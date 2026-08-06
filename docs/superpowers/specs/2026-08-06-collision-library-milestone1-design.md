@@ -1,7 +1,8 @@
 # Collision Library — Milestone 1: Core Slice + RoomLocatorExtension
 
-Status: revised after three rounds of codex review (see `review-coments.md`,
-`review-comments-v2.md`, `review-comments-v3.md` in this directory), pending user re-review
+Status: revised after four rounds of codex review (see `review-coments.md`,
+`review-comments-v2.md`, `review-comments-v3.md`, `review-comments-v4.md` in this directory),
+pending user re-review
 Date: 2026-08-06
 Related: [`docs/ideas/aps-viewer-clash-detection-library-idea.md`](../../ideas/aps-viewer-clash-detection-library-idea.md)
 
@@ -76,6 +77,41 @@ implementation this milestone replaces. This revision:
 - Makes diagnostics role-aware, and emits them for *partially* inconclusive negatives, not only
   totally inconclusive ones.
 - Drops `firstHitOnly` from the Milestone 1 API rather than shipping an undefined option.
+
+### Round 4 (4 P1, 1 P2 — all confirmed valid)
+
+Round 3 built the right *structure* (classify crossings, decompose into components) but several of its
+geometric primitives don't survive contact with the actual `three-mesh-bvh` contract or with
+adversarial geometry. Two findings independently defeat round 3's headline fix — touching must not
+count as overlap — by different routes:
+
+- **Boundary points read as "inside."** Ray parity from a point lying exactly *on* a target face
+  produces a distance-zero hit that the barycentric edge/vertex rule doesn't reject, flipping parity
+  to "inside." A box resting on another box has its whole bottom face on the target's boundary, so
+  this turns pure face contact back into `volume-overlap` — undoing round 3. Fixed with an explicit
+  three-valued `inside | outside | boundary` classification and a surface-proximity pre-check.
+- **`interiorOffset` imposed a hidden minimum penetration depth.** Stepping a fixed
+  `1e-4 × diagonal` off the intersection curve steps *clean through* any overlap thinner than that,
+  yielding a false negative with no vertex witness either. Replaced with an adaptive offset ladder
+  and an explicitly declared `minPenetrationDepth`, plus a symmetric definition of whose diagonal
+  sets the scale (round 3 never said).
+- **Coplanar pairs never had a valid segment.** Verified directly against upstream: the coplanar
+  branch of `ExtendedTriangle.intersectsTriangle` warns and sets the output edge to `(0,0,0)`, so
+  round 3's midpoint was the origin and the four-quadrant argument was vacuous for exactly the case
+  it most needed to classify. Coplanar contact now has its own classification path that never asks
+  for a segment.
+- **The exactness proof was wrong.** Vertex-based union-find can merge two solids joined at a single
+  vertex; one may sit inside the target and the other outside with no transverse crossing, so
+  component representatives can miss the contained one. Round 3's rebuttal ("they touch, so the
+  contact query decides it") confused A-touching-*itself* with A-touching-B. Fixed by switching to
+  edge-connectivity, replacing the unconditional "exact" claim with a stated-precondition guarantee,
+  and detecting the geometry that violates it.
+- **Model removal leaked collision data.** The room cache was evicted per model but geometry
+  records, BLASes, and connectivity — all keyed by `(modelId, geometryIndex)` — were only freed by a
+  whole-world `dispose()`. Added `world.evictModel()`.
+
+This round also pins exact dependency versions and corrects the vendor file layout, both of which
+were wrong in a way that would have surfaced at first `npm install`.
 
 ## Purpose
 
@@ -155,8 +191,8 @@ no monorepo):
 ```text
 wwwroot/
 ├─ vendor/                          # self-hosted, npm-installed, copied here
-│  ├─ three/three.module.js
-│  └─ three-mesh-bvh/index.module.js
+│  ├─ three/build/three.module.js   #  + three.core.js, which it imports
+│  └─ three-mesh-bvh/src/**         #  whole src tree — see note below
 ├─ collision/                       # the CollisionWorld library (Milestone 1 slice)
 │  ├─ viewer/
 │  │  ├─ ViewerModelAdapter.js
@@ -181,9 +217,30 @@ wwwroot/
 └─ index.html                       # gains a <script type="importmap">
 ```
 
-`package.json` gains `three` and `three-mesh-bvh` as real, pinned dependencies. A small
-`scripts/sync-vendor.mjs` copies their built ESM files from `node_modules` into `wwwroot/vendor/`
-(no bundler — just a copy step), matching the idea doc's self-hosted deployment recommendation.
+**Exact dependency pins** (a review pass asked for real versions rather than "pinned"; these were
+checked against the npm registry rather than assumed):
+
+| Package | Pin | Note |
+|---|---|---|
+| `three` | `0.185.1` | ESM entry `./build/three.module.js` |
+| `three-mesh-bvh` | `0.9.14` | declares `peerDependencies: { three: ">= 0.159.0" }` — satisfied |
+
+**The vendor copy is not two files.** The earlier draft's `three-mesh-bvh/build/index.module.js`
+does not exist: that package's `exports.import` is **`./src/index.js`**, a multi-file source tree
+whose modules import each other by relative path and import `three` by bare specifier. `three`'s own
+`build/three.module.js` likewise imports `./three.core.js`. So `scripts/sync-vendor.mjs`
+(`npm run build:vendor`, no bundler — still just a copy step) must copy **directory trees**, not
+single files, and the import map resolves the bare specifiers:
+
+```json
+{ "imports": {
+  "three": "/vendor/three/build/three.module.js",
+  "three-mesh-bvh": "/vendor/three-mesh-bvh/src/index.js"
+} }
+```
+
+The bare `three` specifier inside three-mesh-bvh's own sources resolves through that same map — which
+is exactly the mechanism that keeps it bound to the *collision* THREE and never to Viewer's.
 
 ## Components
 
@@ -289,30 +346,66 @@ quantities living in different spaces and different units — a review pass corr
 `MeshBVH` raycast distances are in the **target BVH's local space** (not Viewer world space) and
 that barycentric coordinates are **dimensionless** and cannot take a distance tolerance at all:
 
+All distances are expressed in the **classification frame** — the frame `bvhcast` traverses in, i.e.
+A's local space, with B mapped into it by the relative matrix. The characteristic length that scales
+them is
+
+```text
+L := min( diagonal(boundsA), diagonal(boundsB mapped into the classification frame) )
+```
+
+which is **symmetric** under swapping A and B (a review pass caught that the previous draft said
+"`localBoundsDiagonal`" without ever saying *whose*, making the tolerance — and therefore the
+predicate — asymmetric). Taking the `min` means the smaller participant sets the scale, so a small
+fixture tested against a large room isn't measured with the room's yardstick.
+
 | Tolerance | Units | Milestone 1 default | Used for |
 |---|---|---|---|
-| `barycentricEpsilon` | dimensionless (0-1) | `1e-6` | Deciding a ray hit is too close to a triangle's edge/vertex to trust |
-| `mergeDistance` | target BVH local-space distance | `1e-6 × localBoundsDiagonal` | Collapsing coincident ray hits before parity counting |
-| `interiorOffset` | local-space distance | `1e-4 × localBoundsDiagonal` | Stepping off the intersection curve in `ProperCrossingQuery` |
+| `barycentricEpsilon` | dimensionless (0-1) | `1e-6` | Rejecting a ray hit too close to a triangle edge/vertex to trust |
+| `coplanarAngleEpsilon` | dimensionless (`1−\|n·n\|`) | `1e-6` | Detecting coplanar triangle pairs before requesting a segment |
+| `mergeDistance` | classification-frame distance | `1e-6 × L` | Collapsing coincident ray hits before parity counting |
+| `surfaceEpsilon` | classification-frame distance | `1e-6 × L` | Deciding a sample point lies *on* a surface (→ `boundary`) |
+| `offsetLadder` | classification-frame distance | `[1e-3, 1e-4, 1e-5] × L` | Adaptive step off the intersection curve in `ProperCrossingQuery` |
+| `minPenetrationDepth` | classification-frame distance | `1e-5 × L` (ladder's last rung) | **Declared** limit: thinner overlaps may report as touching |
 
-Both distance tolerances are **scale-relative** (a fraction of the geometry's own local bounding-box
-diagonal) rather than absolute. This sidesteps the world↔local conversion problem entirely under
-scaled or non-uniform instance transforms: the tolerance is defined in the same space as the numbers
-it's compared against, and never needs converting. Absolute world-space tolerances, model units, and
-global offsets remain an open question inherited from the idea doc's own "Tolerance" section — this
-milestone deliberately avoids depending on them.
+Scale-relative tolerances sidestep the world↔local conversion problem under scaled or non-uniform
+instance transforms: each tolerance lives in the same space as the numbers it's compared against and
+never needs converting. Absolute world-space tolerances, model units, and global offsets remain an
+open question inherited from the idea doc's "Tolerance" section — this milestone avoids depending on
+them.
 
-**`GeometryConnectivity`** (new) — decomposes a normalized geometry into connected components via
-union-find over triangles that share a vertex index, restricted to the active triangle ranges.
-Computed **once per unique `GeometryRecord`** and cached alongside the BLAS (not per query, not per
-pair), so its cost amortizes exactly like BVH construction does. Output: a list of components, each
-with a set of representative vertex indices. Two caveats, both stated rather than assumed away:
-- Tessellated output often duplicates vertices at seams, so index-sharing can *over*-segment a
-  visually-connected mesh. That's conservative — more components means more sampling, never less
-  correctness — but it can inflate sample counts, which `maxContainmentSamples` caps.
-- Two genuinely separate solids that share a single vertex index would be *under*-segmented into one
-  component. Such solids touch, so `ProperCrossingQuery`/`SurfaceIntersectionQuery` see them as
-  contacting geometry and the containment path isn't what decides the result.
+`minPenetrationDepth` deserves emphasis because it is a **semantic** limit, not an implementation
+detail: `volume-overlap` detects overlaps deeper than it, and may classify shallower ones as mere
+touching. The previous draft had exactly this limit at a *thousand times coarser* value and did not
+declare it at all — a review pass correctly identified that a fixed offset steps clean through any
+overlap thinner than itself, producing a false negative in precisely the thin-geometry case
+(perpendicular thin boxes) where no vertex-containment witness exists either. Making the offset
+adaptive shrinks the blind spot; declaring `minPenetrationDepth` makes what remains of it honest.
+
+**`GeometryConnectivity`** (new) — decomposes a normalized geometry into connected components by
+union-find over triangles that share an **edge** (two vertex indices), restricted to the active
+triangle ranges. Computed **once per unique `GeometryRecord`** and cached alongside the BLAS (not per
+query, not per pair), so its cost amortizes exactly like BVH construction does. Building the edge map
+also yields, for free, the manifold classification below.
+
+Round 3 used *vertex*-sharing, which a review pass broke with a clean counterexample: two solids
+joined at a single shared vertex merge into one component; if one sits inside the target and the
+other outside — with only that measure-zero self-contact and no transverse crossing of the target's
+boundary anywhere — then representatives drawn from the outside solid miss the contained one
+entirely. Round 3's rebuttal ("they touch, so the contact query decides it") confused A touching
+*itself* with A touching B; `ProperCrossingQuery(A, B)` never fires on A's internal self-contact.
+Edge-connectivity does not merge vertex-joined solids, which removes that counterexample.
+
+- Tessellated output often duplicates vertices at seams, so index-based connectivity can
+  *over*-segment a visually-connected mesh. Conservative — more components means more sampling, never
+  less correctness — but it inflates sample counts, which `maxContainmentSamples` caps.
+- **Edge-connectivity narrows the under-segmentation hole but does not close it.** Two solids joined
+  along a shared *edge* still merge, and the same construction defeats them. Rather than claim
+  otherwise, `GeometryConnectivity` classifies each component while building the edge map:
+  a component is **manifold** if every one of its edges is shared by exactly two triangles.
+  Components with boundary edges (used once — an open shell) or non-manifold edges (used by three or
+  more — the junction geometry that makes the counterexample possible) are flagged. That flag is what
+  the containment guarantee below is conditioned on, and what gets reported when it doesn't hold.
 
 **`SurfaceIntersectionQuery`** — precisely `MeshBVH.intersectsGeometry(otherGeometry,
 relativeMatrix)`, early-exiting on the first intersecting triangle pair. **True iff any triangle
@@ -333,82 +426,128 @@ milestone replaces, not merely an imprecision.
    intersectsTriangles(triA, triB) { … } })` — a real `three-mesh-bvh` traversal API (the idea doc
    lists `bvhcast` among the reasons for choosing this backend). Returning `true` from the callback
    early-exits the traversal.
-2. For each intersecting pair, compute the intersection segment via
-   `ExtendedTriangle.intersectsTriangle(other, targetLine)` and take its midpoint `M`.
-3. Classify by stepping off the intersection curve into each of the four quadrants the two surfaces
-   locally divide space into: for each sign combination `(s₁, s₂) ∈ {+1,−1}²`, form
-   `candidate = M + interiorOffset × normalize(s₁·nA + s₂·nB)`, skipping combinations where
-   `s₁·nA + s₂·nB` is near-zero (which is exactly the coplanar/parallel case). The pair is a proper
-   crossing iff **some candidate is strictly inside both A and B** (tested with `ContainmentQuery`'s
-   point-in-mesh routine).
-   - This is winding-independent: it never assumes outward-facing normals, only that the two normals
-     span the local quadrants. Round 2's draft would have needed a consistent-winding assumption that
-     Viewer tessellation doesn't guarantee.
-   - For coplanar face-on-face touching, `nA` and `nB` are (anti)parallel, so the non-degenerate
-     candidates lie strictly on one side or the other — inside exactly one solid, never both.
-     Correctly classified as *not* a crossing.
-   - For a genuine crossing (the duct-through-beam case), the transversal surfaces do divide space
-     into four quadrants, one of which is interior to both — correctly classified as a crossing.
-4. Early-exit `true` on the first proper crossing. Examine at most `maxCrossingPairsExamined = 64`
-   intersecting pairs; if that cap is reached with every examined pair classified as mere touching,
-   stop and emit an `inconclusive-crossing` diagnostic rather than asserting a negative — a bounded
-   examination cannot prove the absence of a crossing among unexamined pairs.
+2. **Split coplanar pairs off first**, before asking for any segment. A pair is coplanar when
+   `|nA · nB| ≥ 1 − coplanarAngleEpsilon` *and* the planes coincide within `surfaceEpsilon`.
+   Coplanar pairs are classified as **touching contribution** and skipped — never a crossing on their
+   own — and the loop continues with the remaining pairs.
 
-**`ContainmentQuery`** — point-in-mesh testing by ray-casting parity. It exposes **two layers**, and
-keeping them distinct is what stops the design from being circular:
+   This is not an optimization; round 3's design was simply invalid here. Verified against upstream
+   `ExtendedTriangle.intersectsTriangle`: its coplanar branch emits
+   `console.warn('…Triangles are coplanar which does not support an output edge. Setting edge to
+   0, 0, 0.')` and sets `target.start`/`target.end` to the origin. Round 3 would have taken the
+   midpoint of that zeroed segment — the origin of the classification frame, a point with no relation
+   to the contact — and reasoned about "which side of the contact plane" candidates fell on. The
+   argument was vacuous for exactly the configuration it most needed to decide (face-on-face
+   contact), and it would have spammed the console besides.
 
-- `isPointInside(point, targetBvh)` — the low-level parity primitive. `ProperCrossingQuery` uses
-  only this, on its own synthesized candidate points.
+   Skipping is also the *correct* answer, not just the safe one: if two solids' only contact is
+   coplanar face overlap, that contact has zero volume and is touching by definition. If they also
+   genuinely interpenetrate, the interpenetration necessarily produces non-coplanar intersecting
+   pairs elsewhere, which this loop still examines.
+3. For each remaining (transversal) pair, compute the intersection segment via
+   `ExtendedTriangle.intersectsTriangle(other, targetLine)` — now guaranteed to be the
+   non-coplanar branch, which does produce a real segment — and take its midpoint `M`.
+4. Classify by stepping off the intersection curve into the four quadrants the two surfaces locally
+   divide space into. For each sign combination `(s₁, s₂) ∈ {+1,−1}²` with `d = s₁·nA + s₂·nB`
+   non-degenerate, and **for each rung `δ` of `offsetLadder` from coarsest to finest**, form
+   `candidate = M + δ × normalize(d)`. The pair is a proper crossing iff some candidate classifies
+   as `inside` **both** A and B.
+   - **The ladder is what makes thin overlaps detectable.** A single fixed offset steps clean through
+     any overlap thinner than itself and reports a false negative — a review pass identified this,
+     and it bites hardest on thin perpendicular geometry, where there is no vertex-containment
+     witness to fall back on either. Trying successively finer rungs finds the overlap as long as it
+     is deeper than the last rung, which is precisely the declared `minPenetrationDepth`.
+   - Winding-independent: it never assumes outward-facing normals, only that the two normals span the
+     local quadrants.
+   - For a genuine transversal crossing (the duct-through-beam case), the surfaces divide space into
+     four quadrants, one interior to both — classified as a crossing.
+5. **Inconclusive candidates propagate.** A candidate whose classification against either solid is
+   `boundary` (see `ContainmentQuery`) proves nothing — it can neither confirm nor refute a crossing.
+   If a pair's candidates are exhausted with no `inside`/`inside` result but at least one `boundary`
+   result, that pair is **inconclusive**, not "touching." A negative overall result that had any
+   inconclusive pair carries an `inconclusive-crossing` diagnostic, so it is never reported as a
+   verified negative.
+6. Early-exit `true` on the first proper crossing. Examine at most `maxCrossingPairsExamined = 64`
+   transversal pairs; reaching that cap with everything classified as touching also emits
+   `inconclusive-crossing` — a bounded examination cannot prove the absence of a crossing among
+   unexamined pairs. (Coplanar pairs skipped in step 2 don't consume the budget: they're decided, not
+   deferred.)
+
+**`ContainmentQuery`** — point classification against a mesh. It exposes **two layers**, and keeping
+them distinct is what stops the design from being circular:
+
+- `classifyPoint(point, targetBvh) → 'inside' | 'outside' | 'boundary'` — the low-level primitive.
+  `ProperCrossingQuery` uses only this, on its own synthesized candidate points.
 - `anyComponentInside(source, target)` — the per-component sampling wrapper below.
   `VolumeOverlapQuery` uses this, and only *after* `ProperCrossingQuery` has returned false.
 
-So the exactness argument below (which assumes no proper crossing) never depends on a result that
-depends on it: the primitive has no such precondition, and only the wrapper does.
+So the guarantee below (which assumes no proper crossing) never depends on a result that depends on
+it: the primitive has no such precondition, and only the wrapper does.
 
-- **Sampling is per connected component, not a global cap.** The previous draft's "up to 64 points"
-  had a real false negative a review pass correctly identified: an unsampled component of A could be
-  contained in B while every sampled component sits outside, with no surface intersection anywhere
-  and no diagnostic emitted. It also contradicted itself arithmetically ("up to 64" vs. "at least 8
-  per range" with more than 8 ranges). The fix isn't a bigger cap — it's using the right
-  decomposition:
+**`classifyPoint` is three-valued, and the `boundary` case is load-bearing.** Round 3's boolean
+`isPointInside` had a defect a review pass correctly identified as undoing round 3's entire headline
+fix: a point lying exactly *on* a target face produces a hit at distance ≈ 0 (raycasting starts at
+`near = 0`), that hit sits in a face's *interior* so the barycentric edge/vertex rule doesn't reject
+it, and parity therefore counts it — classifying a boundary point as `inside`. A box resting on
+another box has its entire bottom face on the target's boundary, so pure face contact would have
+come back out as `volume-overlap`, exactly the behavior round 3 existed to eliminate.
 
-  > **Why per-component sampling is exact here.** `ContainmentQuery` only decides the outcome after
-  > `ProperCrossingQuery` has already returned false — i.e. **no proper crossing exists**. Without a
-  > proper crossing, no component of A can be partly inside and partly outside B: passing from
-  > interior to exterior would require transversally crossing B's boundary, which *is* a proper
-  > crossing. So every component is wholly inside or wholly outside (possibly with zero-volume
-  > boundary contact), and **one conclusive sample per component determines that component exactly.**
-  > Covering every component therefore makes the containment step exact, not merely
-  > better-sampled — no vertex scan and no connectivity-blind cap can claim the same.
-  >
-  > The "possibly with boundary contact" caveat is why `samplesPerComponent` is 4 rather than 1: on a
-  > touching-but-not-crossing pair, a sample that happens to sit exactly on the shared interface reads
-  > inconclusive, and the remaining samples of that component are what resolve it.
+1. **Surface-proximity pre-check.** `MeshBVH.closestPointToPoint(point)`; if the distance is
+   ≤ `surfaceEpsilon`, return `boundary` immediately. This both fixes the misclassification and
+   guarantees the parity ray below cannot encounter a near-zero hit — the point is now known to be
+   strictly off the surface, so the degenerate case simply cannot arise rather than needing to be
+   special-cased after the fact.
+2. **Parity test**, in the target BVH's own local space throughout:
+   - Cast with `THREE.DoubleSide` explicitly. `MeshBVH.raycast` defaults to front-face-only, which
+     silently breaks parity counting — a back-facing crossing wouldn't register.
+   - Ray directions are **local-frame axes of the target BVH** (local +X first, local +Y on retry),
+     not world axes. A world axis would need transforming into the target's frame under any rotated
+     or scaled instance transform; choosing the direction in the target's own frame avoids the
+     conversion rather than specifying it.
+   - **Sort hits by distance, then** collapse runs closer together than `mergeDistance` into a single
+     crossing before counting parity. This handles genuinely coincident *surfaces* — duplicated
+     triangles, double-sided wall geometry — where two distinct triangles are hit at the same
+     distance. Sorting must precede merging; `MeshBVH.raycast` does not guarantee ordered hits.
+   - A hit whose barycentric coordinates put it within `barycentricEpsilon` of a triangle edge or
+     vertex is inconclusive *for that ray*: the ray has grazed a seam where the crossing count is
+     unreliable. Retry the whole test once along the alternate local axis. If the retry also grazes,
+     return `boundary` — the point is unresolved, and `boundary` is exactly the "cannot say" value.
+   - Otherwise return `inside` for odd parity, `outside` for even.
 
-  Concretely: take up to `samplesPerComponent = 4` vertices from each component (fewer if the
-  component has fewer), drawn only from vertices referenced by active triangle ranges. Extra samples
-  beyond the first exist purely to survive inconclusive geometry, not for coverage — coverage is
-  already guaranteed by construction. A global `maxContainmentSamples = 512` bounds pathological
-  over-segmented geometry; hitting it emits `incomplete-component-coverage` (see Public API) so an
-  unsampled-component negative is never reported as a clean negative.
-- **Parity test**, in the target BVH's own local space throughout:
-  - Cast with `THREE.DoubleSide` explicitly. `MeshBVH.raycast` defaults to front-face-only, which
-    silently breaks parity counting — a back-facing crossing simply wouldn't register.
-  - Ray directions are **local-frame axes of the target BVH** (local +X first, local +Y on retry),
-    not world axes. The previous draft said "world axis," which would need transforming into the
-    target's frame under any rotated or scaled instance transform; picking the direction in the
-    target's own frame avoids the conversion rather than specifying it.
-  - **Sort hits by distance, then** collapse runs closer together than `mergeDistance` into a single
-    crossing before counting parity — so a ray through an edge shared by two adjacent triangles isn't
-    double-counted. Sorting must precede deduplication; `MeshBVH.raycast` does not guarantee ordered
-    hits.
-  - A hit whose barycentric coordinates put it within `barycentricEpsilon` of a triangle edge or
-    vertex is inconclusive for that attempt. Retry that sample point once with the alternate local
-    axis (2 attempts total). If still inconclusive, that sample is unresolved — move to the next
-    sample of the same component.
-  - A component whose samples are all unresolved is an unresolved component; a pair with any
-    unresolved component emits `inconclusive-containment` whenever the pair's result is negative
-    (see Error Handling — a negative built on unresolved components is not a verified negative).
+**`anyComponentInside` samples per connected component, not against a global cap.** Round 2's flat
+"up to 64 points" had a false negative: an unsampled component of A could be contained in B while
+every sampled component sits outside, with no diagnostic emitted. The fix isn't a bigger cap — it's
+sampling the right decomposition:
+
+> **The containment guarantee, and its preconditions.** `anyComponentInside` only decides the outcome
+> after `ProperCrossingQuery` has returned false — i.e. no proper crossing exists. For a component
+> that is a **closed manifold solid**, passing from B's interior to its exterior would require
+> transversally crossing B's boundary, which *is* a proper crossing. So such a component is wholly
+> inside or wholly outside (possibly with zero-volume boundary contact), and **one conclusive sample
+> determines it exactly.** Covering every component then makes the containment step exact.
+>
+> **That guarantee is conditional, and round 3 stated it unconditionally — which was wrong.** A
+> review pass supplied the counterexample: a component that is *not* a single manifold solid — two
+> solids joined at a shared vertex or edge — can have one part inside B and the other outside, with
+> no transverse crossing anywhere, so representatives drawn from the outside part miss the contained
+> one. Edge-connectivity (see `GeometryConnectivity`) removes the shared-vertex form of this, but not
+> the shared-edge form. The honest statement is therefore:
+>
+> - **manifold component** → the guarantee holds, exactly as argued above;
+> - **non-manifold or open component** → sampling is best-effort, and the component is flagged.
+>   A negative result involving any flagged component emits `non-manifold-component`, so it is
+>   reported as unverified rather than as a clean negative.
+
+Concretely: take up to `samplesPerComponent = 4` vertices from each component (fewer if it has
+fewer), drawn only from vertices referenced by active triangle ranges. On a manifold component the
+extra samples exist purely to survive `boundary` reads — a sample sitting exactly on a
+touching interface is unresolved, and the remaining samples are what resolve the component; coverage
+itself is already guaranteed. On a flagged component they are ordinary sampling, with no guarantee
+attached. A component whose samples all come back `boundary` is unresolved, and a negative result
+with any unresolved component emits `inconclusive-containment`.
+
+A global `maxContainmentSamples = 512` bounds pathologically over-segmented geometry; hitting it
+emits `incomplete-component-coverage` so an unsampled-component negative is never reported as clean.
 
 **`VolumeOverlapQuery`** — the direct replacement for `ThreeBSP.intersect()`, composed from the
 above. Three review rounds shaped it; the two rejected shapes are worth keeping in view because each
@@ -437,10 +576,16 @@ containment would miss it.
 
 Both directions are required for symmetry: a small fixture inside a large room and a large room
 enclosing a small fixture are the same predicate viewed from either side, but only one direction has
-a witness point to find. Pure touching now correctly returns **false** — it yields no proper
-crossing, and a solid resting on another's face is outside it. If every component on both sides is
-unresolved, the result is reported as negative *with* an `inconclusive-containment` diagnostic rather
-than as a clean negative.
+a witness point to find. Pure touching correctly returns **false** — it yields no proper crossing
+(coplanar contact is classified, not crossed), and a solid resting on another's face classifies as
+`boundary`/`outside`, never `inside`. Any unresolved component, inconclusive candidate, or truncated
+examination turns a negative into a *diagnosed* negative rather than a clean one.
+
+**Known limits, stated rather than implied.** `volume-overlap` is exact for closed manifold geometry
+with overlaps deeper than `minPenetrationDepth`. It is best-effort, and says so via diagnostics, for:
+non-manifold or open components; overlaps shallower than `minPenetrationDepth`; and geometry that
+exhausts the examination budgets. Every one of these was a silent failure in an earlier draft; the
+point of this milestone's diagnostics is that none of them is silent now.
 
 **`CollisionWorld`** — the facade. Broad phase is a plain linear AABB scan over
 `CollisionInstance.worldBounds` (no TLAS yet — candidate counts are small). Narrow phase calls
@@ -461,7 +606,9 @@ than as a clean negative.
      `model.search(roomCategoryName, onSuccess, onError, ['Category'], { searchHidden: true })` and
      caches the resulting promise; later calls for the same `model.id` reuse it. The cache entry for
      a model is dropped when that model is unloaded (the extension listens for the Viewer's
-     model-removal notification) so a stale room list can never outlive its model.
+     model-removal notification) so a stale room list can never outlive its model. **That same
+     handler must also call `world.evictModel(model.id)`** — the room cache is not the only
+     model-scoped state, and the previous draft evicted only it.
    - **`model.search`, not `viewer.search`** — a review pass correctly caught the previous draft
      using the latter. Per the installed typings, `Viewer3D.search` is declared with four arguments
      and no `options` parameter (`index.d.ts:1247`), so the `{ searchHidden: true }` argument would
@@ -518,7 +665,16 @@ world.findClashes(query): Promise<ClashResult>
 // room-locator wants every matching room, so nothing in this milestone needs it. Deferred to
 // whichever milestone has a caller that can pin down its meaning.
 
-world.dispose(): void   // frees cached BLAS/geometry records
+world.evictModel(modelId): void
+// Drops everything keyed by that modelId: CollisionInstances, GeometryRecords, their reference
+// counts, cached BLASes, cached connectivity, and any in-flight build promises (which reject).
+// Required because all of that is keyed by (modelId, geometryIndex) — a review pass caught that
+// the previous draft evicted only the extension's room-dbId cache on model removal, leaving the
+// unloaded model's geometry and BVHs resident, and risking stale BLAS reuse if the Viewer ever
+// recycles a model id. Must be called from the extension's model-removal handler, alongside
+// dropping the room cache entry.
+
+world.dispose(): void   // evicts every model and releases all cached state
 ```
 
 ```ts
@@ -528,6 +684,7 @@ class RoomLocatorExtension extends Autodesk.Viewing.Extension {
                                      // (see Data Flow step 1) and no eager BLAS building
   unload()                          // world.dispose(), unregisters context menu + model-removal
                                      // listener, clears the per-model room cache
+  // on model removal: world.evictModel(id) AND drop that id's room-cache entry
   async locateElementByRoom(dbId): Promise<number[]>
   onContextMenu(menu, status)       // adds "Locate Room" item, same UX as the original extension
 }
@@ -550,9 +707,10 @@ type FragmentDiagnosticReason =
   | 'geometry-too-large-for-sync-build'; // over maxSyncTriangleCount
 
 type PairDiagnosticReason =
-  | 'inconclusive-containment'        // unresolved component(s) under a negative result
+  | 'inconclusive-containment'        // unresolved (all-`boundary`) component(s) under a negative
   | 'incomplete-component-coverage'   // maxContainmentSamples hit before covering all components
-  | 'inconclusive-crossing';          // maxCrossingPairsExamined hit, all examined pairs touching
+  | 'inconclusive-crossing'           // budget exhausted, or a candidate classified `boundary`
+  | 'non-manifold-component';         // a component the containment guarantee doesn't cover
 
 type ClashDiagnostic =
   // Discovered during geometry normalization or the size check, independent of any pairing.
@@ -594,15 +752,19 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   `geometry-too-large-for-sync-build` diagnostic rather than blocking the Viewer — see
   `ThreeMeshBvhBackend`/`BlasCache`.
 - **Non-watertight geometry**: ray-parity containment assumes a closed target surface, so
-  `volume-overlap` is only strongly guaranteed for closed/manifold geometry — mitigated with
-  `THREE.DoubleSide` raycasting, distance-sorted coincident-hit merging, `barycentricEpsilon`
-  edge/vertex rejection, and a bounded retry on an alternate local axis (see `ContainmentQuery` for
-  the exact rule). Unresolved components under a negative result produce
+  `volume-overlap` is only strongly guaranteed for closed/manifold geometry — mitigated with the
+  `surfaceEpsilon` boundary pre-check, `THREE.DoubleSide` raycasting, distance-sorted coincident-hit
+  merging, `barycentricEpsilon` edge/vertex rejection, and a bounded retry on an alternate local axis
+  (see `ContainmentQuery`). Unresolved components under a negative produce
   `inconclusive-containment` rather than a silent guess.
+- **Non-manifold or open source components**: the containment guarantee doesn't cover them (see
+  `anyComponentInside`), so a negative result involving one emits `non-manifold-component`. Sampling
+  still runs — this degrades a verified negative to an unverified one, it doesn't skip work.
+- **Overlaps shallower than `minPenetrationDepth`**: may classify as touching rather than overlap.
+  This is a declared semantic limit of the mode (see Tolerances), not a diagnosed failure.
 - **Truncated examination**: hitting `maxContainmentSamples` before covering every component, or
-  `maxCrossingPairsExamined` with every examined pair classified as touching, produces
-  `incomplete-component-coverage` / `inconclusive-crossing` respectively — a bounded search that
-  finds nothing has not proven a negative.
+  `maxCrossingPairsExamined` before deciding, produces `incomplete-component-coverage` /
+  `inconclusive-crossing` — a bounded search that finds nothing has not proven a negative.
 - **No candidate rooms** (empty search result, or wrong category name): `findClashes` still returns
   a full `ClashResult` with `pairs: []` and zeroed `statistics`; the extension surfaces "No rooms
   found" rather than throwing.
@@ -631,34 +793,61 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - **flush/coplanar touching faces only** (a box resting exactly on another box's top face) —
     **intersects**. Correct for *this* mode: touching is surface intersection. The point of the
     fixture is to pin the contrast with `volume-overlap`, which must return false on the same input.
-- `ProperCrossingQuery` — the round-3 fix, tested directly rather than only through its caller:
-  - **flush/coplanar touching faces only** — **not a crossing**. Same geometry as the
-    `SurfaceIntersectionQuery` fixture above, opposite expected result; this pair of fixtures is the
-    regression test for round 2's "touching counted as volume overlap" bug.
+- `ProperCrossingQuery` — tested directly rather than only through its caller:
+  - **flush/coplanar touching faces only** — **not a crossing**, and the run must produce **no
+    `console.warn` from `ExtendedTriangle`**. That warning is the tell that the coplanar branch was
+    reached and a zeroed segment consumed; asserting on its absence is how this fixture proves the
+    coplanar pre-split actually happens rather than the classification merely appearing to work.
   - edge-edge and vertex-face contact with no shared volume — not a crossing
   - **two long, thin boxes crossing perpendicularly mid-span** (a duct through a beam), thin enough
     that no vertex of either lies inside the other — **is a crossing**. Regression test for round 2's
     counterexample, which pure vertex sampling cannot detect at any sample count.
+  - **a crossing whose overlap is thinner than the coarsest ladder rung but deeper than the finest**
+    — must be detected. Regression test for round 3's fixed-offset blind spot, which stepped clean
+    through thin overlaps; it is the fixture that justifies the ladder existing at all.
+  - a crossing shallower than `minPenetrationDepth` — documented as *not* detected, pinning the
+    declared limit so it can't silently drift.
   - a crossing between meshes with **inconsistent/inward-facing winding** — still a crossing,
     verifying the four-quadrant candidate test doesn't depend on outward normals.
-- `ContainmentQuery`:
-  - **a two-component geometry where only the smaller, second component lies inside the target**,
-    with no surface intersection anywhere — must report contained. Regression test for the
-    capped-sampling false negative: any connectivity-blind sampler can miss the small component,
-    while per-component coverage cannot.
-  - a geometry with **more than 8 active ranges** — verifies sample budgeting is coherent (the
-    previous draft's "up to 64 total" and "at least 8 per range" were arithmetically contradictory
-    here)
-  - a mesh where containment is only read correctly with `THREE.DoubleSide` (a thin shell whose
-    back-facing crossings a front-face-only raycast would miss)
-  - two adjacent triangles sharing an edge, with a ray passing exactly through that shared edge —
-    verifies hits are distance-sorted *then* merged, so the shared edge counts as one crossing and
-    doesn't flip parity
+- `ContainmentQuery.classifyPoint` — the three-valued primitive, tested on its own:
+  - a point demonstrably inside / demonstrably outside — `inside` / `outside`
+  - **a point lying exactly on the interior of a target face** — must return `boundary`, **not**
+    `inside`. Direct regression test for the round-3 defect that would have re-promoted face contact
+    to `volume-overlap`; assert it for several ray directions, since the old failure was
+    direction-dependent.
+  - a point on a target edge, and one on a target vertex — `boundary`
+  - a mesh where the answer is only correct with `THREE.DoubleSide` (a thin shell whose back-facing
+    crossings a front-face-only raycast would miss)
+  - **two coincident duplicate triangles** with a ray through them — verifies hits are distance-sorted
+    *then* merged so the duplicated surface counts as one crossing. (Note this fixture tests
+    *coincident surfaces*, not a shared edge: a ray grazing a shared edge is rejected by
+    `barycentricEpsilon` and retried on the alternate axis, so it never reaches the merge logic. An
+    earlier draft asserted merge behavior on a shared-edge ray, which the algorithm can't reach —
+    a genuine contradiction between spec and test.)
   - a target under a **non-uniform scale** instance transform — verifies scale-relative tolerances
     and local-frame ray directions behave, since this is exactly where a world-space epsilon or a
     world-axis ray direction would have gone wrong
+- `ContainmentQuery.anyComponentInside` — the sampling wrapper:
+  - **a two-component geometry where only the smaller, second component lies inside the target** —
+    must report contained. Regression test for the capped-sampling false negative: a
+    connectivity-blind sampler can miss the small component, per-component coverage cannot.
+  - **two solids joined at a single shared vertex, one inside the target and one outside** — must
+    report contained. Regression test for round 3's broken exactness proof; with vertex-based
+    union-find these merge into one component and the contained solid can be missed, with
+    edge-connectivity they are separate components and it cannot.
+  - **two solids joined along a shared edge, one inside and one outside** — the case
+    edge-connectivity does *not* separate. Whatever the sampled result, the component must be flagged
+    non-manifold and a negative must carry `non-manifold-component`. This fixture pins the honest
+    limit rather than asserting a guarantee that doesn't hold.
+  - a geometry with **more than 8 active ranges** — verifies sample budgeting is coherent (an earlier
+    draft's "up to 64 total" and "at least 8 per range" were arithmetically contradictory here)
   - a geometry that exhausts `maxContainmentSamples` — verifies `incomplete-component-coverage` is
     emitted rather than a clean negative
+- `GeometryConnectivity`:
+  - a mesh with duplicated seam vertices — over-segments into multiple components (conservative,
+    accepted) rather than failing
+  - closed manifold, open shell, and non-manifold (three-triangle edge) inputs — verifies the
+    manifold flag that the containment guarantee is conditioned on
 - `VolumeOverlapQuery` (composition-level):
   - box fully inside box; separated boxes — baseline sanity
   - **flush touching only — must report NO overlap.** The headline round-3 behavior change, and the
@@ -721,6 +910,17 @@ need.
   correctness but inflates sample counts, and is the most likely trigger for
   `incomplete-component-coverage` on real models — worth measuring early, since it determines whether
   `maxContainmentSamples = 512` is comfortable or tight.
+- **How often is real Viewer geometry non-manifold?** The containment guarantee is conditioned on
+  manifold components, and Model Derivative tessellation makes no such promise. If a large share of
+  real fragments come back flagged, then `volume-overlap` is best-effort in the common case rather
+  than the rare one — which would be a materially weaker library than this spec reads as, and would
+  warrant revisiting the approach rather than shipping the diagnostics as cover. **Measure this early
+  against the acceptance URN**; it is the single most load-bearing unknown in the design.
+- **Cost of the round-4 correctness work is unmeasured.** `closestPointToPoint` on every sample
+  point, an offset ladder multiplying candidate tests by up to 3×, and a connectivity pass per
+  geometry are all new per-query or per-geometry work added since the last performance reasoning was
+  done. None of it is obviously expensive, but "obviously" is doing real work in that sentence and
+  there is still no benchmark suite.
 - **`InterleavedBufferAttribute` and `drawRange`/`groups`-intersection fixtures are unverified
   against real Viewer output**: the adapter fixes in this revision (index path, interleaved
   fallback, range intersection, `offsets` rejection) are grounded in correct three.js semantics and
@@ -760,4 +960,10 @@ need.
   library-wide convention?
 - When a model is reloaded with the same `model.id` (if that's possible in this Viewer version) but
   different content, does the per-model room cache need an explicit epoch/version key in addition to
-  `model.id`? Unconfirmed whether `model.id` is ever reused across distinct loads.
+  `model.id`? Unconfirmed whether `model.id` is ever reused across distinct loads. `evictModel()`
+  makes this survivable *if* the removal event always fires; the open question is whether it can be
+  missed.
+- Should non-manifold components attempt repair (welding coincident vertices before connectivity) so
+  the containment guarantee covers more real geometry, rather than only being flagged? That's a
+  meaningful chunk of mesh-processing work and is deliberately not in this milestone — but if the
+  measurement above shows most real fragments are flagged, it stops being optional.
