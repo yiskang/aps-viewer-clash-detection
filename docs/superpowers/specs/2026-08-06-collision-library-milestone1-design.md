@@ -178,7 +178,7 @@ fixes what it exposes:
 After six review rounds, the remaining questions were ones no amount of reading could
 settle. `spike/geometry-core.mjs` implements the primitives below against real
 `three@0.185.1` / `three-mesh-bvh@0.9.14`; `spike/fixtures.mjs` runs every regression case the
-review rounds produced, plus the round-7 mode-split and target-closure rules (`node spike/fixtures.mjs` — 39/39 pass); `spike/measure.mjs` replaces the
+review rounds produced, plus the round-7 mode-split and the round-8 surface-crossing and diagnostic-role rules (`node spike/fixtures.mjs` — 55/55 pass); `spike/measure.mjs` replaces the
 guessed constants with measured ones. It found two defects that no review round caught, and settled
 three open questions:
 
@@ -304,7 +304,7 @@ This spec covers a deliberately bounded slice of the idea doc's full architectur
 - `three-mesh-bvh`-backed BLAS, one per unique geometry, lazily built
 - Runtime isolation: separate `three`/`three-mesh-bvh` from Viewer's bundled THREE, via import map,
   self-hosted vendor files
-- Single-pair and small-batch queries: `surface-intersection`, `volume-overlap`
+- Single-pair and small-batch queries: `surface-intersection`, `containment`, `volume-overlap`
 - `RoomLocatorExtension` rewritten as a thin `CollisionWorld` consumer
 
 **Excluded (future milestones):**
@@ -313,7 +313,11 @@ This spec covers a deliberately bounded slice of the idea doc's full architectur
 - Worker offloading
 - Serialization / persistent BLAS caching
 - `touching` / `clearance` query modes
-- Full benchmark suite
+- A full benchmark suite — **but not the single MEP-scale performance gate**, which is *included*
+  (see Testing). Settling B7 in favour of keeping the BVH made that gate the only thing that
+  exercises the acceleration machinery this milestone builds; excluding it wholesale, as an earlier
+  draft did, left the spec calling an MEP model a milestone dependency while defining no milestone
+  test that used one.
 - Cross-model geometry deduplication
 - Cross-model queries of any kind — `findClashes` requires `source.model === target.model` in
   Milestone 1 and rejects otherwise. Placement-transform/global-offset/unit normalization across
@@ -545,11 +549,12 @@ synchronously — `GeometryRegistry` marks the record oversized and emits one fr
 multi-hundred-millisecond freeze; every pair that would have needed that geometry is skipped. This is a deliberate scope boundary, not a
 solved problem — true incremental (multi-frame) or Worker-based construction for large geometries is
 explicitly out of scope for Milestone 1 (see Milestone Scope), so oversized geometries degrade to
-"can't verify this pair" rather than "block the UI." `20_000` is a provisional default reasoned from
-typical `three-mesh-bvh` build costs, not a benchmarked figure — Model Derivative-tessellated Revit
-rooms and fixtures are expected to be well under this in practice (to be confirmed against the given
-URN during implementation), but the threshold itself should be revisited once real measurements
-exist.
+"can't verify this pair" rather than "block the UI." `20_000` began as a figure reasoned from typical
+`three-mesh-bvh` build costs; **the spike then measured it and it survived unchanged** — ~16ms to
+build a BVH at 18k triangles, i.e. right at the one-frame rule every budget here derives from (see
+`ProperCrossingQuery`'s budget table). It is no longer provisional in the sense of "guessed," though
+it is still measured on synthetic geometry rather than on Revit output, and the MEP-scale gate below
+is what would exercise it on real input.
 
 ### Tolerances
 
@@ -656,8 +661,26 @@ bend. So the line is drawn at the **mode boundary** instead.
 | mode | question answered | parity evaluated against | open **source** | open **target** |
 |---|---|---|---|---|
 | `surface-intersection` | do their surfaces meet anywhere, touching included? | nothing — no parity at all | fine, never diagnosed | fine, never diagnosed |
-| `containment` | is any part of the source inside the target's interior? | **target only** | fine, never diagnosed | `unverified-target` |
-| `volume-overlap` | do the two solids share positive volume? | **both** | `unverified-open-component` | `unverified-target` |
+| `containment` | does any point **on the source's surface** lie inside the target's interior? | **target only** | fine, never diagnosed | `unverified-parity-operand` (`role: 'target'`) |
+| `volume-overlap` | do the two solids share positive volume? | **both** | `unverified-open-component` | `unverified-parity-operand` (`role` per path) |
+
+**`containment` treats the source as a point set and the target as a solid, and that asymmetry is the
+whole definition.** Round 8 caught the looser wording — "any part of the source inside the target" —
+being both wrong and self-defeating: for two closed solids, "some part of A is inside B" and "some
+part of B is inside A" are *the same predicate*, because if A lies within B then the region A occupies
+belongs to both. Under that reading `containment` is symmetric, which makes it just `volume-overlap`
+with extra steps, and the spec's own directedness fixture (`containment(room, element)` is false)
+contradicts it.
+
+Reading the source as its **surface** fixes both problems at once and is what the room-locator
+actually wants:
+
+- `containment(element, room)` — the element's surface lies within the room's interior → **true**.
+- `containment(room, element)` — the room's walls do not pass through the element → **false**.
+- `containment(bathtub, room)` — an open shell has a surface even though it has no certified
+  interior, so the mode is well-posed for exactly the geometry that motivated it.
+
+Directed, meaningful for open sources, and dependent only on the target being a solid.
 
 Two consequences worth stating explicitly, because both were previously implicit and one was wrong:
 
@@ -978,18 +1001,23 @@ sampling the right decomposition:
 > negative, no diagnostic — even though every parity read behind it is meaningless. That is the
 > unsound-but-clean case the diagnostics exist to prevent, arrived at from the other side.
 >
-> So parity carries an explicit target precondition, checked once per pair before any sampling:
+> So parity carries an explicit closure precondition, checked once per pair before any sampling:
 >
-> - **the target's participating components must all be certified closed manifolds.** If any is not,
->   every result depending on that parity — positive *and* negative, in `containment` and
->   `volume-overlap` alike — carries `unverified-target`.
+> - **every operand that parity is evaluated against must be a certified closed manifold.** If one is
+>   not, each result depending on that parity — positive *and* negative — carries
+>   `unverified-parity-operand` naming that operand's role.
+> - **Which operands those are depends on the deciding path, not on the mode alone.** Round 7 wrote
+>   this rule as target-only, which is right for `containment` and wrong for `volume-overlap`'s
+>   crossing path, where probes are classified against *both* solids. See the role table under Public
+>   API for the per-path rules; the short version is that a crossing can indict either side, while a
+>   containment term indicts only the container.
 > - The check is free: `GeometryConnectivity` already computes manifold classification per geometry
 >   and caches it alongside the BLAS, so this reads a cached flag rather than adding a pass.
 >
 > Measured on the acceptance model: **every room welds to a perfect closed manifold** (1 component,
 > 0 boundary edges, 0 non-manifold edges), so the side that must be closed is closed and
-> `unverified-target` never fires for the room-locator. It exists for the federated and MEP-heavy
-> models where it will.
+> `unverified-parity-operand` never fires for the room-locator. It exists for the federated and
+> MEP-heavy models where it will.
 >
 > Positives are reported as true rather than suppressed throughout. For the room-locator that is the
 > useful answer — an open-shell fixture inside a room should be located in that room — and the
@@ -1074,18 +1102,53 @@ non-manifold or open components on either side; overlaps shallower than `minPene
 geometry that exhausts the examination budgets. Every one of these was a silent failure in an earlier
 draft; the point of this milestone's diagnostics is that none of them is silent now.
 
-**`ContainmentModeQuery`** — the public `containment` mode, and a strict subset of the above:
+**`ContainmentModeQuery`** — the public `containment` mode:
 
 ```text
-containment(A, B) := ContainmentQuery(anyComponentOf(A) inside B)
+containment(A, B) :=
+      ContainmentQuery(anyComponentOf(A) inside B)   // a source VERTEX inside B
+   OR SurfaceCrossingWitness(A, B)                   // a point on a source TRIANGLE inside B
 ```
 
-One direction only, and no crossing term. That asymmetry is the whole point — `volume-overlap` is a
-symmetric predicate about two solids, `containment` is a directed question about a source and a
-target, so it needs no bidirectional evaluation and inherits only the target's closure precondition.
-It shares `anyComponentInside` verbatim with `VolumeOverlapQuery`; the modes differ in what they
-*compose* and what they *promise*, not in how a point is classified. See **Query modes and their
-preconditions** for why this exists as its own mode rather than as a relaxation of `volume-overlap`.
+One direction only, and no bidirectional evaluation — `volume-overlap` is a symmetric predicate about
+two solids, `containment` is a directed question about a source surface and a target solid.
+
+**The second term is not optional, and round 7 shipped without it.** That draft defined the mode as
+bare `anyComponentInside`, which samples *vertices* and stops at the first conclusive one. A source
+straddling the target's boundary with no vertex inside therefore returned a **clean false**: a duct
+passing through a beam, or a single large triangle passing through a room with all three corners
+outside. This is precisely the failure round 2 found for `volume-overlap` — vertex sampling cannot
+see an overlap bounded by edges crossing faces, at any sample count — reintroduced by splitting the
+mode and dropping the crossing term along with it. `volume-overlap` never had the bug because
+`ProperCrossingQuery` runs ahead of its containment terms; this mode has nothing ahead of it, so it
+must find those points itself.
+
+**`SurfaceCrossingWitness` probes within the source triangle's own plane and classifies against the
+target only.** Given a source triangle properly (non-coplanarly) intersecting the target surface
+along segment `L`, take `L`'s midpoint `M`, form the in-plane direction `u = normalize(nA × dir(L))`
+— perpendicular to `L`, inside the source triangle's plane — and probe `P = M ± δ·u` over
+`offsetLadder`, rejecting any `P` that falls outside the source triangle. The witness holds when some
+`P` classifies `inside` the target.
+
+The contrast with `ProperCrossingQuery`'s four-quadrant probe is the point rather than an
+implementation detail. That test steps off the intersection curve into space and demands `inside`
+**both** solids, because it must prove *shared volume* — which is why it parity-tests both operands
+and inherits both closure preconditions. This one stays **on the source surface** and demands
+`inside` the target only, because it need only exhibit a point that is simultaneously on A and within
+B. It therefore never parity-tests the source, which is exactly what lets `containment` accept open
+sources while `volume-overlap` cannot. Same traversal and budget as the other two modes; roughly half
+the probe cost, since each probe classifies against one BVH instead of two.
+
+Stage ordering is cheapest-first: vertex sampling resolves the common case (a fixture inside a room)
+without any traversal at all. A negative now requires *both* stages to fail, which strictly
+strengthens `anyComponentInside`'s guarantee rather than weakening it — that guarantee was stated
+under "no proper crossing exists," and stage 2 is what now establishes the antecedent instead of
+assuming it.
+
+It shares `anyComponentInside` and `classifyPoint` verbatim with `VolumeOverlapQuery`; the modes
+differ in what they *compose* and what they *promise*, not in how a point is classified. See **Query
+modes and their preconditions** for why this exists as its own mode rather than as a relaxation of
+`volume-overlap`.
 
 Note the deliberate name split: **`ContainmentQuery`** is the internal point-classification component
 (`classifyPoint` + `anyComponentInside`), used by every mode; `ContainmentModeQuery` is the thin
@@ -1234,8 +1297,9 @@ type PairDiagnosticReason =
   | 'non-manifold-component'          // NEGATIVE result involving a component the guarantee misses
   | 'unverified-open-component'       // volume-overlap POSITIVE decided by an open SOURCE component
                                       //   (never emitted in 'containment' mode — see Query modes)
-  | 'unverified-target';              // parity ran against a TARGET that is not certified closed;
-                                      //   attaches to positives AND negatives, in both parity modes
+  | 'unverified-parity-operand';      // ray parity ran against an operand that is not certified
+                                      //   closed. Carries `role` naming WHICH operand; emitted once
+                                      //   per offending operand. Attaches to positives AND negatives.
 
 type ClashDiagnostic =
   // Discovered during geometry normalization or the size check, independent of any pairing.
@@ -1244,9 +1308,35 @@ type ClashDiagnostic =
   | { scope: 'fragment'; reason: FragmentDiagnosticReason; role: 'source' | 'target';
       fragment: FragmentRef }
   // Discovered while evaluating one specific pair; both sides are always known here.
-  | { scope: 'pair'; reason: PairDiagnosticReason;
+  // `role` is required for reasons that indict one operand — 'unverified-parity-operand' and
+  // 'unverified-open-component' — and absent for reasons about the pair as a whole
+  // (budget exhaustion, coverage truncation, inconclusive results).
+  | { scope: 'pair'; reason: PairDiagnosticReason; role?: 'source' | 'target';
       sourceFragment: FragmentRef; targetFragment: FragmentRef };
 ```
+
+**`unverified-parity-operand` carries a role because the old flag pointed at the wrong geometry.**
+The previous draft had `unverified-target`, which named the *only* operand that can be at fault in
+`containment` mode — and is simply wrong on `volume-overlap`'s crossing path, where probe
+classification parity-tests **both** operands. A single unroled flag there either misses an open
+source entirely or reports it as an open target, sending the reader to inspect geometry that is fine.
+Which roles are implicated depends on which path decided, and the rules follow directly from which
+operand each path parity-tests:
+
+| decided by | parity ran against | roles that can be indicted |
+|---|---|---|
+| proper crossing | both operands | `source` and/or `target` |
+| containment of A in B | B only | `target` |
+| containment of B in A | A only | `source` |
+| a negative | every path ran | `source` and/or `target` |
+
+One diagnostic is emitted per offending operand, so a pair with both open produces two.
+
+Note what is *not* covered by this: an open **source** on a containment-decided positive is not a
+parity fault at all — the source was sampled, never parity-tested — and is reported by
+`unverified-open-component` instead. The two diagnostics answer different questions ("was `inside`
+well-defined?" versus "does containment establish volume?") and a fixture asserts they don't collapse
+into each other.
 
 **Diagnostics attach to positive results too, not only negatives.** Every earlier draft treated a
 diagnostic as a caveat on "we found nothing," which left the one case where a *positive* is the
@@ -1268,9 +1358,9 @@ else going unresolved can take that away — so truncation and coverage diagnost
 witness itself being unsound, and there are exactly two such cases, both preconditions rather than
 budgets:
 
-- `unverified-target` — the parity that produced the witness ran against a target that isn't a
-  certified closed manifold, so "inside" was never well-defined. Applies in `containment` and
-  `volume-overlap`.
+- `unverified-parity-operand` — the parity that produced the witness ran against an operand that
+  isn't a certified closed manifold, so "inside" was never well-defined. Applies in `containment` and
+  `volume-overlap`, with `role` naming the operand.
 - `unverified-open-component` — `volume-overlap` only: the witness proves containment of an
   uncertified-open source component, which is not the same as shared volume.
 
@@ -1303,8 +1393,8 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   `surfaceEpsilon` boundary pre-check, `THREE.DoubleSide` raycasting, distance-sorted coincident-hit
   merging, `barycentricEpsilon` edge/vertex rejection, and bounded retries along the remaining
   generic ray directions (see `ContainmentQuery`). Unresolved components under a negative produce
-  `inconclusive-containment` rather than a silent guess; a target that isn't certified closed at all
-  produces `unverified-target` on every result.
+  `inconclusive-containment` rather than a silent guess; a parity operand that isn't certified closed
+  at all produces `unverified-parity-operand` on every result.
 - **Non-manifold or open source components**: the containment guarantee doesn't cover them (see
   `anyComponentInside`), so a negative result involving one emits `non-manifold-component`. Sampling
   still runs — this degrades a verified negative to an unverified one, it doesn't skip work.
@@ -1315,11 +1405,12 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   mode split is what keeps this diagnostic meaningful instead of firing on nearly every real query
   (the acceptance-model bathtub welds to 14 open components; see **Query modes and their
   preconditions**).
-- **An open target**: emits `unverified-target` on *every* result of a parity mode
-  (`containment`, `volume-overlap`), positive and negative alike. Parity is evaluated against the
-  target, so an uncertified target makes `inside` undefined regardless of how sound the source is —
-  the one case where an otherwise-perfect query returns a meaningless answer. The pair is still
-  reported rather than skipped; the caveat is what makes it honest.
+- **An open parity operand**: emits `unverified-parity-operand` (with `role`) on *every* result of a
+  parity mode, positive and negative alike. An uncertified operand makes `inside` undefined against
+  it, regardless of how sound the other side is — the one case where an otherwise-perfect query
+  returns a meaningless answer. In `containment` the operand is always the target; on
+  `volume-overlap`'s crossing path it can be either or both, since probes are classified against both
+  solids. The pair is still reported rather than skipped; the caveat is what makes it honest.
 - **Traversal budget exhausted**: `crossing-budget-exhausted`, with the pair reported as inconclusive
   rather than as a crossing — the abort path returns `true` from `bvhcast` purely as a stop signal
   and must never be mistaken for a hit (see `ProperCrossingQuery`).
@@ -1339,8 +1430,10 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   work attempted.
 - **Invalid dbId**: reject with a clear error rather than silently returning empty.
 - **Stacked/overlapping-bbox rooms** (e.g. double-height spaces): handled correctly by
-  construction — broad phase may pass multiple bbox candidates through, but narrow-phase
-  volume-overlap resolves the true containing room via actual triangle-level testing.
+  construction — broad phase may pass multiple bbox candidates through, but the narrow-phase
+  `containment` query resolves the true containing room via actual triangle-level testing. (This is
+  the mode the room-locator runs; earlier drafts said `volume-overlap` here, from before the mode
+  split.)
 - **Disposal mid-query**: if `unload()`/`world.dispose()` fires while a query is in flight,
   in-flight promises reject cleanly. Full cancellation tokens are out of scope for this milestone.
 
@@ -1407,7 +1500,8 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - **two coincident duplicate triangles** with a ray through them — verifies hits are distance-sorted
     *then* merged so the duplicated surface counts as one crossing. (Note this fixture tests
     *coincident surfaces*, not a shared edge: a ray grazing a shared edge is rejected by
-    `barycentricEpsilon` and retried on the alternate axis, so it never reaches the merge logic. An
+    `barycentricEpsilon` and retried on the next generic direction, so it never reaches the merge
+    logic. An
     earlier draft asserted merge behavior on a shared-edge ray, which the algorithm can't reach —
     a genuine contradiction between spec and test.)
   - a target under a **non-uniform scale** instance transform — verifies scale-relative tolerances
@@ -1455,11 +1549,20 @@ refactor can't silently reintroduce a bug an earlier round already found.
     *degeneracy*-scoped: round 7 tried to distinguish this case from the single triangle by measuring
     volume, and no threshold in the spec could do it. Both fixtures now take the same path.
   - **a closed source classified against an OPEN target** (a box with one face removed) — every
-    result, positive and negative, must carry `unverified-target`. Regression test for the round-6/7
-    blind spot: both rounds identified target openness as the thing that actually breaks parity, then
-    wrote flagging rules that only ever inspected the source, so this pair returned a clean answer
-    built on meaningless parity reads. Assert on **both** a positive and a negative arrangement — a
-    rule that only fires on negatives reproduces exactly the asymmetry round 5 was corrected for.
+    result, positive and negative, must carry `unverified-parity-operand` with `role: 'target'`.
+    Regression test for the round-6/7 blind spot: both rounds identified target openness as the thing
+    that actually breaks parity, then wrote flagging rules that only ever inspected the source, so
+    this pair returned a clean answer built on meaningless parity reads. Assert on **both** a
+    positive and a negative arrangement — a rule that only fires on negatives reproduces exactly the
+    asymmetry round 5 was corrected for.
+  - **role accuracy, one case per path**, since which operand is indicted depends on which path
+    decided (see the table under Public API): an open source producing a **proper crossing** must
+    emit `role: 'source'` — round 7 emitted nothing at all on that path, and the spike papered over
+    it by reporting an open source as an open *target*, which sends the reader to inspect geometry
+    that is fine. A containment-decided positive with an open source must emit **no**
+    parity diagnostic (it was sampled, not parity-tested) but **must** emit
+    `unverified-open-component`. Asserting that pair together is what stops the two diagnostics
+    collapsing into one.
   - a geometry with **more than 8 active ranges** — verifies sample budgeting is coherent (an earlier
     draft's "up to 64 total" and "at least 8 per range" were arithmetically contradictory here)
   - a geometry that exhausts `maxContainmentSamples` — verifies `incomplete-component-coverage` is
@@ -1480,13 +1583,29 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - a pair whose only unresolved components sit under a negative result — verifies the negative
     carries `inconclusive-containment` rather than being reported as verified
 - `ContainmentModeQuery` (composition-level):
+  - **a source straddling the target boundary with no vertex inside it** — the round-8 regression,
+    tested in two forms: a **duct through a beam**, and a **single large triangle passing through a
+    room with all three corners outside**. Both must report contained. The round-7 draft returned a
+    *clean false* on both, because it sampled only vertices; this is the fixture set that forces
+    `SurfaceCrossingWitness` to exist. The lone-triangle form is the sharper one — no sampling
+    strategy over vertices can pass it at any budget, so it cannot be fixed by raising a cap.
   - **the same room/element pairs as above, asserted for direction**: `containment(element, room)` is
     true and `containment(room, element)` is false. `volume-overlap` must return the *same* answer
     for both orderings on both inputs. This pins that `containment` is directed while
     `volume-overlap` is symmetric — the one behavioral difference between the modes beyond their
     diagnostics, and the one a shared `anyComponentInside` implementation could silently erase.
+    Note this assertion is only correct under the **surface** reading of the source (see Query
+    modes): under the looser "any part of the source" wording a review pass correctly showed it is
+    false, since the room volume the element occupies lies inside the element. The fixture and the
+    contract were fixed together.
   - **flush touching only** — false, matching `volume-overlap`: boundary contact yields no `inside`
-    classification in either mode.
+    classification in either mode. Specifically verifies `SurfaceCrossingWitness` rejects coplanar
+    candidate pairs, since a face-to-face pair produces an intersection segment but no interior
+    point.
+  - **budget exhaustion in the surface-crossing stage** — shares the interleaved-comb input with the
+    other two modes, and must abort with `crossing-budget-exhausted` rather than run unbounded. Stage
+    2 added a third traversal to the design; the round-7 lesson was that each new traversal needs its
+    own bounding proof rather than inheriting the claim that "the budgets bound the worst case."
 - `ViewerGeometryAdapter` against fixtures covering:
   - the confirmed primary `vb`/`vbstride`/`vblayout` layout
   - standard `attributes.position.array` (non-interleaved `BufferAttribute`)
@@ -1525,6 +1644,32 @@ in. Manual verification for this milestone — no parallel run against the old C
 cross-checking, since maintaining two implementations to compare adds scope this milestone doesn't
 need.
 
+The spike has already run this query end to end against the live model and it resolves to **Master
+Bath 207 [857194]** (907 of the bathtub's 1003 world-space vertices inside; all 13 other rooms scored
+exactly 0). So the acceptance answer is known in advance — which makes this a regression check on the
+implementation, not an open question about the algorithm.
+
+**Performance gate (also an acceptance criterion for this milestone)**: run one `volume-overlap`
+query against an **MEP-scale model** — fragment geometries in the thousands of triangles, not the
+dozens — and record BLAS build times, candidate-pair counts, and total query wall-clock.
+
+This is one gate, not the excluded benchmark suite, and it exists because of what B7 established:
+the room-locator acceptance test above exercises **correctness only**. Rooms are 12–64 triangles, so
+brute force resolves the whole query in 10.2ms and the BLAS cache, the lazy-build yield,
+`maxSyncTriangleCount`, `maxCandidatePairsExamined`, and eviction are all untouched by it. A
+milestone that keeps that machinery (as decided) and ships with no test that runs it would be
+claiming performance properties on synthetic evidence alone. Pass criteria:
+
+- no single synchronous step exceeds ~16ms — the one-frame rule every budget here is derived from;
+- any budget that trips does so with the correct diagnostic (`geometry-too-large-for-sync-build`,
+  `crossing-budget-exhausted`) rather than a freeze or a fabricated clash;
+- the measured per-candidate and per-build costs are recorded next to `measure.mjs`'s synthetic
+  figures, so the two can be compared rather than conflated.
+
+Acquiring a suitable model is a milestone dependency (see Risks). If none is available at
+implementation time, that is a finding to report, not a step to skip silently — the alternative is
+shipping the acceleration structures untested and calling the milestone verified.
+
 ## Risks (carried and refined from the idea doc)
 
 - **Geometry identity is model-local**: confirmed via direct inspection of the shipped Viewer
@@ -1551,11 +1696,15 @@ need.
   `VolumeOverlapQuery`, precisely so a failure here is diagnosable in isolation. If it does prove
   unworkable during implementation, the fallback is *not* to silently revert to touching-inclusive
   overlap (round 2's rejected behavior) but to raise it as a scope question.
-- **Component decomposition depends on index sharing, not geometric welding**: `GeometryConnectivity`
-  can over-segment tessellated meshes with duplicated seam vertices. This is conservative for
-  correctness but inflates sample counts, and is the most likely trigger for
-  `incomplete-component-coverage` on real models — worth measuring early, since it determines whether
-  `maxContainmentSamples = 512` is comfortable or tight.
+- **Component decomposition is only as good as the weld**: `GeometryConnectivity` runs on welded
+  geometry (welding is mandatory — see `ViewerGeometryAdapter`), but any seam the weld misses still
+  over-segments the mesh. An earlier draft described this risk as "depends on index sharing, **not**
+  geometric welding," which was written before welding became a required normalization step and now
+  states the opposite of the design. Over-segmentation remains conservative for correctness but
+  inflates sample counts, and is the most likely trigger for `incomplete-component-coverage` on real
+  models — worth measuring early, since it determines whether `maxContainmentSamples = 512` is
+  comfortable or tight. On the acceptance model welding left nothing over-segmented (every room: one
+  component), so this risk is currently unexercised rather than disproven.
 - ~~**How often is real Viewer geometry weldable into closed manifolds?**~~ **Answered by spike
   Part B, favourably for the side that matters.** Real SVF arrives as fully unwelded triangle soup
   (raw component count *equals* triangle count), and welding rescues it: every room tested welds to

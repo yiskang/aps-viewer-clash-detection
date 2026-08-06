@@ -184,7 +184,98 @@ console.log('\n=== ROUND 7: an open TARGET taints every result ===');
   check('closed source in CLOSED target: not flagged',
     containment(inside, closedTarget).unverifiedTarget, false);
   check('volume-overlap inherits the target precondition',
-    volumeOverlap(inside, openTarget).unverifiedTarget, true);
+    volumeOverlap(inside, openTarget).unverifiedParityOperands.includes('target'), true);
+}
+
+console.log('\n=== ROUND 8: containment must see straddling sources ===');
+{
+  // Round 7 defined containment as bare anyComponentInside, which samples VERTICES
+  // and stops at the first conclusive one. A source straddling the target boundary
+  // with no vertex inside came back a CLEAN false -- the same lesson round 2 learned
+  // for volume-overlap, reintroduced by splitting the mode.
+  const duct = instance(box(20, 0.4, 0.4));
+  const beam = instance(box(0.4, 0.4, 20));
+  check('duct through beam: contained', containment(duct, beam).contained, true,
+    'round-8 regression: no vertex of either lies inside the other');
+  check('duct through beam: symmetric here', containment(beam, duct).contained, true);
+
+  // Minimal form: one big triangle through a room, all three vertices outside.
+  const big = new THREE.BufferGeometry();
+  big.setAttribute('position', new THREE.Float32BufferAttribute([-10, 0, 0, 10, 0, 0, 0, 10, 0], 3));
+  big.setIndex([0, 1, 2]);
+  check('big triangle through room: contained', containment(instance(big), instance(box(4, 4, 4))).contained,
+    true, 'vertex sampling cannot see this at ANY sample count');
+
+  // The contract is directed because the SOURCE is a point set (its surface) and
+  // the TARGET is a solid. Under the looser "any part of the source" wording this
+  // would be symmetric -- which is just volume-overlap.
+  const el = instance(box(1, 1, 1));
+  const room = instance(box(8, 8, 8));
+  check('element in room', containment(el, room).contained, true);
+  check('room vs element: DIRECTED', containment(room, el).contained, false,
+    'the rooms surface does not pass through the element');
+
+  check('flush touching is not containment',
+    containment(instance(box(2, 2, 2)), instance(box(2, 2, 2), at(0, 2, 0))).contained, false,
+    'boundary contact is not interior: coplanar pairs must be rejected');
+
+  // Stage 2 added a THIRD traversal. Round 7's lesson was that each new traversal
+  // needs its own bounding proof rather than inheriting the claim that the budgets
+  // already bound the worst case.
+  const t0 = performance.now();
+  const combs = containment(instance(comb(0)), instance(comb(0.05)));
+  const ms = performance.now() - t0;
+  check('surface-crossing stage is bounded', combs.contained, false, `${ms.toFixed(1)}ms`);
+  check('...and does not run away', ms < 500, true, `${ms.toFixed(1)}ms`);
+}
+
+console.log('\n=== ROUND 8: parity diagnostics name the right operand ===');
+{
+  // The previous draft set one `unverifiedTarget` flag whenever EITHER operand was
+  // open, reporting an open SOURCE as an open TARGET. A diagnostic that points at
+  // the wrong geometry is worse than none.
+  const openSrc = instance(openBottomedBox(0.4));
+  const closedSrc = instance(box(0.4, 0.4, 0.4));
+  const openTgt = instance(openBottomedBox(8));
+  const closedTgt = instance(box(8, 8, 8));
+
+  // Which roles are implicated depends on which PATH decided, because each path
+  // parity-tests a different set of operands. That is the whole point of tagging
+  // by role rather than raising one flag.
+
+  // Containment-decided positive: parity ran against the container ONLY.
+  const contPos = volumeOverlap(openSrc, closedTgt);
+  check('containment positive, open source -> no parity blame',
+    JSON.stringify(contPos.unverifiedParityOperands), '[]',
+    'the source was sampled, not parity-tested');
+  check('...but its volume is still uncertified', contPos.openComponent, true,
+    'that is unverified-open-component, a different concern');
+  check('containment positive, open target -> ["target"]',
+    JSON.stringify(volumeOverlap(closedSrc, openTgt).unverifiedParityOperands), '["target"]');
+
+  // A negative ran every path, so every parity operand is implicated.
+  const far = new THREE.Matrix4().makeTranslation(500, 0, 0);
+  const negBoth = volumeOverlap(instance(openBottomedBox(0.4)), instance(openBottomedBox(8), far));
+  check('negative, both open -> both roles',
+    JSON.stringify(negBoth.unverifiedParityOperands), '["source","target"]');
+  const negNeither = volumeOverlap(instance(box(0.4, 0.4, 0.4)), instance(box(8, 8, 8), far));
+  check('negative, neither open -> none',
+    JSON.stringify(negNeither.unverifiedParityOperands), '[]');
+
+  // A crossing positive parity-tests BOTH operands, so both roles can be at fault.
+  // Nothing covered this before: the round-7 fixtures only had open operands that
+  // were contained, never ones that crossed.
+  const duct = instance(openBottomedBox(0.4));   // open, and long enough to cross
+  const beam = instance(box(0.2, 0.2, 20));
+  const r = volumeOverlap(duct, beam);
+  check('open operand producing a crossing: reported', r.overlap, true);
+  check('open operand producing a crossing: source named',
+    r.unverifiedParityOperands.includes('source'), true,
+    'round-8: the crossing path emitted no open-operand diagnostic at all');
+
+  check('containment mode never blames the source',
+    JSON.stringify(containment(openSrc, closedTgt).unverifiedParityOperands), '[]',
+    'the source is sampled, never parity-tested');
 }
 
 console.log('\n=== ROUND 7: surface-intersection is bounded ===');

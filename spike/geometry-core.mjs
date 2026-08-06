@@ -288,19 +288,101 @@ function anyComponentInside(srcGeom, srcBvh, targetBvh, matrixSrcToTarget, Ltarg
 //   containment    : needs only the TARGET closed; the source is sampled, never
 //                    parity-tested, so its openness cannot affect soundness
 
-// Is any part of `src` inside `target`'s interior? Open sources are sound here.
+// ROUND 8: the SOURCE is a point set (its triangles), the TARGET is a solid.
+//   containment(A, B) := some point ON A's triangles lies strictly inside B.
+// That asymmetry is what makes the mode directed AND keeps its precondition to
+// target-closure alone: A is only ever sampled, never parity-tested.
+//
+// Round 7 defined it as bare anyComponentInside, which samples VERTICES and stops
+// at the first conclusive one. A source straddling the target boundary with no
+// vertex inside -- a duct through a beam, a big triangle through a room -- came
+// back a CLEAN false. Vertex sampling alone cannot see it at any sample count,
+// which is the same lesson round 2 learned for volume-overlap.
+//
+// volume-overlap does not need stage 2 below: ProperCrossingQuery runs ahead of
+// its containment terms and already catches every transversal crossing. This
+// mode has no crossing term ahead of it, so it must find those points itself.
 function containment(src, target) {
   const srcToTarget = new THREE.Matrix4().copy(target.matrix).invert().multiply(src.matrix);
-  const r = anyComponentInside(src.geometry, src.bvh, target.bvh, srcToTarget, target.L);
   const targetClosed = connectivity(target.geometry).closedManifold;
+  const unverifiedTarget = !targetClosed;
+
+  // Stage 1: vertices, per connected component.
+  const parityOperands = unverifiedTarget ? ['target'] : []; // never 'source' here
+  const r = anyComponentInside(src.geometry, src.bvh, target.bvh, srcToTarget, target.L);
+  if (r.inside) {
+    return { contained: true, via: 'vertex', unverifiedTarget, unverifiedParityOperands: parityOperands };
+  }
+
+  // Stage 2: points on triangle INTERIORS, where the source surface crosses the
+  // target's boundary.
+  const s = surfaceCrossingInside(src, target);
+  if (s.inside) {
+    return { contained: true, via: 'surface-crossing', unverifiedTarget, unverifiedParityOperands: parityOperands };
+  }
 
   return {
-    contained: r.inside,
-    // Parity ran against the target, so an open TARGET taints every result --
-    // positive and negative alike. Rounds 6/7 checked only the source.
-    unverifiedTarget: !targetClosed,
-    inconclusive: !r.inside && r.unresolved,
+    contained: false,
+    unverifiedTarget,
+    unverifiedParityOperands: parityOperands,
+    inconclusive: r.unresolved || s.inconclusive,
   };
+}
+
+const _u = new THREE.Vector3();
+const _segDir = new THREE.Vector3();
+
+// Probe WITHIN the source triangle's own plane, perpendicular to the intersection
+// segment, and classify against the TARGET only. The four-quadrant probe in
+// properCrossing classifies against both solids because it must prove shared
+// volume; here we only need a point that is simultaneously on A and inside B, so
+// one-sided probing suffices -- and that is precisely why this mode never
+// requires the source to be closed.
+function surfaceCrossingInside(src, target) {
+  const targetToSrc = new THREE.Matrix4().copy(src.matrix).invert().multiply(target.matrix);
+  const srcToTarget = new THREE.Matrix4().copy(targetToSrc).invert();
+  const L = Math.min(src.L, target.L);
+  const ladder = ladderFor(L);
+  const surfaceEpsilon = surfaceEpsilonFor(L);
+
+  let inside = false, inconclusive = false, candidates = 0;
+
+  src.bvh.bvhcast(target.bvh, targetToSrc, {
+    intersectsTriangles(triA, triB) {
+      if (++candidates > 50_000) return true; // same budget as the other traversals
+      _triA.copy(triA); _triA.needsUpdate = true;
+      _triB.copy(triB); _triB.needsUpdate = true;
+      _triA.getNormal(_nA);
+      _triB.getNormal(_nB);
+
+      const parallel = Math.abs(_nA.dot(_nB)) >= 1 - COPLANAR_ANGLE_EPSILON;
+      if (parallel && Math.abs(_nA.dot(_triA.a) - _nA.dot(_triB.a)) <= surfaceEpsilon) {
+        return false; // coplanar contact is boundary, never interior
+      }
+      if (!_triA.intersectsTriangle(_triB, _line)) return false;
+
+      _line.getCenter(_mid);
+      _line.delta(_segDir);
+      if (_segDir.lengthSq() < 1e-20) return false;
+      _segDir.normalize();
+      _u.crossVectors(_nA, _segDir).normalize(); // in A's plane, across the segment
+
+      for (const s of [1, -1]) {
+        for (const delta of ladder) {
+          _probe.copy(_mid).addScaledVector(_u, s * delta);
+          if (!_triA.containsPoint(_probe)) continue; // must stay ON the source
+          const c = classifyPoint(
+            _probe.clone().applyMatrix4(srcToTarget), target.bvh, target.L
+          );
+          if (c === 'boundary') { inconclusive = true; continue; }
+          if (c === 'inside') { inside = true; return true; }
+        }
+      }
+      return false;
+    },
+  });
+
+  return { inside, inconclusive: !inside && inconclusive };
 }
 
 function volumeOverlap(a, b) {
@@ -309,23 +391,34 @@ function volumeOverlap(a, b) {
   const aToB = new THREE.Matrix4().copy(b.matrix).invert().multiply(a.matrix);
   const aClosed = connectivity(a.geometry).closedManifold;
   const bClosed = connectivity(b.geometry).closedManifold;
-  const unverifiedTarget = !aClosed || !bClosed;
+
+  // ROUND 8: name WHICH operand parity ran against, by role. The previous draft
+  // set a single `unverifiedTarget` flag whenever EITHER operand was open, which
+  // reported an open source as an open target -- a diagnostic that misdirects the
+  // reader to the wrong geometry is worse than none.
+  const open = (roles) => roles.filter(Boolean);
 
   const cross = properCrossing(a.bvh, b.bvh, bToA, L);
-  // The crossing path classifies probes against BOTH solids, so it inherits both
-  // closure preconditions rather than being the closure-free path earlier drafts
-  // assumed.
+  // The crossing path classifies probes against BOTH solids, so BOTH closure
+  // preconditions apply and both roles can be at fault.
   if (cross.crossing) {
-    return { overlap: true, via: 'crossing', unverifiedTarget, stats: cross.stats };
+    return {
+      overlap: true,
+      via: 'crossing',
+      unverifiedParityOperands: open([!aClosed && 'source', !bClosed && 'target']),
+      stats: cross.stats,
+    };
   }
 
+  // Each containment term parity-tests only the CONTAINER, so only that role can
+  // be at fault -- not both.
   const aInB = anyComponentInside(a.geometry, a.bvh, b.bvh, aToB, b.L);
   if (aInB.inside) {
     return {
       overlap: true,
       via: 'containment(A in B)',
       openComponent: !aInB.decidingComponentClosed,
-      unverifiedTarget: !bClosed,
+      unverifiedParityOperands: open([!bClosed && 'target']),
       stats: cross.stats,
     };
   }
@@ -336,14 +429,15 @@ function volumeOverlap(a, b) {
       overlap: true,
       via: 'containment(B in A)',
       openComponent: !bInA.decidingComponentClosed,
-      unverifiedTarget: !aClosed,
+      unverifiedParityOperands: open([!aClosed && 'source']),
       stats: cross.stats,
     };
   }
 
+  // A negative ran every path, so every parity operand is implicated.
   return {
     overlap: false,
-    unverifiedTarget,
+    unverifiedParityOperands: open([!aClosed && 'source', !bClosed && 'target']),
     inconclusive: cross.inconclusive || aInB.unresolved || bInA.unresolved,
     stats: cross.stats,
   };

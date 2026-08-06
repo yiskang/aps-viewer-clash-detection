@@ -22,7 +22,7 @@ inside it. Every one of the other 13 rooms scored exactly 0. No ambiguity, no ti
 | A3 | Welding *shrinks* geometry ~23% — so abandoning the zero-copy position strategy costs no memory. | Spec fixed |
 | A4 | Measured budgets: BVH build ~16ms @ 18k tris (`maxSyncTriangleCount = 20_000` survives); raw candidate pairs ~0.3µs each, so `maxCandidatePairsExamined` 200_000 (~53ms) → 50_000. | Spec fixed |
 
-`node spike/fixtures.mjs` → 39/39, covering every regression case from seven review rounds.
+`node spike/fixtures.mjs` → 55/55, covering every regression case from eight review rounds.
 
 ## Part B — spec assumptions vs the real model
 
@@ -101,6 +101,18 @@ enclosing no volume), not to any component with boundary edges.
 > nothing was checking it, so a closed source against an open target returned a clean result built on
 > meaningless parity. Both rules now have fixtures (`nearly-closed shell`, `open TARGET`).
 
+> **Round 8 corrected the mode split's first draft.** Defining `containment` as bare
+> `anyComponentInside` — vertex sampling, stop at the first conclusive vertex — made it blind to a
+> source *straddling* the target boundary. A duct through a beam and a single large triangle through
+> a room both returned a **clean false**, verified against this spike. That is round 2's
+> vertex-sampling lesson reintroduced by dropping `volume-overlap`'s crossing term along with its
+> contract. The mode now has a second stage, `SurfaceCrossingWitness`, which probes *within the
+> source triangle's plane* and classifies against the target only — so it finds those points without
+> ever parity-testing the source, preserving the target-closed-only precondition that justified the
+> split. Round 8 also tightened the contract wording: the source is a **surface**, the target a
+> solid. Under the looser "any part of the source" reading the predicate is symmetric for closed
+> solids, i.e. just `volume-overlap`.
+
 ### B6. Primitive-range machinery is dead code for this format
 
 Across every fragment inspected: `groups = 0`, `drawRange = null`, `offsets` absent. The
@@ -132,7 +144,7 @@ extension that is meant to prove it. Worth deciding deliberately rather than by 
 ## Reproducing
 
 ```
-node spike/fixtures.mjs     # 39/39 — algorithm regression suite
+node spike/fixtures.mjs     # 55/55 — algorithm regression suite
 node spike/measure.mjs      # budget measurements
 PORT=8080 npm start         # then drive the viewer; Part B ran via Playwright
 ```
