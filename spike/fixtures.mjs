@@ -3,6 +3,7 @@
 
 import {
   THREE, classifyPoint, properCrossing, connectivity, volumeOverlap, instance,
+  containment, surfaceIntersection,
 } from './geometry-core.mjs';
 
 let passes = 0, failures = 0;
@@ -131,6 +132,87 @@ console.log('\n=== volume-overlap: open component (round 6 regression) ===');
     'round-6 regression: was a CLEAN false positive');
 }
 
+console.log('\n=== ROUND 7: the diagnostic is mode-scoped, not degeneracy-scoped ===');
+{
+  // Round 7's draft tried to tell a nearly-closed bathtub apart from a zero-volume
+  // sheet by measuring volume, and no threshold in the spec could do it. The fix
+  // is the mode split: both take the SAME path, and the mode decides the contract.
+  const tri = new THREE.BufferGeometry();
+  tri.setAttribute('position', new THREE.Float32BufferAttribute(
+    [-0.5, 0, 0, 0.5, 0, 0, 0, 0.5, 0], 3));
+  tri.setIndex([0, 1, 2]);
+
+  const room = instance(box(4, 4, 4));
+
+  // The acceptance-model bathtub in miniature: open-bottomed box. Nearly closed
+  // (4 boundary edges), definitely not a sheet -- the exact case round 7 could
+  // not distinguish and no longer has to.
+  const openBox = openBottomedBox(1);
+  const ob = connectivity(openBox);
+  check('open-bottomed box: not closed', ob.closedManifold, false, `${ob.boundaryEdges} boundary edges`);
+  check('open-bottomed box: single component', ob.componentCount, 1);
+
+  for (const [name, g] of [['zero-volume triangle', tri], ['nearly-closed shell', openBox]]) {
+    const vo = volumeOverlap(instance(g), room);
+    const co = containment(instance(g), room);
+    check(`${name}: volume-overlap positive`, vo.overlap, true);
+    check(`${name}: volume-overlap DIAGNOSED`, vo.openComponent === true, true,
+      'open source cannot certify shared volume');
+    check(`${name}: containment positive`, co.contained, true);
+    check(`${name}: containment CLEAN`, co.unverifiedTarget === false, true,
+      'round-7: asserting ABSENCE is what pins the mode split');
+  }
+}
+
+console.log('\n=== ROUND 7: an open TARGET taints every result ===');
+{
+  // Rounds 6 and 7 both named target openness as the thing that breaks parity,
+  // then wrote flagging rules that only ever inspected the source. A closed source
+  // against an open target came back CLEAN on meaningless parity reads.
+  const openTarget = instance(openBottomedBox(4));
+  const closedTarget = instance(box(4, 4, 4));
+
+  const inside = instance(box(1, 1, 1));           // arranged positive
+  const outside = instance(box(1, 1, 1), at(20, 0, 0)); // arranged negative
+
+  check('closed source in OPEN target: flagged (positive)',
+    containment(inside, openTarget).unverifiedTarget, true,
+    'round-7 blind spot: was clean');
+  check('closed source vs OPEN target: flagged (negative)',
+    containment(outside, openTarget).unverifiedTarget, true,
+    'a rule firing only on negatives repeats round 5s asymmetry');
+  check('closed source in CLOSED target: not flagged',
+    containment(inside, closedTarget).unverifiedTarget, false);
+  check('volume-overlap inherits the target precondition',
+    volumeOverlap(inside, openTarget).unverifiedTarget, true);
+}
+
+console.log('\n=== ROUND 7: surface-intersection is bounded ===');
+{
+  // The spec defined this mode as MeshBVH.intersectsGeometry, which takes no
+  // budget and offers no abort hook -- so the same input the crossing budget
+  // bounds to ~15ms would freeze the Viewer through this mode instead.
+  const a = instance(box(2, 2, 2));
+  const b = instance(box(2, 2, 2), at(0, 2, 0)); // flush face contact
+
+  const touch = surfaceIntersection(a, b);
+  check('flush touching IS surface intersection', touch.intersects, true,
+    'contrast with volume-overlap, which is false on the same input');
+  check('separated is not', surfaceIntersection(a, instance(box(2, 2, 2), at(10, 0, 0))).intersects, false);
+
+  // Same interleaved-comb pair the crossing budget fixture uses: heavy leaf
+  // overlap, zero triangle intersections. Sharing the input is deliberate -- it
+  // fails the moment the two modes stop sharing a traversal.
+  const combs = [comb(0), comb(0.05)].map((g) => instance(g));
+  const t0 = performance.now();
+  const budgeted = surfaceIntersection(combs[0], combs[1], 500);
+  const elapsed = performance.now() - t0;
+  check('budget exhausted -> aborted', budgeted.aborted, true);
+  check('aborted must NOT read as a hit', budgeted.intersects, false,
+    'bvhcast returns true on abort; reading it as a hit fabricates a result');
+  check('abort is fast', elapsed < 100, true, `${elapsed.toFixed(1)}ms`);
+}
+
 console.log('\n=== cost at realistic triangle counts ===');
 {
   for (const seg of [16, 32, 48]) {
@@ -191,6 +273,36 @@ if (failures) {
 process.exit(failures ? 1 : 0);
 
 // -------------------------------------------------------------------- utils
+
+// A cube missing its bottom face: 10 triangles, ALREADY welded (shared indices),
+// 1 component, exactly 4 boundary edges. The acceptance-model bathtub in miniature
+// -- open, but nothing like a zero-volume sheet.
+function openBottomedBox(size) {
+  const h = size / 2;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([
+    -h, -h, -h,   h, -h, -h,   h, -h, h,   -h, -h, h,   // 0..3 bottom ring
+    -h,  h, -h,   h,  h, -h,   h,  h, h,   -h,  h, h,   // 4..7 top ring
+  ], 3));
+  g.setIndex([
+    4, 5, 6,  4, 6, 7,   // top
+    3, 2, 6,  3, 6, 7,   // +z
+    1, 0, 4,  1, 4, 5,   // -z
+    2, 1, 5,  2, 5, 6,   // +x
+    0, 3, 7,  0, 7, 4,   // -x
+                         // bottom deliberately omitted
+  ]);
+  return g;
+}
+
+// Interleaved teeth: heavy BVH-leaf overlap, zero triangle intersections.
+function comb(offset, teeth = 60) {
+  const parts = [];
+  for (let i = 0; i < teeth; i++) {
+    parts.push(new THREE.BoxGeometry(0.02, 4, 0.02).translate(i * 0.1 + offset, 0, 0));
+  }
+  return mergeGeometries(parts);
+}
 
 function mergeGeometries(geoms) {
   const positions = [];

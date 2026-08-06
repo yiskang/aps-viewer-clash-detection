@@ -22,7 +22,7 @@ inside it. Every one of the other 13 rooms scored exactly 0. No ambiguity, no ti
 | A3 | Welding *shrinks* geometry ~23% — so abandoning the zero-copy position strategy costs no memory. | Spec fixed |
 | A4 | Measured budgets: BVH build ~16ms @ 18k tris (`maxSyncTriangleCount = 20_000` survives); raw candidate pairs ~0.3µs each, so `maxCandidatePairsExamined` 200_000 (~53ms) → 50_000. | Spec fixed |
 
-`node spike/fixtures.mjs` → 20/20, covering every regression case from six review rounds.
+`node spike/fixtures.mjs` → 39/39, covering every regression case from seven review rounds.
 
 ## Part B — spec assumptions vs the real model
 
@@ -92,6 +92,15 @@ The distinction the spec missed is which *side* is open:
 Suggested revision: scope `unverified-open-component` to genuinely degenerate sources (a component
 enclosing no volume), not to any component with boundary edges.
 
+> **Superseded by round 7.** That suggestion was not implementable: no metric in the design separates
+> a 441-boundary-edge bathtub from a zero-volume sheet, and defining one is a research task. The
+> accepted fix keeps the strict rule and moves the line to the **mode** instead — `volume-overlap`
+> requires certified-closed operands, and a new `containment` mode answers the room-locator's actual
+> question with open sources sound by construction. Round 7 also found the corollary this section
+> missed: the same reasoning that makes source-openness benign makes **target**-openness fatal, and
+> nothing was checking it, so a closed source against an open target returned a clean result built on
+> meaningless parity. Both rules now have fixtures (`nearly-closed shell`, `open TARGET`).
+
 ### B6. Primitive-range machinery is dead code for this format
 
 Across every fragment inspected: `groups = 0`, `drawRange = null`, `offsets` absent. The
@@ -115,7 +124,7 @@ extension that is meant to prove it. Worth deciding deliberately rather than by 
 ## Reproducing
 
 ```
-node spike/fixtures.mjs     # 20/20 — algorithm regression suite
+node spike/fixtures.mjs     # 39/39 — algorithm regression suite
 node spike/measure.mjs      # budget measurements
 PORT=8080 npm start         # then drive the viewer; Part B ran via Playwright
 ```

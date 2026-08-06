@@ -29,12 +29,12 @@ vertex-sampling misses genuine interpenetration when neither solid's vertices la
 inside the other — precisely the idea doc's own first benchmark scenario, "MEP models with many
 low-poly fragments"). This revision:
 
-- Reinstates a real triangle-triangle crossing test (`MeshBVH.intersectsGeometry`) as one of two
-  `volume-overlap` conditions, OR'd with bidirectional containment sampling — fixing the false
-  negative without reverting to the single-direction, non-symmetric original bug.
+- Reinstates a real triangle-triangle crossing test as one of two `volume-overlap` conditions, OR'd
+  with bidirectional containment sampling — fixing the false negative without reverting to the
+  single-direction, non-symmetric original bug.
 - Gives `surface-intersection` mode its own real, tested definition (it was listed but never
-  designed) — it's now precisely `MeshBVH.intersectsGeometry`, sharing the same primitive
-  `volume-overlap` uses for its crossing check.
+  designed) — it runs the same bounded `bvhcast` traversal `volume-overlap` uses for its crossing
+  check, under a weaker predicate and the same budget.
 - Specifies the ray-parity containment test in enough detail to actually be correct:
   `THREE.DoubleSide`, coincident-hit deduplication, a concrete retry rule, and defined epsilon units.
 - Fixes three real bugs in geometry-range normalization (wrong index property path, missing
@@ -178,7 +178,7 @@ fixes what it exposes:
 After six review rounds, the remaining questions were ones no amount of reading could
 settle. `spike/geometry-core.mjs` implements the primitives below against real
 `three@0.185.1` / `three-mesh-bvh@0.9.14`; `spike/fixtures.mjs` runs every regression case the
-review rounds produced (`node spike/fixtures.mjs` — 20/20 pass); `spike/measure.mjs` replaces the
+review rounds produced, plus the round-7 mode-split and target-closure rules (`node spike/fixtures.mjs` — 39/39 pass); `spike/measure.mjs` replaces the
 guessed constants with measured ones. It found two defects that no review round caught, and settled
 three open questions:
 
@@ -345,7 +345,8 @@ wwwroot/
 │  ├─ query/
 │  │  ├─ SurfaceIntersectionQuery.js  # any triangle contact, touching included
 │  │  ├─ ProperCrossingQuery.js       # contact that actually shares volume
-│  │  ├─ ContainmentQuery.js          # per-component point-in-mesh sampling
+│  │  ├─ ContainmentQuery.js          # per-component point-in-mesh sampling (internal)
+│  │  ├─ ContainmentModeQuery.js      # public 'containment' mode; directed, target-closed only
 │  │  └─ VolumeOverlapQuery.js        # ProperCrossing OR Containment (either direction)
 │  ├─ CollisionWorld.js
 │  └─ index.js
@@ -447,15 +448,24 @@ the idea doc requires ([idea:198](../../ideas/aps-viewer-clash-detection-library
   present, treat as non-indexed (`vertexCount / 3` triangles).
 - Ranges — normalized into `TriangleRange[]`, matching how `WebGLRenderer` actually resolves what
   gets drawn (per its source, group and draw ranges are **intersected**, not treated as either/or):
-  - If `geometry.groups` is present, each group's `{start, count}` is clipped to
+  - **The branch condition is `groups.length > 0`, not "`groups` is present."** This is not
+    pedantry: standard `BufferGeometry` initializes `this.groups = []` in its constructor (verified in
+    `three@0.185.1`), so *every* fallback-path geometry has the property, and a literal implementation
+    of "if `groups` is present" takes the groups branch, iterates zero groups, and emits **zero
+    triangle ranges**. The fragment would then contribute no geometry at all — silently, with no
+    diagnostic, since nothing failed. That is a false negative that looks exactly like a verified
+    no-clash, which is the specific failure class this spec's diagnostics exist to make impossible.
+  - If `groups.length > 0`, each group's `{start, count}` is clipped to
     `geometry.drawRange` when a draw range is also present (`effectiveRange = intersect(group,
     drawRange)`; a group with an empty intersection contributes zero triangles, not an error). The
     previous draft only applied `drawRange` when `groups` was *absent*, which silently produced
     wrong ranges whenever a real fallback-path geometry had both.
-  - If `groups` is absent, synthesize a single range covering the full index/vertex count (clipped to
-    `drawRange` if present) — the `geometry.groups || [{start: 0, count: indices.length, index: 0}]`
-    fallback pattern was directly observed in the shipped Viewer 7.124.2 source's own
-    vertex-enumeration utilities, so it's a grounded default for the no-groups case.
+  - If `groups` is absent **or empty**, synthesize a single range covering the full index/vertex count
+    (clipped to `drawRange` if present) — the `geometry.groups || [{start: 0, count: indices.length,
+    index: 0}]` fallback pattern was directly observed in the shipped Viewer 7.124.2 source's own
+    vertex-enumeration utilities, so it's a grounded default for the no-groups case. Note that the
+    observed pattern uses `||`, which has the same empty-array bug; the spec deliberately does not
+    copy it.
   - No `drawRange` field was observed on the Viewer's internal `LeanBufferGeometry` class itself in
     this version — the intersection logic above only matters for the fallback (non-LMV) path.
   - **Legacy `offsets` layouts are explicitly rejected**, not silently normalized. The previous draft
@@ -601,9 +611,51 @@ same element, and one piece inside the target is an overlap. This is union seman
 side and even-odd on the target side, and that asymmetry is intentional — the source is being asked
 "is any of you in there," the target is being asked "what is your interior."
 
-**Only closed components can establish positive volume.** An open shell has zero volume, so its
-vertices being inside a target proves contact, not overlap. See `anyComponentInside` for how that is
-reported.
+**Only closed components can establish positive volume.** An open shell encloses no *certified*
+volume, so its vertices reading `inside` a target proves **containment**, not **overlap**.
+
+Round 6 stated that rule and round 7 tried to soften it — "diagnose only genuinely degenerate open
+components" — which a review pass correctly rejected as unimplementable: nothing in this design
+distinguishes a nearly-closed bathtub from a zero-volume sheet, and inventing a volumetric
+degeneracy metric is a research task, not a milestone. It also left the spec self-contradictory (the
+solid-model section said only closed components count, the API section said any open positive is
+diagnosed, and a third paragraph said positives need no diagnostic at all).
+
+The resolution is not a better metric. It is that **the room-locator was never asking a
+volume-overlap question**, and squeezing it through that contract is what forced the contract to
+bend. So the line is drawn at the **mode boundary** instead.
+
+### Query modes and their preconditions
+
+| mode | question answered | parity evaluated against | open **source** | open **target** |
+|---|---|---|---|---|
+| `surface-intersection` | do their surfaces meet anywhere, touching included? | nothing — no parity at all | fine, never diagnosed | fine, never diagnosed |
+| `containment` | is any part of the source inside the target's interior? | **target only** | fine, never diagnosed | `unverified-target` |
+| `volume-overlap` | do the two solids share positive volume? | **both** | `unverified-open-component` | `unverified-target` |
+
+Two consequences worth stating explicitly, because both were previously implicit and one was wrong:
+
+- **`volume-overlap` needs *both* operands closed, including on the crossing path.** Earlier drafts
+  treated `ProperCrossingQuery` as closure-free — a transverse surface crossing looks like direct
+  evidence of shared volume. It isn't self-contained: step 4 decides a crossing by classifying probe
+  points as `inside` **both** A and B, and that classification is ray parity. Parity against an open
+  operand is unreliable whichever operand it is. So both the crossing path and the containment path
+  of `volume-overlap` carry the same precondition, which is what makes the strict contract coherent
+  rather than a rule with an exemption.
+- **`containment` needs only the target closed.** The source is *sampled* for points; it is never
+  parity-tested. Its openness therefore cannot affect soundness. That is the structural form of the
+  spike's B5 insight — *which side is open matters* — expressed as a contract rather than as a
+  diagnostic heuristic.
+
+Measured on the acceptance model, this lands where it should: every room welds to a perfect closed
+manifold, and the bathtub welds to 14 open components with 441 boundary edges. `containment` answers
+the room-locator's question cleanly, with **no diagnostic**, because nothing unsound happened. A
+caller who asks the same pair for `volume-overlap` gets `unverified-open-component` — correctly, since
+a 441-boundary-edge shell is not a certified solid and this design cannot prove otherwise.
+
+**The room-locator therefore queries `containment`, not `volume-overlap`.** Round 6's diagnostic
+would have fired on essentially every real query; the mode split makes that noise disappear without
+weakening any contract, because the honest answer was that the caller was in the wrong mode.
 
 **Vertex welding is a required normalization step, not an optional repair.** Earlier drafts deferred
 "welding coincident vertices" to a future milestone as a possible improvement. The spike showed it is
@@ -615,10 +667,36 @@ guarantee would never hold once. After welding, every closed primitive tested co
 manifold component.
 
 So `ViewerGeometryAdapter`'s output is welded before connectivity or BVH construction:
-strip to **position + index only**, then merge vertices coincident within a position epsilon. The
+strip to **position + index only**, then merge vertices coincident within `weldEpsilon`. The
 strip must come first — `mergeVertices` compares all attributes, and per-face normals make every
 vertex unique, so welding a full-attribute geometry silently does nothing. That makes the idea doc's
 "do not copy rendering attributes" rule (written to save memory) **load-bearing for correctness**.
+
+**`weldEpsilon` is a defined tolerance, not `mergeVertices`'s default.** Earlier drafts left it
+unspecified and listed it as "unexamined," which a review pass correctly flagged as a gap in the one
+parameter the whole design rests on. Two properties of the upstream implementation determine how it
+must be specified — both verified in `three@0.185.1`'s `BufferGeometryUtils.js`:
+
+- The signature is `mergeVertices(geometry, tolerance = 1e-4)`, and `tolerance` is an **absolute
+  length in the geometry's own local units** — not relative, not normalized. A default that is
+  correct for a model in feet is 1000× wrong for the same model in millimetres.
+- It is implemented as a **grid quantization, not an epsilon-ball**: the vertex hash is
+  `~~(v * 10^log10(1/tolerance) + tolerance/2 * …)`, i.e. truncation onto a lattice of cell size
+  `tolerance` shifted by half a cell. Two vertices closer than `tolerance` still fail to merge if
+  they straddle a lattice boundary. The half-cell shift makes the common case — coordinates that are
+  bit-identical or differ only in the last float ulp — merge reliably, which is exactly the case SVF
+  seams present, but the guarantee is "identical coordinates always merge," not "anything within
+  `tolerance` merges."
+
+`weldEpsilon` is therefore specified as a **fixed physical length converted into model units**:
+`weldEpsilon = 1e-4 m / model.getUnitScale()` (0.1 mm — well below any real BIM feature, well above
+float noise at building coordinates). Falls back to `1e-4` if the unit scale is unavailable.
+
+Empirically this is not a coin flip: the spike welded the acceptance model at the `1e-4` default in
+that model's own units and got **1 component, 0 boundary edges, 0 non-manifold edges for every
+room** — so SVF seams there are exactly coincident, not merely near-coincident, and the grid-snap
+caveat above never bites. The unit-derived value exists so that result survives a model authored in
+different units, not because the default was observed to fail.
 
 **`GeometryConnectivity`** (new) — decomposes the welded geometry into connected components by
 union-find over triangles that share an **edge** (two vertex indices), restricted to the active
@@ -645,12 +723,31 @@ Edge-connectivity does not merge vertex-joined solids, which removes that counte
   more — the junction geometry that makes the counterexample possible) are flagged. That flag is what
   the containment guarantee below is conditioned on, and what gets reported when it doesn't hold.
 
-**`SurfaceIntersectionQuery`** — precisely `MeshBVH.intersectsGeometry(otherGeometry,
-relativeMatrix)`, early-exiting on the first intersecting triangle pair. **True iff any triangle
-pair from A and B has a non-empty geometric intersection**, including zero-volume coincident contact
-(face-face, edge-edge, vertex-face). This mode is *correctly named* for that behavior — it reports
-surface intersection, which is what touching is. It's the right primitive for "do these two things
-touch at all," and it is deliberately **not** what `volume-overlap` returns.
+**`SurfaceIntersectionQuery`** — **true iff any triangle pair from A and B has a non-empty geometric
+intersection**, including zero-volume coincident contact (face-face, edge-edge, vertex-face). This
+mode is *correctly named* for that behavior — it reports surface intersection, which is what touching
+is. It's the right primitive for "do these two things touch at all," and it is deliberately **not**
+what `volume-overlap` returns.
+
+**It is built on `bvhcast`, not on `MeshBVH.intersectsGeometry`** — a change forced by a review pass
+that found the last unbounded synchronous path in the design. Every earlier draft defined this mode
+as "precisely `MeshBVH.intersectsGeometry(otherGeometry, relativeMatrix)`," and the budgets added in
+rounds 5–6 bound only `ProperCrossingQuery`'s `bvhcast` callback. `intersectsGeometry` accepts no
+budget, exposes no per-candidate callback, and offers no abort hook: verified in
+`three-mesh-bvh@0.9.14`, its `shapecast`/`intersectsTriangle` path runs a nested loop over both leaf
+ranges and returns only on the first hit or on full exhaustion. So the very failure mode
+`maxCandidatePairsExamined` exists to prevent — heavily overlapping BVHs with **no** triangle
+contact — freezes the Viewer through this mode instead, while the spec claimed its budgets bound the
+worst case. That claim is only true once both modes traverse the same way.
+
+The rewrite is a simplification rather than new machinery: `SurfaceIntersectionQuery` is the *same*
+`bvhcast` traversal `ProperCrossingQuery` uses, sharing `maxCandidatePairsExamined`, the same
+per-candidate `intersectsTriangle` test, and the same abort protocol — with a weaker predicate. It
+returns `true` on the first candidate pair that intersects **at all**, so it needs neither the
+coplanar split (coplanar contact *is* touching here, so it counts rather than being skipped) nor the
+probe ladder (no interior classification, hence no parity, hence no closure precondition). Both modes
+then have one traversal, one budget, and one abort path, and `crossing-budget-exhausted` means the
+same thing in both.
 
 **`ProperCrossingQuery`** (new) — answers "do these two solids share positive volume near their
 contact," which is what `volume-overlap` actually needs and what round 2's draft wrongly conflated
@@ -797,8 +894,12 @@ come back out as `volume-overlap`, exactly the behavior round 3 existed to elimi
      distance. Sorting must precede merging; `MeshBVH.raycast` does not guarantee ordered hits.
    - A hit whose barycentric coordinates put it within `barycentricEpsilon` of a triangle edge or
      vertex is inconclusive *for that ray*: the ray has grazed a seam where the crossing count is
-     unreliable. Retry the whole test once along the alternate local axis. If the retry also grazes,
-     return `boundary` — the point is unresolved, and `boundary` is exactly the "cannot say" value.
+     unreliable. **Retry along the next direction in the list above**, up to all three. If every
+     direction grazes, return `boundary` — the point is unresolved, and `boundary` is exactly the
+     "cannot say" value. (Earlier drafts said "retry along the alternate local *axis*," left over from
+     when the directions were the local axes. A review pass caught that the wording survived the fix
+     and would have reintroduced spike defect A1 — retrying along an axis is precisely what makes a
+     box's own centre classify `boundary`.)
    - Otherwise return `inside` for odd parity, `outside` for even — **even-odd across the target's
      entire triangle set**, which is the declared solid model (see **Solid model**), not an
      incidental consequence of how `MeshBVH.raycast` reports hits. A point inside two nested shells
@@ -832,31 +933,41 @@ sampling the right decomposition:
 > the case that matters most: a single open triangle sitting inside a closed box has **zero volume**,
 > so it cannot overlap anything — yet one of its vertices classifies `inside`, `anyComponentInside`
 > returns true, and round 5 reported a *clean* clash with no diagnostic at all. Containment can
-> establish positive volume only for a component certified closed (see **Solid model**). So:
+> establish positive volume only for a component certified closed (see **Solid model**). So, **in
+> `volume-overlap` mode**:
 >
-> - a **positive** result whose deciding component encloses no volume emits
+> - a **positive** result whose deciding **source** component is not a certified closed manifold emits
 >   `unverified-open-component` — the containment is real, the *volume* overlap is not certified;
 > - a **negative** result involving any flagged component emits `non-manifold-component`.
 >
-> **The positive rule is scoped to genuinely degenerate components, not merely open ones — the
-> spike forced this correction.** Round 6 wrote "open or non-manifold," reasoning from a zero-volume
-> single triangle. Measured against the acceptance model, the bathtub welds to 14 components with
-> 441 boundary edges and 5 non-manifold edges: **real furniture is never a closed solid**, so that
-> rule would have fired on virtually every query, making the diagnostic noise and training callers to
-> ignore diagnostics altogether. A 441-boundary-edge bathtub is a nearly-closed solid, not a sheet.
+> In **`containment`** mode neither rule applies to the source at all: that mode's contract is
+> containment, which open sources answer soundly, so an open source is not a caveat and is never
+> diagnosed. See **Query modes and their preconditions** for why this is a contract split rather than
+> the "genuinely degenerate component" test round 7 attempted and could not define.
 >
-> What actually matters is *which side* is open, a distinction round 6 missed entirely:
-> - **target open** → ray parity is unreliable, because parity is evaluated against the target.
->   Serious; this is what `non-manifold-component` is for.
-> - **source open** → parity is still evaluated against a closed target, so "is this point inside the
->   room" stays well-posed. Common, and benign for containment.
+> **The target side is a separate precondition, and rounds 6–7 omitted it entirely.** Both rounds
+> observed that target openness is what actually breaks parity, then wrote flagging rules that only
+> ever inspect the *sampled source component*. A review pass caught the consequence: a perfectly
+> closed source classified against an **open target** returns a **clean** result — positive or
+> negative, no diagnostic — even though every parity read behind it is meaningless. That is the
+> unsound-but-clean case the diagnostics exist to prevent, arrived at from the other side.
+>
+> So parity carries an explicit target precondition, checked once per pair before any sampling:
+>
+> - **the target's participating components must all be certified closed manifolds.** If any is not,
+>   every result depending on that parity — positive *and* negative, in `containment` and
+>   `volume-overlap` alike — carries `unverified-target`.
+> - The check is free: `GeometryConnectivity` already computes manifold classification per geometry
+>   and caches it alongside the BLAS, so this reads a cached flag rather than adding a pass.
 >
 > Measured on the acceptance model: **every room welds to a perfect closed manifold** (1 component,
-> 0 boundary edges, 0 non-manifold edges), so the side that must be closed is closed.
+> 0 boundary edges, 0 non-manifold edges), so the side that must be closed is closed and
+> `unverified-target` never fires for the room-locator. It exists for the federated and MEP-heavy
+> models where it will.
 >
-> The positive is still reported as true rather than suppressed. For the room-locator that is the
+> Positives are reported as true rather than suppressed throughout. For the room-locator that is the
 > useful answer — an open-shell fixture inside a room should be located in that room — and the
-> diagnostic is what keeps the `volume-overlap` contract honest about what was actually proven.
+> diagnostics are what keep each mode's contract honest about what was actually proven.
 
 **Finding a conclusive sample is the algorithm's job, not luck.** Round 4 stopped after 4 arbitrary
 vertices, which a review pass showed does not deliver what the guarantee promises: a solid sitting
@@ -933,13 +1044,32 @@ examination turns a negative into a *diagnosed* negative rather than a clean one
 
 **Known limits, stated rather than implied.** `volume-overlap` is exact for closed manifold geometry
 with overlaps deeper than `minPenetrationDepth`. It is best-effort, and says so via diagnostics, for:
-non-manifold or open components; overlaps shallower than `minPenetrationDepth`; and geometry that
-exhausts the examination budgets. Every one of these was a silent failure in an earlier draft; the
-point of this milestone's diagnostics is that none of them is silent now.
+non-manifold or open components on either side; overlaps shallower than `minPenetrationDepth`; and
+geometry that exhausts the examination budgets. Every one of these was a silent failure in an earlier
+draft; the point of this milestone's diagnostics is that none of them is silent now.
+
+**`ContainmentModeQuery`** — the public `containment` mode, and a strict subset of the above:
+
+```text
+containment(A, B) := ContainmentQuery(anyComponentOf(A) inside B)
+```
+
+One direction only, and no crossing term. That asymmetry is the whole point — `volume-overlap` is a
+symmetric predicate about two solids, `containment` is a directed question about a source and a
+target, so it needs no bidirectional evaluation and inherits only the target's closure precondition.
+It shares `anyComponentInside` verbatim with `VolumeOverlapQuery`; the modes differ in what they
+*compose* and what they *promise*, not in how a point is classified. See **Query modes and their
+preconditions** for why this exists as its own mode rather than as a relaxation of `volume-overlap`.
+
+Note the deliberate name split: **`ContainmentQuery`** is the internal point-classification component
+(`classifyPoint` + `anyComponentInside`), used by every mode; `ContainmentModeQuery` is the thin
+public composition above. They are not the same layer, and conflating them is what let earlier drafts
+treat a containment *witness* as a volume-overlap *proof*.
 
 **`CollisionWorld`** — the facade. Broad phase is a plain linear AABB scan over
 `CollisionInstance.worldBounds` (no TLAS yet — candidate counts are small). Narrow phase calls
-`VolumeOverlapQuery` or `SurfaceIntersectionQuery` per candidate pair depending on `query.mode`.
+`VolumeOverlapQuery`, `ContainmentModeQuery`, or `SurfaceIntersectionQuery` per candidate pair
+depending on `query.mode`.
 
 ## Data Flow — Room Locate Query
 
@@ -966,8 +1096,16 @@ point of this milestone's diagnostics is that none of them is silent now.
      (`index.d.ts:835`). It also scopes results to one model, which a cache keyed by `model.id`
      requires to be correct in the first place.
 2. On a locate request: `world.findClashes({ source: { model, dbIds: [dbId] }, target: { model,
-   dbIds: roomDbIds }, mode: 'volume-overlap', groupBy: 'dbId' })`, where `roomDbIds` comes from the
+   dbIds: roomDbIds }, mode: 'containment', groupBy: 'dbId' })`, where `roomDbIds` comes from the
    per-model cache above (resolving it first if this is the first call for that model).
+
+   **`containment`, not `volume-overlap`** — "which room is this element in" is a containment
+   question, and the acceptance model shows why the distinction is load-bearing rather than
+   pedantic: the bathtub welds to 14 open components, so `volume-overlap` would answer correctly but
+   attach `unverified-open-component` to every result, and the extension's own rule (surface a caveat
+   whenever diagnostics are non-empty) would then warn the user on every successful lookup. Asking
+   the question the caller actually has produces a clean answer. See **Query modes and their
+   preconditions**.
 3. Inside `CollisionWorld.findClashes`:
    - Reject immediately if `source.model !== target.model` (cross-model queries are out of scope —
      see Milestone Scope).
@@ -980,7 +1118,8 @@ point of this milestone's diagnostics is that none of them is silent now.
      is **fragment-scoped and deduplicated**: being oversized is a property of the geometry alone,
      not of the pairing, so one entry is emitted per oversized fragment no matter how many candidate
      pairs it appears in. Otherwise lazily get/build BLAS via `GeometryRegistry`/`BlasCache`, then run
-     `VolumeOverlapQuery` (or `SurfaceIntersectionQuery` for that mode) with the pair's relative
+     the query for `query.mode` — `ContainmentModeQuery` for the room-locator's `containment`, or
+     `VolumeOverlapQuery` / `SurfaceIntersectionQuery` — with the pair's relative
      matrix. Because `MeshBVH`
      construction is synchronous, the narrow phase `await`s a scheduling yield (e.g.
      `requestAnimationFrame`/`setTimeout(0)`) between each *new* BLAS build within one `findClashes`
@@ -1002,9 +1141,14 @@ CollisionWorld.fromViewer(viewer, options): Promise<CollisionWorld>
 
 world.findClashes(query): Promise<ClashResult>
 // query.source.model must === query.target.model — cross-model queries reject in Milestone 1
-// query.mode: 'volume-overlap' | 'surface-intersection'
-//   'volume-overlap'       — solids share positive volume; pure touching is NOT overlap
-//   'surface-intersection' — any triangle contact, touching included
+// query.mode: 'volume-overlap' | 'containment' | 'surface-intersection'
+//   'volume-overlap'       — solids share positive volume; pure touching is NOT overlap.
+//                            Requires BOTH operands certified closed (see Query modes).
+//   'containment'          — any part of the source lies inside the target's interior.
+//                            Requires only the TARGET certified closed; open sources are
+//                            sound here by construction and are never diagnosed.
+//                            This is the mode the room-locator uses.
+//   'surface-intersection' — any triangle contact, touching included. No closure precondition.
 //   ('touching' / 'clearance' deferred to a later milestone)
 // query.groupBy: 'dbId'
 //   ('fragment' / 'externalId' deferred)
@@ -1062,7 +1206,10 @@ type PairDiagnosticReason =
   | 'inconclusive-crossing'           // a probe classified `boundary`, so touching wasn't provable
   | 'crossing-budget-exhausted'       // maxCandidatePairs/maxCrossingPairs hit; traversal aborted
   | 'non-manifold-component'          // NEGATIVE result involving a component the guarantee misses
-  | 'unverified-open-component';      // POSITIVE result decided by an open/zero-volume component
+  | 'unverified-open-component'       // volume-overlap POSITIVE decided by an open SOURCE component
+                                      //   (never emitted in 'containment' mode — see Query modes)
+  | 'unverified-target';              // parity ran against a TARGET that is not certified closed;
+                                      //   attaches to positives AND negatives, in both parity modes
 
 type ClashDiagnostic =
   // Discovered during geometry normalization or the size check, independent of any pairing.
@@ -1085,8 +1232,25 @@ previous draft emitted `inconclusive-containment` only when *every* sample was i
 review pass correctly identified as still losing completeness information: a pair with some
 conclusive "outside" samples and some unresolved components produces a negative that is not a
 verified negative. The rule is now: **any unresolved component or truncated examination that could
-have changed a negative result emits a pair diagnostic.** Positive results need no such diagnostic —
-a witness point inside the other solid is conclusive regardless of what else went unresolved.
+have changed a negative result emits a pair diagnostic.**
+
+**Positives are diagnosed only where their *soundness* is in question, which is narrower than
+negatives but not empty.** A witness point inside the other solid settles *completeness* — nothing
+else going unresolved can take that away — so truncation and coverage diagnostics
+(`incomplete-component-coverage`, `inconclusive-containment`, `inconclusive-crossing`,
+`crossing-budget-exhausted`) never attach to a positive. What can still undermine a positive is the
+witness itself being unsound, and there are exactly two such cases, both preconditions rather than
+budgets:
+
+- `unverified-target` — the parity that produced the witness ran against a target that isn't a
+  certified closed manifold, so "inside" was never well-defined. Applies in `containment` and
+  `volume-overlap`.
+- `unverified-open-component` — `volume-overlap` only: the witness proves containment of an
+  uncertified-open source component, which is not the same as shared volume.
+
+An earlier draft stated flatly that positives need no diagnostic, directly contradicting the
+`unverified-open-component` rule two sections above it. This is the reconciliation: *completeness*
+diagnostics are negative-only; *soundness* diagnostics apply in both directions.
 
 **`findClashes` always resolves `{ pairs: ClashPair[], statistics: ClashStatistics }`**, never a
 bare `{ pairs: [] }` — the earlier draft of this spec returned a statistics-less empty result for
@@ -1108,18 +1272,28 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   `maxSyncTriangleCount` (20,000 triangles) is skipped with a
   `geometry-too-large-for-sync-build` diagnostic rather than blocking the Viewer — see
   `ThreeMeshBvhBackend`/`BlasCache`.
-- **Non-watertight geometry**: ray-parity containment assumes a closed target surface, so
-  `volume-overlap` is only strongly guaranteed for closed/manifold geometry — mitigated with the
+- **Non-watertight geometry**: ray-parity containment assumes a closed target surface, so the parity
+  modes are only strongly guaranteed for closed/manifold targets — mitigated with the
   `surfaceEpsilon` boundary pre-check, `THREE.DoubleSide` raycasting, distance-sorted coincident-hit
-  merging, `barycentricEpsilon` edge/vertex rejection, and a bounded retry on an alternate local axis
-  (see `ContainmentQuery`). Unresolved components under a negative produce
-  `inconclusive-containment` rather than a silent guess.
+  merging, `barycentricEpsilon` edge/vertex rejection, and bounded retries along the remaining
+  generic ray directions (see `ContainmentQuery`). Unresolved components under a negative produce
+  `inconclusive-containment` rather than a silent guess; a target that isn't certified closed at all
+  produces `unverified-target` on every result.
 - **Non-manifold or open source components**: the containment guarantee doesn't cover them (see
   `anyComponentInside`), so a negative result involving one emits `non-manifold-component`. Sampling
   still runs — this degrades a verified negative to an unverified one, it doesn't skip work.
-- **A positive decided by an open component**: emits `unverified-open-component`. An open shell has
-  zero volume and so cannot overlap anything, but its vertices can classify `inside`; the result is
-  still reported as a clash (useful for the room-locator) with its soundness explicitly qualified.
+- **A `volume-overlap` positive decided by an open source component**: emits
+  `unverified-open-component`. An open shell encloses no certified volume, but its vertices can
+  classify `inside`; the result is still reported as a clash with its soundness explicitly qualified.
+  **Not emitted in `containment` mode**, whose contract covers open sources by construction — that
+  mode split is what keeps this diagnostic meaningful instead of firing on nearly every real query
+  (the acceptance-model bathtub welds to 14 open components; see **Query modes and their
+  preconditions**).
+- **An open target**: emits `unverified-target` on *every* result of a parity mode
+  (`containment`, `volume-overlap`), positive and negative alike. Parity is evaluated against the
+  target, so an uncertified target makes `inside` undefined regardless of how sound the source is —
+  the one case where an otherwise-perfect query returns a meaningless answer. The pair is still
+  reported rather than skipped; the caveat is what makes it honest.
 - **Traversal budget exhausted**: `crossing-budget-exhausted`, with the pair reported as inconclusive
   rather than as a crossing — the abort path returns `true` from `bvhcast` purely as a stop signal
   and must never be mistaken for a hit (see `ProperCrossingQuery`).
@@ -1156,6 +1330,15 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - **flush/coplanar touching faces only** (a box resting exactly on another box's top face) —
     **intersects**. Correct for *this* mode: touching is surface intersection. The point of the
     fixture is to pin the contrast with `volume-overlap`, which must return false on the same input.
+  - **the same heavily-overlapping-leaves / zero-intersection pair used for `ProperCrossingQuery`'s
+    budget fixture** — must abort with `crossing-budget-exhausted` and complete within a wall-clock
+    bound. Regression test for round 7's finding that this mode was the last unbounded synchronous
+    path in the design: while it was defined as `MeshBVH.intersectsGeometry`, which takes no budget
+    and offers no abort hook, the *same* input that `ProperCrossingQuery` bounded to ~15ms would
+    freeze the Viewer here. Sharing the fixture between the two modes is deliberate — it fails the
+    moment they stop sharing a traversal.
+  - an **open source and an open target** — intersects, with **no diagnostic**. This mode performs no
+    parity, so neither closure precondition applies; asserting the absence pins that.
 - `ProperCrossingQuery` — tested directly rather than only through its caller:
   - **flush/coplanar touching faces only** — **not a crossing**, and the run must produce **no
     `console.warn` from `ExtendedTriangle`**. That warning is the tell that the coplanar branch was
@@ -1234,9 +1417,23 @@ refactor can't silently reintroduce a bug an earlier round already found.
     source-frame one; with the wrong scale the ladder either exits the source or never leaves its
     `surfaceEpsilon`, and the case silently degrades to unresolved.
   - **a single open triangle placed entirely inside a closed box** — must report the containment as
-    positive **and** carry `unverified-open-component`. Regression test for round 5's clean
-    false-positive: a zero-volume component cannot overlap anything, so an undiagnosed `true` here
-    is the one case where a positive result is the unsound one.
+    positive in both modes, and carry `unverified-open-component` **in `volume-overlap` mode only**.
+    Regression test for round 5's clean false-positive (a zero-volume component cannot overlap
+    anything, so an undiagnosed `true` in `volume-overlap` is the one case where a positive result is
+    the unsound one) *and* for the round-7 mode split: asserting the **absence** of the diagnostic in
+    `containment` mode is what pins that the split actually happened, rather than the diagnostic being
+    emitted everywhere and merely looking harmless.
+  - **a nearly-closed open source** — an open-bottomed box, ~all edges shared, a handful of boundary
+    edges — inside a closed target. Same expectations as above. This is the acceptance-model bathtub
+    in miniature, and it is the fixture that proves the rule is *mode*-scoped rather than
+    *degeneracy*-scoped: round 7 tried to distinguish this case from the single triangle by measuring
+    volume, and no threshold in the spec could do it. Both fixtures now take the same path.
+  - **a closed source classified against an OPEN target** (a box with one face removed) — every
+    result, positive and negative, must carry `unverified-target`. Regression test for the round-6/7
+    blind spot: both rounds identified target openness as the thing that actually breaks parity, then
+    wrote flagging rules that only ever inspected the source, so this pair returned a clean answer
+    built on meaningless parity reads. Assert on **both** a positive and a negative arrangement — a
+    rule that only fires on negatives reproduces exactly the asymmetry round 5 was corrected for.
   - a geometry with **more than 8 active ranges** — verifies sample budgeting is coherent (an earlier
     draft's "up to 64 total" and "at least 8 per range" were arithmetically contradictory here)
   - a geometry that exhausts `maxContainmentSamples` — verifies `incomplete-component-coverage` is
@@ -1256,6 +1453,14 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - a **door-like element straddling two room volumes** through a wall opening — overlap with both
   - a pair whose only unresolved components sit under a negative result — verifies the negative
     carries `inconclusive-containment` rather than being reported as verified
+- `ContainmentModeQuery` (composition-level):
+  - **the same room/element pairs as above, asserted for direction**: `containment(element, room)` is
+    true and `containment(room, element)` is false. `volume-overlap` must return the *same* answer
+    for both orderings on both inputs. This pins that `containment` is directed while
+    `volume-overlap` is symmetric — the one behavioral difference between the modes beyond their
+    diagnostics, and the one a shared `anyComponentInside` implementation could silently erase.
+  - **flush touching only** — false, matching `volume-overlap`: boundary contact yields no `inside`
+    classification in either mode.
 - `ViewerGeometryAdapter` against fixtures covering:
   - the confirmed primary `vb`/`vbstride`/`vblayout` layout
   - standard `attributes.position.array` (non-interleaved `BufferAttribute`)
@@ -1266,11 +1471,25 @@ refactor can't silently reintroduce a bug an earlier round already found.
     offset-0 buffer where every plausible mapping agrees.
   - index via `geometry.index.array` (the correct standard three.js location) — verifying the fixed
     fallback, since the previous draft incorrectly checked `attributes.index.array`
-  - `geometry.groups` present vs. absent (verifying the single-synthesized-range fallback)
+  - `geometry.groups` populated vs. absent (verifying the single-synthesized-range fallback)
+  - **`geometry.groups === []`** — the empty-but-present case, which must synthesize the full range
+    and yield the *same* triangle count as the absent case. This is the one that actually bites:
+    standard `BufferGeometry` initializes `groups = []` in its constructor, so **every** fallback-path
+    geometry hits it, and a `groups ? … : …` test emits zero ranges — a fragment that silently
+    contributes nothing, indistinguishable in the result from a verified no-clash. Assert on the
+    triangle count, not just on "no error thrown," since not throwing is precisely the failure mode.
   - `geometry.groups` **and** `geometry.drawRange` both present, with a group whose range only
     partially overlaps the draw range — verifying the two are intersected, not treated as either/or
   - a fixture using a legacy `offsets` layout — verifying it's explicitly rejected (recorded as
     `rejected-primitive-range`), not silently normalized with a guessed `baseVertex`
+  - **welding**: a geometry carrying per-face normals and uvs must weld to the vertex count of its
+    *distinct positions* (a box: 24 → 8) and to one closed manifold component. Assert the count, not
+    just that welding ran — the failure this pins is silent: `mergeVertices` compares all attributes,
+    so welding before stripping merges **nothing** and returns a geometry that looks fine and has
+    every edge a boundary edge.
+  - **welding under a non-default unit scale** — the same geometry authored in millimetres and in
+    metres must produce the same component count, verifying `weldEpsilon` is derived from
+    `model.getUnitScale()` rather than left at the unit-blind `1e-4` default
 
 **Integration test (acceptance criterion for this milestone)**: load URN
 `dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ`
@@ -1319,10 +1538,13 @@ need.
   components, 441 boundary edges) does not weld closed, but does not need to — see
   `anyComponentInside`. Residual risk is that this is **one model**; a federated or MEP-heavy model
   could differ, so the check is worth repeating rather than assuming settled.
-- **Welding tolerance is unexamined.** The spike used `mergeVertices`'s default position epsilon on
-  clean synthetic geometry. Real tessellation may have seams that are near-coincident rather than
-  exactly coincident, where too tight an epsilon fails to weld (fragmenting components again) and too
-  loose collapses genuinely distinct features. This is now a first-order parameter, not a detail.
+- **Welding tolerance is now specified, but only validated on one model.** Earlier drafts listed the
+  epsilon as unexamined; it is now defined as a fixed physical length converted into model units
+  (`weldEpsilon = 1e-4 m / model.getUnitScale()`) with the upstream grid-snap semantics documented —
+  see `ViewerGeometryAdapter`. What remains open is empirical, not definitional: the acceptance
+  model's seams turned out to be *exactly* coincident, so welding succeeded there for a reason
+  stronger than tolerance choice. A model whose tessellation emits near-coincident rather than
+  identical seam coordinates would exercise the grid-snap boundary case that this one never reached.
 - **Correctness work has accumulated real, unmeasured cost.** `closestPointToPoint` on every sample
   point, an offset ladder multiplying probe tests by up to 3×, a connectivity pass per geometry, a
   triangle-triangle test on every `bvhcast` candidate pair (not just intersecting ones — now known to

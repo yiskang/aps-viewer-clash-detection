@@ -199,10 +199,18 @@ function connectivity(geometry) {
     for (let i = 1; i < tris.length; i++) union(tris[0], tris[i]);
   }
 
+  // Per-COMPONENT manifoldness, not just per-geometry. Round 7 scoped the positive
+  // diagnostic to "the deciding component," which a geometry-wide flag cannot answer:
+  // one open shell would condemn every closed component sharing the geometry.
   let boundaryEdges = 0, nonManifoldEdges = 0;
+  const perComponent = new Map(); // root -> {boundary, nonManifold}
+  const bump = (root, field) => {
+    if (!perComponent.has(root)) perComponent.set(root, { boundary: 0, nonManifold: 0 });
+    perComponent.get(root)[field]++;
+  };
   for (const tris of edgeMap.values()) {
-    if (tris.length === 1) boundaryEdges++;
-    else if (tris.length > 2) nonManifoldEdges++;
+    if (tris.length === 1) { boundaryEdges++; bump(find(tris[0]), 'boundary'); }
+    else if (tris.length > 2) { nonManifoldEdges++; bump(find(tris[0]), 'nonManifold'); }
   }
 
   const components = new Map();
@@ -212,9 +220,15 @@ function connectivity(geometry) {
     components.get(r).push(t);
   }
 
+  const roots = [...components.keys()];
   return {
     componentCount: components.size,
     components: [...components.values()],
+    // Aligned with `components`: componentClosed[i] describes components[i].
+    componentClosed: roots.map((r) => {
+      const c = perComponent.get(r);
+      return !c || (c.boundary === 0 && c.nonManifold === 0);
+    }),
     closedManifold: boundaryEdges === 0 && nonManifoldEdges === 0,
     boundaryEdges,
     nonManifoldEdges,
@@ -229,7 +243,8 @@ function anyComponentInside(srcGeom, srcBvh, targetBvh, matrixSrcToTarget, Ltarg
   const pos = srcGeom.attributes.position;
   let sawBoundary = false;
 
-  for (const tris of conn.components) {
+  for (let ci = 0; ci < conn.components.length; ci++) {
+    const tris = conn.components[ci];
     const verts = new Set();
     for (const t of tris) for (let e = 0; e < 3; e++) verts.add(index[t * 3 + e]);
     const list = [...verts];
@@ -244,7 +259,15 @@ function anyComponentInside(srcGeom, srcBvh, targetBvh, matrixSrcToTarget, Ltarg
     for (const v of order) {
       const p = new THREE.Vector3().fromBufferAttribute(pos, v).applyMatrix4(matrixSrcToTarget);
       const c = classifyPoint(p, targetBvh, Ltarget);
-      if (c === 'inside') return { inside: true, closedManifold: conn.closedManifold, conn };
+      // Report the DECIDING component's closure, not the whole geometry's.
+      if (c === 'inside') {
+        return {
+          inside: true,
+          decidingComponentClosed: conn.componentClosed[ci],
+          closedManifold: conn.closedManifold,
+          conn,
+        };
+      }
       if (c === 'outside') { resolved = true; break; }
     }
     if (!resolved) sawBoundary = true;
@@ -255,20 +278,54 @@ function anyComponentInside(srcGeom, srcBvh, targetBvh, matrixSrcToTarget, Ltarg
 
 // ------------------------------------------------------------ volume-overlap
 
+// ROUND 7: the diagnostic is scoped by MODE, not by a degeneracy measurement.
+// Round 7's draft tried to separate a nearly-closed bathtub from a zero-volume
+// sheet and could not define the test. The real error was that the room-locator
+// was asking a containment question through a volume-overlap contract.
+//
+//   volume-overlap : needs BOTH sides closed (probe classification is parity
+//                    against both, so the crossing path is not closure-free either)
+//   containment    : needs only the TARGET closed; the source is sampled, never
+//                    parity-tested, so its openness cannot affect soundness
+
+// Is any part of `src` inside `target`'s interior? Open sources are sound here.
+function containment(src, target) {
+  const srcToTarget = new THREE.Matrix4().copy(target.matrix).invert().multiply(src.matrix);
+  const r = anyComponentInside(src.geometry, src.bvh, target.bvh, srcToTarget, target.L);
+  const targetClosed = connectivity(target.geometry).closedManifold;
+
+  return {
+    contained: r.inside,
+    // Parity ran against the target, so an open TARGET taints every result --
+    // positive and negative alike. Rounds 6/7 checked only the source.
+    unverifiedTarget: !targetClosed,
+    inconclusive: !r.inside && r.unresolved,
+  };
+}
+
 function volumeOverlap(a, b) {
   const L = Math.min(a.L, b.L);
   const bToA = new THREE.Matrix4().copy(a.matrix).invert().multiply(b.matrix);
   const aToB = new THREE.Matrix4().copy(b.matrix).invert().multiply(a.matrix);
+  const aClosed = connectivity(a.geometry).closedManifold;
+  const bClosed = connectivity(b.geometry).closedManifold;
+  const unverifiedTarget = !aClosed || !bClosed;
 
   const cross = properCrossing(a.bvh, b.bvh, bToA, L);
-  if (cross.crossing) return { overlap: true, via: 'crossing', stats: cross.stats };
+  // The crossing path classifies probes against BOTH solids, so it inherits both
+  // closure preconditions rather than being the closure-free path earlier drafts
+  // assumed.
+  if (cross.crossing) {
+    return { overlap: true, via: 'crossing', unverifiedTarget, stats: cross.stats };
+  }
 
   const aInB = anyComponentInside(a.geometry, a.bvh, b.bvh, aToB, b.L);
   if (aInB.inside) {
     return {
       overlap: true,
       via: 'containment(A in B)',
-      openComponent: !aInB.closedManifold,
+      openComponent: !aInB.decidingComponentClosed,
+      unverifiedTarget: !bClosed,
       stats: cross.stats,
     };
   }
@@ -278,16 +335,44 @@ function volumeOverlap(a, b) {
     return {
       overlap: true,
       via: 'containment(B in A)',
-      openComponent: !bInA.closedManifold,
+      openComponent: !bInA.decidingComponentClosed,
+      unverifiedTarget: !aClosed,
       stats: cross.stats,
     };
   }
 
   return {
     overlap: false,
+    unverifiedTarget,
     inconclusive: cross.inconclusive || aInB.unresolved || bInA.unresolved,
     stats: cross.stats,
   };
+}
+
+// --------------------------------------------------------- surface-intersection
+
+// Same bvhcast traversal as properCrossing, same candidate budget, weaker
+// predicate. Round 7 found the spec's `MeshBVH.intersectsGeometry` definition was
+// the last unbounded synchronous path: it takes no budget and offers no abort
+// hook, so the very input the crossing budget bounds would freeze the Viewer here.
+// No parity, so no closure precondition on either side.
+function surfaceIntersection(a, b, maxCandidatePairs = 50_000) {
+  const bToA = new THREE.Matrix4().copy(a.matrix).invert().multiply(b.matrix);
+  let hit = false, aborted = false, candidates = 0;
+
+  a.bvh.bvhcast(b.bvh, bToA, {
+    intersectsTriangles(triA, triB) {
+      if (++candidates > maxCandidatePairs) { aborted = true; return true; }
+      // Coplanar contact IS surface intersection here, so no coplanar split --
+      // but still call without a target line to avoid the upstream warning.
+      if (triA.intersectsTriangle(triB)) { hit = true; return true; }
+      return false;
+    },
+  });
+
+  // bvhcast returns true on abort too; reading that as a hit would turn a
+  // timeout into a fabricated result.
+  return { intersects: aborted ? false : hit, aborted, candidates };
 }
 
 // ------------------------------------------------------------------- helpers
@@ -321,6 +406,7 @@ function instance(geometry, matrix = new THREE.Matrix4()) {
 
 export {
   THREE, MeshBVH,
-  classifyPoint, properCrossing, connectivity, anyComponentInside, volumeOverlap,
+  classifyPoint, properCrossing, connectivity, anyComponentInside,
+  volumeOverlap, containment, surfaceIntersection,
   instance, scaleOf, normalizeForCollision,
 };
