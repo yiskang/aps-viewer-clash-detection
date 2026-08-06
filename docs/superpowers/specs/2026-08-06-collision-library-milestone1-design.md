@@ -1,8 +1,7 @@
 # Collision Library — Milestone 1: Core Slice + RoomLocatorExtension
 
-Status: revised after five rounds of codex review (see `review-coments.md`,
-`review-comments-v2.md`, `review-comments-v3.md`, `review-comments-v4.md`, `review-comments-v5.md`
-in this directory), pending user re-review
+Status: revised after six rounds of codex review (see `review-coments.md`, `review-comments-v2.md`
+… `review-comments-v6.md` in this directory), pending user re-review
 Date: 2026-08-06
 Related: [`docs/ideas/aps-viewer-clash-detection-library-idea.md`](../../ideas/aps-viewer-clash-detection-library-idea.md)
 
@@ -144,6 +143,35 @@ were wrong in a way that would have surfaced at first `npm install`.
   pin an *older* release for no reason. The finding's methodological point was fair, though, and has
   been acted on: every upstream claim in this spec is now verified against the exact `v0.9.14` tag
   rather than `master`.
+
+### Round 6 (4 P1 — all confirmed valid)
+
+Round 5's fixes held, but three of these findings expose the same underlying gap: **the spec
+described point classification without ever declaring the solid model it implies.** Parity, "any
+component," and "closed manifold" were each specified locally and never reconciled into one
+statement of what geometry *means*. This revision adds that statement (see **Solid model**) and
+fixes what it exposes:
+
+- **Open components could produce a clean false-positive overlap.** A single open triangle inside a
+  closed box has zero volume, yet one of its vertices classifies `inside`, so `anyComponentInside`
+  returned true and `volume-overlap` reported an *undiagnosed* clash. Round 5 flagged non-manifold
+  components only on **negative** results, which is exactly backwards for this case. Flagging now
+  follows whichever component decided the outcome, in either direction.
+- **Target-wide parity is XOR, not union — and the spec claimed neither.** A point inside two nested
+  closed shells crosses two surfaces and reads `outside`. Round 5's composition ("any component
+  inside") implied union semantics while the primitive implemented even-odd, so a source inside two
+  concentric target shells was a clean false negative. Even-odd is now the **declared** model, with
+  its real justification (it is what makes a pipe's bore correctly hollow) and its real limitation
+  (genuinely nested independent solids in one geometry) both stated and pinned by fixtures.
+- **The constructed witness reintroduced the frame bug round 5 had just fixed.** `offsetLadder` is
+  scaled by `L_canonical`, but the witness construction applies it in the *source component's* frame.
+  Round 5 established the per-frame principle and then missed an instance of it; there is now a
+  separate `witnessLadder` scaled by `L_source`.
+- **Raw `bvhcast` candidate work was unbounded.** The crossing budget counted only *confirmed*
+  intersections, so two meshes with heavily overlapping leaves and no intersections at all could run
+  a multi-million-pair synchronous loop while never consuming the budget — directly contradicting
+  this spec's own claim that the budgets bound the worst case. A raw-candidate budget with an abort
+  protocol now backs that claim up.
 
 ## Purpose
 
@@ -424,7 +452,8 @@ problems come from trying to make one scalar serve two frames, so this revision 
 | `coplanarAngleEpsilon` | dimensionless (`1−\|n·n\|`) | `1e-6` | Coplanar pair detection (frame-free) |
 | `mergeDistance` | distance in target frame | `1e-6 × L_target` | Collapsing coincident ray hits |
 | `surfaceEpsilon` | distance in target frame | `1e-6 × L_target` | `boundary` classification |
-| `offsetLadder` | distance in canonical frame | `[1e-3, 1e-4, 1e-5] × L_canonical` | `ProperCrossingQuery` steps |
+| `offsetLadder` | distance in canonical frame | `[1e-3, 1e-4, 1e-5] × L_canonical` | `ProperCrossingQuery` probe steps |
+| `witnessLadder` | distance in **source** frame | `[1e-3, 1e-4, 1e-5] × L_source` | Constructed interior witness (`anyComponentInside` stage 3) |
 | `minPenetrationDepth` | distance in canonical frame | `1e-5 × L_canonical` | **Declared** detection limit |
 
 **Anisotropic scale remains a stated limitation, not a solved problem.** When the relative transform
@@ -443,6 +472,43 @@ declare it at all — a review pass correctly identified that a fixed offset ste
 overlap thinner than itself, producing a false negative in precisely the thin-geometry case
 (perpendicular thin boxes) where no vertex-containment witness exists either. Making the offset
 adaptive shrinks the blind spot; declaring `minPenetrationDepth` makes what remains of it honest.
+
+### Solid model
+
+Everything below depends on what a triangle soup is taken to *mean* as a solid. Six review rounds
+specified parity, "any component," and "closed manifold" separately without ever reconciling them,
+and a review pass showed the pieces disagreed: the composition implied one model, the primitive
+implemented another. Milestone 1 declares the model once, here.
+
+**A target geometry's interior is defined by even-odd (parity) over its entire triangle set.** A ray
+from a point crosses an odd number of surfaces iff the point is inside. This is a deliberate choice,
+not an accident of using `MeshBVH.raycast`:
+
+- It is what makes **hollow solids correct**. A pipe is an outer cylinder plus an inner cylinder;
+  its bore is not material. Under even-odd a point in the bore crosses both shells, reads `outside`,
+  and the pipe is correctly hollow. Under union-of-components semantics the bore would fill with
+  phantom material — and pipes are not an edge case in the MEP models this library exists to serve.
+- The same argument covers containers, ducts, and any Revit family whose tessellation encodes a
+  cavity as an inner shell.
+
+**Its limitation, stated rather than discovered later:** two genuinely *nested independent solids*
+inside one geometry (a small box floating inside a larger closed box, both material) read the inner
+region as cavity, so a source there is classified `outside`. Even-odd cannot distinguish that from a
+hollow container — no parity scheme can, because the two configurations have identical triangle
+sets. Distinguishing them requires per-component classification plus an orientation/nesting analysis
+that Milestone 1 does not attempt. In practice Model Derivative emits separate solids as separate
+fragments far more often than as nested shells within one geometry, so this trades a common
+correctness win (pipes) for a rare loss. A fixture pins the behavior so it can't drift silently.
+
+**A source geometry contributes as the union of its components.** `anyComponentInside` returns true
+if *any* component has material inside the target: distinct components are distinct pieces of the
+same element, and one piece inside the target is an overlap. This is union semantics on the source
+side and even-odd on the target side, and that asymmetry is intentional — the source is being asked
+"is any of you in there," the target is being asked "what is your interior."
+
+**Only closed components can establish positive volume.** An open shell has zero volume, so its
+vertices being inside a target proves contact, not overlap. See `anyComponentInside` for how that is
+reported.
 
 **`GeometryConnectivity`** (new) — decomposes a normalized geometry into connected components by
 union-find over triangles that share an **edge** (two vertex indices), restricted to the active
@@ -541,13 +607,28 @@ milestone replaces, not merely an imprecision.
    pair's probes are exhausted with no `inside`/`inside` result but at least one `boundary` result,
    that pair is **inconclusive**, not "touching." A negative overall result that had any inconclusive
    pair carries an `inconclusive-crossing` diagnostic, so it is never reported as verified.
-6. Early-exit `true` on the first proper crossing. The `maxCrossingPairsExamined = 64` budget counts
-   **confirmed intersecting non-coplanar pairs** — the ones that reach probe classification — not raw
-   candidates from step 1, which cost only a triangle-triangle test each and can legitimately number
-   in the thousands for a large overlapping leaf. Reaching the budget with everything classified as
-   touching also emits `inconclusive-crossing`: a bounded examination cannot prove the absence of a
-   crossing among unexamined pairs. (Coplanar pairs don't consume the budget — they're decided, not
-   deferred.)
+6. Early-exit `true` on the first proper crossing. **Two independent budgets** bound the work, because
+   the expensive failure mode isn't the one round 5 bounded:
+   - `maxCrossingPairsExamined = 64` counts **confirmed intersecting non-coplanar pairs** — the ones
+     that reach probe classification. Coplanar pairs don't consume it; they're decided, not deferred.
+   - `maxCandidatePairsExamined = 200_000` counts **raw candidate pairs** entering the callback.
+     Round 5 explicitly exempted these on the grounds that each costs "only a triangle-triangle
+     test," which a review pass correctly rejected: two sub-`maxSyncTriangleCount` meshes with
+     heavily overlapping leaves and **no intersections at all** never consume the confirmed-pair
+     budget, so nothing bounded them. With `three-mesh-bvh`'s default leaf size, a dense overlap
+     between two ~20k-triangle meshes reaches millions of pairs in one synchronous, uninterruptible
+     `bvhcast` — seconds of frozen Viewer, and a direct contradiction of this spec's own claim that
+     the budgets bound the worst case.
+
+   **Abort protocol.** Exceeding either budget sets an `aborted` flag and returns `true` from
+   `intersectsTriangles` — the only way to stop a `bvhcast` traversal early. `bvhcast` therefore
+   returns `true`, which **must not be read as "crossing found"**: the caller checks the flag first
+   and, when set, reports the pair as inconclusive with `crossing-budget-exhausted` rather than as a
+   crossing. Getting this backwards would turn a timeout into a fabricated clash.
+
+   Chunked or off-thread traversal is the real fix for large overlaps and is deliberately out of
+   scope here (Workers are excluded from this milestone); the budget converts an unbounded freeze
+   into a bounded one plus an honest diagnostic.
 
 **`ContainmentQuery`** — point classification against a mesh. It exposes **two layers**, and keeping
 them distinct is what stops the design from being circular:
@@ -588,7 +669,11 @@ come back out as `volume-overlap`, exactly the behavior round 3 existed to elimi
      vertex is inconclusive *for that ray*: the ray has grazed a seam where the crossing count is
      unreliable. Retry the whole test once along the alternate local axis. If the retry also grazes,
      return `boundary` — the point is unresolved, and `boundary` is exactly the "cannot say" value.
-   - Otherwise return `inside` for odd parity, `outside` for even.
+   - Otherwise return `inside` for odd parity, `outside` for even — **even-odd across the target's
+     entire triangle set**, which is the declared solid model (see **Solid model**), not an
+     incidental consequence of how `MeshBVH.raycast` reports hits. A point inside two nested shells
+     reads `outside`, which is correct for a hollow pipe and is the stated limitation for genuinely
+     nested independent solids.
 
 **`anyComponentInside` samples per connected component, not against a global cap.** Round 2's flat
 "up to 64 points" had a false negative: an unsampled component of A could be contained in B while
@@ -609,10 +694,23 @@ sampling the right decomposition:
 > one. Edge-connectivity (see `GeometryConnectivity`) removes the shared-vertex form of this, but not
 > the shared-edge form. The honest statement is therefore:
 >
-> - **manifold component** → the guarantee holds, exactly as argued above;
+> - **closed manifold component** → the guarantee holds, exactly as argued above;
 > - **non-manifold or open component** → sampling is best-effort, and the component is flagged.
->   A negative result involving any flagged component emits `non-manifold-component`, so it is
->   reported as unverified rather than as a clean negative.
+>
+> **Flagging follows whichever component decided the outcome, in either direction.** Round 5 emitted
+> `non-manifold-component` only on *negative* results, which a review pass showed is backwards for
+> the case that matters most: a single open triangle sitting inside a closed box has **zero volume**,
+> so it cannot overlap anything — yet one of its vertices classifies `inside`, `anyComponentInside`
+> returns true, and round 5 reported a *clean* clash with no diagnostic at all. Containment can
+> establish positive volume only for a component certified closed (see **Solid model**). So:
+>
+> - a **positive** result whose deciding component is open or non-manifold emits
+>   `unverified-open-component` — the containment is real, the *volume* overlap is not certified;
+> - a **negative** result involving any flagged component emits `non-manifold-component`.
+>
+> The positive is still reported as true rather than suppressed. For the room-locator that is the
+> useful answer — an open-shell fixture inside a room should be located in that room — and the
+> diagnostic is what keeps the `volume-overlap` contract honest about what was actually proven.
 
 **Finding a conclusive sample is the algorithm's job, not luck.** Round 4 stopped after 4 arbitrary
 vertices, which a review pass showed does not deliver what the guarantee promises: a solid sitting
@@ -634,10 +732,19 @@ component:
 3. **Constructed interior witness.** If *every* vertex of the component reads `boundary` — possible
    when the component's entire surface is coincident with the target's — synthesize a point in the
    component's own interior instead of relying on its surface: take a triangle of the component, and
-   from its centroid step along ±normal by each `offsetLadder` rung, keeping the first probe that
-   `classifyPoint` puts `inside` **the component's own geometry**. That probe is interior to the
+   from its centroid step along ±normal by each **`witnessLadder`** rung, keeping the first probe
+   that `classifyPoint` puts `inside` **the component's own geometry**. That probe is interior to the
    source by construction, so classifying it against the target decides the component. Try up to
    `maxWitnessTriangles = 8` triangles before giving up.
+
+   **`witnessLadder` is scaled by `L_source`, not `L_canonical`.** This stage constructs and
+   validates points entirely in the *source component's* own local frame — the centroid, the normal
+   step, and the `classifyPoint` call against the source's own BVH all live there. Round 5 reused
+   `offsetLadder`, which is scaled by the canonical operand's `L`; when the source sorts second and
+   the two local scales differ, its rungs are wrong in that frame — too coarse and the step exits the
+   source entirely, too fine and it lands within the source's own `surfaceEpsilon` and reads
+   `boundary` forever. Round 5 established the per-frame tolerance principle and then missed this
+   instance of it; `witnessLadder = [1e-3, 1e-4, 1e-5] × L_source` applies it consistently.
 
 Only if all three stages fail is the component unresolved, and a negative result with any unresolved
 component emits `inconclusive-containment`. On a non-manifold-flagged component the same three stages
@@ -806,8 +913,10 @@ type FragmentDiagnosticReason =
 type PairDiagnosticReason =
   | 'inconclusive-containment'        // unresolved (all-`boundary`) component(s) under a negative
   | 'incomplete-component-coverage'   // maxContainmentSamples hit before covering all components
-  | 'inconclusive-crossing'           // budget exhausted, or a candidate classified `boundary`
-  | 'non-manifold-component';         // a component the containment guarantee doesn't cover
+  | 'inconclusive-crossing'           // a probe classified `boundary`, so touching wasn't provable
+  | 'crossing-budget-exhausted'       // maxCandidatePairs/maxCrossingPairs hit; traversal aborted
+  | 'non-manifold-component'          // NEGATIVE result involving a component the guarantee misses
+  | 'unverified-open-component';      // POSITIVE result decided by an open/zero-volume component
 
 type ClashDiagnostic =
   // Discovered during geometry normalization or the size check, independent of any pairing.
@@ -819,6 +928,11 @@ type ClashDiagnostic =
   | { scope: 'pair'; reason: PairDiagnosticReason;
       sourceFragment: FragmentRef; targetFragment: FragmentRef };
 ```
+
+**Diagnostics attach to positive results too, not only negatives.** Every earlier draft treated a
+diagnostic as a caveat on "we found nothing," which left the one case where a *positive* is the
+unsound answer — an open, zero-volume component classifying `inside` — reported as a clean clash.
+A diagnostic marks any result whose soundness wasn't established, in whichever direction.
 
 **Diagnostics are emitted for partially-unresolved negatives, not only totally-unresolved ones.** The
 previous draft emitted `inconclusive-containment` only when *every* sample was inconclusive, which a
@@ -857,6 +971,12 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
 - **Non-manifold or open source components**: the containment guarantee doesn't cover them (see
   `anyComponentInside`), so a negative result involving one emits `non-manifold-component`. Sampling
   still runs — this degrades a verified negative to an unverified one, it doesn't skip work.
+- **A positive decided by an open component**: emits `unverified-open-component`. An open shell has
+  zero volume and so cannot overlap anything, but its vertices can classify `inside`; the result is
+  still reported as a clash (useful for the room-locator) with its soundness explicitly qualified.
+- **Traversal budget exhausted**: `crossing-budget-exhausted`, with the pair reported as inconclusive
+  rather than as a crossing — the abort path returns `true` from `bvhcast` purely as a stop signal
+  and must never be mistaken for a hit (see `ProperCrossingQuery`).
 - **Overlaps shallower than `minPenetrationDepth`**: may classify as touching rather than overlap.
   This is a declared semantic limit of the mode (see Tolerances), not a diagnosed failure.
 - **Truncated examination**: hitting `maxContainmentSamples` before covering every component, or
@@ -914,6 +1034,12 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - **swapped operand order under an anisotropic instance scale** — `crossing(A,B)` must equal
     `crossing(B,A)`. Verifies the canonical ordering makes symmetry structural, and is the fixture
     that would have caught round 4's non-symmetric `min(diagonal(A), diagonal(B→A))` scale.
+  - **two meshes with heavily overlapping BVH leaves and zero triangle intersections**, sized so the
+    candidate count exceeds `maxCandidatePairsExamined` — must abort and report
+    `crossing-budget-exhausted`, **not** a crossing. Regression test for round 5's unbounded raw
+    candidate loop, and specifically for the abort protocol: `bvhcast` returns `true` on abort, so a
+    caller that reads that as a hit turns a timeout into a fabricated clash. Assert the query
+    completes within a wall-clock bound as well as returning the right verdict.
 - `ContainmentQuery.classifyPoint` — the three-valued primitive, tested on its own:
   - a point demonstrably inside / demonstrably outside — `inside` / `outside`
   - **a point lying exactly on the interior of a target face** — must return `boundary`, **not**
@@ -932,6 +1058,11 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - a target under a **non-uniform scale** instance transform — verifies scale-relative tolerances
     and local-frame ray directions behave, since this is exactly where a world-space epsilon or a
     world-axis ray direction would have gone wrong
+  - **a point inside two nested closed shells** (concentric boxes) — must return `outside`, pinning
+    the declared even-odd model. Pair it with a **pipe fixture** (annulus, point in the bore →
+    `outside`) so the test suite records *why* even-odd was chosen, not merely that it was; and with
+    a **nested independent solids** fixture asserting the same `outside` result as the documented
+    limitation, so the tradeoff is visible in the tests rather than only in prose.
 - `ContainmentQuery.anyComponentInside` — the sampling wrapper:
   - **a two-component geometry where only the smaller, second component lies inside the target** —
     must report contained. Regression test for the capped-sampling false negative: a
@@ -951,6 +1082,15 @@ refactor can't silently reintroduce a bug an earlier round already found.
     vertices **first in index order**, so a naive "first N vertices" pick provably fails it.
   - **a component every one of whose vertices lies on the target's surface** — exercises the
     constructed-interior-witness stage, which is the only stage that can resolve it.
+  - **the same witness case with source and target at markedly different local scales, arranged so
+    the source sorts second** in canonical order — must still resolve. Regression test for round 5's
+    witness stage borrowing `offsetLadder`'s canonical-frame scale instead of `witnessLadder`'s
+    source-frame one; with the wrong scale the ladder either exits the source or never leaves its
+    `surfaceEpsilon`, and the case silently degrades to unresolved.
+  - **a single open triangle placed entirely inside a closed box** — must report the containment as
+    positive **and** carry `unverified-open-component`. Regression test for round 5's clean
+    false-positive: a zero-volume component cannot overlap anything, so an undiagnosed `true` here
+    is the one case where a positive result is the unsound one.
   - a geometry with **more than 8 active ranges** — verifies sample budgeting is coherent (an earlier
     draft's "up to 64 total" and "at least 8 per range" were arithmetically contradictory here)
   - a geometry that exhausts `maxContainmentSamples` — verifies `incomplete-component-coverage` is
@@ -1037,9 +1177,11 @@ need.
   be every pair in overlapping leaves), and containment sampling that may walk a whole component's
   vertices before falling back to constructed witnesses. Each was added to fix a real correctness
   defect and none is obviously expensive, but they compound, and there is still no benchmark suite.
-  The `maxSyncTriangleCount`/`maxCrossingPairsExamined`/`maxContainmentSamples` budgets bound the
-  worst case, so the risk is *latency on realistic input*, not runaway — measure before tuning any of
-  them down.
+  With `maxCandidatePairsExamined` added this round, the budgets do now bound the worst case — but
+  note that claim was made in round 5 and was **false when written**: nothing capped the raw
+  candidate loop, so a dense leaf overlap could run for seconds. Treat "the budgets bound it" as a
+  property to re-verify whenever a new traversal is added, not as a standing invariant. The residual
+  risk is *latency on realistic input*; measure before tuning any budget down.
 - **`InterleavedBufferAttribute` and `drawRange`/`groups`-intersection fixtures are unverified
   against real Viewer output**: the adapter fixes in this revision (index path, interleaved
   fallback, range intersection, `offsets` rejection) are grounded in correct three.js semantics and
@@ -1056,8 +1198,14 @@ need.
 - Should `indexOwnership: 'indirect'` become the default once a benchmark suite exists?
 - Does cross-model geometry deduplication matter enough to prioritize once multi-model clash
   detection (a later milestone) is designed?
+- Is even-odd the right solid model for real Viewer geometry? It is chosen for pipes/containers and
+  costs correctness on nested independent solids (see **Solid model**). The assumption that Model
+  Derivative emits separate solids as separate fragments rather than nested shells within one
+  geometry is **reasoned, not measured** — check it against the acceptance URN, since if nested
+  independent solids turn out to be common the tradeoff inverts.
 - Are `samplesPerComponent = 8` (a stride divisor, not a cap — sampling continues past it),
-  `maxWitnessTriangles = 8`, `maxContainmentSamples = 512`, and
+  `maxWitnessTriangles = 8`, `maxCandidatePairsExamined = 200_000`, `maxContainmentSamples = 512`,
+  and
   `maxCrossingPairsExamined = 64` the right budgets? All three are provisional. Unlike the previous
   draft's flat 64-point cap, none of them affect *coverage* correctness (component decomposition
   handles that) — they only bound pathological cases, and every truncation is now observable via a
