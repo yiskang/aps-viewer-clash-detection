@@ -1,8 +1,8 @@
 # Collision Library — Milestone 1: Core Slice + RoomLocatorExtension
 
-Status: revised after four rounds of codex review (see `review-coments.md`,
-`review-comments-v2.md`, `review-comments-v3.md`, `review-comments-v4.md` in this directory),
-pending user re-review
+Status: revised after five rounds of codex review (see `review-coments.md`,
+`review-comments-v2.md`, `review-comments-v3.md`, `review-comments-v4.md`, `review-comments-v5.md`
+in this directory), pending user re-review
 Date: 2026-08-06
 Related: [`docs/ideas/aps-viewer-clash-detection-library-idea.md`](../../ideas/aps-viewer-clash-detection-library-idea.md)
 
@@ -112,6 +112,38 @@ count as overlap — by different routes:
 
 This round also pins exact dependency versions and corrects the vendor file layout, both of which
 were wrong in a way that would have surfaced at first `npm install`.
+
+### Round 5 (3 P1 accepted, 1 P1 rejected with evidence, 1 P2 accepted)
+
+- **`bvhcast` does not hand you intersecting pairs — it hands you *candidates*.** Round 4 built the
+  whole crossing classifier on the assumption that an `intersectsTriangles` callback meant an
+  intersection had occurred. Verified against `MeshBVH.js` at tag `v0.9.14`: the wrapper is a plain
+  nested loop over every triangle in the two overlapping leaf ranges, calling the callback for each
+  pair with **no intersection test whatsoever** — testing is the callback's job. Round 4 would
+  therefore have computed segments from non-intersecting pairs, where `intersectsTriangle` returns
+  false and leaves `targetLine` holding a *previous* pair's data, fabricating crossings from stale
+  state. `ProperCrossingQuery` now tests each candidate explicitly, and orders the coplanar check so
+  the upstream warning path is never entered at all.
+- **Four samples never guaranteed a conclusive one.** The containment guarantee said "one conclusive
+  sample decides the component," but the algorithm stopped after 4 arbitrary vertices. A solid deep
+  inside a room while sharing one coplanar face with it can have all 4 picks land on that shared
+  face, all reading `boundary` — returning a diagnosed non-overlap for an overlap far deeper than
+  `minPenetrationDepth`. Sampling now continues until conclusive and, if a component's vertices are
+  exhausted inconclusively, falls back to a **constructed interior witness** rather than giving up.
+- **Tolerances were declared in one frame and applied in another.** Round 4 scaled every tolerance by
+  a characteristic length defined in the classification frame, but `classifyPoint` does its proximity
+  and ray work in the *target* BVH's local frame — so `surfaceEpsilon`/`mergeDistance` were being
+  compared against distances in a different space, and the `min(diagonal(A), diagonal(B→A))` formula
+  wasn't even symmetric under swap. Tolerances are now **target-frame-local** by construction, and
+  operand order is **canonicalized** so symmetry is structural rather than a property of a formula.
+- **Interleaved stride/offset mapping** is now spelled out instead of implied.
+- **Rejected: "`three-mesh-bvh@0.9.14` is not published."** It is. `https://registry.npmjs.org/three-mesh-bvh`
+  lists `0.9.14` in `versions` with `dist-tags.latest = 0.9.14`, published `2026-08-01T04:33:04Z`,
+  and its tarball returns HTTP 200. The npmjs.com web UI can lag the registry, which is the likely
+  source of the discrepancy. The pin stays at `0.9.14` — downgrading to `0.9.13` on this basis would
+  pin an *older* release for no reason. The finding's methodological point was fair, though, and has
+  been acted on: every upstream claim in this spec is now verified against the exact `v0.9.14` tag
+  rather than `master`.
 
 ## Purpose
 
@@ -223,7 +255,13 @@ checked against the npm registry rather than assumed):
 | Package | Pin | Note |
 |---|---|---|
 | `three` | `0.185.1` | ESM entry `./build/three.module.js` |
-| `three-mesh-bvh` | `0.9.14` | declares `peerDependencies: { three: ">= 0.159.0" }` — satisfied |
+| `three-mesh-bvh` | `0.9.14` | `peerDependencies: { three: ">= 0.159.0" }` — satisfied |
+
+`0.9.14` was confirmed published against the registry directly (present in `versions`,
+`dist-tags.latest`, published `2026-08-01`, tarball returns HTTP 200) after a review pass reported it
+missing — the npmjs.com web UI can lag `registry.npmjs.org`. **Every upstream behavioral claim in
+this spec is verified against the `v0.9.14` git tag specifically**, not `master`, since the two can
+diverge and a spec that cites the wrong revision is worse than one that cites none.
 
 **The vendor copy is not two files.** The earlier draft's `three-mesh-bvh/build/index.module.js`
 does not exist: that package's `exports.import` is **`./src/index.js`**, a multi-file source tree
@@ -272,6 +310,21 @@ the idea doc requires ([idea:198](../../ideas/aps-viewer-clash-detection-library
      this genuine three.js layout, which the research agent's "no evidence in 7.124.2" finding never
      ruled out for non-LMV geometry the fallback path might legitimately receive.
   3. `geometry.attributes.position.array` (a standard, non-interleaved `BufferAttribute`), stride 3.
+
+  Each source maps onto `TriangleGeometryView`'s `positionStride`/`positionOffset` explicitly —
+  spelled out because a review pass noted the previous draft named the interleaved *array* without
+  ever saying where the stride and offset came from, which is precisely the part that goes silently
+  wrong (a plausible-looking wrong mapping yields garbage vertices, not an error):
+
+  | Source | `positions` | `positionStride` | `positionOffset` |
+  |---|---|---|---|
+  | Viewer interleaved | `geometry.vb` | `geometry.vbstride` | `geometry.vblayout.position.offset` |
+  | `InterleavedBufferAttribute` | `position.data.array` | `position.data.stride` | `position.offset` |
+  | `BufferAttribute` | `position.array` | `position.itemSize` (3) | `0` |
+
+  All three are in **float elements, not bytes** — matching Viewer's own `vbstride` convention — so a
+  vertex `i`'s x-coordinate is always `positions[i * positionStride + positionOffset]`, whichever
+  branch produced it. That single uniform accessor is the whole point of normalizing.
 - Index — `geometry.ib` (Viewer-internal), then `geometry.index?.array`. **Not**
   `geometry.attributes.index.array`, which the previous draft used — standard three.js
   `BufferGeometry` stores its index as a top-level `geometry.index` property, never inside
@@ -346,33 +399,42 @@ quantities living in different spaces and different units — a review pass corr
 `MeshBVH` raycast distances are in the **target BVH's local space** (not Viewer world space) and
 that barycentric coordinates are **dimensionless** and cannot take a distance tolerance at all:
 
-All distances are expressed in the **classification frame** — the frame `bvhcast` traverses in, i.e.
-A's local space, with B mapped into it by the relative matrix. The characteristic length that scales
-them is
+**Every tolerance is defined in the frame it is applied in.** Round 4 defined one characteristic
+length in "the classification frame" and then used it inside `classifyPoint`, which does its
+proximity and ray work in the *target BVH's* local frame — comparing a length from one space against
+distances in another. A review pass also showed the formula `min(diagonal(A), diagonal(B→A))` isn't
+symmetric under swapping the operands, since `B→A` and `A→B` differ under non-uniform scale. Both
+problems come from trying to make one scalar serve two frames, so this revision stops doing that:
 
-```text
-L := min( diagonal(boundsA), diagonal(boundsB mapped into the classification frame) )
-```
+- **Per-BVH tolerance scale.** Each `GeometryRecord` carries `L_X := diagonal(localBounds(X))`,
+  computed once in X's own local space and cached with the BLAS. Any tolerance applied against X's
+  BVH is scaled by `L_X`. `classifyPoint(point, targetBvh)` therefore uses the *target's* scale — the
+  frame it is actually working in — with no conversion anywhere.
+- **Canonical operand order.** `ProperCrossingQuery`'s probes and its `offsetLadder` necessarily live
+  in one shared frame (the one `bvhcast` traverses). Rather than derive a "symmetric" scalar, the
+  pair is **canonically ordered before evaluation** — sorted by `(modelId, geometryKey,
+  instanceId)` — so the classification frame is a deterministic function of the pair, not of
+  argument order. Swapping the caller's arguments now runs the identical computation, making
+  symmetry structural rather than a property to be argued about. `L_canonical` is then simply
+  `L_X` of whichever instance sorts first, and `minPenetrationDepth` is well-defined per pair.
 
-which is **symmetric** under swapping A and B (a review pass caught that the previous draft said
-"`localBoundsDiagonal`" without ever saying *whose*, making the tolerance — and therefore the
-predicate — asymmetric). Taking the `min` means the smaller participant sets the scale, so a small
-fixture tested against a large room isn't measured with the room's yardstick.
-
-| Tolerance | Units | Milestone 1 default | Used for |
+| Tolerance | Units | Milestone 1 default | Applied in |
 |---|---|---|---|
-| `barycentricEpsilon` | dimensionless (0-1) | `1e-6` | Rejecting a ray hit too close to a triangle edge/vertex to trust |
-| `coplanarAngleEpsilon` | dimensionless (`1−\|n·n\|`) | `1e-6` | Detecting coplanar triangle pairs before requesting a segment |
-| `mergeDistance` | classification-frame distance | `1e-6 × L` | Collapsing coincident ray hits before parity counting |
-| `surfaceEpsilon` | classification-frame distance | `1e-6 × L` | Deciding a sample point lies *on* a surface (→ `boundary`) |
-| `offsetLadder` | classification-frame distance | `[1e-3, 1e-4, 1e-5] × L` | Adaptive step off the intersection curve in `ProperCrossingQuery` |
-| `minPenetrationDepth` | classification-frame distance | `1e-5 × L` (ladder's last rung) | **Declared** limit: thinner overlaps may report as touching |
+| `barycentricEpsilon` | dimensionless (0-1) | `1e-6` | Ray-hit edge/vertex rejection (frame-free) |
+| `coplanarAngleEpsilon` | dimensionless (`1−\|n·n\|`) | `1e-6` | Coplanar pair detection (frame-free) |
+| `mergeDistance` | distance in target frame | `1e-6 × L_target` | Collapsing coincident ray hits |
+| `surfaceEpsilon` | distance in target frame | `1e-6 × L_target` | `boundary` classification |
+| `offsetLadder` | distance in canonical frame | `[1e-3, 1e-4, 1e-5] × L_canonical` | `ProperCrossingQuery` steps |
+| `minPenetrationDepth` | distance in canonical frame | `1e-5 × L_canonical` | **Declared** detection limit |
 
-Scale-relative tolerances sidestep the world↔local conversion problem under scaled or non-uniform
-instance transforms: each tolerance lives in the same space as the numbers it's compared against and
-never needs converting. Absolute world-space tolerances, model units, and global offsets remain an
-open question inherited from the idea doc's "Tolerance" section — this milestone avoids depending on
-them.
+**Anisotropic scale remains a stated limitation, not a solved problem.** When the relative transform
+between two instances is anisotropic, no direction-independent scalar converts a length between the
+frames — so `minPenetrationDepth`, defined in the canonical frame, corresponds to a *direction-
+dependent* world-space depth, bounded by the smallest and largest singular values of the transform's
+3×3 linear part. Milestone 1 declares this rather than pretending a single number covers it, and
+pins the behavior with a swapped-operand anisotropic-scale test fixture. Absolute world-space
+tolerances, model units, and global offsets remain an open question inherited from the idea doc's
+"Tolerance" section.
 
 `minPenetrationDepth` deserves emphasis because it is a **semantic** limit, not an implementation
 detail: `volume-overlap` detects overlaps deeper than it, and may classify shallower ones as mere
@@ -422,36 +484,49 @@ CSG implementation being replaced already excluded touching (a BSP intersect of 
 produces no polygons), so accepting contact-as-overlap was a regression against the code this
 milestone replaces, not merely an imprecision.
 
-1. Enumerate intersecting triangle pairs with `MeshBVH.bvhcast(otherBvh, relativeMatrix, {
-   intersectsTriangles(triA, triB) { … } })` — a real `three-mesh-bvh` traversal API (the idea doc
-   lists `bvhcast` among the reasons for choosing this backend). Returning `true` from the callback
-   early-exits the traversal.
-2. **Split coplanar pairs off first**, before asking for any segment. A pair is coplanar when
-   `|nA · nB| ≥ 1 − coplanarAngleEpsilon` *and* the planes coincide within `surfaceEpsilon`.
-   Coplanar pairs are classified as **touching contribution** and skipped — never a crossing on their
-   own — and the loop continues with the remaining pairs.
+1. Traverse with `MeshBVH.bvhcast(otherBvh, relativeMatrix, { intersectsTriangles(triA, triB) { … } })`.
+   Returning `true` from the callback early-exits the traversal.
 
-   This is not an optimization; round 3's design was simply invalid here. Verified against upstream
-   `ExtendedTriangle.intersectsTriangle`: its coplanar branch emits
-   `console.warn('…Triangles are coplanar which does not support an output edge. Setting edge to
-   0, 0, 0.')` and sets `target.start`/`target.end` to the origin. Round 3 would have taken the
-   midpoint of that zeroed segment — the origin of the classification frame, a point with no relation
-   to the contact — and reasoned about "which side of the contact plane" candidates fell on. The
-   argument was vacuous for exactly the configuration it most needed to decide (face-on-face
-   contact), and it would have spammed the console besides.
+   **The callback receives *candidate* pairs, not intersecting ones.** Round 4 assumed otherwise and
+   was wrong. Verified against `MeshBVH.js` at `v0.9.14`: the `intersectsTriangles` wrapper is a
+   plain nested loop over every triangle in the two overlapping leaf ranges —
 
-   Skipping is also the *correct* answer, not just the safe one: if two solids' only contact is
-   coplanar face overlap, that contact has zero volume and is touching by definition. If they also
-   genuinely interpenetrate, the interpenetration necessarily produces non-coplanar intersecting
-   pairs elsewhere, which this loop still examines.
-3. For each remaining (transversal) pair, compute the intersection segment via
-   `ExtendedTriangle.intersectsTriangle(other, targetLine)` — now guaranteed to be the
-   non-coplanar branch, which does produce a real segment — and take its midpoint `M`.
+   ```js
+   for ( let i2 = offset2, l2 = offset2 + count2; i2 < l2; i2 ++ ) { …
+     for ( let i1 = offset1, l1 = offset1 + count1; i1 < l1; i1 ++ ) { …
+       if ( intersectsTriangles( triangle1, triangle2, i1, i2, … ) ) return true;
+   ```
+
+   — with no intersection test anywhere. BVH traversal narrows to overlapping *leaf bounds*; deciding
+   whether two triangles actually meet is the callback's job. Round 4 would have fed non-intersecting
+   pairs into segment computation, where `intersectsTriangle` returns false and leaves `targetLine`
+   holding the *previous* pair's endpoints — fabricating a crossing from stale state, which is both a
+   false positive and a nondeterministic one.
+2. **Classify the candidate before doing anything else**, ordered so the upstream coplanar warning
+   path is never entered:
+   - Compute the cheap coplanarity predicate from the triangles' own planes: coplanar iff
+     `|nA · nB| ≥ 1 − coplanarAngleEpsilon` **and** the planes coincide within the target-frame
+     `surfaceEpsilon`.
+   - **Coplanar candidate** → call `triA.intersectsTriangle(triB)` **without** a target line. If it
+     reports intersection, record a *touching contribution*; either way, continue to the next
+     candidate. Omitting the target argument is what avoids the warning — upstream only warns when
+     asked for an output edge it cannot produce.
+   - **Non-coplanar candidate** → call `triA.intersectsTriangle(triB, targetLine)`. If it returns
+     false, this pair simply doesn't intersect: continue, and **do not read `targetLine`**.
+
+   Skipping coplanar pairs is the *correct* answer, not merely the safe one: if two solids' only
+   contact is coplanar face overlap, that contact has zero volume and is touching by definition. If
+   they also genuinely interpenetrate, the interpenetration necessarily produces non-coplanar
+   intersecting pairs elsewhere, which this loop still examines. (Verified at `v0.9.14`: the coplanar
+   branch of `ExtendedTriangle.intersectsTriangle` warns and sets `target.start`/`target.end` to the
+   origin, so a coplanar pair could never have yielded a usable segment anyway.)
+3. For a confirmed non-coplanar intersection, take the midpoint `M` of the now-valid `targetLine`.
 4. Classify by stepping off the intersection curve into the four quadrants the two surfaces locally
    divide space into. For each sign combination `(s₁, s₂) ∈ {+1,−1}²` with `d = s₁·nA + s₂·nB`
-   non-degenerate, and **for each rung `δ` of `offsetLadder` from coarsest to finest**, form
-   `candidate = M + δ × normalize(d)`. The pair is a proper crossing iff some candidate classifies
-   as `inside` **both** A and B.
+   non-degenerate, and **for each rung `δ` of `offsetLadder` from coarsest to finest**, form a
+   **probe point** `P = M + δ × normalize(d)`. (Called a *probe* rather than a candidate to keep it
+   distinct from the candidate *pairs* of step 1.) The pair is a proper crossing iff some probe
+   classifies as `inside` **both** A and B.
    - **The ladder is what makes thin overlaps detectable.** A single fixed offset steps clean through
      any overlap thinner than itself and reports a false negative — a review pass identified this,
      and it bites hardest on thin perpendicular geometry, where there is no vertex-containment
@@ -461,16 +536,17 @@ milestone replaces, not merely an imprecision.
      local quadrants.
    - For a genuine transversal crossing (the duct-through-beam case), the surfaces divide space into
      four quadrants, one interior to both — classified as a crossing.
-5. **Inconclusive candidates propagate.** A candidate whose classification against either solid is
-   `boundary` (see `ContainmentQuery`) proves nothing — it can neither confirm nor refute a crossing.
-   If a pair's candidates are exhausted with no `inside`/`inside` result but at least one `boundary`
-   result, that pair is **inconclusive**, not "touching." A negative overall result that had any
-   inconclusive pair carries an `inconclusive-crossing` diagnostic, so it is never reported as a
-   verified negative.
-6. Early-exit `true` on the first proper crossing. Examine at most `maxCrossingPairsExamined = 64`
-   transversal pairs; reaching that cap with everything classified as touching also emits
-   `inconclusive-crossing` — a bounded examination cannot prove the absence of a crossing among
-   unexamined pairs. (Coplanar pairs skipped in step 2 don't consume the budget: they're decided, not
+5. **Inconclusive probes propagate.** A probe whose classification against either solid is `boundary`
+   (see `ContainmentQuery`) proves nothing — it can neither confirm nor refute a crossing. If a
+   pair's probes are exhausted with no `inside`/`inside` result but at least one `boundary` result,
+   that pair is **inconclusive**, not "touching." A negative overall result that had any inconclusive
+   pair carries an `inconclusive-crossing` diagnostic, so it is never reported as verified.
+6. Early-exit `true` on the first proper crossing. The `maxCrossingPairsExamined = 64` budget counts
+   **confirmed intersecting non-coplanar pairs** — the ones that reach probe classification — not raw
+   candidates from step 1, which cost only a triangle-triangle test each and can legitimately number
+   in the thousands for a large overlapping leaf. Reaching the budget with everything classified as
+   touching also emits `inconclusive-crossing`: a bounded examination cannot prove the absence of a
+   crossing among unexamined pairs. (Coplanar pairs don't consume the budget — they're decided, not
    deferred.)
 
 **`ContainmentQuery`** — point classification against a mesh. It exposes **two layers**, and keeping
@@ -538,13 +614,34 @@ sampling the right decomposition:
 >   A negative result involving any flagged component emits `non-manifold-component`, so it is
 >   reported as unverified rather than as a clean negative.
 
-Concretely: take up to `samplesPerComponent = 4` vertices from each component (fewer if it has
-fewer), drawn only from vertices referenced by active triangle ranges. On a manifold component the
-extra samples exist purely to survive `boundary` reads — a sample sitting exactly on a
-touching interface is unresolved, and the remaining samples are what resolve the component; coverage
-itself is already guaranteed. On a flagged component they are ordinary sampling, with no guarantee
-attached. A component whose samples all come back `boundary` is unresolved, and a negative result
-with any unresolved component emits `inconclusive-containment`.
+**Finding a conclusive sample is the algorithm's job, not luck.** Round 4 stopped after 4 arbitrary
+vertices, which a review pass showed does not deliver what the guarantee promises: a solid sitting
+deep inside a room while sharing one coplanar face with it has no proper crossing, so it falls
+through to containment — and if all 4 picks land on that shared face they all read `boundary`, and a
+deep, unambiguous overlap comes back as a (diagnosed) non-overlap. "One conclusive sample decides the
+component" is only a guarantee if the search actually pursues one. Three escalating stages, per
+component:
+
+1. **Spatially-spread vertex sampling.** Walk the component's referenced vertices on a stride
+   (`ceil(n / samplesPerComponent)`, `samplesPerComponent = 8`) rather than taking the first few, so
+   the initial picks can't all come from one face of a mesh whose vertices are stored face-by-face —
+   the exact storage order that makes the counterexample above likely rather than exotic. Stop at the
+   first `inside` or `outside`.
+2. **Continue through the component.** If every strided pick reads `boundary`, keep walking the
+   component's remaining vertices until one is conclusive or the component is exhausted. On a
+   manifold component this is where the guarantee is actually discharged: `boundary` reads mean the
+   sample sat on shared surface, and any vertex off that shared surface resolves it.
+3. **Constructed interior witness.** If *every* vertex of the component reads `boundary` — possible
+   when the component's entire surface is coincident with the target's — synthesize a point in the
+   component's own interior instead of relying on its surface: take a triangle of the component, and
+   from its centroid step along ±normal by each `offsetLadder` rung, keeping the first probe that
+   `classifyPoint` puts `inside` **the component's own geometry**. That probe is interior to the
+   source by construction, so classifying it against the target decides the component. Try up to
+   `maxWitnessTriangles = 8` triangles before giving up.
+
+Only if all three stages fail is the component unresolved, and a negative result with any unresolved
+component emits `inconclusive-containment`. On a non-manifold-flagged component the same three stages
+run, but no guarantee attaches to their result.
 
 A global `maxContainmentSamples = 512` bounds pathologically over-segmented geometry; hitting it
 emits `incomplete-component-coverage` so an unsampled-component negative is never reported as clean.
@@ -808,7 +905,15 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - a crossing shallower than `minPenetrationDepth` — documented as *not* detected, pinning the
     declared limit so it can't silently drift.
   - a crossing between meshes with **inconsistent/inward-facing winding** — still a crossing,
-    verifying the four-quadrant candidate test doesn't depend on outward normals.
+    verifying the four-quadrant probe test doesn't depend on outward normals.
+  - **two geometries whose BVH leaves overlap but whose triangles do not intersect** (e.g. two combs
+    interleaved without touching) — must report no crossing. Regression test for round 4's assumption
+    that a `bvhcast` callback implies an intersection; without the explicit per-candidate test this
+    reads a stale `targetLine` and can fabricate a crossing. Run it *after* a fixture that populates
+    `targetLine` with a real segment, so stale state would actually be present to be caught.
+  - **swapped operand order under an anisotropic instance scale** — `crossing(A,B)` must equal
+    `crossing(B,A)`. Verifies the canonical ordering makes symmetry structural, and is the fixture
+    that would have caught round 4's non-symmetric `min(diagonal(A), diagonal(B→A))` scale.
 - `ContainmentQuery.classifyPoint` — the three-valued primitive, tested on its own:
   - a point demonstrably inside / demonstrably outside — `inside` / `outside`
   - **a point lying exactly on the interior of a target face** — must return `boundary`, **not**
@@ -839,6 +944,13 @@ refactor can't silently reintroduce a bug an earlier round already found.
     edge-connectivity does *not* separate. Whatever the sampled result, the component must be flagged
     non-manifold and a negative must carry `non-manifold-component`. This fixture pins the honest
     limit rather than asserting a guarantee that doesn't hold.
+  - **a closed solid deep inside the target while sharing one coplanar face with it** — must report
+    contained. Regression test for round 4's fixed 4-sample cap: there is no proper crossing, so the
+    result rests entirely on containment, and if sampling gives up while its picks sit on the shared
+    face a deep overlap is reported as a diagnosed non-overlap. Build the fixture with its shared-face
+    vertices **first in index order**, so a naive "first N vertices" pick provably fails it.
+  - **a component every one of whose vertices lies on the target's surface** — exercises the
+    constructed-interior-witness stage, which is the only stage that can resolve it.
   - a geometry with **more than 8 active ranges** — verifies sample budgeting is coherent (an earlier
     draft's "up to 64 total" and "at least 8 per range" were arithmetically contradictory here)
   - a geometry that exhausts `maxContainmentSamples` — verifies `incomplete-component-coverage` is
@@ -862,7 +974,10 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - the confirmed primary `vb`/`vbstride`/`vblayout` layout
   - standard `attributes.position.array` (non-interleaved `BufferAttribute`)
   - standard `attributes.position.data.array` (real three.js `InterleavedBufferAttribute`) — the
-    layout the previous draft omitted entirely
+    layout the previous draft omitted entirely. Use a **stride greater than 3 with a nonzero position
+    offset** (e.g. position+normal+uv interleaved, position at offset 3), so a mapping that ignores
+    either field produces visibly wrong vertices instead of accidentally passing on a stride-3,
+    offset-0 buffer where every plausible mapping agrees.
   - index via `geometry.index.array` (the correct standard three.js location) — verifying the fixed
     fallback, since the previous draft incorrectly checked `attributes.index.array`
   - `geometry.groups` present vs. absent (verifying the single-synthesized-range fallback)
@@ -916,11 +1031,15 @@ need.
   than the rare one — which would be a materially weaker library than this spec reads as, and would
   warrant revisiting the approach rather than shipping the diagnostics as cover. **Measure this early
   against the acceptance URN**; it is the single most load-bearing unknown in the design.
-- **Cost of the round-4 correctness work is unmeasured.** `closestPointToPoint` on every sample
-  point, an offset ladder multiplying candidate tests by up to 3×, and a connectivity pass per
-  geometry are all new per-query or per-geometry work added since the last performance reasoning was
-  done. None of it is obviously expensive, but "obviously" is doing real work in that sentence and
-  there is still no benchmark suite.
+- **Correctness work has accumulated real, unmeasured cost.** `closestPointToPoint` on every sample
+  point, an offset ladder multiplying probe tests by up to 3×, a connectivity pass per geometry, a
+  triangle-triangle test on every `bvhcast` candidate pair (not just intersecting ones — now known to
+  be every pair in overlapping leaves), and containment sampling that may walk a whole component's
+  vertices before falling back to constructed witnesses. Each was added to fix a real correctness
+  defect and none is obviously expensive, but they compound, and there is still no benchmark suite.
+  The `maxSyncTriangleCount`/`maxCrossingPairsExamined`/`maxContainmentSamples` budgets bound the
+  worst case, so the risk is *latency on realistic input*, not runaway — measure before tuning any of
+  them down.
 - **`InterleavedBufferAttribute` and `drawRange`/`groups`-intersection fixtures are unverified
   against real Viewer output**: the adapter fixes in this revision (index path, interleaved
   fallback, range intersection, `offsets` rejection) are grounded in correct three.js semantics and
@@ -937,7 +1056,8 @@ need.
 - Should `indexOwnership: 'indirect'` become the default once a benchmark suite exists?
 - Does cross-model geometry deduplication matter enough to prioritize once multi-model clash
   detection (a later milestone) is designed?
-- Are `samplesPerComponent = 4`, `maxContainmentSamples = 512`, and
+- Are `samplesPerComponent = 8` (a stride divisor, not a cap — sampling continues past it),
+  `maxWitnessTriangles = 8`, `maxContainmentSamples = 512`, and
   `maxCrossingPairsExamined = 64` the right budgets? All three are provisional. Unlike the previous
   draft's flat 64-point cap, none of them affect *coverage* correctness (component decomposition
   handles that) — they only bound pathological cases, and every truncation is now observable via a
