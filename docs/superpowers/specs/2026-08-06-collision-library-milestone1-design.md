@@ -228,11 +228,23 @@ classic SVF) via Playwright. Full detail in `spike/FINDINGS.md`; the load-bearin
    primitive-range rules two review rounds were spent on are defensive code that reality never
    reaches in this format.
 
-What remains unsettled is **B7 in `spike/FINDINGS.md`**: brute-force point-in-mesh with no BVH at all
-resolved the entire acceptance query in **10.2ms**, because rooms are 12–64 triangles. The BLAS,
-lazy build, sync-triangle ceiling, and cache-eviction machinery are justified for the general
-clash-detection library the idea doc describes, but are not needed by the extension meant to prove
-it. That is a scope decision to make deliberately rather than by momentum.
+10. **The acceptance query needs no acceleration structure at all** (B7). Brute-force point-in-mesh —
+    no BVH, no TLAS, no caching, plain Möller–Trumbore over raw triangle arrays — resolved 1003
+    bathtub vertices against all 14 rooms in **10.2ms**, because Revit rooms here are 12–64
+    triangles and there is nothing meaningful for a tree to prune.
+
+**B7 is settled: the BVH stays.** Milestone 1 builds the general clash-detection library the idea doc
+describes; the room-locator is its first *consumer*, not its design target, and sizing the
+architecture to its cheapest consumer would defeat the milestone's stated purpose.
+
+The measurement still changes something, though, and the spec would be dishonest to keep it as a
+footnote: **it tells us what the acceptance test does not prove.** Passing the room-locator at 64
+triangles per room exercises correctness and nothing else. Every performance claim here —
+`maxSyncTriangleCount`, `maxCandidatePairsExamined`, lazy BLAS building, cache eviction, the
+one-frame budget rule they all derive from — rests on `measure.mjs`'s synthetic geometry, and the one
+real model available exercises none of it. The MEP-scale benchmark is therefore **load-bearing rather
+than optional polish**: it is the only thing that will exercise the machinery this decision keeps.
+See Risks.
 
 ## Purpose
 
@@ -1556,6 +1568,16 @@ need.
   candidate loop, so a dense leaf overlap could run for seconds. Treat "the budgets bound it" as a
   property to re-verify whenever a new traversal is added, not as a standing invariant. The residual
   risk is *latency on realistic input*; measure before tuning any budget down.
+- **The acceptance model cannot validate any of the acceleration machinery** (B7). This is the
+  sharpest consequence of settling B7 in favour of keeping the BVH, and it deserves stating as a risk
+  rather than as a footnote to that decision. Rooms here are 12–64 triangles; brute force resolved
+  the entire query in 10.2ms. So a green acceptance test says the algorithm is *correct* and says
+  nothing whatever about the BLAS cache, the lazy-build yield, `maxSyncTriangleCount`,
+  `maxCandidatePairsExamined`, or eviction — all of which were designed and twice revised against
+  geometry no available model exercises. The specific hazard is mistaking a passing milestone for a
+  validated one, and then tuning budgets on synthetic evidence. **An MEP-scale model is the missing
+  input**, and acquiring one should be treated as a milestone dependency, not as follow-up work: it
+  is the only thing that will exercise what this milestone deliberately chose to build.
 - **`InterleavedBufferAttribute` and `drawRange`/`groups`-intersection fixtures are unverified
   against real Viewer output**: the adapter fixes in this revision (index path, interleaved
   fallback, range intersection, `offsets` rejection) are grounded in correct three.js semantics and
@@ -1568,7 +1590,12 @@ need.
 ## Open Questions Deferred to Future Milestones
 
 - Should the small-geometry brute-force fallback (from the idea doc) be added in this milestone or
-  the next, once real room/fixture triangle counts are measured against the given URN?
+  the next? The spike measured the triangle counts this question was waiting on — rooms are 12–64
+  triangles, and brute force beats a BVH outright at that size (B7). So the fallback is *justified*,
+  not merely plausible. It stays deferred only because the threshold at which it stops winning is
+  unmeasured, and picking one by reasoning is exactly what rounds 5–6 had to undo for the other
+  budgets. The MEP benchmark that makes the retained BVH meaningful is the same benchmark that would
+  set this threshold.
 - ~~Should `indexOwnership: 'indirect'` become the default once a benchmark suite exists?~~
   **Settled by the spike:** welding produces an owned index, so there is no shared Viewer index for
   indirect mode to protect. The option is inapplicable, not merely deferred.

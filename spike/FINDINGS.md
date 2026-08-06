@@ -121,6 +121,14 @@ cache-eviction apparatus is real engineering that this use case does not need. I
 the *general* clash-detection library the idea doc describes; it is over-engineering for the
 extension that is meant to prove it. Worth deciding deliberately rather than by momentum.
 
+> **Decided: the BVH stays.** Milestone 1 builds the general clash-detection library; the
+> room-locator is its first *consumer*, not its design target. So this measurement does not shrink
+> the scope — but it does change what the acceptance test proves. Passing the room-locator at 64
+> triangles per room exercises correctness only, and leaves every performance claim in the spec
+> (`maxSyncTriangleCount`, `maxCandidatePairsExamined`, lazy BLAS build, cache eviction) resting on
+> `measure.mjs`'s synthetic geometry. **The MEP-scale benchmark is therefore load-bearing, not
+> optional polish** — it is the only thing that will exercise the machinery this decision keeps.
+
 ## Reproducing
 
 ```
