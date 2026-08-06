@@ -248,16 +248,30 @@ See Risks.
 
 ## Purpose
 
-Replace the CSG-based collision logic (`ThreeCSG`/BSP boolean operations) in the reference
-[`RoomLocatorExtension.js`](https://gist.githubusercontent.com/yiskang/c568db634e48c917d258716982eb89ba/raw/0c2920e75c2bfb5d39a82ce2ccfbddeeac5f709c/RoomLocatorExtension.js)
-with a real, non-CSG collision engine, and begin implementing the general-purpose client-side
-clash-detection library described in the idea doc. This is **Milestone 1**: the smallest slice of
-that library that is architecturally real (not a bespoke hack) and sufficient to power room
-containment queries in this sandbox app.
+**The deliverable is the general-purpose client-side clash-detection library** described in the idea
+doc. This is **Milestone 1**: the smallest slice of that library that is architecturally real rather
+than a bespoke hack.
 
-The extension keeps **zero collision logic of its own**. All broad-phase filtering, geometry
-normalization, BVH construction, and containment semantics live in the library. The extension is a
-thin Viewer-facing consumer.
+**Migrating [`RoomLocatorExtension.js`](https://gist.githubusercontent.com/yiskang/c568db634e48c917d258716982eb89ba/raw/0c2920e75c2bfb5d39a82ce2ccfbddeeac5f709c/RoomLocatorExtension.js)
+off `ThreeCSG`/BSP is how that slice gets verified**, not a second deliverable competing with it. The
+extension is the worked example: an existing, working, CSG-based implementation with a known-correct
+answer on a real model, which the library must reproduce without CSG. That makes it a far better
+acceptance test than any fixture — it was written against real Revit geometry by someone who wasn't
+designing this library, so it cannot have been shaped to fit.
+
+The direction of the dependency matters and is easy to get backwards. **The library is not sized to
+the extension.** Room geometry is small (12–64 triangles), and treating the extension as the design
+target would argue away the acceleration structures the library exists to provide — see the B7
+discussion above, where exactly that argument was raised and rejected. The extension proves the
+engine is *correct*; separate MEP-scale work proves it is *fast*.
+
+The extension keeps **zero collision logic of its own** — that is what makes it a valid test. All
+broad-phase filtering, geometry normalization, BVH construction, and containment semantics live in
+the library, so a passing room-locator exercises library code paths rather than extension-local
+workarounds. Both of the original's collision stages are replaced: the coarse
+`THREE.Box3.containsBox()` filter becomes the library's broad phase, and the CSG fine check becomes a
+`containment` query. The extension is left holding only Viewer concerns — context menu, selection,
+room lookup, highlighting.
 
 ## Background
 
