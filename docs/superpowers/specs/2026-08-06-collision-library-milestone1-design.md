@@ -206,9 +206,33 @@ three open questions:
    candidate pairs cost ~0.3µs each, making the guessed `maxCandidatePairsExamined = 200_000` a
    ~53ms stall, so it drops to `50_000`.
 
-What the spike does **not** settle: everything about real Model Derivative tessellation. All
-geometry above is synthetic. Whether real Viewer fragments weld into closed manifolds remains the
-single most load-bearing unknown, and needs the acceptance URN.
+**Part B ran the same questions against the live acceptance model** (`racbasicsampleproject.rvt`,
+classic SVF) via Playwright. Full detail in `spike/FINDINGS.md`; the load-bearing results:
+
+4. **The acceptance criterion is met.** `Bathtub-TOTO-Nexus-FBF794S` resolves to **Master Bath 207**
+   — 907 of its 1003 world vertices classify inside that room, and **all 13 other rooms score
+   exactly 0**. No ambiguity.
+5. **`Autodesk.Viewing.Private.THREE` does not exist** — Viewer's THREE is the global `window.THREE`
+   at **r71**. The spec said otherwise throughout; see Architecture for the corrected (and
+   strengthened) isolation argument.
+6. **The bracketed number in a display name is a Revit ElementId, not a dbId** — `[420270]` is
+   dbId **2530**, and querying 420270 returns nothing. See `ViewerModelAdapter`.
+7. **Rooms weld into perfect closed manifolds** (1 component, 0 boundary edges, 0 non-manifold
+   edges). The precondition ray-parity containment depends on **holds for real room geometry** — the
+   spec's biggest risk, resolved favourably.
+8. **Source geometry does not, and that broke a round-6 rule.** The bathtub welds to 14 components
+   with 441 boundary edges, so "flag any positive decided by an open component" would have fired on
+   essentially every query. Corrected in `anyComponentInside`.
+9. **Real SVF exercises none of the fallback machinery**: 100% of fragments took the `vb`/`vbstride`
+   branch with `ib` indices; `groups`, `drawRange`, and `offsets` were absent everywhere. The
+   primitive-range rules two review rounds were spent on are defensive code that reality never
+   reaches in this format.
+
+What remains unsettled is **B7 in `spike/FINDINGS.md`**: brute-force point-in-mesh with no BVH at all
+resolved the entire acceptance query in **10.2ms**, because rooms are 12–64 triangles. The BLAS,
+lazy build, sync-triangle ceiling, and cache-eviction machinery are justified for the general
+clash-detection library the idea doc describes, but are not needed by the extension meant to prove
+it. That is a scope decision to make deliberately rather than by momentum.
 
 ## Purpose
 
@@ -275,12 +299,29 @@ extend the same method signatures rather than replacing them.
 
 ## Architecture
 
-**Runtime split.** Two isolated THREE.js worlds, per the idea doc. Viewer keeps its bundled THREE
-(`Autodesk.Viewing.Private.THREE`) for rendering. The collision library uses its own modern `three`
-+ `three-mesh-bvh`, loaded via a browser import map, and never assigns to `window.THREE` /
-`globalThis.THREE` / `Autodesk.Viewing.Private.THREE`, and never patches Viewer THREE prototypes.
-The two sides exchange only TypedArrays, plain numeric matrices, and packed bounds — never shared
-class instances (`Mesh`, `Vector3`, `Matrix4`, `Box3`).
+**Runtime split.** Two isolated THREE.js worlds, per the idea doc.
+
+**Viewer's THREE is the global `window.THREE`, at revision 71.** Earlier drafts said
+`Autodesk.Viewing.Private.THREE` throughout; the spike proved that path does not exist in Viewer
+7.124.2 — reading it returns `undefined`. The correction makes isolation *more* critical, not less,
+and for a sharper reason than the original text gave:
+
+- The global is **already occupied by Viewer**. The rule is not "don't pollute a free global," it is
+  "**don't clobber Viewer's r71 and break rendering**." A UMD/classic-script build of modern three
+  would do exactly that, which is why only ESM is acceptable here.
+- r71 against the pinned r185 is a ~114-revision gap, and `three-mesh-bvh@0.9.14` requires
+  `three >= 0.159.0`. Sharing one runtime is not merely inadvisable — it is impossible. The
+  two-runtime design is vindicated rather than merely cautious.
+
+So: the collision library uses its own modern `three` + `three-mesh-bvh` loaded via import map, never
+assigns to `window.THREE` / `globalThis.THREE`, and never patches Viewer THREE prototypes. The two
+sides exchange only TypedArrays, plain numeric matrices, and packed bounds — never shared class
+instances (`Mesh`, `Vector3`, `Matrix4`, `Box3`), which across a 114-revision gap would be
+incompatible even where the class names match.
+
+The acceptance test the idea doc proposed is still exactly right, with one correction: assert
+`window.THREE.REVISION === '71'` before and after loading the collision runtime — *unchanged*, not
+*absent*.
 
 **Repo layout** (this is a single-app sandbox with no bundler — plain `<script type="module">`,
 no monorepo):
@@ -352,7 +393,15 @@ is exactly the mechanism that keeps it bound to the *collision* THREE and never 
 - Leaf fragments: `model.getInstanceTree().enumNodeFragments(dbId, cb, true)`. This is the real
   Viewer API — `getLeafFragIds` (used by the original gist) is not a built-in method, it's a
   community convention wrapping this call. `recursive: true` is required to cover assembly/parent
-  dbIds, not just true leaf nodes.
+  dbIds, not just true leaf nodes — confirmed on the acceptance model, where the family node
+  (dbId 2527) yields its child instance's fragment only with the flag set.
+- **The bracketed number in a display name is a Revit ElementId, not a dbId.** The acceptance
+  element `Bathtub-TOTO-Nexus-FBF794S [420270]` has **dbId 2530**; calling
+  `enumNodeFragments(420270, …, true)` returns an empty array. The number users read off the Model
+  Browser — and the one in this spec's own acceptance criterion — is not addressable by the fragment
+  APIs. Any code path that accepts an element identifier from a human must resolve it (by name
+  search or property lookup) rather than passing it straight through, or it will silently find
+  nothing. This spike hit exactly that.
 - World matrix: `fragList.getWorldMatrix(fragId, matrix)`.
 - World bounds: `fragList.getWorldBounds(fragId, box)` (available directly on `FragmentList`, no
   need to go through the render proxy).
@@ -785,9 +834,25 @@ sampling the right decomposition:
 > returns true, and round 5 reported a *clean* clash with no diagnostic at all. Containment can
 > establish positive volume only for a component certified closed (see **Solid model**). So:
 >
-> - a **positive** result whose deciding component is open or non-manifold emits
+> - a **positive** result whose deciding component encloses no volume emits
 >   `unverified-open-component` — the containment is real, the *volume* overlap is not certified;
 > - a **negative** result involving any flagged component emits `non-manifold-component`.
+>
+> **The positive rule is scoped to genuinely degenerate components, not merely open ones — the
+> spike forced this correction.** Round 6 wrote "open or non-manifold," reasoning from a zero-volume
+> single triangle. Measured against the acceptance model, the bathtub welds to 14 components with
+> 441 boundary edges and 5 non-manifold edges: **real furniture is never a closed solid**, so that
+> rule would have fired on virtually every query, making the diagnostic noise and training callers to
+> ignore diagnostics altogether. A 441-boundary-edge bathtub is a nearly-closed solid, not a sheet.
+>
+> What actually matters is *which side* is open, a distinction round 6 missed entirely:
+> - **target open** → ray parity is unreliable, because parity is evaluated against the target.
+>   Serious; this is what `non-manifold-component` is for.
+> - **source open** → parity is still evaluated against a closed target, so "is this point inside the
+>   room" stays well-posed. Common, and benign for containment.
+>
+> Measured on the acceptance model: **every room welds to a perfect closed manifold** (1 component,
+> 0 boundary edges, 0 non-manifold edges), so the side that must be closed is closed.
 >
 > The positive is still reported as true rather than suppressed. For the room-locator that is the
 > useful answer — an open-shell fixture inside a room should be located in that room — and the
@@ -1246,14 +1311,14 @@ need.
   correctness but inflates sample counts, and is the most likely trigger for
   `incomplete-component-coverage` on real models — worth measuring early, since it determines whether
   `maxContainmentSamples = 512` is comfortable or tight.
-- **How often is real Viewer geometry weldable into closed manifolds?** Still the single most
-  load-bearing unknown, but the spike narrowed it usefully. Synthetic tessellation is *never*
-  manifold before welding and *always* manifold after (for closed primitives), so the question is no
-  longer "is tessellated geometry manifold" — it demonstrably isn't — but "does welding rescue
-  **Model Derivative's** tessellation the way it rescues three.js's." If it does not, `volume-overlap`
-  is best-effort in the common case rather than the rare one, and the approach needs revisiting
-  rather than shipping diagnostics as cover. **Measure against the acceptance URN before building
-  anything on top of it.**
+- ~~**How often is real Viewer geometry weldable into closed manifolds?**~~ **Answered by spike
+  Part B, favourably for the side that matters.** Real SVF arrives as fully unwelded triangle soup
+  (raw component count *equals* triangle count), and welding rescues it: every room tested welds to
+  1 component with 0 boundary and 0 non-manifold edges. Since ray parity is evaluated against the
+  *target*, and targets here are rooms, the precondition holds. Source geometry (the bathtub: 14
+  components, 441 boundary edges) does not weld closed, but does not need to — see
+  `anyComponentInside`. Residual risk is that this is **one model**; a federated or MEP-heavy model
+  could differ, so the check is worth repeating rather than assuming settled.
 - **Welding tolerance is unexamined.** The spike used `mergeVertices`'s default position epsilon on
   clean synthetic geometry. Real tessellation may have seams that are near-coincident rather than
   exactly coincident, where too tight an epsilon fails to weld (fragmenting components again) and too
