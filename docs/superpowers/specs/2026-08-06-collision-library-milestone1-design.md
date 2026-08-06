@@ -173,6 +173,43 @@ fixes what it exposes:
   this spec's own claim that the budgets bound the worst case. A raw-candidate budget with an abort
   protocol now backs that claim up.
 
+## Spike Findings (executable, `spike/`)
+
+After six review rounds, the remaining questions were ones no amount of reading could
+settle. `spike/geometry-core.mjs` implements the primitives below against real
+`three@0.185.1` / `three-mesh-bvh@0.9.14`; `spike/fixtures.mjs` runs every regression case the
+review rounds produced (`node spike/fixtures.mjs` — 20/20 pass); `spike/measure.mjs` replaces the
+guessed constants with measured ones. It found two defects that no review round caught, and settled
+three open questions:
+
+1. **Local-axis ray directions are pathological for BIM geometry.** The spec said "local +X first,
+   local +Y on retry." A ray along a local axis from a symmetric point inside an axis-aligned box
+   strikes the exact *centre* of a face — which is precisely where `BoxGeometry` splits its two
+   triangles — so every hit grazes a diagonal, both retries graze, and the point returns `boundary`.
+   The centre of a box classified as boundary. Axis-aligned boxes being most of what BIM contains,
+   this would have failed pervasively and silently. **Fixed:** generic non-axis-aligned directions.
+2. **Vertex welding is mandatory, not the optional future "repair" the spec deferred.** Unwelded,
+   index-based connectivity splits a plain `BoxGeometry` into **6 components** with every edge a
+   boundary edge; a cylinder into **49**. `closedManifold` is false for the simplest solid there is,
+   so the containment guarantee would never once have held. Welding rescues every closed primitive
+   tested (box, sphere, cylinder, cone, torus → 1 component, closed manifold). **Fixed:** welding is
+   now a required normalization step.
+   - The reason `mergeVertices` appears not to work is that it compares *all* attributes, and
+     per-face normals/uvs make every vertex unique. Stripping to position-only first is what makes
+     welding possible — so the spec's "don't copy rendering attributes" rule, written for memory,
+     turns out to be **load-bearing for correctness**.
+   - This invalidates the zero-copy position strategy (see `ThreeMeshBvhBackend`) — but welding
+     *shrinks* geometry by ~23% on average (box 24→8 vertices, cylinder 148→50), so an owned welded
+     buffer costs less than the shared one would have, not more.
+3. **Measured budgets replace guessed ones** (see Tolerances/budgets): BVH build is ~16ms at 18k
+   triangles, validating `maxSyncTriangleCount = 20_000` as roughly a one-frame ceiling; raw
+   candidate pairs cost ~0.3µs each, making the guessed `maxCandidatePairsExamined = 200_000` a
+   ~53ms stall, so it drops to `50_000`.
+
+What the spike does **not** settle: everything about real Model Derivative tessellation. All
+geometry above is synthetic. Whether real Viewer fragments weld into closed manifolds remains the
+single most load-bearing unknown, and needs the acceptance URN.
+
 ## Purpose
 
 Replace the CSG-based collision logic (`ThreeCSG`/BSP boolean operations) in the reference
@@ -392,9 +429,18 @@ amortization argument that motivates per-geometry BLAS applies unchanged to conn
 Cross-model geometry sharing is out of scope for this milestone.
 
 **`ThreeMeshBvhBackend` / `BlasCache`** — builds one `MeshBVH` per `GeometryRecord`, lazily, on
-first use. Position: shared/zero-copy interleaved buffer. Index: **cloned**
-(`viewerIndex.slice()`), not indirect — the idea doc's own first-version recommendation, simplest
-to reason about without a benchmark suite yet to justify indirect mode. The private collision
+first use, over the **welded** collision geometry.
+
+**Position is an owned welded buffer, not a zero-copy view of Viewer's.** This reverses the idea
+doc's "prefer sharing the original Viewer position buffer / target: zero-copy" guidance, because
+welding necessarily produces a new, deduplicated vertex array — and welding is what makes
+connectivity, manifold classification, and therefore the containment guarantee work at all (see
+above). The memory argument that motivated zero-copy does not survive measurement either: welding
+*shrinks* geometry by ~23% on average across the primitives tested (box 24→8 vertices, cylinder
+148→50), so an owned welded buffer is typically **smaller** than the shared one it replaces. Index is
+likewise owned, produced by the weld. `indexOwnership: 'clone'` remains the only supported value, and
+`'indirect'` is now not merely unimplemented but inapplicable — indirect mode exists to avoid
+reordering a *shared* index, and there is no longer a shared index to protect. The private collision
 `BufferGeometry` handed to `MeshBVH` must have its `groups` (or `drawRange`) set from the adapter's
 normalized `ranges`, not just the raw index buffer — `MeshBVH` only excludes out-of-range triangles
 when the geometry it's given is configured with the correct range, so skipping this would let
@@ -510,7 +556,22 @@ side and even-odd on the target side, and that asymmetry is intentional — the 
 vertices being inside a target proves contact, not overlap. See `anyComponentInside` for how that is
 reported.
 
-**`GeometryConnectivity`** (new) — decomposes a normalized geometry into connected components by
+**Vertex welding is a required normalization step, not an optional repair.** Earlier drafts deferred
+"welding coincident vertices" to a future milestone as a possible improvement. The spike showed it is
+a precondition for the design working at all: tessellators emit per-face vertices (a `BoxGeometry`
+has 24 vertices for 8 corners, because each face carries its own normals and uvs), so index-based
+connectivity on raw geometry splits **a plain box into 6 components with every edge a boundary
+edge** — and a cylinder into 49. `closedManifold` would be false for every solid, and the containment
+guarantee would never hold once. After welding, every closed primitive tested collapses to one closed
+manifold component.
+
+So `ViewerGeometryAdapter`'s output is welded before connectivity or BVH construction:
+strip to **position + index only**, then merge vertices coincident within a position epsilon. The
+strip must come first — `mergeVertices` compares all attributes, and per-face normals make every
+vertex unique, so welding a full-attribute geometry silently does nothing. That makes the idea doc's
+"do not copy rendering attributes" rule (written to save memory) **load-bearing for correctness**.
+
+**`GeometryConnectivity`** (new) — decomposes the welded geometry into connected components by
 union-find over triangles that share an **edge** (two vertex indices), restricted to the active
 triangle ranges. Computed **once per unique `GeometryRecord`** and cached alongside the BLAS (not per
 query, not per pair), so its cost amortizes exactly like BVH construction does. Building the edge map
@@ -611,7 +672,7 @@ milestone replaces, not merely an imprecision.
    the expensive failure mode isn't the one round 5 bounded:
    - `maxCrossingPairsExamined = 64` counts **confirmed intersecting non-coplanar pairs** — the ones
      that reach probe classification. Coplanar pairs don't consume it; they're decided, not deferred.
-   - `maxCandidatePairsExamined = 200_000` counts **raw candidate pairs** entering the callback.
+   - `maxCandidatePairsExamined = 50_000` counts **raw candidate pairs** entering the callback.
      Round 5 explicitly exempted these on the grounds that each costs "only a triangle-triangle
      test," which a review pass correctly rejected: two sub-`maxSyncTriangleCount` meshes with
      heavily overlapping leaves and **no intersections at all** never consume the confirmed-pair
@@ -629,6 +690,19 @@ milestone replaces, not merely an imprecision.
    Chunked or off-thread traversal is the real fix for large overlaps and is deliberately out of
    scope here (Workers are excluded from this milestone); the budget converts an unbounded freeze
    into a bounded one plus an honest diagnostic.
+
+   **The budgets share one principle: no synchronous step should exceed roughly one frame (~16ms).**
+   Earlier drafts picked each constant independently by reasoning; the spike measured them and they
+   are now derived from that single rule, which is also what makes them reviewable:
+
+   | Budget | Measured cost | Value | Blocking |
+   |---|---|---|---|
+   | `maxSyncTriangleCount` | ~16ms to build a BVH at 18k triangles | `20_000` | ~1 frame |
+   | `maxCandidatePairsExamined` | ~0.3µs per candidate pair | `50_000` | ~15ms, ~1 frame |
+
+   The previously-guessed `200_000` corresponds to ~53ms — three-plus dropped frames — which is why
+   it drops to `50_000`. `maxSyncTriangleCount = 20_000` was a lucky guess and survives measurement
+   unchanged.
 
 **`ContainmentQuery`** — point classification against a mesh. It exposes **two layers**, and keeping
 them distinct is what stops the design from being circular:
@@ -657,10 +731,17 @@ come back out as `volume-overlap`, exactly the behavior round 3 existed to elimi
 2. **Parity test**, in the target BVH's own local space throughout:
    - Cast with `THREE.DoubleSide` explicitly. `MeshBVH.raycast` defaults to front-face-only, which
      silently breaks parity counting — a back-facing crossing wouldn't register.
-   - Ray directions are **local-frame axes of the target BVH** (local +X first, local +Y on retry),
-     not world axes. A world axis would need transforming into the target's frame under any rotated
-     or scaled instance transform; choosing the direction in the target's own frame avoids the
-     conversion rather than specifying it.
+   - Ray directions are **generic (non-axis-aligned) directions in the target BVH's local frame** —
+     three of them, tried in order, e.g. `normalize(1, 0.3178, 0.1234)`, `normalize(0.2189, 1,
+     0.4567)`, `normalize(0.4321, 0.1357, 1)`. Local-frame (not world) because a world axis would
+     need transforming into the target's frame under any rotated or scaled instance transform.
+     **Non-axis-aligned because the spike proved axis directions are pathological here**: a ray
+     along local +X from a symmetric interior point of an axis-aligned box hits the exact centre of a
+     face, which is exactly where the two triangles of that face meet, so the hit grazes their shared
+     diagonal; +Y then does the same; both retries graze and the box's own centre returns `boundary`.
+     BIM is largely axis-aligned boxes, so this failed on the very first fixture and would have
+     failed pervasively in production. Directions with no rational relationship to each other or to
+     the axes don't systematically align with mesh features.
    - **Sort hits by distance, then** collapse runs closer together than `mergeDistance` into a single
      crossing before counting parity. This handles genuinely coincident *surfaces* — duplicated
      triangles, double-sided wall geometry — where two distinct triangles are hit at the same
@@ -1165,12 +1246,18 @@ need.
   correctness but inflates sample counts, and is the most likely trigger for
   `incomplete-component-coverage` on real models — worth measuring early, since it determines whether
   `maxContainmentSamples = 512` is comfortable or tight.
-- **How often is real Viewer geometry non-manifold?** The containment guarantee is conditioned on
-  manifold components, and Model Derivative tessellation makes no such promise. If a large share of
-  real fragments come back flagged, then `volume-overlap` is best-effort in the common case rather
-  than the rare one — which would be a materially weaker library than this spec reads as, and would
-  warrant revisiting the approach rather than shipping the diagnostics as cover. **Measure this early
-  against the acceptance URN**; it is the single most load-bearing unknown in the design.
+- **How often is real Viewer geometry weldable into closed manifolds?** Still the single most
+  load-bearing unknown, but the spike narrowed it usefully. Synthetic tessellation is *never*
+  manifold before welding and *always* manifold after (for closed primitives), so the question is no
+  longer "is tessellated geometry manifold" — it demonstrably isn't — but "does welding rescue
+  **Model Derivative's** tessellation the way it rescues three.js's." If it does not, `volume-overlap`
+  is best-effort in the common case rather than the rare one, and the approach needs revisiting
+  rather than shipping diagnostics as cover. **Measure against the acceptance URN before building
+  anything on top of it.**
+- **Welding tolerance is unexamined.** The spike used `mergeVertices`'s default position epsilon on
+  clean synthetic geometry. Real tessellation may have seams that are near-coincident rather than
+  exactly coincident, where too tight an epsilon fails to weld (fragmenting components again) and too
+  loose collapses genuinely distinct features. This is now a first-order parameter, not a detail.
 - **Correctness work has accumulated real, unmeasured cost.** `closestPointToPoint` on every sample
   point, an offset ladder multiplying probe tests by up to 3×, a connectivity pass per geometry, a
   triangle-triangle test on every `bvhcast` candidate pair (not just intersecting ones — now known to
@@ -1195,7 +1282,11 @@ need.
 
 - Should the small-geometry brute-force fallback (from the idea doc) be added in this milestone or
   the next, once real room/fixture triangle counts are measured against the given URN?
-- Should `indexOwnership: 'indirect'` become the default once a benchmark suite exists?
+- ~~Should `indexOwnership: 'indirect'` become the default once a benchmark suite exists?~~
+  **Settled by the spike:** welding produces an owned index, so there is no shared Viewer index for
+  indirect mode to protect. The option is inapplicable, not merely deferred.
+- ~~Should non-manifold components attempt repair (welding coincident vertices)?~~ **Settled by the
+  spike:** not optional — nothing works without it. Promoted to a required normalization step.
 - Does cross-model geometry deduplication matter enough to prioritize once multi-model clash
   detection (a later milestone) is designed?
 - Is even-odd the right solid model for real Viewer geometry? It is chosen for pipes/containers and
@@ -1203,19 +1294,14 @@ need.
   Derivative emits separate solids as separate fragments rather than nested shells within one
   geometry is **reasoned, not measured** — check it against the acceptance URN, since if nested
   independent solids turn out to be common the tradeoff inverts.
-- Are `samplesPerComponent = 8` (a stride divisor, not a cap — sampling continues past it),
-  `maxWitnessTriangles = 8`, `maxCandidatePairsExamined = 200_000`, `maxContainmentSamples = 512`,
-  and
-  `maxCrossingPairsExamined = 64` the right budgets? All three are provisional. Unlike the previous
-  draft's flat 64-point cap, none of them affect *coverage* correctness (component decomposition
-  handles that) — they only bound pathological cases, and every truncation is now observable via a
-  diagnostic. That makes them tunable from real telemetry rather than guesswork, but they still need
-  real measurement.
-- Is `maxSyncTriangleCount = 20,000` the right threshold before a geometry is skipped rather than
-  built synchronously? It's a provisional default, not a benchmarked one (see
-  `ThreeMeshBvhBackend`/`BlasCache`) — needs real measurement against the given URN and, if rooms or
-  fixtures routinely exceed it, either a higher threshold or real incremental/Worker construction
-  becomes a near-term (not indefinitely deferred) need rather than a future-milestone nicety.
+- `maxSyncTriangleCount = 20_000` and `maxCandidatePairsExamined = 50_000` are now **measured**
+  against the one-frame principle (see `ProperCrossingQuery`), not guessed. Remaining question is
+  whether real rooms/fixtures routinely exceed the triangle ceiling — if they do, incremental or
+  Worker construction becomes near-term rather than a future-milestone nicety.
+- `samplesPerComponent = 8` (a stride divisor, not a cap — sampling continues past it),
+  `maxWitnessTriangles = 8`, and `maxContainmentSamples = 512` remain provisional. None affects
+  *coverage* correctness (component decomposition handles that) — they only bound pathological
+  cases, and every truncation is observable via a diagnostic, so they're tunable from telemetry.
 - Now that `ProperCrossingQuery` exists, a `touching` mode is nearly free (it's
   `SurfaceIntersectionQuery AND NOT ProperCrossingQuery`, both already implemented). Should the
   deferred `touching` mode be pulled forward into this milestone, or does adding a third public mode
@@ -1231,7 +1317,7 @@ need.
   `model.id`? Unconfirmed whether `model.id` is ever reused across distinct loads. `evictModel()`
   makes this survivable *if* the removal event always fires; the open question is whether it can be
   missed.
-- Should non-manifold components attempt repair (welding coincident vertices before connectivity) so
-  the containment guarantee covers more real geometry, rather than only being flagged? That's a
-  meaningful chunk of mesh-processing work and is deliberately not in this milestone — but if the
-  measurement above shows most real fragments are flagged, it stops being optional.
+- Beyond welding, should components that are *still* non-manifold after it attempt further repair
+  (hole filling, seam stitching)? Welding is now mandatory and handles the per-face-vertex case,
+  which the spike showed is the dominant one; genuinely open shells are a separate and much smaller
+  problem, deliberately left to the diagnostics for this milestone.
