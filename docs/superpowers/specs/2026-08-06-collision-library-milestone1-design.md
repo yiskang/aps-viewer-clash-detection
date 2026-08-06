@@ -152,9 +152,11 @@ or BSP tree construction.
 
 ## Data Flow — Room Locate Query
 
-1. On `load()`, the extension resolves room dbIds once via
-   `viewer.search(roomCategoryName, onSuccess, onError, ['Category'], { searchHidden: true })`
-   (default `roomCategoryName: 'Revit Rooms'`), cached for the extension's lifetime.
+1. On `load()`, the extension calls `CollisionWorld.fromViewer(viewer, options)` (this only
+   constructs the world — it does not build any `CollisionInstance`s or BLAS yet) and resolves room
+   dbIds once via `viewer.search(roomCategoryName, onSuccess, onError, ['Category'],
+   { searchHidden: true })` (default `roomCategoryName: 'Revit Rooms'`), cached for the extension's
+   lifetime.
 2. On a locate request: `world.findClashes({ source: { model, dbIds: [dbId] }, target: { model,
    dbIds: roomDbIds }, mode: 'volume-overlap', groupBy: 'dbId' })`.
 3. Inside `CollisionWorld.findClashes`:
@@ -173,7 +175,9 @@ or BSP tree construction.
 ```ts
 CollisionWorld.fromViewer(viewer, options): Promise<CollisionWorld>
 // options: { model?, narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' }
-// both narrowPhase and indexOwnership are fixed in Milestone 1 — one backend, one strategy
+// narrowPhase/indexOwnership are accepted for forward compatibility with the idea doc's
+// eventual multi-backend API, but only one value each is implemented in Milestone 1 —
+// passing any other value throws.
 
 world.findClashes(query): Promise<ClashResult>
 // query.mode: 'volume-overlap' | 'surface-intersection'
