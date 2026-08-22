@@ -38,6 +38,7 @@ function setupUrnInput(viewer) {
         const urn = await openModelPicker(browseButton);
         if (urn) {
             input.value = urn;
+            request(urn);
         }
     };
 
