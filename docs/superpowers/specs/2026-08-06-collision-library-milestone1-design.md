@@ -1,9 +1,11 @@
 # Collision Library — Milestone 1: Core Slice + RoomLocatorExtension
 
-Status: revised after sixteen rounds of codex review (see `review-coments.md`, `review-comments-v2.md`
-… `review-comments-v16.md` in this directory), pending round-17 re-review. Rounds 10–16's combined
-10 High findings (stable since round 10, one new in round 13) are recorded in `review-comments-v10.md`
-through `review-comments-v16.md` and intentionally deferred, not yet applied.
+Status: revised after seventeen rounds of codex review (see `review-coments.md`, `review-comments-v2.md`
+… `review-comments-v17.md` in this directory), pending round-18 re-review. Rounds 10–17's combined
+High findings (stable since round 10, one new in round 13) are recorded in `review-comments-v10.md`
+through `review-comments-v17.md` and intentionally deferred, not yet applied — except the one stale-
+wording item round 17 named directly (`volume-overlap`'s performance-gate connectivity wording), fixed
+alongside round 17's Critical.
 Date: 2026-08-06
 Related: [`docs/ideas/aps-viewer-clash-detection-library-idea.md`](../../ideas/aps-viewer-clash-detection-library-idea.md)
 
@@ -454,6 +456,49 @@ in the same extraction/build pipeline round 15 had just touched.
   count. Welding, connectivity, and BVH construction all run over this same compacted buffer — none ever
   sees an out-of-range triangle, which also retired the previous "set `groups`/`drawRange` on the BVH
   input" workaround as unnecessary. See **`ThreeMeshBvhBackend`/`BlasCache`**.
+
+### Round 17 (1 Critical — round 16's own extraction fix still claimed an unverified bound; fixed by
+narrowing the claim honestly rather than inventing a mechanism the API doesn't have; 1 directly related
+stale-wording fix in the performance gate)
+
+- **`maxFragmentsPerDbId` was still described as bounding a single node's own `enumNodeFragments` call,
+  and it doesn't.** Round 16's node-by-node walk correctly stops *between* nodes once the running tally
+  crosses the ceiling — but each node's own `enumNodeFragments(node, cb, /* recursive */ false)` call is
+  one opaque native call, and a single pathological node that directly owns, say, 100,000 fragments still
+  enumerates all of them synchronously before that node's contribution to the tally is even known. This is
+  the same class of bug round 16 fixed, one level down: round 15 bounded "the whole subtree" only after
+  the fact; round 16 bounded that down to "one node's contribution" only after the fact. Verified this
+  round, via the `aps-viewer-implementation-research` skill against the official Reference Guide (not
+  typings alone, per instruction) — `getChildCount(dbId)`/`getChildCount(node)` is documented on both the
+  deprecated `InstanceTree` class and its replacement `Autodesk.Viewing.ObjectTree` as "Get number of
+  children under the specified id," returned without enumerating those children. **No equivalent exists
+  for fragments on either class.** `ObjectTree`'s documented enumeration method isn't even named
+  `enumNodeFragments` — it's `enumNodeInstances(node, callback, recursive)` — and neither its
+  documentation nor `InstanceTree`'s describes any way to learn a node's direct fragment/instance count
+  without enumerating them. Per the standing instruction from the round-16 fix ("if no such mechanism
+  exists, narrow the Milestone-1 contract honestly rather than inventing an unenforceable hard bound"),
+  the fix narrows rather than invents:
+  - `getChildCount(node)` (verified, both classes) is now the explicit, normative preflight before every
+    `enumNodeChildren` call — not merely "useful where cheap" as round 16's wording had it — since it *is*
+    a verified O(1)-shaped check the walk can and should perform before fanning out.
+  - `maxFragmentsPerDbId` and the self-driven walk are re-described for what they actually bound: **total
+    work across the walk, via early termination between nodes** — not the cost of any single node's own
+    `enumNodeFragments` call.
+  - One non-recursive `enumNodeFragments(node, cb, false)` call is now named explicitly as an accepted,
+    non-preemptible atomic risk for Milestone 1 — the same category `maxSyncTriangleCount`'s three phases
+    already occupy, with no known preflight, added to the atomic-operations table and the performance gate
+    so its real worst-case cost gets measured rather than assumed away.
+  - Noted, not acted on (out of this fix's scope): the official Reference Guide documents `InstanceTree`
+    itself as deprecated in favor of `ObjectTree`, which doesn't expose `enumNodeFragments` at all. The
+    installed typings this spec was written against still define `InstanceTree`/`enumNodeFragments`, so
+    the extraction contract keeps using them; the deprecation is recorded here as a fact to revisit at
+    implementation time, not a reason to redesign extraction against `ObjectTree` now.
+  See **Data Flow** step 3, the atomic-operations table under **`ProperCrossingQuery`**'s budgets,
+  **Error Handling & Edge Cases**, and the performance gate.
+- **Stale wording in the performance gate still said `volume-overlap` excludes connectivity**, left over
+  from before round 16's fix to the opposite fact (both `containment` and `volume-overlap` require
+  connectivity; only `surface-intersection` doesn't). Corrected the gate's cold-run-distinction bullet to
+  match.
 
 ## Spike Findings (executable, `spike/`)
 
@@ -1331,7 +1376,8 @@ milestone replaces, not merely an imprecision.
    | `maxSyncTriangleCount` — **BVH phase** | **Measured** (Spike Findings): ~16ms to build a BVH at 18k triangles | `12_000` | Non-preemptible; the one phase every mode needs. Own checkpoint, before it starts. |
    | `maxCandidatePairsExamined` | **Measured**: ~0.3µs per raw candidate pair | `50_000` | Raw `bvhcast` candidate rejection — checked at callback entry, adequate at that granularity since the cost itself is tiny. |
    | one probe / one `classifyPoint` call | **Reasoned, not yet measured**: a BVH raycast against a ≤`maxSyncTriangleCount`-triangle mesh is `O(log n)` traversal, expected sub-millisecond — orders of magnitude below a frame | — | Checked before every occurrence (see the round-11 fixes below); the *composition* of many such calls is what `frameBudgetMs` bounds, not any single call's own cost. |
-   | `maxFragmentsPerDbId` | **Reasoned, not yet measured**: extraction walks the node tree itself via `enumNodeChildren`/non-recursive `enumNodeFragments` (round 16 — not the single recursive call round 15 assumed), so cost is bounded by the ceiling itself, not by subtree size | `5_000` (provisional) | Aborts one dbId's extraction walk **as soon as** its running fragment tally crosses this — not after a full recursive enumeration completes — then rejects the whole `findClashes` call, before any broad/narrow-phase work. See **Data Flow** step 3. |
+   | `maxFragmentsPerDbId` | **Reasoned, not yet measured**: extraction walks the node tree itself via `getChildCount`-gated `enumNodeChildren`/non-recursive `enumNodeFragments` (round 16 mechanism; round 17 added the `getChildCount` preflight and corrected what the ceiling actually bounds) | `5_000` (provisional) | Bounds **cumulative work across the walk only** — aborts one dbId's extraction walk, between nodes, **as soon as** its running fragment tally crosses this, rather than after a full recursive enumeration completes. Round 17: does **not** bound any single node's own `enumNodeFragments` call — see the row below. See **Data Flow** step 3. |
+   | one `enumNodeFragments(node, cb, false)` call (one node's own direct fragments) | **Round 17, reasoned, not yet measured; no verified preflight or abort mechanism exists** — confirmed via the official Reference Guide (`InstanceTree` and its replacement `ObjectTree`) that no fragment/instance-count equivalent to `getChildCount` exists, and neither class documents a way to interrupt or bound one enumeration call | — (no ceiling; accepted atomic risk) | **Non-preemptible, same category as the three `maxSyncTriangleCount` phases** — `maxFragmentsPerDbId`'s tally check only runs *between* nodes, never inside this call, so a single node with a pathologically large direct fragment count is an accepted Milestone-1 risk, not a bounded one. Its real worst-case cost must be measured by the performance gate rather than assumed negligible. See **Data Flow** step 3. |
    | `maxBroadPhaseInstancePairs` | **Reasoned, not yet measured**: one AABB-overlap test is O(µs); the scan itself is the O(sourceCount×targetCount) concern, not any single comparison | `1_000_000` (provisional) | Rejects the whole `findClashes` call, before the nested AABB scan begins, if `sourceInstances.length × targetInstances.length` would exceed this — checked via overflow-safe division (`sourceCount > ceiling / targetCount`), not multiplication. See **Data Flow** step 3. |
 
    The previously-guessed `200_000` for `maxCandidatePairsExamined` corresponds to ~53ms — three-plus
@@ -1875,26 +1921,48 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
      outside, so a `maxFragmentsPerDbId` check performed *after* that call returns only detects an overrun
      once the freeze it was meant to prevent has already happened. The fix does not use the recursive
      form at all: `InstanceTree` also exposes `enumNodeChildren(node, cb, recursive?)` and `getChildCount(dbId)`
-     (confirmed present in the installed `@types/forge-viewer` typings — `index.d.ts:667-669` — alongside
-     `enumNodeFragments`'s own non-recursive form, `enumNodeFragments(node, cb, false)`; their exact
-     runtime cost characteristics are unverified until implementation, consistent with this spec's
-     practice of citing exactly what a `.d.ts` alone can confirm). Extraction walks the node tree itself,
-     depth-first, using these non-recursive primitives:
-     - at each node, call `enumNodeFragments(node, cb, /* recursive */ false)` to collect *that node's
-       own* fragments (not its descendants') and add the count to a running per-dbId tally;
+     (confirmed present in the installed `@types/forge-viewer` typings — `index.d.ts:667-669`, alongside
+     `enumNodeFragments`'s own non-recursive form, `enumNodeFragments(node, cb, false)`). Extraction walks
+     the node tree itself, depth-first, using these non-recursive primitives:
+     - at each node, first call `getChildCount(node)` — **round 17 verified this directly against the
+       official Reference Guide** (not typings alone), which documents it on both `InstanceTree` and its
+       replacement `Autodesk.Viewing.ObjectTree` as returning the node's child count without enumerating
+       them. This is now a **normative preflight, required before every `enumNodeChildren` call**, not an
+       optional cheap check — it's how the walk avoids fanning out into a node with a pathologically large
+       direct-child count before committing to enumerate them;
+     - call `enumNodeFragments(node, cb, /* recursive */ false)` to collect *that node's own* fragments
+       (not its descendants') and add the count to a running per-dbId tally;
      - check the tally against `maxFragmentsPerDbId` (`5_000`, provisional) after every node's
        contribution — **the moment it's exceeded, the walk stops immediately** (no further
        `enumNodeChildren`/`enumNodeFragments` calls for that dbId's remaining subtree) and the entire
        `findClashes` call rejects, naming the offending dbId;
      - otherwise, descend into children one at a time via `enumNodeChildren(node, cb, /* recursive */
-       false)` (using `getChildCount(dbId)` where a cheap pre-check on branching factor is useful) and
-       recurse the same way.
-     This bounds the actual synchronous burst, not just the after-the-fact detection of one: a subtree
-     with 100,000 fragments spread across many nodes stops enumerating once the tally crosses `5_000`,
-     rather than enumerating all 100,000 before rejecting. A checkpoint against `frameBudgetMs` also
-     fires between sibling nodes at the same depth, so composition across a large-but-under-ceiling
-     subtree's many nodes is bounded the same way composition across dbIds already is — this was the
-     "cooperatively scheduled" half of round 16's requested fix, layered on top of the hard ceiling.
+       false)`, gated by the `getChildCount` preflight above, and recurse the same way.
+     This bounds the walk's *cumulative* work across nodes — a subtree with 100,000 fragments spread
+     across many nodes stops enumerating once the tally crosses `5_000`, rather than enumerating all
+     100,000 before rejecting, and a wide-but-fragment-empty tree is caught by the `getChildCount`
+     preflight rather than blocking inside an unbounded `enumNodeChildren` call. A checkpoint against
+     `frameBudgetMs` also fires between sibling nodes at the same depth, so composition across a
+     large-but-under-ceiling subtree's many nodes is bounded the same way composition across dbIds
+     already is.
+
+     **Round 17 found this still doesn't bound one node's *own* `enumNodeFragments` call, and no fix
+     does.** `getChildCount` has no fragment-count equivalent — verified this round against the official
+     Reference Guide for both `InstanceTree` and `ObjectTree` (the latter doesn't even name a method
+     `enumNodeFragments`; its documented enumeration method is `enumNodeInstances`, and neither class's
+     documentation describes any way to learn a node's direct fragment/instance count without enumerating
+     them). A single pathological node that directly owns, say, 100,000 fragments still enumerates all of
+     them synchronously in that one `enumNodeFragments(node, cb, false)` call before the walk's own tally
+     check ever runs — the walk's per-node checkpointing cannot reach inside one native call. Per the
+     round-16 fix's own standing instruction ("if no such mechanism exists, narrow the Milestone-1
+     contract honestly rather than inventing an unenforceable hard bound"), this is not patched with a new
+     invented ceiling: **one non-recursive `enumNodeFragments(node, cb, false)` call is an accepted,
+     non-preemptible Milestone-1 atomic risk**, in the same category as the three `maxSyncTriangleCount`
+     phases (welding, connectivity, BVH construction) — a cost this design cannot checkpoint inside of,
+     only bound the composition around. `maxFragmentsPerDbId` bounds how many such calls the walk makes
+     and how much cumulative tally they can reach before rejecting; it does not, and cannot, bound any one
+     of those calls' own cost. See the atomic-operations table and the performance gate, which now
+     require this risk to be measured rather than assumed away.
      Build `CollisionInstance`s from the fragments this walk collected (one instance per fragment —
      either side may have more than one fragment).
    - **Broad phase**: before the nested scan, check `sourceInstances.length × targetInstances.length`
@@ -2454,7 +2522,11 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   crosses `maxFragmentsPerDbId` (`5_000`, provisional), without enumerating the rest of that subtree,
   and the entire `findClashes` call rejects. Round 15 added a ceiling here but checked it only after a
   single recursive `enumNodeFragments` call had already run to completion, which didn't actually bound
-  the burst it claimed to; round 16 replaced the mechanism, not just the number.
+  the burst it claimed to; round 16 replaced the mechanism, not just the number. Round 17: this bounds
+  cumulative work across nodes only — one node's own `enumNodeFragments(node, cb, false)` call is a
+  separate, accepted non-preemptible atomic risk with no verified bound (see **Data Flow** step 3 and the
+  atomic-operations table); a model where a single node directly owns an oversized fragment count can
+  still stall before this rejection path is reached.
 - **Too many broad-phase candidate instances**: if `sourceInstances.length × targetInstances.length`
   would exceed `maxBroadPhaseInstancePairs` (`1_000_000`, provisional), the entire `findClashes` call
   rejects before the nested AABB scan runs — round 15 found the same gap for the broad-phase scan (see
@@ -3059,14 +3131,23 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   exactly how a ~16.8ms weld and a ~6.9ms connectivity build at ~19,800 triangles went undetected for
   four rounds. Record each phase's own wall-clock span separately; each must individually clear its
   share of the accepted per-atomic-operation ceiling with margin, not just sum to something plausible.
-  A cold run that only ever measures connectivity (a `containment`-mode-only phase) must also be
-  distinguished from one that doesn't touch it at all, so `volume-overlap`'s exclusion of connectivity
-  isn't accidentally masked by always running the gate in `containment` mode.
+  A cold run that measures connectivity — which round 16 corrected to mean **either** `containment`
+  **or** `volume-overlap` (both call `anyComponentInside`), not `containment` alone — must also be
+  distinguished from a `surface-intersection`-only run that doesn't touch connectivity at all, so the one
+  mode that's genuinely connectivity-free isn't accidentally conflated with the two that aren't.
 - **extraction cost for the largest single requested dbId, and the broad-phase scan's own cost at the
   model's actual instance counts, are measured and recorded**, confirming or revising the provisional
   `maxFragmentsPerDbId` (`5_000`) and `maxBroadPhaseInstancePairs` (`1_000_000`) ceilings — round 15
   added both ceilings reasoned, not measured, and this gate is what promotes them to measured (see the
   atomic-operations table under `ProperCrossingQuery`'s budgets).
+- **Round 17: the worst-case cost of one `enumNodeFragments(node, cb, false)` call, on a node chosen to
+  directly own as many fragments as the model actually allows, is measured and recorded separately from
+  the walk's aggregate extraction cost above.** This is the accepted non-preemptible atomic risk round 17
+  found `maxFragmentsPerDbId` cannot bound (see the atomic-operations table) — the gate is what turns "an
+  accepted, unmeasured risk" into a known number, the same way it already does for the three
+  `maxSyncTriangleCount` phases. A model where no single node owns more than a small fraction of
+  `maxFragmentsPerDbId` directly cannot exercise this risk at all; recording that limitation is itself a
+  gate finding, not a pass.
 
 Whatever the MEP model's actual numbers turn out to be, they replace the "reasoned, not yet measured"
 qualifier on every still-unmeasured row of the atomic-operations table under **`ProperCrossingQuery`**'s
