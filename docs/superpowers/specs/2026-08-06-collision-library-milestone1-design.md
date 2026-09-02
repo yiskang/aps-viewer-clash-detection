@@ -1332,10 +1332,13 @@ specified to reject. The rule is therefore:
 - **A build-phase checkpoint validates the record's *owner*, not the building caller's whole query.** A
   between-phases checkpoint on a shared build checks `disposed` first, then the liveness/epoch of the
   one model that owns this geometry — the operand whose `loadEpoch` is in the record's key — and nothing
-  else. It must not reject because the initiating query's *other* operand was evicted: the entry is
-  shared with callers that may not hold that operand at all, and every sharer of this entry necessarily
-  shares its owning `(model, epoch)`, since epochs are globally unique and the key carries one. Each
-  caller separately re-validates both of its own operands at its own checkpoints, before and after
+  else. It must not reject because the initiating query's *other* operand was evicted. The dependency is
+  intentionally owner-scoped: under Milestone 1's `source.model === target.model` restriction, eviction of
+  a distinct non-owner operand is unreachable, so this distinction is not yet behaviorally observable, and
+  every sharer of this entry necessarily shares its owning `(model, epoch)`, since epochs are globally
+  unique and the key carries one. The scoping is retained for a future cross-model milestone, where callers
+  sharing the record may hold different counterpart models. Each caller separately re-validates both of
+  its own operands at its own checkpoints, before and after
   awaiting a shared phase slot. For the same reason, a caller whose own query aborts for an unrelated
   reason does not cancel a phase already in flight: every phase slot runs to settlement, so a
   `'building'` entry is never left permanently unsettled with other callers awaiting it.
@@ -3913,11 +3916,16 @@ refactor can't silently reintroduce a bug an earlier round already found.
     likewise remove the oversized marking without throwing and without attempting to reject any
     cancellation signal for it, while still rejecting the genuine `'building'`/`'ready'` entries' signals
     in the same pass. Regression test for the identical C-5 gap in `dispose()`'s wholesale-clear wording.
-  - **an eviction of the *counterpart* model while a shared build is in flight** — the build's own
-    between-phases checkpoint must **not** reject the shared phase slot (the evicted model does not own
-    this record); the initiating query must still reject with `ModelEvictedError` at its own next
-    checkpoint, and a second caller holding only the owning model must receive the completed geometry.
-    Regression test for coupling a shared build's fate to one caller's operand list.
+  - **two concurrent `findClashes` calls against the same admitted model, interleaved until both await
+    the same unresolved phase slot, followed by `world.evictModel(model)`** — the entry-scoped
+    cancellation signal must be rejected exactly once; both `findClashes` promises must reject with
+    `ModelEvictedError`, neither may remain pending, and the evicted entry must no longer be present in
+    `GeometryRegistry`. Build spies must show the shared phase was started only once. Regression test for
+    broadcasting entry-scoped cancellation to every waiter on a single-flight build — not a test of the
+    owner-vs-counterpart scoping distinction stated in "A build-phase checkpoint validates the record's
+    *owner*, not the building caller's whole query" above, which Milestone 1's same-model restriction
+    makes unreachable (a distinct non-owner counterpart cannot exist to evict; see that rationale for why
+    the distinction is retained anyway, for a future cross-model milestone).
   - **Round 16's core regression test for the active-range-compaction Critical: a fragment whose raw
     index buffer encodes far more triangles than `maxSyncTriangleCount`, but whose `ranges: TriangleRange[]`
     (from normalization) cover a small active subset well under the ceiling** — the pair must **not** be
