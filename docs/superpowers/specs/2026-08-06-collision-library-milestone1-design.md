@@ -1229,14 +1229,24 @@ candidate-pair keyspace) cannot honor.
 
 **Retention is explicitly bounded.** `maxCollisionInstancesPerEpoch` (provisional, unmeasured — see the
 atomic-operations table and the performance gate) limits the number of canonical instances retained for
-one live epoch. After collecting a call's complete unique fragment-id set, but before constructing or
-publishing any missing instance, `findClashes` checks `currentBucketSize + uniqueMissingCount` against the
-limit for every affected epoch; exceeding it rejects the entire call before any bucket changes or
-broad-/narrow-phase work starts. Otherwise all missing instances are committed without an intervening
-`await`, so two concurrent calls cannot both pass against the same stale capacity observation. Entries are
-never individually evicted while their epoch remains live — doing so would break the stable-reference
-guarantee above — so capacity is recovered only by epoch eviction or whole-world disposal, the same two
-release paths every other epoch-scoped cache in this design uses.
+one live epoch. After every requested dbId's extraction walk completes — not per dbId, per node, or per
+fragment — and after the walk's last possible yield, `findClashes` looks up the affected epoch's bucket
+**without creating it** if absent, and recomputes which ids from the call's complete unique fragment-id set
+are still missing against that bucket's *current* contents — never a count carried over from earlier in the
+walk, since a concurrent call's commits during any of the walk's own yields can otherwise leave it stale.
+It then, in that same synchronous step — no intervening `await`, no call out to any external callback,
+getter, or other reentrant operation — checks `currentBucketSize + uniqueMissingCount` against the limit
+for the affected epoch. Exceeding it rejects the entire call: no bucket is created, no canonical instance
+is constructed, and no call-local placement is constructed for any fragment in the query. Otherwise the
+bucket is created if it did not already exist and every missing instance is constructed and committed into
+it in that same step, so two concurrent calls cannot both pass against the same stale capacity observation;
+only after that commit succeeds does the call construct its `PlacedCollisionInstance` values (see **Data
+Flow** step 3). This zero-mutation guarantee is specific to a capacity rejection — a later failure in
+placement construction or in the broad-/narrow-phase work that follows can still leave already-admitted
+canonical instances resident, and is not covered by it. Entries are never individually evicted while their
+epoch remains live — doing so would break the stable-reference guarantee above — so capacity is recovered
+only by epoch eviction or whole-world disposal, the same two release paths every other epoch-scoped cache in
+this design uses.
 
 **`ThreeMeshBvhBackend` / `BlasCache`** — builds one `MeshBVH` per `GeometryRecord`, lazily, on
 first use, over the **welded** collision geometry.
@@ -2722,14 +2732,39 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
      See the atomic-operations table and the performance gate, which require this risk to be measured
      rather than assumed away in the meantime.
 
-     For each fragment this walk collected (one entry per fragment — either side may have more than one
-     fragment), look up or create the epoch's canonical `CollisionInstance` (a cache hit returns the
-     existing frozen object unchanged — see "`CollisionInstance` identity cache" under
-     `GeometryRegistry`), then build a fresh, call-local `PlacedCollisionInstance` pairing it with this
-     call's own `worldMatrix`/`worldBounds` snapshot (see **Broad phase**, below, for why those must be
-     call-local). Before publishing any newly-created instance, check the affected epoch's
-     `maxCollisionInstancesPerEpoch` capacity (see "`CollisionInstance` identity cache"); exceeding it
-     rejects the call before this step's cache/placement construction completes.
+     Capacity admission into the epoch's canonical `CollisionInstance` cache (see "`CollisionInstance`
+     identity cache" under `GeometryRegistry`) happens once per call, after every requested dbId's walk
+     above has completed — never per dbId, per node, or per fragment — over the walk's complete, call-wide
+     unique fragment-id set (one entry per fragment; either side may have more than one):
+
+     1. While walking, capture for each unique fragment not just its id but everything a canonical
+        instance or a placement will need — `fragmentId`, `GeometryIdentity` (`loadEpoch` +
+        `geometryIndex`), and this call's own `worldMatrix`/`worldBounds` snapshot — so no later phase
+        needs to call back into `fragList` or any other Viewer getter.
+     2. After the walk's last possible yield, look up the affected epoch's bucket **without creating it**
+        if it does not yet exist, and recompute — against that bucket's *current* contents, not a count
+        carried over from earlier in the walk — which of the call's unique fragment ids are still missing.
+        A concurrent call's commits during any of the walk's own yields can otherwise leave an earlier
+        count stale.
+     3. In that same synchronous step — no intervening `await`, no call out to any external callback,
+        getter, or other reentrant operation — check the affected epoch's `maxCollisionInstancesPerEpoch`
+        capacity (`currentBucketSize + uniqueMissingCount`). If it would be exceeded, reject the entire
+        call now: no bucket is created, no canonical instance is constructed, and no
+        `PlacedCollisionInstance` is constructed for any fragment in the query. Otherwise create the
+        bucket if it did not already exist and construct and publish a canonical `CollisionInstance`
+        (frozen, `fragmentId` + `GeometryIdentity`, no transform state) for every missing fragment id,
+        entirely from the inputs phase 1 captured.
+     4. **Only after that admission succeeds**, build this call's own `PlacedCollisionInstance` values —
+        pairing each canonical `CollisionInstance` (existing or just-published) with this call's own
+        `worldMatrix`/`worldBounds` snapshot from phase 1 (see **Broad phase**, below, for why those must
+        be call-local).
+
+     "Look up or create," applied to this cache anywhere else in this document, means exactly this
+     sequence — a lookup that finds nothing stages nothing on its own; the instance is only ever
+     constructed during phase 3's admission, never earlier and never partially. This zero-mutation
+     guarantee is specific to a capacity rejection: a later failure in placement construction or in the
+     broad-/narrow-phase work that follows can still leave phase 3's committed instances resident, and is
+     not covered by it.
    - **Broad phase**: before the nested scan, check `sourceInstances.length × targetInstances.length`
      against **`maxBroadPhaseInstancePairs`** (`1_000_000`, provisional — same table), using
      overflow-safe division (`sourceInstances.length > maxBroadPhaseInstancePairs /
