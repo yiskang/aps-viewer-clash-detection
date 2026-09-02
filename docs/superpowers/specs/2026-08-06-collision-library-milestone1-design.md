@@ -1023,7 +1023,8 @@ Network panel shows no failed module request under `/vendor/`, and specifically 
 ## Components
 
 **`ViewerModelAdapter`** — turns a `(model, dbId)` into the raw ingredients for a
-`CollisionInstance`:
+`CollisionInstance` and its call-local `PlacedCollisionInstance` (see "`CollisionInstance` identity
+cache" below for which of these two objects each ingredient below actually ends up on):
 - **Fragments for a dbId — via the self-driven walk, never a recursive enumeration.** The recursive
   form `model.getInstanceTree().enumNodeFragments(dbId, cb, true)` is the real Viewer API
   (`getLeafFragIds`, used by the original gist, is not a built-in method — it's a community convention
@@ -1227,9 +1228,14 @@ the stale-eviction fixture without a `GeometryRegistry`-keyspace dependency this
 (built from every collected fragment, a strict superset of `GeometryRegistry`'s lazily-built
 candidate-pair keyspace) cannot honor.
 
-**Retention is explicitly bounded.** `maxCollisionInstancesPerEpoch` (provisional, unmeasured — see the
-atomic-operations table and the performance gate) limits the number of canonical instances retained for
-one live epoch. After every requested dbId's extraction walk completes — not per dbId, per node, or per
+**Retention is bounded per epoch, not in total.** `maxCollisionInstancesPerEpoch` (provisional,
+unmeasured — see the atomic-operations table and the performance gate) limits the number of canonical
+instances retained for one live epoch. It does not ceiling how many epochs are simultaneously live — the
+design explicitly supports two objects sharing a reused `modelId` both live at once, each under its own
+epoch (see "Ownership and release are epoch-scoped" above) — so total retained instance count across all
+live epochs is `maxCollisionInstancesPerEpoch × (live epochs)`, unceilinged, the same unhedged shape as
+the accepted risk the atomic-operations table row for this check already states for retained *count*.
+After every requested dbId's extraction walk completes — not per dbId, per node, or per
 fragment — and after the walk's last possible yield, `findClashes` looks up the affected epoch's bucket
 **without creating it** if absent, and recomputes which ids from the call's complete unique fragment-id set
 are still missing against that bucket's *current* contents — never a count carried over from earlier in the
@@ -1877,7 +1883,7 @@ milestone replaces, not merely an imprecision.
    | one `enumNodeFragments(node, cb, false)` call (one node's own direct fragments) | **Round 17, reasoned, not yet measured. Round 18 correction: round 17's stated justification for treating this as unboundable is factually wrong; the classification itself is retained only because re-deriving it was outside this pass's scope.** Round 17 recorded, from the Reference Guide, that no fragment/instance-count equivalent to `getChildCount` exists and that neither class documents a way to interrupt an enumeration. Direct inspection of the pinned 7.124.2 bundle refutes both: `ObjectTree.getInstanceCount(dbId)` — "Get number of instances under the specified id" — is documented, with `getFragmentCount(dbId)` as its deprecated alias, and the Reference Guide documents for `enumNodeInstances` (the method `enumNodeFragments` aliases) that *"if the callback function returns a truthy value, a loop over the instances and child nodes will be interrupted"* — the same mechanism round 18 used to give `maxChildrenPerNode` a real bound one call over | — (no ceiling; accepted atomic risk — **flagged for re-derivation**) | **Non-preemptible, same category as the three `maxSyncTriangleCount` phases** — `maxFragmentsPerDbId`'s tally check only runs *between* nodes, never inside this call, so a single node with a pathologically large direct fragment count is an accepted Milestone-1 risk, not a bounded one. Its real worst-case cost must be measured by the performance gate rather than assumed negligible. **As of round 18 this row is unbounded by choice of scope, not by API limitation**, and a follow-up pass is required either to bound it with the two mechanisms named opposite or to state why it should not be. See **Data Flow** step 3. |
    | `maxChildrenPerNode` | **Round 18, reasoned, not yet measured — and deliberately not derived from any existing measurement.** No row of this table measures a callback-driven native enumeration, and the ~0.3µs `bvhcast` candidate figure is a different API boundary (it excludes native enumeration overhead, callback dispatch, and list growth), so it is **not** borrowed as a proxy. `10_000` is a provisional total-work and compatibility limit, set far above any ordinary node's fanout and far below a pathological one, pending the gate | `10_000` (provisional) | **Enforced, and the enforcement is the point — by exactly one mechanism, not two.** Round 18 credited `getChildCount(node)` as a cheap early-reject layer ahead of the in-callback abort; a subsequent invariant audit (finding C-1) found that credit false for the ordinary case — for a node that owns fragments (a "mixed" node), `getChildCount` is not O(1), it linearly scans the same child slots `enumNodeChildren` would walk, with no early-exit hook of its own, so calling it first is strictly worse than the call it was meant to gate. **`getChildCount` is removed from this enforcement path entirely — it is never called here, for any node shape.** The **in-callback abort inside non-recursive `enumNodeChildren(node, cb, false)`** is the sole enforcement mechanism: the callback counts its own invocations and returns truthy the moment the count would exceed `maxChildrenPerNode`, which the Reference Guide documents as interrupting the enumeration, so one call costs at most `maxChildrenPerNode + 1` callbacks regardless of the node's real fanout — for a fragment-free node exactly as for a mixed one, with no distinction in the enforcement logic. The abort tripping rejects the whole `findClashes` call, naming the node, its observed (partial) child count, and the dbId — the same plain rejection `maxFragmentsPerDbId` uses, not a `ClashDiagnostic`. **This spec does not claim `10_000` callbacks fit inside `frameBudgetMs`**; that remains unmeasured, and the gate is required to measure it. See **Data Flow** step 3. |
    | `maxBroadPhaseInstancePairs` | **Reasoned, not yet measured**: one AABB-overlap test is O(µs); the scan itself is the O(sourceCount×targetCount) concern, not any single comparison | `1_000_000` (provisional) | Rejects the whole `findClashes` call, before the nested AABB scan begins, if `sourceInstances.length × targetInstances.length` would exceed this — checked via overflow-safe division (`sourceCount > ceiling / targetCount`), not multiplication. **Round 18: this ceiling bounds how many pairs are tested, not how long the scan blocks for** — at O(µs)/test the ceiling case is ~1,000ms, ~60× the gate's own ~16ms criterion — so the scan is no longer one synchronous span. It now checks the shared `frameBudgetMs` accumulator **before each individual instance pair**, yielding and resuming mid-scan (see **Data Flow** step 3), which moves it from non-preemptible to **cooperatively yieldable** and keeps overshoot bounded by one AABB test, per round 11's rule. The ceiling is retained, unlowered: with an inner checkpoint it bounds total *work* — and, separately, candidate-list memory and the narrow-phase work the scan hands downstream, neither of which chunking reduces. Its value still needs measurement. |
-   | `releaseEpochScopedState`'s (and `dispose()`'s equivalent) per-epoch registry sweep | **Unmeasured, uncategorized in this table until this pass.** Grew from "drop some map entries" (round 15) into a real per-entry enumerative pass with per-entry cancellation-signal rejection (round 18's C3) and an oversized-marking carve-out (round 20), with no prior round classifying it here | — (no ceiling; accepted atomic risk) | **Non-preemptible, same category as one `enumNodeFragments` call and the three `maxSyncTriangleCount` phases.** Runs entirely inside the Viewer's own uncaught-throw-sensitive `BEFORE_MODEL_UNLOAD_EVENT`/`dispose()` call frames (see **`world.evictModel`**'s "Race safety" note), enumerating every `GeometryRegistry` entry filed under one epoch and settling each `'building'`/`'ready'` entry's cancellation signal in the same synchronous step; cost scales with the number of live entries under that epoch, which nothing in this design ceilings. No checkpoint exists inside it — it is required to be non-throwing (see **`world.evictModel`**), not preemptible. Its real worst-case cost must be measured by the performance gate rather than assumed negligible. |
+   | `releaseEpochScopedState`'s (and `dispose()`'s equivalent) per-epoch registry sweep | **Unmeasured, uncategorized in this table until this pass.** Grew from "drop some map entries" (round 15) into a real per-entry enumerative pass with per-entry cancellation-signal rejection (round 18's C3) and an oversized-marking carve-out (round 20), with no prior round classifying it here | — (no ceiling; accepted atomic risk) | **Non-preemptible, same category as one `enumNodeFragments` call and the three `maxSyncTriangleCount` phases.** Runs entirely inside the Viewer's own uncaught-throw-sensitive `BEFORE_MODEL_UNLOAD_EVENT`/`dispose()` call frames (see **`world.evictModel`**'s "Race safety" note), enumerating every `GeometryRegistry` entry filed under one epoch and settling each `'building'`/`'ready'` entry's cancellation signal in the same synchronous step; cost scales with the number of live entries under that epoch, which nothing in this design ceilings. This cost model covers only the `GeometryRegistry` half of the sweep — the same step also performs an independent deletion over the `CollisionInstance` cache's own keyspace (see "`CollisionInstance` identity cache" above), which this row does not separately cost: given the cache's physical partitioning (`Map<loadEpoch, Map<fragmentId, CollisionInstance>>`): for `evictModel`, that deletion is one outer-`Map.delete(loadEpoch)` call, O(1) regardless of how many fragments the outgoing epoch's bucket holds, not an enumerative cost like the `GeometryRegistry` half. For `dispose()`, the equivalent is one outer-`Map.clear()` call over *every* live epoch's bucket at once, not a per-epoch operation — whether that scales with the number of live epochs (which "Retention is bounded per epoch, not in total", above, leaves unceilinged) is unstated and unmeasured here, the same gap this row already carries for the `GeometryRegistry` half. No checkpoint exists inside it — it is required to be non-throwing (see **`world.evictModel`**), not preemptible. Its real worst-case cost must be measured by the performance gate rather than assumed negligible. |
    | `maxCollisionInstancesPerEpoch` (the `CollisionInstance` identity cache's per-epoch capacity check, see **`GeometryRegistry`**) | **Reasoned, not yet measured.** A synchronous size comparison against a bucket's current count is O(1) per affected epoch; the check itself is cheap. What is unmeasured is the retention this ceiling accepts: unlike every other bounded structure in this table, a resident canonical instance is never individually evicted while its epoch stays live (evicting one would break the stable-object-reference guarantee the stale-eviction fixture under **`world.evictModel`** depends on), so retained memory for a long-lived epoch grows monotonically toward this ceiling and stays there | provisional, value not yet chosen | Rejects the whole `findClashes` call, before any cache bucket changes or broad-/narrow-phase work starts, if publishing the call's missing instances would push any affected epoch's bucket over the limit — checked once per call, synchronously, with no intervening `await` between the check and committing every missing instance, so two concurrent calls cannot both pass against the same stale capacity observation. This bounds worst-case retained *count*, not retained *bytes* — a `CollisionInstance`'s own footprint (`fragmentId` + `GeometryIdentity`) is small and fixed-shape, but the product with a long-lived epoch's total unique fragment count is what the performance gate must actually measure. |
 
    The previously-guessed `200_000` for `maxCandidatePairsExamined` corresponds to ~53ms — three-plus
@@ -3094,11 +3100,16 @@ world.dispose(): void
 //     called only from a BEFORE_MODEL_UNLOAD_EVENT handler whose throw the Viewer does not catch and
 //     which would abort the Viewer's own multi-model teardown loop, and because dispose() has already
 //     released everything evictModel would have released (see world.evictModel above).
-// dispose() also wholesale-clears GeometryRegistry, BlasCache, every cached GeometryConnectivity, and the
-// `CollisionInstance` identity cache (see "`CollisionInstance` identity cache" under `GeometryRegistry`)
-// — the entire cache, in one operation, not a per-model sweep over liveModelByModelId — and rejects every
-// in-flight build promise: an entry still in 'building' is reachable because a record is published to
-// the registry when its build starts (see ThreeMeshBvhBackend/BlasCache), and a 'ready' entry currently
+// dispose() also wholesale-clears all four caches — GeometryRegistry, BlasCache, every cached
+// GeometryConnectivity, and the `CollisionInstance` identity cache (see "`CollisionInstance` identity
+// cache" under `GeometryRegistry`) — each in its own single clear operation, not a per-model sweep over
+// liveModelByModelId. Like releaseEpochScopedState's equivalent per-epoch sweep (see world.evictModel
+// above), this wholesale clear is required to be non-throwing — a synchronous set of map/set clears and
+// promise rejections, nothing that can itself fail — for the same reason: a version that could throw
+// partway through would leave `disposed` already set (correct, permanent) but the release incomplete and
+// unretriable, since a second dispose() call throws WorldDisposedError rather than retrying the clear. It
+// also rejects every in-flight build promise: an entry still in 'building' is reachable because a record
+// is published to the registry when its build starts (see ThreeMeshBvhBackend/BlasCache), and a 'ready' entry currently
 // hosting an in-flight lazy connectivity build is reachable the same way, because that same entry-scoped
 // cancellation signal is carried unchanged across the entry's 'building' -> 'ready' transition rather
 // than discarded at it. For every 'building' or 'ready' entry it removes, the clear rejects that entry's
@@ -3292,9 +3303,9 @@ checked everywhere, with no enumeration involved at all. **`dispose()` no longer
 tombstone every live model for correctness**, and this spec no longer claims it does. What `dispose()`
 still does, for memory hygiene rather than correctness: it wholesale-clears `GeometryRegistry`,
 `BlasCache`, every cached `GeometryConnectivity`, and the `CollisionInstance` identity cache (see
-"`CollisionInstance` identity cache" under `GeometryRegistry`) — the entire cache, not a per-model sweep
-over `liveModelByModelId` — and rejects every in-flight build promise, exactly once, on the same disposal
-call. "Every in-flight build promise" is enumerable at all only because a `GeometryRecord` is published
+"`CollisionInstance` identity cache" under `GeometryRegistry`) — all four caches in full, not a per-model
+sweep over `liveModelByModelId` — and rejects every in-flight build promise, exactly once, on the same
+disposal call. "Every in-flight build promise" is enumerable at all only because a `GeometryRecord` is published
 in `buildState: 'building'` when its build starts (see **`ThreeMeshBvhBackend`/`BlasCache`**): the
 unresolved phase slots hanging off the registry's entries — whether the entry is still `'building'` or
 has already reached `'ready'` and is now hosting a later, lazily-started connectivity build — *are* the
@@ -3529,6 +3540,13 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   rejects before the nested AABB scan runs — round 15 found the same gap for the broad-phase scan (see
   **Data Flow** step 3). Round 18: under the ceiling, the scan itself now yields and resumes between
   instance pairs rather than running as one uninterruptible span (see **Data Flow** step 3).
+- **Too many canonical instances retained for the affected epoch**: if committing the call's missing
+  `CollisionInstance`s would push `maxCollisionInstancesPerEpoch` over its limit, the entire `findClashes`
+  call rejects before any bucket is created or mutated and before any `PlacedCollisionInstance` is
+  constructed for any fragment in the query (see "`CollisionInstance` identity cache" under
+  `GeometryRegistry` and **Data Flow** step 3) — the same call-level, pre-mutation rejection contract as
+  `maxFragmentsPerDbId`, `maxChildrenPerNode`, and `maxBroadPhaseInstancePairs` above, and carrying no
+  named error class, the same `[SILENT]` gap those three share.
 - **Non-watertight geometry**: ray-parity containment assumes a closed target surface, so the parity
   modes are only strongly guaranteed for closed/manifold targets — mitigated with the
   `surfaceEpsilon` boundary pre-check, `THREE.DoubleSide` raycasting, distance-sorted coincident-hit
@@ -4276,8 +4294,8 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   two synchronous spans this spec explicitly excludes from any worst-case-span guarantee** — one
   `enumNodeFragments(node, cb, false)` call and `releaseEpochScopedState`/`dispose()`'s own per-epoch
   registry sweep (see the worst-case-span formula's explicit exclusion, above, and the
-  atomic-operations table) — for which a measurement above the band is a required recorded finding, not
-  a gate failure; a measurement above the corrected bound on any other synchronous task **is** a gate
+  atomic-operations table) — for which a measurement above the corrected bound is a required recorded
+  finding, not a gate failure; a measurement above the corrected bound on any other synchronous task **is** a gate
   failure, **with one provisional exception**: one `enumNodeChildren` call at the `maxChildrenPerNode`
   ceiling (criterion 7, below) is the fourth, still-unmeasured member of the ≈24ms figure's own
   enforceably-bounded tier, not one of the three costs it was computed from — if its measured cost pushes
