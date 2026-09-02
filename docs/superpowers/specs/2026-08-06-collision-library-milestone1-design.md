@@ -1,7 +1,9 @@
 # Collision Library — Milestone 1: Core Slice + RoomLocatorExtension
 
-Status: revised after six rounds of codex review (see `review-coments.md`, `review-comments-v2.md`
-… `review-comments-v6.md` in this directory), pending user re-review
+Status: revised after sixteen rounds of codex review (see `review-coments.md`, `review-comments-v2.md`
+… `review-comments-v16.md` in this directory), pending round-17 re-review. Rounds 10–16's combined
+10 High findings (stable since round 10, one new in round 13) are recorded in `review-comments-v10.md`
+through `review-comments-v16.md` and intentionally deferred, not yet applied.
 Date: 2026-08-06
 Related: [`docs/ideas/aps-viewer-clash-detection-library-idea.md`](../../ideas/aps-viewer-clash-detection-library-idea.md)
 
@@ -173,6 +175,286 @@ fixes what it exposes:
   this spec's own claim that the budgets bound the worst case. A raw-candidate budget with an abort
   protocol now backs that claim up.
 
+### Round 9 (4 P1 — all confirmed valid)
+
+Rounds 7–8 shipped the mode split and the surface-crossing witness, but four gaps survived past both:
+
+- **`containment`'s constructed witness stepped off the surface it was supposed to stay on.**
+  `ContainmentModeQuery` reused `anyComponentInside` verbatim, including its stage-3 constructed
+  interior witness — a point deliberately built inside the *source's own volume*, which is exactly
+  what the mode's surface-only contract (see **Query modes**) says not to sample. Two coincident
+  closed boxes are the counterexample: every source-surface point sits exactly on the target's
+  boundary, so containment must read false, but the constructed witness lands inside both boxes and
+  reads true. `containment` now uses `anyComponentInside`'s first two stages only — see **Query modes
+  and their preconditions**.
+- **`unverified-open-component` had no rule for which public operand it names.** `volume-overlap`
+  evaluates containment in both directions (`anyComponentOf(A) inside B` and `anyComponentOf(B) inside
+  A`), but the diagnostic was described only for an open **source** component deciding the first term.
+  A closed public source containing an open-triangle public target decides via the second term, so the
+  open component is the public *target* — a case the spec never named. `role` now follows the deciding
+  term the same way `unverified-parity-operand`'s does.
+- **`SurfaceCrossingWitness`'s probe ladder wasn't scaled to what it was probing.** It reused the
+  canonical-frame `offsetLadder`, a length derived from the *pair's* bounding diagonal, with no
+  relationship to the one source triangle it must stay inside. A small triangle on a geometry with a
+  large overall diagonal can have every rung fall outside the triangle, rejecting every probe and
+  silently resolving to "no witness." Probe distances are now derived from the triangle's own
+  available in-plane width at the intersection segment, and a triangle too small for any valid offset
+  is reported inconclusive rather than clean.
+- **The one-frame budget bounded each stage, not the browser task built from them.** `volume-overlap`
+  composes up to three independently-budgeted stages per candidate pair, and `findClashes` only
+  yielded between *new* BLAS builds — not between those stages, and not between cache-warm pairs. A
+  single negative pair, or a run of cached pairs, could still freeze the Viewer for several frames
+  despite every individual budget being individually correct. A shared wall-clock checkpoint now
+  governs yielding across the whole call — see **`CollisionWorld`**.
+
+### Round 10 (3 Critical — all confirmed valid; 6 High deferred by explicit instruction)
+
+A full re-review (not limited to round 9's own findings) found round 9's `frameBudgetMs` fix
+incomplete, and surfaced two pre-existing gaps rounds 1–9 never reached: model-eviction race safety
+and a missing runtime dependency in the vendor plan. All three are blockers, fixed here; the round's
+six High findings (public API wording, cached-transform staleness, canonical-order determinism,
+a diagnostic-mapping contradiction, invalid-dbId detection, and MEP-gate reproducibility) are recorded
+in `review-comments-v10.md` and intentionally left for a later round.
+
+- **`frameBudgetMs` bounded composition, not any one stage's own internal cost.** Round 9's checkpoint
+  fires at pair and sub-query boundaries, but a single `ProperCrossingQuery` traversal rich in
+  confirmed non-coplanar intersections (up to 64 pairs × 12 probes × 2 BVHs × up to 3 raycasts each) or
+  a single 512-sample containment pass can itself run well past `frameBudgetMs` before returning to any
+  boundary. `ProperCrossingQuery`'s `bvhcast` callback now also aborts on elapsed time, exactly like its
+  existing count-based triggers; `ContainmentQuery`'s plain-JS sampling loops now genuinely yield and
+  resume every `deadlineCheckInterval` samples instead of only aborting, since — unlike a native
+  traversal — they can pause without losing progress. See the "Abort protocol" note under
+  **`ProperCrossingQuery`** and the "Intra-loop checkpoint" note under **`ContainmentQuery`**.
+- **`world.evictModel` dropped caches but specified no race-safety contract for work already in
+  flight.** Nothing prevented a suspended `findClashes` call from resuming into a model that had been
+  evicted while it was yielded, and the "listens for the Viewer's model-removal notification" text
+  never named which of three plausible events that was. Fixed by choosing
+  `Autodesk.Viewing.BEFORE_MODEL_UNLOAD_EVENT` explicitly, adding a per-model generation counter that
+  every yield point — coarse and intra-stage alike — re-validates before touching cached state, and
+  rejecting the whole call with a new `ModelEvictedError` on a stale generation rather than returning a
+  result built on it. The room-search promise cache gets the same treatment: a rejected search is
+  removed rather than replayed forever, and a late-completing search checks its own cache slot's
+  identity before writing, so it can't resurrect an entry for a model that's already gone. See
+  **`world.evictModel`**'s race-safety note and **Data Flow** step 1.
+- **The mandatory weld step cited a file the vendor plan never copied.** `mergeVertices` lives in
+  `three/examples/jsm/utils/BufferGeometryUtils.js`, not under the `three/build/**` /
+  `three-mesh-bvh/src/**` the vendor tree specified — a 404 on first load, before any query could run.
+  Fixed by vendoring that one self-contained file verbatim (it imports only bare `three`, calling
+  nothing else in its own module) rather than hand-porting the algorithm, which would have needed its
+  own re-verification against the tolerance analysis this spec already did on the real upstream source.
+  See the "Welding's own vendor entry" note under **Architecture**.
+
+### Round 11 (1 Critical — confirmed and fixed; 9 High deferred by explicit instruction, one of which
+was a genuine bug in round 10's own fix and got fixed anyway)
+
+A second full re-review found round 10's `frameBudgetMs` fix checked at the wrong granularity, and
+separately caught a real ABA race in round 10's own eviction fix — accepted and fixed even though filed
+as High, since it defeats the correctness property Critical #2 was built to establish. The round's other
+8 High findings are recorded in `review-comments-v11.md` and intentionally left for a later round, per
+explicit instruction.
+
+- **The frame-budget checkpoint fired once per callback/batch, not once per atomic operation — so a
+  single confirmed pair's 12-probe classification, or a single batch of 256 `classifyPoint` calls,
+  could still run unchecked past `frameBudgetMs` before the next checkpoint had a chance to fire.**
+  `ProperCrossingQuery`'s time-based abort now checks before each individual probe rather than once per
+  `intersectsTriangles` invocation; `ContainmentQuery`'s sampling loops now check before each individual
+  `classifyPoint` call rather than every `deadlineCheckInterval = 256` samples. This also forced an
+  honest reframing of the "no synchronous step exceeds ~16ms" principle itself: a `MeshBVH` build is
+  *already* a single non-preemptible atomic operation measured at ~16ms — a full frame on its own — so
+  no sub-frame guarantee can hold for every synchronous span regardless of checkpoint placement. The
+  spec now states two tiers explicitly (a per-atomic-operation ceiling, and the cooperative-composition
+  ceiling `frameBudgetMs` actually bounds) and requires the performance gate to measure a single
+  `classifyPoint`/probe's own cost, not just assume it's negligible. See the "Atomic operations and
+  what remains non-preemptible" note under **`ProperCrossingQuery`**'s budgets.
+- **Round 10's per-`modelId` generation counter reintroduced an ABA race on model-id reuse.** Deleting a
+  `modelId`'s counter on eviction and letting a later reload restart it from the same initial value
+  means a suspended query's captured "old" value can coincidentally equal a reloaded model's "fresh"
+  value — the exact class of bug the mechanism existed to prevent. Replaced with a single
+  `nextLoadEpoch` counter, global to the `CollisionWorld` instance and never scoped to or reset per
+  `modelId`, so no two model loads can ever be stamped with the same epoch. See the "Race safety" note
+  under **`world.evictModel`**.
+- Reconciled a stale Risks entry that still called the unload event name itself unverified after round
+  10's normative text had already selected `BEFORE_MODEL_UNLOAD_EVENT` — what remains genuinely
+  unverified is narrower (the event payload's exact shape, since the installed typings type it as
+  `any`), and the Risks entry now says that instead.
+
+### Round 12 (1 Critical — confirmed and fixed; the same 9 High findings persist, deferred by explicit
+instruction)
+
+A third full re-review found round 11's `modelId`-keyed load epoch still left evicted models
+resurrectable through a specific path round 9–11 hadn't covered: in-flight async work that completes
+*after* eviction but was never itself yielded inside `findClashes`. Fixed by moving liveness identity
+off `modelId` entirely and onto the exact `Model` object.
+
+- **A late-completing room search could hand stale room dbIds to its original caller, which could then
+  enter `findClashes` with an evicted model — the round-10/11 cache-write guard only ever protected the
+  cache, not the caller.** `model.search`'s callback now checks `world.isModelLive(model)` before
+  resolving anything; on a stale completion it rejects the *original* `locateElementByRoom` promise with
+  `ModelEvictedError` instead of silently discarding a cache write while leaving that promise resolved
+  (or, worse, permanently unsettled). See the "A `model.search` callback..." note under **Data Flow**
+  step 1.
+- **`findClashes` had no entry-point check at all — only the per-yield re-validation added in rounds
+  9–11 — so a call that used an already-evicted `Model` object and happened to never yield (every needed
+  BLAS already cached, or a query small enough to complete synchronously) could run to completion
+  against dead geometry undetected.** `findClashes` now validates liveness for both operand models
+  before doing anything else, in addition to (not instead of) the existing per-yield checks.
+- **The underlying identity was keyed by `modelId` (a number) and *deleted* rather than tombstoned on
+  eviction, so nothing distinguished "this exact object was evicted" from "nothing has loaded under
+  this id yet."** Replaced with `modelLifecycle: WeakMap<Model, {epoch, state}>`, keyed by object
+  identity and never deleted — only ever transitioned `'live' → 'evicted'`, permanently. `modelId` is
+  now used only for the pre-existing BLAS/geometry cache keys and for `evictModel`'s bookkeeping of
+  "which object is currently live for this id," not for liveness itself.
+- **`world.dispose()` was described as evicting every model but had no stated terminal contract of its
+  own** — a second call, or any other public method called after disposal, had undefined behavior.
+  `dispose()` now sets a world-level terminal flag, checked ahead of any per-model state by every public
+  method, which reject/throw `WorldDisposedError` (distinct from `ModelEvictedError`) once set.
+- `world.evictModel`'s signature changed from `(modelId)` to `(model)` — the exact object — and a new
+  minimal read-only accessor, `world.isModelLive(model)`, was added; both are what the room-search fix
+  above needed and nothing beyond it. See **`world.evictModel`** for the full mechanism and
+  **`RoomLocatorExtension`**'s class sketch for the updated unload-handler call site.
+
+### Round 13 (1 Critical — confirmed and fixed, a regression introduced by the round-12 fix itself; the
+same 9 High findings persist plus one new High, all deferred by explicit instruction)
+
+A fourth full re-review found round 12's own fix broke the ordinary, common-case path it was meant to
+protect, and separately surfaced a second, related gap in `evictModel`'s cleanup that the fixture set
+hadn't exercised.
+
+- **A model's first-ever room search always rejected with a spurious `ModelEvictedError`, because
+  `world.isModelLive(model)` is defined to return `false` for a model that has never been admitted —
+  and room discovery always runs before the first `findClashes` call, so no model had ever been admitted
+  the first time its room search resolved.** This broke the room-locator's primary workflow outright,
+  not an edge case. Fixed by decoupling "admit" from "the first thing that happens to touch this model":
+  `world.admitModel(model)` is now a public, synchronous, idempotent operation returning a `ModelLease`;
+  the room-search cache calls it *before* starting `model.search`, so the search's callbacks always
+  validate a real, previously-captured lease (`world.isLeaseValid(lease)`) instead of inspecting
+  `isModelLive`'s ambiguous "never seen" state after the fact. `isModelLive` itself is unchanged and
+  still correct for general liveness queries; it is simply no longer the room-search guard. See
+  **`world.admitModel`** and the "A `model.search` callback..." note under **Data Flow** step 1.
+- **`evictModel`'s model.id-scoped cache/BLAS/geometry drop was unconditional, which meant a stale or
+  duplicate eviction call for an old, already-superseded `Model` object could wipe a *different*, still-
+  live object's state if both objects shared the same numeric `model.id`.** Every prior round's fixtures
+  called `evictModel` exactly once, promptly, for the model actually occupying its id slot, so this
+  never surfaced. Fixed by gating the id-scoped drop on `liveModelByModelId.get(model.id) === model` —
+  the object being evicted must still be the current occupant of that id slot for its id-scoped state to
+  be touched; the object-identity tombstone itself (always safe) is unconditional as before. See
+  **`world.evictModel`**'s occupancy-guard note.
+- Codex separately flagged, as a new High rather than part of the Critical, that post-weld degenerate
+  (zero-area/collapsed) triangles are unaddressed for their effect on normals, manifold classification,
+  and BVH behavior — deferred with the other 9 stable High findings per explicit instruction.
+
+### Round 14 (2 Critical — confirmed and fixed, both self-inflicted gaps in the round-13 fix; the same
+10 High findings persist, deferred by explicit instruction)
+
+A fifth full re-review found the round-13 fix closed the room-search resurrection path but left two
+other gaps: one it never touched (model-owned caches were still keyed by reusable `modelId`, never
+addressed by any round's eviction-side fix), and one it introduced directly (a self-contradiction
+between `isLeaseValid`'s own doc comment and `dispose()`'s method list).
+
+- **Model-owned collision state — `GeometryRegistry`, `BlasCache`, `GeometryConnectivity` — was keyed
+  by `(modelId, geometryIndex)`, a plain reusable number, even after `modelLifecycle` moved to object
+  identity three rounds earlier.** A different `Model` object admitted under a reused `modelId` before
+  the old object's own (possibly delayed) eviction ran could have its first geometry lookup silently
+  find and reuse the old object's cached `GeometryRecord`/BLAS — a failure mode round 13's eviction-side
+  occupancy guard could not touch, because nothing about eviction is involved: the bug happens at
+  *admission*, while the old object is still nominally live. Root-cause fixed, not patched again: geometry
+  identity is now keyed by `(loadEpoch, geometryIndex)` — the admitted object's own globally-unique,
+  never-reused epoch — so two objects sharing a `modelId` are structurally guaranteed disjoint cache
+  namespaces regardless of eviction timing. This also let round 13's `evictModel` occupancy guard on
+  `liveModelByModelId` be demoted from a correctness requirement to what it always should have been —
+  bookkeeping hygiene for `dispose()`'s enumeration sweep. See **`GeometryRegistry`**, the "Geometry
+  dedup key" note under **`ViewerModelAdapter`**, and "Race safety" under **`world.evictModel`**.
+- **`world.isLeaseValid`'s own doc comment ("does not throw on a disposed world") directly contradicted
+  `world.dispose()`'s method list, which named `isLeaseValid` among the methods that throw
+  `WorldDisposedError` after disposal** — a self-inflicted round-13 authoring error, not a design flaw
+  either side got right. Resolved by making `isLeaseValid` the one deliberate, documented exception to
+  "every public method throws once disposed": it stays strictly non-throwing and boolean always, and
+  `dispose()`'s method list now says so explicitly instead of listing it alongside the throwing methods.
+  A caller needing the specific reason a lease is invalid (evicted vs. disposed) calls `isModelLive`
+  (unchanged, still throws `WorldDisposedError`) separately for that distinction. See
+  **`world.isLeaseValid`** and **`world.dispose`**.
+
+### Round 15 (3 Critical — confirmed and fixed; the same 10 High findings persist, deferred by explicit
+instruction; the user asked this round's fixes to treat the lifecycle and preprocessing-budget
+invariants as systems, not only patch the reported diff)
+
+A sixth full re-review found round 14's fixes didn't fully close the lifecycle system they touched, and
+separately found the frame-budget bound had a coverage gap no prior round had measured or checkpointed
+at all — the round-9-through-11 scheduling work only ever named `MeshBVH` construction as a
+non-preemptible atomic operation, never welding or connectivity, and a local measurement showed both can
+individually cost as much or more.
+
+- **`world.dispose()`'s per-model tombstone sweep cannot enumerate every live model when a `modelId` has
+  been reused while its old occupant is still live** — exactly the state round 14's own epoch-keying fix
+  made supported and tested. `modelLifecycle` is a `WeakMap` (deliberately non-enumerable); the only
+  enumerable proxy, `liveModelByModelId`, holds one object per numeric id, so it can reach at most one of
+  two simultaneously-live objects sharing an id. **Fixed at the root, not by trying to make the sweep
+  complete**: `disposed` is now checked directly and first at every liveness site — `findClashes`'s
+  entry (already true), every per-yield checkpoint (round 15 added this), `isLeaseValid`, `isModelLive`
+  — instead of being inferred from whether a given model's own tombstone happened to get set. `dispose()`
+  no longer needs to enumerate-and-tombstone every live model for correctness; it wholesale-clears
+  `GeometryRegistry`/`BlasCache`/`GeometryConnectivity` instead of sweeping per model, and
+  `liveModelByModelId` is now purely diagnostic bookkeeping, load-bearing for nothing. See "Race safety"
+  under **`world.evictModel`** and **`world.isLeaseValid`**/**`world.isModelLive`**/**`world.dispose`**.
+- **Evicting a `Model` object this world never admitted had no defined tombstone shape** —
+  `BEFORE_MODEL_UNLOAD_EVENT` can fire for a model that was loaded but never touched `findClashes`/
+  room-search, and the single-shape `{epoch, state}` value type never said what epoch such an entry
+  should carry. Fixed by changing `modelLifecycle`'s value type to a two-variant discriminated union,
+  `{state: 'live', epoch: number} | {state: 'evicted'}` — the evicted variant carries no epoch at all,
+  since every check short-circuits on `state !== 'live'` before it would ever need one. `evictModel` now
+  unconditionally writes `{state: 'evicted'}` regardless of whether a prior entry existed, releasing
+  epoch-scoped cache state only when a prior `'live'` entry actually had one. See **`world.evictModel`**.
+- **The frame-budget bound only ever named `MeshBVH` construction as a non-preemptible atomic
+  operation.** A local measurement found welding costs ~16.8ms and connectivity construction ~6.9ms at
+  ~19,800 triangles — before BVH construction even starts — so the true worst-case cost of a first
+  `GeometryRecord` build was roughly 2–3× what the BVH-only framing implied, with no checkpoint of its
+  own for either phase. Recursive per-dbId extraction and the broad-phase `O(sourceCount×targetCount)`
+  scan had no checkpoint or size ceiling at all. Fixed by treating welding, connectivity, and BVH
+  construction as three separately-checkpointed atomic phases (connectivity remains independently lazy);
+  revising `maxSyncTriangleCount` down to a reasoned, provisional `12_000` pending re-measurement of all
+  three phases; and adding two new reasoned, provisional ceilings — `maxFragmentsPerDbId` and
+  `maxBroadPhaseInstancePairs` — that reject the whole `findClashes` call up front rather than leaving
+  extraction and the broad-phase scan unbounded. See **`ThreeMeshBvhBackend`/`BlasCache`**, the
+  atomic-operations table under **`ProperCrossingQuery`**'s budgets, and **Data Flow** step 3.
+
+### Round 16 (3 Critical — confirmed and fixed, 2 self-inflicted gaps in the round-15 fix, 1 new; the
+same 10 High findings persist, deferred by explicit instruction; fixes reviewed as one invariant —
+Viewer geometry → active-range compaction → size gate → weld → connectivity when required → BVH — per
+explicit instruction, not only patched against the reported diff)
+
+A seventh full re-review found two of round 15's own three fixes were themselves incomplete or wrong,
+and surfaced one new gap in how `maxSyncTriangleCount` related to active-range normalization — all three
+in the same extraction/build pipeline round 15 had just touched.
+
+- **`volume-overlap` also requires connectivity, and round 15's own wording — plus a regression fixture
+  it shipped — said the opposite.** `VolumeOverlapQuery` composes `anyComponentInside` through its own
+  containment term (run after `ProperCrossingQuery` returns false), and `anyComponentInside` samples per
+  connected component regardless of which public mode is asking — `volume-overlap` only skips its
+  *stage-3* constructed interior witness, never the component decomposition itself. Only
+  `surface-intersection` is genuinely connectivity-free. Fixed by correcting the dependency description
+  under **`ThreeMeshBvhBackend`/`BlasCache`** and the atomic-operations table, and replacing the wrong
+  round-15 fixture (which asserted *no* connectivity checkpoint for `volume-overlap`) with one asserting
+  it fires for `volume-overlap` and is absent only for `surface-intersection`.
+- **`maxFragmentsPerDbId` was checked only after the unbounded operation it claimed to bound.** Round 15
+  added the ceiling but kept the single recursive `enumNodeFragments(dbId, cb, true)` call underneath it
+  — a 100,000-fragment subtree still enumerates all 100,000, synchronously, before that after-the-fact
+  check ever runs. Fixed by replacing the recursive call with a self-driven, abortable walk using
+  `InstanceTree`'s non-recursive primitives (`enumNodeChildren`/`getChildCount`/non-recursive
+  `enumNodeFragments`, confirmed present in the installed typings) — the walk stops the moment its
+  running tally crosses the ceiling, rather than after full enumeration, and checkpoints against
+  `frameBudgetMs` between sibling nodes as a composition safeguard on top of the hard bound. See **Data
+  Flow** step 3.
+- **`maxSyncTriangleCount` was never defined against a specific triangle set, and the raw geometry —
+  not the normalized active ranges — was what welding actually walked.** A fragment with a huge total
+  index but a tiny active draw range could pass an active-triangle ceiling check while `mergeVertices`
+  still processed the full raw buffer underneath it. Fixed by inserting active-range compaction as a
+  phase before the ceiling check and before welding: the active triangle count (`sum(ranges[].count)`,
+  free to compute from already-normalized range metadata) gates first; only once that passes is a
+  compacted, collision-owned position/index buffer materialized, bounded by the now-confirmed active
+  count. Welding, connectivity, and BVH construction all run over this same compacted buffer — none ever
+  sees an out-of-range triangle, which also retired the previous "set `groups`/`drawRange` on the BVH
+  input" workaround as unnecessary. See **`ThreeMeshBvhBackend`/`BlasCache`**.
+
 ## Spike Findings (executable, `spike/`)
 
 After six review rounds, the remaining questions were ones no amount of reading could
@@ -202,9 +484,10 @@ three open questions:
      *shrinks* geometry by ~23% on average (box 24→8 vertices, cylinder 148→50), so an owned welded
      buffer costs less than the shared one would have, not more.
 3. **Measured budgets replace guessed ones** (see Tolerances/budgets): BVH build is ~16ms at 18k
-   triangles, validating `maxSyncTriangleCount = 20_000` as roughly a one-frame ceiling; raw
-   candidate pairs cost ~0.3µs each, making the guessed `maxCandidatePairsExamined = 200_000` a
-   ~53ms stall, so it drops to `50_000`.
+   triangles, validating `maxSyncTriangleCount = 20_000` as roughly a one-frame ceiling **at the time —
+   round 15 found this measured only the BVH-build phase, not welding or connectivity, and revised the
+   ceiling down to `12_000`; see `ThreeMeshBvhBackend`/`BlasCache`**; raw candidate pairs cost ~0.3µs
+   each, making the guessed `maxCandidatePairsExamined = 200_000` a ~53ms stall, so it drops to `50_000`.
 
 **Part B ran the same questions against the live acceptance model** (`racbasicsampleproject.rvt`,
 classic SVF) via Playwright. Full detail in `spike/FINDINGS.md`; the load-bearing results:
@@ -360,6 +643,8 @@ no monorepo):
 wwwroot/
 ├─ vendor/                          # self-hosted, npm-installed, copied here
 │  ├─ three/build/three.module.js   #  + three.core.js, which it imports
+│  ├─ three/examples/jsm/utils/
+│  │  └─ BufferGeometryUtils.js     #  mergeVertices — see "welding's own vendor entry" below
 │  └─ three-mesh-bvh/src/**         #  whole src tree — see note below
 ├─ collision/                       # the CollisionWorld library (Milestone 1 slice)
 │  ├─ viewer/
@@ -410,12 +695,35 @@ single files, and the import map resolves the bare specifiers:
 ```json
 { "imports": {
   "three": "/vendor/three/build/three.module.js",
-  "three-mesh-bvh": "/vendor/three-mesh-bvh/src/index.js"
+  "three-mesh-bvh": "/vendor/three-mesh-bvh/src/index.js",
+  "three/addons/utils/BufferGeometryUtils.js": "/vendor/three/examples/jsm/utils/BufferGeometryUtils.js"
 } }
 ```
 
 The bare `three` specifier inside three-mesh-bvh's own sources resolves through that same map — which
 is exactly the mechanism that keeps it bound to the *collision* THREE and never to Viewer's.
+
+**Welding's own vendor entry, and why it was missing.** Round 10 found that **Solid model**'s mandatory
+weld step specifies `mergeVertices` and cites `three@0.185.1`'s `BufferGeometryUtils.js` for its exact
+grid-quantization behavior (see **Solid model** below), but the vendor tree above never copied that
+file — only `three/build/**` and `three-mesh-bvh/src/**`. `mergeVertices` lives at
+`three/examples/jsm/utils/BufferGeometryUtils.js`, not under `three/build/`, so `ViewerGeometryAdapter`
+would import a module `sync-vendor.mjs` never placed, 404ing on first load before any query could run.
+
+The fix vendors that one file rather than writing a local weld implementation: `mergeVertices` is
+self-contained (verified directly against the `three@0.185.1` source — it imports only bare `three`
+and calls no other function defined in its own module), so copying it verbatim keeps the tolerance
+analysis under **Solid model** exactly true (it cites the actual shipped source, not a hand-ported
+copy that would need its own re-verification) while adding a single ~40KB file to the vendor payload,
+not the whole `examples/jsm` tree — `sync-vendor.mjs` copies this one file explicitly, by path, the
+same way it copies the two directory trees above. The import-map key uses the same bare specifier
+`three`'s own JSDoc documents (`three/addons/utils/BufferGeometryUtils.js`), so `ViewerGeometryAdapter`
+imports it exactly as upstream code and documentation both would.
+
+**Acceptance check for this fix**: after `npm run build:vendor`, load the sandbox app and confirm the
+Network panel shows no failed module request under `/vendor/`, and specifically that
+`BufferGeometryUtils.js` resolves — a fixture that stubs `fetch`/module resolution and asserts
+`ViewerGeometryAdapter`'s weld step imports successfully covers this without a real browser.
 
 ## Components
 
@@ -436,9 +744,16 @@ is exactly the mechanism that keeps it bound to the *collision* THREE and never 
 - World matrix: `fragList.getWorldMatrix(fragId, matrix)`.
 - World bounds: `fragList.getWorldBounds(fragId, box)` (available directly on `FragmentList`, no
   need to go through the render proxy).
-- Geometry dedup key: `fragList.getGeometryId(fragId)` combined with `modelId`. Confirmed
-  (via direct inspection of the shipped Viewer source) to be **model-local only** — the key must
-  always be `(modelId, geometryIndex)`, never the bare index.
+- Geometry dedup key: `fragList.getGeometryId(fragId)` combined with the model's **admitted load
+  epoch** (`modelLifecycle.get(model).epoch`, from `world.admitModel`/`findClashes`'s entry-point
+  admission — see `world.admitModel` and "Race safety"), **not** `modelId`. Confirmed (via direct
+  inspection of the shipped Viewer source) that `fragList.getGeometryId(fragId)` alone is **model-local
+  only** — round 14 found combining it with the reusable numeric `modelId`, as every prior round did,
+  let a different `Model` object that reused a `modelId` before the old object's eviction ran alias the
+  old object's `GeometryRecord`/BLAS. Since `loadEpoch` is global, monotonic, and assigned exactly once
+  per admitted object, the key must always be `(loadEpoch, geometryIndex)` — never `(modelId,
+  geometryIndex)`, and never the bare index. See **`GeometryRegistry`** below and **`world.evictModel`**'s
+  "Race safety" note for why this closes the aliasing hole structurally rather than by timing.
 
 **`ViewerGeometryAdapter`** — normalizes `viewer.impl.getRenderProxy(model, fragId).geometry` into
 the idea doc's `TriangleGeometryView`, **including its `ranges: TriangleRange[]` field** — the
@@ -510,51 +825,130 @@ The adapter still does runtime capability detection rather than hard-coding any 
 only possible layout — the research just tells us which branch fires in practice for this Viewer
 version.
 
-**`GeometryRegistry` / `GeometryIdentity`** — one `GeometryRecord` per unique
-`(modelId, geometryIndex)`, with a `referenceCount`, a lazy `accelerationPromise` (the BLAS), and a
+**`GeometryRegistry` / `GeometryIdentity`** — one `GeometryRecord` per unique `(loadEpoch,
+geometryIndex)` — **keyed by the owning `Model` object's admitted load epoch, not its numeric
+`modelId`** (round 14; see the "Geometry dedup key" note under `ViewerModelAdapter` and "Race safety"
+under **`world.evictModel`**) — with a `referenceCount`, a lazy `accelerationPromise` (the BLAS), and a
 lazy `connectivity` (the `GeometryConnectivity` component decomposition). Both derived structures are
 computed at most once per unique geometry and reused by every fragment instancing it — the same
-amortization argument that motivates per-geometry BLAS applies unchanged to connectivity.
+amortization argument that motivates per-geometry BLAS applies unchanged to connectivity. `modelId`
+remains attached to a record only as display/diagnostic metadata (e.g. for error messages naming which
+model a `geometry-too-large-for-sync-build` diagnostic belongs to); it plays no role in cache identity.
 Cross-model geometry sharing is out of scope for this milestone.
 
 **`ThreeMeshBvhBackend` / `BlasCache`** — builds one `MeshBVH` per `GeometryRecord`, lazily, on
 first use, over the **welded** collision geometry.
 
-**Position is an owned welded buffer, not a zero-copy view of Viewer's.** This reverses the idea
-doc's "prefer sharing the original Viewer position buffer / target: zero-copy" guidance, because
-welding necessarily produces a new, deduplicated vertex array — and welding is what makes
-connectivity, manifold classification, and therefore the containment guarantee work at all (see
-above). The memory argument that motivated zero-copy does not survive measurement either: welding
+**Round 15 found that building a `GeometryRecord` for the first time is not one atomic operation with
+a single checkpoint before it — it is up to three, each independently capable of costing a full frame,
+and only one of the three (the BVH build) had ever been named, measured, or checkpointed as such.** A
+local measurement on this repo's actual dependencies found ~16.8ms to weld and ~6.9ms to build the
+connectivity/edge-map at ~19,800 triangles — *before* `MeshBVH` construction even starts — meaning the
+true worst-case non-preemptible cost of a first build (extract → weld → [connectivity] → BVH) at
+anything near the sync-triangle ceiling was roughly 2–3× what this spec's BVH-only framing implied. See
+the "Atomic operations and what remains non-preemptible" table under **`ProperCrossingQuery`**'s budgets
+for the corrected accounting.
+
+**The fix treats welding, connectivity, and BVH construction as three separately-checkpointed atomic
+phases, not one.** Welding and BVH construction always run together the first time any mode touches a
+geometry — every mode needs a built BVH, and welding is a prerequisite the BVH is built over. Connectivity
+remains independently lazy exactly as before (computed "at most once per unique geometry," only the
+first time a mode that actually consumes it touches this `GeometryRecord`) — **but round 16 found the
+round-15 wording of "which modes actually consume it" was wrong.** Both `containment` and
+`volume-overlap` call `anyComponentInside` (`ContainmentModeQuery` directly; `VolumeOverlapQuery`
+through its own containment term, run *after* `ProperCrossingQuery` returns false — see
+`anyComponentInside`), and `anyComponentInside` samples per connected component, which requires
+`GeometryConnectivity`'s decomposition regardless of which of the two modes is asking. `volume-overlap`
+only skips `anyComponentInside`'s *stage 3* (the constructed interior witness), never its component
+decomposition (stages 1–2) — so it needs connectivity exactly as much as `containment` does. Only
+`surface-intersection`, which never calls `anyComponentInside` at all, is genuinely connectivity-free.
+Each phase,
+whichever ones run, gets its own checkpoint immediately **before** it starts — not partway through, since
+none of the three can be paused mid-call — so the accepted per-atomic-operation ceiling (the same ~16ms
+a single BVH build was already allowed to cost, see the atomic-operations table) now applies to each
+phase individually, rather than to however many of them happen to run back-to-back in one span. A build
+that needs all three phases (first-ever use of a geometry in `containment` mode) therefore still costs
+up to roughly 3× that ceiling in wall-clock time, same as before — but no *single* uninterrupted
+synchronous span exceeds it, because each phase gets its own yield-and-revalidate checkpoint (disposed,
+then model epoch — see "Race safety") ahead of it, the same discipline `ProperCrossingQuery`'s probes and
+`ContainmentQuery`'s samples already follow at finer grain.
+**A `GeometryRecord` is only published to the shared cache — visible to other candidate pairs, other
+`findClashes` calls — once every phase it needs has completed successfully.** If a checkpoint between
+phases finds the model evicted or the world disposed, the partially-built record (whichever intermediate
+buffers exist) is discarded, not cached; the failure surfaces as the same `ModelEvictedError`/
+`WorldDisposedError` any other checkpoint failure would produce, and a later, valid attempt starts the
+whole pipeline fresh rather than resuming a half-built record.
+
+**Round 16 found `maxSyncTriangleCount` was never defined against a specific triangle set — the raw
+index buffer, or only the normalized active ranges — and that ambiguity was live, not academic: the
+geometry actually handed to `mergeVertices` was the full raw buffer, with `ranges`/`groups` only ever
+used afterward to tell `MeshBVH` which triangles to traverse.** A fragment with a huge total index but a
+tiny active draw range could pass a ceiling check counted against the active set while still making
+welding walk the entire oversized raw index — the exact gap the ceiling exists to close, just moved one
+step earlier in the pipeline. **The fix inserts one more phase before the three above, not gated by
+`frameBudgetMs` but by the ceiling itself: active-range compaction.** Before welding, before the
+ceiling check, and before anything is handed to `mergeVertices`, `ViewerGeometryAdapter`'s already-
+normalized `ranges: TriangleRange[]` (computed during the earlier layout-normalization pass — free, no
+per-triangle work) are used to materialize a **collision-owned, compacted position/index pair containing
+only the triangles those ranges cover**. The total active triangle count is `sum(ranges[].count)` —
+itself free to compute, proportional to the number of ranges/groups (typically a handful), never to
+triangle count — so **`maxSyncTriangleCount` is checked against that sum before any copying happens**:
+a fragment whose active set alone exceeds the ceiling is marked oversized and diagnosed exactly as
+before, without ever materializing a compacted buffer for it. Only once that check passes does
+compaction actually copy triangle data, so its own cost is bounded by the now-confirmed-under-ceiling
+active count — never by the size of whatever "inactive" portion of the raw buffer happens to exist,
+however large. Welding, connectivity, and BVH construction (below) then all run over this **same**
+compacted buffer; none of the three ever sees a triangle outside the active ranges. This is what
+`maxSyncTriangleCount` unambiguously means from round 16 onward: the compacted geometry's own triangle
+count, full stop — not the raw index's, whichever normalization state a given implementation happened
+to check it in.
+
+**Position is an owned, compacted-then-welded buffer, not a zero-copy view of Viewer's.** This reverses
+the idea doc's "prefer sharing the original Viewer position buffer / target: zero-copy" guidance for two
+compounding reasons: welding necessarily produces a new, deduplicated vertex array — and welding is what
+makes connectivity, manifold classification, and therefore the containment guarantee work at all (see
+above) — and, as of round 16, active-range compaction produces an owned buffer even *before* welding
+touches it. The memory argument that motivated zero-copy does not survive measurement either: welding
 *shrinks* geometry by ~23% on average across the primitives tested (box 24→8 vertices, cylinder
 148→50), so an owned welded buffer is typically **smaller** than the shared one it replaces. Index is
-likewise owned, produced by the weld. `indexOwnership: 'clone'` remains the only supported value, and
-`'indirect'` is now not merely unimplemented but inapplicable — indirect mode exists to avoid
-reordering a *shared* index, and there is no longer a shared index to protect. The private collision
-`BufferGeometry` handed to `MeshBVH` must have its `groups` (or `drawRange`) set from the adapter's
-normalized `ranges`, not just the raw index buffer — `MeshBVH` only excludes out-of-range triangles
-when the geometry it's given is configured with the correct range, so skipping this would let
-triangles from unrelated material groups produce false clashes. `BlasCache` dedupes concurrent
-build requests via `accelerationPromise` so two simultaneous queries never build the same BVH twice
-— but **that promise does not make the underlying `MeshBVH` constructor non-blocking**: it's
-synchronous, and dedup alone doesn't prevent one `findClashes` call from freezing the Viewer while
-it builds several room BLASes back to back. `CollisionWorld`'s narrow phase (below) is responsible
-for yielding between builds; `BlasCache` only owns not-building-the-same-thing-twice.
+likewise owned, produced first by compaction and then by the weld. `indexOwnership: 'clone'` remains the
+only supported value, and `'indirect'` is now not merely unimplemented but inapplicable — indirect mode
+exists to avoid reordering a *shared* index, and there is no longer a shared index to protect at any
+stage of this pipeline. **Round 16 also retired the previous "set `groups`/`drawRange` on the BVH input"
+workaround**: because compaction already discards everything outside the active ranges before welding
+ever runs, the geometry `MeshBVH` builds over contains only active triangles to begin with — there is no
+out-of-range material left for a missing `groups`/`drawRange` configuration to fail to exclude, so
+`ThreeMeshBvhBackend` no longer needs to set either on the collision `BufferGeometry` it builds from.
+`BlasCache` dedupes concurrent build requests via `accelerationPromise` so two simultaneous queries never
+build the same BVH twice — but **that promise does not make the underlying `MeshBVH` constructor
+non-blocking**: it's synchronous, and dedup alone doesn't prevent one `findClashes` call from freezing
+the Viewer while it builds several room BLASes back to back. `CollisionWorld`'s narrow phase (below) is
+responsible for yielding between builds; `BlasCache` only owns not-building-the-same-thing-twice.
 
 Yielding between *separate* builds doesn't help if a single build is itself large enough to freeze
 the Viewer, and a review pass correctly pointed out the earlier draft deferred that risk entirely
 rather than bounding it. Milestone 1 commits to a concrete (if provisional) limit:
-`maxSyncTriangleCount = 20_000`. A geometry at or above that triangle count is **not** built
+`maxSyncTriangleCount = 12_000`. A geometry at or above that triangle count is **not** built
 synchronously — `GeometryRegistry` marks the record oversized and emits one fragment-scoped
 `geometry-too-large-for-sync-build` diagnostic (see Public API) rather than risking a
 multi-hundred-millisecond freeze; every pair that would have needed that geometry is skipped. This is a deliberate scope boundary, not a
 solved problem — true incremental (multi-frame) or Worker-based construction for large geometries is
 explicitly out of scope for Milestone 1 (see Milestone Scope), so oversized geometries degrade to
-"can't verify this pair" rather than "block the UI." `20_000` began as a figure reasoned from typical
-`three-mesh-bvh` build costs; **the spike then measured it and it survived unchanged** — ~16ms to
-build a BVH at 18k triangles, i.e. right at the one-frame rule every budget here derives from (see
-`ProperCrossingQuery`'s budget table). It is no longer provisional in the sense of "guessed," though
-it is still measured on synthetic geometry rather than on Revit output, and the MEP-scale gate below
-is what would exercise it on real input.
+"can't verify this pair" rather than "block the UI."
+
+**`20_000` (this ceiling's value through round 14) does not survive round 15.** It was reasoned, then
+the spike measured the BVH build alone and it survived unchanged at ~16ms for 18k triangles — but round
+15 found that measurement answered the wrong question: it never measured welding or connectivity, the
+two phases that (per the "Round 15 found..." note under **`ThreeMeshBvhBackend`/`BlasCache`** above) now
+also each need to fit under the same per-atomic-operation ceiling individually, and a local measurement
+found welding alone costs ~16.8ms at ~19,800 triangles — already over that ceiling at essentially the old
+limit, on its own, before the BVH build even starts. `12_000` is a **reasoned, provisional** revision —
+scaled down from the welding measurement with headroom for slower hardware and measurement variance — not
+a new measured figure; it is exactly as provisional today as `20_000` was before the spike first measured
+it. **The performance gate below is now required to measure each of the three phases (weld, connectivity,
+BVH) individually, at this ceiling, on this repo's own geometry** — the same standard `20_000` was
+originally held to — before `12_000` can be called "measured" rather than "reasoned," and the gate may
+revise it again if any single phase still doesn't clear the ceiling with margin.
 
 ### Tolerances
 
@@ -589,7 +983,8 @@ problems come from trying to make one scalar serve two frames, so this revision 
 | `mergeDistance` | distance in target frame | `1e-6 × L_target` | Collapsing coincident ray hits |
 | `surfaceEpsilon` | distance in target frame | `1e-6 × L_target` | `boundary` classification |
 | `offsetLadder` | distance in canonical frame | `[1e-3, 1e-4, 1e-5] × L_canonical` | `ProperCrossingQuery` probe steps |
-| `witnessLadder` | distance in **source** frame | `[1e-3, 1e-4, 1e-5] × L_source` | Constructed interior witness (`anyComponentInside` stage 3) |
+| `witnessLadder` | distance in **source** frame | `[1e-3, 1e-4, 1e-5] × L_source` | Constructed interior witness (`anyComponentInside` stage 3, `volume-overlap` only) |
+| `crossingProbeFractions` | dimensionless (0-1), scaled per-candidate by that triangle's own available in-plane distance | `[0.5, 0.1, 0.01]` | `SurfaceCrossingWitness` in-triangle probe steps (`containment` only) |
 | `minPenetrationDepth` | distance in canonical frame | `1e-5 × L_canonical` | **Declared** detection limit |
 
 **Anisotropic scale remains a stated limitation, not a solved problem.** When the relative transform
@@ -662,7 +1057,7 @@ bend. So the line is drawn at the **mode boundary** instead.
 |---|---|---|---|---|
 | `surface-intersection` | do their surfaces meet anywhere, touching included? | nothing — no parity at all | fine, never diagnosed | fine, never diagnosed |
 | `containment` | does any point **on the source's surface** lie inside the target's interior? | **target only** | fine, never diagnosed | `unverified-parity-operand` (`role: 'target'`) |
-| `volume-overlap` | do the two solids share positive volume? | **both** | `unverified-open-component` | `unverified-parity-operand` (`role` per path) |
+| `volume-overlap` | do the two solids share positive volume? | **both** | `unverified-parity-operand` and/or `unverified-open-component`, both `role: 'source'` — which one depends on the deciding path | `unverified-parity-operand` and/or `unverified-open-component`, both `role: 'target'` — which one depends on the deciding path |
 
 **`containment` treats the source as a point set and the target as a solid, and that asymmetry is the
 whole definition.** Round 8 caught the looser wording — "any part of the source inside the target" —
@@ -882,22 +1277,128 @@ milestone replaces, not merely an imprecision.
    and, when set, reports the pair as inconclusive with `crossing-budget-exhausted` rather than as a
    crossing. Getting this backwards would turn a timeout into a fabricated clash.
 
+   **A third, time-based trigger sets the same `aborted` flag: elapsed synchronous time since the
+   traversal's own start exceeding `frameBudgetMs`.** Round 10 found the two count-based budgets alone
+   don't bound this stage to one frame — they bound it to ~15ms of *raw candidate rejection*, but say
+   nothing about the cost of *confirmed-pair probe classification*: up to 64 confirmed pairs, each
+   running up to 12 probes (4 quadrants × 3 `offsetLadder` rungs), each probe calling `classifyPoint`
+   against **both** solids, and each `classifyPoint` call performing a proximity check plus up to three
+   full raycasts. That cost was never measured or bounded by either existing budget, so a candidate
+   pair rich in confirmed non-coplanar intersections can synchronously exceed `frameBudgetMs` while
+   both counts stay under their caps.
+
+   **Round 11 found the round-10 fix still checked at the wrong granularity: once per
+   `intersectsTriangles` invocation, when one invocation for a *confirmed* pair runs its entire
+   12-probe classification internally before returning.** Checking only at callback entry lets a
+   single confirmed pair's full probe loop run to completion — up to 24 `classifyPoint` calls, each up
+   to a proximity check plus three raycasts — before the next checkpoint has any chance to fire, which
+   is exactly the unbounded span the round-10 fix was meant to close. The check therefore moves inside
+   the probe loop itself: `performance.now()` is read **before each individual probe** (before forming
+   `P` and calling `classifyPoint` against either solid), not once per callback and not once per
+   confirmed pair. A raw candidate pair that never reaches probe classification is still checked at
+   callback entry, as before — that path's per-candidate cost is already measured (~0.3µs) and small
+   enough that entry-granularity is adequate there; it's specifically the probe loop inside a
+   *confirmed* pair's branch that needed tightening. The moment elapsed time crosses `frameBudgetMs`
+   at either checkpoint, `aborted` is set exactly as the count-based triggers do. `bvhcast` cannot be
+   paused and resumed mid-traversal — there is no way to `await` inside a synchronous native callback
+   — so a time-triggered abort ends this candidate pair's crossing evaluation for good, same as a
+   count-triggered one, whether it fires between candidates or mid-probe-loop; the pair is reported via
+   `crossing-budget-exhausted` and `findClashes` returns to an `await`-capable context, where the
+   checkpoints in **`CollisionWorld`** below can actually yield to the browser.
+
+   **This bounds the overshoot to one probe's cost (up to two `classifyPoint` calls), not one
+   confirmed pair's cost (up to 24).** Whether that remaining overshoot is actually negligible depends
+   on a single `classifyPoint` call's own cost, which is reasoned but not yet measured — see "Atomic
+   operations and what remains non-preemptible" below for why that matters and what the performance
+   gate is now required to confirm.
+
    Chunked or off-thread traversal is the real fix for large overlaps and is deliberately out of
    scope here (Workers are excluded from this milestone); the budget converts an unbounded freeze
    into a bounded one plus an honest diagnostic.
 
-   **The budgets share one principle: no synchronous step should exceed roughly one frame (~16ms).**
-   Earlier drafts picked each constant independently by reasoning; the spike measured them and they
-   are now derived from that single rule, which is also what makes them reviewable:
+   **The budgets share one principle, stated in two tiers because round 11 found one flat "~16ms for
+   every synchronous step" claim doesn't survive contact with the design's own non-preemptible
+   primitives.** `MeshBVH` construction (`maxSyncTriangleCount`) is *already* measured at ~16ms — a
+   full frame, not a fraction of one — for a single atomic operation with no internal hook to check a
+   clock against. A guarantee that every synchronous span stays under, say, half a frame is simply
+   false the moment a BVH build is on the critical path; the honest claim has to say what's actually
+   true about each kind of primitive:
 
-   | Budget | Measured cost | Value | Blocking |
+   | Budget or ceiling | Measured / reasoned cost | Value | What it bounds |
    |---|---|---|---|
-   | `maxSyncTriangleCount` | ~16ms to build a BVH at 18k triangles | `20_000` | ~1 frame |
-   | `maxCandidatePairsExamined` | ~0.3µs per candidate pair | `50_000` | ~15ms, ~1 frame |
+   | `maxSyncTriangleCount` — **compaction + welding phase** | **Measured** (round 15, weld only): ~16.8ms to weld ~19,800 triangles. Round 16 folded active-range compaction into this same phase/checkpoint — compaction's own cost is unmeasured but bounded by the same ceiling and expected small relative to welding | `12_000` | Non-preemptible; runs whenever a `GeometryRecord` is first built, against the compacted active-range triangle set only (round 16 — see `ThreeMeshBvhBackend`/`BlasCache`), not the raw index. Own checkpoint, before it starts. |
+   | `maxSyncTriangleCount` — **connectivity phase** | **Measured** (round 15): ~6.9ms to build the edge-map at ~19,800 triangles | `12_000` | Non-preemptible; independently lazy — runs the first time a mode that calls `anyComponentInside` (`containment` **or** `volume-overlap` — round 16 corrected this from "`containment`-only," see `ThreeMeshBvhBackend`/`BlasCache`) touches this record. Never runs for `surface-intersection`-only sessions. Own checkpoint, before it starts. |
+   | `maxSyncTriangleCount` — **BVH phase** | **Measured** (Spike Findings): ~16ms to build a BVH at 18k triangles | `12_000` | Non-preemptible; the one phase every mode needs. Own checkpoint, before it starts. |
+   | `maxCandidatePairsExamined` | **Measured**: ~0.3µs per raw candidate pair | `50_000` | Raw `bvhcast` candidate rejection — checked at callback entry, adequate at that granularity since the cost itself is tiny. |
+   | one probe / one `classifyPoint` call | **Reasoned, not yet measured**: a BVH raycast against a ≤`maxSyncTriangleCount`-triangle mesh is `O(log n)` traversal, expected sub-millisecond — orders of magnitude below a frame | — | Checked before every occurrence (see the round-11 fixes below); the *composition* of many such calls is what `frameBudgetMs` bounds, not any single call's own cost. |
+   | `maxFragmentsPerDbId` | **Reasoned, not yet measured**: extraction walks the node tree itself via `enumNodeChildren`/non-recursive `enumNodeFragments` (round 16 — not the single recursive call round 15 assumed), so cost is bounded by the ceiling itself, not by subtree size | `5_000` (provisional) | Aborts one dbId's extraction walk **as soon as** its running fragment tally crosses this — not after a full recursive enumeration completes — then rejects the whole `findClashes` call, before any broad/narrow-phase work. See **Data Flow** step 3. |
+   | `maxBroadPhaseInstancePairs` | **Reasoned, not yet measured**: one AABB-overlap test is O(µs); the scan itself is the O(sourceCount×targetCount) concern, not any single comparison | `1_000_000` (provisional) | Rejects the whole `findClashes` call, before the nested AABB scan begins, if `sourceInstances.length × targetInstances.length` would exceed this — checked via overflow-safe division (`sourceCount > ceiling / targetCount`), not multiplication. See **Data Flow** step 3. |
 
-   The previously-guessed `200_000` corresponds to ~53ms — three-plus dropped frames — which is why
-   it drops to `50_000`. `maxSyncTriangleCount = 20_000` was a lucky guess and survives measurement
-   unchanged.
+   The previously-guessed `200_000` for `maxCandidatePairsExamined` corresponds to ~53ms — three-plus
+   dropped frames — which is why it drops to `50_000`. `maxSyncTriangleCount`'s three rows share one
+   value (`12_000`, provisional pending round 15's required re-measurement — see `ThreeMeshBvhBackend`/
+   `BlasCache`) because they gate the same underlying build pipeline at the same triangle count; they are
+   split into three rows because round 15 found each phase is its own non-preemptible atomic operation
+   with its own checkpoint, not one operation with one cost. `maxFragmentsPerDbId` and
+   `maxBroadPhaseInstancePairs` are new in round 15 (see below) and, unlike every other row in this
+   table, have not been measured at all yet — they exist to close the "no checkpoint or ceiling"
+   gap Codex's round-15 review identified for extraction and the broad-phase scan, using the same
+   "reject the excess rather than silently degrade" pattern `maxSyncTriangleCount` already established,
+   pending real measurement.
+
+   **Atomic operations and what remains non-preemptible.** Two genuinely different claims were being
+   conflated under "the budgets bound the worst case," and round 11 was the second time that conflation
+   produced a real gap (round 10 closed the cross-stage/cross-pair composition gap; round 11 closed the
+   within-stage checkpoint-granularity gap; round 15 closed a *coverage* gap — see below):
+
+   - **A per-atomic-operation ceiling.** Round 11 through 14 described exactly one primitive in this
+     design as costing a full frame on its own with no internal checkpoint possible: a `MeshBVH` build.
+     **Round 15 found that framing incomplete, not wrong** — the BVH build genuinely is one such
+     primitive, but welding and connectivity construction are two more, previously undeclared and
+     unmeasured, each capable of costing as much or more (see the table above). All three now get the
+     same treatment: the yield-and-revalidate-before-each-phase rule under **`ThreeMeshBvhBackend`/
+     `BlasCache`** ensures none of the three is ever compounded with other work, or with each other, in
+     the same synchronous span — each phase either *is* the whole span (starting fresh right after its
+     own checkpoint) or doesn't share a span with meaningful other work. Every other atomic primitive
+     that participates in a synchronous span — one raycast, one proximity check, one `classifyPoint`
+     call, one probe — is expected to be a small fraction of a frame, but that expectation is
+     **reasoned, not measured**, unlike the three build-phase rows. This spec does not claim it as fact;
+     the performance gate below is now required to measure it before this guarantee can be called
+     verified rather than designed.
+   - **A cooperative-composition ceiling**, which is what `frameBudgetMs` actually bounds: the
+     accumulated cost of many small atomic operations run back-to-back before a checkpoint gets a
+     chance to fire. Round 10 added the checkpoints at pair/stage boundaries; round 11 moved them to
+     fire before each individual probe (**`ProperCrossingQuery`**) and each individual `classifyPoint`
+     call (**`ContainmentQuery`**, below) rather than once per callback or every 256 samples — so the
+     *overshoot* past `frameBudgetMs` at any one checkpoint is bounded by one atomic operation's own
+     cost, not by a batch of them. Round 15 extended this coverage further still: a checkpoint now also
+     fires before extraction begins for each requested dbId and before the broad-phase scan starts (see
+     **Data Flow** step 3) — the two synchronous spans Codex's round-15 review found had no checkpoint
+     of their own at all, composition or otherwise.
+
+   **The resulting worst-case single synchronous span is therefore bounded by roughly
+   `max(frameBudgetMs + one small atomic operation's cost, one build-phase's own cost)`** — dominated by
+   the ~16ms class of cost shared by all three build phases (weld, connectivity, BVH — no longer just the
+   BVH build), not by `frameBudgetMs` alone. This is a real, statable bound, not a vague best-effort
+   disclaimer — but it is only as good as the unmeasured rows of the table above, which is why closing
+   that measurement gap (now three build phases plus extraction plus the broad-phase scan, not one) is a
+   required part of the performance gate rather than an assumption this spec quietly relies on.
+
+   **These count-based budgets (`maxCandidatePairsExamined`, `maxCrossingPairsExamined`,
+   `maxContainmentSamples`) still bound each stage's total *work* — how much can happen at all — which
+   the time-based checkpoints don't replace.** Composition across stages and pairs is a further,
+   distinct concern: round 9 found that `volume-overlap` runs `ProperCrossingQuery` and up to two
+   `ContainmentQuery` component-sampling passes per candidate pair, each individually bounded as above,
+   with nothing yielding *between* them — so a single pair, or a run of pairs whose BLASes are already
+   cached, could still block for several such spans back to back. See **`CollisionWorld`**'s
+   `frameBudgetMs` checkpoint for that mechanism; it wraps these budgets and the per-primitive
+   checkpoints above rather than replacing either.
+
+   Both mechanisms key off the same constant and the same clock; they differ only in *where* the check
+   runs and *what happens* when it trips — abort-and-diagnose inside a synchronous native traversal
+   that cannot pause, versus genuinely yield-and-resume in plain JS loops that can (see
+   **`ContainmentQuery`**'s sampling stages below, and **`CollisionWorld`** for the pair/stage
+   boundaries).
 
 **`ContainmentQuery`** — point classification against a mesh. It exposes **two layers**, and keeping
 them distinct is what stops the design from being circular:
@@ -985,8 +1486,18 @@ sampling the right decomposition:
 > establish positive volume only for a component certified closed (see **Solid model**). So, **in
 > `volume-overlap` mode**:
 >
-> - a **positive** result whose deciding **source** component is not a certified closed manifold emits
->   `unverified-open-component` — the containment is real, the *volume* overlap is not certified;
+> - a **positive** result whose deciding component is not a certified closed manifold emits
+>   `unverified-open-component` — the containment is real, the *volume* overlap is not certified.
+>   **`role` names whichever public operand supplied that component, and round 9 found the spec never
+>   said so.** `volume-overlap`'s composition (see below) evaluates containment in *both* directions —
+>   `anyComponentOf(A) inside B` and `anyComponentOf(B) inside A` — and either term can decide the
+>   positive. When the first term decides, the sampled (and possibly open) component belongs to the
+>   public **source**; when the second term decides, it belongs to the public **target**. A closed
+>   public source containing an open-triangle public target decides via the second term, so the
+>   diagnostic must read `role: 'target'` — a case the previous wording ("decided by an open SOURCE
+>   component") had no way to express and the spike consequently under-reported. The role follows the
+>   deciding term exactly as `unverified-parity-operand`'s does (see the role table under Public API),
+>   just for the containment terms rather than the crossing and containment-parity ones;
 > - a **negative** result involving any flagged component emits `non-manifold-component`.
 >
 > In **`containment`** mode neither rule applies to the source at all: that mode's contract is
@@ -1029,7 +1540,8 @@ deep inside a room while sharing one coplanar face with it has no proper crossin
 through to containment — and if all 4 picks land on that shared face they all read `boundary`, and a
 deep, unambiguous overlap comes back as a (diagnosed) non-overlap. "One conclusive sample decides the
 component" is only a guarantee if the search actually pursues one. Three escalating stages, per
-component:
+component — **the third is scoped to `volume-overlap` only; see the note after stage 3 for why
+`containment` stops after the second:**
 
 1. **Spatially-spread vertex sampling.** Walk the component's referenced vertices on a stride
    (`ceil(n / samplesPerComponent)`, `samplesPerComponent = 8`) rather than taking the first few, so
@@ -1057,12 +1569,65 @@ component:
    `boundary` forever. Round 5 established the per-frame tolerance principle and then missed this
    instance of it; `witnessLadder = [1e-3, 1e-4, 1e-5] × L_source` applies it consistently.
 
-Only if all three stages fail is the component unresolved, and a negative result with any unresolved
-component emits `inconclusive-containment`. On a non-manifold-flagged component the same three stages
-run, but no guarantee attaches to their result.
+   **This stage is scoped to `volume-overlap`; `containment` never runs it, and round 9 was the
+   correction of an earlier draft that ran it in both.** The witness is deliberately constructed
+   *inside the source's own volume* — a point off the surface entirely — which is exactly right for
+   `volume-overlap`'s question ("do the two solids share volume") but wrong for `containment`'s, whose
+   contract is restricted to points **on the source's surface** (see **Query modes and their
+   preconditions**). Two coincident closed boxes are the counterexample: every source-surface point
+   sits exactly on the target's boundary, so surface containment must read false, but a witness
+   constructed just inside the shared surface lands inside both boxes and reads true — the mode
+   answering a question it explicitly declined to ask.
+
+   `containment`'s use of `anyComponentInside` (in `ContainmentModeQuery` below) therefore stops after
+   stage 2. **This is not the same as asserting the component is clean-false** — "every vertex reads
+   `boundary`" does not *prove* the component's whole surface coincides with the target's, only that
+   the vertices sampled do; a component whose faces genuinely bulge into the interior between
+   boundary-reading vertices is not ruled out by this stage alone. So a component left unresolved after
+   stage 2 stays unresolved for this term, on the same "unresolved component → diagnosed negative" rule
+   as every other stage-exhaustion case (see below), rather than being asserted false. What discharges
+   the genuine "surface dips inside without any vertex inside" case is `SurfaceCrossingWitness`'s
+   independent triangle-level search, which finds it if it exists regardless of how any vertex
+   classified; if that search also finds nothing, the pair is a **diagnosed** negative, not a silently
+   clean one — see **`ContainmentModeQuery`**.
+
+Only if all three stages fail (`volume-overlap`) or the first two fail (`containment`) is the
+component unresolved, and a negative result with any unresolved component emits
+`inconclusive-containment`. On a non-manifold-flagged component the same stages run, but no guarantee
+attaches to their result.
 
 A global `maxContainmentSamples = 512` bounds pathologically over-segmented geometry; hitting it
 emits `incomplete-component-coverage` so an unsampled-component negative is never reported as clean.
+
+**Intra-loop checkpoint: unlike `ProperCrossingQuery`'s `bvhcast` callback, this sampling loop is
+plain JS under `findClashes`'s own control, so it can genuinely yield and resume instead of only
+aborting.** Round 10 found the composed-stage checkpoints added under **`CollisionWorld`** don't
+bound *this* stage's own internal cost either — up to 512 samples, each a `classifyPoint` call, can
+themselves run well past `frameBudgetMs` before the stage returns and the next checkpoint is reached.
+
+**Round 11 found round 10's own fix too coarse: checking every `deadlineCheckInterval = 256` samples
+still lets up to 256 `classifyPoint` calls run unchecked before a checkpoint fires — the same
+granularity mistake as `ProperCrossingQuery`'s round-10 fix, just at a different batch size.** The
+check moves to **before every individual `classifyPoint` call**, not batched at all: elapsed time is
+read immediately before each sample's classification. If it exceeds `frameBudgetMs`, the loop `await`s
+the same scheduling yield as the pair/stage boundaries, **then re-checks the model's load epoch** (see
+**`world.evictModel`**) before resuming sampling from where it left off. A stale epoch aborts the
+whole `findClashes` call with `ModelEvictedError`, exactly as a boundary-level checkpoint would. This
+bounds the overshoot past `frameBudgetMs` to at most one `classifyPoint` call's own cost — see "Atomic
+operations and what remains non-preemptible" under **`ProperCrossingQuery`**'s budget table for why
+that cost is reasoned small but not yet measured, and what the performance gate must confirm.
+Checking every call rather than batching does add `performance.now()` overhead per sample rather than
+amortizing it over 256 — accepted deliberately, since correctness (bounding the actual overshoot) is
+the point of this fix, and `performance.now()`'s own cost is itself far below a `classifyPoint` call's.
+
+Unlike the `bvhcast` case, this does **not** truncate the search — sampling resumes exactly where it
+paused, so `maxContainmentSamples` alone still decides whether the component is eventually unresolved;
+the time check only decides how the work is *scheduled* across frames, not how much of it happens. The
+same per-call-checked, yield-and-resume pattern applies to stage 3's witness-triangle loop
+(`maxWitnessTriangles = 8`, checked before each witness-triangle attempt) and to
+`SurfaceCrossingWitness`'s per-candidate probe loop below (checked before each candidate's probe,
+mirroring `ProperCrossingQuery`'s per-probe checkpoint) — all three are plain JS loops with no native
+traversal in the way.
 
 **`VolumeOverlapQuery`** — the direct replacement for `ThreeBSP.intersect()`, composed from the
 above. Three review rounds shaped it; the two rejected shapes are worth keeping in view because each
@@ -1113,6 +1678,14 @@ containment(A, B) :=
 One direction only, and no bidirectional evaluation — `volume-overlap` is a symmetric predicate about
 two solids, `containment` is a directed question about a source surface and a target solid.
 
+**The first term uses only `anyComponentInside`'s stages 1–2 (vertex sampling), never its stage-3
+constructed interior witness — round 9's fix for the mode's surface-only contract being violated by an
+off-surface sample.** See the note under **the containment guarantee** above for why: stage 3
+constructs a point inside the source's own volume, which answers `volume-overlap`'s question, not this
+mode's. A component left unresolved by stages 1–2 alone contributes no witness here and, if the second
+term below also finds nothing, the pair is a diagnosed negative (`inconclusive-containment`), never a
+witness manufactured by stepping off the surface.
+
 **The second term is not optional, and round 7 shipped without it.** That draft defined the mode as
 bare `anyComponentInside`, which samples *vertices* and stops at the first conclusive one. A source
 straddling the target's boundary with no vertex inside therefore returned a **clean false**: a duct
@@ -1126,9 +1699,29 @@ must find those points itself.
 **`SurfaceCrossingWitness` probes within the source triangle's own plane and classifies against the
 target only.** Given a source triangle properly (non-coplanarly) intersecting the target surface
 along segment `L`, take `L`'s midpoint `M`, form the in-plane direction `u = normalize(nA × dir(L))`
-— perpendicular to `L`, inside the source triangle's plane — and probe `P = M ± δ·u` over
-`offsetLadder`, rejecting any `P` that falls outside the source triangle. The witness holds when some
-`P` classifies `inside` the target.
+— perpendicular to `L`, inside the source triangle's plane — and compute `dAvail`, the distance from
+`M` to the triangle's own edge along `u` (the nearest point where the ray `M + t·u`, `t > 0`, exits the
+triangle; `-u` is handled symmetrically and can have a different `dAvail`). Probe `P = M ± δ·u` for
+`δ` in **`crossingProbeFractions × dAvail`** (`[0.5, 0.1, 0.01]`, dimensionless fractions of the
+available in-triangle distance, coarsest first) rather than the canonical-frame `offsetLadder`. The
+witness holds when some `P` classifies `inside` the target.
+
+**Round 9 found that reusing `offsetLadder` here silently failed on any triangle whose own size
+diverged from the pair's canonical scale.** `offsetLadder` is `[1e-3, 1e-4, 1e-5] × L_canonical`, a
+length derived from the *pair's* bounding diagonal, with no relationship to any one triangle's own
+size — a small triangle on a geometry with a large overall diagonal (or a source with a small triangle
+alongside a distant, larger component) can have every rung fall outside the triangle, so every probe
+is rejected and the candidate silently resolves to "no witness," the same clean false this stage
+exists to eliminate. Scaling by the triangle's own available in-plane distance at `M`, recomputed per
+candidate rather than looked up from a per-geometry cache, ties the ladder to the one quantity that
+actually bounds it.
+
+**If no rung produces a probe that both stays inside the triangle and clears `surfaceEpsilon` against
+the target, the candidate is inconclusive, not a rejected witness.** This mirrors
+`ProperCrossingQuery`'s step 5: a probe that can't be evaluated proves nothing, and folding it into a
+clean "no witness" would silently reproduce the false negative this stage exists to close. A negative
+`containment` result with any such candidate carries `inconclusive-crossing` — redefined below to cover
+an unproducible in-triangle probe alongside its original boundary-classification case.
 
 The contrast with `ProperCrossingQuery`'s four-quadrant probe is the point rather than an
 implementation detail. That test steps off the intersection curve into space and demands `inside`
@@ -1145,10 +1738,12 @@ strengthens `anyComponentInside`'s guarantee rather than weakening it — that g
 under "no proper crossing exists," and stage 2 is what now establishes the antecedent instead of
 assuming it.
 
-It shares `anyComponentInside` and `classifyPoint` verbatim with `VolumeOverlapQuery`; the modes
-differ in what they *compose* and what they *promise*, not in how a point is classified. See **Query
-modes and their preconditions** for why this exists as its own mode rather than as a relaxation of
-`volume-overlap`.
+It shares `classifyPoint` verbatim with `VolumeOverlapQuery`, and `anyComponentInside` through its
+first two stages — the point classification and the vertex-sampling search are identical; only the
+constructed-interior-witness stage (`volume-overlap` only, see above) and the probe scaling inside
+`SurfaceCrossingWitness` differ. The modes differ in what they *compose* and what they *promise*, not
+in how a point is classified. See **Query modes and their preconditions** for why this exists as its
+own mode rather than as a relaxation of `volume-overlap`.
 
 Note the deliberate name split: **`ContainmentQuery`** is the internal point-classification component
 (`classifyPoint` + `anyComponentInside`), used by every mode; `ContainmentModeQuery` is the thin
@@ -1158,7 +1753,9 @@ treat a containment *witness* as a volume-overlap *proof*.
 **`CollisionWorld`** — the facade. Broad phase is a plain linear AABB scan over
 `CollisionInstance.worldBounds` (no TLAS yet — candidate counts are small). Narrow phase calls
 `VolumeOverlapQuery`, `ContainmentModeQuery`, or `SurfaceIntersectionQuery` per candidate pair
-depending on `query.mode`.
+depending on `query.mode`, threading through the shared `frameBudgetMs = 8` wall-clock checkpoint
+described under **Data Flow** below — the mechanism that bounds what the per-stage budgets in
+`ProperCrossingQuery` and `ContainmentQuery` compose into across one `findClashes` call.
 
 ## Data Flow — Room Locate Query
 
@@ -1170,14 +1767,82 @@ depending on `query.mode`.
    only calls `loadModel()` after later async user interaction (URN entry, translation-status
    polling), and the user can load a different model afterward. A `load()`-time cache would either
    run against no model at all or go stale the moment a new model loads.
-   - Instead, room dbIds are resolved **lazily, keyed by `model.id`**, in a `Map<number, Promise<number[]>>`
-     owned by the extension. The first `locateElementByRoom` call for a given model triggers
+   - Instead, room dbIds are resolved **lazily, keyed by the exact `Model` object**, in a
+     `Map<Model, Promise<number[]>>` owned by the extension — **not by `model.id`**, per round 12
+     below. The first `locateElementByRoom` call for the extension's current model triggers
      `model.search(roomCategoryName, onSuccess, onError, ['Category'], { searchHidden: true })` and
-     caches the resulting promise; later calls for the same `model.id` reuse it. The cache entry for
-     a model is dropped when that model is unloaded (the extension listens for the Viewer's
-     model-removal notification) so a stale room list can never outlive its model. **That same
-     handler must also call `world.evictModel(model.id)`** — the room cache is not the only
-     model-scoped state, and the previous draft evicted only it.
+     caches the resulting promise against that model object; later calls for the same object reuse it.
+     This is an internal cache-keying change only — `locateElementByRoom(dbId)`'s own public signature
+     is unchanged and still resolves "the current model" however it already does; see **`RoomLocatorExtension`
+     does not satisfy the Viewer lifecycle or model-selection contract** in `review-comments-v12.md` for
+     the deferred, separate question of whether that signature itself should take a model argument.
+
+     **The unload hook is `Autodesk.Viewing.BEFORE_MODEL_UNLOAD_EVENT` (`"beforeModelUnload"`,
+     `index.d.ts:324`), not left as an unnamed "model-removal notification."** Round 10 found the
+     spec never picked one of the three plausible candidates the installed typings expose
+     (`BEFORE_MODEL_UNLOAD_EVENT`, `MODEL_REMOVED_EVENT`, `MODEL_UNLOADED_EVENT`) — those typings
+     declare the listener payload as `event: any` (no payload interface is shipped), so the handler
+     must confirm `event.model` once during implementation before relying on it; Autodesk's public
+     event reference documents that field, but the installed `.d.ts` alone doesn't verify it, in
+     keeping with this spec's practice of citing exactly what was checked. `BEFORE_MODEL_UNLOAD_EVENT`
+     specifically (not the two events named for *after* removal) is what makes the eviction below
+     race-safe: it fires while `model` is still valid to read, and — because the handler runs
+     synchronously within that event dispatch — invalidating this model's state inside it closes the
+     race window as early as the Viewer offers any hook to close it. **That same handler calls
+     `world.evictModel(event.model)` — the exact object, not `model.id`, per round 12 — before
+     deleting that object's room-cache entry** — the room cache is not the only model-scoped state, and
+     the previous draft evicted only it. See **`world.evictModel`** below for what "evicting" now
+     guarantees under concurrent in-flight work, including why it takes the object rather than the id.
+
+     **A room-search promise that *rejects* is removed from the cache, not left cached.** Round 10
+     found the previous wording ("caches the resulting promise") didn't say what happens after a
+     rejection: leaving a rejected promise in the map would replay the same failure on every later
+     `locateElementByRoom` call for that model forever, even for a transient `model.search` error. On
+     rejection, the handler deletes that model object's cache entry (in addition to still rejecting the
+     caller's in-flight call), so the next call retries `model.search` fresh rather than replaying a
+     stale failure.
+
+     **A `model.search` callback that completes after its model was evicted must reject its original
+     caller, not merely skip the cache write.** Round 12 found the round-10/11 guard only prevented a
+     late callback from *writing* a stale entry — it didn't stop the callback from calling `resolve`,
+     so the caller already awaiting that promise (typically still inside `locateElementByRoom`, on its
+     way into `findClashes`) could receive stale room dbIds and proceed to query against an unloaded
+     model, exactly the resurrection round 12 found. `model.search`'s callbacks fire asynchronously and
+     are not cancellable, so a search started just before `beforeModelUnload` can still complete
+     afterward.
+
+     **Round 13 found the round-12 fix for this — checking `world.isModelLive(model)` inside the
+     callback — broke the ordinary case instead: a model's very *first* room search always runs before
+     that model has ever been touched by `findClashes`, so `isModelLive` (whose contract is "never seen
+     before → false," see **`world.isModelLive`**) returned `false` for a perfectly live, just-loaded
+     model and rejected every first lookup with a spurious `ModelEvictedError`.** The fix is to admit
+     the model *before* starting the search, not to inspect its ambiguous liveness state *after* the
+     search resolves:
+     - Before calling `model.search`, the cache-miss path synchronously calls `const lease =
+       world.admitModel(model)` and captures the returned `ModelLease` in the closure that builds this
+       cache entry's promise. `admitModel` throws immediately (never starting the search) if `model` is
+       already tombstoned evicted, or if the world is disposed — both surface as the promise this call
+       returns being rejected with `ModelEvictedError`/`WorldDisposedError` respectively, without ever
+       calling `model.search` at all.
+     - The success callback now checks `world.isLeaseValid(lease)` **before** doing anything else:
+       - **invalid** (the model was evicted, or the world disposed, sometime between admission and the
+         callback firing) → `reject(new ModelEvictedError(model.id))` and leave the cache untouched. The
+         caller's `await locateElementByRoom(dbId)` now rejects instead of resolving with stale data or
+         hanging silently — either of which earlier wording could produce, since a guard that only skips
+         `resolve()` without calling `reject()` leaves the promise permanently unsettled.
+       - **valid** → also check `roomCache.get(model) === thisCall's own promise` (guards against a
+         *different* load of the same object having somehow superseded this entry, which object-keying
+         makes structurally impossible for a *different* `Model` object but is still checked for the
+         same-object, reused-promise-slot case) before writing the result and resolving normally.
+     - The error callback (a genuine `model.search` failure, not eviction) follows the same shape: check
+       `isLeaseValid(lease)` first so a failure that arrives after eviction still surfaces as
+       `ModelEvictedError` rather than the underlying search error, since eviction is the more accurate
+       explanation for why the caller should stop waiting.
+     Because admission is now synchronous and up front, `isLeaseValid` never has to answer for a model
+     that was "never seen" — a lease only exists for a model this call itself admitted, so the callback
+     always finds either a still-valid lease or one invalidated by a real eviction/disposal in between.
+     This needs no new public surface beyond `admitModel`/`isLeaseValid` — everything else is state the
+     extension's own object-keyed cache already has.
    - **`model.search`, not `viewer.search`** — a review pass correctly caught the previous draft
      using the latter. Per the installed typings, `Viewer3D.search` is declared with four arguments
      and no `options` parameter (`index.d.ts:1247`), so the `{ searchHidden: true }` argument would
@@ -1198,22 +1863,92 @@ depending on `query.mode`.
 3. Inside `CollisionWorld.findClashes`:
    - Reject immediately if `source.model !== target.model` (cross-model queries are out of scope —
      see Milestone Scope).
-   - Build/get `CollisionInstance`s for the source dbId and every target room dbId via
-     `ViewerModelAdapter` (one instance per fragment — either side may have more than one fragment).
-   - **Broad phase**: linear AABB scan of source instances against target instances.
-   - **Narrow phase**: for each candidate pair, check both geometries' triangle counts against
-     `maxSyncTriangleCount` (20,000) first — if either exceeds it, skip the pair and record a
-     `geometry-too-large-for-sync-build` diagnostic against the offending fragment. That diagnostic
-     is **fragment-scoped and deduplicated**: being oversized is a property of the geometry alone,
-     not of the pairing, so one entry is emitted per oversized fragment no matter how many candidate
-     pairs it appears in. Otherwise lazily get/build BLAS via `GeometryRegistry`/`BlasCache`, then run
-     the query for `query.mode` — `ContainmentModeQuery` for the room-locator's `containment`, or
-     `VolumeOverlapQuery` / `SurfaceIntersectionQuery` — with the pair's relative
-     matrix. Because `MeshBVH`
-     construction is synchronous, the narrow phase `await`s a scheduling yield (e.g.
-     `requestAnimationFrame`/`setTimeout(0)`) between each *new* BLAS build within one `findClashes`
-     call — cached BLAS hits don't yield, only builds do — so a query that touches many
-     not-yet-built rooms doesn't freeze the Viewer in one synchronous burst.
+   - **Extraction** (round 15 added the first checkpoint/ceiling this step ever had; round 16 found that
+     ceiling didn't actually bound anything and fixed the mechanism, not just the number): for each
+     requested dbId (source, then every target dbId), before beginning that dbId's own extraction, check
+     the accumulated `frameBudgetMs` accumulator (below) and yield if due — this bounds *composition*
+     across dbIds, the same way the existing pair/stage checkpoint bounds composition across pairs.
+
+     **Round 16 found the round-15 design didn't bound one dbId's own enumeration, only claimed to.**
+     `enumNodeFragments(dbId, cb, true)` (`recursive: true`) is a single, uninterruptible native call — a
+     large assembly's subtree is enumerated in one synchronous burst no matter how it's checkpointed from
+     outside, so a `maxFragmentsPerDbId` check performed *after* that call returns only detects an overrun
+     once the freeze it was meant to prevent has already happened. The fix does not use the recursive
+     form at all: `InstanceTree` also exposes `enumNodeChildren(node, cb, recursive?)` and `getChildCount(dbId)`
+     (confirmed present in the installed `@types/forge-viewer` typings — `index.d.ts:667-669` — alongside
+     `enumNodeFragments`'s own non-recursive form, `enumNodeFragments(node, cb, false)`; their exact
+     runtime cost characteristics are unverified until implementation, consistent with this spec's
+     practice of citing exactly what a `.d.ts` alone can confirm). Extraction walks the node tree itself,
+     depth-first, using these non-recursive primitives:
+     - at each node, call `enumNodeFragments(node, cb, /* recursive */ false)` to collect *that node's
+       own* fragments (not its descendants') and add the count to a running per-dbId tally;
+     - check the tally against `maxFragmentsPerDbId` (`5_000`, provisional) after every node's
+       contribution — **the moment it's exceeded, the walk stops immediately** (no further
+       `enumNodeChildren`/`enumNodeFragments` calls for that dbId's remaining subtree) and the entire
+       `findClashes` call rejects, naming the offending dbId;
+     - otherwise, descend into children one at a time via `enumNodeChildren(node, cb, /* recursive */
+       false)` (using `getChildCount(dbId)` where a cheap pre-check on branching factor is useful) and
+       recurse the same way.
+     This bounds the actual synchronous burst, not just the after-the-fact detection of one: a subtree
+     with 100,000 fragments spread across many nodes stops enumerating once the tally crosses `5_000`,
+     rather than enumerating all 100,000 before rejecting. A checkpoint against `frameBudgetMs` also
+     fires between sibling nodes at the same depth, so composition across a large-but-under-ceiling
+     subtree's many nodes is bounded the same way composition across dbIds already is — this was the
+     "cooperatively scheduled" half of round 16's requested fix, layered on top of the hard ceiling.
+     Build `CollisionInstance`s from the fragments this walk collected (one instance per fragment —
+     either side may have more than one fragment).
+   - **Broad phase**: before the nested scan, check `sourceInstances.length × targetInstances.length`
+     against **`maxBroadPhaseInstancePairs`** (`1_000_000`, provisional — same table), using
+     overflow-safe division (`sourceInstances.length > maxBroadPhaseInstancePairs /
+     targetInstances.length`) rather than computing the product directly. Over the ceiling, the entire
+     call rejects before the scan runs, rather than letting an unbounded `O(N×M)` AABB scan execute with
+     no checkpoint of its own — the second synchronous span round 15 found had neither a checkpoint nor
+     a size limit. Under the ceiling: linear AABB scan of source instances against target instances, as
+     before.
+   - **Narrow phase**: for each candidate pair, check both geometries' **active-range triangle counts**
+     (`sum(ranges[].count)` — round 16: never the raw index's own count, see `ThreeMeshBvhBackend`/
+     `BlasCache`) against `maxSyncTriangleCount` (`12_000` — revised in round 15) first — if either
+     exceeds it, skip the pair and record a `geometry-too-large-for-sync-build` diagnostic against the
+     offending fragment. That diagnostic is **fragment-scoped and deduplicated**: being oversized is a
+     property of the geometry alone, not of the pairing, so one entry is emitted per oversized fragment
+     no matter how many candidate pairs it appears in. Otherwise lazily get/build the `GeometryRecord` via
+     `GeometryRegistry`/`BlasCache` — active-range compaction and welding together, then (only for a mode
+     that calls `anyComponentInside` — `containment` or `volume-overlap`, not `surface-intersection`)
+     connectivity, then the BVH, each its own checkpointed phase, see `ThreeMeshBvhBackend`/`BlasCache`
+     — then run the query for `query.mode` — `ContainmentModeQuery` for the room-locator's `containment`,
+     or `VolumeOverlapQuery` / `SurfaceIntersectionQuery` — with the pair's relative matrix.
+
+     **Yielding is governed by one shared wall-clock budget for the entire `findClashes` call, not
+     only by new build-phase starts.** Welding, connectivity construction, and `MeshBVH` construction are
+     each synchronous, so each was always its own yield checkpoint (see the "Round 15 found..." note
+     under `ThreeMeshBvhBackend`/`BlasCache` for why all three, not just the BVH build, get this
+     treatment) — but round 9 found checkpointing build-phase starts alone isn't what the one-frame
+     guarantee actually needs: a `volume-overlap` pair composes up to three independently-budgeted
+     stages (`ProperCrossingQuery`, then `ContainmentQuery(source in target)`, then
+     `ContainmentQuery(target in source)`), each sized to roughly one frame on its own, with nothing
+     yielding *between* them; and once every candidate's `GeometryRecord` is cached, a run of pairs could
+     execute back to back with no checkpoint between them at all. Either alone can freeze the Viewer for
+     several frames despite the per-stage budgets above all being individually correct. The narrow phase
+     therefore tracks one `performance.now()`-based accumulator for the call and checks it — not only
+     before each new build phase, but also before starting each candidate pair (cached or not), before
+     each dbId's extraction (above), before the broad-phase scan (above), and between each of a pair's
+     composed sub-queries. Whenever accumulated synchronous time since the last yield exceeds
+     `frameBudgetMs` (`8` — half the one-frame target, since a checkpoint can only fire *between*
+     primitives, not preempt one), it `await`s the same scheduling yield
+     (`requestAnimationFrame`/`setTimeout(0)`) before continuing. The count-based budgets
+     (`maxCandidatePairsExamined`, `maxCrossingPairsExamined`, `maxContainmentSamples`) are unchanged and
+     still bound each stage individually as a backstop; `frameBudgetMs` is what now bounds their
+     *composition*, which no fixed count can do without knowing the other stages' cost in advance.
+
+     **This is the coarse, pair/stage-boundary layer only — round 10 found it insufficient by itself,
+     since a single stage's own internal loop can exceed `frameBudgetMs` before ever reaching one of
+     these boundaries.** `ProperCrossingQuery`'s `bvhcast` traversal and `ContainmentQuery`'s sampling
+     loops each carry their own intra-stage checkpoint at a finer granularity — see the "Abort
+     protocol" note under **`ProperCrossingQuery`** and the "Intra-loop checkpoint" note under
+     **`ContainmentQuery`**. Every checkpoint, coarse or fine, checks `disposed` first, then re-validates
+     the model's load epoch (see **`world.evictModel`**'s "Race safety" note) before resuming — round 15
+     added the `disposed` half of that ordering; a model evicted, or a world disposed, while any yield
+     was in flight is never operated on after the fact.
    - Aggregate fragment-pair hits into dbId-level `ClashPair`s (`groupBy: 'dbId'`), deduping so a
      room with multiple fragments isn't reported twice.
 4. The extension maps `result.pairs[].target.dbId` back to room dbIds and returns them — the same
@@ -1229,6 +1964,12 @@ CollisionWorld.fromViewer(viewer, options): Promise<CollisionWorld>
 // passing any other value throws.
 
 world.findClashes(query): Promise<ClashResult>
+// Rejects immediately, before any geometry extraction, if the world is disposed or if
+// query.source.model/query.target.model is a Model object already tombstoned as evicted — see "Race
+// safety" below. Otherwise admits both operand models via the same internal admission path
+// world.admitModel exposes publicly (assigns a fresh epoch on first use, idempotent on a model already
+// live) — a model object never seen before is a legitimate first use and is admitted normally; only an
+// object this exact world has already evicted is rejected.
 // query.source.model must === query.target.model — cross-model queries reject in Milestone 1
 // query.mode: 'volume-overlap' | 'containment' | 'surface-intersection'
 //   'volume-overlap'       — solids share positive volume; pure touching is NOT overlap.
@@ -1248,27 +1989,327 @@ world.findClashes(query): Promise<ClashResult>
 // room-locator wants every matching room, so nothing in this milestone needs it. Deferred to
 // whichever milestone has a caller that can pin down its meaning.
 
-world.evictModel(modelId): void
-// Drops everything keyed by that modelId: CollisionInstances, GeometryRecords, their reference
-// counts, cached BLASes, cached connectivity, and any in-flight build promises (which reject).
-// Required because all of that is keyed by (modelId, geometryIndex) — a review pass caught that
-// the previous draft evicted only the extension's room-dbId cache on model removal, leaving the
-// unloaded model's geometry and BVHs resident, and risking stale BLAS reuse if the Viewer ever
-// recycles a model id. Must be called from the extension's model-removal handler, alongside
-// dropping the room cache entry.
+world.admitModel(model): ModelLease
+// Synchronous. Returns { model, epoch } — an opaque capture of this exact object's current lifecycle
+// state, valid until the object is evicted or the world is disposed. Idempotent: calling it again for
+// an already-live object returns a lease with that same epoch (does not re-admit or reassign). Three
+// outcomes, checked in this order:
+//   - world disposed → throws WorldDisposedError
+//   - modelLifecycle has this exact object tombstoned 'evicted' → throws ModelEvictedError, immediately,
+//     without assigning a new epoch (a model that was ever evicted can never be re-leased)
+//   - otherwise → admits if not already admitted (assigns epoch = nextLoadEpoch++, records
+//     liveModelByModelId, same lazy-admission path findClashes's entry check uses — see below) and
+//     returns the (possibly pre-existing) lease
+// Round 13 found the previous design had no way for a caller to distinguish "not yet admitted, safe to
+// proceed" from "evicted, must reject" *before* starting async work: world.isModelLive(model) answers
+// false for both, by design (see isModelLive below), which is correct for a general liveness query but
+// wrong as a pre-flight gate for a caller — like the room-search cache — that needs to admit the model
+// up front and then validate that exact admission later. admitModel makes admission an explicit,
+// synchronous step a caller can perform before starting async work, and hands back a token
+// (ModelLease) that later validates against exactly that admission, not against whatever the model's
+// state happens to be when the check runs. See "Race safety" below and Data Flow step 1.
 
-world.dispose(): void   // evicts every model and releases all cached state
+world.isLeaseValid(lease): boolean
+// Strictly non-throwing and total: for any lease ever returned by admitModel, always returns a plain
+// boolean, never throws. Checks `disposed` FIRST, directly — not by inferring it from lease.model's own
+// modelLifecycle entry — and returns false immediately if set:
+//   if (disposed) return false;
+//   const entry = modelLifecycle.get(lease.model);
+//   return entry?.state === 'live' && entry.epoch === lease.epoch;
+// Round 14 found the previous wording of this method ("does not throw on a disposed world") directly
+// contradicted dispose()'s own contract, which listed isLeaseValid among the public methods that
+// "reject or throw WorldDisposedError" after disposal — two irreconcilable behaviors for one method, and
+// one of them (throwing) would exit an async Viewer callback as an uncaught exception rather than a
+// rejection, leaving whichever promise the caller was building permanently unsettled. isLeaseValid is
+// the resolution: it is the one deliberate exception to "every public method throws WorldDisposedError
+// once disposed" (see world.dispose() below), precisely because it exists to be called from contexts —
+// like an async model.search callback — that need a plain answer they can branch on, not a throw they'd
+// have to wrap in try/catch. Round 15 found the *implementation* of that resolution mattered too: a
+// version that answers "disposed" by checking whether dispose() has gotten around to tombstoning
+// lease.model specifically is only as complete as dispose()'s own model sweep — which round 15 also
+// found is not guaranteed to reach every live model under `modelId` reuse (see "Race safety" below).
+// Checking `disposed` directly, first, sidesteps that entirely: this method's correctness never depended
+// on enumeration completeness to begin with. A caller that needs to distinguish *why* a lease went
+// invalid (evicted vs. disposed vs. never valid to begin with) does that mapping itself, outside this
+// predicate — e.g. the room-search callback maps "lease invalid" to
+// reject(new ModelEvictedError(model.id)) regardless of which of the two caused it, since both mean the
+// same thing to that caller ("stop, don't use this model"). A future caller that needs the distinction
+// can check world.isModelLive(model) (still throws WorldDisposedError, per its own unchanged contract)
+// after seeing isLeaseValid return false.
+
+world.evictModel(model): void
+// Takes the exact Viewer Model OBJECT, not modelId — round 12 found modelId-keyed eviction can't
+// permanently distinguish "this exact load was evicted" from "nothing has loaded under this id yet,"
+// which is what let a stale caller re-admit an evicted object as if it were a fresh one.
+//
+// Round 15 found the round-12-through-14 wording ("tombstones that object's lifecycle entry FIRST")
+// never actually specified what a tombstone looks like for a `model` this world has never admitted —
+// BEFORE_MODEL_UNLOAD_EVENT fires for any unloaded model, including one that was loaded but never
+// touched findClashes/room-search, so evictModel must handle "no prior modelLifecycle entry at all,"
+// not only "was live." modelLifecycle's value type is now the two-variant discriminated union
+// { state: 'live', epoch: number } | { state: 'evicted' } — the evicted variant carries no epoch at
+// all, because nothing ever needs to compare one: every liveness/lease check short-circuits on
+// `state !== 'live'` before it would ever read `.epoch`. This makes "evict something never admitted"
+// representable without fabricating an epoch that would falsely imply the object was ever live:
+//   const previous = modelLifecycle.get(model);
+//   if (previous?.state === 'evicted') return;               // idempotent no-op
+//   modelLifecycle.set(model, { state: 'evicted' });          // unconditional — handles both
+//                                                              // "was live" and "never seen" identically
+//   if (previous?.state === 'live') releaseEpochScopedState(previous.epoch);
+// The tombstone write happens before the (conditional) state release, and is permanent either way: this
+// exact object can never become live again in this world, even if model.id is later reused by a
+// different object (see "Race safety" below).
+// `releaseEpochScopedState` drops every GeometryRecord, cached BLAS, cached connectivity, and in-flight
+// build promise (which rejects) filed under the object's own admitted epoch (see "Race safety" —
+// GeometryRegistry keys records by (loadEpoch, geometryIndex), not (modelId, geometryIndex),
+// specifically so this step can never touch another object's state). Because the key space is
+// partitioned by epoch rather than by the reusable `modelId`, this release needs no occupancy check
+// against `liveModelByModelId` the way round 13's interim fix did — a stale, delayed, or duplicate
+// evictModel(oldModel) call can only ever release records filed under oldModel's own epoch, which no
+// other object's records are ever filed under, regardless of model.id reuse or call timing. **This step
+// must be non-throwing** (a synchronous map/set removal and promise rejection, nothing that can itself
+// fail) — round 15 flagged that a version which could throw partway through would leave the tombstone
+// written (correct, permanent) but the release incomplete and unretriable, since the now-`'evicted'`
+// entry no longer carries the epoch a second attempt would need to find those records again. This is a
+// state-release/cleanup completeness concern, not a liveness-correctness one — the object is correctly
+// dead either way — but it is required for the design to actually reclaim what it claims to.
+// If this object is still `liveModelByModelId`'s current entry for its `model.id`, that entry is also
+// deleted, freeing the id for a future different object; this is diagnostic/bookkeeping only (see
+// "Race safety" below for why nothing correctness-relevant depends on it, including world.dispose(),
+// which wholesale-clears caches rather than sweeping this map).
+// Required because BLAS/geometry state must not outlive the load that produced it — a review pass
+// caught that the previous draft evicted only the extension's room-dbId cache on model removal, leaving
+// the unloaded model's geometry and BVHs resident. Must be called from the extension's
+// Autodesk.Viewing.BEFORE_MODEL_UNLOAD_EVENT handler with event.model (see Data Flow step 1), alongside
+// dropping that object's room-cache entry.
+
+world.isModelLive(model): boolean
+// Checks `disposed` FIRST, directly (same ordering as isLeaseValid, see above) — throws
+// WorldDisposedError immediately if set, before consulting modelLifecycle at all. Otherwise: true iff
+// this exact Model object has a { state: 'live' } lifecycle entry. Never seen before → false (not yet
+// admitted; findClashes would admit it fresh, this accessor does not). General-purpose liveness query,
+// retained for callers (tests, diagnostics) that need to distinguish *why* a model isn't usable — a
+// throw here specifically means "the world itself is gone," which isLeaseValid's plain-boolean contract
+// cannot express. Round 13 found this "never seen → false" contract is *wrong* for a pre-admission gate
+// — a caller that needs to tell "not yet admitted, proceed" apart from "evicted, reject" before starting
+// async work should call admitModel + isLeaseValid instead (see above), which is what the room-search
+// cache now does; nothing public still depends on isModelLive for that purpose.
+
+world.dispose(): void
+// Terminal. Sets the world-level `disposed` flag FIRST, synchronously, before anything else — this
+// single write is what every public method and every per-yield checkpoint now checks directly (see
+// "Race safety" below for why round 15 made this the authoritative signal instead of a per-model
+// tombstone sweep). After dispose() returns, every public method on this world instance — findClashes,
+// evictModel, admitModel, isModelLive, a second dispose() — rejects or throws WorldDisposedError rather
+// than doing anything, including admitting a new model object or rebuilding any collision state.
+// isLeaseValid is the one deliberate exception: it stays a plain, non-throwing boolean predicate even
+// after disposal (see world.isLeaseValid above), because it checks `disposed` directly too, the same way
+// every other method now does.
+// dispose() also wholesale-clears GeometryRegistry, BlasCache, and every cached GeometryConnectivity —
+// the entire cache, in one operation, not a per-model sweep over liveModelByModelId — and rejects every
+// in-flight build promise. It best-effort tombstones whatever `liveModelByModelId` currently references,
+// for diagnostic bookkeeping, but this is no longer load-bearing for correctness: round 15 found
+// `liveModelByModelId` cannot enumerate every live model when a `modelId` has been reused while its old
+// occupant is still live (exactly the state round 14's own fix made supported), so nothing correctness-
+// relevant may depend on that sweep reaching every model — see "Race safety" below.
+// A query already suspended at a yield checkpoint when dispose() runs fails at its next checkpoint
+// because that checkpoint now checks `disposed` directly, independent of whether this specific model was
+// ever individually tombstoned — not because dispose()'s sweep happened to reach it.
 ```
+
+**Race safety: object-identity lifecycle state, permanently tombstoned on eviction, checked at every
+yield point and at `findClashes`'s own entry — not only at `evictModel`'s own callers.** Round 10 found
+the eviction contract was silent on the case that actually matters for correctness: a `findClashes`
+call holds `CollisionInstance`/BLAS/geometry references across the yields described under **Data
+Flow** and the intra-stage checkpoints below, and nothing prevented one of those yields from resuming
+into a model that was evicted while the call was suspended. Round 10's own fix (a **per-`modelId`
+generation counter that restarts at its first use**) round 11 found reintroduces exactly that race on
+`modelId` reuse — a suspended query's captured "old" value could coincidentally equal a reloaded
+model's "fresh" one. Round 11's fix (a single global, never-reset `nextLoadEpoch` counter) closed the
+reuse race but round 12 found it still keyed liveness by `modelId`, a number — which meant *deleting*
+a `modelId`'s entry on eviction, rather than tombstoning it, left no permanent record that **this exact
+`Model` object** had already been evicted. A caller that obtained that same object through some other
+path (most concretely: a `model.search` promise that was already in flight when eviction happened,
+still holding the original `Model` reference) could hand it to `findClashes` afterward and have it
+treated as an unremarkable first-time admission, since nothing about the (now-empty) `modelId` slot
+said otherwise.
+
+**The fix keys liveness by the exact `Model` object, not `modelId`, and never deletes a tombstone.**
+`CollisionWorld` maintains:
+
+- **`modelLifecycle: WeakMap<Model, { state: 'live'; epoch: number } | { state: 'evicted' }>`** — one
+  entry per `Model` object this world has ever admitted *or* evicted, keyed by object identity. Round 15
+  changed the value type from a single `{ epoch, state }` shape to this two-variant discriminated union:
+  the `'evicted'` variant carries no `epoch` at all, because — as established below — nothing ever needs
+  to read one for an evicted entry. This closes a gap round 12–14 left implicit: `evictModel` must be
+  able to tombstone a `Model` object that was **never admitted in the first place** (see
+  **`world.evictModel`**), and the old single-shape type had no well-defined value for "evicted, but no
+  epoch was ever assigned." `evictModel` sets `{ state: 'evicted' }` **in place**; it never deletes this
+  entry, whether the previous entry was `'live'` or absent entirely. A `Model` object with no entry at
+  all has simply never been admitted *or* evicted — a legitimate first use, the only case `findClashes`
+  treats as "admit fresh." A `Model` object with an `'evicted'` entry is permanently dead in this world:
+  nothing re-admits it, ever, because nothing ever clears or overwrites it back to `'live'`. (Using a
+  `WeakMap` is what makes "permanent" free rather than a leak — if every other reference to an evicted
+  `Model` object is eventually dropped, its entry is reclaimed by the GC along with it; nothing needs to
+  enumerate and prune tombstones by hand — which is also exactly why nothing in this design may depend on
+  being able to *enumerate* `modelLifecycle`; see `disposed`, below.)
+- **`liveModelByModelId: Map<modelId, Model>`** — the *current* live object for a given `modelId`.
+  Round 14 narrowed what this map is actually for: bookkeeping for diagnostics (resolving a raw `modelId`
+  back to its live `Model` object) and a best-effort assist for `world.dispose()`'s cleanup. Round 15
+  found even that assist role cannot be relied on for *correctness*: because this map holds only one
+  object per numeric id, it structurally cannot represent "two `Model` objects sharing a reused `modelId`
+  are both currently live" — a state round 14's own epoch-keying fix made supported and tested — so a
+  sweep built on this map can miss one of the two. See `disposed`, below, for the fix: no correctness
+  property in this design depends on this map's completeness anymore, only on it being reasonably
+  accurate for bookkeeping/diagnostic purposes. `admitModel` sets this entry; `evictModel` deletes it,
+  but only when the object being evicted is still the current entry for its id — a stale/delayed
+  eviction of an already-superseded object leaves whichever object actually holds the slot today
+  untouched, without needing to guard anything else `evictModel` does.
+- **`disposed: boolean`** — world-level terminal flag, unchanged in spirit since round 12 but now the
+  system's single authoritative liveness signal rather than one input among several. See **`world.dispose()`
+  is terminal**, further below, for what round 15 changed and why.
+- **`nextLoadEpoch`** — unchanged from round 11: a single counter, global to the `CollisionWorld`
+  instance, that only ever increments. A `Model` object is stamped with `epoch = nextLoadEpoch++` the
+  first time it's admitted. Because the counter is global and never reset, **a different `Model` object
+  reusing a `modelId` still gets a strictly greater epoch than anything issued before it** — the
+  round-11 property is preserved, now layered under object-identity tombstoning rather than instead of
+  it.
+
+**Round 13 found object-identity tombstoning alone still left two gaps: admission was only ever lazy
+(triggered by the first thing that happens to touch the model), and eviction's model.id-scoped cleanup
+was unconditional.** Both are fixed the same way — by making the two operations symmetric and explicit
+rather than inferring them from whatever code path happens to run first:
+
+- **Admission is now also available explicitly and synchronously, via `world.admitModel(model)`.**
+  Every previous round assumed the first `CollisionInstance` use (inside `findClashes`) was always where
+  a model first became live — true for `findClashes` callers, but not for the room-search cache, which
+  needs to know a model's admission state *before* starting an uncancellable async `model.search` call,
+  not after it resolves. `admitModel` performs the exact same "no entry → assign epoch, mark live;
+  tombstoned → reject" logic `findClashes`'s entry check already performed internally, but exposes it as
+  a public, synchronous, idempotent operation that returns a `ModelLease` (`{ model, epoch }`) the caller
+  can hold onto and validate later with `world.isLeaseValid(lease)`. This is what closes the round-13
+  Critical: because admission now happens *before* `model.search` starts (see Data Flow step 1), the
+  room-search success callback always has a real lease to validate by the time it fires — it is never in
+  the "never seen this model" state `isModelLive` used to conflate with "evicted." `isModelLive` itself
+  is unchanged and still correct for what it always claimed: a general liveness query, not a
+  pre-admission gate.
+- **`evictModel`'s model-scoped cache drop was still, at the end of round 13, gated on
+  `liveModelByModelId.get(model.id) === model` before touching any state "keyed by model.id."** That
+  guard fixed round 13's own bug (a stale eviction wiping a newer same-id object's state) but round 14
+  found it was a symptom fix, not a root-cause one: the underlying `GeometryRegistry`/`BlasCache` state
+  was still keyed by the reusable numeric `modelId` in the first place, so the guard only protected the
+  *cleanup* direction. It did nothing for the *admission* direction — see the round-14 paragraph below.
+
+**Round 14 found the remaining gap wasn't in eviction at all: `GeometryRegistry`, `BlasCache`, and
+`GeometryConnectivity` caches were keyed by `(modelId, geometryIndex)` — plain numeric `modelId` — while
+`modelLifecycle` had already moved to object identity three rounds earlier.** Two different `Model`
+objects sharing a reused `modelId` therefore still shared one `GeometryRecord` namespace, regardless of
+which one was "live" in `modelLifecycle` at any given moment. Concretely: if a model's own unload event
+is delayed and a different `Model` object is admitted under the same `modelId` before that eviction
+runs, the new object's very first geometry lookup can find — and reuse — the **old** object's cached
+`GeometryRecord`/BLAS, computing clashes against dead geometry with no eviction, no stale lease, and no
+epoch mismatch anywhere in the picture: the identity check that would have caught this (per-yield
+liveness re-validation) only ever runs against the *model* object passed into `findClashes`, never
+against the geometry cache's own key. Round 13's occupancy guard on `evictModel` could not fix this,
+because the bug doesn't happen during eviction — it happens during the new object's admission, before
+any eviction of the old object occurs at all.
+
+**The fix keys model-owned collision state by the admitted load identity (`loadEpoch`), not `modelId`,
+closing the hole structurally rather than by adding another timing-sensitive check.** `GeometryRegistry`
+now keys every `GeometryRecord` by `(loadEpoch, geometryIndex)` (see **`GeometryRegistry`** and the
+"Geometry dedup key" note under **`ViewerModelAdapter`**), where `loadEpoch` is the exact value
+`modelLifecycle.get(model).epoch` assigned at that object's own admission. Because `nextLoadEpoch` is
+global, monotonic, and never reused (round 11's property, unchanged), **a different `Model` object
+admitted under a reused `modelId` is structurally guaranteed a disjoint epoch, and therefore a disjoint
+`GeometryRecord` namespace, before its first geometry lookup ever runs** — there is no ordering between
+admission and eviction that can make the two objects' state collide, because their state was never filed
+under the same key to begin with. This is also why `evictModel`'s cache-scoped release (see
+**`world.evictModel`**) no longer needs round 13's `liveModelByModelId` occupancy guard to be safe: it
+releases records filed under the evicted object's own `epoch`, which — by the same disjointness
+guarantee — no other object's records are ever filed under, regardless of `modelId` reuse or how late
+the eviction call arrives. The guard remains in `liveModelByModelId` bookkeeping (previous bullet) for
+enumeration hygiene, but nothing about state-release correctness depends on it anymore.
+
+**`findClashes` validates liveness at its own entry, before any geometry extraction or lazy
+admission** — not only relying on callers to have checked first. First, `disposed` (below); then, for
+each of `query.source.model` and `query.target.model`: a `modelLifecycle` entry with `state: 'evicted'`
+rejects immediately with `ModelEvictedError`; no entry at all proceeds to lazy admission (assigns a
+fresh epoch, sets `state: 'live'`, records it in `liveModelByModelId`) exactly as before. This is what
+stops `findClashes(evictedModel, …)` from ever creating a fresh lifecycle entry for an object the world
+has already tombstoned — the defense round 12 found missing — and it composes with, rather than
+replaces, the existing per-yield re-validation: every yield point inside `findClashes` (the pair/stage
+boundaries in **Data Flow**, and the intra-stage checkpoints in **`ProperCrossingQuery`**/
+**`ContainmentQuery`** below) **checks `disposed` first** — see round 15's fix directly below, which
+closes a gap this ordering used to have — and only then re-checks
+`modelLifecycle.get(model)?.state === 'live' && modelLifecycle.get(model).epoch === epoch`, before
+touching any cached BLAS, `GeometryRecord`, or `CollisionInstance` for that model — catching eviction
+or disposal that happens *after* a query has already validly started, which the entry-point check alone
+cannot. A failure at either the entry check or any yield checkpoint aborts the **entire** `findClashes`
+call: `disposed` rejects with `WorldDisposedError`, an evicted/mismatched-epoch model rejects with
+`ModelEvictedError` naming the evicted `modelId` — neither returns a partial or diagnosed `ClashResult`.
+This is a different failure than anything the diagnostic system answers — the query's premise (this
+world, or this model's geometry, still exists) no longer holds, so there is no partial answer worth
+returning. This is also why eviction already rejects in-flight BLAS build promises (existing rule,
+above): `ModelEvictedError` is that same failure surfaced at whichever checkpoint notices it first,
+entry or yield.
+
+**`world.dispose()` is terminal. Round 15 found the previous mechanism for making that true —
+tombstoning every currently-live model so each one's own per-model check would independently catch a
+resumed query — could not actually reach every live model, and fixed the invariant at its root instead
+of trying to make the sweep complete.** `modelLifecycle` is a `WeakMap`, which is deliberately
+non-enumerable (see its own entry below); the only enumerable proxy, `liveModelByModelId`, holds one
+`Model` object *per numeric `modelId`* — but round 14's own fix made "an old object is still `'live'`
+while a different object has already been admitted under the same reused `modelId`" a supported,
+tested state, and in exactly that state `liveModelByModelId` can only ever point at one of the two
+objects. A sweep built on it therefore cannot guarantee it reaches every live model, and nothing about
+epoch-keyed geometry state (round 14) helps here either — that fix makes two objects' *caches* disjoint,
+it says nothing about whether disposal's *sweep* finds both objects to tombstone in the first place.
+
+**The fix makes `disposed` itself the authoritative, directly-checked signal everywhere — not
+something every model's own tombstone has to be made to imply.** `dispose()` sets the world-level
+`disposed` flag **first, synchronously, before anything else** — this single write is now sufficient
+correctness-wise, on its own, for every check anywhere in the system, because every check now consults
+it directly instead of inferring it from per-model state:
+
+- `findClashes`'s entry check, above, already checked `disposed` first.
+- **Every per-yield checkpoint now checks `disposed` first too** — this is the round-15 change: the
+  pair/stage-boundary checkpoints in **Data Flow**, and the intra-stage checkpoints in
+  **`ProperCrossingQuery`**/**`ContainmentQuery`**, all check `disposed` (reject `WorldDisposedError`)
+  *before* re-validating `modelLifecycle`'s per-model `state`/`epoch` (reject `ModelEvictedError`).
+  Previously these checkpoints only ever consulted per-model state, which is exactly the gap round 15
+  found: a query suspended against a model `dispose()`'s sweep failed to reach would pass its resumed
+  checkpoint clean, because nothing at that checkpoint ever asked the world itself whether it was still
+  usable.
+- `isLeaseValid`/`isModelLive` check `disposed` first too — see their own entries below for the exact
+  (deliberately different) shape each returns.
+
+Because every checkpoint now has its own direct, independent answer to "is the world disposed," none of
+them depend on `dispose()` having successfully reached and tombstoned the specific model they're
+holding — the property that used to require a complete sweep now falls out of a single boolean write,
+checked everywhere, with no enumeration involved at all. **`dispose()` no longer needs to enumerate and
+tombstone every live model for correctness**, and this spec no longer claims it does. What `dispose()`
+still does, for memory hygiene rather than correctness: it wholesale-clears `GeometryRegistry`,
+`BlasCache`, and every cached `GeometryConnectivity` — the entire cache, not a per-model sweep over
+`liveModelByModelId` — and rejects every in-flight build promise, exactly once, on the same disposal
+call. A wholesale clear cannot suffer the same enumeration gap a per-model sweep can, because it never
+needs to identify *which* models were live in the first place; it discards everything unconditionally.
+`liveModelByModelId` itself is best-effort updated for diagnostic/bookkeeping purposes only (as round 14
+already established) — no correctness property, cache-release completeness included, is layered on top
+of it anymore.
 
 ```ts
 class RoomLocatorExtension extends Autodesk.Viewing.Extension {
   constructor(viewer, options)      // options.roomCategoryName default 'Revit Rooms'
   async load()                      // constructs the CollisionWorld only; no room resolution here
                                      // (see Data Flow step 1) and no eager BLAS building
-  unload()                          // world.dispose(), unregisters context menu + model-removal
+  unload()                          // world.dispose(), unregisters context menu + BEFORE_MODEL_UNLOAD
                                      // listener, clears the per-model room cache
-  // on model removal: world.evictModel(id) AND drop that id's room-cache entry
-  async locateElementByRoom(dbId): Promise<number[]>
+  // on Autodesk.Viewing.BEFORE_MODEL_UNLOAD_EVENT: world.evictModel(event.model) — the exact
+  // object, not model.id — AND drop that object's room-cache entry (see Data Flow step 1 and
+  // world.evictModel's race-safety note)
+  async locateElementByRoom(dbId): Promise<number[]>  // rejects with ModelEvictedError if its
+                                     // model is evicted mid-query, or with WorldDisposedError if
+                                     // the world was disposed (see world.evictModel/world.dispose)
   onContextMenu(menu, status)       // adds "Locate Room" item, same UX as the original extension
 }
 ```
@@ -1292,10 +2333,13 @@ type FragmentDiagnosticReason =
 type PairDiagnosticReason =
   | 'inconclusive-containment'        // unresolved (all-`boundary`) component(s) under a negative
   | 'incomplete-component-coverage'   // maxContainmentSamples hit before covering all components
-  | 'inconclusive-crossing'           // a probe classified `boundary`, so touching wasn't provable
+  | 'inconclusive-crossing'           // a probe classified `boundary`, OR no offset both stayed inside
+                                      //   the source triangle and cleared `surfaceEpsilon` (containment
+                                      //   mode's SurfaceCrossingWitness) — either way, not provable
   | 'crossing-budget-exhausted'       // maxCandidatePairs/maxCrossingPairs hit; traversal aborted
   | 'non-manifold-component'          // NEGATIVE result involving a component the guarantee misses
-  | 'unverified-open-component'       // volume-overlap POSITIVE decided by an open SOURCE component
+  | 'unverified-open-component'       // volume-overlap POSITIVE decided by an open component. Carries
+                                      //   `role` naming WHICH public operand supplied that component
                                       //   (never emitted in 'containment' mode — see Query modes)
   | 'unverified-parity-operand';      // ray parity ran against an operand that is not certified
                                       //   closed. Carries `role` naming WHICH operand; emitted once
@@ -1332,11 +2376,25 @@ operand each path parity-tests:
 
 One diagnostic is emitted per offending operand, so a pair with both open produces two.
 
-Note what is *not* covered by this: an open **source** on a containment-decided positive is not a
-parity fault at all — the source was sampled, never parity-tested — and is reported by
+Note what is *not* covered by this: an open component on a containment-decided **`volume-overlap`**
+positive is not a parity fault at all — it was sampled, never parity-tested — and is reported by
 `unverified-open-component` instead. The two diagnostics answer different questions ("was `inside`
 well-defined?" versus "does containment establish volume?") and a fixture asserts they don't collapse
 into each other.
+
+**`unverified-open-component`'s `role` follows the same "which path decided" logic, but names which
+operand the open component *belongs to*, not which operand parity ran against — round 9 found the
+spec stated this only for one of the two containment terms:**
+
+| decided by | open component belongs to | `role` |
+|---|---|---|
+| containment of A in B (A sampled, B is the target) | A | `source` |
+| containment of B in A (B sampled, A is the target) | B | `target` |
+
+`volume-overlap` tries both terms with early exit (see **`VolumeOverlapQuery`** below), so which row
+applies is a property of which term actually produced the positive, not of the pair in the abstract —
+the same pair can decide via either term depending on which solid's components happen to resolve
+first.
 
 **Diagnostics attach to positive results too, not only negatives.** Every earlier draft treated a
 diagnostic as a caveat on "we found nothing," which left the one case where a *positive* is the
@@ -1362,7 +2420,8 @@ budgets:
   isn't a certified closed manifold, so "inside" was never well-defined. Applies in `containment` and
   `volume-overlap`, with `role` naming the operand.
 - `unverified-open-component` — `volume-overlap` only: the witness proves containment of an
-  uncertified-open source component, which is not the same as shared volume.
+  uncertified-open component (`role` naming whichever public operand it belongs to), which is not the
+  same as shared volume.
 
 An earlier draft stated flatly that positives need no diagnostic, directly contradicting the
 `unverified-open-component` rule two sections above it. This is the reconciliation: *completeness*
@@ -1384,10 +2443,22 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   indistinguishable from a verified no-clash one. The extension should surface a visible caveat (not
   silently report "no room found") when `statistics.diagnostics` is non-empty for the queried
   element.
-- **Geometry too large to build synchronously**: a candidate pair whose geometry exceeds
-  `maxSyncTriangleCount` (20,000 triangles) is skipped with a
-  `geometry-too-large-for-sync-build` diagnostic rather than blocking the Viewer — see
-  `ThreeMeshBvhBackend`/`BlasCache`.
+- **Geometry too large to build synchronously**: a candidate pair whose **active-range** triangle count
+  (`sum(ranges[].count)`, never the raw index's own count — round 16, see `ThreeMeshBvhBackend`/
+  `BlasCache`) exceeds `maxSyncTriangleCount` (`12_000` triangles, revised in round 15) is skipped with a
+  `geometry-too-large-for-sync-build` diagnostic rather than blocking the Viewer. A fragment with a huge
+  raw index but a small active draw range is judged on the active range alone, and never has that raw
+  index materialized or handed to welding at all.
+- **One requested dbId's subtree is too large to enumerate**: extraction's own node-by-node walk (round
+  16 — see **Data Flow** step 3) aborts as soon as a single requested dbId's running fragment tally
+  crosses `maxFragmentsPerDbId` (`5_000`, provisional), without enumerating the rest of that subtree,
+  and the entire `findClashes` call rejects. Round 15 added a ceiling here but checked it only after a
+  single recursive `enumNodeFragments` call had already run to completion, which didn't actually bound
+  the burst it claimed to; round 16 replaced the mechanism, not just the number.
+- **Too many broad-phase candidate instances**: if `sourceInstances.length × targetInstances.length`
+  would exceed `maxBroadPhaseInstancePairs` (`1_000_000`, provisional), the entire `findClashes` call
+  rejects before the nested AABB scan runs — round 15 found the same gap for the broad-phase scan (see
+  **Data Flow** step 3).
 - **Non-watertight geometry**: ray-parity containment assumes a closed target surface, so the parity
   modes are only strongly guaranteed for closed/manifold targets — mitigated with the
   `surfaceEpsilon` boundary pre-check, `THREE.DoubleSide` raycasting, distance-sorted coincident-hit
@@ -1398,13 +2469,15 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
 - **Non-manifold or open source components**: the containment guarantee doesn't cover them (see
   `anyComponentInside`), so a negative result involving one emits `non-manifold-component`. Sampling
   still runs — this degrades a verified negative to an unverified one, it doesn't skip work.
-- **A `volume-overlap` positive decided by an open source component**: emits
-  `unverified-open-component`. An open shell encloses no certified volume, but its vertices can
-  classify `inside`; the result is still reported as a clash with its soundness explicitly qualified.
-  **Not emitted in `containment` mode**, whose contract covers open sources by construction — that
-  mode split is what keeps this diagnostic meaningful instead of firing on nearly every real query
-  (the acceptance-model bathtub welds to 14 open components; see **Query modes and their
-  preconditions**).
+- **A `volume-overlap` positive decided by an open component, on either side**: emits
+  `unverified-open-component` with `role` naming whichever public operand supplied the deciding
+  component — `source` when `anyComponentOf(source) inside target` decided it, `target` when
+  `anyComponentOf(target) inside source` did (see the role table under Public API). An open shell
+  encloses no certified volume, but its vertices can classify `inside`; the result is still reported as
+  a clash with its soundness explicitly qualified. **Not emitted in `containment` mode**, whose
+  contract covers open sources by construction — that mode split is what keeps this diagnostic
+  meaningful instead of firing on nearly every real query (the acceptance-model bathtub welds to 14
+  open components; see **Query modes and their preconditions**).
 - **An open parity operand**: emits `unverified-parity-operand` (with `role`) on *every* result of a
   parity mode, positive and negative alike. An uncertified operand makes `inside` undefined against
   it, regardless of how sound the other side is — the one case where an otherwise-perfect query
@@ -1434,8 +2507,52 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   `containment` query resolves the true containing room via actual triangle-level testing. (This is
   the mode the room-locator runs; earlier drafts said `volume-overlap` here, from before the mode
   split.)
-- **Disposal mid-query**: if `unload()`/`world.dispose()` fires while a query is in flight,
-  in-flight promises reject cleanly. Full cancellation tokens are out of scope for this milestone.
+- **A model is evicted mid-query** (`world.evictModel` — e.g. the user loads a different model into
+  the same slot while a `locateElementByRoom` call is still awaiting a yield): the in-flight
+  `findClashes` call rejects with `ModelEvictedError` at whichever yield checkpoint next re-checks the
+  model object's tombstone state (see **`world.evictModel`**'s race-safety note); it never resumes into
+  the evicted model's BLAS/geometry state, and never returns a `ClashResult` built on it. Full
+  cancellation tokens (stopping the work *before* its next checkpoint) are still out of scope for this
+  milestone — only correctness (never reusing stale state) is guaranteed, not immediate abort. This
+  holds even if a *different* `Model` object reloads under the same `modelId` before the suspended call
+  resumes: the suspended call holds a reference to the *old* object, whose tombstone (once set) is
+  permanent and keyed by that object's own identity, not by `modelId` — the new object's lifecycle
+  entry is unrelated state the old call's check never even looks at.
+- **A `findClashes` call is made directly against an already-evicted `Model` object** (not via a
+  suspended yield, but as the call's very first argument — e.g. a caller held onto a `Model` reference
+  past its `beforeModelUnload` event): rejects immediately with `ModelEvictedError`, before any
+  geometry extraction or BLAS work, via the same entry-point check described in **`world.evictModel`**'s
+  race-safety note. This does not require the call to have started before eviction — the tombstone is
+  permanent, so any later call using that exact object fails identically.
+- **Disposal mid-query**: `unload()`/`world.dispose()` tombstones every model's lifecycle entry (see
+  above) and sets the world's own terminal `disposed` flag before releasing anything, so an in-flight
+  query rejects with `ModelEvictedError` through the same per-model mechanism, not a separate one. A
+  *new* call made against an already-disposed world — `findClashes`, `evictModel`, `admitModel`,
+  `isModelLive`, or a repeated `dispose()` — rejects or throws `WorldDisposedError` instead, checked
+  ahead of any per-model state. `isLeaseValid` is the deliberate exception: it stays a plain, non-throwing
+  boolean and simply returns `false` for any lease on a disposed world — see **`world.isLeaseValid`**.
+  Full cancellation tokens remain out of scope, as above.
+- **A model's very first room search, before that model has ever been touched by `findClashes`**: this
+  is the ordinary case, not an edge case, but round 13 found the round-12 design mishandled it — see
+  **`world.admitModel`**. `locateElementByRoom`'s cache-miss path admits the model synchronously before
+  starting `model.search`, so the search's own callbacks always validate a real lease rather than an
+  ambiguous "never seen" state; the lookup succeeds normally.
+- **A stale or duplicate `world.evictModel(oldModel)` call arrives after a different `Model` object has
+  already reused the same `model.id` and been admitted** (the old object's own unload event was missed,
+  delayed, or fired twice): the old object is still permanently tombstoned by this call — correct, since
+  nothing should ever treat it as live again. The new object's live `GeometryRecord`/BLAS/connectivity
+  state was never at risk in the first place: since round 14, that state is keyed by the new object's own
+  `loadEpoch`, disjoint from the old object's, so there is nothing for a stale eviction of the old object
+  to accidentally touch. (`liveModelByModelId.get(model.id)` also stops pointing at the old object once
+  the new one is admitted, so the map itself stays accurate — see **`world.evictModel`** — but that is
+  bookkeeping hygiene, not what makes the new object's state safe.)
+- **A different `Model` object is admitted under a reused `model.id` and queried *before* the old
+  object's own eviction ever runs** (the old object is still `'live'` in `modelLifecycle` throughout):
+  the new object's first geometry lookup builds fresh state under its own `loadEpoch` rather than
+  finding the old object's cached `GeometryRecord`/BLAS, so its `findClashes` results are computed
+  against its own geometry, never the old object's. This is the round-14 Critical's exact scenario — see
+  the "Race safety" note under **`world.evictModel`** for the epoch-keying mechanism that makes it
+  impossible for the two objects' state to collide regardless of eviction timing.
 
 ## Testing & Verification
 
@@ -1488,6 +2605,23 @@ refactor can't silently reintroduce a bug an earlier round already found.
     candidate loop, and specifically for the abort protocol: `bvhcast` returns `true` on abort, so a
     caller that reads that as a hit turns a timeout into a fabricated clash. Assert the query
     completes within a wall-clock bound as well as returning the right verdict.
+  - **a pair with many confirmed non-coplanar intersections, each requiring a full 12-probe
+    classification, sized so the *time* budget trips before either count budget does** — must abort
+    with `crossing-budget-exhausted` and complete within a `frameBudgetMs`-scaled wall-clock bound.
+    Round 10's regression test: the two count-based budgets alone measure only raw candidate rejection
+    (~0.3µs/pair) and confirmed-pair *counting*, never the cost of the probe-classification loop those
+    confirmed pairs feed into, so a candidate rich in confirmed intersections could previously run
+    unbounded while staying under both counts. This fixture is the one that actually forces the
+    confirmed-intersection path to consume the time budget, not just the raw-candidate path the
+    existing budget fixture above already covers.
+  - **the same fixture, but asserting the abort fires mid-probe-loop, not only at the next confirmed
+    pair's callback entry** — with a mocked clock, arrange for the deadline to cross partway through
+    one confirmed pair's 12-probe classification, and assert the traversal aborts having evaluated
+    strictly fewer than 12 probes for that pair. Round 11's regression test for round 10's own
+    too-coarse fix: checking `performance.now()` only at callback entry (once per confirmed pair) still
+    let a single pair's full probe loop — up to 24 `classifyPoint` calls — run unchecked once entered.
+    This is the fixture that would fail against the round-10 version of the check and pass only once
+    the checkpoint moves inside the probe loop itself.
 - `ContainmentQuery.classifyPoint` — the three-valued primitive, tested on its own:
   - a point demonstrably inside / demonstrably outside — `inside` / `outside`
   - **a point lying exactly on the interior of a target face** — must return `boundary`, **not**
@@ -1543,6 +2677,14 @@ refactor can't silently reintroduce a bug an earlier round already found.
     the unsound one) *and* for the round-7 mode split: asserting the **absence** of the diagnostic in
     `containment` mode is what pins that the split actually happened, rather than the diagnostic being
     emitted everywhere and merely looking harmless.
+  - **the same single-open-triangle fixture with the roles reversed** — a closed box (public source)
+    containing an open triangle (public target) — must report `volume-overlap` positive via
+    `anyComponentOf(target) inside source`, carrying `unverified-open-component` with **`role:
+    'target'`**, not `'source'`. Round 9's regression test: the previous wording named only an open
+    *source* component, so this pair — decided by the second containment term, where the open
+    component belongs to the public target — had no defined diagnostic at all, and the spike under
+    this exact input reported `openComponent: true` with no parity fault and nothing pinning what
+    `role` it should carry.
   - **a nearly-closed open source** — an open-bottomed box, ~all edges shared, a handful of boundary
     edges — inside a closed target. Same expectations as above. This is the acceptance-model bathtub
     in miniature, and it is the fixture that proves the rule is *mode*-scoped rather than
@@ -1567,6 +2709,18 @@ refactor can't silently reintroduce a bug an earlier round already found.
     draft's "up to 64 total" and "at least 8 per range" were arithmetically contradictory here)
   - a geometry that exhausts `maxContainmentSamples` — verifies `incomplete-component-coverage` is
     emitted rather than a clean negative
+  - **a single component with many vertices, timed (via a mocked clock) so `classifyPoint`'s
+    per-call checkpoint crosses `frameBudgetMs` mid-component** — with the scheduling primitive
+    mocked, must yield at least once *and* still resolve the component correctly afterward, resuming
+    from exactly the next unsampled vertex rather than restarting or skipping samples. Regression test
+    for intra-loop yield-and-resume: unlike `ProperCrossingQuery`'s time-abort, this must not degrade
+    the result, since correctness (not just responsiveness) depends on the loop actually resuming
+    rather than truncating. Also assert the checkpoint fires **before** the sample whose elapsed time
+    crosses the deadline is classified, not after — round 11's regression for round 10's own
+    too-coarse (`every 256 samples`) checkpoint.
+  - **the same fixture, but the model is evicted (mocked) during the mid-loop yield** — sampling must
+    not resume; the enclosing `findClashes` call rejects with `ModelEvictedError` rather than returning
+    a result computed from a partially-stale sample set.
 - `GeometryConnectivity`:
   - a mesh with duplicated seam vertices — over-segments into multiple components (conservative,
     accepted) rather than failing
@@ -1606,6 +2760,218 @@ refactor can't silently reintroduce a bug an earlier round already found.
     other two modes, and must abort with `crossing-budget-exhausted` rather than run unbounded. Stage
     2 added a third traversal to the design; the round-7 lesson was that each new traversal needs its
     own bounding proof rather than inheriting the claim that "the budgets bound the worst case."
+  - **two exactly coincident closed boxes (identical geometry, identical transform)** — round 9's
+    counterexample: `containment(A, B)` must be **false**, and — because every vertex reads `boundary`
+    and every triangle-triangle contact is coplanar (so `SurfaceCrossingWitness` never gets a target
+    line either) — the result carries `inconclusive-containment`, not a silent clean false. Regression
+    test for the stage-3 constructed witness having been reachable from `containment` mode at all: with
+    stage 3 still in the composition this fixture reads `true` (a witness built just inside the shared
+    surface lands inside both boxes), which is precisely the surface-only contract violation round 9
+    found.
+  - **a source triangle much smaller than the pair's canonical diagonal, arranged so every
+    `offsetLadder`-scaled rung would fall outside the triangle** (e.g. a small triangle on a geometry
+    sharing a BLAS with a much larger, distant component) — must still find the witness via
+    `crossingProbeFractions`' per-triangle scaling. Regression test for round 9's finding that the
+    canonical-frame ladder is the wrong quantity to scale a single triangle's probe by; the spike's own
+    implementation used `min(src.L, target.L)` rather than the spec's `L_canonical`, which this fixture
+    would have caught either version failing.
+  - **the same small-triangle case shrunk further, so no offset can both stay inside the triangle and
+    clear `surfaceEpsilon`** — must report `inconclusive-crossing` on a negative result, not a silent
+    "no witness." Regression test for the failure mode itself: an unproducible probe folded into a
+    clean negative would reproduce the exact bug this stage exists to close, just relocated from "wrong
+    scale" to "no valid scale at all."
+- `CollisionWorld.findClashes` — cross-pair/cross-stage yielding, tested with the scheduling primitive
+  mocked so the assertion is on *whether* a yield happened, not on wall-clock:
+  - **many cache-warm candidate pairs (every BLAS pre-built), each individually cheap but summing past
+    `frameBudgetMs`** — must yield at least once before completing. Regression test for round 9's
+    finding that "cached BLAS hits don't yield" left an unbounded run of cheap pairs with no checkpoint
+    at all; asserting the mock was called is what pins that the cross-pair checkpoint exists
+    independently of any BLAS build.
+  - **a single pair whose composed stages (`ProperCrossingQuery` then both `ContainmentQuery`
+    directions) individually stay under budget but sum past `frameBudgetMs`** — must yield between
+    stages, not only between pairs. Regression test for round 9's core counterexample: three
+    per-stage-correct budgets composed with no checkpoint between them.
+  - **a query cheap enough overall to never cross `frameBudgetMs`** — must complete with **zero**
+    yields. Pins that the checkpoint is time-triggered, not inserted unconditionally at every stage or
+    pair boundary, so the common small-query case (e.g. the room-locator's actual acceptance input)
+    isn't paying scheduling overhead it doesn't need.
+  - **Round 15's core regression test for the preprocessing-budget Critical: a first-time
+    `GeometryRecord` build, mocked so welding, connectivity, and BVH construction each report a distinct
+    non-trivial synthetic cost individually under `frameBudgetMs` but summing well past a single
+    checkpoint's tolerance** — the scheduling primitive must be invoked once *before each* of the three
+    phases (three separate checkpoint calls, not one before "the build"), asserted via a spy distinguishing
+    which phase was about to run at each checkpoint. A design that checkpoints once before "get/build BLAS"
+    as a single opaque step fails this fixture by making one checkpoint call cover all three phases' summed
+    cost, reintroducing exactly the coverage gap round 15 found.
+  - **the same first-time build, but a `volume-overlap` query runs instead of `containment`** — the
+    connectivity-phase checkpoint must **still fire** (asserted via the same spy), pinning that
+    `volume-overlap` also consumes connectivity via `anyComponentInside`. Round 16's core regression test
+    for the connectivity-dependency Critical: round 15 shipped this exact fixture asserting the *opposite*
+    (no connectivity checkpoint for `volume-overlap`), which round 16 found directly contradicts
+    `VolumeOverlapQuery`'s own established algorithm — a fixture testing for the wrong behavior is itself
+    the bug.
+  - **the same first-time build, but a `surface-intersection` query runs instead** — the connectivity-phase
+    checkpoint must **not** fire (asserted via the same spy). `surface-intersection` is the only mode that
+    never calls `anyComponentInside`, so it's the only one this fixture now applies to.
+  - **a checkpoint between build phases finds the model evicted (or the world disposed) before the next
+    phase starts** — the partially-built record (e.g. welded geometry with no BVH yet) must **not** be
+    published to `GeometryRegistry`'s cache; a later, valid `findClashes` call for the same geometry must
+    start the pipeline fresh (asserted via a spy: welding runs again, not resumed from a cached partial
+    record).
+  - **Round 16's core regression test for the active-range-compaction Critical: a fragment whose raw
+    index buffer encodes far more triangles than `maxSyncTriangleCount`, but whose `ranges: TriangleRange[]`
+    (from normalization) cover a small active subset well under the ceiling** — the pair must **not** be
+    skipped as `geometry-too-large-for-sync-build` (the active count is what's checked, not the raw
+    count), and a spy on the weld step (`mergeVertices` or its call site) must show it was invoked with a
+    geometry sized to the *active* triangle count, never the raw one. A design that checks
+    `maxSyncTriangleCount` against the raw index (or against the active count but still hands the raw,
+    uncompacted buffer to welding) fails this fixture — passing the size gate is not the same as never
+    touching the excluded triangles.
+  - **the inverse: a fragment whose active-range triangle count alone already exceeds
+    `maxSyncTriangleCount`** — must be skipped as `geometry-too-large-for-sync-build` **without** ever
+    materializing a compacted buffer (asserted via a spy on the compaction step itself: zero calls),
+    pinning that the ceiling is checked against the cheap `sum(ranges[].count)` before any copying, not
+    after.
+  - **a single requested dbId whose node tree (mocked via `enumNodeChildren`/`getChildCount`/non-recursive
+    `enumNodeFragments`) would yield far more fragments than `maxFragmentsPerDbId` if fully walked** —
+    `findClashes` must reject the entire call before any broad-phase or narrow-phase work runs, naming the
+    offending dbId, asserted via a spy that no `CollisionInstance` was built for *any* dbId in the query,
+    not only the oversized one. Round 15's regression test for extraction having no ceiling at all: a
+    design that only checkpoints *between* dbIds (composition) passes an unbounded single dbId straight
+    through.
+  - **Round 16's core regression test for the extraction Critical: the same oversized-subtree mock,
+    but asserting the walk itself stops early** — mock the subtree so it would take, say, 100 node visits
+    to fully enumerate but crosses `maxFragmentsPerDbId` by node visit 10; assert via a spy that
+    `enumNodeChildren`/`enumNodeFragments` were called roughly 10 times, not 100, before `findClashes`
+    rejects. A design that still performs one recursive `enumNodeFragments(dbId, cb, true)` call and only
+    checks the ceiling on the total afterward passes the fixture above (it does reject) but fails this
+    one — it enumerated the full 100-node subtree first, which is the exact "detects the overrun after
+    the freeze already happened" bug round 16 found in round 15's own mechanism.
+  - **`sourceInstances.length × targetInstances.length` exceeding `maxBroadPhaseInstancePairs`** (mocked
+    instance counts, not real geometry) — `findClashes` must reject before the nested AABB scan begins,
+    asserted via a spy that the broad-phase scan function was never invoked. Include a case where
+    `sourceInstances.length` and `targetInstances.length` are both large enough that their product would
+    lose precision or behave unexpectedly under naive multiplication, confirming the implementation uses
+    the overflow-safe division form specified under **Data Flow** step 3, not direct multiplication.
+  - **`world.evictModel(model)` called (mocked as synchronous) while a pair/stage-boundary yield for
+    that same object is suspended** — the resumed call must reject with `ModelEvictedError` and must
+    not touch any cached BLAS/instance/geometry state for that model afterward. Round 10's core
+    regression test: the liveness check is what makes this true, not the mere existence of
+    `evictModel`'s cache-clearing.
+  - **`world.dispose()` mid-query** — must reject with `WorldDisposedError`, checked directly by the
+    resumed checkpoint (see the round-15 `isLeaseValid`/`isModelLive` fixtures above for why this is no
+    longer routed through a per-model tombstone). Regression test for the previous "in-flight promises
+    reject cleanly" wording, which named an outcome without a mechanism.
+  - **a query against a `modelId` that is evicted and then reloaded (a *different* `Model` object under
+    the same id) before the suspended call resumes** — the resumed call, which holds a reference to the
+    *original* (now-evicted) object, still rejects with `ModelEvictedError` rather than silently
+    completing against the new object's geometry. Round 11's regression test for round 10's own ABA
+    bug, still valid under round 12's redesign: assert it against a mocked `nextLoadEpoch` sequence
+    where the reloaded model's epoch differs from the evicted model's, so a design that accidentally
+    reused the same numeric value can't pass by coincidence.
+  - **`findClashes` called directly with an already-evicted `Model` object as `source.model`/
+    `target.model` — no suspended yield involved, eviction happened before the call started** — must
+    reject with `ModelEvictedError` immediately, asserted via a spy that no BLAS build, geometry
+    extraction, or `CollisionInstance` construction was attempted. Round 12's core regression test: the
+    round-11 design only checked liveness at yield points, so a call that never yields before hitting
+    the evicted state (a small query, or one where every needed BLAS happens to already be cached)
+    could complete against dead geometry undetected. This is the fixture that specifically requires an
+    entry-point check, not just yield-point re-validation.
+  - **a room-search promise that rejects, followed by a second `locateElementByRoom` call for the same
+    model** — the second call must trigger a fresh `model.search`, not replay the cached rejection.
+    Regression test for the previous "caches the resulting promise" wording never specifying what
+    happens after rejection.
+  - **room search starts → model evicted → the search callback fires late (mocked) with a successful
+    result** — `locateElementByRoom`'s original returned promise must **reject** with
+    `ModelEvictedError`, and `findClashes` must never be called (assert via a spy). Round 12's core
+    regression test for the resurrection bug itself: the round-10/11 guard only suppressed the *cache
+    write* on a late success, leaving the caller's own promise either resolved with stale data or
+    (worse) permanently unsettled; this fixture is the one that would have caught either failure mode,
+    since it asserts on what the *original caller* observes, not on the cache's internal state.
+  - **the same sequence, but a *new* `Model` object then loads under the same numeric `modelId` before
+    the stale search callback fires** — the stale search must still reject its original caller exactly
+    as above, **and** a fresh `locateElementByRoom` call against the *new* object must succeed
+    independently, proving the two loads' room caches (keyed by object identity, not `modelId`) never
+    alias each other.
+  - **a model's first-ever room search — no prior `findClashes` call for that object, so no lifecycle
+    entry exists before `locateElementByRoom` runs** — must succeed and resolve room dbIds normally.
+    Round 13's core regression test for the resurrection *fix's own* regression: a design that checks
+    `isModelLive`/an equivalent "have I seen this before" liveness query, instead of admitting the model
+    up front and validating a captured lease, fails this fixture by rejecting with `ModelEvictedError`
+    on a model that was never evicted at all.
+  - **`world.admitModel(model)` called twice on the same still-live object** — must return leases with
+    the same `epoch` both times (idempotent, does not re-admit or bump the epoch), asserted via a spy
+    that `nextLoadEpoch` was only consumed once.
+  - **`world.admitModel(model)` called on an already-evicted object** — must throw `ModelEvictedError`
+    synchronously, immediately, without consuming a new epoch (asserted via the same spy as above),
+    proving admission cannot resurrect a tombstoned object even when called directly rather than through
+    `findClashes`.
+  - **`world.evictModel(oldModel)` called (mocked as a stale/delayed call) after a *different* `Model`
+    object has already been admitted under the same numeric `modelId` and has live `CollisionInstance`/
+    BLAS state** — `oldModel`'s own lifecycle entry must end up tombstoned `'evicted'`, but the new
+    object's `CollisionInstance`/BLAS/geometry cache must be asserted unchanged afterward (same object
+    references, no rebuild triggered), and a `findClashes` call against the new object immediately after
+    must succeed without a fresh BLAS build. Regression test for round 13's `liveModelByModelId`
+    bookkeeping guard: a stale eviction must not delete the map's entry for the object that currently
+    holds it.
+  - **A *different* `Model` object is admitted under a reused `modelId` and queried *before* the old
+    object under that same id is ever evicted** — i.e. the old object's `modelLifecycle` entry is still
+    `'live'` throughout. The new object's first `findClashes` call must build a **fresh** `GeometryRecord`
+    and BLAS (asserted via a spy: the BLAS-build path runs, it is not a cache hit) and must return clash
+    results computed against the *new* object's own geometry, not the old object's. Round 14's core
+    regression test for the model-ID-reuse Critical: a design that keys `GeometryRegistry` by bare
+    `modelId` fails this fixture by silently reusing the old object's cached `GeometryRecord`/BLAS,
+    since nothing about the old object's eviction status is involved in this failure mode at all — the
+    `(loadEpoch, geometryIndex)` keying fix is what a design must actually implement to pass it, not any
+    eviction-side guard.
+  - **`world.isLeaseValid(lease)` called after `world.dispose()`, from inside a mocked async callback
+    (mirroring the room-search success callback's own calling context)** — must return `false`
+    synchronously and must **not** throw. Round 14's regression test for the disposal-contract
+    contradiction: a design in which `isLeaseValid` throws `WorldDisposedError` (matching the literal
+    pre-round-14 wording of `world.dispose()`'s method list) fails this fixture with an uncaught
+    exception from the mocked callback, which is exactly the "the caller's promise is left unsettled"
+    failure mode the fixture exists to catch.
+  - **`world.isModelLive(model)` called after `world.dispose()`** — must throw `WorldDisposedError`,
+    distinguishing it from `isLeaseValid`'s non-throwing contract above; a test asserting the wrong
+    behavior for either method is a regression in its own right, since they are deliberately different.
+  - **`world.dispose()` called, followed by a new `findClashes` call** — must reject immediately with
+    `WorldDisposedError`, before any per-model check, asserted via a spy that no geometry work was
+    attempted. Distinguish this from the `ModelEvictedError` fixtures above: a test asserting the wrong
+    error type here is a regression in its own right, since callers may branch on which one they got.
+  - **a query suspended at a yield checkpoint, then `world.dispose()` runs, then the query resumes** —
+    must reject with **`WorldDisposedError`** and must touch no BLAS/instance/geometry state released by
+    disposal. Round 15 revised this fixture's own expected error: rounds 12–14 expected `ModelEvictedError`
+    here, reasoning that dispose()'s per-model tombstone sweep was what the resumed checkpoint would see.
+    Round 15 found that sweep isn't guaranteed to reach every live model (see the next fixture) and fixed
+    the checkpoint to test `disposed` directly, first — so the resumed checkpoint now fails on `disposed`
+    before it ever reaches the per-model check, and a correct implementation surfaces `WorldDisposedError`
+    here, not `ModelEvictedError`. A test still expecting `ModelEvictedError` is itself the regression.
+  - **Round 15's core regression test for the disposal-enumeration Critical: two distinct `Model` objects
+    admitted under the same reused numeric `modelId`, both left live (the old object's own eviction never
+    runs), each with its own query suspended at a yield checkpoint — then `world.dispose()` runs.** Both
+    suspended queries must reject with `WorldDisposedError` on resume, including the *old* object's query
+    — the one `liveModelByModelId` cannot reach, since it holds only the new object for that id slot. A
+    design that makes `dispose()`'s per-model tombstone sweep (walking `liveModelByModelId`) the sole
+    mechanism for this fails the old object's query, which resumes seeing a stale `{state: 'live'}` entry
+    the sweep never reached and incorrectly completes. This is exactly the scenario Codex's round-15
+    review identified; it is also why `isLeaseValid`/`isModelLive` fixtures above must check `disposed`
+    is consulted directly rather than inferred from per-model state.
+  - **`world.evictModel(model)` called for a `Model` object with no prior `modelLifecycle` entry at all**
+    (mocked as `BEFORE_MODEL_UNLOAD_EVENT` firing for a model that was loaded but never touched
+    `findClashes`/room-search) — Round 15's core regression test for the evict-before-admit Critical:
+    `modelLifecycle.get(model)` must read `{ state: 'evicted' }` afterward (no `epoch` field), a
+    subsequent `world.admitModel(model)` or `findClashes(model, …)` must reject permanently with
+    `ModelEvictedError`, and no epoch-scoped cache release is attempted (asserted via a spy — there is
+    nothing to release, since this object was never admitted). A design that requires an `epoch` on every
+    `modelLifecycle` entry (the pre-round-15 single-shape type) cannot represent this state at all and
+    either throws constructing the tombstone or silently skips it, letting the object be admitted later
+    as if it were a legitimate first use.
+  - **`world.evictModel(model)` called twice on a `Model` object that was live with cached
+    `GeometryRecord`/BLAS state at the time of the first call** — the first call must tombstone the entry
+    and release the epoch-scoped state (asserted via a spy); the second call must be a no-op (asserted via
+    a spy that no further release is attempted, since the evicted entry no longer carries an epoch to
+    release against). Regression test for the idempotent-double-eviction edge case: a second eviction
+    must never throw or attempt to re-derive a released epoch it no longer has access to.
 - `ViewerGeometryAdapter` against fixtures covering:
   - the confirmed primary `vb`/`vbstride`/`vblayout` layout
   - standard `attributes.position.array` (non-interleaved `BufferAttribute`)
@@ -1635,6 +3001,12 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - **welding under a non-default unit scale** — the same geometry authored in millimetres and in
     metres must produce the same component count, verifying `weldEpsilon` is derived from
     `model.getUnitScale()` rather than left at the unit-blind `1e-4` default
+  - **clean-install module resolution**: after `npm run build:vendor`, load the sandbox app and import
+    every module under `collision/`, `wwwroot/vendor/three/`, and
+    `wwwroot/vendor/three/examples/jsm/utils/BufferGeometryUtils.js` — no unresolved module request.
+    Round 10's regression test for the welding vendor gap: `mergeVertices`'s import would 404 without
+    this file present, and nothing in the existing fixture set (which calls `mergeVertices` directly
+    against an already-resolved module, not through the app's own import map) would have caught it.
 
 **Integration test (acceptance criterion for this milestone)**: load URN
 `dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ`
@@ -1651,20 +3023,55 @@ implementation, not an open question about the algorithm.
 
 **Performance gate (also an acceptance criterion for this milestone)**: run one `volume-overlap`
 query against an **MEP-scale model** — fragment geometries in the thousands of triangles, not the
-dozens — and record BLAS build times, candidate-pair counts, and total query wall-clock.
+dozens — and record BLAS build times, candidate-pair counts, and total query wall-clock. **Run it
+twice**: once cold (no BLAS cached — exercises the build-boundary yield) and once immediately after,
+cache-warm (every BLAS already built — exercises the `frameBudgetMs` cross-pair/cross-stage
+checkpoint, since nothing in the query touches a new build the second time).
 
 This is one gate, not the excluded benchmark suite, and it exists because of what B7 established:
 the room-locator acceptance test above exercises **correctness only**. Rooms are 12–64 triangles, so
 brute force resolves the whole query in 10.2ms and the BLAS cache, the lazy-build yield,
 `maxSyncTriangleCount`, `maxCandidatePairsExamined`, and eviction are all untouched by it. A
 milestone that keeps that machinery (as decided) and ships with no test that runs it would be
-claiming performance properties on synthetic evidence alone. Pass criteria:
+claiming performance properties on synthetic evidence alone. **Round 9 added the cache-warm run
+specifically**: the build-only yield rule made the cold run's ~16ms bound plausible without ever
+exercising the composed-stage/cross-pair case that only shows up once every candidate's BLAS is
+already resident, which is exactly the scenario the earlier gate left unmeasured. Pass criteria:
 
-- no single synchronous step exceeds ~16ms — the one-frame rule every budget here is derived from;
+- no single synchronous task exceeds `frameBudgetMs`'s tolerance band around ~16ms, measured on
+  **both** runs — record the browser's longest task across each (the Long Tasks API where available,
+  or `performance.now()` deltas bracketing every yield point otherwise);
 - any budget that trips does so with the correct diagnostic (`geometry-too-large-for-sync-build`,
   `crossing-budget-exhausted`) rather than a freeze or a fabricated clash;
 - the measured per-candidate and per-build costs are recorded next to `measure.mjs`'s synthetic
-  figures, so the two can be compared rather than conflated.
+  figures, so the two can be compared rather than conflated;
+- **the worst-case cost of one `classifyPoint` call and one crossing probe are measured directly and
+  recorded, not merely reasoned about.** Round 11 found the per-primitive checkpoints under
+  **`ProperCrossingQuery`** and **`ContainmentQuery`** bound the *overshoot* past `frameBudgetMs` to
+  "one atomic operation's own cost" — a claim this spec makes but, unlike `maxSyncTriangleCount`'s
+  measured ~16ms, had never actually measured for a single `classifyPoint` call or probe. This model,
+  with its actual triangle density and BVH depth, is what confirms that overshoot is the negligible
+  fraction of a frame this spec assumes rather than an unmeasured risk; a run whose measured per-call
+  cost turns out non-negligible is itself an acceptance finding, not a pass.
+- **each of the three `GeometryRecord`-build phases — welding, connectivity, BVH construction — is
+  measured individually, at `maxSyncTriangleCount`, not only in combination.** Round 15 found the prior
+  version of this gate only ever measured the BVH build (folded into "BLAS build times" above), which is
+  exactly how a ~16.8ms weld and a ~6.9ms connectivity build at ~19,800 triangles went undetected for
+  four rounds. Record each phase's own wall-clock span separately; each must individually clear its
+  share of the accepted per-atomic-operation ceiling with margin, not just sum to something plausible.
+  A cold run that only ever measures connectivity (a `containment`-mode-only phase) must also be
+  distinguished from one that doesn't touch it at all, so `volume-overlap`'s exclusion of connectivity
+  isn't accidentally masked by always running the gate in `containment` mode.
+- **extraction cost for the largest single requested dbId, and the broad-phase scan's own cost at the
+  model's actual instance counts, are measured and recorded**, confirming or revising the provisional
+  `maxFragmentsPerDbId` (`5_000`) and `maxBroadPhaseInstancePairs` (`1_000_000`) ceilings — round 15
+  added both ceilings reasoned, not measured, and this gate is what promotes them to measured (see the
+  atomic-operations table under `ProperCrossingQuery`'s budgets).
+
+Whatever the MEP model's actual numbers turn out to be, they replace the "reasoned, not yet measured"
+qualifier on every still-unmeasured row of the atomic-operations table under **`ProperCrossingQuery`**'s
+budgets — this milestone cannot claim that table's unmeasured rows as verified until this gate has run
+once, and `maxSyncTriangleCount`'s `12_000` value specifically remains provisional until it has.
 
 Acquiring a suitable model is a milestone dependency (see Risks). If none is available at
 implementation time, that is a finding to report, not a step to skip silently — the alternative is
@@ -1685,10 +3092,13 @@ shipping the acceleration structures untested and calling the milestone verified
 - **Import map registration order**: the import map must be present in `index.html` before the
   first module import that resolves `three`/`three-mesh-bvh`, per the idea doc's deployment
   guidance.
-- **Model-removal event name unverified**: the per-model room-dbId cache (Data Flow step 1) needs to
-  invalidate when a model unloads. The exact Viewer event/notification for this wasn't confirmed
-  during design research (only load-side APIs were) — must be verified against the 7.124.2 source or
-  official docs during implementation, not assumed.
+- **Model-unload event payload shape unverified**: round 10 selected
+  `Autodesk.Viewing.BEFORE_MODEL_UNLOAD_EVENT` (confirmed present at `index.d.ts:324`) as the
+  authoritative hook for invalidating the per-model room-dbId cache and calling `world.evictModel`
+  (see Data Flow step 1). What remains genuinely unverified is narrower: the installed typings declare
+  the listener payload as `event: any`, so `event.model` — assumed per Autodesk's public event
+  reference — needs a one-time confirmation against the 7.124.2 source or a live console check during
+  implementation, not the choice of event itself.
 - **`ProperCrossingQuery` is the most intricate piece of new geometry code in this milestone**: the
   four-quadrant candidate test is standard technique, but it is the one component with no simpler
   fallback if it proves fragile against real tessellation (thin slivers, near-degenerate triangles at
@@ -1771,10 +3181,16 @@ shipping the acceleration structures untested and calling the milestone verified
   Derivative emits separate solids as separate fragments rather than nested shells within one
   geometry is **reasoned, not measured** — check it against the acceptance URN, since if nested
   independent solids turn out to be common the tradeoff inverts.
-- `maxSyncTriangleCount = 20_000` and `maxCandidatePairsExamined = 50_000` are now **measured**
-  against the one-frame principle (see `ProperCrossingQuery`), not guessed. Remaining question is
-  whether real rooms/fixtures routinely exceed the triangle ceiling — if they do, incremental or
-  Worker construction becomes near-term rather than a future-milestone nicety.
+- `maxCandidatePairsExamined = 50_000` is **measured** against the one-frame principle (see
+  `ProperCrossingQuery`), not guessed. `maxSyncTriangleCount` was too, at `20_000`, through round 14 —
+  round 15 found that measurement covered only the BVH-build phase, not welding or connectivity, and
+  revised it down to `12_000` (**reasoned, not yet measured** at the new value — see
+  `ThreeMeshBvhBackend`/`BlasCache`); the performance gate below must confirm or further revise it
+  before it can be called measured again. `maxFragmentsPerDbId` and `maxBroadPhaseInstancePairs` are new
+  in round 15 and are reasoned, not measured, from the start. Remaining question is whether real
+  rooms/fixtures routinely exceed the (now three, not one) triangle ceilings, or the two new count
+  ceilings — if they do, incremental or Worker construction becomes near-term rather than a
+  future-milestone nicety.
 - `samplesPerComponent = 8` (a stride divisor, not a cap — sampling continues past it),
   `maxWitnessTriangles = 8`, and `maxContainmentSamples = 512` remain provisional. None affects
   *coverage* correctness (component decomposition handles that) — they only bound pathological
@@ -1789,11 +3205,14 @@ shipping the acceleration structures untested and calling the milestone verified
   these two modes* (touching is surface intersection, not volume overlap) but not at the architecture
   level for `clearance`/`touching` tolerances. Should that answer be promoted into the idea doc as a
   library-wide convention?
-- When a model is reloaded with the same `model.id` (if that's possible in this Viewer version) but
-  different content, does the per-model room cache need an explicit epoch/version key in addition to
-  `model.id`? Unconfirmed whether `model.id` is ever reused across distinct loads. `evictModel()`
-  makes this survivable *if* the removal event always fires; the open question is whether it can be
-  missed.
+- **Resolved by round 12**: the per-model room cache (and `CollisionWorld`'s own liveness tracking) is
+  now keyed by the exact `Model` object rather than `model.id`, so a reload under a reused id can never
+  alias the previous load's cache entry regardless of whether `model.id` reuse is actually possible in
+  this Viewer version — the design no longer depends on knowing the answer. What remains genuinely
+  open: whether `BEFORE_MODEL_UNLOAD_EVENT` can ever fail to fire for some model-removal path this spec
+  hasn't identified. If it can, `evictModel`/the tombstone never runs for that model, and every
+  race-safety guarantee here is conditioned on the event firing at least once per removal — this is a
+  Viewer-behavior question implementation should confirm, not a gap in the eviction design itself.
 - Beyond welding, should components that are *still* non-manifold after it attempt further repair
   (hole filling, seam stitching)? Welding is now mandatory and handles the per-face-vertex case,
   which the spike showed is the dominant one; genuinely open shells are a separate and much smaller
