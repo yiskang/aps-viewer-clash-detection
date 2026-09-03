@@ -599,9 +599,12 @@ session where two clusters touched the same doc block):
   documented truthy-return enumeration interrupt both exist); the atomic-risk classification is retained
   as an explicit scope decision, flagged for a follow-up pass, not re-derived here. H-B1: the broad-phase
   `maxBroadPhaseInstancePairs = 1_000_000` ceiling bought ~1,000ms of uninterruptible work (~60× the
-  gate's ~16ms criterion) with no inner checkpoint; fixed by chunking the scan with a per-pair
+  gate's ~16ms criterion, as it stood at Round 18) with no inner checkpoint; fixed by chunking the scan
+  with a per-pair
   `frameBudgetMs` checkpoint (round 11's granularity, not batched), rather than only shrinking the
-  constant. H-B2: round 17's worst-case-span formula was restated as bounding only the ceilinged,
+  constant. *(This entry's "~16ms criterion" was accurate at Round 18 but is superseded by Round 22's
+  worst-case-span re-derivation — see the atomic-operations table's `maxBroadPhaseInstancePairs` row for
+  the current, canonical comparison.)* H-B2: round 17's worst-case-span formula was restated as bounding only the ceilinged,
   cooperative-composition tier, explicitly excluding the accepted-unbounded `enumNodeFragments` atomic
   risk it had silently ranged over.
 
@@ -723,7 +726,10 @@ extraction's atomic-risk boundaries, the mode dependency matrix):
   makes a `bvhcast` traversal's permanent, result-altering abort depend on scheduling position rather than
   the traversal's own cost (since `bvhcast` cannot yield-and-resume the way every other checkpoint can);
   reverted to the private clock, whose own worst case sits within, not beyond, the performance gate's
-  ~16ms tolerance band. Classified
+  ~16ms tolerance band. *(This entry's "~16ms tolerance band" was accurate at Round 21 but is superseded
+  by Round 22's worst-case-span re-derivation, which corrected the gate's own bound to ≈24ms — see the
+  worst-case-span formula under `ProperCrossingQuery`'s budgets for the current, canonical figure.)*
+  Classified
   `releaseEpochScopedState`/`dispose()`'s per-epoch registry sweep in the atomic-operations table for the
   first time — as a second accepted, unmeasured non-preemptible atomic risk alongside
   `enumNodeFragments` — and threaded that classification through the worst-case-span formula's exclusion
@@ -763,7 +769,12 @@ due. A phase (or a `bvhcast` traversal) whose preceding checkpoint finds the acc
 still runs to completion in the same span as whatever cooperative work already accumulated, adding its
 own full non-preemptible/abort-only cost on top. Re-derived the formula as `frameBudgetMs + [that unit's
 own worst-case cost]` — **≈24ms** at the measured weld figure or at `bvhcast`'s own self-bound
-(~2×`frameBudgetMs`), not the ≈16ms this document stated through Round 21, a ~1.5× understatement.
+(~2×`frameBudgetMs`), not the ≈16ms this document stated through Round 21, a ~1.5× understatement. *(This
+entry's parenthetical "~2×`frameBudgetMs`" self-bound was accurate at Round 22 but is superseded by a
+later Medium/Low pass, which found no derivation reproduced that factor and corrected it to
+`frameBudgetMs` + one probe's own cost — see the clock-basis passage under `ProperCrossingQuery`'s budgets
+for the current, canonical figure; the ≈24ms headline is unaffected, since welding remains the controlling
+term either way.)*
 Corrected the `ThreeMeshBvhBackend`/`BlasCache` per-phase-checkpoint claim, the
 atomic-operations-and-composition section under `ProperCrossingQuery`'s budgets, and the performance
 gate's pass-criterion tolerance to match; explicitly retained, unchanged, the pre-existing exclusion of
@@ -1868,10 +1879,16 @@ milestone replaces, not merely an imprecision.
    opposite verdicts depending on what else ran first in the same `findClashes` call, which is exactly the
    nondeterminism-in-its-own-inputs hazard this design treats as a defect elsewhere (see round 10's own
    count-based-budget rationale below). A private, traversal-local clock avoids that: its own worst case is
-   bounded by one `frameBudgetMs` span starting fresh at this traversal's own entry — at most
-   ~2×`frameBudgetMs`. Admitting this traversal to the abort-only tier does not increase the worst-case-span
-   formula's controlling unit-cost term: at the Round 22 measurements, the independently measured ~16.8ms
-   weld phase remains larger than this traversal's own ~2×`frameBudgetMs` worst case, so the formula's
+   bounded by one `frameBudgetMs` span starting fresh at this traversal's own entry, plus the one
+   uncaught interval the per-probe check below leaves open — at most `frameBudgetMs` + one probe's own
+   cost, not a separately-derived factor of two. **This corrects an earlier draft of this passage, which
+   asserted the traversal's own worst case at ~2×`frameBudgetMs` with no derivation reproducing that
+   factor** — the check fires before every probe (see the round-11 fix below), so the overshoot past
+   `frameBudgetMs` here is bounded the same way every other cooperatively-checkpointed primitive's
+   overshoot is: by one atomic operation's own cost, not by a second full `frameBudgetMs` span. Admitting
+   this traversal to the abort-only tier does not increase the worst-case-span formula's controlling
+   unit-cost term: at the Round 22 measurements, the independently measured ~16.8ms weld phase remains
+   larger than this traversal's own `frameBudgetMs` + one probe worst case, so the formula's
    **≈24ms** figure (`frameBudgetMs` plus one non-preemptible/abort-only unit's own worst case — see the
    worst-case-span formula below and the performance gate) is unchanged by admitting it — and the verdict
    depends only on this traversal's own cost, not on scheduling position. Round 10 found the two
@@ -1930,7 +1947,7 @@ milestone replaces, not merely an imprecision.
    | `maxFragmentsPerDbId` | **Reasoned, not yet measured**: extraction walks the node tree itself via in-callback-bounded `enumNodeChildren`/non-recursive `enumNodeFragments` (round 16 mechanism; a later invariant-audit fix, C-1, removed `getChildCount` from this walk entirely — see the `maxChildrenPerNode` row below) | `5_000` (provisional) | Bounds **cumulative work across the walk only** — aborts one dbId's extraction walk, between nodes, **as soon as** its running fragment tally crosses this, rather than after a full recursive enumeration completes. Round 17: does **not** bound any single node's own `enumNodeFragments` call — see the row below. See **Data Flow** step 3. |
    | one `enumNodeFragments(node, cb, false)` call (one node's own direct fragments) | **Round 17, reasoned, not yet measured. Round 18 correction: round 17's stated justification for treating this as unboundable is factually wrong; the classification itself is retained only because re-deriving it was outside this pass's scope.** Round 17 recorded, from the Reference Guide, that no fragment/instance-count equivalent to `getChildCount` exists and that neither class documents a way to interrupt an enumeration. Direct inspection of the pinned 7.124.2 bundle refutes both: `ObjectTree.getInstanceCount(dbId)` — "Get number of instances under the specified id" — is documented, with `getFragmentCount(dbId)` as its deprecated alias, and the Reference Guide documents for `enumNodeInstances` (the method `enumNodeFragments` aliases) that *"if the callback function returns a truthy value, a loop over the instances and child nodes will be interrupted"* — the same mechanism round 18 used to give `maxChildrenPerNode` a real bound one call over | — (no ceiling; accepted atomic risk — **flagged for re-derivation**) | **Non-preemptible, same category as the three `maxSyncTriangleCount` phases** — `maxFragmentsPerDbId`'s tally check only runs *between* nodes, never inside this call, so a single node with a pathologically large direct fragment count is an accepted Milestone-1 risk, not a bounded one. Its real worst-case cost must be measured by the performance gate rather than assumed negligible. **As of round 18 this row is unbounded by choice of scope, not by API limitation**, and a follow-up pass is required either to bound it with the two mechanisms named opposite or to state why it should not be. See **Data Flow** step 3. |
    | `maxChildrenPerNode` | **Round 18, reasoned, not yet measured — and deliberately not derived from any existing measurement.** No row of this table measures a callback-driven native enumeration, and the ~0.3µs `bvhcast` candidate figure is a different API boundary (it excludes native enumeration overhead, callback dispatch, and list growth), so it is **not** borrowed as a proxy. `10_000` is a provisional total-work and compatibility limit, set far above any ordinary node's fanout and far below a pathological one, pending the gate | `10_000` (provisional) | **Enforced, and the enforcement is the point — by exactly one mechanism, not two.** Round 18 credited `getChildCount(node)` as a cheap early-reject layer ahead of the in-callback abort; a subsequent invariant audit (finding C-1) found that credit false for the ordinary case — for a node that owns fragments (a "mixed" node), `getChildCount` is not O(1), it linearly scans the same child slots `enumNodeChildren` would walk, with no early-exit hook of its own, so calling it first is strictly worse than the call it was meant to gate. **`getChildCount` is removed from this enforcement path entirely — it is never called here, for any node shape.** The **in-callback abort inside non-recursive `enumNodeChildren(node, cb, false)`** is the sole enforcement mechanism: the callback counts its own invocations and returns truthy the moment the count would exceed `maxChildrenPerNode`, which the Reference Guide documents as interrupting the enumeration, so one call costs at most `maxChildrenPerNode + 1` callbacks regardless of the node's real fanout — for a fragment-free node exactly as for a mixed one, with no distinction in the enforcement logic. The abort tripping rejects the whole `findClashes` call, naming the node, its observed (partial) child count, and the dbId — the same plain rejection `maxFragmentsPerDbId` uses, not a `ClashDiagnostic`. **This spec does not claim `10_000` callbacks fit inside `frameBudgetMs`**; that remains unmeasured, and the gate is required to measure it. See **Data Flow** step 3. |
-   | `maxBroadPhaseInstancePairs` | **Reasoned, not yet measured**: one AABB-overlap test is O(µs); the scan itself is the O(sourceCount×targetCount) concern, not any single comparison | `1_000_000` (provisional) | Rejects the whole `findClashes` call, before the nested AABB scan begins, if `sourceInstances.length × targetInstances.length` would exceed this — checked via overflow-safe division (`sourceCount > ceiling / targetCount`), not multiplication. **Round 18: this ceiling bounds how many pairs are tested, not how long the scan blocks for** — at O(µs)/test the ceiling case is ~1,000ms, ~60× the gate's own ~16ms criterion — so the scan is no longer one synchronous span. It now checks the shared `frameBudgetMs` accumulator **before each individual instance pair**, yielding and resuming mid-scan (see **Data Flow** step 3), which moves it from non-preemptible to **cooperatively yieldable** and keeps overshoot bounded by one AABB test, per round 11's rule. The ceiling is retained, unlowered: with an inner checkpoint it bounds total *work* — and, separately, candidate-list memory and the narrow-phase work the scan hands downstream, neither of which chunking reduces. Its value still needs measurement. |
+   | `maxBroadPhaseInstancePairs` | **Reasoned, not yet measured**: one AABB-overlap test is O(µs); the scan itself is the O(sourceCount×targetCount) concern, not any single comparison | `1_000_000` (provisional) | Rejects the whole `findClashes` call, before the nested AABB scan begins, if `sourceInstances.length × targetInstances.length` would exceed this — checked via overflow-safe division (`sourceCount > ceiling / targetCount`), not multiplication. **Round 18: this ceiling bounds how many pairs are tested, not how long the scan blocks for** — at O(µs)/test the ceiling case is ~1,000ms, ~40× the gate's own ≈24ms worst-case-span bound (Round 18's own comparison used this document's then-current ~16ms figure, superseded by Round 22's re-derivation; the conclusion is unchanged either way) — so the scan is no longer one synchronous span. It now checks the shared `frameBudgetMs` accumulator **before each individual instance pair**, yielding and resuming mid-scan (see **Data Flow** step 3), which moves it from non-preemptible to **cooperatively yieldable** and keeps overshoot bounded by one AABB test, per round 11's rule. The ceiling is retained, unlowered: with an inner checkpoint it bounds total *work* — and, separately, candidate-list memory and the narrow-phase work the scan hands downstream, neither of which chunking reduces. Its value still needs measurement. |
    | `releaseEpochScopedState`'s (and `dispose()`'s equivalent) per-epoch registry sweep | **Unmeasured, uncategorized in this table until this pass.** Grew from "drop some map entries" (round 15) into a real per-entry enumerative pass with per-entry cancellation-signal rejection (round 18's C3) and an oversized-marking carve-out (round 20), with no prior round classifying it here | — (no ceiling; accepted atomic risk) | **Non-preemptible, same category as one `enumNodeFragments` call and the three `maxSyncTriangleCount` phases.** Runs entirely inside the Viewer's own uncaught-throw-sensitive `BEFORE_MODEL_UNLOAD_EVENT`/`dispose()` call frames (see **`world.evictModel`**'s "Race safety" note), enumerating every `GeometryRegistry` entry filed under one epoch and settling each `'building'`/`'ready'` entry's cancellation signal in the same synchronous step; cost scales with the number of live entries under that epoch, which nothing in this design ceilings. This cost model covers only the `GeometryRegistry` half of the sweep — the same step also performs an independent deletion over the `CollisionInstance` cache's own keyspace (see "`CollisionInstance` identity cache" above), which this row does not separately cost: given the cache's physical partitioning (`Map<loadEpoch, Map<fragmentId, CollisionInstance>>`): for `evictModel`, that deletion is one outer-`Map.delete(loadEpoch)` call, O(1) regardless of how many fragments the outgoing epoch's bucket holds, not an enumerative cost like the `GeometryRegistry` half. For `dispose()`, the equivalent is one outer-`Map.clear()` call over *every* live epoch's bucket at once, not a per-epoch operation — whether that scales with the number of live epochs (which "Retention is bounded per epoch, not in total", above, leaves unceilinged) is unstated and unmeasured here, the same gap this row already carries for the `GeometryRegistry` half. No checkpoint exists inside it — it is required to be non-throwing (see **`world.evictModel`**), not preemptible. Its real worst-case cost must be measured by the performance gate rather than assumed negligible. |
    | `maxCollisionInstancesPerEpoch` (the `CollisionInstance` identity cache's per-epoch capacity check, see **`GeometryRegistry`**) | **Reasoned, not yet measured.** A synchronous size comparison against a bucket's current count is O(1) per affected epoch; the check itself is cheap. What is unmeasured is the retention this ceiling accepts: unlike every other bounded structure in this table, a resident canonical instance is never individually evicted while its epoch stays live (evicting one would break the stable-object-reference guarantee the stale-eviction fixture under **`world.evictModel`** depends on), so retained memory for a long-lived epoch grows monotonically toward this ceiling and stays there | provisional, value not yet chosen | Rejects the whole `findClashes` call, before any cache bucket changes or broad-/narrow-phase work starts, if publishing the call's missing instances would push any affected epoch's bucket over the limit — checked once per call, synchronously, with no intervening `await` between the check and committing every missing instance, so two concurrent calls cannot both pass against the same stale capacity observation. This bounds worst-case retained *count*, not retained *bytes* — a `CollisionInstance`'s own footprint (`fragmentId` + `GeometryIdentity`) is small and fixed-shape, but the product with a long-lived epoch's total unique fragment count is what the performance gate must actually measure. |
 
@@ -1957,8 +1974,12 @@ milestone replaces, not merely an imprecision.
      primitive, but welding and connectivity construction are two more, previously undeclared and
      unmeasured, each capable of costing as much or more (see the table above). All three now get the
      same treatment: the yield-and-revalidate-before-each-phase rule under **`ThreeMeshBvhBackend`/
-     `BlasCache`** gives each phase its own hard ceiling on *its own* cost, so no phase ever compounds
-     with another build phase in the same span. **Round 22 correction:** that per-phase checkpoint is
+     `BlasCache`** gives each phase its own hard ceiling on *its own* cost. **Round 22 correction:** an
+     earlier draft of this passage went on to conclude "so no phase ever compounds with another build
+     phase in the same span" — false at the doc's own measured figures (connectivity's ~6.9ms falls under
+     `frameBudgetMs`, so its own checkpoint need not yield, letting it share a span with the BVH build; see
+     `ThreeMeshBvhBackend`/`BlasCache`'s corrected per-phase discussion for the concrete ~22.9ms
+     counterexample). That per-phase checkpoint is
      not a guaranteed yield — it is the same conditional, shared-`frameBudgetMs`-accumulator check every
      other checkpoint in this design uses (see the cooperative-composition bullet immediately below and
      `bvhcast`'s clock-basis passage under `ProperCrossingQuery`'s budgets, the one documented exception).
@@ -1977,8 +1998,9 @@ milestone replaces, not merely an imprecision.
      resume once started, so its ceiling is enforced by permanently aborting it rather than by a
      checkpoint inside it, and its **own** duration is self-bounded independent of what ran before it —
      a private, traversal-local clock, deliberately not the shared accumulator (see the clock-basis
-     passage), worst case ~2×`frameBudgetMs`; this is the one documented, deliberate exception to the
-     shared-accumulator convention every other checkpoint in this design follows (Round 21's H-B7). But
+     passage), worst case `frameBudgetMs` + one probe's own cost; this is the one documented, deliberate
+     exception to the shared-accumulator convention every other checkpoint in this design follows (Round
+     21's H-B7). But
      the checkpoint that decides *whether to start* that traversal at all — the ordinary pair/stage
      checkpoint under **`CollisionWorld`** — is the same conditional, shared-accumulator check as the
      build-phase bullet above, not a guaranteed yield. This traversal's self-bound describes its own
@@ -2042,8 +2064,13 @@ milestone replaces, not merely an imprecision.
      first term was correct and stays.
    - For the enforceably-bounded, non-preemptible tier (the three `maxSyncTriangleCount` build phases;
      the `maxChildrenPerNode`-capped `enumNodeChildren` call), the addend is that unit's own worst-case
-     cost. Of this tier's four members, three are measured — welding is the largest, at ~16.8ms, at the
-     sync-triangle ceiling — and `frameBudgetMs` (`8`) plus that is **≈24ms**, not the ≈16ms this section
+     cost. Of this tier's four members, three are measured — welding is the largest, at ~16.8ms. That
+     figure was measured at ~19,800 triangles (see the atomic-operations table's welding row), not at the
+     `12_000` sync-triangle ceiling itself; scaled down to the ceiling the true cost is smaller (~10.2ms),
+     so using the as-measured ~16.8ms figure here is conservative, not tight. `frameBudgetMs` (`8`) plus
+     that is **≈24ms** — precisely `8 + 16.8 = 24.8ms`; the gate's own pass/fail criterion (below) uses
+     this exact figure, not a rounded-down ≈24ms, since a measurement between 24 and 24.8ms is inside the
+     bound, not a violation of it — not the ≈16ms this section
      stated through Round 21, about 1.5× larger, because the prior figure silently dropped the
      `frameBudgetMs` prefix. **The fourth member, one `enumNodeChildren` call at the `maxChildrenPerNode`
      ceiling, is not one of the three measured costs this ≈24ms is computed from** — its own cost is
@@ -2057,9 +2084,13 @@ milestone replaces, not merely an imprecision.
    - For the abort-only tier (`ProperCrossingQuery`'s `bvhcast` traversal — the one with the private,
      traversal-local clock; `SurfaceCrossingWitness`'s own `bvhcast` traversal reads the shared
      accumulator instead and falls under the cooperatively-yieldable tier above, not this one — see the
-     abort-only bullet), the addend is that traversal's own self-bounded worst case, ~2×`frameBudgetMs`
-     (~16ms, independently derived under `ProperCrossingQuery`'s budgets and unchanged by this
-     re-derivation), giving the same `frameBudgetMs` + ~2×`frameBudgetMs` ≈ **~24ms** composed span.
+     abort-only bullet), the addend is that traversal's own self-bounded worst case, `frameBudgetMs` +
+     one probe's own cost (~`frameBudgetMs`, independently derived under `ProperCrossingQuery`'s budgets
+     — see the corrected clock-basis passage), giving a composed span of `frameBudgetMs` (this formula's
+     own outer prefix) + (`frameBudgetMs` + one probe) ≈ 2×`frameBudgetMs` ≈ **~16ms** for this tier —
+     comfortably under the enforceably-bounded tier's controlling **≈24ms** figure above, which admitting
+     this traversal to the abort-only tier does not change (see the clock-basis passage's independent
+     ~16.8ms-vs-`frameBudgetMs`+one-probe comparison).
 
    **Any number of checkpointed units may share a synchronous span — not only one.** An earlier draft of
    this passage claimed only one non-preemptible/abort-only unit could ever be the one absorbing prior
@@ -2116,7 +2147,11 @@ milestone replaces, not merely an imprecision.
    `frameBudgetMs` checkpoint for that mechanism; it wraps these budgets and the per-primitive
    checkpoints above rather than replacing either.
 
-   Both mechanisms key off the same constant and the same clock; they differ only in *where* the check
+   Both mechanisms key off the same constant, `frameBudgetMs`; they do **not** always key off the same
+   clock. The yield-and-resume mechanism, and `SurfaceCrossingWitness`'s own abort-and-diagnose check,
+   read the shared per-call accumulator; `ProperCrossingQuery`'s `bvhcast` abort-and-diagnose check is the
+   one documented exception, reading a private, traversal-local clock instead (see the clock-basis
+   passage above). They differ, beyond that, only in *where* the check
    runs and *what happens* when it trips — abort-and-diagnose inside a synchronous native traversal
    that cannot pause, versus genuinely yield-and-resume in plain JS loops that can (see
    **`ContainmentQuery`**'s sampling stages below, and **`CollisionWorld`** for the pair/stage
@@ -2919,7 +2954,7 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
      under `ThreeMeshBvhBackend`/`BlasCache` for why all three, not just the BVH build, get this
      treatment) — but round 9 found checkpointing build-phase starts alone isn't what the one-frame
      guarantee actually needs: a `volume-overlap` pair composes up to three independently-budgeted
-     stages (`ProperCrossingQuery`, then `ContainmentQuery(source in target)`, then
+     scheduling stages (`ProperCrossingQuery`, then `ContainmentQuery(source in target)`, then
      `ContainmentQuery(target in source)`), each sized to roughly one frame on its own, with nothing
      yielding *between* them; and once every candidate's `GeometryRecord` is cached, a run of pairs could
      execute back to back with no checkpoint between them at all. Either alone can freeze the Viewer for
@@ -2928,7 +2963,10 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
      before each new build phase, but also before starting each candidate pair (cached or not), before
      each dbId's extraction (above), before the broad-phase scan starts and again before each individual
      instance pair within it (round 18's own per-pair checkpoint — above), and between each of a pair's
-     composed sub-queries. Whenever accumulated synchronous time since the last yield exceeds
+     composed sub-queries. (This per-pair scheduling sense of "stage" — used throughout this section and
+     `CollisionWorld`'s own "pair/stage" checkpoints above — is a coarser, distinct concept from
+     `anyComponentInside`'s own internally-numbered stages 1–3, above; the two are never composed with or
+     cross-referenced against each other, and nothing in this design conflates them.) Whenever accumulated synchronous time since the last yield exceeds
      `frameBudgetMs` (`8` — half the one-frame target, since a checkpoint can only fire *between*
      primitives, not preempt one), it `await`s the same scheduling yield
      (`requestAnimationFrame`/`setTimeout(0)`) before continuing. The count-based budgets
@@ -3481,7 +3519,8 @@ type PairDiagnosticReason =
   | 'inconclusive-crossing'           // a probe classified `boundary`, OR no offset both stayed inside
                                       //   the source triangle and cleared `surfaceEpsilon` (containment
                                       //   mode's SurfaceCrossingWitness) — either way, not provable
-  | 'crossing-budget-exhausted'       // maxCandidatePairs/maxCrossingPairs hit; traversal aborted
+  | 'crossing-budget-exhausted'       // candidate-count, crossing-count, or elapsed-time ceiling hit;
+                                      //   traversal aborted
   | 'non-manifold-component'          // NEGATIVE result involving a component the guarantee misses
   | 'unverified-open-component'       // volume-overlap POSITIVE decided by an open component. Carries
                                       //   `role` naming WHICH public operand supplied that component
@@ -4396,7 +4435,12 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
 
 - no single synchronous task exceeds the corrected worst-case-span bound established under
   `ProperCrossingQuery`'s budgets — `frameBudgetMs` plus one non-preemptible or abort-only atomic unit's
-  own worst-case cost, **≈24ms** at the measured weld/`bvhcast` figures, not the ≈16ms this criterion
+  own worst-case cost, **24.8ms** (`8 + 16.8`) at the measured weld figure — the controlling term; the
+  abort-only tier's own `bvhcast` figure composes to a smaller ~16ms and does not raise this bound (see
+  the clock-basis passage under `ProperCrossingQuery`'s budgets) — stated loosely
+  elsewhere in this document as **≈24ms** — **this criterion's own pass/fail line is the literal 24.8ms,
+  not the rounded-down ≈24ms shorthand: a measurement of, say, 24.5ms is inside the bound and must not be
+  read as a failure** — not the ≈16ms this criterion
   stated through Round 21 (which omitted the `frameBudgetMs` prefix a conditional checkpoint can let a
   phase or traversal inherit — see the Round 22 re-derivation) — measured on **both** runs, **except the
   two synchronous spans this spec explicitly excludes from any worst-case-span guarantee** — one
@@ -4405,24 +4449,30 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   atomic-operations table) — for which a measurement above the corrected bound is a required recorded
   finding, not a gate failure; a measurement above the corrected bound on any other synchronous task **is** a gate
   failure, **with one provisional exception**: one `enumNodeChildren` call at the `maxChildrenPerNode`
-  ceiling (criterion 7, below) is the fourth, still-unmeasured member of the ≈24ms figure's own
+  ceiling (criterion 7, below) is the fourth, still-unmeasured member of the 24.8ms figure's own
   enforceably-bounded tier, not one of the three costs it was computed from — if its measured cost pushes
-  the true bound above ≈24ms, that is this criterion's own tolerance being corrected by measurement, not
-  a failure of this criterion; every other synchronous task's ≈24ms tolerance is not provisional in the
+  the true bound above 24.8ms, that is this criterion's own tolerance being corrected by measurement, not
+  a failure of this criterion; every other synchronous task's 24.8ms tolerance is not provisional in the
   same way. Record the browser's longest task across each (the Long Tasks API where available,
   or `performance.now()` deltas bracketing every yield point otherwise);
 - any budget that trips does so with the correct diagnostic (`geometry-too-large-for-sync-build`,
   `crossing-budget-exhausted`) rather than a freeze or a fabricated clash;
 - the measured per-candidate and per-build costs are recorded next to `measure.mjs`'s synthetic
   figures, so the two can be compared rather than conflated;
-- **the worst-case cost of one `classifyPoint` call and one crossing probe are measured directly and
+- **the worst-case cost of one `classifyPoint` call, one crossing probe, and one `SurfaceCrossingWitness`
+  in-triangle probe are measured directly and
   recorded, not merely reasoned about.** Round 11 found the per-primitive checkpoints under
   **`ProperCrossingQuery`** and **`ContainmentQuery`** bound the *overshoot* past `frameBudgetMs` to
   "one atomic operation's own cost" — a claim this spec makes but, unlike `maxSyncTriangleCount`'s
   measured ~16ms, had never actually measured for a single `classifyPoint` call or probe. This model,
   with its actual triangle density and BVH depth, is what confirms that overshoot is the negligible
   fraction of a frame this spec assumes rather than an unmeasured risk; a run whose measured per-call
-  cost turns out non-negligible is itself an acceptance finding, not a pass.
+  cost turns out non-negligible is itself an acceptance finding, not a pass. `SurfaceCrossingWitness`'s
+  own per-probe checkpoint (see the clock-basis passage under `ProperCrossingQuery`'s budgets for why it
+  reads the shared accumulator, unlike `ProperCrossingQuery`'s traversal) belongs to this same
+  cooperatively-yieldable tier and is covered by the same overshoot claim; it is named here explicitly
+  because, unlike the two accepted-risk exclusions and `enumNodeChildren` (criterion 7 below), no other
+  criterion below names it as its own single-call measurement target.
 - **each of the three `GeometryRecord`-build phases — welding, connectivity, BVH construction — is
   measured individually, at `maxSyncTriangleCount`, not only in combination.** Round 15 found the prior
   version of this gate only ever measured the BVH build (folded into "BLAS build times" above), which is
@@ -4437,10 +4487,16 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   model's actual instance counts, are measured and recorded**, confirming or revising the provisional
   `maxFragmentsPerDbId` (`5_000`) and `maxBroadPhaseInstancePairs` (`1_000_000`) ceilings — round 15
   added both ceilings reasoned, not measured, and this gate is what promotes them to measured (see the
-  atomic-operations table under `ProperCrossingQuery`'s budgets). **Round 18 changed what "the
+  atomic-operations table under `ProperCrossingQuery`'s budgets). Also record the extraction walk's own
+  **longest uninterrupted span between two consecutive per-sibling-node checkpoints** (see the extraction
+  walk's `frameBudgetMs` sibling checkpoint in **Data Flow** step 3), the same way the broad-phase scan's
+  longest inter-yield span is recorded below — extraction is cooperatively yieldable at that same
+  granularity, and criterion 1's generic "any synchronous task" wording covers it, but no criterion here
+  names it explicitly the way `enumNodeChildren` (criterion 7 below) and the other single-call targets
+  below name theirs. **Round 18 changed what "the
   broad-phase scan's own cost" has to mean here.** Since round 18 the scan yields and resumes mid-scan,
-  so it is no longer one atomic span and a total wall-clock figure says nothing about the tolerance
-  criterion above: record its **longest uninterrupted span** between two consecutive yields, alongside the
+  so it is no longer one atomic span and a total wall-clock figure says nothing about the worst-case-span
+  bound criterion 1 above enforces: record its **longest uninterrupted span** between two consecutive yields, alongside the
   total. Record two further numbers with it — the cost of one `performance.now()` read relative to one
   AABB-overlap test (the scan now performs one read per pair, and whether that is negligible or
   dominant decides whether the per-pair granularity survives or must be batched with a measured
