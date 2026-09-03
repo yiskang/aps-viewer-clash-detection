@@ -167,10 +167,27 @@ export function runCheckpointPortContractTests(makePort, { suiteName = 'Checkpoi
       controls.forceYieldDue();
       const pending = port.checkpoint({ loadEpoch: 1 });
       assert.equal(controls.getYieldInvocationCount(), 1);
+
+      // Attach settlement observer to prove causality: revalidation only runs after yield
+      let settled = false;
+      pending.then(() => { settled = true; }, () => { settled = true; });
+
       // Mutate state before resolving the yield
       controls.setDisposed(true);
-      // Resolve the yield and let the async function run
+
+      // Let several event-loop turns pass WITHOUT resolving the yield.
+      // If revalidation were NOT causally gated on the injected yield (e.g., a
+      // fire-and-forget implementation that awaits Promise.resolve() instead),
+      // it would have already run and settled the promise by now.
+      await Promise.resolve();  // microtask turn
+      await new Promise((r) => setImmediate(r));  // macrotask turn
+
+      // Prove: promise is still pending (not settled despite state mutation and event-loop turns)
+      assert.equal(settled, false, 'revalidation not yet happened -- causally gated on yield');
+
+      // NOW resolve the injected yield and let revalidation run
       if (controls.resolveNextYield) controls.resolveNextYield();
+
       // Revalidation should now run and reject with WorldDisposedError
       await assert.rejects(pending, { name: 'WorldDisposedError' });
     });
