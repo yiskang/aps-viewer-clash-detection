@@ -32,7 +32,11 @@
       "mcp__playwright__browser_select_option",
       "mcp__playwright__browser_press_key",
       "mcp__playwright__browser_fill_form",
-      "mcp__playwright__browser_network_requests"
+      "mcp__playwright__browser_network_requests",
+      "WebFetch(domain:aps.autodesk.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:developer.api.autodesk.com)",
+      "Bash(python3 -c ' *)"
     ]
   },
   "enabledMcpjsonServers": [
