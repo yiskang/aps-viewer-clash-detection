@@ -1762,7 +1762,8 @@ contact — freezes the Viewer through this mode instead, while the spec claimed
 worst case. That claim is only true once both modes traverse the same way.
 
 The rewrite is a simplification rather than new machinery: `SurfaceIntersectionQuery` is the *same*
-`bvhcast` traversal `ProperCrossingQuery` uses, sharing `maxCandidatePairsExamined`, the same
+`bvhcast` traversal `ProperCrossingQuery` uses, using the same `maxCandidatePairsExamined` ceiling, with a
+fresh traversal-local `candidatePairsExamined` counter for each traversal, the same
 per-candidate `intersectsTriangle` test, and the same abort protocol — with a weaker predicate. It
 returns `true` on the first candidate pair that intersects **at all**, so it needs neither the
 coplanar split (coplanar contact *is* touching here, so it counts rather than being skipped) nor the
@@ -1868,12 +1869,13 @@ milestone replaces, not merely an imprecision.
    nondeterminism-in-its-own-inputs hazard this design treats as a defect elsewhere (see round 10's own
    count-based-budget rationale below). A private, traversal-local clock avoids that: its own worst case is
    bounded by one `frameBudgetMs` span starting fresh at this traversal's own entry — at most
-   ~2×`frameBudgetMs`, which sits within, not beyond, the performance gate's own tolerance bound (**Round
-   22: ≈24ms** — `frameBudgetMs` plus one non-preemptible/abort-only unit's own worst case, of which this
-   traversal's own ~2×`frameBudgetMs` is itself one instance — see the worst-case-span formula below and
-   the performance gate) — and the verdict depends only on this traversal's own cost, not on scheduling
-   position. Round 10 found the two count-based budgets alone
-   don't bound this stage to one frame — they bound it to ~15ms of *raw candidate rejection*, but say
+   ~2×`frameBudgetMs`. Admitting this traversal to the abort-only tier does not increase the worst-case-span
+   formula's controlling unit-cost term: at the Round 22 measurements, the independently measured ~16.8ms
+   weld phase remains larger than this traversal's own ~2×`frameBudgetMs` worst case, so the formula's
+   **≈24ms** figure (`frameBudgetMs` plus one non-preemptible/abort-only unit's own worst case — see the
+   worst-case-span formula below and the performance gate) is unchanged by admitting it — and the verdict
+   depends only on this traversal's own cost, not on scheduling position. Round 10 found the two
+   count-based budgets alone don't bound this stage to one frame — they bound it to ~15ms of *raw candidate rejection*, but say
    nothing about the cost of *confirmed-pair probe classification*: up to 64 confirmed pairs, each
    running up to 12 probes (4 quadrants × 3 `offsetLadder` rungs), each probe calling `classifyPoint`
    against **both** solids, and each `classifyPoint` call performing a proximity check plus up to three
@@ -2186,9 +2188,12 @@ sampling the right decomposition:
 
 > **The containment guarantee, and its preconditions.** `anyComponentInside` only decides the outcome
 > once no proper crossing exists between source and target — established by `ProperCrossingQuery`
-> returning false for `VolumeOverlapQuery`, and by `ContainmentModeQuery`'s own two-stage negative for
-> `containment`, which has no `ProperCrossingQuery` term ahead of it (see **Stage ordering is
-> cheapest-first**, under `ContainmentModeQuery` below). For a component
+> returning false for `VolumeOverlapQuery`, and by `ContainmentModeQuery`'s own two-term negative for
+> `containment`, which has no `ProperCrossingQuery` term ahead of it (see **Term ordering is
+> cheapest-first**, under `ContainmentModeQuery` below). For `volume-overlap`, a true `ProperCrossingQuery`
+> result instead returns positive immediately, before either containment term is evaluated; for
+> `containment`, a positive first term likewise decides immediately, without invoking this precondition —
+> it governs negatives only, which is what "two-term negative" above already scopes it to. For a component
 > that is a **closed manifold solid**, passing from B's interior to its exterior would require
 > transversally crossing B's boundary, which *is* a proper crossing. So such a component is wholly
 > inside or wholly outside (possibly with zero-volume boundary contact), and **one conclusive sample
@@ -2248,8 +2253,12 @@ sampling the right decomposition:
 >   crossing path, where probes are classified against *both* solids. See the role table under Public
 >   API for the per-path rules; the short version is that a crossing can indict either side, while a
 >   containment term indicts only the container.
-> - The check is free: `GeometryConnectivity` already computes manifold classification per geometry
->   and caches it alongside the BLAS, so this reads a cached flag rather than adding a pass.
+> - **Reading** the flag is free: once `GeometryConnectivity` has been built for a geometry, this parity
+>   check reads its cached manifold classification rather than adding a pass. Building that record is not
+>   free — it is its own separately-checkpointed lazy phase, and `containment`/`volume-overlap`'s
+>   connectivity gate (see `ThreeMeshBvhBackend`/`BlasCache` above) is what guarantees the *target*'s
+>   record has already gone through that phase before this check runs, not only the operand(s)
+>   `anyComponentInside` samples.
 >
 > Measured on the acceptance model: **every room welds to a perfect closed manifold** (1 component,
 > 0 boundary edges, 0 non-manifold edges), so the side that must be closed is closed and
@@ -2440,17 +2449,18 @@ diverged from the pair's canonical scale.** `offsetLadder` is `[1e-3, 1e-4, 1e-5
 length derived from the *pair's* bounding diagonal, with no relationship to any one triangle's own
 size — a small triangle on a geometry with a large overall diagonal (or a source with a small triangle
 alongside a distant, larger component) can have every rung fall outside the triangle, so every probe
-is rejected and the candidate silently resolves to "no witness," the same clean false this stage
-exists to eliminate. Scaling by the triangle's own available in-plane distance at `M`, recomputed per
-candidate rather than looked up from a per-geometry cache, ties the ladder to the one quantity that
-actually bounds it.
+is rejected and the candidate silently resolves to "no witness," the same clean false
+`SurfaceCrossingWitness` exists to eliminate. Scaling by the triangle's own available in-plane distance
+at `M`, recomputed per candidate rather than looked up from a per-geometry cache, ties the ladder to the
+one quantity that actually bounds it.
 
 **If no rung produces a probe that both stays inside the triangle and clears `surfaceEpsilon` against
 the target, the candidate is inconclusive, not a rejected witness.** This mirrors
 `ProperCrossingQuery`'s step 5: a probe that can't be evaluated proves nothing, and folding it into a
-clean "no witness" would silently reproduce the false negative this stage exists to close. A negative
-`containment` result with any such candidate carries `inconclusive-crossing` — redefined below to cover
-an unproducible in-triangle probe alongside its original boundary-classification case.
+clean "no witness" would silently reproduce the false negative `SurfaceCrossingWitness` exists to
+close. A negative `containment` result with any such candidate carries `inconclusive-crossing` —
+redefined below to cover an unproducible in-triangle probe alongside its original
+boundary-classification case.
 
 The contrast with `ProperCrossingQuery`'s four-quadrant probe is the point rather than an
 implementation detail. That test steps off the intersection curve into space and demands `inside`
@@ -2474,11 +2484,11 @@ from the callback — inspected after `bvhcast` returns, exactly as `ProperCross
 protocol works, producing a diagnosed negative with `crossing-budget-exhausted` rather than a witness. The
 outer `CollisionWorld` checkpoint may still yield afterward.
 
-Stage ordering is cheapest-first: vertex sampling resolves the common case (a fixture inside a room)
-without any traversal at all. A negative now requires *both* stages to fail, which strictly
+**Term ordering is cheapest-first:** vertex sampling resolves the common case (a fixture inside a room)
+without any traversal at all. A negative now requires *both* composition terms to fail, which strictly
 strengthens `anyComponentInside`'s guarantee rather than weakening it — that guarantee was stated
-under "no proper crossing exists," and stage 2 is what now establishes the antecedent instead of
-assuming it.
+under "no proper crossing exists," and the second term (`SurfaceCrossingWitness`) is what now
+establishes the antecedent instead of assuming it.
 
 It shares `classifyPoint` verbatim with `VolumeOverlapQuery`, and `anyComponentInside` through its
 first two stages — the point classification and the vertex-sampling search are identical; only the
@@ -2962,9 +2972,11 @@ world.findClashes(query): Promise<ClashResult>
 //                            Soundest when BOTH operands are certified closed; an operand that isn't
 //                            degrades gracefully rather than rejecting — every result depending on
 //                            that operand's parity carries `unverified-parity-operand` naming its
-//                            role, and a positive whose deciding component isn't a certified closed
-//                            manifold also carries `unverified-open-component` (see "The containment
-//                            guarantee, and its preconditions" and the role table below).
+//                            role, a positive whose deciding component isn't a certified closed
+//                            manifold also carries `unverified-open-component`, and a negative
+//                            involving any non-manifold or open component carries
+//                            `non-manifold-component` (see "The containment guarantee, and its
+//                            preconditions" and the role table below).
 //   'containment'          — any point on the source's SURFACE lies inside the target's
 //                            interior (see fixture at "asserted for direction" in Testing:
 //                            the looser "any part of the source" wording was round-8-rejected
@@ -3509,6 +3521,13 @@ operand each path parity-tests:
 
 One diagnostic is emitted per offending operand, so a pair with both open produces two.
 
+**Mode scope:** the `proper crossing` row, the `containment of B in A` row, the two-role `a negative` row,
+and the both-open two-diagnostic case above apply only to `volume-overlap` — the only mode with a
+crossing term and bidirectional containment. `containment` mode composes
+`ContainmentQuery(anyComponentOf(A) inside B)` and `SurfaceCrossingWitness(A, B)` (see
+`ContainmentModeQuery`), and both parity-test only the target B, so a `containment` result — positive or
+negative — can indict `target` only.
+
 Note what is *not* covered by this: an open component on a containment-decided **`volume-overlap`**
 positive is not a parity fault at all — it was sampled, never parity-tested — and is reported by
 `unverified-open-component` instead. The two diagnostics answer different questions ("was `inside`
@@ -3631,9 +3650,11 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   generic ray directions (see `ContainmentQuery`). Unresolved components under a negative produce
   `inconclusive-containment` rather than a silent guess; a parity operand that isn't certified closed
   at all produces `unverified-parity-operand` on every result.
-- **Non-manifold or open source components**: the containment guarantee doesn't cover them (see
-  `anyComponentInside`), so a negative result involving one emits `non-manifold-component`. Sampling
-  still runs — this degrades a verified negative to an unverified one, it doesn't skip work.
+- **Non-manifold or open components sampled by `anyComponentInside`** (the public source in
+  `containment` mode; either public operand in `volume-overlap` mode, depending on which containment
+  term is sampling it): the containment guarantee doesn't cover them (see `anyComponentInside`), so a
+  negative result involving one emits `non-manifold-component`. Sampling still runs — this degrades a
+  verified negative to an unverified one, it doesn't skip work.
 - **A `volume-overlap` positive decided by an open component, on either side**: emits
   `unverified-open-component` with `role` naming whichever public operand supplied the deciding
   component — `source` when `anyComponentOf(source) inside target` decided it, `target` when
@@ -3654,9 +3675,13 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   and must never be mistaken for a hit (see `ProperCrossingQuery`).
 - **Overlaps shallower than `minPenetrationDepth`**: may classify as touching rather than overlap.
   This is a declared semantic limit of the mode (see Tolerances), not a diagnosed failure.
-- **Truncated examination**: hitting `maxContainmentSamples` before covering every component, or
-  `maxCrossingPairsExamined` before deciding, produces `incomplete-component-coverage` /
-  `inconclusive-crossing` — a bounded search that finds nothing has not proven a negative.
+- **Truncated or inconclusive examination**: exhausting `maxContainmentSamples` before covering every
+  component produces `incomplete-component-coverage`. An otherwise-negative result produces
+  `inconclusive-crossing` when a probe classifies `boundary` against either solid (`ProperCrossingQuery`
+  step 5), or when `SurfaceCrossingWitness` cannot construct a valid in-triangle probe that clears
+  `surfaceEpsilon` — distinct from exhausting `maxCrossingPairsExamined` itself, which aborts the
+  traversal and produces `crossing-budget-exhausted` (see **Traversal budget exhausted** above). Either
+  way, a bounded search that finds nothing has not proven a negative.
 - **No candidate rooms** (empty search result, or wrong category name): `findClashes` still returns
   a full `ClashResult` with `pairs: []` and zeroed `statistics`; the extension surfaces "No rooms
   found" rather than throwing.
@@ -3934,10 +3959,11 @@ refactor can't silently reintroduce a bug an earlier round already found.
     classification in either mode. Specifically verifies `SurfaceCrossingWitness` rejects coplanar
     candidate pairs, since a face-to-face pair produces an intersection segment but no interior
     point.
-  - **budget exhaustion in the surface-crossing stage** — shares the interleaved-comb input with the
-    other two modes, and must abort with `crossing-budget-exhausted` rather than run unbounded. Stage
-    2 added a third traversal to the design; the round-7 lesson was that each new traversal needs its
-    own bounding proof rather than inheriting the claim that "the budgets bound the worst case."
+  - **budget exhaustion in `SurfaceCrossingWitness`** — shares the interleaved-comb input with the
+    other two modes, and must abort with `crossing-budget-exhausted` rather than run unbounded.
+    `ContainmentModeQuery`'s second composition term added a third traversal to the design; the
+    round-7 lesson was that each new traversal needs its own bounding proof rather than inheriting the
+    claim that "the budgets bound the worst case."
   - **two exactly coincident closed boxes (identical geometry, identical transform)** — round 9's
     counterexample: `containment(A, B)` must be **false**, and — because every vertex reads `boundary`
     and every triangle-triangle contact is coplanar (so `SurfaceCrossingWitness` never gets a target
@@ -3956,8 +3982,8 @@ refactor can't silently reintroduce a bug an earlier round already found.
   - **the same small-triangle case shrunk further, so no offset can both stay inside the triangle and
     clear `surfaceEpsilon`** — must report `inconclusive-crossing` on a negative result, not a silent
     "no witness." Regression test for the failure mode itself: an unproducible probe folded into a
-    clean negative would reproduce the exact bug this stage exists to close, just relocated from "wrong
-    scale" to "no valid scale at all."
+    clean negative would reproduce the exact bug `SurfaceCrossingWitness` exists to close, just
+    relocated from "wrong scale" to "no valid scale at all."
 - `CollisionWorld.findClashes` — cross-pair/cross-stage yielding, tested with the scheduling primitive
   mocked so the assertion is on *whether* a yield happened, not on wall-clock:
   - **many cache-warm candidate pairs (every BLAS pre-built), each individually cheap but summing past
