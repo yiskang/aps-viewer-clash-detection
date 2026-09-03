@@ -12,15 +12,23 @@
 // instead (spec:3804-3810: "skip that fragment; record a diagnostic ... must be
 // distinguishable from a verified no-clash").
 
+function isValidPositiveNumber(n) {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0;
+}
+
+function isValidNonNegativeNumber(n) {
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0;
+}
+
 function resolvePositions(geometry) {
   // Priority 1: Viewer-internal interleaved layout (spec:1154-1159) -- confirmed
   // universal across SVF/SVF2/OTG in Viewer 7.124.2.
   if (
     geometry.vb &&
-    typeof geometry.vbstride === 'number' &&
+    isValidPositiveNumber(geometry.vbstride) &&
     geometry.vblayout &&
     geometry.vblayout.position &&
-    typeof geometry.vblayout.position.offset === 'number'
+    isValidNonNegativeNumber(geometry.vblayout.position.offset)
   ) {
     return {
       positions: geometry.vb,
@@ -32,17 +40,22 @@ function resolvePositions(geometry) {
   const positionAttr = geometry.attributes && geometry.attributes.position;
 
   // Priority 2: standard three.js InterleavedBufferAttribute.
-  if (positionAttr && positionAttr.data && positionAttr.data.array && typeof positionAttr.data.stride === 'number') {
+  if (positionAttr && positionAttr.data && positionAttr.data.array && isValidPositiveNumber(positionAttr.data.stride)) {
+    const offset = typeof positionAttr.offset === 'undefined' ? 0 : positionAttr.offset;
+    if (!isValidNonNegativeNumber(offset)) return null;
     return {
       positions: positionAttr.data.array,
       positionStride: positionAttr.data.stride,
-      positionOffset: positionAttr.offset || 0,
+      positionOffset: offset,
     };
   }
 
   // Priority 3: standard non-interleaved BufferAttribute.
   if (positionAttr && positionAttr.array) {
-    return { positions: positionAttr.array, positionStride: positionAttr.itemSize || 3, positionOffset: 0 };
+    // If itemSize is explicitly provided, validate it; otherwise default to 3.
+    const stride = typeof positionAttr.itemSize === 'undefined' ? 3 : positionAttr.itemSize;
+    if (!isValidPositiveNumber(stride)) return null;
+    return { positions: positionAttr.array, positionStride: stride, positionOffset: 0 };
   }
 
   return null;
@@ -57,18 +70,22 @@ function resolveIndex(geometry) {
   return null; // non-indexed
 }
 
-function intersectRange(range, drawRange) {
-  if (!drawRange) return { start: range.start, count: range.count };
-  const start = Math.max(range.start, drawRange.start);
-  const end = Math.min(range.start + range.count, drawRange.start + drawRange.count);
+function intersectRange(range, constraint) {
+  if (!constraint) return { start: range.start, count: range.count };
+  const start = Math.max(range.start, constraint.start);
+  const end = Math.min(range.start + range.count, constraint.start + constraint.count);
   return { start, count: Math.max(0, end - start) };
 }
 
 function resolveRanges(geometry, fullCount) {
   const drawRange =
     geometry.drawRange && typeof geometry.drawRange.count === 'number'
-      ? { start: geometry.drawRange.start || 0, count: geometry.drawRange.count }
+      ? { start: typeof geometry.drawRange.start === 'undefined' ? 0 : geometry.drawRange.start, count: geometry.drawRange.count }
       : null;
+
+  // All ranges must be clamped to the actual geometry bounds [0, fullCount) to prevent
+  // index overruns downstream. This applies to both the groups branch and the fallback.
+  const fullCountRange = { start: 0, count: fullCount };
 
   // Branch condition is `groups.length > 0`, NOT "groups is present" -- standard
   // BufferGeometry always initializes `groups = []` (spec:1166), so a naive
@@ -77,7 +94,11 @@ function resolveRanges(geometry, fullCount) {
   // no-clash. This is the exact bug this length check guards against.
   if (Array.isArray(geometry.groups) && geometry.groups.length > 0) {
     // Group and draw ranges are INTERSECTED, not either/or (spec:1167).
-    return geometry.groups.map((g) => intersectRange({ start: g.start, count: g.count }, drawRange));
+    // Each group range is clamped to the geometry's actual bounds.
+    return geometry.groups.map((g) => {
+      const bounded = intersectRange({ start: g.start, count: g.count }, fullCountRange);
+      return intersectRange(bounded, drawRange);
+    });
   }
 
   // groups absent OR empty: synthesize one range covering the full index/vertex
@@ -98,6 +119,11 @@ export function computeActiveTriangleCount(ranges) {
 }
 
 export function adaptViewerGeometry(geometry) {
+  // Guard against null/undefined/non-object input before accessing any properties.
+  if (geometry === null || typeof geometry !== 'object') {
+    return { unsupported: true, reason: 'unsupported-geometry-layout' };
+  }
+
   // Legacy `offsets` layouts are explicitly rejected, not silently normalized with a
   // guessed `baseVertex: 0` (spec:1170) -- no confirmed rule for this layout, no
   // evidence it appears in Viewer 7.124.2.
@@ -116,6 +142,23 @@ export function adaptViewerGeometry(geometry) {
   // Uniform accessor invariant for callers: x_i = positions[i*positionStride + positionOffset].
   const vertexCount = Math.floor(positions.length / positionStride);
   const fullCount = index ? index.length : vertexCount;
+
+  // Validate drawRange numeric fields if present.
+  if (geometry.drawRange && typeof geometry.drawRange.count === 'number') {
+    const drStart = typeof geometry.drawRange.start === 'undefined' ? 0 : geometry.drawRange.start;
+    if (!isValidNonNegativeNumber(drStart) || !isValidNonNegativeNumber(geometry.drawRange.count)) {
+      return { unsupported: true, reason: 'unsupported-geometry-layout' };
+    }
+  }
+
+  // Validate groups numeric fields if present.
+  if (Array.isArray(geometry.groups)) {
+    for (const group of geometry.groups) {
+      if (!isValidNonNegativeNumber(group.start) || !isValidNonNegativeNumber(group.count)) {
+        return { unsupported: true, reason: 'unsupported-geometry-layout' };
+      }
+    }
+  }
 
   const ranges = resolveRanges(geometry, fullCount);
   const activeTriangleCount = computeActiveTriangleCount(ranges);

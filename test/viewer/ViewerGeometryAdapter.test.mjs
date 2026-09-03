@@ -144,3 +144,95 @@ test('computeActiveTriangleCount: sums floor(count/3) per range, not raw sum', (
   assert.equal(computeActiveTriangleCount([{ start: 0, count: 10 }]), 3); // floor(10/3)
   assert.equal(computeActiveTriangleCount([{ start: 0, count: 9 }, { start: 9, count: 9 }]), 6);
 });
+
+test('group range exceeding buffer bounds: clamped to [0, fullCount), not unclamped', () => {
+  // A group that claims {start:0, count:30003} on a 6-element index should be
+  // clamped to {start:0, count:6}, preventing 5000x overcounting and index overruns.
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX }, // 6 elements total
+    groups: [{ start: 0, count: 30003 }], // absurdly large, exceeds buffer
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, false);
+  assert.deepEqual(result.ranges, [{ start: 0, count: 6 }]);
+  assert.equal(result.activeTriangleCount, 2, 'must clamp to actual buffer, not propagate overrun');
+});
+
+test('group + drawRange intersection still clamps group to fullCount', () => {
+  // Group claims {start:0, count:30003}, drawRange is {start:0, count:3}.
+  // Should clamp group first to [0,6), then intersect with drawRange -> [0,3).
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+    groups: [{ start: 0, count: 30003 }],
+    drawRange: { start: 0, count: 3 },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.deepEqual(result.ranges, [{ start: 0, count: 3 }]);
+  assert.equal(result.activeTriangleCount, 1);
+});
+
+test('null input: returns unsupported, does not throw', () => {
+  const result = adaptViewerGeometry(null);
+  assert.equal(result.unsupported, true);
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('undefined input: returns unsupported, does not throw', () => {
+  const result = adaptViewerGeometry(undefined);
+  assert.equal(result.unsupported, true);
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('non-object input (string, number): returns unsupported, does not throw', () => {
+  assert.equal(adaptViewerGeometry('not-a-geometry').unsupported, true);
+  assert.equal(adaptViewerGeometry(123).unsupported, true);
+});
+
+test('NaN stride: returns unsupported instead of propagating NaN', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: NaN } },
+    index: { array: QUAD_INDEX },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'must reject NaN stride as invalid');
+});
+
+test('Infinity stride: returns unsupported instead of propagating Infinity', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: Infinity } },
+    index: { array: QUAD_INDEX },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'must reject Infinity stride as invalid');
+});
+
+test('negative stride: returns unsupported', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: -3 } },
+    index: { array: QUAD_INDEX },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true);
+});
+
+test('NaN in drawRange: returns unsupported', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+    drawRange: { start: 0, count: NaN },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true);
+});
+
+test('negative group start: returns unsupported', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+    groups: [{ start: -1, count: 6 }],
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true);
+});
