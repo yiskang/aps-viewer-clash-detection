@@ -43,6 +43,13 @@
         </div>
     </dialog>
     <script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js"></script>
+    <script type="importmap">
+    { "imports": {
+      "three": "/vendor/three/build/three.module.js",
+      "three-mesh-bvh": "/vendor/three-mesh-bvh/src/index.js",
+      "three/addons/utils/BufferGeometryUtils.js": "/vendor/three/examples/jsm/utils/BufferGeometryUtils.js"
+    } }
+    </script>
     <script src="/main.js" type="module"></script>
 </body>
 
