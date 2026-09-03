@@ -17,6 +17,23 @@ affected the same invariants it was fixing — H-G1 (triangle-count units), H-B1
 span), H-B2 (worst-case-span formula), and H-Q3 (`containment`'s Public API wording) from
 `invariant-audit-v1.md`'s own High-severity list. See the Round 18 revision-notes entry below for the
 full scope of this pass and `invariant-audit-v2.md` for the post-fix re-audit.
+
+**This Status paragraph is itself frozen at the Round 17→18 transition, per this document's own
+no-rewriting-history convention.** The changelog below (**Revision Notes**) continues through Round 23.
+Every round after Round 23 — at minimum Round 24 (`round-24-h6c1-disposition.md`), Round 25
+(`round-25-cache-concurrency-medium-low-disposition.md`), Round 26
+(`round-26-lifecycle-medium-low-disposition.md`), and Round 27
+(`round-27-geometry-medium-low-disposition.md`) as of this writing, with further rounds likely to follow
+the same pattern — closed additional findings without adding its own `### Round N` changelog entry here;
+**check `docs/superpowers/specs/round-*-disposition.md` for the full, current list rather than trusting
+this paragraph's enumeration to stay exhaustive.** Those disposition documents are this file's
+authoritative record for that work, not this Revision Notes section. Not every round number in the
+sequence below has its own entry (some rounds' work was folded into an adjacent entry or recorded only in
+a standalone disposition document) — a numbering gap is not evidence of missing content. Five different
+finding-label conventions have been used across this changelog and the linked invariant-audit series (v1:
+"C4/C5"; v2: "C-1…C-4"; v3: "C-5"; v4: "H-*"; v5/v6: "H2", "H6-G1", etc.) with no single global scheme; a
+bare label anywhere in this file's prose is shorthand for its own audit document's finding, not a
+cross-document identifier.
 Date: 2026-08-06
 Related: [`docs/ideas/aps-viewer-clash-detection-library-idea.md`](../../ideas/aps-viewer-clash-detection-library-idea.md)
 
@@ -499,7 +516,8 @@ stale-wording fix in the performance gate)
   round, via the `aps-viewer-implementation-research` skill against the official Reference Guide (not
   typings alone, per instruction) — `getChildCount(dbId)`/`getChildCount(node)` is documented on both the
   deprecated `InstanceTree` class and its replacement `Autodesk.Viewing.ObjectTree` as "Get number of
-  children under the specified id," returned without enumerating those children. **No equivalent exists
+  children under the specified id" — this round found that count is returned without enumerating those
+  children. **No equivalent exists
   for fragments on either class.** `ObjectTree`'s documented enumeration method isn't even named
   `enumNodeFragments` — it's `enumNodeInstances(node, callback, recursive)` — and neither its
   documentation nor `InstanceTree`'s describes any way to learn a node's direct fragment/instance count
@@ -1193,7 +1211,10 @@ version.
 **`GeometryRegistry` / `GeometryIdentity`** — one `GeometryRecord` per unique `(loadEpoch,
 geometryIndex)` — **keyed by the owning `Model` object's admitted load epoch, not its numeric
 `modelId`** (round 14; see the "Geometry dedup key" note under `ViewerModelAdapter` and "Race safety"
-under **`world.evictModel`**) — with a `referenceCount`, an explicit `buildState: 'building' | 'ready'`,
+under **`world.evictModel`**) — with a `referenceCount` (reserved, unused in Milestone 1 — release is
+epoch-scoped, not reference-counted; see "Ownership and release are epoch-scoped" under the
+`CollisionInstance` identity cache and this record's own release paths below), an explicit `buildState:
+'building' | 'ready'`,
 and one lazily-created promise per build phase: a `weldPromise` (active-range compaction + weld,
 resolving to the collision-owned compacted/welded position+index pair), an `accelerationPromise` (the
 BLAS), and the promise behind a lazy `connectivity` (the `GeometryConnectivity` component
@@ -1350,7 +1371,9 @@ specified to reject. The rule is therefore:
   first, then connectivity if it is needed, then the BVH — preserving the phase order the narrow phase
   and the atomic-operations table already specify.
 - **A caller that finds an existing entry never starts a duplicate build.** It awaits the phase slots
-  its own query needs off that entry. This single registry-level mechanism is what makes concurrent
+  its own query needs off that entry — or, if the entry is an oversized marking instead, skips the pair
+  immediately without awaiting anything (see the oversized-entry bullet below); either way no second
+  build is ever started for that geometry. This single registry-level mechanism is what makes concurrent
   build requests dedupe, and it covers compaction/weld and connectivity exactly as it covers the BVH —
   see `BlasCache` below, which owns no dedup mechanism of its own.
 - **Nothing reads a phase's product off a `'building'` record.** The compacted/welded buffers, the
@@ -1360,10 +1383,12 @@ specified to reject. The rule is therefore:
   have both resolved** — the phases every mode needs. What varies by mode is what a *query* requires of
   a record: a `'ready'` record is everything `surface-intersection` needs, and it is `'ready'` whether
   or not the connectivity slot was ever created; `containment` and `volume-overlap` additionally await
-  connectivity's slot on that same entry, created on demand at whichever point this spec's
-  connectivity-trigger rule fires (see the narrow phase in **Data Flow** step 3 and "Connectivity
-  remains independently lazy" above — this state model does not by itself decide that trigger point).
-  Connectivity is never what makes a record un-`'ready'`.
+  connectivity's slot on that same entry, created lazily, on demand, the first time any call's narrow
+  phase runs a mode needing `anyComponentInside` against this record — whether that is the same call
+  that first builds the entry (see the narrow phase in **Data Flow** step 3 and "Connectivity remains
+  independently lazy" above) or a later call against an already-`'ready'` entry (see "a lazy connectivity
+  build started later against an already-`'ready'` entry" below). Connectivity is never what makes a
+  record un-`'ready'`.
 - **A build-phase checkpoint validates the record's *owner*, not the building caller's whole query.** A
   between-phases checkpoint on a shared build checks `disposed` first, then the liveness/epoch of the
   one model that owns this geometry — the operand whose `loadEpoch` is in the record's key — and nothing
@@ -1386,9 +1411,10 @@ specified to reject. The rule is therefore:
   pipeline fresh rather than resuming a half-built record. Removal is identity-guarded (delete only if
   the registry still holds this exact entry for that key), so a late rejection can never drop a newer
   entry filed under a different epoch.
-- **`evictModel` and `dispose()` reject in-flight builds through this same entry.** Every registry entry
-  carries one entry-scoped cancellation signal, created once when the entry is first inserted in
-  `buildState: 'building'` and kept alive, unchanged, for the entry's entire lifetime — the signal is
+- **`evictModel` and `dispose()` reject in-flight builds through this same entry.** Every
+  `'building'`/`'ready'` registry entry carries one entry-scoped cancellation signal, created once when
+  the entry is first inserted in `buildState: 'building'` and kept alive, unchanged, for the entry's
+  entire lifetime — the signal is
   *not* discarded or replaced when the entry transitions to `'ready'`. Every unresolved phase slot the
   entry ever hosts races that same signal, including a lazy connectivity build started later against an
   already-`'ready'` entry (see "connectivity's slot on that same entry" above): the signal is scoped to
@@ -1403,9 +1429,7 @@ specified to reject. The rule is therefore:
   path above already is: the release step deletes the entry only if the registry still holds this exact
   entry for that key, so a late-resolving continuation from a just-cancelled phase (weld, BVH, or a
   lazily-started connectivity build) can never republish its result or otherwise mutate state once the
-  entry is gone. This entry-lifetime signal is defined only for `'building'`/`'ready'` entries — an
-  *oversized marking* (see below) never has one, because no phase is ever started for it and it carries
-  no `buildState` to begin with.
+  entry is gone. (An oversized marking carries no such signal at all — see the next bullet.)
 - **An oversized geometry (below) is a distinct kind of entry, not a build state.** A registry lookup
   yields one of three things: an *oversized marking* (no phase is ever started for it, it carries no
   `buildState`, and every pair needing it is skipped), a `'building'` record, or a `'ready'` one. Because
@@ -1423,9 +1447,10 @@ used afterward to tell `MeshBVH` which triangles to traverse.** A fragment with 
 tiny active draw range could pass a ceiling check counted against the active set while still making
 welding walk the entire oversized raw index — the exact gap the ceiling exists to close, just moved one
 step earlier in the pipeline. **The fix inserts one more phase before the three above, not gated by
-`frameBudgetMs` but by the ceiling itself: active-range compaction.** Before welding, before the
-ceiling check, and before anything is handed to `mergeVertices`, `ViewerGeometryAdapter`'s already-
-normalized `ranges: TriangleRange[]` (computed during the earlier layout-normalization pass — free, no
+`frameBudgetMs` but by the ceiling itself: active-range compaction.** Before welding and before anything
+is handed to `mergeVertices` — but only once the ceiling check below has passed —
+`ViewerGeometryAdapter`'s already-normalized `ranges: TriangleRange[]` (computed during the earlier
+layout-normalization pass — free, no
 per-triangle work) are used to materialize a **collision-owned, compacted position/index pair containing
 only the triangles those ranges cover**. The total active triangle count is
 **`activeTriangleCount := Σ floor(ranges[i].count / 3)`** — `TriangleRange.count` is an *index-element*
@@ -1478,7 +1503,7 @@ not-building-it-twice rule, which the registry entry provides for every phase al
 Yielding between *separate* builds doesn't help if a single build is itself large enough to freeze
 the Viewer, and a review pass correctly pointed out the earlier draft deferred that risk entirely
 rather than bounding it. Milestone 1 commits to a concrete (if provisional) limit:
-`maxSyncTriangleCount = 12_000`. A geometry at or above that triangle count is **not** built
+`maxSyncTriangleCount = 12_000`. A geometry whose triangle count exceeds that ceiling is **not** built
 synchronously — `GeometryRegistry` marks the record oversized and emits one fragment-scoped
 `geometry-too-large-for-sync-build` diagnostic (see Public API) rather than risking a
 multi-hundred-millisecond freeze; every pair that would have needed that geometry is skipped. This is a deliberate scope boundary, not a
@@ -1515,8 +1540,10 @@ symmetric under swapping the operands, since `B→A` and `A→B` differ under no
 problems come from trying to make one scalar serve two frames, so this revision stops doing that:
 
 - **Per-BVH tolerance scale.** Each `GeometryRecord` carries `L_X := diagonal(localBounds(X))`,
-  computed once in X's own local space and cached with the BLAS. Any tolerance applied against X's
-  BVH is scaled by `L_X`. `classifyPoint(point, targetBvh)` therefore uses the *target's* scale — the
+  computed once, in X's own local space, over the same collision-owned compacted-then-welded buffer the
+  BLAS is built from (see "Position is an owned, compacted-then-welded buffer" above) — never the raw
+  Viewer geometry — and cached with the BLAS. Any tolerance applied against X's BVH is scaled by `L_X`.
+  `classifyPoint(point, targetBvh)` therefore uses the *target's* scale — the
   frame it is actually working in — with no conversion anywhere.
 - **Canonical operand order.** `ProperCrossingQuery`'s probes and its `offsetLadder` necessarily live
   in one shared frame (the one `bvhcast` traverses). Rather than derive a "symmetric" scalar, the
@@ -1841,7 +1868,7 @@ milestone replaces, not merely an imprecision.
    nondeterminism-in-its-own-inputs hazard this design treats as a defect elsewhere (see round 10's own
    count-based-budget rationale below). A private, traversal-local clock avoids that: its own worst case is
    bounded by one `frameBudgetMs` span starting fresh at this traversal's own entry — at most
-   ~2×`frameBudgetMs`, which sits within, not beyond, the performance gate's own tolerance band (**Round
+   ~2×`frameBudgetMs`, which sits within, not beyond, the performance gate's own tolerance bound (**Round
    22: ≈24ms** — `frameBudgetMs` plus one non-preemptible/abort-only unit's own worst case, of which this
    traversal's own ~2×`frameBudgetMs` is itself one instance — see the worst-case-span formula below and
    the performance gate) — and the verdict depends only on this traversal's own cost, not on scheduling
@@ -1995,7 +2022,8 @@ milestone replaces, not merely an imprecision.
      checkpoint") predate this conditional-yield correction and denote this same mechanism; they are
      historical naming, not a claim that every checkpoint yields.
 
-   **Round 22 re-derivation (closing `invariant-audit-v5.md`'s H2): the worst-case single synchronous
+   **Round 22 re-derivation (closing `invariant-audit-v5.md`'s finding "H2" — see the Status line above
+   for why this label is not a global identifier): the worst-case single synchronous
    span is `frameBudgetMs + [worst-case cost of the one non-preemptible or abort-only atomic unit, if
    any, that immediately follows a checkpoint which found the accumulator not yet due]`, not the
    two-term `max(frameBudgetMs + one small atomic operation's cost, one build-phase's own cost)` this
@@ -2054,9 +2082,13 @@ milestone replaces, not merely an imprecision.
    the cost as a Milestone-1 risk**. Both rows, and the `enumNodeFragments` atomic risk rounds 16 and 17
    tracked more generally, are **explicitly excluded from the formula above and from any finite
    worst-case-span guarantee this spec makes.** A model in which one node directly owns a pathological
-   fragment count, or one epoch accumulates a pathological number of live `GeometryRegistry` entries,
-   can produce a single synchronous span longer than the formula's value by a margin this spec does not
-   state, because it does not know it; the performance gate is required to measure
+   fragment count, one epoch accumulates a pathological number of live `GeometryRegistry` entries, or
+   (on the `dispose()` path specifically, whose `CollisionInstance`-cache clear spans every live epoch at
+   once rather than one) a pathological number of live epochs is simultaneously outstanding — a second,
+   independent keyspace with its own unmeasured scaling; see the atomic-operations table's sweep-cost row
+   for the full accounting, including why `evictModel`'s own equivalent deletion is O(1) and not a source
+   of this risk — can produce a single synchronous span longer than the formula's value by a margin this
+   spec does not state, because it does not know it; the performance gate is required to measure
    it rather than assume it away.
 
    What the formula *does* bound is every span composed out of primitives that are actually ceilinged:
@@ -2857,10 +2889,14 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
      (`activeTriangleCount = Σ floor(ranges[].count / 3)` — the ranges' counts are index elements, not
      triangles; round 16: never the raw index's own count, see `ThreeMeshBvhBackend`/
      `BlasCache`) against `maxSyncTriangleCount` (`12_000` — revised in round 15) first — if either
-     exceeds it, skip the pair and record a `geometry-too-large-for-sync-build` diagnostic against the
-     offending fragment. That diagnostic is **fragment-scoped and deduplicated**: being oversized is a
-     property of the geometry alone, not of the pairing, so one entry is emitted per oversized fragment
-     no matter how many candidate pairs it appears in. Otherwise lazily get/build the `GeometryRecord` via
+     exceeds it, skip the pair: `GeometryRegistry` marks that geometry's entry oversized (see the ceiling
+     check under `ThreeMeshBvhBackend`/`BlasCache` above) and this phase records a
+     `geometry-too-large-for-sync-build` diagnostic against the offending fragment. That diagnostic is
+     **fragment-scoped and deduplicated**
+     against a fragment-keyed set scoped to this `findClashes` call: being oversized is a property of the
+     geometry alone, not of the pairing, but the diagnostic still names the fragment — the unit a caller
+     can act on in the model tree — so one entry is emitted per oversized fragment no matter how many
+     candidate pairs it appears in. Otherwise lazily get/build the `GeometryRecord` via
      `GeometryRegistry`/`BlasCache` — active-range compaction and welding together, then (only for a mode
      that calls `anyComponentInside` — `containment` or `volume-overlap`, not `surface-intersection`)
      connectivity, then the BVH, each its own checkpointed phase, see `ThreeMeshBvhBackend`/`BlasCache`
@@ -3029,7 +3065,9 @@ world.evictModel(model): void
 // different object (see "Race safety" below).
 // `releaseEpochScopedState` sweeps GeometryRegistry for every entry filed under the object's own
 // admitted epoch — in whichever build state, 'building' or 'ready', plus any oversized marking — and
-// drops each one together with its cached BLAS and cached connectivity. It also, as an independent
+// drops each one, together with its cached BLAS and cached connectivity where it has any (an oversized
+// marking has neither, since no phase is ever started for it, so this step is a plain removal for that
+// entry). It also, as an independent
 // operation over a different keyspace (not derived from this GeometryRegistry sweep — the
 // CollisionInstance cache is keyed by every collected fragment, a strict superset of the registry's
 // lazily-built candidate-pair keyspace), deletes the outgoing epoch's own `CollisionInstance` bucket —
@@ -3348,7 +3386,9 @@ unresolved phase slots hanging off the registry's entries — whether the entry 
 has already reached `'ready'` and is now hosting a later, lazily-started connectivity build — *are* the
 in-flight builds, because the entry-scoped cancellation signal created when the entry was first inserted
 stays live across that transition rather than being scoped to `'building'` alone, and the clear rejects
-each entry's cancellation signal as it drops the entry. A wholesale clear cannot
+each `'building'`/`'ready'` entry's cancellation signal as it drops the entry — an oversized marking
+carries no such signal, since no phase is ever started for it, so it is simply dropped with nothing to
+reject (same statement as `world.dispose()`'s own code comment above). A wholesale clear cannot
 suffer the same enumeration gap a per-model sweep can, because it never needs to identify *which* models
 were live in the first place; it discards everything unconditionally.
 `liveModelByModelId` itself is best-effort updated for diagnostic/bookkeeping purposes only (as round 14
@@ -4036,6 +4076,11 @@ refactor can't silently reintroduce a bug an earlier round already found.
     comparing `sum(ranges[].count)` against `maxSyncTriangleCount` directly. An implementation that
     omits the `/ 3` fails the second case: it enforces a ceiling of ~4,000 real triangles, which is the
     3×-too-strict gate this conversion exists to prevent.
+  - **the ceiling's own operator boundary: a fragment whose `activeTriangleCount` is exactly `12_000`
+    (ranges summing to `36_000` index elements) must be built, not skipped** — pinning that the check is
+    strictly "exceeds" (`>`), matching every other site that states this comparison, not "at or above"
+    (`>=`). The two boundary fixtures above (13,000 / 11,000 triangles) never exercise `12_000` itself and
+    so cannot pin this on their own.
   - **a single requested dbId whose node tree (mocked via `enumNodeChildren`/non-recursive
     `enumNodeFragments`) would yield far more fragments than `maxFragmentsPerDbId` if fully walked** —
     `findClashes` must reject the entire call before any broad-phase or narrow-phase work runs, naming the
@@ -4403,7 +4448,11 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   above) — no prior round classified or measured it, despite it growing into a real per-entry enumerative
   pass with per-entry cancellation-signal rejection. Measure the sweep triggered from both
   `world.evictModel` (mid-session eviction) and `world.dispose()` (whole-world teardown), since both run
-  this operation over a potentially different entry count. A model whose epoch never accumulates more
+  this operation over a potentially different entry count. `world.dispose()`'s measurement must
+  additionally vary the number of *simultaneously live epochs* at teardown, not only one epoch's entry
+  count — its wholesale `CollisionInstance`-cache clear is a single `Map.clear()` over every live epoch's
+  bucket at once, whose cost scaling with live-epoch count is unmeasured (see the atomic-operations
+  table's sweep-cost row). A model whose epoch never accumulates more
   than a handful of `GeometryRegistry` entries cannot exercise this risk at scale; recording that
   limitation is itself a gate finding, not a pass.
 - **The `CollisionInstance` identity cache's retained size, per epoch, is measured across a realistic
