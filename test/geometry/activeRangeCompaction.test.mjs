@@ -99,59 +99,57 @@ test('box (24 raw vertices / 8 corners): welds to 8 vertices, 12 triangles', () 
   assert.equal(result.position.length / 3, 8, 'welding must merge the 24 raw vertices down to the 8 real corners');
 });
 
-test('weld epsilon derived from unit scale: mm-authored and m-authored geometry weld to the same component count', () => {
-  // Build meshes with intentional seams at distances that require CORRECT epsilon scaling to merge.
-  // The test checks that epsilon is correctly scaled by comparing component counts across scales.
-  // Seam distance is carefully chosen so incorrect scaling would produce different results.
+test('weld epsilon derived from unit scale: mm-authored and m-authored geometry weld to the same vertex count', () => {
+  // Build meshes with intentional seams. The key: NO shared vertex indices between triangles.
+  // Only v0 (from triangle A) and v3 (from triangle B) are near each other at controlled distance.
+  // All other vertex pairs are far apart (>= 1 unit, well outside any epsilon).
+  // Test asserts on raw vertex count (result.position.length / 3), not component connectivity,
+  // because a single-vertex merge won't show up in edge-based component counting.
+  // With CORRECT epsilon scaling, both models merge v0/v3 → 5 vertices.
+  // With BROKEN epsilon (unit-blind), mm model doesn't merge → 6 vertices.
 
-  function buildMeshWithSeam(scale) {
-    const seamDistance = 5e-5 * scale; // physical 5e-5 m, scaled to model units
-    // Vertex positions: create two triangles that share edges (connected if seam merges)
-    // plus an isolated triangle to verify component counting works
-    const positions = new Float32Array(9 * 3);
-    positions.set([0, 0, 0], 0 * 3);            // v0
-    positions.set([scale, 0, 0], 1 * 3);        // v1
-    positions.set([0, scale, 0], 2 * 3);        // v2
-    positions.set([seamDistance, 0, 0], 3 * 3); // v3 (seam away from v0)
-    positions.set([scale * 2, 0, 0], 4 * 3);    // v4
-    positions.set([scale * 3, 0, 0], 5 * 3);    // v5
-    positions.set([scale * 2, scale, 0], 6 * 3); // v6
-    positions.set([scale * 4, 0, 0], 7 * 3);    // v7
-    positions.set([scale * 5, 0, 0], 8 * 3);    // v8
-
-    const index = new Uint32Array([
-      0, 1, 2,  // triangle using v0
-      3, 1, 2,  // triangle using v3 (seam vertex, same v1,v2 as previous)
-      4, 5, 6,  // isolated triangle
+  function buildSeamPair(seamGap) {
+    // Two triangles, 6 independent vertex ids, no shared indices.
+    // Only v0 and v3 are near each other at distance seamGap.
+    // Key: Small geometry bounds (~0.2) so that mergeVertices' relative epsilon
+    // threshold makes the seam distance significant enough to merge only when
+    // epsilon is correctly scaled (not when unit-blind).
+    const positions = new Float32Array([
+      0, 0, 0,           // v0 (triangle A, corner 0)
+      0.1, 0, 0,         // v1 (triangle A, corner 1)
+      0, 0.1, 0,         // v2 (triangle A, corner 2)
+      seamGap, 0, 0,     // v3 (triangle B, corner 0) -- near v0 only
+      0.2, 0.1, 0,       // v4 (triangle B, corner 1) -- far from everything
+      0.2, -0.1, 0,      // v5 (triangle B, corner 2) -- far from everything
     ]);
-
+    const index = new Uint32Array([0, 1, 2, 3, 4, 5]);
     return {
-      unsupported: false,
-      positions,
-      positionStride: 3,
-      positionOffset: 0,
-      index,
-      ranges: [{ start: 0, count: 9 }],
-      activeTriangleCount: 3,
+      unsupported: false, positions, positionStride: 3, positionOffset: 0, index,
+      ranges: [{ start: 0, count: index.length }], activeTriangleCount: 2,
     };
   }
 
-  const viewMeters = buildMeshWithSeam(1);
-  const viewMillimeters = buildMeshWithSeam(1000);
-
+  // Meters: seamGap = 5e-5 m, getUnitScale() = 1 → weldEpsilon = 1e-4 m
+  // Geometry bounds ~0.2 m; with correctly scaled epsilon (1e-4), seam merges
+  // v0/v3 distance = 5e-5 < epsilon → merge → 5 vertices
+  const viewMeters = buildSeamPair(5e-5);
   const resultMeters = compactAndWeld(viewMeters, { getUnitScale: () => 1 });
-  // A model authored in millimetres reports getUnitScale() (meters-per-unit) = 0.001,
-  // so weldEpsilon becomes 1e-4/0.001 = 0.1 (mm) -- the same PHYSICAL tolerance as
-  // 1e-4 m applied to the metres model. This ensures the seams merge at the same
-  // geometric tolerance, regardless of unit scale.
-  const resultMillimeters = compactAndWeld(viewMillimeters, { getUnitScale: () => 0.001 });
+  const vertexCountMeters = resultMeters.position.length / 3;
 
-  // With correct epsilon scaling, seams merge in both cases at the same physical distance.
-  // Component counts should be the same, proving epsilon was scaled correctly.
-  const componentsMeters = countComponents(resultMeters.index, resultMeters.triangleCount);
-  const componentsMillimeters = countComponents(resultMillimeters.index, resultMillimeters.triangleCount);
-  assert.equal(componentsMeters, componentsMillimeters,
-    'unit-scale-aware epsilon: same component count across different model scales proves epsilon was scaled correctly');
+  // Millimeters: seamGap = 0.05 mm, getUnitScale() = 0.001 → weldEpsilon = 1e-4 / 0.001 = 0.1 mm
+  // Geometry bounds ~200 mm; with correctly scaled epsilon (0.1 mm), seam merges
+  // v0/v3 distance = 0.05 < epsilon → merge → 5 vertices
+  // CRITICAL: if epsilon were unit-blind (always 1e-4 mm), distance 0.05 > 1e-4 → no merge → 6 vertices
+  const viewMillimeters = buildSeamPair(0.05);
+  const resultMillimeters = compactAndWeld(viewMillimeters, { getUnitScale: () => 0.001 });
+  const vertexCountMillimeters = resultMillimeters.position.length / 3;
+
+  // With correct epsilon scaling, both should be 5 (v0 and v3 merged).
+  // A broken (unit-blind) implementation would give meters=5, millimeters=6.
+  assert.equal(vertexCountMeters, 5, 'meters case: v0/v3 merge → 5 vertices');
+  assert.equal(vertexCountMillimeters, 5, 'millimeters case: v0/v3 merge with scaled epsilon → 5 vertices');
+  assert.equal(vertexCountMeters, vertexCountMillimeters,
+    'unit-scale-aware epsilon: same vertex count across scales proves epsilon was scaled correctly');
 });
 
 test('explicit weldEpsilon option overrides getUnitScale derivation', () => {
