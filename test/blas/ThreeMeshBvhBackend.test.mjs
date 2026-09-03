@@ -60,33 +60,25 @@ test('build: is stateless -- two calls over equivalent input produce independent
 });
 
 test('build: preserves original triangle index ordering (no reordering by MeshBVH)', () => {
-  // Create geometry with asymmetric layout so original index order is unambiguous.
-  // Use a tetrahedron (4 vertices, 4 triangles) with vertices at distinct positions.
-  const weldedGeometry = {
-    position: new Float32Array([
-      0, 0, 0,       // v0: origin
-      1, 0, 0,       // v1: +x
-      0, 1, 0,       // v2: +y
-      0, 0, 1,       // v3: +z
-    ]),
-    index: new Uint32Array([
-      0, 1, 2,       // triangle 0: (v0, v1, v2)
-      0, 2, 3,       // triangle 1: (v0, v2, v3)
-      0, 3, 1,       // triangle 2: (v0, v3, v1)
-      1, 2, 3,       // triangle 3: (v1, v2, v3)
-    ]),
-    triangleCount: 4,
-  };
+  // Use rawBoxWelded(1): 12 triangles, sufficient to trigger MeshBVH's index partitioning logic
+  // (targetLeafSize default is 10; with only 4 triangles, no partitioning occurs and index
+  // would not reorder even without indirect: true, making the test blind to the bug).
+  const welded = rawBoxWelded(1);
+  const originalIndexArray = welded.index;
+  const { bvh } = build(welded);
 
-  const originalIndexArray = weldedGeometry.index;
-  const { bvh } = build(weldedGeometry);
+  // Direct verification: { indirect: true } option is set on the BVH.
+  // This is version-resilient and doesn't depend on MeshBVH's internal partitioning heuristics.
+  assert.equal(bvh.indirect, true, 'MeshBVH must be created with indirect: true option');
 
-  // Get the index array from the BVH's geometry and verify it matches original order.
+  // Element-for-element verification: the resulting index array is not reordered.
+  // MeshBVH with indirect: true preserves the original index buffer; without it, 12 triangles
+  // exceed targetLeafSize and trigger partitioning that reorders indices in place.
   const resultingIndexArray = bvh.geometry.getIndex().array;
   assert.deepEqual(
     Array.from(resultingIndexArray),
     Array.from(originalIndexArray),
-    'BVH must preserve original triangle ordinal via indirect: true; index buffer reordering would break GeometryConnectivity alignment'
+    'BVH must preserve original triangle ordinal; reordering would break GeometryConnectivity.componentOf alignment'
   );
 });
 
