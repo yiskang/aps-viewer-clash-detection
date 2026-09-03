@@ -1,0 +1,191 @@
+// collision/viewer/ViewerGeometryAdapter.js
+//
+// Normalizes a raw Viewer (or standard three.js) geometry object into the shape the
+// rest of the collision library consumes: { positions, positionStride, positionOffset,
+// index, ranges, activeTriangleCount }, per spec:1148-1227. Runtime capability
+// detection, not a hard-coded single layout -- Viewer's own internal interleaved
+// layout, standard three.js InterleavedBufferAttribute, and standard non-interleaved
+// BufferAttribute are all supported; legacy `offsets` multi-draw layouts are
+// explicitly rejected (never silently guessed).
+//
+// Never throws for an unsupported/rejected geometry -- returns a diagnostic marker
+// instead (spec:3804-3810: "skip that fragment; record a diagnostic ... must be
+// distinguishable from a verified no-clash").
+
+function isValidPositiveNumber(n) {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0;
+}
+
+function isValidNonNegativeNumber(n) {
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0;
+}
+
+function isValidDrawRangeCount(n) {
+  // drawRange.count may be Infinity (three.js default meaning "no limit"), but not
+  // NaN, -Infinity, or negative values. Regular ranges are clamped during intersectRange.
+  // A finite count must be an integer -- these are index-element counts, never fractional.
+  return typeof n === 'number' && (Number.isFinite(n) ? (n >= 0 && Number.isInteger(n)) : n === Infinity);
+}
+
+function isValidNonNegativeInteger(n) {
+  // group/drawRange start and count are always index-element offsets/counts, never
+  // fractional quantities (Finding 4).
+  return isValidNonNegativeNumber(n) && Number.isInteger(n);
+}
+
+function resolvePositions(geometry) {
+  // Priority 1: Viewer-internal interleaved layout (spec:1154-1159) -- confirmed
+  // universal across SVF/SVF2/OTG in Viewer 7.124.2.
+  if (
+    geometry.vb &&
+    isValidPositiveNumber(geometry.vbstride) &&
+    geometry.vblayout &&
+    geometry.vblayout.position &&
+    isValidNonNegativeNumber(geometry.vblayout.position.offset)
+  ) {
+    const offset = geometry.vblayout.position.offset;
+    // Finding 3: enough room in each stride for x,y,z without reading into the next
+    // vertex's data.
+    if (offset + 3 > geometry.vbstride) return null;
+    return {
+      positions: geometry.vb,
+      positionStride: geometry.vbstride,
+      positionOffset: offset,
+    };
+  }
+
+  const positionAttr = geometry.attributes && geometry.attributes.position;
+
+  // Priority 2: standard three.js InterleavedBufferAttribute.
+  if (positionAttr && positionAttr.data && positionAttr.data.array && isValidPositiveNumber(positionAttr.data.stride)) {
+    const offset = typeof positionAttr.offset === 'undefined' ? 0 : positionAttr.offset;
+    if (!isValidNonNegativeNumber(offset)) return null;
+    // Finding 3: enough room in each stride for x,y,z without reading into the next
+    // vertex's data.
+    if (offset + 3 > positionAttr.data.stride) return null;
+    return {
+      positions: positionAttr.data.array,
+      positionStride: positionAttr.data.stride,
+      positionOffset: offset,
+    };
+  }
+
+  // Priority 3: standard non-interleaved BufferAttribute.
+  if (positionAttr && positionAttr.array) {
+    // If itemSize is explicitly provided, validate it; otherwise default to 3.
+    const stride = typeof positionAttr.itemSize === 'undefined' ? 3 : positionAttr.itemSize;
+    if (!isValidPositiveNumber(stride)) return null;
+    // Finding 3: a position attribute needs at least x,y,z (itemSize >= 3); offset is
+    // always 0 here, so this alone also guarantees offset + 3 <= stride.
+    if (stride < 3) return null;
+    return { positions: positionAttr.array, positionStride: stride, positionOffset: 0 };
+  }
+
+  return null;
+}
+
+function resolveIndex(geometry) {
+  // spec:1178-1183 -- geometry.ib (Viewer-internal) first, then geometry.index?.array.
+  // Deliberately NEVER geometry.attributes.index.array: standard three.js stores the
+  // index as top-level geometry.index, never inside attributes -- a previous draft's bug.
+  if (geometry.ib) return geometry.ib;
+  if (geometry.index && geometry.index.array) return geometry.index.array;
+  return null; // non-indexed
+}
+
+function intersectRange(range, constraint) {
+  if (!constraint) return { start: range.start, count: range.count };
+  const start = Math.max(range.start, constraint.start);
+  const end = Math.min(range.start + range.count, constraint.start + constraint.count);
+  return { start, count: Math.max(0, end - start) };
+}
+
+function resolveRanges(geometry, fullCount) {
+  const drawRange =
+    geometry.drawRange && typeof geometry.drawRange.count === 'number'
+      ? { start: typeof geometry.drawRange.start === 'undefined' ? 0 : geometry.drawRange.start, count: geometry.drawRange.count }
+      : null;
+
+  // All ranges must be clamped to the actual geometry bounds [0, fullCount) to prevent
+  // index overruns downstream. This applies to both the groups branch and the fallback.
+  const fullCountRange = { start: 0, count: fullCount };
+
+  // Branch condition is `groups.length > 0`, NOT "groups is present" -- standard
+  // BufferGeometry always initializes `groups = []` (spec:1166), so a naive
+  // truthiness/presence check takes this branch, iterates zero groups, and silently
+  // emits zero triangle ranges: a false negative indistinguishable from a verified
+  // no-clash. This is the exact bug this length check guards against.
+  if (Array.isArray(geometry.groups) && geometry.groups.length > 0) {
+    // Group and draw ranges are INTERSECTED, not either/or (spec:1167).
+    // Each group range is clamped to the geometry's actual bounds.
+    return geometry.groups.map((g) => {
+      const bounded = intersectRange({ start: g.start, count: g.count }, fullCountRange);
+      return intersectRange(bounded, drawRange);
+    });
+  }
+
+  // groups absent OR empty: synthesize one range covering the full index/vertex
+  // count, clipped to drawRange if present (spec:1168).
+  return [intersectRange({ start: 0, count: fullCount }, drawRange)];
+}
+
+export function computeActiveTriangleCount(ranges) {
+  // TriangleRange.count is an index-ELEMENT (or vertex) count, not a triangle count.
+  // A clipped range whose count is not a multiple of 3 contributes only whole
+  // triangles (spec:1164, 1523 "floor(count/3)"). Comparing raw sum(ranges[].count)
+  // instead of this converted sum would enforce a ceiling ~3x stricter than intended.
+  let total = 0;
+  for (const range of ranges) {
+    total += Math.floor(range.count / 3);
+  }
+  return total;
+}
+
+export function adaptViewerGeometry(geometry) {
+  // Guard against null/undefined/non-object input before accessing any properties.
+  if (geometry === null || typeof geometry !== 'object') {
+    return { unsupported: true, reason: 'unsupported-geometry-layout' };
+  }
+
+  // Legacy `offsets` layouts are explicitly rejected, not silently normalized with a
+  // guessed `baseVertex: 0` (spec:1170) -- no confirmed rule for this layout, no
+  // evidence it appears in Viewer 7.124.2.
+  if (Array.isArray(geometry.offsets) && geometry.offsets.length > 0) {
+    return { unsupported: true, reason: 'rejected-primitive-range' };
+  }
+
+  const positionResult = resolvePositions(geometry);
+  if (!positionResult) {
+    return { unsupported: true, reason: 'unsupported-geometry-layout' };
+  }
+  const { positions, positionStride, positionOffset } = positionResult;
+
+  const index = resolveIndex(geometry);
+
+  // Uniform accessor invariant for callers: x_i = positions[i*positionStride + positionOffset].
+  const vertexCount = Math.floor(positions.length / positionStride);
+  const fullCount = index ? index.length : vertexCount;
+
+  // Validate drawRange numeric fields if present.
+  // drawRange.count may be Infinity (three.js default) meaning "no limit", handled by intersectRange.
+  if (geometry.drawRange && typeof geometry.drawRange.count === 'number') {
+    const drStart = typeof geometry.drawRange.start === 'undefined' ? 0 : geometry.drawRange.start;
+    if (!isValidNonNegativeInteger(drStart) || !isValidDrawRangeCount(geometry.drawRange.count)) {
+      return { unsupported: true, reason: 'unsupported-geometry-layout' };
+    }
+  }
+
+  // Validate groups numeric fields if present.
+  if (Array.isArray(geometry.groups)) {
+    for (const group of geometry.groups) {
+      if (!group || !isValidNonNegativeInteger(group.start) || !isValidNonNegativeInteger(group.count)) {
+        return { unsupported: true, reason: 'unsupported-geometry-layout' };
+      }
+    }
+  }
+
+  const ranges = resolveRanges(geometry, fullCount);
+  const activeTriangleCount = computeActiveTriangleCount(ranges);
+
+  return { unsupported: false, positions, positionStride, positionOffset, index, ranges, activeTriangleCount };
+}

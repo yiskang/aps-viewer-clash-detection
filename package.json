@@ -4,7 +4,10 @@
   "description": "Autodesk Platform Services application built by following the Simple Viewer tutorial from https://aps.autodesk.com/tutorials.",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build:vendor": "node scripts/sync-vendor.mjs",
+    "pretest": "npm run build:vendor",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"
