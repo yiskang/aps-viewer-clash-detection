@@ -40,7 +40,8 @@
         "~/.npm",
         "~/.yarn",
         "~/.pnpm-store",
-        "./node_modules"
+        "./node_modules",
+        "~/.Trash"
       ],
 
       "denyWrite": [
