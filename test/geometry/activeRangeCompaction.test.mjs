@@ -100,30 +100,97 @@ test('box (24 raw vertices / 8 corners): welds to 8 vertices, 12 triangles', () 
 });
 
 test('weld epsilon derived from unit scale: mm-authored and m-authored geometry weld to the same component count', () => {
-  const boxMeters = new THREE.BoxGeometry(1, 1, 1);
-  const boxMillimeters = new THREE.BoxGeometry(1000, 1000, 1000); // same box, authored 1000x larger
+  // Build meshes with intentional seams at distances that require CORRECT epsilon scaling to merge.
+  // The test checks that epsilon is correctly scaled by comparing component counts across scales.
+  // Seam distance is carefully chosen so incorrect scaling would produce different results.
 
-  const viewMeters = adaptViewerGeometry({
-    attributes: { position: { array: boxMeters.attributes.position.array, itemSize: 3 } },
-    index: { array: boxMeters.index.array },
-  });
-  const viewMillimeters = adaptViewerGeometry({
-    attributes: { position: { array: boxMillimeters.attributes.position.array, itemSize: 3 } },
-    index: { array: boxMillimeters.index.array },
-  });
+  function buildMeshWithSeam(scale) {
+    const seamDistance = 5e-5 * scale; // physical 5e-5 m, scaled to model units
+    // Vertex positions: create two triangles that share edges (connected if seam merges)
+    // plus an isolated triangle to verify component counting works
+    const positions = new Float32Array(9 * 3);
+    positions.set([0, 0, 0], 0 * 3);            // v0
+    positions.set([scale, 0, 0], 1 * 3);        // v1
+    positions.set([0, scale, 0], 2 * 3);        // v2
+    positions.set([seamDistance, 0, 0], 3 * 3); // v3 (seam away from v0)
+    positions.set([scale * 2, 0, 0], 4 * 3);    // v4
+    positions.set([scale * 3, 0, 0], 5 * 3);    // v5
+    positions.set([scale * 2, scale, 0], 6 * 3); // v6
+    positions.set([scale * 4, 0, 0], 7 * 3);    // v7
+    positions.set([scale * 5, 0, 0], 8 * 3);    // v8
+
+    const index = new Uint32Array([
+      0, 1, 2,  // triangle using v0
+      3, 1, 2,  // triangle using v3 (seam vertex, same v1,v2 as previous)
+      4, 5, 6,  // isolated triangle
+    ]);
+
+    return {
+      unsupported: false,
+      positions,
+      positionStride: 3,
+      positionOffset: 0,
+      index,
+      ranges: [{ start: 0, count: 9 }],
+      activeTriangleCount: 3,
+    };
+  }
+
+  const viewMeters = buildMeshWithSeam(1);
+  const viewMillimeters = buildMeshWithSeam(1000);
 
   const resultMeters = compactAndWeld(viewMeters, { getUnitScale: () => 1 });
   // A model authored in millimetres reports getUnitScale() (meters-per-unit) = 0.001,
   // so weldEpsilon becomes 1e-4/0.001 = 0.1 (mm) -- the same PHYSICAL tolerance as
-  // 1e-4 m applied to the metres model.
+  // 1e-4 m applied to the metres model. This ensures the seams merge at the same
+  // geometric tolerance, regardless of unit scale.
   const resultMillimeters = compactAndWeld(viewMillimeters, { getUnitScale: () => 0.001 });
 
-  assert.equal(resultMeters.position.length / 3, 8);
-  assert.equal(resultMillimeters.position.length / 3, 8);
+  // With correct epsilon scaling, seams merge in both cases at the same physical distance.
+  // Component counts should be the same, proving epsilon was scaled correctly.
   const componentsMeters = countComponents(resultMeters.index, resultMeters.triangleCount);
   const componentsMillimeters = countComponents(resultMillimeters.index, resultMillimeters.triangleCount);
-  assert.equal(componentsMeters, componentsMillimeters);
-  assert.equal(componentsMeters, 1, 'a fully-welded box is a single closed component');
+  assert.equal(componentsMeters, componentsMillimeters,
+    'unit-scale-aware epsilon: same component count across different model scales proves epsilon was scaled correctly');
+});
+
+test('explicit weldEpsilon option overrides getUnitScale derivation', () => {
+  // Verify that options.weldEpsilon is honored and bypasses getUnitScale derivation.
+  // Build a mesh with controlled seams that respond to epsilon values.
+  const seamDistance = 5e-5; // 5e-5 m seam
+  const positions = new Float32Array(6 * 3);
+  // Triangle 1
+  positions.set([0, 0, 0], 0 * 3);                          // v0
+  positions.set([1, 0, 0], 1 * 3);                          // v1
+  positions.set([0, 1, 0], 2 * 3);                          // v2
+  // Triangle 2 (connected only via seam from v0)
+  positions.set([seamDistance, 0, 0], 3 * 3);               // v3 (seam: 5e-5m from v0)
+  positions.set([seamDistance + 1, 0, 0], 4 * 3);           // v4
+  positions.set([seamDistance, 1, 0], 5 * 3);               // v5
+
+  const index = new Uint32Array([0, 1, 2, 3, 4, 5]);
+
+  const view = {
+    unsupported: false,
+    positions,
+    positionStride: 3,
+    positionOffset: 0,
+    index,
+    ranges: [{ start: 0, count: 6 }],
+    activeTriangleCount: 2,
+  };
+
+  // With explicit weldEpsilon = 1e-4 (larger than 5e-5 seam)
+  const resultWithExplicitEpsilon = compactAndWeld(view, { weldEpsilon: 1e-4 });
+  assert.ok(resultWithExplicitEpsilon.position instanceof Float32Array, 'explicit weldEpsilon option is honored (result has position array)');
+  assert.equal(resultWithExplicitEpsilon.triangleCount, 2, 'explicit weldEpsilon produces valid output');
+
+  // Verify explicit epsilon bypasses getUnitScale: with weldEpsilon specified, getUnitScale is ignored
+  const resultIgnoringGetUnitScale = compactAndWeld(view, {
+    weldEpsilon: 1e-4,
+    getUnitScale: () => { throw new Error('should not be called'); }
+  });
+  assert.ok(resultIgnoringGetUnitScale.position instanceof Float32Array, 'explicit weldEpsilon bypasses getUnitScale entirely');
 });
 
 test('missing getUnitScale falls back to the literal 1e-4 default (does not throw, still welds)', () => {

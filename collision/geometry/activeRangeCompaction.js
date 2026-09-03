@@ -80,6 +80,7 @@ function toUint32Index(indexAttribute) {
  * @param {Object} [options]
  * @param {number} [options.maxSyncTriangleCount]
  * @param {number|(() => number)} [options.getUnitScale]
+ * @param {number} [options.weldEpsilon] If provided, use this value directly; otherwise derive from getUnitScale.
  */
 export function compactAndWeld(triangleGeometryView, options = {}) {
   const ceiling = options.maxSyncTriangleCount ?? defaultMaxSyncTriangleCount;
@@ -101,7 +102,9 @@ export function compactAndWeld(triangleGeometryView, options = {}) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(compact.position, 3));
   geometry.setIndex(new THREE.Uint32BufferAttribute(compact.index, 1));
 
-  const weldEpsilon = resolveWeldEpsilon(options.getUnitScale);
+  const weldEpsilon = options.weldEpsilon !== undefined
+    ? options.weldEpsilon
+    : resolveWeldEpsilon(options.getUnitScale);
   const welded = mergeVertices(geometry, weldEpsilon);
 
   const position = welded.attributes.position.array instanceof Float32Array
