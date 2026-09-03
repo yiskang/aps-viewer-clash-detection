@@ -23,7 +23,14 @@ function isValidNonNegativeNumber(n) {
 function isValidDrawRangeCount(n) {
   // drawRange.count may be Infinity (three.js default meaning "no limit"), but not
   // NaN, -Infinity, or negative values. Regular ranges are clamped during intersectRange.
-  return typeof n === 'number' && (Number.isFinite(n) ? n >= 0 : n === Infinity);
+  // A finite count must be an integer -- these are index-element counts, never fractional.
+  return typeof n === 'number' && (Number.isFinite(n) ? (n >= 0 && Number.isInteger(n)) : n === Infinity);
+}
+
+function isValidNonNegativeInteger(n) {
+  // group/drawRange start and count are always index-element offsets/counts, never
+  // fractional quantities (Finding 4).
+  return isValidNonNegativeNumber(n) && Number.isInteger(n);
 }
 
 function resolvePositions(geometry) {
@@ -36,10 +43,14 @@ function resolvePositions(geometry) {
     geometry.vblayout.position &&
     isValidNonNegativeNumber(geometry.vblayout.position.offset)
   ) {
+    const offset = geometry.vblayout.position.offset;
+    // Finding 3: enough room in each stride for x,y,z without reading into the next
+    // vertex's data.
+    if (offset + 3 > geometry.vbstride) return null;
     return {
       positions: geometry.vb,
       positionStride: geometry.vbstride,
-      positionOffset: geometry.vblayout.position.offset,
+      positionOffset: offset,
     };
   }
 
@@ -49,6 +60,9 @@ function resolvePositions(geometry) {
   if (positionAttr && positionAttr.data && positionAttr.data.array && isValidPositiveNumber(positionAttr.data.stride)) {
     const offset = typeof positionAttr.offset === 'undefined' ? 0 : positionAttr.offset;
     if (!isValidNonNegativeNumber(offset)) return null;
+    // Finding 3: enough room in each stride for x,y,z without reading into the next
+    // vertex's data.
+    if (offset + 3 > positionAttr.data.stride) return null;
     return {
       positions: positionAttr.data.array,
       positionStride: positionAttr.data.stride,
@@ -61,6 +75,9 @@ function resolvePositions(geometry) {
     // If itemSize is explicitly provided, validate it; otherwise default to 3.
     const stride = typeof positionAttr.itemSize === 'undefined' ? 3 : positionAttr.itemSize;
     if (!isValidPositiveNumber(stride)) return null;
+    // Finding 3: a position attribute needs at least x,y,z (itemSize >= 3); offset is
+    // always 0 here, so this alone also guarantees offset + 3 <= stride.
+    if (stride < 3) return null;
     return { positions: positionAttr.array, positionStride: stride, positionOffset: 0 };
   }
 
@@ -153,7 +170,7 @@ export function adaptViewerGeometry(geometry) {
   // drawRange.count may be Infinity (three.js default) meaning "no limit", handled by intersectRange.
   if (geometry.drawRange && typeof geometry.drawRange.count === 'number') {
     const drStart = typeof geometry.drawRange.start === 'undefined' ? 0 : geometry.drawRange.start;
-    if (!isValidNonNegativeNumber(drStart) || !isValidDrawRangeCount(geometry.drawRange.count)) {
+    if (!isValidNonNegativeInteger(drStart) || !isValidDrawRangeCount(geometry.drawRange.count)) {
       return { unsupported: true, reason: 'unsupported-geometry-layout' };
     }
   }
@@ -161,7 +178,7 @@ export function adaptViewerGeometry(geometry) {
   // Validate groups numeric fields if present.
   if (Array.isArray(geometry.groups)) {
     for (const group of geometry.groups) {
-      if (!group || !isValidNonNegativeNumber(group.start) || !isValidNonNegativeNumber(group.count)) {
+      if (!group || !isValidNonNegativeInteger(group.start) || !isValidNonNegativeInteger(group.count)) {
         return { unsupported: true, reason: 'unsupported-geometry-layout' };
       }
     }

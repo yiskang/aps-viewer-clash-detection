@@ -24,6 +24,19 @@ export function build(weldedGeometry) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(weldedGeometry.position, 3));
   geometry.setIndex(new THREE.Uint32BufferAttribute(weldedGeometry.index, 1));
 
+  // CONTRACT for any future caller that traverses this BVH (bvhcast, intersectsTriangles,
+  // or any similar callback-based traversal): `indirect: true` means MeshBVH internally
+  // reorders triangles into its own BVH-layout order and callback indices are reported
+  // in THAT layout, NOT as original triangle ordinals into weldedGeometry.index. Naively
+  // using a raw callback index to index into per-original-triangle-ordinal data (e.g.
+  // GeometryConnectivity's componentOf) will silently misattribute triangles to the
+  // wrong connectivity component once the BVH's internal partitioning reorders leaves.
+  // Any such caller MUST first resolve the BVH-layout index back to the original
+  // triangle ordinal via `bvh.resolveTriangleIndex(bvhLayoutIndex)` (confirmed against
+  // the vendored three-mesh-bvh source, node_modules/three-mesh-bvh/src/core/MeshBVH.js)
+  // before using it to index componentOf or any other per-original-triangle-ordinal
+  // array. This module builds the BVH but performs no traversal itself -- no
+  // bvhcast-consuming logic is implemented here.
   const bvh = new MeshBVH(geometry, { indirect: true });
 
   // L_X := diagonal(localBounds(X)), computed once in X's own local space, over the

@@ -248,6 +248,84 @@ test('groups array containing null: returns unsupported (not throw)', () => {
   assert.equal(result.unsupported, true, 'must reject null group, not throw');
 });
 
+test('Finding 3: itemSize 2 (undersized, no room for z) is rejected, not accepted with NaN z', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 2 } },
+    index: { array: QUAD_INDEX },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'itemSize < 3 must be rejected, not produce NaN z-components downstream');
+});
+
+test('Finding 3: InterleavedBufferAttribute offset + 3 > stride (no room for x,y,z) is rejected', () => {
+  // stride 4, offset 2: only 2 components of room remain (offset..stride), not enough
+  // for x,y,z (needs 3).
+  const interleaved = new Float32Array([
+    9, 9, 0, 0,
+    9, 9, 1, 0,
+    9, 9, 1, 1,
+    9, 9, 0, 1,
+  ]);
+  const geometry = {
+    attributes: { position: { data: { array: interleaved, stride: 4 }, offset: 2 } },
+    index: { array: QUAD_INDEX },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'offset + 3 > stride must be rejected, not read into the next vertex');
+});
+
+test('Finding 3: vb/vbstride/vblayout offset + 3 > stride (no room for x,y,z) is rejected', () => {
+  const vb = new Float32Array([
+    0, 0, 9,
+    1, 0, 9,
+    1, 1, 9,
+    0, 1, 9,
+  ]); // stride 3, position offset 1 -- only room for 2 floats, not x,y,z
+  const geometry = { vb, vbstride: 3, vblayout: { position: { offset: 1 } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'offset + 3 > stride must be rejected for the Viewer-internal layout too');
+});
+
+test('Finding 4: fractional group.start is rejected', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+    groups: [{ start: 0.5, count: 3 }],
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'fractional group.start must be rejected');
+});
+
+test('Finding 4: fractional group.count is rejected', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+    groups: [{ start: 0, count: 3.5 }],
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'fractional group.count must be rejected');
+});
+
+test('Finding 4: fractional drawRange.start is rejected', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+    drawRange: { start: 0.5, count: 3 },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'fractional drawRange.start must be rejected');
+});
+
+test('Finding 4: fractional drawRange.count is rejected', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+    drawRange: { start: 0, count: 3.5 },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'fractional drawRange.count must be rejected');
+});
+
 test('REGRESSION: real THREE.BufferGeometry with default drawRange (Infinity)', () => {
   // three.js sets drawRange = { start: 0, count: Infinity } by default, meaning "draw all".
   // This is a legitimate sentinel value, not invalid input — Infinity is clamped by
