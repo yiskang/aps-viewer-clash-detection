@@ -24,7 +24,7 @@ export function build(weldedGeometry) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(weldedGeometry.position, 3));
   geometry.setIndex(new THREE.Uint32BufferAttribute(weldedGeometry.index, 1));
 
-  const bvh = new MeshBVH(geometry);
+  const bvh = new MeshBVH(geometry, { indirect: true });
 
   // L_X := diagonal(localBounds(X)), computed once in X's own local space, over the
   // SAME buffer the BLAS is built from (spec:1609-1614) -- ported from
