@@ -310,7 +310,11 @@ off `modelId` entirely and onto the exact `Model` object.
   9–11 — so a call that used an already-evicted `Model` object and happened to never yield (every needed
   BLAS already cached, or a query small enough to complete synchronously) could run to completion
   against dead geometry undetected.** `findClashes` now validates liveness for both operand models
-  before doing anything else, in addition to (not instead of) the existing per-yield checks.
+  before doing anything else, in addition to (not instead of) the existing per-yield checks. *(This
+  entry's "before doing anything else" was accurate at round 12 but is superseded by Round 26, which
+  settled `findClashes`'s full entry order as `disposed` first, then the cross-model rejection, and only
+  then per-operand liveness — see "`findClashes` validates liveness at its own entry" for the current,
+  canonical three-step statement.)*
 - **The underlying identity was keyed by `modelId` (a number) and *deleted* rather than tombstoned on
   eviction, so nothing distinguished "this exact object was evicted" from "nothing has loaded under
   this id yet."** Replaced with `modelLifecycle: WeakMap<Model, {epoch, state}>`, keyed by object
@@ -749,6 +753,21 @@ the two ceiling-less accepted atomic risks (one `enumNodeFragments` call, `relea
 `dispose()`'s sweep) from any finite worst-case-span claim, since this design still cannot prove a global
 bound. No behavior, fixture, query/lifecycle/cache/extraction mechanism, or other finding touched — see
 `invariant-audit-v6.md` for the follow-up audit against this pass's own text.
+
+### Round 23 (1 Critical — lifecycle-only fix pass, closes `invariant-audit-v6-lifecycle.md`'s C-L1; not a
+Codex review round; see `round-23-c-l1-disposition.md`)
+
+`invariant-audit-v6-lifecycle.md` found the Milestone-1 "counterpart model eviction" acceptance fixture
+unsatisfiable by construction: under the same-model entry restriction, the evicted "counterpart" would
+have to be simultaneously the awaited record's owner and not its owner. The owner-scoped build-phase
+checkpoint rule the fixture exercised was not itself broken — it is satisfied vacuously under Milestone 1
+and retained for a future cross-model milestone — only the fixture was wrong. Fixed by (1) qualifying the
+rule's rationale clause as forward-looking, since a distinct non-owner operand is unreachable under
+Milestone 1's same-model restriction, and (2) replacing the fixture with a constructible same-model
+variant: two concurrent `findClashes` calls sharing one build slot, the owning model evicted mid-build,
+asserting the entry-scoped cancellation signal rejects exactly once and both callers reject with
+`ModelEvictedError`. No mechanism, behavior, or protected Critical invariant changed — both edits are
+confined to one rationale clause and one fixture bullet.
 
 ## Spike Findings (executable, `spike/`)
 
@@ -1965,7 +1984,16 @@ milestone replaces, not merely an imprecision.
      `bvhcast`-entry checkpoints included — is this same mechanism**, except `bvhcast`'s own internal
      abort clock once a traversal is already under way. A checkpoint that finds the accumulator not yet
      due does not yield at all; it lets whatever non-preemptible or abort-only unit follows it run to
-     completion in the same span.
+     completion in the same span. **What is conditional here is only the scheduling yield.** The
+     two-part lifecycle revalidation every checkpoint carries — `disposed` first, then the model's load
+     epoch (see "Race safety" under **`world.evictModel`**) — runs whenever a checkpoint is reached,
+     accumulator-due or not; it is never itself skipped. When a checkpoint's `await` does fire —
+     including an `await` on a shared build-phase slot, not only the accumulator-driven scheduling
+     yield — the two-part revalidation runs again immediately on resume, in addition to the one that
+     already ran when the checkpoint was reached. This document's other names for these sites ("every
+     per-yield checkpoint", "every yield point", "a yield-and-revalidate checkpoint", "its next yield
+     checkpoint") predate this conditional-yield correction and denote this same mechanism; they are
+     historical naming, not a claim that every checkpoint yields.
 
    **Round 22 re-derivation (closing `invariant-audit-v5.md`'s H2): the worst-case single synchronous
    span is `frameBudgetMs + [worst-case cost of the one non-preemptible or abort-only atomic unit, if
@@ -2615,8 +2643,13 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
    the question the caller actually has produces a clean answer. See **Query modes and their
    preconditions**.
 3. Inside `CollisionWorld.findClashes`:
-   - Reject immediately if `source.model !== target.model` (cross-model queries are out of scope —
-     see Milestone Scope).
+   - **Entry order:** `disposed` first (see "`findClashes` validates liveness at its own entry" under
+     **`world.evictModel`**'s "Race safety" note) — a disposed world rejects `WorldDisposedError`
+     regardless of query contents, before this or any other check runs. Otherwise, reject immediately if
+     `source.model !== target.model` (cross-model queries are out of scope — see Milestone Scope),
+     ahead of the per-operand eviction checks and lazy admission that same passage describes: a
+     structurally unsupported query is rejected before either operand is admitted or looked up, and
+     never mutates any lifecycle state.
    - **Extraction** (round 15 added the first checkpoint/ceiling this step ever had; round 16 found that
      ceiling didn't actually bound anything and fixed the mechanism, not just the number): for each
      requested dbId (source, then every target dbId), before beginning that dbId's own extraction, check
@@ -2881,13 +2914,13 @@ CollisionWorld.fromViewer(viewer, options): Promise<CollisionWorld>
 // passing any other value throws.
 
 world.findClashes(query): Promise<ClashResult>
-// Rejects immediately, before any geometry extraction, if the world is disposed or if
-// query.source.model/query.target.model is a Model object already tombstoned as evicted — see "Race
-// safety" below. Otherwise admits both operand models via the same internal admission path
-// world.admitModel exposes publicly (assigns a fresh epoch on first use, idempotent on a model already
-// live) — a model object never seen before is a legitimate first use and is admitted normally; only an
-// object this exact world has already evicted is rejected.
-// query.source.model must === query.target.model — cross-model queries reject in Milestone 1
+// Entry order, before any geometry extraction: disposed first — a disposed world rejects
+// WorldDisposedError regardless of query contents (see "Race safety" below). Otherwise, if
+// query.source.model !== query.target.model, rejects immediately — cross-model queries are out of
+// scope in Milestone 1 — before either operand is looked up or admitted. Otherwise, per operand: a
+// Model object already tombstoned as evicted rejects ModelEvictedError; an object never seen before
+// is a legitimate first use and is admitted via the same internal admission path world.admitModel
+// exposes publicly (assigns a fresh epoch on first use, idempotent on a model already live).
 // query.mode: 'volume-overlap' | 'containment' | 'surface-intersection'
 //   'volume-overlap'       — solids share positive volume; pure touching is NOT overlap.
 //                            Soundest when BOTH operands are certified closed; an operand that isn't
@@ -3242,8 +3275,12 @@ the eviction call arrives. The guard remains in `liveModelByModelId` bookkeeping
 enumeration hygiene, but nothing about state-release correctness depends on it anymore.
 
 **`findClashes` validates liveness at its own entry, before any geometry extraction or lazy
-admission** — not only relying on callers to have checked first. First, `disposed` (below); then, for
-each of `query.source.model` and `query.target.model`: a `modelLifecycle` entry with `state: 'evicted'`
+admission** — not only relying on callers to have checked first. First, `disposed` (below); a disposed
+world rejects `WorldDisposedError` regardless of query contents, before anything else runs. Second,
+`query.source.model !== query.target.model` (see **Data Flow** step 3) — cross-model queries reject
+before either operand is looked up, so a structurally unsupported query can never itself trigger a
+lifecycle-table lookup or lazy admission. Only then, for each of `query.source.model` and
+`query.target.model`: a `modelLifecycle` entry with `state: 'evicted'`
 rejects immediately with `ModelEvictedError`; no entry at all proceeds to lazy admission (assigns a
 fresh epoch, sets `state: 'live'`, records it in `liveModelByModelId`) exactly as before. This is what
 stops `findClashes(evictedModel, …)` from ever creating a fresh lifecycle entry for an object the world
