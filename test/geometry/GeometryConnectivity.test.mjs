@@ -94,6 +94,11 @@ test('Finding 1 (defense-in-depth): degenerate triangles (repeated vertex index)
     Array.from(result.closedManifold).every((flag) => flag === false),
     'no component containing a degenerate triangle may be reported as closedManifold: true'
   );
+  // Stronger than the aggregate check above: the two degenerate triangles must NOT be
+  // spuriously unioned into one shared component via their coincidental "0_0" self-edge
+  // -- each stays isolated in its own singleton component.
+  assert.equal(result.componentCount, 2, 'two unrelated degenerate triangles must not be spuriously merged into one component');
+  assert.notEqual(result.componentOf[0], result.componentOf[1], 'each degenerate triangle must be its own isolated component');
 });
 
 test('Finding 1 (defense-in-depth): a degenerate triangle does not corrupt an otherwise-valid neighboring component', () => {
@@ -101,15 +106,23 @@ test('Finding 1 (defense-in-depth): a degenerate triangle does not corrupt an ot
   // the degenerate triangle must not falsely certify itself as manifold, and must not
   // break the real box component's own correct closedManifold: true.
   const box = weldedBox();
+  const boxTriangleCount = box.index.length / 3;
   const degenerateTriangle = new Uint32Array([0, 0, 1]); // repeated vertex index
   const mergedIndex = new Uint32Array(box.index.length + degenerateTriangle.length);
   mergedIndex.set(box.index, 0);
   mergedIndex.set(degenerateTriangle, box.index.length);
 
   const result = computeGeometryConnectivity({ index: mergedIndex });
-  const flags = Array.from(result.closedManifold);
-  assert.ok(flags.includes(true), 'the real box component must still report closedManifold: true');
-  assert.ok(flags.includes(false), "the degenerate triangle's own component must report closedManifold: false");
+  // Stronger than an aggregate flags.includes() check: pin down the EXACT component
+  // each triangle lands in, not just that both true and false appear somewhere.
+  const boxComponentId = result.componentOf[0];
+  const degenerateComponentId = result.componentOf[boxTriangleCount];
+  assert.notEqual(boxComponentId, degenerateComponentId, 'the degenerate triangle must not be merged into the box component');
+  for (let t = 0; t < boxTriangleCount; t++) {
+    assert.equal(result.componentOf[t], boxComponentId, 'every box triangle must share the box component');
+  }
+  assert.equal(result.closedManifold[boxComponentId], true, 'the real box component must still report closedManifold: true');
+  assert.equal(result.closedManifold[degenerateComponentId], false, "the degenerate triangle's own component must report closedManifold: false");
 });
 
 test('DISCRIMINATOR: per-component (not per-geometry) manifold: mixed closed + open components have per-component flags', () => {
