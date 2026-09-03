@@ -58,6 +58,46 @@ function buildCompactBuffers(view, triangleVertexIds) {
   return { position: new Float32Array(compactPositions), index: compactIndex };
 }
 
+// Finding 3: an out-of-range index value reads past the position buffer (undefined ->
+// NaN), and mergeVertices then silently welds the corrupted vertex into an unrelated
+// real vertex instead of erroring. Caught HERE, before buildCompactBuffers ever reads
+// position data for it, so corrupted output is never produced in the first place.
+function findOutOfRangeVertexId(triangleVertexIds, vertexCount) {
+  for (let i = 0; i < triangleVertexIds.length; i++) {
+    const id = triangleVertexIds[i];
+    if (!(id >= 0 && id < vertexCount)) return id;
+  }
+  return undefined;
+}
+
+// Finding 1: mergeVertices can itself produce a degenerate triangle (index triple with
+// a repeated vertex, e.g. [0,0,1]) when two of a triangle's three vertices weld
+// together under the weld epsilon. This is the single canonical choke point every
+// downstream consumer (GeometryConnectivity, ThreeMeshBvhBackend) trusts, so filtering
+// degenerate triangles out HERE fixes it for everyone, not just one caller. Only the
+// index array is filtered -- unused/orphaned vertices left in the position array are
+// fine (no later task requires a minimal vertex set, only a minimal triangle set with
+// no degenerate entries).
+function filterDegenerateTriangles(index) {
+  const triangleCount = index.length / 3;
+  let degenerateCount = 0;
+  for (let t = 0; t < triangleCount; t++) {
+    const a = index[t * 3], b = index[t * 3 + 1], c = index[t * 3 + 2];
+    if (a === b || b === c || a === c) degenerateCount++;
+  }
+  if (degenerateCount === 0) return index;
+
+  const filtered = new Uint32Array((triangleCount - degenerateCount) * 3);
+  let outOffset = 0;
+  for (let t = 0; t < triangleCount; t++) {
+    const a = index[t * 3], b = index[t * 3 + 1], c = index[t * 3 + 2];
+    if (a === b || b === c || a === c) continue;
+    filtered[outOffset] = a; filtered[outOffset + 1] = b; filtered[outOffset + 2] = c;
+    outOffset += 3;
+  }
+  return filtered;
+}
+
 function resolveWeldEpsilon(getUnitScale) {
   if (getUnitScale == null) return weldEpsilonMeters;
   const unitScale = typeof getUnitScale === 'function' ? getUnitScale() : getUnitScale;
@@ -80,9 +120,23 @@ function toUint32Index(indexAttribute) {
  * @param {Object} [options]
  * @param {number} [options.maxSyncTriangleCount]
  * @param {number|(() => number)} [options.getUnitScale]
- * @param {number} [options.weldEpsilon] If provided, use this value directly; otherwise derive from getUnitScale.
+ * @param {number} [options.weldEpsilon] If provided, use this value directly; otherwise
+ *   derive from getUnitScale. Must be a finite, positive number -- throws TypeError
+ *   otherwise (a caller contract violation, not malformed input geometry).
  */
 export function compactAndWeld(triangleGeometryView, options = {}) {
+  // Finding 5: options.weldEpsilon is a programmer-facing API override (not untrusted
+  // Viewer geometry data), so an invalid value is a caller contract violation --
+  // thrown, matching this codebase's existing convention for invalid function
+  // arguments (collision/geometry/GeometryIdentity.js's constructor validators), not
+  // returned as a geometry-data diagnostic.
+  if (options.weldEpsilon !== undefined) {
+    const eps = options.weldEpsilon;
+    if (typeof eps !== 'number' || !Number.isFinite(eps) || eps <= 0) {
+      throw new TypeError(`compactAndWeld: options.weldEpsilon must be a finite positive number, got ${eps}`);
+    }
+  }
+
   const ceiling = options.maxSyncTriangleCount ?? defaultMaxSyncTriangleCount;
   const { activeTriangleCount } = triangleGeometryView;
 
@@ -93,6 +147,19 @@ export function compactAndWeld(triangleGeometryView, options = {}) {
   }
 
   const triangleVertexIds = collectActiveTriangleVertexIds(triangleGeometryView);
+
+  // Finding 3: an index value that references past the actual vertex count would
+  // otherwise read undefined/NaN position data and let mergeVertices silently weld
+  // the corrupted vertex into an unrelated real one. Reject with the same
+  // {oversized: ...}-style diagnostic shape this file already uses for "cannot
+  // process this input", rather than proceeding to build corrupted output.
+  const { positions, positionStride } = triangleGeometryView;
+  const vertexCount = Math.floor(positions.length / positionStride);
+  const invalidVertexId = findOutOfRangeVertexId(triangleVertexIds, vertexCount);
+  if (invalidVertexId !== undefined) {
+    return { oversized: true, reason: 'index-references-invalid-vertex', activeTriangleCount };
+  }
+
   const compact = buildCompactBuffers(triangleGeometryView, triangleVertexIds);
 
   // Strip to position+index BEFORE welding: mergeVertices compares ALL attributes on
@@ -110,7 +177,7 @@ export function compactAndWeld(triangleGeometryView, options = {}) {
   const position = welded.attributes.position.array instanceof Float32Array
     ? welded.attributes.position.array
     : Float32Array.from(welded.attributes.position.array);
-  const index = toUint32Index(welded.index);
+  const index = filterDegenerateTriangles(toUint32Index(welded.index));
 
   return { position, index, triangleCount: index.length / 3 };
 }

@@ -29,8 +29,25 @@ export function computeGeometryConnectivity({ index }) {
     if (ra !== rb) parent[ra] = rb;
   };
 
+  // Finding 1 (defense-in-depth): a degenerate triangle (repeated vertex index, e.g.
+  // [0,0,1]) counts EDGE OCCURRENCES, not distinct triangles -- its own repeated-vertex
+  // edges collide with each other (or with an unrelated triangle's legitimate edge) and
+  // can spuriously satisfy the "shared by exactly 2" closed-manifold check, or spuriously
+  // union it into an unrelated component. activeRangeCompaction.js is the primary fix
+  // (filters these out before this module ever sees them), but a caller that hands this
+  // function a hand-built index directly must not get a false closedManifold: true.
+  // Degenerate triangles are excluded entirely from the edge map -- they contribute no
+  // edges, so they can never falsely link to (or manifold-certify with) real geometry --
+  // and are forced non-manifold in their own (necessarily unshared) component below.
+  const isDegenerate = new Uint8Array(triangleCount);
+  for (let t = 0; t < triangleCount; t++) {
+    const v0 = index[t * 3], v1 = index[t * 3 + 1], v2 = index[t * 3 + 2];
+    if (v0 === v1 || v1 === v2 || v2 === v0) isDegenerate[t] = 1;
+  }
+
   const edgeMap = new Map();
   for (let t = 0; t < triangleCount; t++) {
+    if (isDegenerate[t]) continue;
     for (let e = 0; e < 3; e++) {
       const v0 = index[t * 3 + e];
       const v1 = index[t * 3 + ((e + 1) % 3)];
@@ -71,6 +88,14 @@ export function computeGeometryConnectivity({ index }) {
     if (tris.length !== 2) {
       closedManifold[componentOf[tris[0]]] = false;
     }
+  }
+
+  // A degenerate triangle is never part of a valid closed manifold -- it contributed
+  // no edges above (so it can't be un-flagged by a later real triangle sharing its
+  // component), and its own component must be reported as non-manifold, not left at
+  // the `true` default.
+  for (let t = 0; t < triangleCount; t++) {
+    if (isDegenerate[t]) closedManifold[componentOf[t]] = false;
   }
 
   return { componentCount, componentOf, closedManifold };

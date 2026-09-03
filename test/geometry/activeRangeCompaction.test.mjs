@@ -200,3 +200,74 @@ test('missing getUnitScale falls back to the literal 1e-4 default (does not thro
   const result = compactAndWeld(view); // no options at all
   assert.equal(result.position.length / 3, 8);
 });
+
+// Finding 1: mergeVertices can itself produce a degenerate (repeated-vertex) triangle
+// when two of a triangle's three vertices weld together under the weld epsilon. The
+// filter must drop that triangle from the returned index/triangleCount.
+test('Finding 1: triangle that becomes degenerate after welding is filtered out', () => {
+  // Triangle A: v0, v1, v2 -- v0 and v1 are within weld epsilon of each other, so
+  // after welding this triangle collapses to a repeated-vertex (degenerate) triangle.
+  // Triangle B: a normal, well-separated triangle that must survive untouched.
+  const weldEps = 1e-6;
+  const positions = new Float32Array([
+    0, 0, 0,               // v0 (triangle A)
+    weldEps / 10, 0, 0,    // v1 (triangle A) -- within weldEps of v0, welds to it
+    0, 1, 0,               // v2 (triangle A)
+    10, 0, 0,              // v3 (triangle B)
+    11, 0, 0,              // v4 (triangle B)
+    10, 1, 0,              // v5 (triangle B)
+  ]);
+  const index = new Uint32Array([0, 1, 2, 3, 4, 5]);
+  const view = {
+    unsupported: false, positions, positionStride: 3, positionOffset: 0, index,
+    ranges: [{ start: 0, count: index.length }], activeTriangleCount: 2,
+  };
+
+  const result = compactAndWeld(view, { weldEpsilon: weldEps });
+  assert.equal('oversized' in result, false);
+  // Triangle A collapsed to 2 distinct vertices post-weld (degenerate) and must be
+  // dropped; only triangle B survives.
+  assert.equal(result.triangleCount, 1, 'the post-weld degenerate triangle must be filtered out');
+  for (let t = 0; t < result.triangleCount; t++) {
+    const a = result.index[t * 3], b = result.index[t * 3 + 1], c = result.index[t * 3 + 2];
+    assert.notEqual(a, b);
+    assert.notEqual(b, c);
+    assert.notEqual(a, c);
+  }
+});
+
+// Finding 3: an index value that references past the actual vertex count must be
+// rejected with a diagnostic, not silently welded into an unrelated real vertex.
+test('Finding 3: out-of-range index value is rejected with a diagnostic, not silently corrupted', () => {
+  const positions = new Float32Array([
+    0, 0, 0,  // v0
+    1, 0, 0,  // v1
+    0, 1, 0,  // v2
+  ]);
+  const index = new Uint32Array([0, 1, 99]); // vertex 99 does not exist (only 0,1,2)
+  const view = {
+    unsupported: false, positions, positionStride: 3, positionOffset: 0, index,
+    ranges: [{ start: 0, count: index.length }], activeTriangleCount: 1,
+  };
+
+  const result = compactAndWeld(view);
+  assert.equal(result.oversized, true, 'out-of-range index must be rejected, not silently welded');
+  assert.equal(result.reason, 'index-references-invalid-vertex');
+});
+
+// Finding 5: options.weldEpsilon is a programmer-facing override; an invalid value
+// must be rejected rather than silently corrupting the geometry.
+test('Finding 5: options.weldEpsilon NaN is rejected', () => {
+  const view = buildIsolatedTriangleView(1);
+  assert.throws(() => compactAndWeld(view, { weldEpsilon: NaN }), TypeError);
+});
+
+test('Finding 5: options.weldEpsilon Infinity is rejected', () => {
+  const view = buildIsolatedTriangleView(1);
+  assert.throws(() => compactAndWeld(view, { weldEpsilon: Infinity }), TypeError);
+});
+
+test('Finding 5: options.weldEpsilon negative is rejected', () => {
+  const view = buildIsolatedTriangleView(1);
+  assert.throws(() => compactAndWeld(view, { weldEpsilon: -1 }), TypeError);
+});

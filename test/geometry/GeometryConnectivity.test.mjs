@@ -83,6 +83,35 @@ test('DISCRIMINATOR: edge-based (not vertex-based): two triangles sharing only o
   assert.equal(result.componentCount, 2, 'two triangles sharing only a vertex must be separate components (edge-based, not vertex-based)');
 });
 
+test('Finding 1 (defense-in-depth): degenerate triangles (repeated vertex index) must not report closedManifold: true', () => {
+  // Two degenerate triangles: [0,0,1] and [0,0,2]. Each has a repeated vertex index
+  // (edge occurrences, not distinct triangles, would otherwise let their self-edges
+  // spuriously satisfy the "shared by exactly 2" check and even spuriously union them
+  // into a single falsely-manifold component via the shared "0_0" self-edge key).
+  const index = new Uint32Array([0, 0, 1, 0, 0, 2]);
+  const result = computeGeometryConnectivity({ index });
+  assert.ok(
+    Array.from(result.closedManifold).every((flag) => flag === false),
+    'no component containing a degenerate triangle may be reported as closedManifold: true'
+  );
+});
+
+test('Finding 1 (defense-in-depth): a degenerate triangle does not corrupt an otherwise-valid neighboring component', () => {
+  // A real closed box, plus one degenerate triangle referencing box vertices --
+  // the degenerate triangle must not falsely certify itself as manifold, and must not
+  // break the real box component's own correct closedManifold: true.
+  const box = weldedBox();
+  const degenerateTriangle = new Uint32Array([0, 0, 1]); // repeated vertex index
+  const mergedIndex = new Uint32Array(box.index.length + degenerateTriangle.length);
+  mergedIndex.set(box.index, 0);
+  mergedIndex.set(degenerateTriangle, box.index.length);
+
+  const result = computeGeometryConnectivity({ index: mergedIndex });
+  const flags = Array.from(result.closedManifold);
+  assert.ok(flags.includes(true), 'the real box component must still report closedManifold: true');
+  assert.ok(flags.includes(false), "the degenerate triangle's own component must report closedManifold: false");
+});
+
 test('DISCRIMINATOR: per-component (not per-geometry) manifold: mixed closed + open components have per-component flags', () => {
   // Component 0: a closed box (closed manifold).
   // Component 1: a single triangle (open shell, non-manifold).
