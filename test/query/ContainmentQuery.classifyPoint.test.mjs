@@ -118,3 +118,46 @@ test('nested independent solids (stated M1 limitation, not a bug): same outside 
   assert.equal(classifyPoint(new THREE.Vector3(0, 0, 0), b.bvh, b.localDiagonal), 'outside',
     'stated M1 limitation: reads as a cavity, indistinguishable from the hollow case above');
 });
+
+test('representative BIM aspect ratio (~1000:1, e.g. a long thin duct/wall segment): classifyPoint remains correct', () => {
+  // This pins correctness at a REALISTIC BIM/MEP envelope (a long thin duct or wall
+  // segment: 0.01m thick x 10m long x 0.5m tall, ~1000:1 aspect ratio) -- it is NOT a
+  // claim that the tolerance model (mergeDistance/surfaceEpsilon, both scaled off the
+  // target's single global localDiagonal) is safe at ALL aspect ratios. See the
+  // `{ todo: true }` extreme-aspect-ratio reproducer below (~1,000,000:1, a scale real
+  // BIM/MEP elements do not realistically approach) for the known, tracked gap in that
+  // tolerance model, and the comment beside classifyPoint's tolerance calculation in
+  // collision/query/ContainmentQuery.js for the full explanation of both failure modes.
+  const b = instanceOf(box(0.01, 10, 0.5));
+  assert.equal(classifyPoint(new THREE.Vector3(0, 0, 0), b.bvh, b.localDiagonal), 'inside');
+  assert.equal(classifyPoint(new THREE.Vector3(0.1, 0, 0), b.bvh, b.localDiagonal), 'outside');
+  assert.equal(classifyPoint(new THREE.Vector3(0.005, 0, 0), b.bvh, b.localDiagonal), 'boundary');
+  assert.equal(classifyPoint(new THREE.Vector3(0, 6, 0), b.bvh, b.localDiagonal), 'outside');
+});
+
+test('KNOWN GAP (tracked separately, not fixed by Task 6): extreme single-geometry aspect ratio (~1,000,000:1) breaks both mergeDistance and surfaceEpsilon', { todo: true }, () => {
+  // EXACT reproducer from the codex-review finding (independently reproduced by both
+  // codex-advisor and the Task-6 implementer against the running implementation):
+  // both classifyPoint tolerances scale off the target's single GLOBAL localDiagonal,
+  // not any local/per-feature thickness, so an extreme single-geometry aspect ratio
+  // (distinct from the spec's existing "anisotropic scale" passage, which covers
+  // cross-instance transform anisotropy, a different mechanism) breaks two ways on
+  // this SAME fixture:
+  //   (a) merge-collapse: mergeDistance (~1.41 here) exceeds the box's actual 0.5
+  //       thickness, merging the thin dimension's entry/exit crossings -- a genuinely
+  //       OUTSIDE point currently misclassifies as `inside`.
+  //   (b) boundary-expansion: surfaceEpsilon (same global-diagonal scale) catches the
+  //       genuinely INTERIOR centre point in the Stage-1 proximity pre-check before
+  //       parity casting runs -- it currently misclassifies as `boundary` instead of
+  //       `inside`.
+  // This asserts the DESIRED CORRECT answers, not today's actual (wrong) output, so a
+  // future fix to the tolerance model turns this test green instead of leaving the gap
+  // invisible. A proper fix needs geometric evidence beyond a single scalar (hit
+  // positions/normals/local feature scale) -- a spec-revision-level redesign, out of
+  // Task 6's scope. Do not attempt to fix this by editing this test's expectations.
+  const b = instanceOf(box(0.5, 1_000_000, 1_000_000));
+  assert.equal(classifyPoint(new THREE.Vector3(-10, 0, 0), b.bvh, b.localDiagonal), 'outside',
+    'currently misclassifies inside due to merge-collapse (failure mode (a))');
+  assert.equal(classifyPoint(new THREE.Vector3(0, 0, 0), b.bvh, b.localDiagonal), 'inside',
+    'currently misclassifies boundary due to boundary-expansion (failure mode (b))');
+});

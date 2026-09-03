@@ -45,6 +45,30 @@ function nearTriangleEdge(hit) {
  * @returns {'inside' | 'outside' | 'boundary'}
  */
 export function classifyPoint(point, targetBvh, targetLocalDiagonal) {
+  // KNOWN GAP -- NOT a declared spec limitation, tracked separately, out of Task 6's
+  // scope to fix (a proper fix needs geometric evidence beyond a single scalar --
+  // hit positions/normals/local feature scale -- i.e. a spec-revision-level redesign
+  // of this tolerance model, not a transcription concern):
+  //
+  // Both tolerances below scale off the target's single GLOBAL bounding-box diagonal
+  // (targetLocalDiagonal), not off any local/per-feature thickness. For extreme
+  // single-geometry aspect ratios (one dimension enormously larger than another, on
+  // the SAME target -- distinct from the spec's existing "anisotropic scale" passage,
+  // which covers cross-instance transform anisotropy, a different mechanism), this
+  // produces two failure modes, both reproduced on the same box(0.5, 1_000_000,
+  // 1_000_000) fixture (~1,000,000:1 aspect ratio -- real BIM/MEP elements do not
+  // realistically approach this):
+  //   (a) merge-collapse: mergeDistance (~1.41 on that fixture) can exceed the box's
+  //       actual 0.5 thickness, so the entry and exit crossings through the thin
+  //       dimension merge into one -- flipping parity and misclassifying a genuinely
+  //       OUTSIDE point (e.g. (-10, 0, 0)) as `inside`.
+  //   (b) boundary-expansion: surfaceEpsilon uses the same global-diagonal scale, so
+  //       once it approaches half the thin dimension, a genuinely INTERIOR point
+  //       (e.g. the centre (0,0,0)) gets caught by the Stage-1 proximity pre-check
+  //       and classified `boundary` before parity casting is even attempted, instead
+  //       of `inside`.
+  // See test/query/ContainmentQuery.classifyPoint.test.mjs's `{ todo: true }` fixture
+  // for the exact reproducer and the desired (currently failing) correct answers.
   const surfaceEpsilon = surfaceEpsilonFactor * targetLocalDiagonal;
   const mergeDistance = mergeDistanceFactor * targetLocalDiagonal;
 
