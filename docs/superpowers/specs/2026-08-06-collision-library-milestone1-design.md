@@ -949,6 +949,13 @@ This spec covers a deliberately bounded slice of the idea doc's full architectur
   Milestone 1 and rejects otherwise. Placement-transform/global-offset/unit normalization across
   models is real work the idea doc explicitly calls out ([idea:1130-1136]) and is undefined until a
   later milestone designs it.
+- **Surviving a Viewer model/document replacement.** Once `RoomLocatorExtension`/`CollisionWorld` has
+  been established for this app's initially loaded model, a later `loadDocumentNode` call that
+  replaces it is out of scope — Milestone 1 makes no promise the extension or its `CollisionWorld`
+  survive that replacement. Extension reload/re-registration and `CollisionWorld` reconstruction across
+  a replacement (whether via `keepCurrentModels`, an explicit unload+admit cycle, or another mechanism)
+  are deferred to a later milestone; see **Data Flow** step 1 for the decided scope boundary and the
+  Viewer-behavior evidence behind it.
 
 The public `CollisionWorld` API is designed to be forward-compatible with these — later milestones
 extend the same method signatures rather than replacing them.
@@ -1258,14 +1265,49 @@ creates the epoch's canonical instance for each unique fragment. A cache hit ret
 unchanged — **no `findClashes` call ever writes through a cached `CollisionInstance`.**
 
 **Placement state is call-local, never cached.** Each `findClashes` call builds fresh
-`PlacedCollisionInstance` values — `{ instance, worldMatrix, worldBounds }` — with newly owned matrix and
-bounds objects copied from `fragList.getWorldMatrix`/`getWorldBounds` during that call's extraction (see
+`PlacedCollisionInstance` values — `{ instance, worldMatrix, worldBounds, ownerDbId }` — with newly owned
+matrix and bounds objects copied from `fragList.getWorldMatrix`/`getWorldBounds`, and `ownerDbId` captured
+from the extraction walk's own traversal state (see below), all during that call's extraction (see
 **Data Flow** step 3). Broad and narrow phases consume these placement values, never matrix or bounds
 fields off the canonical `CollisionInstance` (which has none). Source and target placement arrays are
 owned solely by their call and remain unchanged across its yields — this is what preserves the per-call
 snapshot guarantee under **Broad phase** unchanged: concurrent calls may share the same immutable
 `instance` reference while each holds its own independent transform snapshot, and neither call can
 overwrite state the other resumes with.
+
+**`ownerDbId` is the fragment's own dbId — the node the self-driven walk was visiting when its
+`enumNodeFragments(node, cb, false)` call yielded this fragment (see Data Flow step 3), not necessarily
+one of the query's own requested dbIds.** A requested dbId that is itself an ancestor (a "family" node
+that owns no fragments directly — see `ViewerModelAdapter`'s "why the walk covers exactly what
+`recursive: true` covered") resolves through descent to the child instance node that actually owns the
+fragment; `ownerDbId` names that descendant. This is exactly what `groupBy: 'dbId'` aggregation (Data
+Flow step 3, below, and Public API) uses to populate `ElementRef.dbId`/`FragmentRef.dbId` for a result —
+never the literal requested dbId list, which names only where extraction started. For the ordinary case —
+a fragment with exactly one owning node — this is a structural property of the instance tree, not a
+per-call artifact, so `ownerDbId` is the same value on every call that captures it. **This spec does not
+claim the same cross-call stability for the accepted edge case below** (a fragment discovered under more
+than one node): "first discovery wins" is well-defined *within* one call, whose own traversal order is
+fixed once the call starts, but nothing in this document establishes that `enumNodeChildren`'s iteration
+order is itself stable *across* separate calls, so a fragment that hits this edge case could in principle
+resolve to a different `ownerDbId` on a later call. `ownerDbId` is carried on `PlacedCollisionInstance`,
+never added to the frozen `CollisionInstance`, regardless of which case applies: it is produced by, and
+needed only during, one call's own extraction and aggregation, and `CollisionInstance` elsewhere in this
+document is stated, verbatim, to contain only `fragmentId` and `GeometryIdentity` (see "`CollisionInstance`
+identity cache" below) — the same reason `worldMatrix`/`worldBounds` live here and not there.
+
+**A fragment id can be discovered under more than one node in a single walk** — the pre-existing "a
+fragment id reported under more than one node costs the walk twice" case Data Flow step 3 already accepts
+for tally-counting purposes, whether from one requested dbId's own subtree reporting the same fragment
+under two node paths, or from two of the call's requested dbIds on the same side having overlapping
+subtrees (an ancestor and one of its own descendants both requested). `ownerDbId` resolves this the same
+way fragment identity itself already does: **first discovery wins.** The walk's per-side, call-wide
+fragment capture (Data Flow step 3, phase 1) records `ownerDbId` the first time it sees a given fragment
+id and never overwrites it on a later (re)discovery under a different node — the identical first-write
+discipline this document already applies to phase-1 capture as a whole, extended to this one field, so no
+new dedup mechanism is introduced. This makes `ownerDbId`, and therefore which dbId group a fragment
+aggregates under, deterministic for a given call without this design needing to assert that a real Viewer
+instance tree never reports one fragment under two nodes — only that when it does, this walk resolves it
+the same way every time.
 
 **Ownership and release are epoch-scoped, independent of `GeometryRegistry`.** The cache is physically
 partitioned as `Map<loadEpoch, Map<fragmentId, CollisionInstance>>`, not one flat map. A canonical
@@ -2612,7 +2654,7 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
    polling), and the user can load a different model afterward. A `load()`-time cache would either
    run against no model at all or go stale the moment a new model loads.
 
-   **Scope of the model-identity apparatus, and a known M1 gap it does not cover.** The
+   **Scope of the model-identity apparatus, and the Milestone-1 boundary it stops at.** The
    `modelLifecycle`/`loadEpoch` tombstone-and-epoch scheme below (`world.evictModel`/`world.admitModel`)
    is the load-bearing correctness mechanism for as long as one `RoomLocatorExtension` instance and its
    `CollisionWorld` stay alive — including multiple admitted models, explicit eviction, delayed eviction,
@@ -2626,16 +2668,21 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
    afterward: confirmed against the pinned 7.124.2 bundle's `Viewer3D.prototype.loadDocumentNode`
    (`keepCurrentModels`/`hasModels()` guard, `viewer3D.js:27710`, recurring in the `loadModel` path at
    `viewer3D.js:88293`), a real Viewer side effect undocumented by either method's own Reference Guide
-   entry. **So on this app's current wiring, Room Locator does not survive a second model load at all —
-   it is unloaded once and never comes back, a Milestone-1 application-wiring gap, not a defect in the
-   identity apparatus itself.** This spec leaves the resolution open rather than papering over it: either
-   the application must explicitly reload the extension (or restructure model replacement around
-   `keepCurrentModels`/explicit unload+admit, keeping the extension registered and exercising
-   `evictModel` normally) after each `loadModel()` call, or Milestone 1 is understood to support Room
-   Locator only up to the first model replacement — neither is decided here. On the `tearDown()`-driven
-   path specifically — **provided `unload()` itself completes all three of its steps** (see
-   `RoomLocatorExtension.unload()`'s per-step-isolation caveat; the same proviso `unload()`'s own
-   ordering note applies to the sibling case where `BEFORE_MODEL_UNLOAD_EVENT` fires into an
+   entry.
+
+   **Decided: Milestone 1 does not support a Viewer model/document replacement after
+   `RoomLocatorExtension`/`CollisionWorld` has been established.** On this app's current wiring, Room
+   Locator does not survive a second model load at all — it is unloaded once and never comes back. The
+   Milestone-1 acceptance path covers the initially loaded, supported model/session only; no code path in
+   this milestone re-registers the extension or reconstructs its `CollisionWorld` after a
+   replacement-driven `tearDown()`, and none is required to. Extension reload/re-registration and
+   `CollisionWorld` reconstruction across a model replacement — whether by restructuring the application
+   around `keepCurrentModels`, by an explicit unload+admit cycle that exercises `evictModel` normally, or
+   by some other mechanism — are deferred to a later milestone (see **Milestone Scope**); this document
+   does not choose among them, and no Milestone-1 implementation work should attempt to. On the
+   `tearDown()`-driven path specifically — **provided `unload()` itself completes all three of its
+   steps** (see `RoomLocatorExtension.unload()`'s per-step-isolation caveat; the same proviso `unload()`'s
+   own ordering note applies to the sibling case where `BEFORE_MODEL_UNLOAD_EVENT` fires into an
    already-disposed world) — `BEFORE_MODEL_UNLOAD_EVENT` fires only after `tearDown()`'s own
    extension-unload loop already ran, so this extension's listener is already deregistered and
    `world.evictModel` is never invoked for the outgoing model that way; `world.dispose()`'s wholesale
@@ -2647,6 +2694,14 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
    `BEFORE_MODEL_UNLOAD_EVENT` as its first statement (`viewer3D.js:34054`). This ordering is an
    internal implementation detail, not documented or guaranteed by Autodesk — revalidate on any Viewer
    upgrade.*
+
+   **This decision changes nothing about unload/eviction handling within the supported Milestone-1
+   lifecycle.** For one `RoomLocatorExtension`/`CollisionWorld` instance, across every model admitted,
+   evicted, or explicitly disposed before any replacement-driven `tearDown()` occurs, `world.evictModel`,
+   `world.dispose`, admission, and every race-safety mechanism this document specifies for that lifecycle
+   are exactly as specified elsewhere in this document — the scope boundary above only says the instance
+   itself does not persist *across* a replacement, not that anything within one supported session behaves
+   differently.
 
    - Instead, room dbIds are resolved **lazily, keyed by the exact `Model` object**, in a
      `Map<Model, Promise<number[]>>` owned by the extension — **not by `model.id`**, per round 12
@@ -2838,7 +2893,10 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
        invocations, not distinct fragment ids** — it bounds work done, and a fragment id reported under
        more than one node costs the walk twice regardless of how many `CollisionInstance`s come out the
        other end. `CollisionInstance` construction separately dedupes by fragment id, so one Viewer
-       fragment never becomes two collision instances merely because traversal reported it twice;
+       fragment never becomes two collision instances merely because traversal reported it twice — and
+       phase 1's own capture (below, in the `CollisionInstance` identity cache's admission sequence)
+       records this `node` as that fragment's `ownerDbId` only the first time it is seen, for the same
+       reason: a repeat report under a different node changes nothing phase 1 already captured;
      - check the tally against `maxFragmentsPerDbId` (`5_000`, provisional) after every node's
        contribution — **the moment it's exceeded, the walk stops immediately** (no further
        `enumNodeChildren`/`enumNodeFragments` calls for that dbId's remaining subtree) and the entire
@@ -2908,8 +2966,14 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
 
      1. While walking, capture for each unique fragment not just its id but everything a canonical
         instance or a placement will need — `fragmentId`, `GeometryIdentity` (`loadEpoch` +
-        `geometryIndex`), and this call's own `worldMatrix`/`worldBounds` snapshot — so no later phase
-        needs to call back into `fragList` or any other Viewer getter.
+        `geometryIndex`), this call's own `worldMatrix`/`worldBounds` snapshot, and `ownerDbId` (the node
+        being visited when this fragment's `enumNodeFragments(node, cb, false)` call yielded it — see
+        `PlacedCollisionInstance`'s `ownerDbId` note above) — so no later phase needs to call back into
+        `fragList`, `InstanceTree`, or any other Viewer getter. **First discovery wins for `ownerDbId`**:
+        if this call's own walk, on this side, later reports the same fragment id again under a different
+        node — an ancestor/descendant pair both requested on this side, or the pre-existing
+        more-than-one-node case this step already tallies for `maxFragmentsPerDbId` — the already-captured
+        `ownerDbId` is kept, never replaced.
      2. **Before touching any cache bucket**, check the walk's own complete unique fragment-id count
         against `maxCollisionInstancesPerEpoch`. If it is exceeded, reject the entire call now, without
         looking up or creating any bucket: a bucket capped at `maxCollisionInstancesPerEpoch` can never
@@ -3064,8 +3128,27 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
      the model's load epoch (see **`world.evictModel`**'s "Race safety" note) before resuming — round 15
      added the `disposed` half of that ordering; a model evicted, or a world disposed, while any yield
      was in flight is never operated on after the fact.
-   - Aggregate fragment-pair hits into dbId-level `ClashPair`s (`groupBy: 'dbId'`), deduping so a
-     room with multiple fragments isn't reported twice.
+   - **Aggregate fragment-pair hits into dbId-level `ClashPair`s (`groupBy: 'dbId'`).** Every candidate
+     pair's `PlacedCollisionInstance` already carries its own `ownerDbId` (captured during extraction,
+     above), so this step is a direct lookup, never a re-derivation and never combinatorial: a positive
+     fragment-pair hit between `sourcePlaced`/`targetPlaced` maps to exactly **one** dbId pair —
+     `(sourcePlaced.ownerDbId, targetPlaced.ownerDbId)` — regardless of how many of the call's requested
+     dbIds that fragment was reachable from (see `PlacedCollisionInstance`'s `ownerDbId` note under
+     `GeometryRegistry`/`CollisionInstance` above). Maintain one call-scoped map keyed by the ordered pair
+     `(sourceDbId, targetDbId)` — source and target are never interchangeable, matching `containment`'s
+     own directedness (see **Query modes and their preconditions**). The first fragment-pair hit for a
+     given key publishes that key's `ClashPair` (`{ source: { dbId: sourceDbId, ... }, target: { dbId:
+     targetDbId, ... }, type: query.mode }`); every later fragment-pair hit for the same key is dropped
+     from `pairs[]` without constructing a second `ClashPair` — this, not a post-hoc array dedup, is what
+     "a room with multiple fragments isn't reported twice" means, and it is deterministic because the
+     broad phase's own linear scan order (over deterministically-ordered `sourceInstances`/
+     `targetInstances`) is itself deterministic for a given call. Milestone 1 does not populate the idea
+     doc's optional `ClashPair.fragmentPairs`/`minimumDistance` fields — a dropped, same-key fragment-pair
+     hit contributes no fragment-level detail beyond the first, the same way every other idea-doc-optional
+     field this milestone leaves unset is handled. Per-fragment/per-pair `ClashDiagnostic`s are unaffected
+     by this dedup: they attach to `FragmentRef`s (via the same `ownerDbId`) and accumulate into
+     `ClashStatistics.diagnostics` independently of `pairs[]`, so a diagnostic produced by a later, dropped
+     fragment-pair hit is still reported even though its `ClashPair` is not duplicated.
 4. The extension maps `result.pairs[].target.dbId` back to room dbIds and returns them — the same
    return contract as the original `locateElementByRoom(dbId)`.
 
@@ -3108,6 +3191,10 @@ world.findClashes(query): Promise<ClashResult>
 //   'surface-intersection' — any triangle contact, touching included. No closure precondition.
 //   ('touching' / 'clearance' deferred to a later milestone)
 // query.groupBy: 'dbId'
+//   Aggregates by each fragment's own owning dbId — the instance-tree node that directly owns it
+//   (`ownerDbId`, see Data Flow step 3), which may be a descendant of a requested ancestor dbId, never
+//   the literal ancestor itself when the two differ. A fragment belongs to exactly one dbId group per
+//   call, deterministically, regardless of how many of the query's requested dbIds could reach it.
 //   ('fragment' / 'externalId' deferred)
 //
 // No firstHitOnly in Milestone 1. It sat in this API from the first draft with no defined
@@ -3579,8 +3666,13 @@ class RoomLocatorExtension extends Autodesk.Viewing.Extension {
 ```
 
 `ClashPair`, `ClashResult`, `ClashStatistics`, `ElementRef`, `FragmentRef` reuse the shapes already
-defined in the idea doc's "Proposed Types" section, with one addition for this milestone:
-`ClashStatistics` gains `diagnostics: ClashDiagnostic[]`.
+defined in the idea doc's "Proposed Types" section, with two additions for this milestone:
+`ClashStatistics` gains `diagnostics: ClashDiagnostic[]`, and every `ElementRef`/`FragmentRef` this
+milestone constructs gets its `dbId` from the owning `PlacedCollisionInstance`'s `ownerDbId` (see Data
+Flow step 3, and `PlacedCollisionInstance`'s `ownerDbId` note under `GeometryRegistry`/
+`CollisionInstance`) — never directly from the query's own `source.dbIds`/`target.dbIds`, which name only
+where extraction started, not which node actually owns the fragment a result names. Milestone 1 does not
+populate `ClashPair.fragmentPairs`/`minimumDistance` (see the aggregation step under Data Flow step 3).
 
 Two earlier shapes were rejected in review. A flat `skippedFragments: FragmentRef[]` couldn't say
 *why* a fragment was skipped. Replacing it with a required `sourceFragment` plus optional
@@ -3821,8 +3913,12 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   `containment` query resolves the true containing room via actual triangle-level testing. (This is
   the mode the room-locator runs; earlier drafts said `volume-overlap` here, from before the mode
   split.)
-- **A model is evicted mid-query** (`world.evictModel` — e.g. the user loads a different model into
-  the same slot while a `locateElementByRoom` call is still awaiting a yield): the in-flight
+- **A model is evicted mid-query** (`world.evictModel` — a `BEFORE_MODEL_UNLOAD_EVENT` fires for this
+  model while `RoomLocatorExtension`/`CollisionWorld` are still registered and a `locateElementByRoom`
+  call is still awaiting a yield. **Not** the same thing as this app's own `loadModel()` loading a
+  *different* model: per Data Flow step 1's decided Milestone-1 scope, that path tears the extension down
+  via `tearDown()`/`unload()` before the outgoing model's own unload event ever fires, so it produces
+  `WorldDisposedError` instead — see the **Disposal mid-query** bullet below, not this one): the in-flight
   `findClashes` call rejects with `ModelEvictedError` at whichever yield checkpoint next re-checks the
   model object's tombstone state (see **`world.evictModel`**'s race-safety note); it never resumes into
   the evicted model's BLAS/geometry state, and never returns a `ClashResult` built on it. Full
@@ -4260,6 +4356,35 @@ refactor can't silently reintroduce a bug an earlier round already found.
     agree on a real build; the argument under `ViewerModelAdapter` establishes only that they agree
     *given a complete instance tree*, which is a Viewer readiness property this fixture cannot prove
     (see **Risks**).
+  - **`ownerDbId` provenance and `groupBy: 'dbId'` aggregation, regression tests for the dbId-provenance
+    fix:**
+    - **A source dbId whose subtree contains a family/ancestor node and, beneath it, the child instance
+      node that actually owns fragments** (mocked, mirroring the acceptance model's dbId `2527`/`2530`
+      pair) — assert every resulting `ElementRef`/`FragmentRef` names the **child instance's** dbId
+      (`2530`), never the requested ancestor (`2527`), pinning that `ownerDbId` is the node
+      `enumNodeFragments(node, cb, false)` actually yielded the fragment under, not the dbId the walk was
+      asked to start from.
+    - **The same fragment reachable from two of the call's own requested dbIds on one side** (an ancestor
+      and its own descendant both passed in the same `dbIds` list) — mock the walk so the fragment is
+      discovered first under the descendant and would be discovered again under the ancestor if the walk
+      didn't dedupe; assert `ownerDbId` is captured once, from the first discovery, and that a spy on the
+      per-fragment capture shows it is never overwritten on the second discovery. Pins the first-discovery-
+      wins rule under `PlacedCollisionInstance` and closes the "which requested root does this fragment
+      belong to" ambiguity by construction: it never belongs to more than one.
+    - **One target dbId (a room) owning two distinct fragments, both clashing with the same source
+      fragment** — `findClashes` must return exactly **one** `ClashPair` for that `(sourceDbId,
+      targetDbId)` pair, asserted by asserting `pairs.length` directly (not merely that no duplicate
+      appears), and the narrow phase must still be asserted (via a spy) to have run **twice** — once per
+      distinct fragment pair — proving the dedup collapses the *aggregated output*, not the *collision
+      work itself* (see the aggregation step's "never re-derivation, never combinatorial" rule under Data
+      Flow step 3).
+    - **Two fragment-pair hits whose dbId attribution is reversed relative to each other** — one hit's
+      `(sourcePlaced.ownerDbId, targetPlaced.ownerDbId)` is `(dbIdX, dbIdY)`; a *different* hit's is
+      `(dbIdY, dbIdX)` (e.g. a query whose `dbIds` lists put both `dbIdX` and `dbIdY` on both the source
+      and target side, so both directions are genuinely queried) — assert `findClashes` returns **two**
+      separate `ClashPair`s, one per ordered key, and that neither suppresses or merges with the other.
+      Pins that the aggregation map key is the ordered pair, never a canonicalized/sorted one, matching
+      `containment`'s own source/target asymmetry (see **Query modes and their preconditions**).
   - **The invariant-audit fix's regression test for the fanout ceiling (finding C-1): a requested dbId
     whose subtree contains one node with more than `maxChildrenPerNode` direct children** — run the case
     twice, once with that node owning **zero** fragments directly (fragment-free, making
@@ -4709,6 +4834,11 @@ shipping the acceleration structures untested and calling the milestone verified
   before extraction begins. What readiness signal (if any) the installed Viewer version exposes for
   this, and whether `findClashes`/`world.admitModel` should check it, is deferred to implementation —
   confirm against the official Reference Guide before relying on any specific API, not assumed here.
+  **This is an implementation-plan research task, not a Milestone-1 design blocker**: identify the
+  concrete Viewer readiness signal (if any — e.g. `OBJECT_TREE_CREATED_EVENT` or a documented geometry-load
+  wait) before deciding whether `findClashes`/`world.admitModel` should wait on it, reject when it isn't
+  met, or document it as a caller precondition; the choice among those three does not change any mechanism
+  this document already specifies.
 - **`ProperCrossingQuery` is the most intricate piece of new geometry code in this milestone**: the
   four-quadrant candidate test is standard technique, but it is the one component with no simpler
   fallback if it proves fragile against real tessellation (thin slivers, near-degenerate triangles at
@@ -4840,3 +4970,11 @@ shipping the acceleration structures untested and calling the milestone verified
   (hole filling, seam stitching)? Welding is now mandatory and handles the per-face-vertex case,
   which the spike showed is the dominant one; genuinely open shells are a separate and much smaller
   problem, deliberately left to the diagnostics for this milestone.
+- **Decided (see Data Flow step 1 and Milestone Scope): Milestone 1 does not survive a Viewer model
+  replacement.** What remains open for a later milestone is *how* the extension should survive one —
+  restructuring the app around `keepCurrentModels`, an explicit unload+admit cycle exercising
+  `evictModel` normally, or another mechanism — none of which this document chooses among.
+- What Viewer readiness signal (if any) should gate extraction against an incomplete instance tree, and
+  whether `findClashes`/`world.admitModel` should wait on it, reject when it isn't met, or document it as
+  a caller precondition (see **Risks**' instance-tree-completeness entry). Recorded as an
+  implementation-plan research task, not decided here.
