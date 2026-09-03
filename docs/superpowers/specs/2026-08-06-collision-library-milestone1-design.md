@@ -1286,24 +1286,28 @@ design explicitly supports two objects sharing a reused `modelId` both live at o
 epoch (see "Ownership and release are epoch-scoped" above) — so total retained instance count across all
 live epochs is `maxCollisionInstancesPerEpoch × (live epochs)`, unceilinged, the same unhedged shape as
 the accepted risk the atomic-operations table row for this check already states for retained *count*.
-After every requested dbId's extraction walk completes — not per dbId, per node, or per
-fragment — and after the walk's last possible yield, `findClashes` looks up the affected epoch's bucket
-**without creating it** if absent, and recomputes which ids from the call's complete unique fragment-id set
-are still missing against that bucket's *current* contents — never a count carried over from earlier in the
-walk, since a concurrent call's commits during any of the walk's own yields can otherwise leave it stale.
-It then, in that same synchronous step — no intervening `await`, no call out to any external callback,
-getter, or other reentrant operation — checks `currentBucketSize + uniqueMissingCount` against the limit
-for the affected epoch. Exceeding it rejects the entire call: no bucket is created, no canonical instance
-is constructed, and no call-local placement is constructed for any fragment in the query. Otherwise the
-bucket is created if it did not already exist and every missing instance is constructed and committed into
-it in that same step, so two concurrent calls cannot both pass against the same stale capacity observation;
-only after that commit succeeds does the call construct its `PlacedCollisionInstance` values (see **Data
-Flow** step 3). This zero-mutation guarantee is specific to a capacity rejection — a later failure in
-placement construction or in the broad-/narrow-phase work that follows can still leave already-admitted
-canonical instances resident, and is not covered by it. Entries are never individually evicted while their
-epoch remains live — doing so would break the stable-reference guarantee above — so capacity is recovered
-only by epoch eviction or whole-world disposal, the same two release paths every other epoch-scoped cache in
-this design uses.
+The exact admission sequence, from every requested dbId's extraction walk completing through commit, is
+stated once, canonically, under **Data Flow** step 3 — this section defers to it rather than maintaining a
+second, independently-drifting copy. In summary: **before touching any cache bucket**, a call-wide precheck
+rejects the entire call if the walk's own complete unique fragment-id count exceeds
+`maxCollisionInstancesPerEpoch`; only a call the precheck admits ever reaches the bucket lookup, which
+happens **without creating it** if absent, after the walk's last possible yield, and recomputes which ids
+from the call's complete unique fragment-id set are still missing against that bucket's *current* contents
+— never a count carried over from earlier in the walk, since a concurrent call's commits during any of the
+walk's own yields can otherwise leave it stale. In that same synchronous step — no intervening `await`, no
+call out to any external callback, getter, or other reentrant operation — it checks
+`currentBucketSize + uniqueMissingCount` against the limit for the affected epoch. Exceeding either check
+rejects the entire call: no bucket is created, no canonical instance is constructed, and no call-local
+placement is constructed for any fragment in the query. Otherwise the bucket is created if it did not
+already exist and every missing instance is constructed and committed into it in that same step, so two
+concurrent calls cannot both pass against the same stale capacity observation; only after that commit
+succeeds does the call construct its `PlacedCollisionInstance` values (see **Data Flow** step 3). This
+zero-mutation guarantee is specific to a capacity rejection (the precheck's or the bucket-capacity check's)
+— a later failure in placement construction or in the broad-/narrow-phase work that follows can still leave
+already-admitted canonical instances resident, and is not covered by it. Entries are never individually
+evicted while their epoch remains live — doing so would break the stable-reference guarantee above — so
+capacity is recovered only by epoch eviction or whole-world disposal, the same two release paths every
+other epoch-scoped cache in this design uses.
 
 **`ThreeMeshBvhBackend` / `BlasCache`** — builds one `MeshBVH` per `GeometryRecord`, lazily, on
 first use, over the **welded** collision geometry.
@@ -1460,10 +1464,20 @@ welding walk the entire oversized raw index — the exact gap the ceiling exists
 step earlier in the pipeline. **The fix inserts one more phase before the three above, not gated by
 `frameBudgetMs` but by the ceiling itself: active-range compaction.** Before welding and before anything
 is handed to `mergeVertices` — but only once the ceiling check below has passed —
-`ViewerGeometryAdapter`'s already-normalized `ranges: TriangleRange[]` (computed during the earlier
-layout-normalization pass — free, no
-per-triangle work) are used to materialize a **collision-owned, compacted position/index pair containing
-only the triangles those ranges cover**. The total active triangle count is
+`ViewerGeometryAdapter`'s `ranges: TriangleRange[]` are used to materialize a **collision-owned, compacted
+position/index pair containing only the triangles those ranges cover**. `ViewerGeometryAdapter` itself
+runs **once per unique `(loadEpoch, geometryIndex)`, on the registry's first touch of this geometry — never
+per candidate pair** (see the narrow phase below, which resolves the call-frequency ambiguity an earlier
+draft of this passage left open, and the `ViewerGeometryAdapter`-classification row in the atomic-operations
+table for its own cost, ordering, and atomicity/non-reentrancy assumption). **Classification never re-runs
+for an entry already present as an oversized marking or a `'building'`/`'ready'` record — but that dedup
+guarantee currently covers only the ceiling outcome, not a normalization failure** (`unsupported-geometry-layout`
+or `rejected-primitive-range`, see `FragmentDiagnosticReason`): unlike the oversized case, those two
+diagnoses settle no persistent registry-entry state, so a geometry that fails normalization is
+re-classified, and its diagnostic re-emitted, on every candidate pair that touches it — a pre-existing gap
+this pass narrows the scope of rather than closes (only the oversized diagnostic has the dedup rule and
+persistent entry-kind these two share the identical justification for lacking). The total active triangle
+count is
 **`activeTriangleCount := Σ floor(ranges[i].count / 3)`** — `TriangleRange.count` is an *index-element*
 count, not a triangle count (see the ranges bullet under **`ViewerGeometryAdapter`**, which also
 triangle-aligns each range), while `maxSyncTriangleCount` is a triangle count, so the conversion has to
@@ -1770,7 +1784,10 @@ budget, exposes no per-candidate callback, and offers no abort hook: verified in
 ranges and returns only on the first hit or on full exhaustion. So the very failure mode
 `maxCandidatePairsExamined` exists to prevent — heavily overlapping BVHs with **no** triangle
 contact — freezes the Viewer through this mode instead, while the spec claimed its budgets bound the
-worst case. That claim is only true once both modes traverse the same way.
+worst case for this traversal. That per-traversal claim is only true once both modes traverse the
+same way — it is not, and was never meant to be, the whole-design worst-case-span guarantee that
+the "Atomic operations and what remains non-preemptible" note under **`ProperCrossingQuery`**'s budgets
+explicitly disclaims (see "still not a finite worst-case-span guarantee").
 
 The rewrite is a simplification rather than new machinery: `SurfaceIntersectionQuery` is the *same*
 `bvhcast` traversal `ProperCrossingQuery` uses, using the same `maxCandidatePairsExamined` ceiling, with a
@@ -1780,7 +1797,11 @@ returns `true` on the first candidate pair that intersects **at all**, so it nee
 coplanar split (coplanar contact *is* touching here, so it counts rather than being skipped) nor the
 probe ladder (no interior classification, hence no parity, hence no closure precondition). Both modes
 then have one traversal, one budget, and one abort path, and `crossing-budget-exhausted` means the
-same thing in both.
+same thing in both. **"The same abort protocol" includes the private, traversal-local time-based
+trigger** (see `ProperCrossingQuery`'s Abort protocol below, and the scheduling taxonomy's abort-only
+tier, which this traversal shares with `ProperCrossingQuery`'s): this traversal's own worst case is
+therefore `frameBudgetMs` + one raw candidate callback's own cost, not a function of the shared
+accumulator or of what else ran earlier in the same call.
 
 **`ProperCrossingQuery`** (new) — answers "do these two solids share positive volume near their
 contact," which is what `volume-overlap` actually needs and what round 2's draft wrongly conflated
@@ -1939,7 +1960,8 @@ milestone replaces, not merely an imprecision.
 
    | Budget or ceiling | Measured / reasoned cost | Value | What it bounds |
    |---|---|---|---|
-   | `maxSyncTriangleCount` — **compaction + welding phase** | **Measured** (round 15, weld only): ~16.8ms to weld ~19,800 triangles. Round 16 folded active-range compaction into this same phase/checkpoint — compaction's own cost is unmeasured but bounded by the same ceiling and expected small relative to welding | `12_000` | Non-preemptible; runs whenever a `GeometryRecord` is first built, against the compacted active-range triangle set only (round 16 — see `ThreeMeshBvhBackend`/`BlasCache`), not the raw index. Own checkpoint, before it starts. |
+   | `ViewerGeometryAdapter` normalization + active-range ceiling classification | **Reasoned, not measured**: one `getRenderProxy` call — an internal, undocumented API this spec does not claim a measured or Viewer-guaranteed cost for (see the Viewer-API-drift risk under Risks) — plus a constant number of property-existence branches independent of triangle count, plus the range-count summation itself, `O(ranges)` and, per the ranges bullet under `ViewerGeometryAdapter`, typically small (a handful of groups/ranges). Runs once per unique `(loadEpoch, geometryIndex)`, on the registry's first touch of that geometry — never per candidate pair (see the active-range gate and the narrow phase below) | — (no ceiling; accepted atomic risk) | **Non-preemptible, same category as one `enumNodeFragments` call and the `releaseEpochScopedState`/`dispose()` registry sweep.** Runs to completion before the entry's own `buildState`/oversized verdict is settled and before the compaction+welding phase's own checkpoint fires — see "Insert first, then build" and the active-range gate for why this ordering is sound without the entry needing to exist first: it depends on this step being synchronous and non-reentrant (no yield, no synchronous call back into `evictModel`/`dispose`/a concurrent `findClashes` call), a property this spec assumes of the installed Viewer version without independent verification, the same disclosed-not-verified category as the `enumNodeChildren` callback contract below. Its own cost is not itself ceilinged by this spec — a residual, disclosed gap, not a claimed bound. |
+   | `maxSyncTriangleCount` — **compaction + welding phase** | **Measured** (round 15, weld only): ~16.8ms to weld ~19,800 triangles. Round 16 folded active-range compaction into this same phase/checkpoint — compaction's own cost is unmeasured but bounded by the same ceiling and expected small relative to welding | `12_000` | Non-preemptible; runs whenever a `GeometryRecord` is first built, against the compacted active-range triangle set only (round 16 — see `ThreeMeshBvhBackend`/`BlasCache`), not the raw index. Own checkpoint, before it starts — which, per the row above, is also the first checkpoint to run after `ViewerGeometryAdapter`'s classification, so that unceilinged step's own cost never silently extends this phase's ~16.8ms figure. |
    | `maxSyncTriangleCount` — **connectivity phase** | **Measured** (round 15): ~6.9ms to build the edge-map at ~19,800 triangles | `12_000` | Non-preemptible; independently lazy — runs the first time a mode that calls `anyComponentInside` (`containment` **or** `volume-overlap` — round 16 corrected this from "`containment`-only," see `ThreeMeshBvhBackend`/`BlasCache`) touches this record. Never runs for `surface-intersection`-only sessions. Own checkpoint, before it starts. |
    | `maxSyncTriangleCount` — **BVH phase** | **Measured** (Spike Findings): ~16ms to build a BVH at 18k triangles | `12_000` | Non-preemptible; the one phase every mode needs. Own checkpoint, before it starts. |
    | `maxCandidatePairsExamined` | **Measured**: ~0.3µs per raw candidate pair | `50_000` | Raw `bvhcast` candidate rejection — checked at callback entry, adequate at that granularity since the cost itself is tiny. |
@@ -1950,6 +1972,7 @@ milestone replaces, not merely an imprecision.
    | `maxBroadPhaseInstancePairs` | **Reasoned, not yet measured**: one AABB-overlap test is O(µs); the scan itself is the O(sourceCount×targetCount) concern, not any single comparison | `1_000_000` (provisional) | Rejects the whole `findClashes` call, before the nested AABB scan begins, if `sourceInstances.length × targetInstances.length` would exceed this — checked via overflow-safe division (`sourceCount > ceiling / targetCount`), not multiplication. **Round 18: this ceiling bounds how many pairs are tested, not how long the scan blocks for** — at O(µs)/test the ceiling case is ~1,000ms, ~40× the gate's own ≈24ms worst-case-span bound (Round 18's own comparison used this document's then-current ~16ms figure, superseded by Round 22's re-derivation; the conclusion is unchanged either way) — so the scan is no longer one synchronous span. It now checks the shared `frameBudgetMs` accumulator **before each individual instance pair**, yielding and resuming mid-scan (see **Data Flow** step 3), which moves it from non-preemptible to **cooperatively yieldable** and keeps overshoot bounded by one AABB test, per round 11's rule. The ceiling is retained, unlowered: with an inner checkpoint it bounds total *work* — and, separately, candidate-list memory and the narrow-phase work the scan hands downstream, neither of which chunking reduces. Its value still needs measurement. |
    | `releaseEpochScopedState`'s (and `dispose()`'s equivalent) per-epoch registry sweep | **Unmeasured, uncategorized in this table until this pass.** Grew from "drop some map entries" (round 15) into a real per-entry enumerative pass with per-entry cancellation-signal rejection (round 18's C3) and an oversized-marking carve-out (round 20), with no prior round classifying it here | — (no ceiling; accepted atomic risk) | **Non-preemptible, same category as one `enumNodeFragments` call and the three `maxSyncTriangleCount` phases.** Runs entirely inside the Viewer's own uncaught-throw-sensitive `BEFORE_MODEL_UNLOAD_EVENT`/`dispose()` call frames (see **`world.evictModel`**'s "Race safety" note), enumerating every `GeometryRegistry` entry filed under one epoch and settling each `'building'`/`'ready'` entry's cancellation signal in the same synchronous step; cost scales with the number of live entries under that epoch, which nothing in this design ceilings. This cost model covers only the `GeometryRegistry` half of the sweep — the same step also performs an independent deletion over the `CollisionInstance` cache's own keyspace (see "`CollisionInstance` identity cache" above), which this row does not separately cost: given the cache's physical partitioning (`Map<loadEpoch, Map<fragmentId, CollisionInstance>>`): for `evictModel`, that deletion is one outer-`Map.delete(loadEpoch)` call, O(1) regardless of how many fragments the outgoing epoch's bucket holds, not an enumerative cost like the `GeometryRegistry` half. For `dispose()`, the equivalent is one outer-`Map.clear()` call over *every* live epoch's bucket at once, not a per-epoch operation — whether that scales with the number of live epochs (which "Retention is bounded per epoch, not in total", above, leaves unceilinged) is unstated and unmeasured here, the same gap this row already carries for the `GeometryRegistry` half. No checkpoint exists inside it — it is required to be non-throwing (see **`world.evictModel`**), not preemptible. Its real worst-case cost must be measured by the performance gate rather than assumed negligible. |
    | `maxCollisionInstancesPerEpoch` (the `CollisionInstance` identity cache's per-epoch capacity check, see **`GeometryRegistry`**) | **Reasoned, not yet measured.** A synchronous size comparison against a bucket's current count is O(1) per affected epoch; the check itself is cheap. What is unmeasured is the retention this ceiling accepts: unlike every other bounded structure in this table, a resident canonical instance is never individually evicted while its epoch stays live (evicting one would break the stable-object-reference guarantee the stale-eviction fixture under **`world.evictModel`** depends on), so retained memory for a long-lived epoch grows monotonically toward this ceiling and stays there | provisional, value not yet chosen | Rejects the whole `findClashes` call, before any cache bucket changes or broad-/narrow-phase work starts, if publishing the call's missing instances would push any affected epoch's bucket over the limit — checked once per call, synchronously, with no intervening `await` between the check and committing every missing instance, so two concurrent calls cannot both pass against the same stale capacity observation. This bounds worst-case retained *count*, not retained *bytes* — a `CollisionInstance`'s own footprint (`fragmentId` + `GeometryIdentity`) is small and fixed-shape, but the product with a long-lived epoch's total unique fragment count is what the performance gate must actually measure. |
+   | `CollisionInstance` capacity-admission's recompute-and-commit (steps under "`CollisionInstance` identity cache," see **`GeometryRegistry`**) | **Reasoned, not yet measured**: `O(U)` where `U` is the call's complete unique fragment-id set — the recompute-missing scan plus the construct-freeze-and-publish loop, run in the same synchronous step as the row above's O(1) capacity comparison, with no intervening `await` (mandatory — see "`CollisionInstance` identity cache") | bounded by `maxCollisionInstancesPerEpoch` (same constant as the row above; provisional, value not yet chosen) via the call-wide precheck (see **Data Flow** step 3) | Non-preemptible by requirement. **Enforceably bounded, not an accepted atomic risk**: the call-wide precheck under **Data Flow** step 3 rejects, before this step ever begins, any call whose complete unique fragment-id count `U` exceeds `maxCollisionInstancesPerEpoch` — since a bucket capped at that ceiling can never need more than that many instances constructed in one admission, every call that reaches this step already has `U ≤ maxCollisionInstancesPerEpoch`, so this step's own worst-case cost is capped at that same ceiling. Its real worst-case cost, at that ceiling, must be measured by the performance gate — this row's classification does not become "measured" until it has. |
 
    The previously-guessed `200_000` for `maxCandidatePairsExamined` corresponds to ~53ms — three-plus
    dropped frames — which is why it drops to `50_000`. `maxSyncTriangleCount`'s three rows share one
@@ -1998,16 +2021,26 @@ milestone replaces, not merely an imprecision.
      resume once started, so its ceiling is enforced by permanently aborting it rather than by a
      checkpoint inside it, and its **own** duration is self-bounded independent of what ran before it —
      a private, traversal-local clock, deliberately not the shared accumulator (see the clock-basis
-     passage), worst case `frameBudgetMs` + one probe's own cost; this is the one documented, deliberate
-     exception to the shared-accumulator convention every other checkpoint in this design follows (Round
-     21's H-B7). But
+     passage), worst case `frameBudgetMs` + one probe's own cost; **this private-clock abort protocol is
+     the one documented, deliberate exception to the shared-accumulator convention every other checkpoint
+     in this design follows (Round 21's H-B7) — used by both `ProperCrossingQuery`'s traversal and
+     `SurfaceIntersectionQuery`'s. `SurfaceIntersectionQuery` is built on "the *same* `bvhcast` traversal
+     `ProperCrossingQuery` uses... and the same abort protocol" (see `SurfaceIntersectionQuery`'s own
+     definition), and the time-based trigger is checked at callback entry exactly as it is for a raw
+     candidate pair that never reaches `ProperCrossingQuery`'s own probe loop (see the clock-basis
+     passage's "checked at callback entry, as before" for that case) — so it applies unchanged to a
+     traversal with no probe loop at all. `SurfaceIntersectionQuery`'s own worst case is `frameBudgetMs` +
+     one raw candidate callback's own cost (~0.3µs, measured — see the atomic-operations table's
+     `maxCandidatePairsExamined` row), smaller than `ProperCrossingQuery`'s addend, so admitting it here
+     does not change this tier's own contribution to the formula.** But
      the checkpoint that decides *whether to start* that traversal at all — the ordinary pair/stage
      checkpoint under **`CollisionWorld`** — is the same conditional, shared-accumulator check as the
      build-phase bullet above, not a guaranteed yield. This traversal's self-bound describes its own
      cost once started, not the full span it can end up part of — the same composition gap as the build
-     phases, folded into the same corrected formula below. **`SurfaceCrossingWitness` is a second
-     `bvhcast`-native traversal (see `ProperCrossingQuery`'s budgets, "the contrast with
-     `ProperCrossingQuery`'s four-quadrant probe") but is not a second instance of this exception**: its
+     phases, folded into the same corrected formula below. **`SurfaceCrossingWitness` is a third
+     `bvhcast`-native traversal — after `ProperCrossingQuery`'s and, as admitted to this exception above,
+     `SurfaceIntersectionQuery`'s (see `ProperCrossingQuery`'s budgets, "the contrast with
+     `ProperCrossingQuery`'s four-quadrant probe") — but is not a further instance of this exception**: its
      own passage states its time-based abort checks *the shared* elapsed-time accumulator, at callback
      entry and before every probe — not a private clock. At that fine, per-probe granularity it belongs
      to the cooperative-composition tier below (bounded overshoot: one probe's own cost) rather than to
@@ -2063,8 +2096,11 @@ milestone replaces, not merely an imprecision.
      cost, sub-millisecond and negligible relative to `frameBudgetMs`. This part of the prior formula's
      first term was correct and stays.
    - For the enforceably-bounded, non-preemptible tier (the three `maxSyncTriangleCount` build phases;
-     the `maxChildrenPerNode`-capped `enumNodeChildren` call), the addend is that unit's own worst-case
-     cost. Of this tier's four members, three are measured — welding is the largest, at ~16.8ms. That
+     the `maxChildrenPerNode`-capped `enumNodeChildren` call; the `maxCollisionInstancesPerEpoch`-bounded
+     `CollisionInstance` capacity-admission recompute-and-commit — see the atomic-operations table and
+     "`CollisionInstance` identity cache" under `GeometryRegistry` for its own precheck), the addend is
+     that unit's own worst-case cost. Of this tier's five members, three are measured — welding is the
+     largest, at ~16.8ms. That
      figure was measured at ~19,800 triangles (see the atomic-operations table's welding row), not at the
      `12_000` sync-triangle ceiling itself; scaled down to the ceiling the true cost is smaller (~10.2ms),
      so using the as-measured ~16.8ms figure here is conservative, not tight. `frameBudgetMs` (`8`) plus
@@ -2072,25 +2108,35 @@ milestone replaces, not merely an imprecision.
      this exact figure, not a rounded-down ≈24ms, since a measurement between 24 and 24.8ms is inside the
      bound, not a violation of it — not the ≈16ms this section
      stated through Round 21, about 1.5× larger, because the prior figure silently dropped the
-     `frameBudgetMs` prefix. **The fourth member, one `enumNodeChildren` call at the `maxChildrenPerNode`
-     ceiling, is not one of the three measured costs this ≈24ms is computed from** — its own cost is
-     "reasoned, not measured — and deliberately not derived from any existing measurement" (see the
-     atomic-operations table). It is enforced (capped at `maxChildrenPerNode + 1` callbacks), not
-     ceiling-less like the two excluded accepted-risk rows below, so it belongs in this tier and this
-     formula in principle — but **≈24ms is provisional for it specifically until the performance gate
-     measures it** (gate criterion 7, below): if that measurement exceeds ~16.8ms, this tier's addend,
-     and the ≈24ms figure everywhere it's cited, must be revised upward to match, the same way
-     `maxSyncTriangleCount`'s own value stayed provisional until its three phases were measured.
-   - For the abort-only tier (`ProperCrossingQuery`'s `bvhcast` traversal — the one with the private,
-     traversal-local clock; `SurfaceCrossingWitness`'s own `bvhcast` traversal reads the shared
+     `frameBudgetMs` prefix. **The fourth and fifth members — one `enumNodeChildren` call at the
+     `maxChildrenPerNode` ceiling, and the capacity-admission recompute-and-commit at the
+     `maxCollisionInstancesPerEpoch` ceiling — are not among the three measured costs this ≈24ms is
+     computed from**; each one's own cost is "reasoned, not measured" (see the atomic-operations table).
+     Both are enforced by their own ceiling (the fourth capped at `maxChildrenPerNode + 1` callbacks; the
+     fifth capped at `maxCollisionInstancesPerEpoch` instances constructed, via the call-wide precheck),
+     not ceiling-less like the three excluded accepted-risk rows below, so both belong in this tier and this
+     formula in principle — but **≈24ms is provisional for both specifically until the performance gate
+     measures them** (gate criterion 7 for the fourth; the capacity-admission gate criterion below for the
+     fifth) and, for the fifth, until `maxCollisionInstancesPerEpoch` itself is given a chosen value
+     (currently provisional — see "`CollisionInstance` identity cache"): if either measurement exceeds
+     ~16.8ms, this tier's addend, and the ≈24ms figure everywhere it's cited, must be revised upward to
+     match, the same way `maxSyncTriangleCount`'s own value stayed provisional until its three phases were
+     measured.
+   - For the abort-only tier (`ProperCrossingQuery`'s `bvhcast` traversal and `SurfaceIntersectionQuery`'s
+     — both reading the private, traversal-local clock as part of the same abort protocol (see the
+     abort-only bullet above); `SurfaceCrossingWitness`'s own `bvhcast` traversal reads the shared
      accumulator instead and falls under the cooperatively-yieldable tier above, not this one — see the
-     abort-only bullet), the addend is that traversal's own self-bounded worst case, `frameBudgetMs` +
+     abort-only bullet), the addend is that traversal's own self-bounded worst case. For
+     `ProperCrossingQuery`: `frameBudgetMs` +
      one probe's own cost (~`frameBudgetMs`, independently derived under `ProperCrossingQuery`'s budgets
      — see the corrected clock-basis passage), giving a composed span of `frameBudgetMs` (this formula's
      own outer prefix) + (`frameBudgetMs` + one probe) ≈ 2×`frameBudgetMs` ≈ **~16ms** for this tier —
      comfortably under the enforceably-bounded tier's controlling **≈24ms** figure above, which admitting
      this traversal to the abort-only tier does not change (see the clock-basis passage's independent
-     ~16.8ms-vs-`frameBudgetMs`+one-probe comparison).
+     ~16.8ms-vs-`frameBudgetMs`+one-probe comparison). For `SurfaceIntersectionQuery`, which has no probe
+     loop, the addend is `frameBudgetMs` + one raw candidate callback's own cost (~0.3µs, measured — see
+     the `maxCandidatePairsExamined` row) — strictly smaller than `ProperCrossingQuery`'s addend, so it
+     does not raise this tier's own composed span above ~16ms either.
 
    **Any number of checkpointed units may share a synchronous span — not only one.** An earlier draft of
    this passage claimed only one non-preemptible/abort-only unit could ever be the one absorbing prior
@@ -2110,9 +2156,10 @@ milestone replaces, not merely an imprecision.
    **This corrected formula is still not a finite worst-case-span guarantee for the whole design, and
    Round 22 does not claim it is one** — for the same reason this section already gave through Round 21:
    the table above deliberately contains rows with no ceiling at all — one non-recursive
-   `enumNodeFragments(node, cb, false)` call, and `releaseEpochScopedState`/`dispose()`'s own per-epoch
-   registry sweep (see the atomic-operations table), for which **this spec claims no bound and accepts
-   the cost as a Milestone-1 risk**. Both rows, and the `enumNodeFragments` atomic risk rounds 16 and 17
+   `enumNodeFragments(node, cb, false)` call, `releaseEpochScopedState`/`dispose()`'s own per-epoch
+   registry sweep, and `ViewerGeometryAdapter`'s normalization + active-range ceiling classification (see
+   the atomic-operations table), for which **this spec claims no bound and accepts
+   the cost as a Milestone-1 risk**. All three rows, and the `enumNodeFragments` atomic risk rounds 16 and 17
    tracked more generally, are **explicitly excluded from the formula above and from any finite
    worst-case-span guarantee this spec makes.** A model in which one node directly owns a pathological
    fragment count, one epoch accumulates a pathological number of live `GeometryRegistry` entries, or
@@ -2126,14 +2173,17 @@ milestone replaces, not merely an imprecision.
 
    What the formula *does* bound is every span composed out of primitives that are actually ceilinged:
    the three `maxSyncTriangleCount` build phases, the `maxChildrenPerNode`-capped `enumNodeChildren`
-   call, `ProperCrossingQuery`'s `bvhcast` traversal's own self-bounded worst case (see the abort-only
-   bullet above for why `SurfaceCrossingWitness`'s own traversal is covered by the
-   cooperative-composition tier instead), the now-chunked broad-phase scan, and the per-primitive
-   checkpoints above. Even over those it
+   call, the `maxCollisionInstancesPerEpoch`-bounded `CollisionInstance` capacity-admission
+   recompute-and-commit, `ProperCrossingQuery`'s and `SurfaceIntersectionQuery`'s `bvhcast` traversals'
+   own self-bounded worst cases (see the abort-only bullet above for why `SurfaceCrossingWitness`'s own
+   traversal is covered by the cooperative-composition tier instead), the now-chunked broad-phase scan,
+   and the per-primitive checkpoints above. Even over those it
    is only as good as the table's unmeasured rows — which is why closing the measurement gap (the three
-   build phases, extraction's aggregate walk, one `enumNodeFragments` call on its own, one
-   `enumNodeChildren` call at the fanout ceiling, and the broad-phase scan's longest uninterrupted span)
-   is a required part of the performance gate rather than an assumption this spec quietly relies on.
+   build phases, extraction's aggregate walk, one `enumNodeFragments` call on its own,
+   `ViewerGeometryAdapter`'s normalization and ceiling classification, one `enumNodeChildren` call at the
+   fanout ceiling, the `CollisionInstance` capacity-admission recompute-and-commit at the
+   `maxCollisionInstancesPerEpoch` ceiling, and the broad-phase scan's longest uninterrupted span) is a
+   required part of the performance gate rather than an assumption this spec quietly relies on.
    This is also the concrete reason for the standing warning under **Risks**: treat "the budgets bound
    it" as a property to re-verify whenever a new traversal is added, not as a standing invariant.
 
@@ -2149,9 +2199,10 @@ milestone replaces, not merely an imprecision.
 
    Both mechanisms key off the same constant, `frameBudgetMs`; they do **not** always key off the same
    clock. The yield-and-resume mechanism, and `SurfaceCrossingWitness`'s own abort-and-diagnose check,
-   read the shared per-call accumulator; `ProperCrossingQuery`'s `bvhcast` abort-and-diagnose check is the
-   one documented exception, reading a private, traversal-local clock instead (see the clock-basis
-   passage above). They differ, beyond that, only in *where* the check
+   read the shared per-call accumulator; `ProperCrossingQuery`'s and `SurfaceIntersectionQuery`'s
+   `bvhcast` abort-and-diagnose checks are the one documented exception — the same private-clock protocol,
+   used by both traversals (see the abort-only bullet above) — reading a private, traversal-local clock
+   instead (see the clock-basis passage above). They differ, beyond that, only in *where* the check
    runs and *what happens* when it trips — abort-and-diagnose inside a synchronous native traversal
    that cannot pause, versus genuinely yield-and-resume in plain JS loops that can (see
    **`ContainmentQuery`**'s sampling stages below, and **`CollisionWorld`** for the pair/stage
@@ -2515,8 +2566,10 @@ count per confirmed pair, though total runtime still needs measurement, not the 
 passage previously overclaimed). Being `bvhcast`-native, this traversal cannot `await`, yield, or resume:
 the shared elapsed-time accumulator is checked at callback entry and immediately before every probe, and
 exceeding either count ceiling or `frameBudgetMs` sets a traversal-local `aborted` flag and returns `true`
-from the callback — inspected after `bvhcast` returns, exactly as `ProperCrossingQuery`'s own abort
-protocol works, producing a diagnosed negative with `crossing-budget-exhausted` rather than a witness. The
+from the callback — inspected after `bvhcast` returns, the same flag-and-callback-return mechanism
+`ProperCrossingQuery`'s own abort protocol uses, though (as above) checked against the shared accumulator,
+not the private clock that protocol's documented exception status specifically depends on — producing a
+diagnosed negative with `crossing-budget-exhausted` rather than a witness. The
 outer `CollisionWorld` checkpoint may still yield afterward.
 
 **Term ordering is cheapest-first:** vertex sampling resolves the common case (a fixture inside a room)
@@ -2857,30 +2910,43 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
         instance or a placement will need — `fragmentId`, `GeometryIdentity` (`loadEpoch` +
         `geometryIndex`), and this call's own `worldMatrix`/`worldBounds` snapshot — so no later phase
         needs to call back into `fragList` or any other Viewer getter.
-     2. After the walk's last possible yield, look up the affected epoch's bucket **without creating it**
+     2. **Before touching any cache bucket**, check the walk's own complete unique fragment-id count
+        against `maxCollisionInstancesPerEpoch`. If it is exceeded, reject the entire call now, without
+        looking up or creating any bucket: a bucket capped at `maxCollisionInstancesPerEpoch` can never
+        need more instances constructed in one admission than that ceiling allows, whatever the bucket's
+        existing contents are, so this rejection is never premature — every call this precheck admits is
+        guaranteed `U ≤ maxCollisionInstancesPerEpoch` for every later step in this sequence (`U` = the
+        walk's unique fragment-id count). This is what makes step 4's recompute-and-commit an
+        **enforceably bounded**, not merely non-preemptible, synchronous span (see the atomic-operations
+        table).
+     3. After the walk's last possible yield, look up the affected epoch's bucket **without creating it**
         if it does not yet exist, and recompute — against that bucket's *current* contents, not a count
         carried over from earlier in the walk — which of the call's unique fragment ids are still missing.
         A concurrent call's commits during any of the walk's own yields can otherwise leave an earlier
         count stale.
-     3. In that same synchronous step — no intervening `await`, no call out to any external callback,
+     4. In that same synchronous step — no intervening `await`, no call out to any external callback,
         getter, or other reentrant operation — check the affected epoch's `maxCollisionInstancesPerEpoch`
         capacity (`currentBucketSize + uniqueMissingCount`). If it would be exceeded, reject the entire
         call now: no bucket is created, no canonical instance is constructed, and no
-        `PlacedCollisionInstance` is constructed for any fragment in the query. Otherwise create the
+        `PlacedCollisionInstance` is constructed for any fragment in the query. **Step 2's precheck does
+        not replace this check** — a call can pass step 2 (its own unique-fragment count is under the
+        ceiling) and still be rejected here, if the bucket's own pre-existing contents from other calls
+        push the combined total over the ceiling; step 2 only bounds this step's own *cost*, not its
+        *outcome*. Otherwise create the
         bucket if it did not already exist and construct and publish a canonical `CollisionInstance`
         (frozen, `fragmentId` + `GeometryIdentity`, no transform state) for every missing fragment id,
         entirely from the inputs phase 1 captured.
-     4. **Only after that admission succeeds**, build this call's own `PlacedCollisionInstance` values —
+     5. **Only after that admission succeeds**, build this call's own `PlacedCollisionInstance` values —
         pairing each canonical `CollisionInstance` (existing or just-published) with this call's own
         `worldMatrix`/`worldBounds` snapshot from phase 1 (see **Broad phase**, below, for why those must
         be call-local).
 
      "Look up or create," applied to this cache anywhere else in this document, means exactly this
      sequence — a lookup that finds nothing stages nothing on its own; the instance is only ever
-     constructed during phase 3's admission, never earlier and never partially. This zero-mutation
-     guarantee is specific to a capacity rejection: a later failure in placement construction or in the
-     broad-/narrow-phase work that follows can still leave phase 3's committed instances resident, and is
-     not covered by it.
+     constructed during phase 4's admission, never earlier and never partially. This zero-mutation
+     guarantee is specific to a capacity rejection (step 2's or step 4's): a later failure in placement
+     construction or in the broad-/narrow-phase work that follows can still leave a completed admission's
+     committed instances resident, and is not covered by it.
    - **Broad phase**: before the nested scan, check `sourceInstances.length × targetInstances.length`
      against **`maxBroadPhaseInstancePairs`** (`1_000_000`, provisional — same table), using
      overflow-safe division (`sourceInstances.length > maxBroadPhaseInstancePairs /
@@ -2892,9 +2958,11 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
 
      **Round 18 found the ceiling bounds the scan's total work and says nothing about its span.** At
      this table's own stated O(µs) per AABB-overlap test, `1_000_000` pairs is roughly **1,000ms** of
-     uninterruptible synchronous work — the largest single span in this design, about **60× the
-     performance gate's own ~16ms pass criterion** — reached while the surrounding prose claimed
-     frame-scale bounds. The spec had already done exactly this arithmetic once, for
+     uninterruptible synchronous work — the largest single span in this design, about **~40× the gate's
+     own ≈24ms worst-case-span bound** (Round 18's own comparison used this document's then-current
+     ~16ms figure, superseded by Round 22's re-derivation to 24.8ms; the conclusion is unchanged either
+     way) — reached while the surrounding prose claimed frame-scale bounds. The spec had already done
+     exactly this arithmetic once, for
      `maxCandidatePairsExamined` (`200_000` → `50_000`, because `200_000` costs ~53ms); it was never
      applied here. The fix is not a smaller ceiling — that only narrows how bad the ceiling case is
      while leaving a genuinely large scene uninterruptible — but an **inner checkpoint, at the same
@@ -2930,23 +2998,36 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
      placement snapshots. The lifecycle checkpoint
      catches eviction and disposal; it does **not** catch a transform, explode, or visibility change
      mid-scan, and the snapshot is what makes that harmless rather than a torn read.
-   - **Narrow phase**: for each candidate pair, check both geometries' **active-range triangle counts**
-     (`activeTriangleCount = Σ floor(ranges[].count / 3)` — the ranges' counts are index elements, not
-     triangles; round 16: never the raw index's own count, see `ThreeMeshBvhBackend`/
-     `BlasCache`) against `maxSyncTriangleCount` (`12_000` — revised in round 15) first — if either
-     exceeds it, skip the pair: `GeometryRegistry` marks that geometry's entry oversized (see the ceiling
-     check under `ThreeMeshBvhBackend`/`BlasCache` above) and this phase records a
-     `geometry-too-large-for-sync-build` diagnostic against the offending fragment. That diagnostic is
-     **fragment-scoped and deduplicated**
-     against a fragment-keyed set scoped to this `findClashes` call: being oversized is a property of the
-     geometry alone, not of the pairing, but the diagnostic still names the fragment — the unit a caller
-     can act on in the model tree — so one entry is emitted per oversized fragment no matter how many
-     candidate pairs it appears in. Otherwise lazily get/build the `GeometryRecord` via
-     `GeometryRegistry`/`BlasCache` — active-range compaction and welding together, then (only for a mode
-     that calls `anyComponentInside` — `containment` or `volume-overlap`, not `surface-intersection`)
-     connectivity, then the BVH, each its own checkpointed phase, see `ThreeMeshBvhBackend`/`BlasCache`
-     — then run the query for `query.mode` — `ContainmentModeQuery` for the room-locator's `containment`,
-     or `VolumeOverlapQuery` / `SurfaceIntersectionQuery` — with the pair's relative matrix.
+   - **Narrow phase**: for each candidate pair, look up each geometry's `GeometryRegistry` entry for its
+     `(loadEpoch, geometryIndex)` — the same dedup key every phase of this record uses. An existing
+     **oversized marking** skips the pair immediately, recording a `geometry-too-large-for-sync-build`
+     diagnostic against the offending fragment (**fragment-scoped and deduplicated** against a
+     fragment-keyed set scoped to this `findClashes` call: being oversized is a property of the geometry
+     alone, not of the pairing, but the diagnostic still names the fragment — the unit a caller can act on
+     in the model tree — so one entry is emitted per oversized fragment no matter how many candidate pairs
+     it appears in) — **without re-running `ViewerGeometryAdapter` or the ceiling check**, both of which
+     already ran and settled this verdict the first time any pair touched this geometry. An existing
+     `'building'`/`'ready'` entry likewise skips straight to awaiting its phase slots, below. **Only a
+     lookup that finds no entry at all** runs, in this order (see the classification row in the
+     atomic-operations table, distinct from the compaction+welding-phase row, and the active-range gate
+     above for the synchronous/non-reentrant assumption this ordering depends on): `ViewerGeometryAdapter`'s
+     layout normalization producing `ranges: TriangleRange[]`; the conversion to `activeTriangleCount = Σ
+     floor(ranges[].count / 3)` (the ranges' counts are index elements, not triangles; round 16: never the
+     raw index's own count, see `ThreeMeshBvhBackend`/`BlasCache`); then the ceiling check against
+     `maxSyncTriangleCount` (`12_000` — revised in round 15) — over the ceiling, the entry is inserted as
+     an oversized marking (recording the diagnostic above) with no compacted buffer ever materialized; at
+     or under it, the entry is inserted `'building'` and active-range compaction and welding proceed
+     together, then (only for a mode that calls `anyComponentInside` — `containment` or `volume-overlap`,
+     not `surface-intersection`) connectivity, then the BVH, each its own checkpointed phase, see
+     `ThreeMeshBvhBackend`/`BlasCache`. Either way, once the entry is settled — as an oversized marking or
+     a `'building'`/`'ready'` record — every later pair that shares this geometry reads that settled entry
+     and never repeats normalization or the ceiling check. **This dedup guarantee covers only the ceiling
+     outcome** — a normalization failure (`unsupported-geometry-layout` or `rejected-primitive-range`)
+     settles no persistent entry state, so those two diagnoses can still be re-emitted per candidate pair;
+     see the active-range gate above (this is a pre-existing gap this pass narrows the scope of, not one it
+     closes). Once the entry's phases resolve, run the query
+     for `query.mode` — `ContainmentModeQuery` for the room-locator's `containment`, or
+     `VolumeOverlapQuery` / `SurfaceIntersectionQuery` — with the pair's relative matrix.
 
      **Yielding is governed by one shared wall-clock budget for the entire `findClashes` call, not
      only by new build-phase starts.** Welding, connectivity construction, and `MeshBVH` construction are
@@ -3522,6 +3603,7 @@ type PairDiagnosticReason =
   | 'crossing-budget-exhausted'       // candidate-count, crossing-count, or elapsed-time ceiling hit;
                                       //   traversal aborted
   | 'non-manifold-component'          // NEGATIVE result involving a component the guarantee misses
+                                      //   (never emitted in 'containment' mode — see Query modes)
   | 'unverified-open-component'       // volume-overlap POSITIVE decided by an open component. Carries
                                       //   `role` naming WHICH public operand supplied that component
                                       //   (never emitted in 'containment' mode — see Query modes)
@@ -3689,11 +3771,14 @@ its counters zeroed (`broadPhasePairs: 0`, etc.) rather than the field being omi
   generic ray directions (see `ContainmentQuery`). Unresolved components under a negative produce
   `inconclusive-containment` rather than a silent guess; a parity operand that isn't certified closed
   at all produces `unverified-parity-operand` on every result.
-- **Non-manifold or open components sampled by `anyComponentInside`** (the public source in
-  `containment` mode; either public operand in `volume-overlap` mode, depending on which containment
-  term is sampling it): the containment guarantee doesn't cover them (see `anyComponentInside`), so a
-  negative result involving one emits `non-manifold-component`. Sampling still runs — this degrades a
-  verified negative to an unverified one, it doesn't skip work.
+- **Non-manifold or open components sampled by `anyComponentInside`** (either public operand in
+  `volume-overlap` mode, depending on which containment term is sampling it): the containment
+  guarantee doesn't cover them (see `anyComponentInside`), so a negative result involving one emits
+  `non-manifold-component`. Sampling still runs — this degrades a verified negative to an unverified
+  one, it doesn't skip work. **Not emitted in `containment` mode**, whose contract covers open or
+  non-manifold sources by construction — that mode split is what keeps this diagnostic meaningful
+  instead of firing on nearly every real query (the acceptance-model bathtub welds to 14 open
+  components; see **Query modes and their preconditions**).
 - **A `volume-overlap` positive decided by an open component, on either side**: emits
   `unverified-open-component` with `role` naming whichever public operand supplied the deciding
   component — `source` when `anyComponentOf(source) inside target` decided it, `target` when
@@ -3894,8 +3979,10 @@ refactor can't silently reintroduce a bug an earlier round already found.
     edge-connectivity they are separate components and it cannot.
   - **two solids joined along a shared edge, one inside and one outside** — the case
     edge-connectivity does *not* separate. Whatever the sampled result, the component must be flagged
-    non-manifold and a negative must carry `non-manifold-component`. This fixture pins the honest
-    limit rather than asserting a guarantee that doesn't hold.
+    non-manifold and a negative must carry `non-manifold-component` (this exercises the shared
+    `ContainmentQuery` primitive directly; a negative reaching `findClashes` through `containment`
+    mode's source path never carries it — see **Query modes and their preconditions**). This fixture
+    pins the honest limit rather than asserting a guarantee that doesn't hold.
   - **a closed solid deep inside the target while sharing one coplanar face with it** — must report
     contained. Regression test for round 4's fixed 4-sample cap: there is no proper crossing, so the
     result rests entirely on containment, and if sampling gives up while its picks sit on the shared
@@ -4123,7 +4210,8 @@ refactor can't silently reintroduce a bug an earlier round already found.
     the distinction is retained anyway, for a future cross-model milestone).
   - **Round 16's core regression test for the active-range-compaction Critical: a fragment whose raw
     index buffer encodes far more triangles than `maxSyncTriangleCount`, but whose `ranges: TriangleRange[]`
-    (from normalization) cover a small active subset well under the ceiling** — the pair must **not** be
+    (from `ViewerGeometryAdapter`, computed once on this geometry's first registry touch — see the
+    active-range gate) cover a small active subset well under the ceiling** — the pair must **not** be
     skipped as `geometry-too-large-for-sync-build` (the active count is what's checked, not the raw
     count), and a spy on the weld step (`mergeVertices` or its call site) must show it was invoked with a
     geometry sized to the *active* triangle count, never the raw one. A design that checks
@@ -4290,6 +4378,18 @@ refactor can't silently reintroduce a bug an earlier round already found.
     via a spy: no `PlacedCollisionInstance` is constructed for any fragment in the query). A repeat call
     querying only fragments already resident in the bucket must succeed normally, since it creates no new
     entries and cannot itself exceed the ceiling.
+  - **`findClashes` called with a walk whose own complete unique fragment-id set exceeds
+    `maxCollisionInstancesPerEpoch`, against an epoch whose bucket is still empty** — the call-wide
+    precheck must reject the entire call **before** any bucket lookup or `CollisionInstance` construction
+    (asserted via spies: zero calls to the bucket-lookup path, zero `CollisionInstance` constructions).
+    Regression test distinguishing the precheck (step 2, keyed on the walk's own unique-fragment count)
+    from the bucket-capacity check immediately above (step 4, keyed on the bucket's combined contents) —
+    not by outcome (an empty bucket's combined total is exactly the query's own unique set, so step 4
+    would also eventually reject this call) but by **when and how** the rejection happens: a design that
+    only implements the bucket-capacity check still rejects this call, but only after looking up the
+    bucket, so it passes the fixture above yet fails this one by tripping the "zero calls to the
+    bucket-lookup path" spy — the precheck's own "before any bucket lookup or `CollisionInstance`
+    construction" guarantee is what this fixture pins, not a difference in which calls get rejected.
   - **A *different* `Model` object is admitted under a reused `modelId` and queried *before* the old
     object under that same id is ever evicted** — i.e. the old object's `modelLifecycle` entry is still
     `'live'` throughout. The new object's first `findClashes` call must build a **fresh** `GeometryRecord`
@@ -4443,18 +4543,21 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   read as a failure** — not the ≈16ms this criterion
   stated through Round 21 (which omitted the `frameBudgetMs` prefix a conditional checkpoint can let a
   phase or traversal inherit — see the Round 22 re-derivation) — measured on **both** runs, **except the
-  two synchronous spans this spec explicitly excludes from any worst-case-span guarantee** — one
-  `enumNodeFragments(node, cb, false)` call and `releaseEpochScopedState`/`dispose()`'s own per-epoch
-  registry sweep (see the worst-case-span formula's explicit exclusion, above, and the
+  three synchronous spans this spec explicitly excludes from any worst-case-span guarantee** — one
+  `enumNodeFragments(node, cb, false)` call, `releaseEpochScopedState`/`dispose()`'s own per-epoch
+  registry sweep, and `ViewerGeometryAdapter`'s normalization + active-range ceiling classification (see
+  the worst-case-span formula's explicit exclusion, above, and the
   atomic-operations table) — for which a measurement above the corrected bound is a required recorded
   finding, not a gate failure; a measurement above the corrected bound on any other synchronous task **is** a gate
-  failure, **with one provisional exception**: one `enumNodeChildren` call at the `maxChildrenPerNode`
-  ceiling (criterion 7, below) is the fourth, still-unmeasured member of the 24.8ms figure's own
-  enforceably-bounded tier, not one of the three costs it was computed from — if its measured cost pushes
-  the true bound above 24.8ms, that is this criterion's own tolerance being corrected by measurement, not
-  a failure of this criterion; every other synchronous task's 24.8ms tolerance is not provisional in the
-  same way. Record the browser's longest task across each (the Long Tasks API where available,
-  or `performance.now()` deltas bracketing every yield point otherwise);
+  failure, **with two provisional exceptions**: one `enumNodeChildren` call at the `maxChildrenPerNode`
+  ceiling (criterion 7, below), and the `CollisionInstance` capacity-admission's recompute-and-commit at
+  the `maxCollisionInstancesPerEpoch` ceiling (the capacity-admission criterion below) — the fourth and
+  fifth, still-unmeasured members of the 24.8ms figure's own enforceably-bounded tier (see "five members"
+  under `ProperCrossingQuery`'s budgets), neither one of the three costs it was computed from — if either
+  one's measured cost pushes the true bound above 24.8ms, that is this criterion's own tolerance being
+  corrected by measurement, not a failure of this criterion; every other synchronous task's 24.8ms
+  tolerance is not provisional in the same way. Record the browser's longest task across each (the Long
+  Tasks API where available, or `performance.now()` deltas bracketing every yield point otherwise);
 - any budget that trips does so with the correct diagnostic (`geometry-too-large-for-sync-build`,
   `crossing-budget-exhausted`) rather than a freeze or a fabricated clash;
 - the measured per-candidate and per-build costs are recorded next to `measure.mjs`'s synthetic
@@ -4471,7 +4574,7 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   own per-probe checkpoint (see the clock-basis passage under `ProperCrossingQuery`'s budgets for why it
   reads the shared accumulator, unlike `ProperCrossingQuery`'s traversal) belongs to this same
   cooperatively-yieldable tier and is covered by the same overshoot claim; it is named here explicitly
-  because, unlike the two accepted-risk exclusions and `enumNodeChildren` (criterion 7 below), no other
+  because, unlike the three accepted-risk exclusions and `enumNodeChildren` (criterion 7 below), no other
   criterion below names it as its own single-call measurement target.
 - **each of the three `GeometryRecord`-build phases — welding, connectivity, BVH construction — is
   measured individually, at `maxSyncTriangleCount`, not only in combination.** Round 15 found the prior
@@ -4516,6 +4619,16 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   a behaviour the gate must observe rather than trust. As with the `enumNodeFragments` row above, a
   model whose widest node has far fewer children than the ceiling cannot exercise this at all —
   recording that limitation is itself a gate finding, not a pass.
+- **The `CollisionInstance` capacity-admission's recompute-and-commit is measured and recorded
+  separately from its own precheck**, at a `GeometryRegistry`/cache state where the call-wide unique
+  fragment-id count sits at (or just under) `maxCollisionInstancesPerEpoch`. `maxCollisionInstancesPerEpoch`
+  is a provisional limit on how many `CollisionInstance` constructions this step may cost in one call, not
+  a figure derived from any measurement (see the atomic-operations table). Measure the step's own
+  wall-clock cost at that ceiling, and separately assert that the call-wide precheck actually rejects a
+  call whose unique fragment-id count exceeds the ceiling **before** any bucket lookup or
+  `CollisionInstance` construction (see the regression fixture under Testing & Verification). A model
+  whose calls never collect fragments anywhere near `maxCollisionInstancesPerEpoch` cannot exercise this
+  risk at scale; recording that limitation is itself a gate finding, not a pass.
 - **Round 17: the worst-case cost of one `enumNodeFragments(node, cb, false)` call, on a node chosen to
   directly own as many fragments as the model actually allows, is measured and recorded separately from
   the walk's aggregate extraction cost above.** This is the accepted non-preemptible atomic risk round 17
@@ -4537,6 +4650,14 @@ already resident, which is exactly the scenario the earlier gate left unmeasured
   table's sweep-cost row). A model whose epoch never accumulates more
   than a handful of `GeometryRegistry` entries cannot exercise this risk at scale; recording that
   limitation is itself a gate finding, not a pass.
+- **`ViewerGeometryAdapter`'s normalization and active-range ceiling classification is measured and
+  recorded separately from the compaction+welding phase it precedes.** This is the third accepted
+  non-preemptible atomic risk in the atomic-operations table (see above) — no prior round measured the
+  cost of the `getRenderProxy` call and range-count summation this step performs before every
+  `GeometryRecord`'s first build. Measure it at a range count representative of the model's most
+  fragmented geometry (many small `TriangleRange` groups), since `O(ranges)` is this step's only
+  unceilinged term. A model whose geometries all normalize to a small, flat `ranges` array cannot exercise
+  this risk at scale; recording that limitation is itself a gate finding, not a pass.
 - **The `CollisionInstance` identity cache's retained size, per epoch, is measured across a realistic
   session — repeated `findClashes` calls against a long-lived model, not a single call.** Unlike every
   other bounded structure this gate measures, this cache's resident count only grows while its epoch
@@ -4625,11 +4746,20 @@ shipping the acceleration structures untested and calling the milestone verified
   be every pair in overlapping leaves), and containment sampling that may walk a whole component's
   vertices before falling back to constructed witnesses. Each was added to fix a real correctness
   defect and none is obviously expensive, but they compound, and there is still no benchmark suite.
-  With `maxCandidatePairsExamined` added this round, the budgets do now bound the worst case — but
-  note that claim was made in round 5 and was **false when written**: nothing capped the raw
-  candidate loop, so a dense leaf overlap could run for seconds. Treat "the budgets bound it" as a
-  property to re-verify whenever a new traversal is added, not as a standing invariant. The residual
-  risk is *latency on realistic input*; measure before tuning any budget down.
+  With `maxCandidatePairsExamined` added this round, the budgets bound the worst case for every span
+  this document actually ceilings — they do **not** bound the worst case for the whole design.
+  `enumNodeFragments`'s non-recursive call, the `dispose()` registry sweep, and any other span this
+  spec names as an accepted non-preemptible atomic risk remain unbounded by construction, excluded
+  from the formula on purpose (see the "Atomic operations and what remains non-preemptible" note under
+  **`ProperCrossingQuery`**'s budgets, "still not a finite worst-case-span guarantee," and the
+  atomic-operations table). An earlier version of this bullet
+  asserted, present-tense, that the budgets now bound the worst case outright — that claim was made
+  in round 5 and was **false when written** (nothing capped the raw candidate loop then, so a dense
+  leaf overlap could run for seconds), and it is superseded here by Round 22's corrected formula and
+  its explicit exclusion list, which is the section that governs. Treat "the budgets bound it" as a
+  property to re-verify whenever a new traversal or atomic unit is added, not as a standing invariant.
+  The residual risk is *latency on realistic input* for the ceilinged work, and **accepted, unbounded
+  cost** for the excluded atomic-risk spans; measure before tuning any budget down.
 - **The acceptance model cannot validate any of the acceleration machinery** (B7). This is the
   sharpest consequence of settling B7 in favour of keeping the BVH, and it deserves stating as a risk
   rather than as a footnote to that decision. Rooms here are 12–64 triangles; brute force resolved
