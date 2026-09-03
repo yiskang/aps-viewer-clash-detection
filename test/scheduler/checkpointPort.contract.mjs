@@ -83,6 +83,8 @@ export function runCheckpointPortContractTests(makePort, { suiteName = 'Checkpoi
       controls.forceYieldDue();
       const pending = port.checkpoint({ loadEpoch: 1 });
       assert.ok(pending instanceof Promise, 'a due checkpoint must return a real Promise, not undefined');
+      assert.equal(controls.getYieldInvocationCount(), 1, 'yield invoked synchronously');
+      if (controls.resolveNextYield) controls.resolveNextYield();
       await pending;
       assert.equal(controls.getYieldInvocationCount(), 1, 'exactly one real yield per due checkpoint call');
     });
@@ -100,6 +102,7 @@ export function runCheckpointPortContractTests(makePort, { suiteName = 'Checkpoi
       // current synchronous stack finishes (confirmed via codex-advisor before relying
       // on this technique here).
       controls.setDisposed(true);
+      if (controls.resolveNextYield) controls.resolveNextYield();
       await assert.rejects(pending, { name: 'WorldDisposedError' });
     });
 
@@ -110,6 +113,7 @@ export function runCheckpointPortContractTests(makePort, { suiteName = 'Checkpoi
       controls.forceYieldDue();
       const pending = port.checkpoint({ loadEpoch: 1 });
       controls.setEpochLive(1, false);
+      if (controls.resolveNextYield) controls.resolveNextYield();
       await assert.rejects(pending, { name: 'ModelEvictedError' });
     });
 
@@ -121,7 +125,69 @@ export function runCheckpointPortContractTests(makePort, { suiteName = 'Checkpoi
       const pending = port.checkpoint({ loadEpoch: 1 });
       controls.setDisposed(true);
       controls.setEpochLive(1, false);
+      if (controls.resolveNextYield) controls.resolveNextYield();
       await assert.rejects(pending, { name: 'WorldDisposedError' });
+    });
+
+    await t.test('throws WorldDisposedError SYNCHRONOUSLY even when yield is due (pre-yield validation)', () => {
+      const { port, controls } = makePort();
+      controls.setEpochLive(1, true);
+      controls.setDisposed(true);
+      controls.forceYieldDue();
+      assert.throws(() => port.checkpoint({ loadEpoch: 1 }), { name: 'WorldDisposedError' });
+      assert.equal(controls.getYieldInvocationCount(), 0, 'validation throws before yield is invoked');
+    });
+
+    await t.test('throws ModelEvictedError SYNCHRONOUSLY even when yield is due (pre-yield validation)', () => {
+      const { port, controls } = makePort();
+      controls.setDisposed(false);
+      controls.setEpochLive(1, false);
+      controls.forceYieldDue();
+      assert.throws(() => port.checkpoint({ loadEpoch: 1 }), { name: 'ModelEvictedError' });
+      assert.equal(controls.getYieldInvocationCount(), 0, 'validation throws before yield is invoked');
+    });
+
+    await t.test('due -> yield primitive is invoked SYNCHRONOUSLY (before return, observable via count)', async () => {
+      const { port, controls } = makePort();
+      controls.setEpochLive(1, true);
+      controls.setDisposed(false);
+      controls.forceYieldDue();
+      const pending = port.checkpoint({ loadEpoch: 1 });
+      assert.ok(pending instanceof Promise);
+      assert.equal(controls.getYieldInvocationCount(), 1, 'yield invoked synchronously before returning');
+      // Resolve the yield to clean up
+      if (controls.resolveNextYield) controls.resolveNextYield();
+      await pending;
+    });
+
+    await t.test('due -> revalidation is gated on yield resolution, disposed-first ordering', async () => {
+      const { port, controls } = makePort();
+      controls.setEpochLive(1, true);
+      controls.setDisposed(false);
+      controls.forceYieldDue();
+      const pending = port.checkpoint({ loadEpoch: 1 });
+      assert.equal(controls.getYieldInvocationCount(), 1);
+      // Mutate state before resolving the yield
+      controls.setDisposed(true);
+      // Resolve the yield and let the async function run
+      if (controls.resolveNextYield) controls.resolveNextYield();
+      // Revalidation should now run and reject with WorldDisposedError
+      await assert.rejects(pending, { name: 'WorldDisposedError' });
+    });
+
+    await t.test('due -> revalidation is gated on yield resolution, evicted epoch', async () => {
+      const { port, controls } = makePort();
+      controls.setEpochLive(1, true);
+      controls.setDisposed(false);
+      controls.forceYieldDue();
+      const pending = port.checkpoint({ loadEpoch: 1 });
+      assert.equal(controls.getYieldInvocationCount(), 1);
+      // Mutate state before resolving the yield
+      controls.setEpochLive(1, false);
+      // Resolve the yield and let the async function run
+      if (controls.resolveNextYield) controls.resolveNextYield();
+      // Revalidation should now run and reject with ModelEvictedError
+      await assert.rejects(pending, { name: 'ModelEvictedError' });
     });
   });
 }

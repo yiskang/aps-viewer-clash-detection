@@ -1,12 +1,13 @@
 import { createCheckpointPort, createFrameBudgetAccumulator } from '../../collision/scheduler.js';
 import { runCheckpointPortContractTests } from './checkpointPort.contract.mjs';
 
-function makeRealPortHarness() {
+function makeRealPortHarness(options = {}) {
   let disposed = false;
   const liveEpochs = new Set();
   let mockNow = 0;
   let forcedDue = false;
   let yieldInvocationCount = 0;
+  let currentYieldResolvers = [];
 
   const accumulator = createFrameBudgetAccumulator({ now: () => mockNow, budgetMs: 8 });
   const wrappedAccumulator = {
@@ -20,7 +21,11 @@ function makeRealPortHarness() {
     accumulator: wrappedAccumulator,
     yieldToScheduler: () => {
       yieldInvocationCount++;
-      return new Promise((resolve) => setTimeout(resolve, 0));
+      if (options.controllableYield) {
+        return new Promise((resolve) => { currentYieldResolvers.push(resolve); });
+      } else {
+        return new Promise((resolve) => setTimeout(resolve, 0));
+      }
     },
   });
 
@@ -31,11 +36,16 @@ function makeRealPortHarness() {
     forceYieldDue: () => { forcedDue = true; },
     forceYieldNotDue: () => { forcedDue = false; accumulator.markCheckpointed(); },
     getYieldInvocationCount: () => yieldInvocationCount,
+    resolveNextYield: () => {
+      if (currentYieldResolvers.length > 0) {
+        currentYieldResolvers.shift()();
+      }
+    },
   };
 
   return { port, controls };
 }
 
-runCheckpointPortContractTests(makeRealPortHarness, {
+runCheckpointPortContractTests(() => makeRealPortHarness({ controllableYield: true }), {
   suiteName: 'CheckpointPort contract (real createCheckpointPort)',
 });
