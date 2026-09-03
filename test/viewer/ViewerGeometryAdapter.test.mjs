@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { adaptViewerGeometry, computeActiveTriangleCount } from '../../collision/viewer/ViewerGeometryAdapter.js';
+import * as THREE from '../../node_modules/three/build/three.module.js';
 
 // A minimal two-triangle quad (4 vertices, 6 index elements = 2 triangles), reused
 // across fixtures with different position-layout encodings.
@@ -235,4 +236,31 @@ test('negative group start: returns unsupported', () => {
   };
   const result = adaptViewerGeometry(geometry);
   assert.equal(result.unsupported, true);
+});
+
+test('groups array containing null: returns unsupported (not throw)', () => {
+  const geometry = {
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+    groups: [null],
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'must reject null group, not throw');
+});
+
+test('REGRESSION: real THREE.BufferGeometry with default drawRange (Infinity)', () => {
+  // three.js sets drawRange = { start: 0, count: Infinity } by default, meaning "draw all".
+  // This is a legitimate sentinel value, not invalid input — Infinity is clamped by
+  // intersectRange to the actual fullCount. Must NOT be rejected as unsupported.
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(QUAD_POSITIONS_PLAIN, 3));
+  geo.setIndex(new THREE.BufferAttribute(QUAD_INDEX, 1));
+
+  // Verify the geometry has the default Infinity drawRange
+  assert.equal(geo.drawRange.count, Infinity, 'test fixture has THREE default drawRange.count');
+
+  const result = adaptViewerGeometry(geo);
+  assert.equal(result.unsupported, false, 'must succeed on normal THREE.BufferGeometry');
+  assert.equal(result.activeTriangleCount, 2, 'Infinity drawRange must be treated as "no limit"');
+  assert.deepEqual(result.ranges, [{ start: 0, count: 6 }], 'ranges clamped to index length');
 });

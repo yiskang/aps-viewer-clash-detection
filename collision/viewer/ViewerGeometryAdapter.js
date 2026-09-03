@@ -20,6 +20,12 @@ function isValidNonNegativeNumber(n) {
   return typeof n === 'number' && Number.isFinite(n) && n >= 0;
 }
 
+function isValidDrawRangeCount(n) {
+  // drawRange.count may be Infinity (three.js default meaning "no limit"), but not
+  // NaN, -Infinity, or negative values. Regular ranges are clamped during intersectRange.
+  return typeof n === 'number' && (Number.isFinite(n) ? n >= 0 : n === Infinity);
+}
+
 function resolvePositions(geometry) {
   // Priority 1: Viewer-internal interleaved layout (spec:1154-1159) -- confirmed
   // universal across SVF/SVF2/OTG in Viewer 7.124.2.
@@ -144,9 +150,10 @@ export function adaptViewerGeometry(geometry) {
   const fullCount = index ? index.length : vertexCount;
 
   // Validate drawRange numeric fields if present.
+  // drawRange.count may be Infinity (three.js default) meaning "no limit", handled by intersectRange.
   if (geometry.drawRange && typeof geometry.drawRange.count === 'number') {
     const drStart = typeof geometry.drawRange.start === 'undefined' ? 0 : geometry.drawRange.start;
-    if (!isValidNonNegativeNumber(drStart) || !isValidNonNegativeNumber(geometry.drawRange.count)) {
+    if (!isValidNonNegativeNumber(drStart) || !isValidDrawRangeCount(geometry.drawRange.count)) {
       return { unsupported: true, reason: 'unsupported-geometry-layout' };
     }
   }
@@ -154,7 +161,7 @@ export function adaptViewerGeometry(geometry) {
   // Validate groups numeric fields if present.
   if (Array.isArray(geometry.groups)) {
     for (const group of geometry.groups) {
-      if (!isValidNonNegativeNumber(group.start) || !isValidNonNegativeNumber(group.count)) {
+      if (!group || !isValidNonNegativeNumber(group.start) || !isValidNonNegativeNumber(group.count)) {
         return { unsupported: true, reason: 'unsupported-geometry-layout' };
       }
     }
