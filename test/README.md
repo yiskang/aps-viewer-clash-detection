@@ -20,6 +20,9 @@ and binding for every later task in this plan):
     automatically; a literal directory argument like `node --test test/` does **not**
     recurse the way you would expect on this Node version -- verified empirically at
     Task 0 time. Use no argument, or an explicit glob, never a bare directory path.).
+    **Note:** `npm test` automatically runs `npm run build:vendor` first via a `pretest`
+    hook (spec:1038-1076 prerequisite), so the vendor files are always populated when
+    tests run.
   - A single file: `node --test test/geometry/GeometryConnectivity.test.mjs`.
   - A directory subset via glob: `node --test 'test/query/**/*.test.mjs'`.
 - **Assertions**: `node:assert/strict`. Prefer `assert.equal`/`assert.deepEqual` for
