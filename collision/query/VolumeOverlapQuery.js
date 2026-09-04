@@ -51,12 +51,48 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   };
   const mergeDiagnostics = (list) => { for (const d of list) addDiagnostic(d.reason, d.role); };
 
-  const canonicalSecondToFirst = canonicalFirst.matrix.clone().invert().multiply(canonicalSecond.matrix);
-  const crossing = properCrossingQuery(
-    canonicalFirst.bvh, canonicalSecond.bvh, canonicalSecondToFirst,
-    canonicalFirst.localDiagonal, canonicalSecond.localDiagonal, options.crossing
-  );
-  mergeDiagnostics(crossing.diagnostics);
+  // M1 aspect-ratio disposition guard for the crossing term (Batch-2 reconciliation
+  // pass; docs/...Tolerances section, "Single-geometry aspect ratio"; see
+  // ContainmentQuery.js's updated gate-site comment near its own guard).
+  // properCrossingQuery's classifyPoint calls treat BOTH bvhA and bvhB as
+  // parity-tested targets -- the identical role anyComponentInside's containerRole
+  // plays -- so it needs the identical gate. Checked here against the PUBLIC
+  // source/target roles (never canonicalFirst/canonicalSecond: diagnostic
+  // role-naming must stay tied to the public roles regardless of canonical order,
+  // per this file's own convention -- see the compareCanonical comment above).
+  // When gated, properCrossingQuery is never called at all; a synthetic result is
+  // substituted so the rest of this function's control flow is unaffected.
+  let crossing;
+  if (source.aspectRatioExceeded || target.aspectRatioExceeded) {
+    const skippedDiagnostics = [];
+    if (source.aspectRatioExceeded) {
+      skippedDiagnostics.push({ reason: 'geometry-aspect-ratio-exceeds-tolerance-model', role: 'source' });
+    }
+    if (target.aspectRatioExceeded) {
+      skippedDiagnostics.push({ reason: 'geometry-aspect-ratio-exceeds-tolerance-model', role: 'target' });
+    }
+    crossing = {
+      crossing: false,
+      aborted: false,
+      inconclusive: true,
+      skipped: true,
+      diagnostics: skippedDiagnostics,
+      stats: { candidatePairsExamined: 0, crossingPairsExamined: 0 },
+    };
+  } else {
+    const canonicalSecondToFirst = canonicalFirst.matrix.clone().invert().multiply(canonicalSecond.matrix);
+    crossing = properCrossingQuery(
+      canonicalFirst.bvh, canonicalSecond.bvh, canonicalSecondToFirst,
+      canonicalFirst.localDiagonal, canonicalSecond.localDiagonal, options.crossing
+    );
+  }
+
+  // NOTE: crossing.diagnostics is deliberately NOT merged here. Per the design spec
+  // (docs/...:3858-3862), truncation/coverage diagnostics (which this crossing-term
+  // skip diagnostic, and inconclusive-crossing/crossing-budget-exhausted, all are)
+  // must never attach to a positive result. It is deferred and merged only on the
+  // negative path at the end of this function, once no positive term rescued the
+  // overlap.
 
   if (crossing.crossing) {
     // The crossing path classifies probes against BOTH solids, so both closure
@@ -95,9 +131,15 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       targetAspectRatioExceeded: target.aspectRatioExceeded,
     }
   );
-  mergeDiagnostics(aInB.diagnostics);
-
+  // aInB.diagnostics is deliberately NOT merged here either, for the identical reason
+  // as crossing.diagnostics above (codex-review finding on this reconciliation pass):
+  // if aInB is a NEGATIVE (e.g. gated by target.aspectRatioExceeded, or a truncated
+  // incomplete-component-coverage), merging its diagnostics unconditionally here would
+  // taint a SUBSEQUENT bInA positive that has nothing to do with aInB's own failed
+  // attempt. Deferred to: immediately below (aInB's own positive, its own
+  // diagnostics only), or the final negative path (all three terms' diagnostics).
   if (aInB.inside) {
+    mergeDiagnostics(aInB.diagnostics);
     return { overlap: true, via: 'containment(A in B)', diagnostics, stats: { crossing: crossing.stats, aInB } };
   }
 
@@ -119,17 +161,31 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       targetAspectRatioExceeded: source.aspectRatioExceeded,
     }
   );
-  mergeDiagnostics(bInA.diagnostics);
-
+  // bInA.diagnostics is likewise deliberately NOT merged here (same reasoning as
+  // aInB above, codex-review finding on this reconciliation pass): a bInA NEGATIVE
+  // must not taint anything, and there is no later positive term for it to leak into
+  // here anyway (bInA is the last term) -- but merging unconditionally on this shared
+  // codepath would be inconsistent with aInB's own now-deferred merge and easy to
+  // regress. Deferred to: immediately below (bInA's own positive, its own
+  // diagnostics only), or the final negative path (all three terms' diagnostics).
   if (bInA.inside) {
+    mergeDiagnostics(bInA.diagnostics);
     return { overlap: true, via: 'containment(B in A)', diagnostics, stats: { crossing: crossing.stats, aInB, bInA } };
   }
 
-  // Negative: both containment terms already self-report unverified-parity-operand
-  // for their own container role unconditionally (docs/...:2367-2389), merged above
-  // -- so a negative here already carries every applicable parity diagnostic without
-  // re-derivation. Any unresolved component makes this a DIAGNOSED negative, never a
-  // clean one (docs/...:2526-2534).
+  // Negative: no positive term rescued this call, so none of the three terms'
+  // diagnostics could taint a positive result -- merge all of them now.
+  // crossing.diagnostics, aInB.diagnostics, and bInA.diagnostics were all
+  // deliberately withheld above for exactly this reason (docs/...:3858-3862:
+  // truncation/coverage diagnostics must never attach to a positive). Both
+  // containment terms also already self-report unverified-parity-operand for their
+  // own container role unconditionally (docs/...:2367-2389) -- included in this
+  // merge like any other diagnostic. Any unresolved component makes this a DIAGNOSED
+  // negative, never a clean one (docs/...:2526-2534).
+  mergeDiagnostics(crossing.diagnostics);
+  mergeDiagnostics(aInB.diagnostics);
+  mergeDiagnostics(bInA.diagnostics);
+
   if (aInB.unresolvedComponentCount > 0 || bInA.unresolvedComponentCount > 0) {
     addDiagnostic('inconclusive-containment');
   }

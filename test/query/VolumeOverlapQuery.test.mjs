@@ -192,3 +192,160 @@ test('aspect-ratio threading: source.aspectRatioExceeded suppresses the B-in-A c
     'gated: diagnostic carries the source container role'
   );
 });
+
+// --- Batch-2 reconciliation: crossing-term aspect-ratio gate. ProperCrossingQuery's
+// classifyPoint calls treat BOTH of its operands as parity-tested targets -- the
+// identical role anyComponentInside's containerRole plays -- so it needs the identical
+// M1 aspect-ratio gate. Unlike the containment terms above, ProperCrossingQuery itself
+// carries no aspect-ratio parameter (matching SurfaceCrossingWitness's precedent); the
+// gate lives entirely in this file, ahead of the properCrossingQuery call. See
+// ContainmentQuery.js's updated gate-site comment (three known sites as of this pass:
+// Task 9 internal, Task 12 external via ContainmentModeQuery, and this one). ---
+
+test('crossing-term aspect-ratio gate: source.aspectRatioExceeded skips properCrossingQuery entirely', async () => {
+  // Perpendicular thin boxes crossing mid-span (ProperCrossingQuery's own "duct
+  // through beam" regression fixture): a genuine crossing, and neither solid contains
+  // the other, so no containment term can rescue it once the crossing term is gated.
+  const duct = testInstance(box(20, 0.4, 0.4));
+  const beam = testInstance(box(0.4, 0.4, 20));
+  duct.aspectRatioExceeded = true;
+  // If properCrossingQuery were entered at all, its first clock read would throw --
+  // proves the gate short-circuits BEFORE calling it, not merely discards its result.
+  const throwingCrossingOptions = { now: () => { throw new Error('properCrossingQuery should not have been called'); } };
+  const r = await volumeOverlapQuery(duct, beam, { crossing: throwingCrossingOptions });
+  assert.equal(r.overlap, false,
+    'gated: crossing term skipped, and neither containment term resolves this genuinely-crossing (not contained) geometry');
+  assert.equal(r.stats.crossing.candidatePairsExamined, 0, 'gated: properCrossingQuery never actually ran');
+  assert.equal(
+    r.diagnostics.some((d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model' && d.role === 'source'),
+    true,
+    'gated: diagnostic carries the source role'
+  );
+});
+
+test('crossing-term aspect-ratio gate: target.aspectRatioExceeded skips properCrossingQuery entirely', async () => {
+  const duct = testInstance(box(20, 0.4, 0.4));
+  const beam = testInstance(box(0.4, 0.4, 20));
+  beam.aspectRatioExceeded = true;
+  const throwingCrossingOptions = { now: () => { throw new Error('properCrossingQuery should not have been called'); } };
+  const r = await volumeOverlapQuery(duct, beam, { crossing: throwingCrossingOptions });
+  assert.equal(r.overlap, false,
+    'gated: crossing term skipped, and neither containment term resolves this genuinely-crossing (not contained) geometry');
+  assert.equal(r.stats.crossing.candidatePairsExamined, 0, 'gated: properCrossingQuery never actually ran');
+  assert.equal(
+    r.diagnostics.some((d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model' && d.role === 'target'),
+    true,
+    'gated: diagnostic carries the target role'
+  );
+});
+
+test('crossing-term aspect-ratio gate: both flagged carries exactly two role-tagged diagnostics', async () => {
+  const duct = testInstance(box(20, 0.4, 0.4));
+  const beam = testInstance(box(0.4, 0.4, 20));
+  duct.aspectRatioExceeded = true;
+  beam.aspectRatioExceeded = true;
+  const throwingCrossingOptions = { now: () => { throw new Error('properCrossingQuery should not have been called'); } };
+  const r = await volumeOverlapQuery(duct, beam, { crossing: throwingCrossingOptions });
+  assert.equal(r.overlap, false, 'gated: crossing term skipped, no containment term rescues it');
+  const aspectDiagnostics = r.diagnostics.filter((d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model');
+  assert.equal(aspectDiagnostics.length, 2, 'exactly two aspect-ratio diagnostics, one per flagged role');
+  assert.equal(aspectDiagnostics.some((d) => d.role === 'source'), true, 'source role present');
+  assert.equal(aspectDiagnostics.some((d) => d.role === 'target'), true, 'target role present');
+});
+
+test('crossing-term aspect-ratio gate: deferred merge does not taint a sound positive decided by the OTHER, unflagged operand', async () => {
+  // source is fully inside target. anyComponentInside's A-in-B call parity-tests
+  // TARGET (containerRole) and merely samples SOURCE (sampledRole) -- flagging
+  // SOURCE's aspectRatioExceeded therefore does NOT gate this containment term (only
+  // the crossing term, and the B-in-A term where source plays containerRole -- moot
+  // here since A-in-B already resolves positive). This is the critical
+  // deferred-merge-timing regression: the crossing term's skip diagnostic must not
+  // leak into a genuinely sound positive resolved entirely by the unflagged operand's
+  // valid parity test.
+  const small = testInstance(box(1, 1, 1));
+  const large = testInstance(box(6, 6, 6));
+  small.aspectRatioExceeded = true;
+  const r = await volumeOverlapQuery(small, large);
+  assert.equal(r.overlap, true, 'sound positive via containment(A in B), decided by the unflagged target operand');
+  assert.equal(r.via, 'containment(A in B)');
+  assert.equal(
+    r.diagnostics.some((d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model'),
+    false,
+    'deferred crossing-term skip diagnostic must not taint this sound positive'
+  );
+});
+
+test('crossing-term aspect-ratio gate: mirrored positive -- target flagged, but containment(B in A) succeeds via the unflagged source as parity target', async () => {
+  // codex-review finding on this reconciliation pass: the crossing-term gate's own
+  // deferred-merge fix wasn't enough on its own -- aInB.diagnostics was ALSO merged
+  // eagerly (pre-existing bug, same class), so a target-flagged run could still leak
+  // the aspect-ratio diagnostic into a bInA positive via THAT path even after the
+  // crossing-term fix. This fixture exercises both at once: source is the large
+  // container (unflagged), target is the small solid fully inside it, and TARGET
+  // itself is flagged.
+  //   - crossing: gated (target.aspectRatioExceeded) -- diagnostics carry role:'target'.
+  //   - aInB (source in target, containerRole='target'): ALSO gated by the same flag
+  //     (target plays containerRole here) -- diagnostics carry role:'target' again.
+  //   - bInA (target in source, containerRole='source', unflagged): ungated, resolves
+  //     true legitimately -- source (large box) validly parity-tests target's probe.
+  // Neither of the two failed/skipped attempts' target-flagged diagnostics may leak
+  // into the sound bInA positive.
+  const source = testInstance(box(6, 6, 6));
+  const target = testInstance(box(1, 1, 1));
+  target.aspectRatioExceeded = true;
+  const r = await volumeOverlapQuery(source, target);
+  assert.equal(r.overlap, true, 'sound positive via containment(B in A), decided by the unflagged source operand');
+  assert.equal(r.via, 'containment(B in A)');
+  assert.equal(
+    r.diagnostics.some((d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model'),
+    false,
+    'neither the gated crossing term nor the gated aInB term may taint this sound positive'
+  );
+});
+
+test('codex-review regression: aInB\'s own incomplete-component-coverage diagnostic must not taint a bInA positive', async () => {
+  // Same class of bug as the aspect-ratio leak above, but via a genuinely different
+  // diagnostic (incomplete-component-coverage) and with no aspect-ratio flags
+  // involved at all -- proves the deferred-merge fix is general, not aspect-ratio-
+  // specific. source has 21 components: 20 small filler boxes far from everything
+  // (never inside the small target, and numerous enough that a tight sample budget
+  // truncates coverage of them), plus one large box at the origin that genuinely
+  // encloses target. target is a small box fully inside that large component.
+  //   - aInB (source's components sampled against target as container): none of
+  //     source's 21 components is smaller than or fits inside the small target, so
+  //     this resolves false regardless of budget -- but the tight budget leaves most
+  //     components unsampled, so aInB's OWN diagnostics carry
+  //     incomplete-component-coverage.
+  //   - bInA (target sampled against source's whole BVH as container): target sits
+  //     entirely inside source's large origin component, so this resolves true via a
+  //     completely valid classifyPoint parity test -- unrelated to aInB's truncation.
+  const parts = [];
+  for (let i = 0; i < 20; i++) parts.push(box(2, 2, 2).translate(i * 3, 20, 0)); // 20 disjoint filler components, far from target
+  parts.push(box(6, 6, 6)); // 21st component: genuinely encloses target at the origin
+  const source = testInstance(mergeGeometries(parts));
+  const target = testInstance(box(1, 1, 1));
+  assert.equal(source.connectivity.componentCount, 21, 'sanity: 21 genuinely separate components');
+  const r = await volumeOverlapQuery(source, target, { containment: { maxContainmentSamples: 10 } });
+  assert.equal(r.stats.aInB.inside, false, 'sanity: aInB alone does not resolve this (no source component fits inside the small target)');
+  assert.equal(r.stats.aInB.budgetExhausted, true, 'sanity: aInB genuinely truncated coverage under this budget');
+  assert.equal(r.stats.aInB.diagnostics.some((d) => d.reason === 'incomplete-component-coverage'), true,
+    'sanity: aInB\'s own result actually carries the truncated-coverage diagnostic');
+  assert.equal(r.overlap, true, 'bInA independently resolves this positive (target genuinely inside source\'s origin component)');
+  assert.equal(r.via, 'containment(B in A)');
+  assert.equal(r.diagnostics.some((d) => d.reason === 'incomplete-component-coverage'), false,
+    'aInB\'s truncated-coverage diagnostic must not taint the bInA positive that actually decided this');
+});
+
+test('crossing-term aspect-ratio gate: sanity -- no flags set, crossing term runs normally and decides overlap as before', async () => {
+  const duct = testInstance(box(20, 0.4, 0.4));
+  const beam = testInstance(box(0.4, 0.4, 20));
+  const r = await volumeOverlapQuery(duct, beam);
+  assert.equal(r.overlap, true, 'unflagged: crossing term runs normally and detects the perpendicular crossing');
+  assert.equal(r.via, 'crossing');
+  assert.equal(r.stats.crossing.candidatePairsExamined > 0, true, 'crossing term actually ran (not skipped)');
+  assert.equal(
+    r.diagnostics.some((d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model'),
+    false,
+    'unflagged: no aspect-ratio diagnostic appears'
+  );
+});

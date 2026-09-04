@@ -81,6 +81,58 @@ test('shrunk further, no valid probe exists', () => {
     'reports inconclusive-crossing, not silent no-witness');
 });
 
+test('large source triangle piercing a thin target: found (Batch-2 reconciliation regression)', () => {
+  // BATCH-2 RECONCILIATION REGRESSION: crossingProbeFractions x dAvail is scaled ONLY
+  // by the SOURCE triangle's own size -- it has no relationship to the TARGET's local
+  // thickness in the probe direction. A large source triangle crossing a thin target
+  // (here, this repo's own "realistic BIM aspect ratio" fixture, box(0.01, 10, 0.5),
+  // ratio ~1000:1 -- well under maxLocalAspectRatio's 10,000 gate, so NOT excluded by
+  // that guard) can, before this fix, have EVERY crossingProbeFractions rung overshoot
+  // clean across the target's thin x-extent, landing confidently 'outside' past its
+  // far face and never 'boundary' -- a silent false negative (witnessFound:false,
+  // inconclusive:false). minSurfaceCrossingProbeFactor's extra source-frame-scaled
+  // floor rung closes this for a target whose local thickness meaningfully exceeds
+  // that floor.
+  const target = testInstance(box(0.01, 10, 0.5));
+  const tri = new THREE.BufferGeometry();
+  tri.setAttribute('position', new THREE.Float32BufferAttribute([
+    -5, 0, -0.1,
+     5, 0, -0.1,
+     0, 0,  5,
+  ], 3));
+  tri.setIndex([0, 1, 2]);
+  const source = testInstance(tri);
+  const r = witnessOf(source, target);
+  assert.equal(r.witnessFound, true,
+    'batch-2 regression: large source triangle vs. thin target must not overshoot clean across it');
+});
+
+test('target thinner than even the new floor: inconclusive, not silently negative (Batch-2 reconciliation regression)', () => {
+  // Companion to the above: when the target's local thickness in the probe direction
+  // is below even minSurfaceCrossingProbeFactor x sourceLocalDiagonal, the new floor
+  // rung ALSO overshoots -- this is a genuinely below-declared-floor case. The other
+  // half of this fix (marking every confirmed non-coplanar crossing candidate that
+  // exhausts all probes without a witness as inconclusive, not just ones with no valid
+  // in-triangle probe or a boundary hit) ensures this still reports `inconclusive`
+  // rather than reproducing the same silent-negative bug for below-floor thicknesses.
+  const tri = new THREE.BufferGeometry();
+  tri.setAttribute('position', new THREE.Float32BufferAttribute([
+    -5000, 0, -0.1,
+     5000, 0, -0.1,
+        0, 0,  0.2,
+  ], 3));
+  tri.setIndex([0, 1, 2]);
+  const source = testInstance(tri);
+  // floorDelta (sourceLocalDiagonal ~= 10000, x 1e-5 ~= 0.1) exceeds this target's own
+  // half-width (0.005) by 20x -- genuinely below the declared floor for this pair.
+  const target = testInstance(box(0.01, 10, 0.5));
+  const r = witnessOf(source, target);
+  assert.equal(r.witnessFound, false, 'below declared floor: no witness found');
+  assert.equal(r.inconclusive, true, 'below declared floor: inconclusive, not a confident negative');
+  assert.equal(r.diagnostics.some((d) => d.reason === 'inconclusive-crossing'), true,
+    'carries inconclusive-crossing');
+});
+
 test('coplanar candidates rejected', () => {
   const a = testInstance(box(2, 2, 2));
   const b = testInstance(box(2, 2, 2), at(0, 2, 0)); // flush touching

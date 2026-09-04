@@ -191,12 +191,21 @@ export async function anyComponentInside(
   if (!targetClosedManifold) addDiagnostic('unverified-parity-operand', containerRole);
 
   // M1 aspect-ratio disposition guard (spec Tolerances section, "Single-geometry
-  // aspect ratio"; this task and Task 12's containment-mode target role are the ONLY
-  // two spec-assigned gate sites, per the batch's reconciliation ledger). When the
-  // TARGET's own aspectRatioExceeded signal is set, classifyPoint's tolerance model
-  // cannot make a trustworthy call against it at all -- short-circuit BEFORE the
-  // per-component sampling loop below, and before stage 3's constructedInteriorWitness
-  // (which also classifies its constructed probe against targetBvh) ever runs.
+  // aspect ratio"). Three gate sites are known as of the Batch-2 reconciliation pass:
+  // this task's own containerRole gate here, Task 12's containment-mode target role
+  // (ContainmentModeQuery, external gate before calling surfaceCrossingWitness), and
+  // VolumeOverlapQuery's crossing-term gate (added by that reconciliation pass, ahead
+  // of its properCrossingQuery call, since properCrossingQuery classifies probes
+  // against BOTH of its operands in this same parity-tested-target role). This is not
+  // asserted to be an exhaustive list of every place classifyPoint's tolerance-model
+  // limitation could matter -- see this file's own separate, still-open
+  // constructedInteriorWitness gap below (component-scoped BVH's own
+  // aspectRatioExceeded, discarded for SOURCE-side self-classification), which this
+  // comment does not resolve or contradict. When the TARGET's own aspectRatioExceeded
+  // signal is set, classifyPoint's tolerance model cannot make a trustworthy call
+  // against it at all -- short-circuit BEFORE the per-component sampling loop below,
+  // and before stage 3's constructedInteriorWitness (which also classifies its
+  // constructed probe against targetBvh) ever runs.
   if (targetAspectRatioExceeded) {
     addDiagnostic('geometry-aspect-ratio-exceeds-tolerance-model', containerRole);
     return {

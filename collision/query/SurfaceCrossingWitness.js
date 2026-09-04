@@ -15,6 +15,7 @@ import {
   coplanarAngleEpsilon,
   surfaceEpsilonFactor,
   crossingProbeFractions,
+  minSurfaceCrossingProbeFactor,
   maxCandidatePairsExamined,
   maxCrossingPairsExamined,
   frameBudgetMs,
@@ -132,8 +133,6 @@ export function surfaceCrossingWitness(sourceBvh, targetBvh, targetToSourceMatri
         _segDir.normalize();
         _u.crossVectors(_nA, _segDir).normalize(); // in-plane, perpendicular to the segment
 
-        let candidateProducedInPlaneProbe = false;
-
         for (const sign of [1, -1]) {
           // dAvail: distance from M to THIS triangle's own edge along sign*u, recomputed
           // fresh per candidate -- never a cached per-geometry or canonical-frame scale
@@ -141,13 +140,35 @@ export function surfaceCrossingWitness(sourceBvh, targetBvh, targetToSourceMatri
           const dAvail = availableInPlaneDistance(_triA, _mid, _u, sign);
           if (dAvail <= 0) continue;
 
-          for (const fraction of crossingProbeFractions) {
+          // The 3 crossingProbeFractions rungs are all scaled off THIS candidate's own
+          // dAvail, so they can all overshoot clean across a target whose local
+          // thickness in direction u is small relative to the SOURCE triangle's own
+          // extent (a large source triangle piercing a thin target) -- every probe then
+          // classifies confidently 'outside' the target, never 'boundary', producing a
+          // silent false negative even though a genuine transversal crossing exists.
+          // Append one more, absolutely-bounded rung -- minSurfaceCrossingProbeFactor x
+          // sourceLocalDiagonal (NOT targetLocalDiagonal: like coplanarSurfaceEpsilon
+          // above, `_probe` is stepped in SOURCE's own local frame, and a
+          // targetLocalDiagonal-scaled step cannot be validly added there under a
+          // general, possibly anisotropic relative transform without a much more
+          // complex direction-specific conversion -- out of scope for M1) -- only when
+          // it is smaller than dAvail, so it never exceeds this triangle's own room in
+          // direction u (containsPoint would reject it anyway if it did; skip the
+          // wasted probe). This closes the overshoot gap for the common case where the
+          // target's local interior extent along the (transformed) probe direction
+          // meaningfully exceeds this rung plus target's own surfaceEpsilon clearance --
+          // it is NOT an unconditional guarantee for arbitrary thinness, shallow
+          // crossing angles, or anisotropic relative transforms, all of which can still
+          // reduce effective target-normal clearance below this floor.
+          const floorDelta = minSurfaceCrossingProbeFactor * sourceLocalDiagonal;
+          const deltas = crossingProbeFractions.map((fraction) => fraction * dAvail);
+          if (floorDelta < dAvail) deltas.push(floorDelta);
+
+          for (const delta of deltas) {
             if (timeExceeded()) { aborted = true; return true; }
 
-            const delta = fraction * dAvail;
             _probe.copy(_mid).addScaledVector(_u, sign * delta);
             if (!_triA.containsPoint(_probe)) continue; // must stay ON the source triangle
-            candidateProducedInPlaneProbe = true;
 
             _probeInTarget.copy(_probe).applyMatrix4(sourceToTargetMatrix);
             const c = classifyPoint(_probeInTarget, targetBvh, targetLocalDiagonal);
@@ -156,10 +177,24 @@ export function surfaceCrossingWitness(sourceBvh, targetBvh, targetToSourceMatri
           }
         }
 
-        // Mirrors ProperCrossingQuery's step 5: a candidate that could never even
-        // produce a usable in-triangle probe is inconclusive, not rejected
-        // (docs/...:2585-2591).
-        if (!candidateProducedInPlaneProbe) sawInconclusiveCandidate = true;
+        // A confirmed non-coplanar crossing candidate (reached this point, i.e. passed
+        // intersectsTriangle and incremented crossingPairsExamined) that completes
+        // without finding a witness is ALWAYS inconclusive, not a confident negative --
+        // even when probes DID land inside triangle A but every one classified
+        // confidently 'outside' against target (this file's own false-negative bug:
+        // dAvail depends only on the source triangle's own size, so every rung can
+        // overshoot clean across a target thinner than the source, landing definitively
+        // 'outside' past its far face -- never 'boundary', never failing to produce an
+        // in-triangle probe at all). For a genuine transversal crossing with room on
+        // the correct side of L, the source surface locally continues into the target's interior immediately
+        // adjacent to L on one side -- failing to witness that via ANY probe means
+        // either the probe set was too coarse for the target's local thickness at this
+        // location, or the target's thickness here is genuinely below the declared
+        // floor -- both cases warrant "inconclusive," not a confident negative (matches
+        // this codebase's own stated design principle, docs/superpowers/specs/2026-08-06-
+        // collision-library-milestone1-design.md line ~3982: "a bounded search that
+        // finds nothing has not proven a negative").
+        sawInconclusiveCandidate = true;
         return false;
       } catch (err) {
         caughtError = err;

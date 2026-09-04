@@ -12,6 +12,15 @@ export const offsetLadderFactors = [1e-3, 1e-4, 1e-5];  // × L_canonical
 export const witnessLadderFactors = [1e-3, 1e-4, 1e-5]; // × L_source
 export const crossingProbeFractions = [0.5, 0.1, 0.01]; // dimensionless, × triangle's own in-plane dAvail
 export const minPenetrationDepthFactor = 1e-5;          // × L_canonical -- DECLARED detection limit, not a bug
+// minSurfaceCrossingProbeFactor is a DISTINCT constant from minPenetrationDepthFactor above
+// even though the numeric value happens to match today -- do not collapse the two.
+// minPenetrationDepthFactor is documented specifically as 1e-5 x L_canonical for
+// VolumeOverlapQuery's four-quadrant offset ladder; this constant instead declares
+// SurfaceCrossingWitness's own in-plane probe floor, scaled by L_source (that file's
+// probes are stepped in the SOURCE triangle's own local frame), not L_canonical.
+// Reusing minPenetrationDepthFactor here would conflate two different declared
+// contracts for two different quantities that merely share a value today.
+export const minSurfaceCrossingProbeFactor = 1e-5;      // × L_source -- SurfaceCrossingWitness's declared minimum-detectable in-plane probe step
 export const weldEpsilonMeters = 1e-4;                  // meters; divide by model.getUnitScale() (fallback: literal 1e-4 if unit scale unavailable)
 // M1 disposition (spec Tolerances section, "Single-geometry aspect ratio"): mergeDistanceFactor/
 // surfaceEpsilonFactor above both scale off a target's single global localDiagonal, which breaks
