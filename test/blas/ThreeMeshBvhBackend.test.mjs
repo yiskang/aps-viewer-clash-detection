@@ -91,3 +91,46 @@ test('build: statelessness extends to identity-keyed caching -- same input objec
   assert.notEqual(a.bvh, b.bvh, 'no identity-keyed caching (e.g., WeakMap) belongs in this module');
   assert.notEqual(a.bvh.geometry, b.bvh.geometry, 'geometries must be independent even if input object is reused');
 });
+
+function weldedFromBox(w, h, d) {
+  const box = new THREE.BoxGeometry(w, h, d);
+  return {
+    position: box.attributes.position.array,
+    index: Uint32Array.from(box.index.array),
+    triangleCount: box.index.count / 3,
+  };
+}
+
+test('build: M1 aspect-ratio disposition guard -- realistic BIM-scale target (max/min extent = 1000:1) is NOT exceeded', () => {
+  // Same envelope as ContainmentQuery.classifyPoint.test.mjs's "representative BIM aspect ratio"
+  // fixture (a long thin duct/wall segment): 0.01m x 10m x 0.5m -- max/min = 10/0.01 = exactly 1000.
+  const { aspectRatio, aspectRatioExceeded } = build(weldedFromBox(0.01, 10, 0.5));
+  assert.ok(Math.abs(aspectRatio - 1000) < 1, `expected aspectRatio ~1000, got ${aspectRatio}`);
+  assert.equal(aspectRatioExceeded, false);
+});
+
+test('build: M1 aspect-ratio disposition guard -- extreme target (the KNOWN GAP fixture) IS exceeded, at its ACTUAL ratio', () => {
+  // Exact box dimensions from ContainmentQuery.classifyPoint.test.mjs's `{ todo: true }` KNOWN GAP
+  // fixture: box(0.5, 1_000_000, 1_000_000) -- max/min = 1_000_000/0.5 = exactly 2,000,000, NOT the
+  // ~1,000,000 the box's own dimensions might suggest by eye (codex-advisor caught this discrepancy
+  // during the disposition-note consistency check). This test only asserts the GUARD fires at the
+  // correct computed ratio -- it makes no claim about classifyPoint's own (still incorrect, still out
+  // of scope) classification at this aspect ratio.
+  const { aspectRatio, aspectRatioExceeded } = build(weldedFromBox(0.5, 1_000_000, 1_000_000));
+  assert.ok(Math.abs(aspectRatio - 2_000_000) < 1, `expected aspectRatio ~2,000,000, got ${aspectRatio}`);
+  assert.equal(aspectRatioExceeded, true);
+});
+
+test('build: M1 aspect-ratio disposition guard -- boundary: exactly maxLocalAspectRatio (10,000:1) is NOT exceeded (strict >)', () => {
+  // box(1, 10_000, 1) -> max/min = 10_000/1 = exactly 10_000, the threshold itself.
+  // aspectRatioExceeded uses strict `>`, so exactly-at-threshold must NOT be exceeded.
+  const { aspectRatio, aspectRatioExceeded } = build(weldedFromBox(1, 10_000, 1));
+  assert.ok(Math.abs(aspectRatio - 10_000) < 1, `expected aspectRatio ~10,000, got ${aspectRatio}`);
+  assert.equal(aspectRatioExceeded, false);
+});
+
+test('build: M1 aspect-ratio disposition guard -- boundary: just past maxLocalAspectRatio (10,001:1) IS exceeded', () => {
+  const { aspectRatio, aspectRatioExceeded } = build(weldedFromBox(1, 10_001, 1));
+  assert.ok(Math.abs(aspectRatio - 10_001) < 1, `expected aspectRatio ~10,001, got ${aspectRatio}`);
+  assert.equal(aspectRatioExceeded, true);
+});

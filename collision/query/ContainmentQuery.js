@@ -56,7 +56,7 @@ export function classifyPoint(point, targetBvh, targetLocalDiagonal) {
   // the SAME target -- distinct from the spec's existing "anisotropic scale" passage,
   // which covers cross-instance transform anisotropy, a different mechanism), this
   // produces two failure modes, both reproduced on the same box(0.5, 1_000_000,
-  // 1_000_000) fixture (~1,000,000:1 aspect ratio -- real BIM/MEP elements do not
+  // 1_000_000) fixture (max/min local extent = 2,000,000:1 -- real BIM/MEP elements do not
   // realistically approach this):
   //   (a) merge-collapse: mergeDistance (~1.41 on that fixture) can exceed the box's
   //       actual 0.5 thickness, so the entry and exit crossings through the thin

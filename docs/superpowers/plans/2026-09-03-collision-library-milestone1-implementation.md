@@ -3906,6 +3906,19 @@ git commit -m "Add anyComponentInside: three-stage per-component containment sam
 - Round 6/7 (`docs/...:2367-2372`): target openness must taint every result, not only ones where the source happens to be open.
 - Round 9 (`docs/...:2350-2359`): the open-component diagnostic's `role` must follow whichever public operand supplied the deciding component, not a hardcoded side.
 - Round 10/11 (`docs/...:2471-2486`): the checkpoint must fire before every individual sample, not batched at any interval.
+- **M1 aspect-ratio disposition guard (spec Tolerances section, "Single-geometry aspect ratio")**:
+  `ThreeMeshBvhBackend.build()` (Task 4) returns `aspectRatio`/`aspectRatioExceeded` alongside
+  `bvh`/`localDiagonal`. Before calling `classifyPoint` against a **target** (this task's `targetBvh`
+  parameter — never the source, which is sampled, not parity-tested), this task must check the
+  target's `aspectRatioExceeded` and, if true, skip `classifyPoint` for that target and emit a
+  diagnostic (reason `geometry-aspect-ratio-exceeds-tolerance-model`, per the spec's disposition)
+  rather than trusting a classification this tolerance model cannot make correctly at that aspect
+  ratio. **This check is scoped to target usage in `classifyPoint` specifically — not a blanket
+  `GeometryRecord`-level rejection**: `Task 14`'s generic build orchestration (weld/connectivity/BVH,
+  shared by every query mode) must NOT reject a geometry solely for `aspectRatioExceeded`, since
+  `surface-intersection` mode never calls `classifyPoint` at all and would be incorrectly denied a
+  geometry it can process correctly. `Task 14` only computes/surfaces the signal (via `ThreeMeshBvhBackend`);
+  this task (and Task 12's `containment`-mode target role) is where it must actually be acted on.
 
 ---
 
@@ -5884,6 +5897,34 @@ EOF
 - `BlasCache` must not reintroduce the retired "set `groups`/`drawRange` on the BVH input"
   workaround — compaction already discards everything outside active ranges before welding
   ever runs, so nothing is left for `ThreeMeshBvhBackend` to exclude — spec `:1554-1558`.
+- **`ViewerGeometryAdapter`'s output holds live references into Viewer's own buffers, not copies,
+  until compaction copies them — the weld-phase factory must call `resolveGeometryView` and pass its
+  result into `compactAndWeld` with no intervening `await`.** `ViewerGeometryAdapter.adaptViewerGeometry`
+  (Task 2) resolves `positions`/`index` as direct references into whatever the Viewer geometry object
+  itself owns (`geometry.vb`, `positionAttr.data.array`, `positionAttr.array`, `geometry.ib`,
+  `geometry.index.array`) — it never copies (independently verified this session: `resolvePositions`/
+  `resolveIndex` return the original TypedArrays directly; `compactAndWeld` reads and copies them
+  synchronously with no `await` of its own). Whether Viewer's buffers can actually become invalid across
+  a model unload/reload cycle is **not independently re-verified this session** — the Batch-1 shadow-
+  evaluation's Viewer-knowledge check reported fragment buffers as memoized per-fragment within a
+  session, "not proven stable" across a reload, which is a caution, not a confirmed instability. What
+  this invariant concretely buys, independent of that open question: keeping `resolveGeometryView` and
+  `compactAndWeld` in one synchronous JavaScript call stack — no `await`, no yield, no checkpoint between
+  them — prevents any **event-loop-driven** lifecycle event (a model reload's teardown running, an epoch
+  being evicted) from landing in the gap between reading the live reference and compaction copying it. It
+  does not, by itself, prove Viewer's buffers are stable in general; it only closes the one channel (an
+  intervening yield) this codebase could introduce that would create a window for such an event to
+  matter. The `weldPromise` factory this task wires therefore MUST call
+  `resolveGeometryView(loadEpoch, geometryIndex)` and hand its `triangleGeometryView` straight into
+  `compactAndWeld(...)` inside that same synchronous span. This is a stricter requirement than the general "insert-first-then-build"
+  single-flight rule above: it is about the gap *before* the first phase's own checkpoint, not about
+  checkpoints between phases. Do not restructure the pipeline to copy earlier (e.g. inside
+  `ViewerGeometryAdapter` itself) to relax this — that would reverse the "position is an owned,
+  compacted-then-welded buffer, not a zero-copy view" performance rationale (spec `:1543-1550`) for no
+  benefit; keeping the two calls adjacent and synchronous is the correct, minimal way to satisfy this
+  invariant. A future test for this task should assert `resolveGeometryView` and `compactAndWeld` are
+  invoked within the same microtask/synchronous span (e.g. by spying on call order relative to a
+  deliberately-inserted `await` elsewhere and confirming no such gap exists on this path).
 
 ---
 

@@ -124,7 +124,7 @@ test('representative BIM aspect ratio (~1000:1, e.g. a long thin duct/wall segme
   // segment: 0.01m thick x 10m long x 0.5m tall, ~1000:1 aspect ratio) -- it is NOT a
   // claim that the tolerance model (mergeDistance/surfaceEpsilon, both scaled off the
   // target's single global localDiagonal) is safe at ALL aspect ratios. See the
-  // `{ todo: true }` extreme-aspect-ratio reproducer below (~1,000,000:1, a scale real
+  // `{ todo: true }` extreme-aspect-ratio reproducer below (max/min local extent = 2,000,000:1, a scale real
   // BIM/MEP elements do not realistically approach) for the known, tracked gap in that
   // tolerance model, and the comment beside classifyPoint's tolerance calculation in
   // collision/query/ContainmentQuery.js for the full explanation of both failure modes.
@@ -135,7 +135,7 @@ test('representative BIM aspect ratio (~1000:1, e.g. a long thin duct/wall segme
   assert.equal(classifyPoint(new THREE.Vector3(0, 6, 0), b.bvh, b.localDiagonal), 'outside');
 });
 
-test('KNOWN GAP (tracked separately, not fixed by Task 6): extreme single-geometry aspect ratio (~1,000,000:1) breaks both mergeDistance and surfaceEpsilon', { todo: true }, () => {
+test('KNOWN GAP (tracked separately, not fixed by Task 6): extreme single-geometry aspect ratio (max/min local extent = 2,000,000:1) breaks both mergeDistance and surfaceEpsilon', { todo: true }, () => {
   // EXACT reproducer from the codex-review finding (independently reproduced by both
   // codex-advisor and the Task-6 implementer against the running implementation):
   // both classifyPoint tolerances scale off the target's single GLOBAL localDiagonal,

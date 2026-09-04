@@ -13,11 +13,23 @@
 
 import * as THREE from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
+import { maxLocalAspectRatio } from '../constants.js';
 
 /**
  * @param {{ position: Float32Array, index: Uint32Array, triangleCount: number }} weldedGeometry
  *   Exactly the resolved shape of GeometryRecord.weldPromise.
- * @returns {{ bvh: import('three-mesh-bvh').MeshBVH, localDiagonal: number }}
+ * @returns {{ bvh: import('three-mesh-bvh').MeshBVH, localDiagonal: number, aspectRatio: number,
+ *   aspectRatioExceeded: boolean }} `aspectRatio`/`aspectRatioExceeded` are the M1 single-geometry
+ *   aspect-ratio disposition guard (spec Tolerances section) -- this module only COMPUTES and
+ *   surfaces the signal (stays stateless/non-gating per its own objective above); it does NOT itself
+ *   reject anything, and neither should Task 14's GeometryRegistry/BlasCache orchestration, which
+ *   builds this for every query mode including surface-intersection (which never calls
+ *   classifyPoint and is unaffected by this limitation). The caller that uses this geometry as a
+ *   classifyPoint TARGET -- ContainmentQuery.anyComponentInside (Task 9) / ContainmentModeQuery
+ *   (Task 12) -- is responsible for checking `aspectRatioExceeded` and, if true, skipping
+ *   classifyPoint for that target and emitting a
+ *   `geometry-aspect-ratio-exceeds-tolerance-model` diagnostic instead of trusting a classification
+ *   this tolerance model cannot make correctly at that aspect ratio.
  */
 export function build(weldedGeometry) {
   const geometry = new THREE.BufferGeometry();
@@ -43,7 +55,18 @@ export function build(weldedGeometry) {
   // SAME buffer the BLAS is built from (spec:1609-1614) -- ported from
   // spike/geometry-core.mjs's scaleOf.
   geometry.computeBoundingBox();
-  const localDiagonal = geometry.boundingBox.getSize(new THREE.Vector3()).length();
+  const size = geometry.boundingBox.getSize(new THREE.Vector3());
+  const localDiagonal = size.length();
 
-  return { bvh, localDiagonal };
+  // M1 aspect-ratio disposition guard (spec Tolerances section, "Single-geometry aspect ratio"):
+  // max/min local AABB extent. A zero minExtent (a mathematically flat/2D mesh) has no well-defined
+  // ratio -- treated as exceeded (Infinity), conservatively flagging it for the same caller-side
+  // disposition rather than silently computing a meaningless ratio.
+  const extents = [size.x, size.y, size.z];
+  const maxExtent = Math.max(...extents);
+  const minExtent = Math.min(...extents);
+  const aspectRatio = minExtent > 0 ? maxExtent / minExtent : Infinity;
+  const aspectRatioExceeded = aspectRatio > maxLocalAspectRatio;
+
+  return { bvh, localDiagonal, aspectRatio, aspectRatioExceeded };
 }

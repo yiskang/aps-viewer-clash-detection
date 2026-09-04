@@ -1549,9 +1549,21 @@ touches it. The memory argument that motivated zero-copy does not survive measur
 *shrinks* geometry by ~23% on average across the primitives tested (box 24→8 vertices, cylinder
 148→50), so an owned welded buffer is typically **smaller** than the shared one it replaces. Index is
 likewise owned, produced first by compaction and then by the weld. `indexOwnership: 'clone'` remains the
-only supported value, and `'indirect'` is now not merely unimplemented but inapplicable — indirect mode
-exists to avoid reordering a *shared* index, and there is no longer a shared index to protect at any
-stage of this pipeline. **Round 16 also retired the previous "set `groups`/`drawRange` on the BVH input"
+only supported value, and `indexOwnership: 'indirect'` is now not merely unimplemented but inapplicable —
+that ownership option exists to avoid reordering a *shared Viewer* index in place, and there is no longer
+a shared Viewer index to protect at any stage of this pipeline once compaction has copied. **This is a
+statement about `indexOwnership` — a pipeline-level ownership *strategy* for whether the collision library
+may mutate a buffer it does not own — and is unrelated to `MeshBVH`'s own, differently-scoped
+`indirect: true` *constructor* option.** `ThreeMeshBvhBackend` still, correctly, builds every BVH with
+`new MeshBVH(geometry, { indirect: true })` (see its own module for the full contract) — not to protect a
+shared buffer (there is none at that point; the geometry is already the collision-owned, compacted-then-
+welded buffer), but so that `MeshBVH`'s internal leaf-partitioning never reorders the triangle index out
+from under `GeometryConnectivity`'s per-original-triangle-ordinal `componentOf` correspondence (Finding 2,
+`aaf40bc`/`012a237`; confirmed against the vendored `three-mesh-bvh` source, and pinned by
+`test/blas/ThreeMeshBvhBackend.test.mjs`'s "preserves original triangle index ordering" test). Do not read
+the paragraph above as license to build the BVH with `indirect: false`/omitted — that would be a real
+regression, silently breaking triangle-ordinal correspondence, not a cleanup of now-dead code. **Round 16
+also retired the previous "set `groups`/`drawRange` on the BVH input"
 workaround**: because compaction already discards everything outside the active ranges before welding
 ever runs, the geometry `MeshBVH` builds over contains only active triangles to begin with — there is no
 out-of-range material left for a missing `groups`/`drawRange` configuration to fail to exclude, so
@@ -1630,6 +1642,7 @@ problems come from trying to make one scalar serve two frames, so this revision 
 | `witnessLadder` | distance in **source** frame | `[1e-3, 1e-4, 1e-5] × L_source` | Constructed interior witness (`anyComponentInside` stage 3, `volume-overlap` only) |
 | `crossingProbeFractions` | dimensionless (0-1), scaled per-candidate by that triangle's own available in-plane distance | `[0.5, 0.1, 0.01]` | `SurfaceCrossingWitness` in-triangle probe steps (`containment` only) |
 | `minPenetrationDepth` | distance in canonical frame | `1e-5 × L_canonical` | **Declared** detection limit |
+| `maxLocalAspectRatio` | dimensionless (max/min local AABB extent of one target) | `10_000` | Single-geometry aspect-ratio disposition guard (Milestone 1, see below) — **not** the cross-instance anisotropic-scale limitation |
 
 **Anisotropic scale remains a stated limitation, not a solved problem.** When the relative transform
 between two instances is anisotropic, no direction-independent scalar converts a length between the
@@ -1638,7 +1651,76 @@ dependent* world-space depth, bounded by the smallest and largest singular value
 3×3 linear part. Milestone 1 declares this rather than pretending a single number covers it, and
 pins the behavior with a swapped-operand anisotropic-scale test fixture. Absolute world-space
 tolerances, model units, and global offsets remain an open question inherited from the idea doc's
-"Tolerance" section.
+"Tolerance" section. **This paragraph is about cross-instance transform anisotropy — the relative
+transform *between* two instances — which no Milestone-1 task implements yet** (it becomes live only
+once a crossing/overlap query composes two instances' world transforms, e.g. a future `ProperCrossingQuery`-
+consuming task); nothing in this reconciliation pass changes this paragraph's disposition or the
+tasks that will eventually need it.
+
+**Single-geometry aspect ratio is a separate, already-live Milestone-1 tolerance-model limit — disposition
+declared here.** Distinct from the cross-instance anisotropic-scale limitation above (that one is about
+the transform *between* two instances; this one is about one target's *own* local shape, with no instance
+transform involved at all — see `ContainmentQuery.js`'s own comment beside `classifyPoint`'s tolerance
+calculation for the full mechanism), `mergeDistance` and `surfaceEpsilon` both scale off a target's single
+global `L_target` (its local bounding-box diagonal), not off any local/per-feature thickness. For an
+extreme single-geometry aspect ratio (one local dimension enormously larger than another, on the *same*
+target), this produces two failure modes on the same fixture: merge-collapse (`mergeDistance` exceeds the
+thin dimension's actual thickness, merging its entry/exit ray crossings and flipping parity) and boundary-
+expansion (`surfaceEpsilon` catches a genuinely interior point in the Stage-1 proximity pre-check before
+parity casting runs). Both derive from the same `1e-6` factors, but `L_target` is the AABB *diagonal*,
+not simply its longest extent, so failure onset in terms of a **max/min local-extent ratio** (the metric
+`ThreeMeshBvhBackend.build()` actually computes — see Detection below) depends on box shape: for a target
+with two comparably large dimensions and one thin one (`test/query/ContainmentQuery.classifyPoint.test.mjs`'s
+`{ todo: true }` fixture, `box(0.5, 1_000_000, 1_000_000)`), the diagonal's extra `√2` factor from the two
+large dimensions brings the tighter failure mode (boundary-expansion) on at a **max/min ratio of ~354,000**,
+not the ~1,000,000 the fixture's own box dimensions might suggest by eye — that fixture's actual max/min
+ratio is **2,000,000:1** (`1,000,000 / 0.5`), comfortably past onset either way. A target with only one
+dominant long dimension (other two extents `O(1)`, diagonal ≈ that one dimension) fails later, closer to
+~500,000-707,000:1. **The guard is therefore a conservative proxy, not an exact predicate**: whole-AABB
+max/min extent correlates with, but is not identical to, the diagonal-vs-thinnest-local-feature quantity
+that actually governs `classifyPoint`'s failure — it also cannot detect a thin local *feature* embedded
+inside an otherwise roughly-cubic AABB (e.g. a small thin fin on a cube), which is a real, currently-
+undetected instance of the same underlying tolerance-model limitation. The existing "representative BIM
+aspect ratio" fixture (`box(0.01, 10, 0.5)`, ~1,000:1 by the same max/min metric — a long thin duct/wall
+segment, a realistic BIM/MEP envelope) is proven correct at the current tolerance model, well clear of
+either failure-onset estimate above.
+
+**Milestone-1 disposition: declared unsupported beyond `maxLocalAspectRatio` (`10_000`), not fixed.**
+`10_000` sits roughly 35× below the tighter of the two derived failure-onset estimates above (`~354,000`)
+and 10× above the tested realistic-BIM fixture (`~1,000`), giving safety margin in both directions —
+smaller than a first-pass diagonal-only estimate might suggest, but still comfortable, and still without
+requiring the tolerance-model redesign a correct fix at arbitrary aspect ratio would need (that redesign
+needs geometric evidence beyond a single scalar — hit positions/normals/local feature scale — and is out
+of Milestone-1 scope; nothing in the current acceptance criteria requires a target this extreme, and
+repository evidence does not establish real MEP models' actual maximum aspect ratios or minimum local
+feature sizes — this bound is a reasoned safety margin, not a measured one). This is the smaller-scope
+disposition (option A), chosen because Milestone-1 acceptance is real BIM/MEP building geometry, not
+synthetic extreme ratios, and the existing realistic-BIM fixture already demonstrates the bound is not
+reached in practice. **Detection:** `ThreeMeshBvhBackend.build()` computes `aspectRatio` (max/min local
+AABB extent) and `aspectRatioExceeded` (`aspectRatio > maxLocalAspectRatio`) alongside `localDiagonal`,
+over the same collision-owned compacted-then-welded buffer `L_target` is computed from —
+`ThreeMeshBvhBackend` stays a stateless, non-gating builder per its own module objective, so it *computes
+and surfaces* this signal but does not itself reject anything. **Rejection scope — narrower than the whole
+`GeometryRecord`:** the tolerance-model failure is specific to using a geometry as a **`classifyPoint`
+target** (the parity-tested operand) — it says nothing about that same geometry's fitness as a
+`classifyPoint` *source* (which is sampled, never parity-tested) or its fitness for `surface-intersection`
+mode (which never calls `classifyPoint` at all). Task 14's generic build orchestration (weld/connectivity/
+BVH, shared by every query mode) therefore must **not** reject a `GeometryRecord` outright merely because
+`aspectRatioExceeded` is true — doing so would incorrectly deny `surface-intersection` and source-role
+containment work this tolerance-model limitation does not actually affect. The check belongs at the call
+site that uses a geometry as a `classifyPoint` target: `ContainmentQuery.anyComponentInside` (Task 9,
+`targetBvh`) and `ContainmentModeQuery`'s (Task 12) target role, which must skip `classifyPoint` for a
+target with `aspectRatioExceeded: true` and emit a diagnostic (reason
+`geometry-aspect-ratio-exceeds-tolerance-model`) rather than trust a classification this tolerance model
+cannot make correctly at that aspect ratio — see Task 9's "Protected invariants" section in the
+implementation plan for the acceptance-criterion wording. **Fixture/acceptance coverage:**
+`test/blas/ThreeMeshBvhBackend.test.mjs` asserts the exact computed `aspectRatio` (not merely a threshold
+inequality) for both the realistic-BIM-scale fixture (`aspectRatioExceeded: false`) and the existing
+extreme `{ todo: true }` fixture's own box dimensions (`aspectRatioExceeded: true`, ratio ≈ 2,000,000), plus
+boundary-value coverage at and just past `maxLocalAspectRatio` itself — the `{ todo: true }` `classifyPoint`
+test itself is unchanged (it still documents the correct desired classification behavior as a future
+redesign target); the new coverage is only that the *guard* fires correctly, not a claim that classification
+itself is fixed.
 
 `minPenetrationDepth` deserves emphasis because it is a **semantic** limit, not an implementation
 detail: `volume-overlap` detects overlaps deeper than it, and may classify shallower ones as mere
@@ -4919,8 +5001,12 @@ shipping the acceleration structures untested and calling the milestone verified
   budgets. The MEP benchmark that makes the retained BVH meaningful is the same benchmark that would
   set this threshold.
 - ~~Should `indexOwnership: 'indirect'` become the default once a benchmark suite exists?~~
-  **Settled by the spike:** welding produces an owned index, so there is no shared Viewer index for
-  indirect mode to protect. The option is inapplicable, not merely deferred.
+  **Settled by the spike:** welding produces an owned index, so there is no shared Viewer index for that
+  *ownership option* to protect. `indexOwnership: 'indirect'` — the pipeline-level buffer-ownership
+  strategy — is inapplicable, not merely deferred. This does **not** extend to `MeshBVH`'s own, unrelated
+  `indirect: true` constructor option, which `ThreeMeshBvhBackend` still correctly uses for triangle-
+  ordinal stability (see the "Position is an owned, compacted-then-welded buffer" passage above for the
+  full distinction) — do not read this settled question as grounds to remove it.
 - ~~Should non-manifold components attempt repair (welding coincident vertices)?~~ **Settled by the
   spike:** not optional — nothing works without it. Promoted to a required normalization step.
 - Does cross-model geometry deduplication matter enough to prioritize once multi-model clash

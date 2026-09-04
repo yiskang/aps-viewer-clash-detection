@@ -11,6 +11,14 @@
 // Never throws for an unsupported/rejected geometry -- returns a diagnostic marker
 // instead (spec:3804-3810: "skip that fragment; record a diagnostic ... must be
 // distinguishable from a verified no-clash").
+//
+// Returns LIVE REFERENCES into whatever the Viewer geometry object itself owns (geometry.vb,
+// positionAttr.data.array, positionAttr.array, geometry.ib, geometry.index.array) -- never
+// copies. The caller (the weldPromise factory, Task 14) MUST hand this result into
+// compactAndWeld with no intervening await/yield -- this closes the one channel this codebase
+// could introduce for an event-loop-driven lifecycle event (reload teardown, epoch eviction) to
+// land in the gap; it is not a claim that Viewer's buffers are proven stable in general -- see
+// Task 14's "Protected invariants" section.
 
 function isValidPositiveNumber(n) {
   return typeof n === 'number' && Number.isFinite(n) && n > 0;
