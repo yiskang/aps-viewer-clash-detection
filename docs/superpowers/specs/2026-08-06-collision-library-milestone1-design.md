@@ -686,7 +686,16 @@ extraction's atomic-risk boundaries, the mode dependency matrix):
 - **Lifecycle (H-L1/H-L2, H-L4, H-L7, H-L8).** Corrected a mischaracterization from this pass's own first
   draft, caught by `codex-advisor`: the extension does not get silently reconstructed after a model
   switch under this app's current wiring — it is unloaded once, permanently, since extensions are
-  registered only once in `config.extensions` at `viewer.start()`. Documented that gap explicitly, scoped
+  registered only once in `config.extensions` at `viewer.start()`. *(Superseded by Round 24: a direct
+  read of the pinned 7.124.2 bundle found that `loadDocumentNode()`'s replacement branch calls
+  `setUp(config)` immediately after `tearDown()`, and `setUp()` reloads every id in `config.extensions` —
+  so the Viewer itself DOES reconstruct a fresh `RoomLocatorExtension`/`CollisionWorld` on this app's
+  replacement path. This codex-advisor consultation reasoned from this Agent Kit's own
+  `knowledge/viewer-model-lifecycle.md`, which documented `tearDown()`'s unload behavior but not what
+  `loadDocumentNode()` does immediately afterward — an evidence gap, not a misreading of what it had. See
+  Round 24 and the corrected "Scope of the model-identity apparatus" passage under Data Flow step 1 for
+  the current, canonical statement; the Milestone-1 "does not guarantee continuity" conclusion this entry
+  reached is still correct, for a different reason than stated here.)* Documented that gap explicitly, scoped
   the `modelLifecycle`/`loadEpoch` identity apparatus to "while one instance is alive" (its actual,
   still-Critical-protected role), and narrowed the stale "every race-safety guarantee depends on the
   event firing" Open Question to exclude the `tearDown()`-driven path. Stated `load()`'s
@@ -797,6 +806,46 @@ variant: two concurrent `findClashes` calls sharing one build slot, the owning m
 asserting the entry-scoped cancellation signal rejects exactly once and both callers reject with
 `ModelEvictedError`. No mechanism, behavior, or protected Critical invariant changed — both edits are
 confined to one rationale clause and one fixture bullet.
+
+### Round 24 (0 Critical — lifecycle-accuracy correction, not a Codex review round; independently
+re-verifies Round 21's Lifecycle finding directly against the pinned 7.124.2 bundle, not through
+`knowledge/viewer-model-lifecycle.md`)
+
+Round 21's Lifecycle fix (see above) stated the extension "does not get silently reconstructed after a
+model switch... it is unloaded once, permanently" — sourced through this Agent Kit's own
+`knowledge/viewer-model-lifecycle.md`, which documents `tearDown()`'s extension-unload behavior but not
+what `Viewer3D.prototype.loadDocumentNode` does immediately afterward. A direct read of the pinned
+7.124.2 bundle found that gap: `loadDocumentNode`'s replacement branch (entered whenever
+`keepCurrentModels` is falsy and `hasModels()` is true — this app's own path, `wwwroot/viewer.js:31-41`)
+calls `this.tearDown()` and then, synchronously and un-awaited, `this.setUp(this.config)`
+(`viewer3D.js:27710-27713`); `setUp(config)` reloads every id in `config.extensions` via
+`this.loadExtension(extensions[i], this.config)` (`viewer3D.js:26491-26506`), and because `tearDown()`
+already cleared `loadedExtensions`, `loadExtensionLocal` finds nothing registered under this extension's
+id and constructs a fresh instance (`viewer3D.js:15024-15043`) before calling its `load()`. So a
+replacement destroys the current `RoomLocatorExtension`/`CollisionWorld` AND the Viewer itself
+reconstructs a fresh one in the same call — the "never comes back" half of Round 21's claim was wrong;
+its "Milestone 1 does not guarantee continuity" conclusion was right, for a different reason (fresh,
+empty state on a new instance, not permanent absence of one).
+
+Fixed by rewriting the "Scope of the model-identity apparatus" / "Decided:" passage under Data Flow step
+1 to state the verified runtime behavior and the Milestone-1 support contract as two separate claims —
+the former cited to the bundle, the latter a normative milestone decision this document makes given that
+runtime fact, not itself a bundle claim; annotating Round 21's own entry as superseded on this one point
+(its H-L4/H-L7/H-L8 fixes are unaffected and remain correct); and recording three further caveats
+verified in the same pass, none of which redesign anything this milestone already committed to: `setUp()`
+never awaits the reconstructed extension's `load()`, and the resulting readiness gap is unverified beyond
+"at least one microtask" — narrower than merely "benign" — only because `CollisionWorld
+.fromViewer` happens to contain no internal `await` — an implementation property of this milestone's own
+code, not a guarantee `setUp()`/`loadExtension()` provide; `wwwroot/main.js`'s `onModelSelected` does not
+serialize overlapping `loadModel()` calls; and `RoomLocatorExtension._onBeforeModelUnload`'s own
+defensive throw for a missing `event.model` propagates into the same unprotected `dispatchEvent` call
+`world.evictModel`'s hazard analysis already covers, but — unlike `evictModel` — was never made
+non-throwing, a gap the spec did not previously disclose at all.
+
+Deliberately not touched: every Critical invariant; every query/geometry mechanism; `world.evictModel`'s
+own non-throwing behavior (unchanged); `RoomLocatorExtension.unload()`'s existing per-step-isolation
+disclosure (unchanged — it was already correctly hedged and did not claim safety). This is a
+lifecycle-accuracy correction only, not a redesign.
 
 ## Spike Findings (executable, `spike/`)
 
@@ -949,13 +998,16 @@ This spec covers a deliberately bounded slice of the idea doc's full architectur
   Milestone 1 and rejects otherwise. Placement-transform/global-offset/unit normalization across
   models is real work the idea doc explicitly calls out ([idea:1130-1136]) and is undefined until a
   later milestone designs it.
-- **Surviving a Viewer model/document replacement.** Once `RoomLocatorExtension`/`CollisionWorld` has
-  been established for this app's initially loaded model, a later `loadDocumentNode` call that
-  replaces it is out of scope — Milestone 1 makes no promise the extension or its `CollisionWorld`
-  survive that replacement. Extension reload/re-registration and `CollisionWorld` reconstruction across
-  a replacement (whether via `keepCurrentModels`, an explicit unload+admit cycle, or another mechanism)
-  are deferred to a later milestone; see **Data Flow** step 1 for the decided scope boundary and the
-  Viewer-behavior evidence behind it.
+- **State continuity across a Viewer model/document replacement.** Once `RoomLocatorExtension`/
+  `CollisionWorld` has been established for this app's initially loaded model, a later `loadDocumentNode`
+  call that replaces it is out of scope — Milestone 1 makes no promise that the outgoing instance's state
+  (admitted models, room cache, in-flight work, `CollisionWorld` registries) carries over to whatever
+  instance is live afterward. This is a statement about *state continuity*, not about whether an instance
+  exists afterward: on this app's current wiring the Viewer itself automatically reconstructs a fresh
+  `RoomLocatorExtension`/`CollisionWorld` on that path (see **Data Flow** step 1), but the fresh instance
+  starts empty. Carrying state into the reconstructed instance, or restructuring the application around
+  `keepCurrentModels` so the *same* instance persists instead, are deferred to a later milestone; see
+  **Data Flow** step 1 for the decided scope boundary and the Viewer-behavior evidence behind it.
 
 The public `CollisionWorld` API is designed to be forward-compatible with these — later milestones
 extend the same method signatures rather than replacing them.
@@ -2741,32 +2793,62 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
    is the load-bearing correctness mechanism for as long as one `RoomLocatorExtension` instance and its
    `CollisionWorld` stay alive — including multiple admitted models, explicit eviction, delayed eviction,
    and in-flight work racing an eviction. It does not, by itself, make the *instance* survive a model
-   switch, and this app's own wiring does not either: extensions are registered once, in
-   `config.extensions` at `viewer.start()` (`wwwroot/viewer.js:15-24`), and `loadModel()`'s own call site
-   passes `viewer.loadDocumentNode(doc, defaultGeometry)` with no options object
-   (`wwwroot/viewer.js:31-41`), so `keepCurrentModels` is never set. Loading a second model therefore
-   invokes `Viewer3D.tearDown()` before the new model loads, which unloads every currently-registered
-   extension — this one included, via its own `unload()` — and nothing in this app re-registers it
-   afterward: confirmed against the pinned 7.124.2 bundle's `Viewer3D.prototype.loadDocumentNode`
-   (`keepCurrentModels`/`hasModels()` guard, `viewer3D.js:27710`, recurring in the `loadModel` path at
-   `viewer3D.js:88293`), a real Viewer side effect undocumented by either method's own Reference Guide
-   entry.
+   switch. Whether the Viewer replaces that instance with nothing, or with a fresh one, is a runtime fact,
+   verified below; either way the apparatus's guarantees stay scoped to one instance's own lifetime.
 
-   **Decided: Milestone 1 does not support a Viewer model/document replacement after
-   `RoomLocatorExtension`/`CollisionWorld` has been established.** On this app's current wiring, Room
-   Locator does not survive a second model load at all — it is unloaded once and never comes back. The
-   Milestone-1 acceptance path covers the initially loaded, supported model/session only; no code path in
-   this milestone re-registers the extension or reconstructs its `CollisionWorld` after a
-   replacement-driven `tearDown()`, and none is required to. Extension reload/re-registration and
-   `CollisionWorld` reconstruction across a model replacement — whether by restructuring the application
-   around `keepCurrentModels`, by an explicit unload+admit cycle that exercises `evictModel` normally, or
-   by some other mechanism — are deferred to a later milestone (see **Milestone Scope**); this document
-   does not choose among them, and no Milestone-1 implementation work should attempt to. On the
-   `tearDown()`-driven path specifically — **provided `unload()` itself completes all three of its
+   **Runtime behavior on a replacement, verified against the pinned 7.124.2 bundle.** This app's own
+   wiring registers extensions once, in `config.extensions` at `viewer.start()` (`wwwroot/viewer.js:15-24`),
+   and `loadModel()`'s own call site passes `viewer.loadDocumentNode(doc, defaultGeometry)` with no
+   options object (`wwwroot/viewer.js:31-41`), so `keepCurrentModels` is never set. `Viewer3D.prototype
+   .loadDocumentNode`'s replacement branch — entered whenever `keepCurrentModels` is falsy and
+   `impl.hasModels()` is true, exactly this app's own condition — therefore runs on each later call made
+   while the Viewer still has a model loaded.
+   That branch does not merely call `tearDown()`; it calls `tearDown()` and then, synchronously in the
+   same statement block, `setUp(config)`: `let _conf = this.config; this.tearDown(); this.setUp(_conf);`
+   (`viewer3D.js:27710-27713`, recurring in the `loadModel` path at `viewer3D.js:88293-88297`).
+   `tearDown()` unloads every currently-registered extension via each one's own `unload()` (wrapped in
+   try/catch) and clears `loadedExtensions` (`viewer3D.js:26536-26557`) — this is the half of the story
+   Round 21 documented. **`setUp(config)` then reloads `config.extensions`**: it iterates the array and
+   calls `this.loadExtension(extensions[i], this.config)` for every entry, including this extension's own
+   id, which was never removed from `config.extensions` by the replacement (`viewer3D.js:26491-26506`).
+   Because `tearDown()` already cleared `loadedExtensions`, `loadExtension` → `loadExtensionLocal` finds
+   no existing instance registered under that id and constructs a fresh one — `new EXTENSION_CLASS(this,
+   options)` (`viewer3D.js:15024-15043`) — before calling its `load()`. **So on this app's default wiring,
+   a Viewer model/document replacement destroys the current `RoomLocatorExtension`/`CollisionWorld` AND,
+   in the same synchronous `setUp()` call, causes the Viewer to construct a brand-new
+   `RoomLocatorExtension` instance, which in turn constructs a brand-new `CollisionWorld` (via
+   `CollisionWorld.fromViewer`) once its own `load()` runs.** This is a Viewer-driven side effect that
+   this app's code does not arrange — this app's `loadModel()` call site does not currently pass
+   `keepCurrentModels`, so nothing in this app's own wiring suppresses it today. It is
+   undocumented by either `loadDocumentNode`'s or `setUp`'s own Reference Guide entry, so — like every
+   other internal-ordering claim in this document — revalidate on any Viewer upgrade.
+
+   **Decided: Milestone 1 still does not support continuity across a Viewer model/document replacement —
+   for a different reason than a prior round of this document stated.** The freshly reconstructed
+   `RoomLocatorExtension`/`CollisionWorld` from the paragraph above is a genuinely new instance with
+   genuinely empty state; Milestone 1 makes no attempt to hand anything off to it from the instance
+   `tearDown()` just destroyed, and a brand-new instance has nothing to hand off from regardless. None of
+   the following survive a replacement: the outgoing instance's admitted-model state
+   (`modelLifecycle`/`loadEpoch`, scoped to that one instance per the paragraph above), the extension's
+   room-dbId cache, any in-flight `locateElementByRoom`/`model.search` work the outgoing instance had
+   running, or the outgoing `CollisionWorld`'s registries (`GeometryRegistry`, `BlasCache`, the
+   `CollisionInstance` identity cache). The fresh instance starts exactly where a first-ever `load()`
+   starts: no admitted models, an empty room cache, empty registries. The Milestone-1 acceptance path
+   covers the initially loaded, supported model/session only; no code path in this milestone attempts to
+   preserve or transfer state across a replacement-driven `tearDown()`/`setUp()` cycle, and none is
+   required to. Restructuring the application around `keepCurrentModels` so the *same* instance persists
+   across multiple loaded models, or any other mechanism for carrying state into the reconstructed
+   instance, is deferred to a later milestone (see **Milestone Scope**); this document does not choose
+   among them, and no Milestone-1 implementation work should attempt to. **Milestone 1 also makes no
+   guarantee about replacement-load serialization or about the freshly reconstructed extension's
+   readiness timing** — see the three caveats below, verified in the same pass, none of which this
+   milestone redesigns anything to close.
+
+   On the `tearDown()`-driven path specifically — **provided `unload()` itself completes all three of its
    steps** (see `RoomLocatorExtension.unload()`'s per-step-isolation caveat; the same proviso `unload()`'s
    own ordering note applies to the sibling case where `BEFORE_MODEL_UNLOAD_EVENT` fires into an
    already-disposed world) — `BEFORE_MODEL_UNLOAD_EVENT` fires only after `tearDown()`'s own
-   extension-unload loop already ran, so this extension's listener is already deregistered and
+   extension-unload loop already ran, so the outgoing instance's listener is already deregistered and
    `world.evictModel` is never invoked for the outgoing model that way; `world.dispose()`'s wholesale
    clear and the room-cache clear already release everything a per-model `evictModel` call would have.
    *Confirmed against the pinned 7.124.2 bundle: `tearDown()`'s extension-unload loop
@@ -2776,6 +2858,54 @@ described under **Data Flow** below — the mechanism that bounds what the per-s
    `BEFORE_MODEL_UNLOAD_EVENT` as its first statement (`viewer3D.js:34054`). This ordering is an
    internal implementation detail, not documented or guaranteed by Autodesk — revalidate on any Viewer
    upgrade.*
+
+   **Three further verified lifecycle caveats, recorded here without redesigning this milestone:**
+
+   1. **`setUp()` does not await the reconstructed extension's `load()`.** `Viewer3D.prototype.setUp`
+      calls `this.loadExtension(extensions[i], this.config)` in a plain, un-awaited `for` loop
+      (`viewer3D.js:26499-26503`), and `loadDocumentNode`'s replacement branch does not await
+      `this.setUp(_conf)` either (`viewer3D.js:27710-27713`) — so `loadDocumentNode()` proceeds to load
+      the replacement model, and its own returned promise can resolve, before the fresh
+      `RoomLocatorExtension.load()` — which awaits `CollisionWorld.fromViewer(...)` to completion before
+      registering its listener and context-menu item (see the `RoomLocatorExtension` class sketch) — has
+      necessarily finished. This is currently benign only because `CollisionWorld.fromViewer`
+      (`collision/CollisionWorld.js:275-306`) contains no internal `await`: its own body runs to
+      completion synchronously and returns an already-resolved promise. That still leaves at least one
+      microtask boundary between the fresh instance being constructed and `load()`'s continuation
+      registering its `BEFORE_MODEL_UNLOAD_EVENT` listener and context-menu item — `await`, even on an
+      already-resolved promise, always defers to a later microtask; this document does not establish, and
+      does not claim, that nothing else can run in that window. **What is verified is only that the gap
+      does not additionally wait on any I/O — a property of this milestone's own `fromViewer`
+      implementation, not a guarantee `setUp()`/`loadExtension()` themselves provide.** A future
+      `fromViewer` that awaits anything I/O-bound (a worker handshake, a dynamic import, …) would widen
+      that same window from "one microtask, exact contents unverified" to one that can span an arbitrary
+      delay, in which application code, or another overlapping replacement, could observe a
+      `RoomLocatorExtension` whose listener and context-menu item are not yet registered.
+   2. **`wwwroot/main.js` does not serialize overlapping `loadModel()` calls.** `onModelSelected`
+      (`wwwroot/main.js:61-93`) calls `loadModel(viewer, urn)` (line 86) with no in-flight guard —
+      nothing prevents a second model selection, or the translation-status poll's own retry
+      (`window.onModelSelectedTimeout`, line 79), from invoking `loadModel` again before a prior
+      `loadDocumentNode()` call's returned promise has settled. `loadDocumentNode`'s own `tearDown()`/
+      `setUp()` pair runs as one synchronous block within a single call, so two such calls cannot
+      interleave at the statement level — but nothing serializes the two *calls* themselves: each
+      `loadModel()` invocation starts its own asynchronous chain (`fetch`/`Model.Document.load`, then
+      `loadDocumentNode`), and this milestone does not reason about what happens if a second chain's
+      `loadDocumentNode()` call — and the fresh `RoomLocatorExtension`/`CollisionWorld` it constructs —
+      lands before, during, or racing a prior chain's own in-flight `load()`. Recorded as an open
+      replacement-lifecycle risk; this pass does not redesign `main.js`'s load sequencing.
+   3. **`RoomLocatorExtension._onBeforeModelUnload` can throw into the same unprotected Viewer dispatch
+      `world.evictModel`'s own hazard analysis was written against.** The handler
+      (`wwwroot/extensions/RoomLocatorExtension.js:90-96`) throws synchronously if `event.model` is
+      missing, *before* it ever calls `world.evictModel`. Because this handler is itself the direct
+      listener `EventDispatcher.prototype.dispatchEvent` invokes with no try/catch
+      (`viewer3D.js:13300-13341`, dispatched as the first statement of `Viewer3DImpl.unloadModel`,
+      `viewer3D.js:34052-34054` — see **`world.evictModel`**'s race-safety note below for the full
+      blast-radius analysis), an uncaught throw here has the identical effect already documented there:
+      it aborts the Viewer's own remaining-models teardown loop. `world.evictModel` was deliberately made
+      non-throwing to avoid exactly this (see **`world.evictModel`** below); **this handler's own guard
+      clause was not**, and remains open/unsettled — the same disposition `RoomLocatorExtension.unload()`'s
+      per-step-isolation gap already carries (see the `RoomLocatorExtension` class sketch). This is not a
+      safe path; it is an undecided one that this milestone does not close.
 
    **This decision changes nothing about unload/eviction handling within the supported Milestone-1
    lifecycle.** For one `RoomLocatorExtension`/`CollisionWorld` instance, across every model admitted,
@@ -3740,6 +3870,13 @@ class RoomLocatorExtension extends Autodesk.Viewing.Extension {
   // world.evictModel's race-safety note). The room-cache deletion is unconditional and independent of
   // the evictModel call: world.dispose() never touches the extension-owned room cache, so the handler
   // must still drop the entry when evictModel no-ops on a disposed world.
+  // Guards event.model first and throws synchronously if it is missing, BEFORE calling evictModel —
+  // this handler IS the listener EventDispatcher.prototype.dispatchEvent invokes with no try/catch (see
+  // world.evictModel's race-safety note for the full blast-radius analysis), so an uncaught throw here
+  // has the same effect documented there: it aborts the Viewer's own remaining-models teardown loop.
+  // Unlike world.evictModel, this guard clause was never made non-throwing — that gap is open and
+  // unsettled, the same disposition unload()'s per-step-isolation gap above already carries, not a safe
+  // path (see Data Flow step 1's "Three further verified lifecycle caveats").
   async locateElementByRoom(dbId): Promise<number[]>  // rejects with ModelEvictedError if its
                                      // model is evicted mid-query, or with WorldDisposedError if
                                      // the world was disposed (see world.evictModel/world.dispose)
