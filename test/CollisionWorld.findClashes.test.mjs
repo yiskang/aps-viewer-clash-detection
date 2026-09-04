@@ -19,7 +19,10 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { CollisionWorld } from '../collision/CollisionWorld.js';
 import { CollisionWorld as IndexExportedCollisionWorld } from '../collision/index.js';
-import { WorldDisposedError, ModelEvictedError } from '../collision/errors.js';
+import {
+  WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
+} from '../collision/errors.js';
+import * as collisionIndex from '../collision/index.js';
 import { ExtractionLimitExceededError } from '../collision/viewer/ViewerModelAdapter.js';
 import {
   maxBroadPhaseInstancePairs, maxChildrenPerNode, maxFragmentsPerDbId, maxSyncTriangleCount,
@@ -49,7 +52,7 @@ const translationMatrix = ([x, y, z]) => new THREE.Matrix4().makeTranslation(x, 
  *   pass unnoticed). `bounds` overrides that derivation, for fixtures whose raw geometry is a
  *   deliberately non-THREE object.
  */
-function makeFixture(rootNodes, fragSpecs = {}) {
+function makeFixture(rootNodes, fragSpecs = {}, modelOptions = {}) {
   const fragmentGeometry = new Map();
   const rawGeometryByFragId = new Map();
   for (const [fragIdKey, spec] of Object.entries(fragSpecs)) {
@@ -62,7 +65,9 @@ function makeFixture(rootNodes, fragSpecs = {}) {
     });
     if (spec.geometry) rawGeometryByFragId.set(fragId, spec.geometry);
   }
-  const { model: baseModel, stats } = buildMockModel(rootNodes, fragmentGeometry);
+  // `modelOptions` is forwarded verbatim to buildMockModel -- notably objectTreeReady /
+  // settleObjectTree, which drive findClashes's instance-tree readiness wait.
+  const { model: baseModel, stats } = buildMockModel(rootNodes, fragmentGeometry, modelOptions);
   // buildMockModel predates Task 19; getUnitScale is what _resolveGeometryView reads to scale
   // weldEpsilonMeters. 1 (meters) is the identity case.
   const model = { ...baseModel, id: 1, getUnitScale: () => 1 };
@@ -672,6 +677,301 @@ test('admitted CollisionInstances are cached per epoch and reused across calls i
   const first = bucket.get(80000);
   await world.findClashes(query(model, [80], [90]));
   assert.equal(world._instanceCache.get(epoch).get(80000), first, 'the same canonical instance is reused');
+});
+
+// === batch-4 fix wave ==========================================================================
+
+// --- Finding 2: a transient missing render proxy must not permanently poison a geometry entry ---
+//
+// viewer.impl.getRenderProxy legitimately returns null for a fragment that is not yet loaded, is
+// culled, or has already been torn down. Before the fix that null was handed to adaptViewerGeometry,
+// which reported `unsupported-geometry-layout` -- indistinguishable from a genuinely malformed
+// geometry -- and createGeometryRegistry's buildWeld converted it into a PERMANENT oversized marker
+// cached for the whole epoch, with no retry mechanism. That contradicts the spec's own rule
+// (:3171-3174) that a normalization failure "settles no persistent entry state", and left the
+// fragment unusable for the rest of the model's life even once its proxy came back.
+for (const [label, unavailableProxy] of [['null proxy', null], ['proxy with no geometry', { geometry: null }]]) {
+  test(`transient render-proxy miss (${label}): pair skipped with a diagnostic, entry NOT poisoned`, async () => {
+    const { model, viewer } = makeFixture(
+      [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+      {
+        100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+        200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+      },
+    );
+    // Fragment 200's proxy is missing on the FIRST attempt only -- exactly the Viewer's own
+    // "not yet loaded" transient, which resolves by itself a moment later.
+    const realGetRenderProxy = viewer.impl.getRenderProxy;
+    let proxyMissing = true;
+    viewer.impl.getRenderProxy = (queriedModel, fragId) =>
+      (proxyMissing && fragId === 200 ? unavailableProxy : realGetRenderProxy(queriedModel, fragId));
+
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    const epoch = world.admitModel(model).epoch;
+
+    const first = await world.findClashes(query(model, [10], [20]));
+    assert.equal(first.pairs.length, 0, 'no geometry was available, so no verdict may be reported');
+    assert.equal(first.statistics.narrowPhasePairs, 1, 'the pair reached the narrow phase and was skipped there');
+    assert.deepEqual(first.statistics.diagnostics, [{
+      scope: 'fragment',
+      reason: 'geometry-not-yet-available',
+      role: 'target',
+      fragment: { modelId: model.id, dbId: 20, fragId: 200 },
+    }], 'a transient miss gets its OWN reason, never unsupported-geometry-layout');
+
+    // The registry must hold NO entry for the missing geometry index -- not a record, and above all
+    // not an oversized marker. geometryIndex 0 (which built fine) is still cached, proving the
+    // discard is scoped to the failed entry alone.
+    const registryBucket = world._registry._epochs.get(epoch);
+    assert.equal(registryBucket.has(0), true, 'the geometry that DID build stays cached');
+    assert.equal(registryBucket.has(1), false, 'the failed attempt settled no persistent entry state');
+
+    // ...and once the proxy exists, the SAME (loadEpoch, geometryIndex) builds for real.
+    proxyMissing = false;
+    const second = await world.findClashes(query(model, [10], [20]));
+    assert.equal(world.admitModel(model).epoch, epoch, 'still the same epoch -- no reload happened');
+    assert.equal(second.pairs.length, 1, 'the retry succeeds: nothing was permanently poisoned');
+    assert.deepEqual(second.statistics.diagnostics, []);
+  });
+}
+
+test('a NON-RenderProxyUnavailable error from a geometry build still aborts the whole call', async () => {
+  // The catch in buildOne is deliberately narrow: only the transient class is absorbed. A checkpoint
+  // liveness failure, a builder bug, or any other error must still propagate and fail the call.
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const originalResolve = world._resolveGeometryView.bind(world);
+  world._resolveGeometryView = (loadEpoch, geometryIndex) => {
+    if (geometryIndex === 1) throw new Error('some other geometry-resolution failure');
+    return originalResolve(loadEpoch, geometryIndex);
+  };
+  await assert.rejects(world.findClashes(query(model, [10], [20])), /some other geometry-resolution failure/);
+});
+
+test('RenderProxyUnavailableError / ObjectTreeUnavailableError are exported from collision/index.js', () => {
+  assert.equal(collisionIndex.RenderProxyUnavailableError, RenderProxyUnavailableError);
+  assert.equal(collisionIndex.ObjectTreeUnavailableError, ObjectTreeUnavailableError);
+});
+
+// --- Finding 3: a surface-intersection ABORT must be observable, not a silent clean negative -----
+//
+// surfaceIntersectionQuery owns a private, traversal-local clock and candidate-pair budget, and on
+// exhaustion returns `{ intersects: false, aborted: true, diagnostics: [crossing-budget-exhausted] }`
+// -- correctly refusing to read its own abort as a hit. findClashes read only `.intersects` and
+// discarded the rest, making a budget-exhausted traversal indistinguishable from a verified no-touch
+// (spec :3804-3810; the same rule spike/fixtures.mjs's own "aborted must NOT read as a hit" fixture
+// pins one layer down).
+test('an aborted surface-intersection traversal is surfaced as a diagnostic, not a clean negative', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    {
+      // The SAME overlapping pair the "cheap query" fixture at the top of this file reports as a
+      // genuine hit -- so the zero-pairs result below is caused by the abort and nothing else.
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+
+  // The query's private clock reads the real `performance.now()` and findClashes exposes no seam to
+  // override it (the injected `now` above drives only the world's own frame-budget accumulator), so
+  // the abort is forced by making that global clock leap on every read: the traversal is already
+  // past frameBudgetMs at its very first callback entry. Deterministic -- no wall-clock luck, and no
+  // dependence on how many candidate pairs this particular BVH pair happens to produce.
+  const realNow = performance.now;
+  let result;
+  try {
+    let t = 0;
+    performance.now = () => (t += 1_000_000);
+    result = await world.findClashes(query(model, [10], [20]));
+  } finally {
+    performance.now = realNow;
+  }
+
+  assert.equal(result.statistics.narrowPhasePairs, 1, 'the pair did reach the narrow phase');
+  assert.equal(result.pairs.length, 0, 'an aborted traversal never fabricates a hit');
+  assert.equal(result.statistics.diagnostics.length, 1,
+    'the incompleteness must be observable -- an empty diagnostics array here would read as a VERIFIED no-touch');
+  assert.deepEqual(result.statistics.diagnostics[0], {
+    scope: 'pair',
+    reason: 'crossing-budget-exhausted',
+    sourceFragment: { modelId: model.id, dbId: 10, fragId: 100 },
+    targetFragment: { modelId: model.id, dbId: 20, fragId: 200 },
+  });
+});
+
+// --- Finding 5: the instance-tree readiness wait (Task 15's own approved decision) ---------------
+//
+// docs/superpowers/specs/instance-tree-readiness-decision.md, outcome (a) "wait": findClashes waits
+// on model.getObjectTree()'s documented completion before the extraction walk begins, closing that
+// record's Mode 1 (tree not yet created at all). Assigned to "Task 19/20" and missed by both.
+const READINESS_TREE = [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }];
+const READINESS_FRAGS = {
+  100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+  200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+};
+
+test('readiness fast path: an already-created tree is never waited on', async () => {
+  const { model, viewer, stats } = makeFixture(READINESS_TREE, READINESS_FRAGS);
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes(query(model, [10], [20]));
+  assert.equal(stats.getObjectTreeWithCallbacksCalls, 0,
+    'isObjectTreeCreated() === true means proceed synchronously -- getObjectTree(onSuccess, onError) is never called');
+  assert.equal(result.pairs.length, 1, 'and the call behaves exactly as before');
+});
+
+test('readiness wait: extraction does not begin until getObjectTree calls back with success', async () => {
+  let fireSuccess = null;
+  const { model, viewer, stats } = makeFixture(READINESS_TREE, READINESS_FRAGS, {
+    objectTreeReady: false,
+    // Captured, not fired: the Viewer settles this asynchronously, whenever the property database
+    // actually finishes loading.
+    settleObjectTree: (onSuccess, _onError, instanceTree) => { fireSuccess = () => onSuccess(instanceTree); },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const pending = world.findClashes(query(model, [10], [20]));
+
+  // Drain the microtask queue AND one macrotask turn: if findClashes were not waiting, extraction
+  // would have run to completion by now.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(stats.getObjectTreeWithCallbacksCalls, 1, 'the documented wait mechanism was actually used');
+  assert.equal(stats.enumNodeFragmentsCalls, 0,
+    'the extraction walk must not touch the instance tree while the Viewer says it is not created');
+
+  fireSuccess();
+  const result = await pending;
+  assert.ok(stats.enumNodeFragmentsCalls > 0, 'the walk ran after settlement');
+  assert.equal(result.pairs.length, 1, 'and produced the normal result');
+});
+
+test('readiness fast path is CONDITIONALLY SYNCHRONOUS -- it costs no microtask boundary', async () => {
+  // Not cosmetic: a bare `await` on an already-ready model would defer everything after it by a
+  // microtask, which is exactly the boundary ViewerModelAdapter's own Item-D fix exists to keep
+  // closed, and which the decision record's "proceed synchronously" wording rules out
+  // (instance-tree-readiness-decision.md:149).
+  //
+  // Observable proof: with a frozen clock no checkpoint is ever due, so extractFragments runs its
+  // whole walk synchronously before returning its promise. If findClashes reaches extraction without
+  // suspending, the walk has therefore already happened by the time findClashes() returns to us --
+  // synchronously, before a single `await` on our side.
+  const { model, viewer, stats } = makeFixture(READINESS_TREE, READINESS_FRAGS);
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const pending = world.findClashes(query(model, [10], [20]));
+  assert.ok(stats.enumNodeFragmentsCalls > 0,
+    'the fast path must not defer extraction behind a microtask -- _awaitObjectTreeReady returns undefined, it is not awaited');
+  assert.equal((await pending).pairs.length, 1);
+});
+
+test('readiness wait: a model with no isObjectTreeCreated still uses the documented getObjectTree', async () => {
+  // Declining to wait merely because the predicate is missing would silently abandon the strategy
+  // the decision record selected. Only a model implementing NEITHER accessor is unwaitable.
+  let fireSuccess = null;
+  const { model, viewer, stats } = makeFixture(READINESS_TREE, READINESS_FRAGS, {
+    settleObjectTree: (onSuccess, _onError, instanceTree) => { fireSuccess = () => onSuccess(instanceTree); },
+  });
+  delete model.isObjectTreeCreated;
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const pending = world.findClashes(query(model, [10], [20]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(stats.getObjectTreeWithCallbacksCalls, 1, 'the documented accessor is used, not assumed-ready');
+  assert.equal(stats.enumNodeFragmentsCalls, 0);
+  fireSuccess();
+  assert.equal((await pending).pairs.length, 1);
+});
+
+for (const [label, kill, ExpectedError] of [
+  ['eviction', (world, model) => world.evictModel(model), ModelEvictedError],
+  ['disposal', (world) => world.dispose(), WorldDisposedError],
+]) {
+  test(`readiness wait: ${label} DURING the wait is reported, even with no dbIds to check it`, async () => {
+    // The readiness wait is the widest gap in findClashes -- a real property-database load takes
+    // seconds. Extraction's own first checkpoint normally catches a lifecycle change across it (a
+    // single non-empty operand is enough for that), but it never fires AT ALL when both dbIds arrays
+    // are empty: ViewerModelAdapter's per-dbId loop body never runs, and the empty-extraction branch
+    // then returns { pairs: [] } as a SUCCESS against a disposed world or an evicted model. So the
+    // entry-order checks are re-run across the wait itself.
+    let fireSuccess = null;
+    const { model, viewer } = makeFixture(READINESS_TREE, READINESS_FRAGS, {
+      objectTreeReady: false,
+      settleObjectTree: (onSuccess, _onError, instanceTree) => { fireSuccess = () => onSuccess(instanceTree); },
+    });
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    const pending = world.findClashes(query(model, [], [])); // zero checkpoints will ever fire
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    kill(world, model);
+    fireSuccess();
+    await assert.rejects(pending, ExpectedError);
+  });
+}
+
+test('readiness wait: disposal during a FAILING wait reports disposal, not the tree error', async () => {
+  // Ordering: disposed first, then evicted, then anything else -- the same precedence the entry
+  // checks use. A disposal that lands during the wait outranks the Viewer's own tree failure.
+  let fireError = null;
+  const { model, viewer } = makeFixture(READINESS_TREE, READINESS_FRAGS, {
+    objectTreeReady: false,
+    settleObjectTree: (_onSuccess, onError) => { fireError = () => onError(new Error('propertyDbError')); },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const pending = world.findClashes(query(model, [10], [20]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  world.dispose();
+  fireError();
+  await assert.rejects(pending, WorldDisposedError);
+});
+
+test('readiness wait: getObjectTree onError rejects with ObjectTreeUnavailableError, never a silent walk', async () => {
+  const propertyDbError = new Error('propertyDbError');
+  const { model, viewer, stats } = makeFixture(READINESS_TREE, READINESS_FRAGS, {
+    objectTreeReady: false,
+    settleObjectTree: (_onSuccess, onError) => onError(propertyDbError),
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await assert.rejects(world.findClashes(query(model, [10], [20])), (err) => {
+    assert.ok(err instanceof ObjectTreeUnavailableError, `expected ObjectTreeUnavailableError, got ${err?.name}`);
+    // Distinct from the two lifecycle errors: nothing is wrong with this world or this lease.
+    assert.equal(err instanceof WorldDisposedError, false);
+    assert.equal(err instanceof ModelEvictedError, false);
+    assert.equal(err.modelId, model.id);
+    assert.equal(err.cause, propertyDbError, 'the Viewer\'s own error is kept for diagnosis');
+    return true;
+  });
+  assert.equal(stats.enumNodeFragmentsCalls, 0, 'no extraction walk against an unavailable tree');
+});
+
+// --- Finding 19-2: the broad-phase ceiling is checked BEFORE any side effect --------------------
+test('broad-phase ceiling: a rejected call consumes no instance-cache or representative-fragment state', async () => {
+  // Same shape as the "rejects before the nested scan is ever entered" fixture above (1001 x 1000 >
+  // maxBroadPhaseInstancePairs), but asserting the OTHER half of the contract: a call that is going
+  // to be rejected must not first admit 2,001 CollisionInstances against
+  // maxCollisionInstancesPerEpoch (10% of the epoch's entire budget, never released) nor record
+  // representative fragments for them.
+  const sourceChildren = Array.from({ length: 1001 }, (_, i) => ({ dbId: 500_000 + i, fragments: [500_000 + i] }));
+  const targetChildren = Array.from({ length: 1000 }, (_, i) => ({ dbId: 600_000 + i, fragments: [600_000 + i] }));
+  const { model, viewer } = makeFixture(
+    [{ dbId: 0, children: [{ dbId: 1, children: sourceChildren }, { dbId: 2, children: targetChildren }] }],
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const epoch = world.admitModel(model).epoch;
+
+  await assert.rejects(world.findClashes(query(model, [1], [2])), /maxBroadPhaseInstancePairs/);
+
+  assert.equal(world._instanceCache.get(epoch)?.size ?? 0, 0,
+    'a rejected call must not consume maxCollisionInstancesPerEpoch headroom');
+  assert.equal(world._representativeFragmentByGeometry.get(epoch)?.size ?? 0, 0,
+    'nor pollute the epoch representative-fragment map');
+
+  // The epoch is still perfectly usable afterwards: a smaller query against the same live model
+  // admits normally.
+  const ok = await world.findClashes(query(model, [500_000], [600_000]));
+  assert.equal(ok.statistics.broadPhasePairs, 1);
+  assert.equal(world._instanceCache.get(epoch).size, 2, 'only the accepted call\'s two instances');
 });
 
 test('representative fragments and the epoch->model map are released on eviction', async () => {

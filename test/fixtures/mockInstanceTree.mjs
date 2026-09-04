@@ -26,6 +26,19 @@ if (!globalThis.THREE) globalThis.THREE = THREE;
 // test) proves extractFragments passes a genuine THREE.Matrix4/THREE.Box3, never a shim.
 const IDENTITY_MATRIX4 = new THREE.Matrix4();
 
+/**
+ * @param {Array} rootNodes
+ * @param {Map} fragmentGeometry
+ * @param {Object} [options]
+ * @param {Object} [options.stats]  shared counter object (see below)
+ * @param {boolean} [options.objectTreeReady=true]  what `model.isObjectTreeCreated()` reports.
+ *   Defaults to true so every pre-existing fixture takes CollisionWorld.findClashes's
+ *   readiness-wait fast path with no change of its own.
+ * @param {(onSuccess: Function, onError: Function, instanceTree: Object) => void}
+ *   [options.settleObjectTree]  how a `getObjectTree(onSuccess, onError)` call settles. Default:
+ *   `onSuccess(instanceTree)` synchronously. Override to defer it (capture the callbacks and fire
+ *   them later), or to drive the onError path.
+ */
 export function buildMockModel(rootNodes, fragmentGeometry, options = {}) {
   const stats = options.stats || {
     enumNodeChildrenCalls: 0,
@@ -34,6 +47,13 @@ export function buildMockModel(rootNodes, fragmentGeometry, options = {}) {
     enumNodeFragmentsCallbacks: 0,
     getChildCountCalls: 0,
   };
+  // Counted separately from any plain `getObjectTree()` read: ViewerModelAdapter's extraction walk
+  // calls the SAME method with no arguments to fetch the tree, so only a call carrying callbacks is
+  // evidence of the readiness WAIT having run.
+  if (stats.getObjectTreeWithCallbacksCalls === undefined) stats.getObjectTreeWithCallbacksCalls = 0;
+  const objectTreeReady = options.objectTreeReady ?? true;
+  const settleObjectTree = options.settleObjectTree
+    || ((onSuccess, _onError, tree) => onSuccess(tree));
 
   const nodesById = new Map();
   (function index(nodes) {
@@ -124,9 +144,25 @@ export function buildMockModel(rootNodes, fragmentGeometry, options = {}) {
     // fixture's own round-18 ground-truth test (ViewerModelAdapter.test.mjs) still
     // calls it directly for an independently-derived comparison.
     getInstanceTree() { return instanceTree; },
-    getObjectTree() { return instanceTree; },
+    // Dual-shape, exactly like the real Viewer's Model.getObjectTree: called with NO arguments
+    // (extraction's own read) it simply returns the tree; called WITH callbacks (findClashes's
+    // readiness wait) it settles them per `options.settleObjectTree`. It still returns the tree in
+    // both cases so neither caller shape has to special-case it.
+    getObjectTree(onSuccess, onError) {
+      if (typeof onSuccess === 'function') {
+        stats.getObjectTreeWithCallbacksCalls++;
+        settleObjectTree(onSuccess, onError, instanceTree);
+      }
+      return instanceTree;
+    },
+    // "Returns whether the frag-to-node-id mapping is done" -- the predicate
+    // CollisionWorld.findClashes consults for its fast path.
+    isObjectTreeCreated() { return objectTreeReady; },
     getFragmentList() { return fragmentList; },
   };
 
+  // Return shape deliberately unchanged ({ model, stats }): a fixture that needs to drive the
+  // readiness wait by hand does it entirely through `options.settleObjectTree`, which is handed the
+  // real onSuccess/onError callbacks and the tree itself and can fire them whenever it likes.
   return { model, stats };
 }

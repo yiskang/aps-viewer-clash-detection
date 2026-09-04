@@ -8,5 +8,7 @@
 // individual implementation modules.
 
 export { CollisionWorld, CapacityExceededError } from './CollisionWorld.js';
-export { WorldDisposedError, ModelEvictedError } from './errors.js';
+export {
+  WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
+} from './errors.js';
 export { ExtractionLimitExceededError } from './viewer/ViewerModelAdapter.js';

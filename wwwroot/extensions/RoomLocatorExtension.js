@@ -160,7 +160,26 @@ export class RoomLocatorExtension extends ExtensionBase {
   // Resolve the model at ACTION time. load() runs before any model exists in this app's real flow, so
   // a load()-time snapshot is null forever; `_currentModel` is kept only as a fallback for callers/
   // fixtures that set it explicitly.
+  //
+  // Unchanged public shape: `Promise<number[]>`. Callers that also need to know whether the answer
+  // was COMPLETE use locateElementByRoomDetailed below.
   async locateElementByRoom(dbId) {
+    const { roomDbIds } = await this.locateElementByRoomDetailed(dbId);
+    return roomDbIds;
+  }
+
+  /**
+   * The same query as locateElementByRoom, returning the clash statistics' diagnostics alongside the
+   * room dbIds: `{ roomDbIds: number[], diagnostics: Array<Object> }`.
+   *
+   * This exists because a non-empty `statistics.diagnostics` means the answer may be INCOMPLETE — a
+   * skipped fragment (oversized/unparseable/not-yet-loaded geometry) or an aborted, budget-exhausted
+   * traversal — and an empty `roomDbIds` in that situation is emphatically NOT the same statement as
+   * "this element is in no room". The spec requires the extension to surface a visible caveat rather
+   * than silently report "no room found" whenever this array is non-empty (spec :3889-3891), which
+   * locateElementByRoom's bare `number[]` cannot express at all.
+   */
+  async locateElementByRoomDetailed(dbId) {
     const model = this._viewer?.model ?? this._currentModel;
     if (!model) {
       throw new Error('RoomLocatorExtension: no model is loaded — locateElementByRoom needs a model on the viewer (viewer.model) or a previously cached one.');
@@ -173,7 +192,31 @@ export class RoomLocatorExtension extends ExtensionBase {
       mode: 'containment',
       groupBy: 'dbId',
     });
-    return result.pairs.map((pair) => pair.target.dbId);
+    return {
+      roomDbIds: result.pairs.map((pair) => pair.target.dbId),
+      // Defensive `?? []`: `statistics` is part of findClashes's documented result shape, but this
+      // value is fed straight to a `.length` check and a `.map` below, and a caveat mechanism that
+      // itself throws would be worse than the silence it exists to replace.
+      diagnostics: result.statistics?.diagnostics ?? [],
+    };
+  }
+
+  // The one user-visible caveat channel this app has. wwwroot/viewer.js's own getAccessToken error
+  // path already establishes `alert(...)` as this sandbox's convention for "the user must see this"
+  // (there is no toast/notification framework here), with the detail going to the console alongside
+  // it. console.warn alone is NOT a surface: it is exactly the silence the spec's caveat requirement
+  // is written against. The typeof guard is for this extension's own headless Node fixtures, where
+  // no `alert` global exists.
+  _notifyUser(message) {
+    if (typeof alert === 'function') alert(message);
+    else console.warn(message);
+  }
+
+  // "3 diagnostic(s): geometry-too-large-for-sync-build, crossing-budget-exhausted" — informative
+  // about WHAT was incomplete without enumerating every entry (a big query can produce many).
+  static describeDiagnostics(diagnostics) {
+    const reasons = [...new Set(diagnostics.map((d) => d?.reason ?? 'unknown'))];
+    return `${diagnostics.length} diagnostic(s): ${reasons.join(', ')}`;
   }
 
   onContextMenu(menu, status) {
@@ -185,14 +228,27 @@ export class RoomLocatorExtension extends ExtensionBase {
       title: 'Locate Room',
       target: async () => {
         try {
-          const roomDbIds = await this.locateElementByRoom(dbId);
+          const { roomDbIds, diagnostics } = await this.locateElementByRoomDetailed(dbId);
+          // The caveat is surfaced on BOTH outcomes, not only the empty one: a non-empty result can
+          // also be incomplete (one room found, another skipped), and the user acting on a partial
+          // isolate deserves to know that as much as the user told "no room found" does.
+          const caveat = diagnostics.length > 0
+            ? ` The result may be incomplete — ${RoomLocatorExtension.describeDiagnostics(diagnostics)}.`
+            : '';
+          if (diagnostics.length > 0) {
+            console.warn('RoomLocatorExtension: findClashes reported diagnostics', diagnostics);
+          }
           if (roomDbIds.length === 0) {
-            // "No candidate rooms" contract — surface, do not throw.
+            // "No candidate rooms" contract — surface, do not throw. With diagnostics present this
+            // must NOT read as a plain "no room found": that is the exact silent-negative the spec
+            // forbids (:3889-3891).
             console.warn('RoomLocatorExtension: no containing room found for dbId', dbId);
+            if (caveat) this._notifyUser(`No containing room was found for element ${dbId}.${caveat}`);
             return;
           }
           this._viewer.isolate(roomDbIds);
           this._viewer.fitToView(roomDbIds);
+          if (caveat) this._notifyUser(`Located ${roomDbIds.length} room(s) for element ${dbId}.${caveat}`);
         } catch (err) {
           console.error('RoomLocatorExtension: locate failed', err);
         }

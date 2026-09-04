@@ -273,5 +273,111 @@ async function extensionWithFakeWorld() {
   check('after a synchronous search throw, the second call really did re-invoke model.search', searchCalls, 2);
 }
 
+// === batch-4 fix wave, Finding 4: findClashes diagnostics must reach the user ====================
+// Spec :3889-3891, verbatim: "The extension should surface a visible caveat (not silently report
+// 'no room found') when statistics.diagnostics is non-empty for the queried element." Before the fix
+// locateElementByRoom discarded result.statistics outright and the context-menu action had no
+// diagnostic check at all, so a query whose geometry was skipped or whose traversal was aborted was
+// reported to the user identically to a fully-verified negative.
+
+// A shared setup: a fake world whose findClashes resolves with BOTH a real room hit and a non-empty
+// diagnostics array — the "found something, but the answer may be incomplete" case.
+function extensionWithDiagnostics(diagnostics, { pairs = null } = {}) {
+  const viewer = makeMockViewer();
+  const ext = new RoomLocatorExtension(viewer, {});
+  ext._world = makeFakeWorld();
+  const model = makeMockModel(12);
+  model.search = (text, onSuccess) => onSuccess([1200, 1201]);
+  viewer.model = model;
+  ext._world.findClashes = async ({ source, target }) => ({
+    pairs: pairs ?? [{ source: { dbId: source.dbIds[0] }, target: { dbId: target.dbIds[0] } }],
+    statistics: { diagnostics },
+  });
+  return { ext, viewer, model };
+}
+
+// Captures whatever `_notifyUser` puts in front of the user. This headless process has no `alert`
+// global at all, which is exactly why the production helper is written as `typeof alert === 'function'
+// ? alert(...) : console.warn(...)` — defining one here exercises the real browser branch.
+async function withCapturedAlerts(body) {
+  const alerts = [];
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'alert');
+  const original = globalThis.alert;
+  globalThis.alert = (message) => alerts.push(message);
+  try { await body(alerts); } finally {
+    if (had) globalThis.alert = original; else delete globalThis.alert;
+  }
+  return alerts;
+}
+
+{
+  const diagnostics = [
+    { scope: 'fragment', reason: 'geometry-too-large-for-sync-build', role: 'source', fragment: { modelId: 12, dbId: 1, fragId: 5 } },
+    { scope: 'pair', reason: 'crossing-budget-exhausted', sourceFragment: {}, targetFragment: {} },
+    { scope: 'fragment', reason: 'crossing-budget-exhausted', role: 'target', fragment: { modelId: 12, dbId: 2, fragId: 6 } },
+  ];
+  const { ext } = extensionWithDiagnostics(diagnostics);
+  const detailed = await ext.locateElementByRoomDetailed(42);
+  check('locateElementByRoomDetailed returns the room dbIds', detailed.roomDbIds.join(','), '1200');
+  check('locateElementByRoomDetailed exposes findClashes statistics.diagnostics', detailed.diagnostics.length, 3);
+  check('locateElementByRoomDetailed carries the diagnostic reasons verbatim',
+    detailed.diagnostics[0].reason, 'geometry-too-large-for-sync-build');
+  // The pre-existing public shape is unchanged: still a bare number[], for callers that had it.
+  const plain = await ext.locateElementByRoom(42);
+  check('locateElementByRoom still resolves to a bare number[] (unchanged public shape)',
+    Array.isArray(plain) && plain.join(','), '1200');
+  check('describeDiagnostics summarizes count + DISTINCT reasons',
+    RoomLocatorExtension.describeDiagnostics(diagnostics),
+    '3 diagnostic(s): geometry-too-large-for-sync-build, crossing-budget-exhausted');
+}
+
+{
+  // The context-menu action — the app's only user-facing path — must actually SHOW the caveat.
+  const { ext, viewer } = extensionWithDiagnostics([{ scope: 'pair', reason: 'crossing-budget-exhausted' }]);
+  viewer.getSelection = () => [42];
+  let isolated = null;
+  viewer.isolate = (ids) => { isolated = ids; };
+  viewer.fitToView = () => {};
+  const alerts = await withCapturedAlerts(async () => {
+    const menu = [];
+    ext.onContextMenu(menu, { hasSelected: true });
+    await menu[0].target();
+  });
+  check('context-menu action still isolates the rooms it did find', (isolated || []).join(','), '1200');
+  check('context-menu action shows a VISIBLE caveat when diagnostics are non-empty', alerts.length, 1);
+  check('the caveat says the result may be incomplete', /may be incomplete/.test(alerts[0] || ''), true);
+  check('the caveat names the diagnostic reason', /crossing-budget-exhausted/.test(alerts[0] || ''), true);
+}
+
+{
+  // ...and the "no room found" case with diagnostics is precisely the silent negative the spec names.
+  const { ext, viewer } = extensionWithDiagnostics(
+    [{ scope: 'fragment', reason: 'geometry-not-yet-available' }], { pairs: [] },
+  );
+  viewer.getSelection = () => [42];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  const alerts = await withCapturedAlerts(async () => {
+    const menu = [];
+    ext.onContextMenu(menu, { hasSelected: true });
+    await menu[0].target();
+  });
+  check('empty result + diagnostics is NOT reported as a bare "no room found"', alerts.length, 1);
+  check('the empty-result caveat still names the reason', /geometry-not-yet-available/.test(alerts[0] || ''), true);
+}
+
+{
+  // Control: a clean, fully-verified query alerts NOTHING. A caveat on every locate would be noise,
+  // and would make the real caveat meaningless.
+  const { ext, viewer } = extensionWithDiagnostics([]);
+  viewer.getSelection = () => [42];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  const alerts = await withCapturedAlerts(async () => {
+    const menu = [];
+    ext.onContextMenu(menu, { hasSelected: true });
+    await menu[0].target();
+  });
+  check('a clean query with no diagnostics shows no caveat at all', alerts.length, 0);
+}
+
 console.log(`\n  ${passes} passed, ${failures} failed`);
 if (failures) process.exitCode = 1;

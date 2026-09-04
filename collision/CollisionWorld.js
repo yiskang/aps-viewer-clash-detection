@@ -4,7 +4,9 @@
 // against model eviction, world disposal, and modelId reuse.
 
 import * as THREE from 'three';
-import { WorldDisposedError, ModelEvictedError } from './errors.js';
+import {
+  WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
+} from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator } from './scheduler.js';
 import { maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, weldEpsilonMeters } from './constants.js';
 import { extractFragments } from './viewer/ViewerModelAdapter.js';
@@ -484,6 +486,51 @@ export class CollisionWorld {
     return this.admitModel(model); // never-seen -> lazy admission, same path admitModel exposes publicly
   }
 
+  /**
+   * The instance-tree readiness wait, per docs/superpowers/specs/instance-tree-readiness-decision.md
+   * ("Decision": outcome (a) wait; "Hook point for implementation").
+   *
+   * Closes that record's Mode 1 -- "tree not yet created at all" -- using the Viewer's own
+   * documented, public async-completion accessor. It does NOT close Mode 2 ("tree object exists but
+   * under-populated"), which that record explicitly records as residual and undischarged: no Viewer
+   * signal is documented or observed to guarantee enumeration has stabilized, and this
+   * implementation deliberately does not layer the kit's optional retry-until-stable heuristic on
+   * top (the decision record leaves that open rather than mandating it).
+   *
+   * CONDITIONALLY SYNCHRONOUS, exactly like this library's checkpoint port: it returns `undefined`
+   * outright on the ready path and a real Promise only when a wait is genuinely needed, and callers
+   * MUST branch on that (`const pending = ...; if (pending) await pending;`) rather than bare-`await`
+   * it. `await` on an already-settled value still inserts a microtask boundary, and this codebase
+   * treats that boundary as load-bearing, not cosmetic (see ViewerModelAdapter's own Item-D fix and
+   * its "checkpoint returning undefined inserts NO microtask boundary before the model is read"
+   * fixture) -- the decision record's "proceed synchronously (fast path, no added latency for the
+   * common case)" is honoured literally here.
+   *
+   * `isObjectTreeCreated()` true means the tree object already exists (it is
+   * `!!model.getData().instanceTree`, set in the same synchronous block that dispatches
+   * OBJECT_TREE_CREATED_EVENT), so there is nothing to wait for and getObjectTree is not even called.
+   *
+   * With no predicate but a `getObjectTree` present, the documented accessor is used anyway rather
+   * than assuming readiness -- declining to wait merely because the (equally documented) predicate is
+   * missing would silently abandon the strategy this decision record selected. Only a model
+   * implementing NEITHER accessor is treated as unwaitable: there is nothing left to ask, and
+   * extraction reads the tree immediately afterwards and fails loudly if it is absent.
+   */
+  _awaitObjectTreeReady(model) {
+    if (typeof model?.isObjectTreeCreated === 'function' && model.isObjectTreeCreated() === true) {
+      return undefined; // synchronous fast path -- no Promise, no microtask boundary
+    }
+    if (typeof model?.getObjectTree !== 'function') return undefined;
+    return new Promise((resolve, reject) => {
+      model.getObjectTree(
+        () => resolve(),
+        // The Viewer's own "the property database / tree could not be built" signal. Reject with a
+        // clearly-named error of its own rather than silently walking an unavailable tree.
+        (err) => reject(new ObjectTreeUnavailableError(modelIdOf(model), err)),
+      );
+    });
+  }
+
   // Used by Task 18's admitCollisionInstances lease validation, which needs full model+epoch
   // cross-checking (not just epoch liveness) against a specific model object. Kept verbatim from the
   // brief's own Step 3 for that later task's use — the checkpoint port itself does NOT use this; it
@@ -568,6 +615,33 @@ export class CollisionWorld {
     // Throws WorldDisposedError, then cross-model-query-rejected, then ModelEvictedError, in that
     // order; lazily admits a never-seen model.
     const { model, epoch } = this._checkEntryLifecycle(query.source, query.target);
+    // Instance-tree readiness wait, immediately after the entry-order lifecycle checks and BEFORE
+    // any extraction (docs/superpowers/specs/instance-tree-readiness-decision.md, "Hook point for
+    // implementation"). Cross-model queries are rejected above, so both operands are the SAME model
+    // object in Milestone 1 -- one wait per call, nothing to deduplicate.
+    //
+    // Branch on the return value; do NOT bare-`await` it. On the ready path this must not even cost
+    // a microtask boundary (see _awaitObjectTreeReady's own comment).
+    const pendingObjectTree = this._awaitObjectTreeReady(model);
+    if (pendingObjectTree) {
+      // A REAL wait can last as long as the Viewer's property-database load, i.e. seconds -- far
+      // wider a window than any other gap in this method -- so the entry-order lifecycle checks are
+      // re-run across it. Without this, an eviction or disposal landing mid-wait could still be
+      // reported as a SUCCESSFUL empty result: extraction's own first checkpoint is what normally
+      // catches such a race (one non-empty operand is enough for that), but it never fires AT ALL
+      // when BOTH dbIds arrays are empty -- ViewerModelAdapter's per-dbId loop body never runs --
+      // and the empty-extraction branch below then returns { pairs: [] } as a success.
+      try {
+        await pendingObjectTree;
+      } finally {
+        // In `finally`, deliberately: these run on the failure path too, and a throw here REPLACES a
+        // pending ObjectTreeUnavailableError -- which is the correct precedence. Disposal outranks
+        // "the tree could not be built", in the same order the entry checks above use (disposed
+        // first, then evicted).
+        if (this._disposed) throw new WorldDisposedError();
+        this._assertEpochLive(model, epoch);
+      }
+    }
     const lease = Object.freeze({ model, epoch });
     // ONE port for this whole call, with one frame-budget accumulator shared by every checkpoint in
     // it (extraction, broad phase, narrow phase). Its ctx defaults to this lease, so almost every
@@ -589,6 +663,18 @@ export class CollisionWorld {
       statistics.totalMs = this._now() - startedAt;
       return { pairs: [], statistics };
     }
+    // The broad-phase ceiling is checked HERE -- before any side effect, not just before the scan
+    // (finding 19-2). Extraction size and admitted-instance count are the same number for this
+    // check's purposes (every extracted fragment becomes exactly one CollisionInstance), so nothing
+    // is lost by checking early -- but a call that is going to be REJECTED must not first consume
+    // maxCollisionInstancesPerEpoch headroom via admitCollisionInstances or pollute the epoch's
+    // representative-fragment map, neither of which is undone on the throw.
+    if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, targetExtracted.size)) {
+      throw new Error(
+        `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
+        `(${sourceExtracted.size} x ${targetExtracted.size} > ${maxBroadPhaseInstancePairs})`,
+      );
+    }
     this._recordRepresentativeFragments(epoch, sourceExtracted);
     this._recordRepresentativeFragments(epoch, targetExtracted);
     // Which side's record wins per fragmentId is immaterial: admitCollisionInstances reads only
@@ -601,13 +687,9 @@ export class CollisionWorld {
     const sourceInstances = [...sourceExtracted.values()].map((rec) => makePlaced(admitted, rec));
     const targetInstances = [...targetExtracted.values()].map((rec) => makePlaced(admitted, rec));
 
-    // --- Broad phase, pre-scan ceiling first.
-    if (this._exceedsBroadPhaseCeiling(sourceInstances.length, targetInstances.length)) {
-      throw new Error(
-        `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
-        `(${sourceInstances.length} x ${targetInstances.length} > ${maxBroadPhaseInstancePairs})`,
-      );
-    }
+    // --- Broad phase. Its ceiling was already enforced above, against the extraction counts these
+    // two arrays are built from one-for-one, and deliberately BEFORE the admission/bookkeeping side
+    // effects -- so there is no second check here.
     const broadPhaseStartedAt = this._now();
     const candidates = await this._runBroadPhaseScan(sourceInstances, targetInstances, statistics, checkpoint);
     statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
@@ -695,29 +777,68 @@ export class CollisionWorld {
     sourcePlaced, targetPlaced, mode, model, epoch, statistics, oversizedDiagnosedFragments, checkpoint,
   ) {
     const needsConnectivity = mode !== 'surface-intersection';
+    // Diagnosed once per fragment per call, shared by BOTH fragment-scoped skip reasons below: a
+    // fragment appearing in many candidate pairs must not flood statistics.diagnostics with the same
+    // verdict, whichever of the two it is.
+    const diagnoseFragmentOnce = (placed, role, reason) => {
+      if (oversizedDiagnosedFragments.has(placed.instance.fragmentId)) return;
+      oversizedDiagnosedFragments.add(placed.instance.fragmentId);
+      statistics.diagnostics.push({
+        scope: 'fragment',
+        reason,
+        role,
+        fragment: fragmentRef(model, placed),
+      });
+    };
     const buildOne = async (placed, role) => {
       const identity = placed.instance.geometryIdentity; // { loadEpoch, geometryIndex }
-      const record = await this._registry.getOrBuildGeometry({
-        loadEpoch: identity.loadEpoch,
-        geometryIndex: identity.geometryIndex,
-        ownerModelIdHint: modelIdOf(model), // diagnostic-only, per GeometryRegistry's contract
-        needsConnectivity,
-      });
+      let record;
+      try {
+        record = await this._registry.getOrBuildGeometry({
+          loadEpoch: identity.loadEpoch,
+          geometryIndex: identity.geometryIndex,
+          ownerModelIdHint: modelIdOf(model), // diagnostic-only, per GeometryRegistry's contract
+          needsConnectivity,
+        });
+      } catch (err) {
+        // EXACTLY this one class is absorbed; anything else -- a checkpoint's own
+        // WorldDisposedError/ModelEvictedError, a builder bug, an extraction invariant break --
+        // still aborts the whole findClashes call, unchanged.
+        if (!(err instanceof RenderProxyUnavailableError)) throw err;
+        // A transient Viewer-side miss: no geometry existed to inspect, so nothing was diagnosed
+        // ABOUT the geometry and nothing persistent was settled for it (GeometryRegistry already
+        // discarded the in-flight entry on this rejection). Skip this candidate pair, say so, and
+        // leave a later call free to build the same (loadEpoch, geometryIndex) for real.
+        //
+        // Attribution caveat, inherited from _recordRepresentativeFragments' first-discovery-wins
+        // rule rather than introduced here: the proxy that was missing belongs to the geometry's
+        // REPRESENTATIVE fragment, which may not be `placed` when several fragments share one
+        // geometryIndex. Render-proxy availability is per-fragment (load/cull state), so a
+        // representative can be absent while a sibling instance of the same geometry is present, and
+        // this diagnostic then names the sibling. The pre-fix code mis-attributed the identical way
+        // (and permanently); widening representatives to a retry list is a separate design change.
+        // The `role` and `fragment` fields therefore say WHICH PAIR was skipped, not necessarily
+        // which fragment id the Viewer had no proxy for -- the error's own `fragId` does that.
+        diagnoseFragmentOnce(placed, role, 'geometry-not-yet-available');
+        return null;
+      }
       if (record.oversized) {
-        // Diagnosed once per fragment per call: a fragment appearing in many candidate pairs must
-        // not flood statistics.diagnostics with the same verdict.
-        if (!oversizedDiagnosedFragments.has(placed.instance.fragmentId)) {
-          oversizedDiagnosedFragments.add(placed.instance.fragmentId);
-          statistics.diagnostics.push({
-            scope: 'fragment',
-            // The record's OWN reason, never a hardcoded literal — there are several
-            // (geometry-too-large-for-sync-build, unsupported-geometry-layout,
-            // rejected-primitive-range, index-references-invalid-vertex).
-            reason: record.reason,
-            role,
-            fragment: fragmentRef(model, placed),
-          });
-        }
+        // The record's OWN reason, never a hardcoded literal — there are several
+        // (geometry-too-large-for-sync-build, unsupported-geometry-layout,
+        // rejected-primitive-range, index-references-invalid-vertex). Unlike the missing-proxy case
+        // above, every one of them describes a geometry that WAS inspected and structurally rejected,
+        // so re-attempting it could only reach the same verdict — which is why this path settles a
+        // cached oversized marker for the epoch and is left exactly as Task 19 built it.
+        //
+        // KNOWN TENSION, deliberately not changed here: the spec's dedup guarantee is scoped to the
+        // ceiling outcome only, and says a normalization failure (`unsupported-geometry-layout` or
+        // `rejected-primitive-range`) "settles no persistent entry state, so those two diagnoses can
+        // still be re-emitted per candidate pair" (spec :3170-3174). createGeometryRegistry's
+        // buildWeld filter caches those two as oversized markers all the same, so they are in fact
+        // emitted once per epoch, not once per pair. That is a pre-existing behavioural deviation
+        // from the spec text, recorded here rather than silently reinterpreted; the batch-4 fix wave
+        // was scoped to the missing-proxy half of this problem only.
+        diagnoseFragmentOnce(placed, role, record.reason);
         return null;
       }
       return record;
@@ -728,35 +849,22 @@ export class CollisionWorld {
     const targetRecord = await buildOne(targetPlaced, 'target');
     if (!targetRecord) return false;
 
-    if (mode === 'surface-intersection') {
-      const relativeMatrix = computeRelativeMatrix(sourcePlaced.worldMatrix, targetPlaced.worldMatrix);
-      // surfaceIntersectionQuery is SYNCHRONOUS and owns a private, traversal-local clock: bvhcast
-      // cannot pause mid-traversal, so there is nothing for this call's shared checkpoint to do
-      // inside it. The pair-boundary checkpoint in findClashes is the one that applies here. This
-      // mode also performs no parity test at all, so it produces no diagnostics of its own.
-      const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix);
-      return result.intersects;
-    }
-
-    // --- The two composed modes. Both take full `Instance` operands (never raw bvh/matrix pairs)
-    // and compute whatever relative matrices they need from those operands' own `matrix` fields, so
-    // computeRelativeMatrix is deliberately NOT called on this path.
-    const sourceInstance = toInstance(sourceRecord, sourcePlaced.worldMatrix);
-    const targetInstance = toInstance(targetRecord, targetPlaced.worldMatrix);
-    const scheduler = createComposedStageScheduler(checkpoint, this._now);
-
-    const sourceFragment = fragmentRef(model, sourcePlaced);
-    const targetFragment = fragmentRef(model, targetPlaced);
-    // Both composed queries return PARTIAL diagnostics -- `{ reason }` or `{ reason, role }`, with
-    // no `scope` and no fragment refs (verified in ContainmentModeQuery/VolumeOverlapQuery's own
-    // `addDiagnostic` bodies; the plan's snippet branches on a `d.scope === 'pair'` field that
-    // those modules never set). Completing them is this layer's job, and every one of them is
-    // PAIR-scoped by construction: they are discovered while evaluating one specific pair, so both
-    // sides are always known and both are always named. `role`, when present, says which operand is
-    // indicted; it never turns the diagnostic into a fragment-scoped one (that scope belongs solely
-    // to normalization/size failures, emitted by buildOne above).
+    // Every query mode's own diagnostics are PARTIAL -- `{ reason }` or `{ reason, role }`, with no
+    // `scope` and no fragment refs (verified in SurfaceIntersectionQuery/ContainmentModeQuery/
+    // VolumeOverlapQuery's own bodies; the plan's snippet branches on a `d.scope === 'pair'` field
+    // that none of those modules ever sets). Completing them is this layer's job, and every one of
+    // them is PAIR-scoped by construction: they are discovered while evaluating one specific pair, so
+    // both sides are always known and both are always named. `role`, when present, says which operand
+    // is indicted; it never turns the diagnostic into a fragment-scoped one (that scope belongs solely
+    // to the geometry-availability/normalization/size failures buildOne emits above).
+    //
+    // The two FragmentRefs are built lazily, inside the empty check: the overwhelmingly common case
+    // is a pair with no diagnostics at all, and this runs once per narrow-phase pair.
     const attach = (diagnostics) => {
-      for (const d of diagnostics || []) {
+      if (!diagnostics || diagnostics.length === 0) return;
+      const sourceFragment = fragmentRef(model, sourcePlaced);
+      const targetFragment = fragmentRef(model, targetPlaced);
+      for (const d of diagnostics) {
         statistics.diagnostics.push({
           scope: 'pair',
           reason: d.reason,
@@ -766,6 +874,33 @@ export class CollisionWorld {
         });
       }
     };
+
+    if (mode === 'surface-intersection') {
+      const relativeMatrix = computeRelativeMatrix(sourcePlaced.worldMatrix, targetPlaced.worldMatrix);
+      // surfaceIntersectionQuery is SYNCHRONOUS and owns a private, traversal-local clock: bvhcast
+      // cannot pause mid-traversal, so there is nothing for this call's shared checkpoint to do
+      // inside it. The pair-boundary checkpoint in findClashes is the one that applies here.
+      //
+      // This mode performs no parity test, so it emits no TOLERANCE diagnostics -- but it does emit
+      // one on an ABORT (`crossing-budget-exhausted`, from its own private candidate-count/time
+      // budgets), and that one must be surfaced. An aborted traversal did not reach a conclusive
+      // answer; the query already refuses to read its own abort as a hit and returns
+      // `intersects: false`, so without this the caller could not tell a budget-exhausted traversal
+      // from a genuinely verified no-touch (spec :3804-3810). The boolean verdict is deliberately
+      // left alone -- what changes is that the incompleteness is now OBSERVABLE.
+      // `result.diagnostics` is [] whenever `aborted` is false, so this is a no-op on every
+      // conclusive pair.
+      const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix);
+      attach(result.diagnostics);
+      return result.intersects;
+    }
+
+    // --- The two composed modes. Both take full `Instance` operands (never raw bvh/matrix pairs)
+    // and compute whatever relative matrices they need from those operands' own `matrix` fields, so
+    // computeRelativeMatrix is deliberately NOT called on this path.
+    const sourceInstance = toInstance(sourceRecord, sourcePlaced.worldMatrix);
+    const targetInstance = toInstance(targetRecord, targetPlaced.worldMatrix);
+    const scheduler = createComposedStageScheduler(checkpoint, this._now);
 
     if (mode === 'containment') {
       // Directed, one direction only: "is any of this source surface inside that target solid".
@@ -828,11 +963,21 @@ export class CollisionWorld {
         `in loadEpoch ${loadEpoch}`,
       );
     }
-    // A fragment with no live render proxy (not yet loaded, culled, or already torn down) yields no
-    // geometry; adaptViewerGeometry turns that into an `unsupported` marker, which buildWeld
-    // converts into the documented skip-with-diagnostic outcome rather than a crash.
+    // A fragment with no live render proxy -- or a proxy carrying no geometry -- is TRANSIENT: not
+    // yet loaded, culled, or already torn down. It must NOT be fed to adaptViewerGeometry, which
+    // would return the same `unsupported-geometry-layout` marker a genuinely malformed geometry
+    // produces, and which createGeometryRegistry's buildWeld would then settle as a PERMANENT
+    // oversized entry for the whole epoch -- contradicting the spec's own rule that a normalization
+    // failure "settles no persistent entry state" (spec :3171-3174) and giving this fragment no way
+    // back once its proxy exists again. Throw instead: GeometryRegistry._runPhase's existing
+    // rejection handling discards the in-flight entry, so the next lookup starts a fresh attempt.
     const proxy = this._viewer?.impl?.getRenderProxy(model, fragId);
-    const triangleGeometryView = adaptViewerGeometry(proxy ? proxy.geometry : null);
+    if (!proxy || !proxy.geometry) {
+      throw new RenderProxyUnavailableError({
+        loadEpoch, geometryIndex, fragId, modelId: modelIdOf(model),
+      });
+    }
+    const triangleGeometryView = adaptViewerGeometry(proxy.geometry);
     return { triangleGeometryView, weldEpsilon: resolveWeldEpsilon(model) };
   }
 }

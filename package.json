@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "build:vendor": "node scripts/sync-vendor.mjs",
+    "prestart": "npm run build:vendor",
     "pretest": "npm run build:vendor",
     "test": "node --test"
   },
