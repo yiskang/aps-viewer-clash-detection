@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { CollisionWorld } from '../collision/CollisionWorld.js';
 import { buildMockModel } from './fixtures/mockInstanceTree.mjs';
+import { mergeGeometries } from './fixtures/geometry.mjs';
 
 // --- fixture plumbing (same shape as test/CollisionWorld.findClashes.test.mjs) ------------------
 
@@ -63,6 +64,28 @@ const OPTIONS = { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' };
 // accumulator never fires, so the call counts below measure call sites, not wall-clock luck.
 function frozenClock() { return () => 0; }
 
+// The clock the injected one above CANNOT reach. ProperCrossingQuery, SurfaceIntersectionQuery and
+// SurfaceCrossingWitness each deliberately own a private, traversal-local wall clock
+// (docs/...:1932-1957 -- a bvhcast cannot pause mid-traversal, so it can only measure and abort),
+// read straight off the real `performance.now()`, and `findClashes` exposes no seam to override it.
+// Under concurrent `node --test` load a scheduling stall longer than frameBudgetMs (8ms) inside one
+// of those traversals aborts it, and an aborted traversal never reports a positive -- so any fixture
+// whose expected answer is a traversal-decided POSITIVE is wall-clock flaky by construction.
+//
+// Freezing `performance.now` for the duration of one test removes that hazard outright. Top-level
+// node:test tests run sequentially, so nothing else in this file observes the patch, and the
+// `finally` restores it even if the body throws. Done by hand rather than via `t.mock.method` so the
+// fixture carries no dependency on that API's availability.
+async function withFrozenPerformanceClock(body) {
+  const realNow = performance.now;
+  performance.now = () => 0;
+  try {
+    return await body();
+  } finally {
+    performance.now = realNow;
+  }
+}
+
 async function freshWorld(viewer = null, extra = {}) {
   return CollisionWorld.fromViewer(viewer, { ...OPTIONS, ...extra });
 }
@@ -86,6 +109,17 @@ function openBox(w, h, d) {
   const g = new THREE.BoxGeometry(w, h, d);
   g.setIndex(Array.from(g.index.array).slice(6));
   return g;
+}
+
+// A source element in TWO edge-disconnected parts: a 1x1x1 box at (-2,0,0) and another at (6,0,0).
+// Against a 6x6x6 box at the origin the first is wholly inside it and the second wholly outside, so
+// `anyComponentInside` decides the pair the same way regardless of which component it visits first
+// and which vertex of that component it samples first.
+function twoPartBox() {
+  return mergeGeometries([
+    new THREE.BoxGeometry(1, 1, 1).translate(-2, 0, 0),
+    new THREE.BoxGeometry(1, 1, 1).translate(6, 0, 0),
+  ]);
 }
 
 const reasonsOf = (result) => result.statistics.diagnostics.map((d) => d.reason);
@@ -158,12 +192,33 @@ test('containment dispatch is NOT surface-intersection: the same fixture answers
 
 // === volume-overlap mode dispatch ==============================================================
 
-test('volume-overlap dispatch: genuine interpenetration reports one volume-overlap pair', async () => {
+test('volume-overlap dispatch: a source only partly inside the target reports one volume-overlap pair', async () => {
+  // A two-part source element (one 1x1x1 box buried at (-2,0,0), well inside the 6x6x6 target; one
+  // 1x1x1 box out at (6,0,0), well outside it) against that target. The element genuinely overlaps
+  // the target in part and misses it in part, and the verdict is decided by
+  // `anyComponentInside(source in target)`.
+  //
+  // Two properties make that verdict deterministic, and both were needed:
+  //  - ContainmentQuery's sampling walk has NO clock, only a sample budget (512, vs the ~16 vertices
+  //    here), so it is immune to the wall-clock hazard `withFrozenPerformanceClock` describes.
+  //  - Every vertex of the buried component is strictly inside the target and every vertex of the
+  //    outer one is strictly outside, so neither component-visit order nor vertex-sample order can
+  //    change the answer: the outer component (if visited first) simply resolves 'outside' and the
+  //    loop moves on to the buried one, which resolves 'inside'.
+  //
+  // Why not the obvious "two 2x2x2 boxes at (0,0,0) and (1,0,0)" this fixture used to hold: that
+  // pair is decided ONLY by the crossing term, and ProperCrossingQuery measures frameBudgetMs
+  // against a REAL performance.now() of its own (deliberately -- docs/...:1932-1957, it cannot pause
+  // mid-bvhcast), entirely unrelated to the frozen clock this world injects. Under concurrent
+  // `node --test` load its traversal could abort, and because every vertex of each coincident-face
+  // box sits exactly ON the other's boundary planes, neither containment term could rescue the
+  // verdict -- so the pair count intermittently came back 0 (measured: 2 failures in 48 runs at
+  // 8-way concurrency).
   const { model, viewer } = makeFixture(
     [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
     {
-      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
-      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+      100: { geometryIndex: 0, geometry: twoPartBox(), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(6, 6, 6), at: [0, 0, 0] },
     },
   );
   const world = await freshWorld(viewer, { now: frozenClock() });
@@ -209,6 +264,64 @@ test('volume-overlap dispatch: an AABB-overlapping but geometrically disjoint pa
   assert.equal(result.pairs.length, 0);
 });
 
+// === canonical operand ordering (fix round 1, Finding 1) =======================================
+//
+// `compareCanonical` decides which operand's localDiagonal becomes L_canonical for
+// ProperCrossingQuery's offset ladder (`{1e-3,1e-4,1e-5} x L_canonical`). VolumeOverlapQuery's own
+// library default treats the PUBLIC source as canonical-first, which makes that scale depend on
+// which side the caller happened to label source -- a public VERDICT difference, not a tolerance
+// nuance, whenever the two operands' local diagonals differ sharply.
+//
+// The geometry below is that case, measured rather than assumed: a 3000 x 1 x 1 duct
+// (localDiagonal ~3000) crossing a 1 x 1 x 4 beam (localDiagonal ~4.24) at the origin -- a ~707:1
+// ratio, a genuine crossing with NO vertex of either solid inside the other (so neither containment
+// term can rescue it), and both aspect ratios (3000 and 4) comfortably under maxLocalAspectRatio.
+// Probed directly against volumeOverlapQuery: with the duct canonical-first it returns
+// overlap: true via 'crossing'; with the beam canonical-first the ladder's largest step
+// (1e-3 x 4.24) lands inside the duct's own classifyPoint boundary band, every probe reports
+// 'boundary', and it returns a clean overlap: false.
+//
+// With the identity-based comparator wired in, canonical order is fixed by
+// (loadEpoch, geometryIndex, fragmentId) -- the duct (geometryIndex 0) always sorts first -- so both
+// call directions agree. Without it, this fixture reports 1 pair one way and 0 the other.
+
+const ductThroughBeamFixture = () => makeFixture(
+  [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+  {
+    100: { geometryIndex: 0, geometry: box(3000, 1, 1), at: [0, 0, 0] },  // L ~ 3000
+    200: { geometryIndex: 1, geometry: box(1, 1, 4), at: [0, 0, 0] },     // L ~ 4.24
+  },
+);
+
+test('volume-overlap is source/target-swap invariant: a ~707:1 local-diagonal pair gets ONE verdict', async () => {
+  const { model, viewer } = ductThroughBeamFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+
+  const [forward, backward] = await withFrozenPerformanceClock(async () => [
+    await world.findClashes(query(model, [10], [20], 'volume-overlap')),
+    await world.findClashes(query(model, [20], [10], 'volume-overlap')),
+  ]);
+
+  assert.ok(
+    !reasonsOf(forward).concat(reasonsOf(backward)).includes('crossing-budget-exhausted'),
+    'with the crossing clock frozen, neither traversal may abort -- an abort would make this fixture ' +
+    'say nothing about canonical ordering',
+  );
+  assert.equal(forward.statistics.narrowPhasePairs, 1, 'the pair must reach the narrow phase both ways');
+  assert.equal(backward.statistics.narrowPhasePairs, 1);
+  assert.equal(
+    forward.pairs.length, backward.pairs.length,
+    `the SAME physical pair must get the same verdict regardless of which side is labelled source ` +
+    `(forward ${forward.pairs.length}, backward ${backward.pairs.length})`,
+  );
+  // Non-vacuity: the shared verdict must be the POSITIVE one the duct-canonical order produces,
+  // which is what pins the ordering to identity rather than to the public source role. A pair of
+  // zeroes would satisfy the equality above while proving nothing.
+  assert.equal(forward.pairs.length, 1, 'the crossing is real and must be reported');
+  assert.equal(forward.pairs[0].source.dbId, 10);
+  assert.equal(backward.pairs[0].source.dbId, 20, 'public role naming still follows the caller, not canonical order');
+});
+
 // === lazy connectivity: requested per mode, never under surface-intersection ====================
 
 function instrumentConnectivity(world) {
@@ -248,7 +361,16 @@ test('surface-intersection mode NEVER requests connectivity', async () => {
   );
   const world = await freshWorld(viewer, { now: frozenClock() });
   const seen = instrumentConnectivity(world);
-  const result = await world.findClashes(query(model, [10], [20], 'surface-intersection'));
+  // The only fixture in this file whose expected answer is a bvhcast-decided POSITIVE under a mode
+  // with no containment term to fall back on, so it is the one exposed to SurfaceIntersectionQuery's
+  // own real wall clock. It never flaked across ~240 runs at 8- to 16-way concurrency, but the
+  // identically-shaped coincident-face fixtures in test/CollisionWorld.findClashes.test.mjs do flake
+  // under two concurrent full-suite runs, so the hazard is real rather than theoretical -- and unlike
+  // the volume-overlap case it cannot be designed away with different geometry, because the abort is
+  // unconditional on time. Freeze the clock instead.
+  const result = await withFrozenPerformanceClock(
+    () => world.findClashes(query(model, [10], [20], 'surface-intersection')),
+  );
   assert.equal(result.pairs.length, 1, 'the fixture must still reach and pass the narrow phase');
   assert.ok(seen.length > 0);
   assert.equal(seen.filter(Boolean).length, 0, 'surface-intersection must never ask for connectivity');
@@ -394,6 +516,48 @@ test('containment mode NEVER emits unverified-open-component / non-manifold-comp
   for (const reason of completenessReasons) {
     assert.ok(!reasonsOf(overlap).includes(reason), `positive result must not carry ${reason}`);
   }
+});
+
+// === aspectRatioExceeded forwarding (fix round 1, Finding 3) ===================================
+
+test('an extreme-aspect-ratio target under containment emits geometry-aspect-ratio-exceeds-tolerance-model', async () => {
+  // `toInstance` forwards `record.aspectRatioExceeded` from the GeometryRegistry record into the
+  // `Instance` both composed queries consume. That field gates a real safety check: the tolerance
+  // model (mergeDistanceFactor / surfaceEpsilonFactor, both scaled off a single global
+  // localDiagonal) cannot make correct decisions for a container at extreme aspect ratio, so
+  // ContainmentModeQuery suppresses classification and reports a diagnostic instead of trusting it.
+  //
+  // 1000 x 0.001 x 0.001 is an aspect ratio of ~1e6, ~100x over maxLocalAspectRatio (10,000), and
+  // its thin extent is still 10x the 1e-4 weld epsilon so welding cannot collapse it. It is the
+  // TARGET, because both gate sites (ContainmentModeQuery's own witness gate and the
+  // targetAspectRatioExceeded pass-through into anyComponentInside) read the CONTAINER's signal.
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(1000, 0.001, 0.001), at: [0, 0, 0] },
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes(query(model, [10], [20], 'containment'));
+
+  assert.equal(result.statistics.narrowPhasePairs, 1, 'the pair must actually reach the narrow phase');
+  // The gate SUPPRESSES classification -- it does not merely annotate it. Without this assertion a
+  // regression could emit the diagnostic and still report an untrustworthy positive.
+  assert.equal(result.pairs.length, 0, 'a gated pair must not be classified at all');
+  const gated = result.statistics.diagnostics.find(
+    (d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model',
+  );
+  assert.ok(
+    gated,
+    `expected geometry-aspect-ratio-exceeds-tolerance-model, got ${JSON.stringify(reasonsOf(result))}`,
+  );
+  assert.equal(gated.scope, 'pair');
+  assert.equal(gated.role, 'target', 'the CONTAINER is the operand whose aspect ratio is indicted');
+  assert.equal(gated.sourceFragment.fragId, 100);
+  assert.equal(gated.targetFragment.fragId, 200);
+  assert.equal(gated.targetFragment.dbId, 20);
+  assert.equal(gated.targetFragment.modelId, 1);
 });
 
 // === the Task 19 placeholder is gone ===========================================================

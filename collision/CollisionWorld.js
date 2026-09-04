@@ -66,6 +66,44 @@ function computeRelativeMatrix(sourceWorldMatrix, targetWorldMatrix) {
   return source.invert().multiply(target);
 }
 
+// The stable, identity-based comparator that decides CANONICAL ORDER for volume-overlap
+// (docs/superpowers/specs/2026-08-06-collision-library-milestone1-design.md:1626-1632; implementation
+// plan :2415-2437, which assigns supplying a real comparator to CollisionWorld). It exists ONLY to
+// pick which operand's `localDiagonal` becomes L_canonical for ProperCrossingQuery's offset ladder
+// (`{1e-3,1e-4,1e-5} x L_canonical`) -- never which operand is publicly named `source`/`target` in a
+// diagnostic, which stays fixed to the caller's own arguments.
+//
+// Without it VolumeOverlapQuery falls back to its library default ("public source is always
+// canonical-first"), which makes the ladder scale depend on which side the CALLER happened to label
+// source. That is a public verdict bug, not a tolerance nuance: for a pair whose two operands differ
+// sharply in local diagonal (a long duct crossing a short beam, ~700:1), findClashes(A -> B) and
+// findClashes(B -> A) return DIFFERENT pair counts for the identical physical pair.
+//
+// (loadEpoch, geometryIndex, fragmentId) compared lexicographically is total and stable, and is
+// sufficient for Milestone 1: cross-model queries are rejected at entry, so one call's operands
+// always share a model and therefore a loadEpoch, and (loadEpoch, fragmentId) alone already
+// uniquely identifies a CollisionInstance. geometryIndex sits between them so that two fragments
+// sharing one geometry sort together, and all three are included so the order stays total if a
+// later milestone lifts the single-model restriction.
+//
+// The two operands compare EQUAL only when they are literally the same fragment (a dbId appearing
+// on both sides of the query), and that case is degenerate in the right way: one geometry, one
+// placement, so L_canonical is the same number whichever operand is picked.
+//
+// Compared field by field off the PlacedInstances rather than through a materialized key array:
+// this runs once per composed narrow-phase pair, and the broad phase admits up to
+// maxBroadPhaseInstancePairs of them.
+function comparePlacedCanonically(a, b) {
+  const idA = a.instance.geometryIdentity;
+  const idB = b.instance.geometryIdentity;
+  if (idA.loadEpoch !== idB.loadEpoch) return idA.loadEpoch < idB.loadEpoch ? -1 : 1;
+  if (idA.geometryIndex !== idB.geometryIndex) return idA.geometryIndex < idB.geometryIndex ? -1 : 1;
+  const fragA = a.instance.fragmentId;
+  const fragB = b.instance.fragmentId;
+  if (fragA !== fragB) return fragA < fragB ? -1 : 1;
+  return 0;
+}
+
 // Adapts one resolved GeometryRegistry record plus this call's own placement into the `Instance`
 // shape ContainmentModeQuery/VolumeOverlapQuery document in their own JSDoc typedefs:
 // `{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix,
@@ -85,6 +123,10 @@ function computeRelativeMatrix(sourceWorldMatrix, targetWorldMatrix) {
 //
 // `matrix` must be a real THREE.Matrix4: both consumers call `.clone().invert().multiply(...)` on
 // it. Extraction stores world matrices as plain 16-number arrays, so the conversion happens here.
+//
+// Note what is deliberately NOT here: any identity field. Canonical ordering is decided from the
+// PlacedInstances at the call site (comparePlacedCanonically above), so this object stays exactly
+// the shape both consumers' typedefs declare.
 function toInstance(record, placedWorldMatrix) {
   return {
     geometry: record.geometry,
@@ -732,7 +774,20 @@ export class CollisionWorld {
       return result.contained;
     }
     // mode === 'volume-overlap' -- the only remaining member of supportedModes.
-    const result = await volumeOverlapQuery(sourceInstance, targetInstance, { scheduler });
+    //
+    // `compareCanonical` is REQUIRED here, not optional polish: VolumeOverlapQuery's own default
+    // ("public source is always canonical-first") would make L_canonical -- and therefore
+    // ProperCrossingQuery's offset ladder -- depend on which side the caller labelled source, so the
+    // same physical pair could clash one way and not the other. See comparePlacedCanonically above.
+    //
+    // The sign is computed once, from the two PlacedInstances, and the comparator merely reports it
+    // for whichever argument order it is handed -- so nothing identity-shaped has to be smuggled
+    // into the `Instance` objects, and the comparison itself allocates nothing per pair.
+    const canonicalOrder = comparePlacedCanonically(sourcePlaced, targetPlaced);
+    const result = await volumeOverlapQuery(sourceInstance, targetInstance, {
+      scheduler,
+      compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
+    });
     attach(result.diagnostics);
     return result.overlap;
   }
