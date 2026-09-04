@@ -12,7 +12,11 @@
 // explicit parameter instead of recomputing it per call.
 
 import * as THREE from 'three';
-import { barycentricEpsilon, mergeDistanceFactor, surfaceEpsilonFactor } from '../constants.js';
+import { build as buildScopedBvh } from '../blas/ThreeMeshBvhBackend.js';
+import {
+  barycentricEpsilon, mergeDistanceFactor, surfaceEpsilonFactor,
+  maxContainmentSamples, samplesPerComponent, maxWitnessTriangles, witnessLadderFactors,
+} from '../constants.js';
 
 // SPIKE FINDING (spec:2286-2296): the naive "local +X first, +Y on retry" rule is
 // pathological for BIM. A ray along a local axis from a symmetric point inside an
@@ -106,4 +110,353 @@ export function classifyPoint(point, targetBvh, targetLocalDiagonal) {
   }
 
   return 'boundary'; // every direction grazed -- genuinely cannot say
+}
+
+// anyComponentInside samples per connected component, not against a global cap
+// (docs/...:2312-2497). Guarantee: for a closed manifold component, one conclusive
+// sample decides it exactly, because crossing B's boundary would BE a proper
+// crossing. Non-manifold/open components are best-effort and flagged.
+
+const noopScheduler = { elapsedMs: () => 0, checkpointIfDue: async () => {} };
+
+const _point = new THREE.Vector3();
+const _wa = new THREE.Vector3();
+const _wb = new THREE.Vector3();
+const _wc = new THREE.Vector3();
+const _wCentroid = new THREE.Vector3();
+const _wNormal = new THREE.Vector3();
+const _wEdge1 = new THREE.Vector3();
+const _wEdge2 = new THREE.Vector3();
+const _wProbe = new THREE.Vector3();
+const _wProbeInTarget = new THREE.Vector3();
+
+/**
+ * @param {import('three').BufferGeometry} sourceGeometry - already welded
+ * @param {import('three-mesh-bvh').MeshBVH} sourceBvh
+ * @param {number} sourceLocalDiagonal
+ * @param {{ componentCount: number, componentOf: Int32Array, closedManifold: boolean[] }} sourceConnectivity
+ * @param {import('three-mesh-bvh').MeshBVH} targetBvh
+ * @param {number} targetLocalDiagonal
+ * @param {boolean} targetClosedManifold
+ * @param {import('three').Matrix4} sourceToTargetMatrix
+ * @param {{
+ *   mode: 'containment' | 'volume-overlap',
+ *   containerRole?: 'source' | 'target',
+ *   sampledRole?: 'source' | 'target',
+ *   maxContainmentSamples?: number,
+ *   samplesPerComponent?: number,
+ *   maxWitnessTriangles?: number,
+ *   witnessLadderFactors?: number[],
+ *   scheduler?: { elapsedMs(): number, checkpointIfDue(): Promise<void> },
+ *   targetAspectRatioExceeded?: boolean,
+ * }} options
+ */
+export async function anyComponentInside(
+  // sourceBvh/sourceLocalDiagonal are accepted for signature stability (the canonical
+  // reference's documented shape, and callers like VolumeOverlapQuery pass them
+  // unconditionally) but are NOT used in this function's own body: stages 1-2 only
+  // ever classify against `targetBvh`, and stage 3 (see constructedInteriorWitness
+  // below) builds and uses its own component-scoped BVH instead of the full
+  // multi-component `sourceBvh` -- that is precisely the Critical fix a Codex
+  // spec-review of an earlier draft required (see below).
+  sourceGeometry, sourceBvh, sourceLocalDiagonal, sourceConnectivity,
+  targetBvh, targetLocalDiagonal, targetClosedManifold,
+  sourceToTargetMatrix, options
+) {
+  const mode = options?.mode;
+  if (mode !== 'containment' && mode !== 'volume-overlap') {
+    throw new TypeError("anyComponentInside: options.mode must be 'containment' or 'volume-overlap'");
+  }
+  const containerRole = options.containerRole ?? 'target';
+  const sampledRole = options.sampledRole ?? 'source';
+  const sampleBudget = options.maxContainmentSamples ?? maxContainmentSamples;
+  const perComponentTarget = options.samplesPerComponent ?? samplesPerComponent;
+  const witnessTriangleBudget = options.maxWitnessTriangles ?? maxWitnessTriangles;
+  const ladderFactors = options.witnessLadderFactors ?? witnessLadderFactors;
+  const scheduler = options.scheduler ?? noopScheduler;
+  const targetAspectRatioExceeded = options.targetAspectRatioExceeded ?? false;
+
+  const diagnostics = [];
+  const addDiagnostic = (reason, role) => {
+    if (!diagnostics.some((d) => d.reason === reason && d.role === role)) {
+      diagnostics.push(role ? { reason, role } : { reason });
+    }
+  };
+
+  // Target-side precondition, checked once regardless of mode or outcome
+  // (docs/...:2367-2389): every operand parity is evaluated against must be a
+  // certified closed manifold, or every result (positive AND negative) is tainted.
+  // Orthogonal to the aspect-ratio gate below -- both diagnostics can and should
+  // coexist when both conditions are true.
+  if (!targetClosedManifold) addDiagnostic('unverified-parity-operand', containerRole);
+
+  // M1 aspect-ratio disposition guard (spec Tolerances section, "Single-geometry
+  // aspect ratio"; this task and Task 12's containment-mode target role are the ONLY
+  // two spec-assigned gate sites, per the batch's reconciliation ledger). When the
+  // TARGET's own aspectRatioExceeded signal is set, classifyPoint's tolerance model
+  // cannot make a trustworthy call against it at all -- short-circuit BEFORE the
+  // per-component sampling loop below, and before stage 3's constructedInteriorWitness
+  // (which also classifies its constructed probe against targetBvh) ever runs.
+  if (targetAspectRatioExceeded) {
+    addDiagnostic('geometry-aspect-ratio-exceeds-tolerance-model', containerRole);
+    return {
+      inside: false,
+      decidingComponentClosed: null,
+      decidingComponentIndex: null,
+      diagnostics,
+      unresolvedComponentCount: sourceConnectivity.componentCount,
+      samplesUsed: 0,
+      budgetExhausted: false,
+    };
+  }
+
+  const index = sourceGeometry.index.array;
+  const position = sourceGeometry.attributes.position;
+  const componentOf = sourceConnectivity.componentOf;
+  const triCount = componentOf.length;
+
+  const trianglesByComponent = new Map();
+  for (let t = 0; t < triCount; t++) {
+    const c = componentOf[t];
+    if (!trianglesByComponent.has(c)) trianglesByComponent.set(c, []);
+    trianglesByComponent.get(c).push(t);
+  }
+
+  let samplesUsed = 0;
+  let budgetExhausted = false;
+  let anyFlaggedComponentInvolved = false;
+  let anyClassifiedInside = false;
+  let decidingComponentClosed = null;
+  let decidingComponentIndex = null;
+  let unresolvedComponentCount = 0;
+
+  componentLoop:
+  for (const [componentId, tris] of trianglesByComponent) {
+    if (anyClassifiedInside) break;
+    if (budgetExhausted) { unresolvedComponentCount++; continue; }
+
+    const closed = sourceConnectivity.closedManifold[componentId];
+    if (!closed) anyFlaggedComponentInvolved = true;
+
+    // Derive the component's referenced vertex list, then order it as: stride bucket
+    // 0 (spatially-spread stride picks, "stage 1"), then bucket 1, etc. -- so the
+    // FIRST `perComponentTarget` entries are spread across the whole component
+    // (stage 1), and if all of those read `boundary`, the walk naturally continues
+    // through the rest (stage 2) without a separate code path (docs/...:2409-2417).
+    const vertexSet = new Set();
+    for (const t of tris) {
+      vertexSet.add(index[t * 3]);
+      vertexSet.add(index[t * 3 + 1]);
+      vertexSet.add(index[t * 3 + 2]);
+    }
+    const vertices = [...vertexSet];
+    const stride = Math.max(1, Math.ceil(vertices.length / perComponentTarget));
+    const order = [];
+    for (let s = 0; s < stride; s++) {
+      for (let i = s; i < vertices.length; i += stride) order.push(vertices[i]);
+    }
+
+    let componentResolved = false;
+    for (const v of order) {
+      if (samplesUsed >= sampleBudget) { budgetExhausted = true; break; }
+
+      // Intra-loop checkpoint, called before EVERY individual classifyPoint call
+      // (docs/...:2465-2496, round-11 fix for round-10's too-coarse
+      // deadlineCheckInterval=256). checkpointIfDue() itself decides whether elapsed
+      // time actually warrants yielding -- a call that isn't due yet resolves
+      // immediately without yielding, so calling it every iteration is correct, not
+      // merely tolerated. On an actual yield: two-part revalidation
+      // (disposed-first-then-epoch) is the scheduler's own job; this loop just awaits
+      // it and lets a rejection propagate, then resumes sampling from exactly the
+      // next unsampled vertex -- it does NOT restart or truncate the search.
+      await scheduler.checkpointIfDue();
+
+      _point.fromBufferAttribute(position, v).applyMatrix4(sourceToTargetMatrix);
+      const c = classifyPoint(_point, targetBvh, targetLocalDiagonal);
+      samplesUsed++;
+
+      if (c === 'inside') {
+        anyClassifiedInside = true;
+        decidingComponentClosed = closed;
+        decidingComponentIndex = componentId;
+        componentResolved = true;
+        break;
+      }
+      if (c === 'outside') { componentResolved = true; break; }
+      // 'boundary': keep walking the rest of `order`.
+    }
+
+    if (anyClassifiedInside) break;
+
+    // Stage 3: constructed interior witness, volume-overlap only (docs/...:2418-2443,
+    // 2547-2553 for why containment stops after stage 2).
+    if (!componentResolved && !budgetExhausted && mode === 'volume-overlap') {
+      const witness = await constructedInteriorWitness(
+        sourceGeometry, tris,
+        targetBvh, targetLocalDiagonal, sourceToTargetMatrix,
+        witnessTriangleBudget, ladderFactors, scheduler,
+        samplesUsed, sampleBudget
+      );
+      samplesUsed = witness.samplesUsed;
+      if (witness.budgetExhausted) budgetExhausted = true;
+      if (witness.inside) {
+        anyClassifiedInside = true;
+        decidingComponentClosed = closed;
+        decidingComponentIndex = componentId;
+        break;
+      }
+    }
+
+    if (!anyClassifiedInside && !componentResolved) unresolvedComponentCount++;
+  }
+
+  if (anyClassifiedInside) {
+    // Positive result whose deciding component is not certified closed: containment
+    // is real, the VOLUME is not certified (docs/...:2340-2359). Only meaningful in
+    // volume-overlap; containment's contract handles open sources by design.
+    if (mode === 'volume-overlap' && decidingComponentClosed === false) {
+      addDiagnostic('unverified-open-component', sampledRole);
+    }
+  } else if (mode === 'volume-overlap' && anyFlaggedComponentInvolved) {
+    // A negative result involving ANY flagged component is degraded to unverified,
+    // regardless of whether that component's own sample happened to resolve cleanly
+    // (docs/...:2360; the guarantee itself is what's uncertain for such a component,
+    // not merely this run's sampling outcome).
+    addDiagnostic('non-manifold-component');
+  }
+
+  if (budgetExhausted) addDiagnostic('incomplete-component-coverage');
+
+  return {
+    inside: anyClassifiedInside,
+    decidingComponentClosed,
+    decidingComponentIndex,
+    diagnostics,
+    unresolvedComponentCount,
+    samplesUsed,
+    budgetExhausted,
+  };
+}
+
+// Stage 3 helper: constructs a point in the component's own interior (never relying
+// on its surface), validates it against the component's OWN geometry first, then
+// classifies it against target.
+//
+// A Codex spec-review of an earlier draft caught a Critical bug here: that draft
+// validated the constructed probe against the FULL `sourceBvh` (every component of
+// the source geometry), not just the deciding component's own triangles. Even-odd
+// parity is evaluated over whatever triangle set it's asked to classify against
+// (docs/...:1658, "over the target's ENTIRE triangle set") -- so classifying against
+// the WHOLE source lets an unrelated or nested sibling component change the verdict
+// (concrete counterexample: two nested closed shells sharing this source geometry,
+// where a probe just inside the INNER shell is also enclosed by the OUTER shell, so
+// whole-source parity reads it `outside` via the same even-odd cancellation
+// docs/...:1662-1665 describes for a hollow pipe -- silently rejecting a valid
+// witness for a real, containable component). The fix: build a BVH scoped to ONLY
+// `componentTriangles`, and classify the probe against THAT, never the full source.
+//
+// This also settles what "the component's own local frame" (docs/...:2426-2433)
+// means precisely: this plan takes it to mean the DECIDING COMPONENT's own local
+// scale, not the whole source geometry's cached `L_source` -- consistent with round
+// 5's own reasoning (never borrow a scale from a larger/unrelated context) applied
+// one level deeper than the spec's literal wording resolves on its own. Flagged for
+// the spec owner to confirm during assembly if a different reading was intended.
+async function constructedInteriorWitness(
+  sourceGeometry, componentTriangles,
+  targetBvh, targetLocalDiagonal, sourceToTargetMatrix,
+  witnessTriangleBudget, ladderFactors, scheduler,
+  samplesUsedIn, sampleBudget
+) {
+  const position = sourceGeometry.attributes.position;
+  const index = sourceGeometry.index.array;
+
+  // Build a triangle set containing ONLY this component's own triangles, remapped to
+  // a dense local vertex range, and a fresh BVH over just that subset. Batch-2
+  // reconciliation adaptation #1: ThreeMeshBvhBackend.build() takes raw
+  // {position, index, triangleCount} arrays directly, not a THREE.BufferGeometry --
+  // componentPositions/componentIndex are already plain arrays in that raw shape, so
+  // no intermediate BufferGeometry is constructed for this call at all.
+  const localIndexOf = new Map();
+  const componentPositions = [];
+  const componentIndex = [];
+  for (const t of componentTriangles) {
+    for (let e = 0; e < 3; e++) {
+      const globalIndex = index[t * 3 + e];
+      if (!localIndexOf.has(globalIndex)) {
+        localIndexOf.set(globalIndex, componentPositions.length / 3);
+        componentPositions.push(
+          position.getX(globalIndex), position.getY(globalIndex), position.getZ(globalIndex)
+        );
+      }
+      componentIndex.push(localIndexOf.get(globalIndex));
+    }
+  }
+  // KNOWN GAP, flagged not silently patched (codex-advisor medium review of this
+  // task's finished draft, cross-checked against the batch ledger's own scoping
+  // language): `buildScopedBvh` also returns `aspectRatioExceeded` for this
+  // component-scoped BVH, discarded here. This module's M1 aspect-ratio gate
+  // (`options.targetAspectRatioExceeded`, above) is scoped by the ledger's ruling to
+  // "this task's targetBvh parameter -- never the source, which is sampled, not
+  // parity-tested"; the classifyPoint call below against `componentBvh` validates the
+  // constructed probe against the SOURCE component's own geometry (the "own-class"
+  // check), not against a target, so it falls on the source side of that same
+  // ruling's explicit exclusion, not a silently-skipped instance of the gate this
+  // task was asked to add. An extreme-aspect-ratio source component could therefore
+  // still misclassify its own witness probe via the same underlying tolerance-model
+  // limitation classifyPoint documents elsewhere in this file. Same disposition as
+  // ProperCrossingQuery's analogous, already-flagged gap (batch ledger, "Explicitly
+  // OUT of this ruling's scope") -- a genuine open question for the spec owner, not a
+  // defect in this task's own implementation of the spec as scoped. Also unbudgeted:
+  // this synchronous BVH build has no checkpoint before it and is not itself counted
+  // against the sample budget, inherited unchanged from this task's own brief.
+  const componentIndexArray = Uint32Array.from(componentIndex);
+  const { bvh: componentBvh, localDiagonal: componentLocalDiagonal } = buildScopedBvh({
+    position: Float32Array.from(componentPositions),
+    index: componentIndexArray,
+    triangleCount: componentIndexArray.length / 3,
+  });
+
+  const ladder = ladderFactors.map((f) => f * componentLocalDiagonal);
+
+  let samplesUsed = samplesUsedIn;
+  let budgetExhausted = false;
+
+  for (let attempt = 0; attempt < Math.min(witnessTriangleBudget, componentTriangles.length); attempt++) {
+    if (samplesUsed >= sampleBudget) { budgetExhausted = true; break; }
+
+    // Checked before each witness-triangle attempt (docs/...:2492-2494), same
+    // yield-and-resume pattern as the vertex-sampling loop above.
+    await scheduler.checkpointIfDue();
+
+    const t = componentTriangles[attempt];
+    const ia = index[t * 3], ib = index[t * 3 + 1], ic = index[t * 3 + 2];
+    _wa.fromBufferAttribute(position, ia);
+    _wb.fromBufferAttribute(position, ib);
+    _wc.fromBufferAttribute(position, ic);
+    _wCentroid.copy(_wa).add(_wb).add(_wc).multiplyScalar(1 / 3);
+    _wEdge1.subVectors(_wb, _wa);
+    _wEdge2.subVectors(_wc, _wa);
+    _wNormal.crossVectors(_wEdge1, _wEdge2).normalize();
+
+    for (const sign of [1, -1]) {
+      for (const delta of ladder) {
+        if (samplesUsed >= sampleBudget) { budgetExhausted = true; break; }
+        samplesUsed++;
+        _wProbe.copy(_wCentroid).addScaledVector(_wNormal, sign * delta);
+        // Must actually land inside the DECIDING COMPONENT's own geometry first --
+        // only then does classifying it against target mean anything
+        // (docs/...:2418-2424) -- classified against the component-scoped BVH above,
+        // never the full multi-component sourceBvh.
+        const ownClass = classifyPoint(_wProbe, componentBvh, componentLocalDiagonal);
+        if (ownClass !== 'inside') continue;
+        _wProbeInTarget.copy(_wProbe).applyMatrix4(sourceToTargetMatrix);
+        const targetClass = classifyPoint(_wProbeInTarget, targetBvh, targetLocalDiagonal);
+        if (targetClass === 'inside') return { inside: true, samplesUsed, budgetExhausted };
+      }
+      if (budgetExhausted) break;
+    }
+    if (budgetExhausted) break;
+  }
+
+  return { inside: false, samplesUsed, budgetExhausted };
 }
