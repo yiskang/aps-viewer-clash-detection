@@ -239,9 +239,9 @@ export class GeometryRegistry {
     // Spread the full resolved `accel` object (the real ThreeMeshBvhBackend.build()
     // resolves to { bvh, localDiagonal, aspectRatio, aspectRatioExceeded } -- Task 14
     // wires that in) rather than hand-picking named fields, so this stays
-    // forward-compatible without a matching edit here. `accel` is spread FIRST so an
-    // explicit `oversized`/`connectivity` below can never be shadowed by anything
-    // accidentally present on `accel`.
-    return { oversized: false, ...accel, connectivity };
+    // forward-compatible without a matching edit here. `accel` is spread FIRST so the
+    // explicit `oversized`/`connectivity` written AFTER it below always win over
+    // anything accidentally present on `accel` with the same name.
+    return { ...accel, oversized: false, connectivity };
   }
 }
