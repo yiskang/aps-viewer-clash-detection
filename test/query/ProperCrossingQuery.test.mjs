@@ -140,6 +140,35 @@ test('time budget trips before count budgets (round 10 regression)', () => {
     'carries crossing-budget-exhausted');
 });
 
+test('callback exception does not poison subsequent bvhcast traversals (defect fix)', () => {
+  // three-mesh-bvh's bvhcast sets a module-global `_active` flag true at entry and
+  // clears it only on its normal-completion path (no try/finally). If
+  // intersectsTriangles were allowed to let an exception escape straight out of
+  // bvhcast, `_active` would stay stuck true and permanently break every LATER
+  // bvhcast-based query in the process ("Recursive calls to bvhcast not supported")
+  // until reload -- including SurfaceIntersectionQuery and, once built,
+  // SurfaceCrossingWitness. Verified directly against the installed
+  // three-mesh-bvh's bvhcast.js: `_active` is set true at entry and cleared only on
+  // the normal-completion path.
+  const a = testInstance(box(3, 3, 3));
+  const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1)); // deep overlap: callback invoked
+  let calls = 0;
+  const throwingNow = () => {
+    calls++;
+    if (calls === 2) throw new Error('injected clock failure');
+    return 0;
+  };
+  assert.throws(() => crossOf(a, b, { now: throwingNow }), /injected clock failure/,
+    'the injected exception propagates out of properCrossingQuery, not swallowed');
+
+  // A completely normal, immediately-following call must still succeed -- proves the
+  // callback's catch/return-true/rethrow protocol let bvhcast reach its
+  // normal-completion path and clear `_active` despite the thrown exception.
+  const r = crossOf(a, b);
+  assert.equal(typeof r.crossing, 'boolean',
+    'subsequent traversal is not poisoned by the prior callback exception');
+});
+
 test('time budget aborts strictly mid-probe-loop (round 11 regression)', () => {
   // Round 10's fix checked only at callback entry, letting up to 24 classifyPoint
   // calls (a full 12-probe loop for a confirmed pair) run unchecked. This fixture

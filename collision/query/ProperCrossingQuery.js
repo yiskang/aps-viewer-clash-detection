@@ -57,82 +57,99 @@ export function properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, loca
   let aborted = false;
   let sawBoundaryProbe = false;
 
+  // Callback-exception containment: the pinned three-mesh-bvh's bvhcast sets a
+  // module-global `_active` flag true at entry and clears it only on its
+  // normal-completion path (no try/finally). If intersectsTriangles were allowed to
+  // throw straight out of bvhcast, `_active` would stay stuck true and permanently
+  // break every LATER bvhcast-based query in the process ("Recursive calls to bvhcast
+  // not supported") until reload. So: catch everything inside the callback, save it,
+  // return true so bvhcast still exits via its normal-completion path and clears its
+  // internal state, then rethrow once bvhcast has actually returned.
+  let caughtError = null;
+
   bvhA.bvhcast(bvhB, matrixBtoA, {
     intersectsTriangles(triA, triB) {
-      candidatePairsExamined++;
-      // Entry-granularity is adequate for a raw candidate that never reaches probe
-      // classification (~0.3us/pair, docs/...:1974-1976).
-      if (candidatePairsExamined > candidateBudget || now() - traversalStart > timeBudgetMs) {
-        aborted = true;
-        return true;
-      }
+      try {
+        candidatePairsExamined++;
+        // Entry-granularity is adequate for a raw candidate that never reaches probe
+        // classification (~0.3us/pair, docs/...:1974-1976).
+        if (candidatePairsExamined > candidateBudget || now() - traversalStart > timeBudgetMs) {
+          aborted = true;
+          return true;
+        }
 
-      _triA.copy(triA); _triA.needsUpdate = true;
-      _triB.copy(triB); _triB.needsUpdate = true;
-      _triA.getNormal(_nA);
-      _triB.getNormal(_nB);
+        _triA.copy(triA); _triA.needsUpdate = true;
+        _triB.copy(triB); _triB.needsUpdate = true;
+        _triA.getNormal(_nA);
+        _triB.getNormal(_nB);
 
-      // Classify the candidate before doing anything else, ordered so the upstream
-      // coplanar-warning path is never entered (docs/...:1874-1891).
-      const parallel = Math.abs(_nA.dot(_nB)) >= 1 - coplanarAngleEpsilon;
-      const coplanar = parallel && Math.abs(_nA.dot(_triA.a) - _nA.dot(_triB.a)) <= surfaceEpsilon;
+        // Classify the candidate before doing anything else, ordered so the upstream
+        // coplanar-warning path is never entered (docs/...:1874-1891).
+        const parallel = Math.abs(_nA.dot(_nB)) >= 1 - coplanarAngleEpsilon;
+        const coplanar = parallel && Math.abs(_nA.dot(_triA.a) - _nA.dot(_triB.a)) <= surfaceEpsilon;
 
-      if (coplanar) {
-        // Call WITHOUT a target line: a coplanar pair has zero-volume contact --
-        // not a crossing regardless of whether it touches -- and omitting the
-        // argument is what avoids ExtendedTriangle's coplanar-target warning.
-        _triA.intersectsTriangle(_triB);
-        return false;
-      }
+        if (coplanar) {
+          // Call WITHOUT a target line: a coplanar pair has zero-volume contact --
+          // not a crossing regardless of whether it touches -- and omitting the
+          // argument is what avoids ExtendedTriangle's coplanar-target warning.
+          _triA.intersectsTriangle(_triB);
+          return false;
+        }
 
-      // Must test explicitly: a non-intersecting pair leaves _line holding the
-      // PREVIOUS confirmed pair's endpoints, which would fabricate a crossing from
-      // stale state if read without this guard (docs/...:1859-1873, round-4 regression).
-      if (!_triA.intersectsTriangle(_triB, _line)) return false;
+        // Must test explicitly: a non-intersecting pair leaves _line holding the
+        // PREVIOUS confirmed pair's endpoints, which would fabricate a crossing from
+        // stale state if read without this guard (docs/...:1859-1873, round-4 regression).
+        if (!_triA.intersectsTriangle(_triB, _line)) return false;
 
-      crossingPairsExamined++;
-      if (crossingPairsExamined > crossingBudget) {
-        aborted = true;
-        return true;
-      }
+        crossingPairsExamined++;
+        if (crossingPairsExamined > crossingBudget) {
+          aborted = true;
+          return true;
+        }
 
-      _line.getCenter(_mid);
+        _line.getCenter(_mid);
 
-      for (const s1 of [1, -1]) {
-        for (const s2 of [1, -1]) {
-          _dir.copy(_nA).multiplyScalar(s1).addScaledVector(_nB, s2);
-          if (_dir.lengthSq() < 1e-20) continue; // degenerate: parallel normals
-          _dir.normalize();
+        for (const s1 of [1, -1]) {
+          for (const s2 of [1, -1]) {
+            _dir.copy(_nA).multiplyScalar(s1).addScaledVector(_nB, s2);
+            if (_dir.lengthSq() < 1e-20) continue; // degenerate: parallel normals
+            _dir.normalize();
 
-          for (const delta of ladder) {
-            // Round-11 fix: performance.now() read before EVERY individual probe,
-            // not once per callback and not once per confirmed pair
-            // (docs/...:1966-1989) -- bounds overshoot to one probe's cost (up to
-            // two classifyPoint calls), not one confirmed pair's cost (up to 24).
-            if (now() - traversalStart > timeBudgetMs) {
-              aborted = true;
-              return true;
-            }
+            for (const delta of ladder) {
+              // Round-11 fix: performance.now() read before EVERY individual probe,
+              // not once per callback and not once per confirmed pair
+              // (docs/...:1966-1989) -- bounds overshoot to one probe's cost (up to
+              // two classifyPoint calls), not one confirmed pair's cost (up to 24).
+              if (now() - traversalStart > timeBudgetMs) {
+                aborted = true;
+                return true;
+              }
 
-            _probe.copy(_mid).addScaledVector(_dir, delta);
+              _probe.copy(_mid).addScaledVector(_dir, delta);
 
-            const inA = classifyPoint(_probe, bvhA, localDiagonalA);
-            if (inA === 'boundary') { sawBoundaryProbe = true; continue; }
-            if (inA !== 'inside') continue;
+              const inA = classifyPoint(_probe, bvhA, localDiagonalA);
+              if (inA === 'boundary') { sawBoundaryProbe = true; continue; }
+              if (inA !== 'inside') continue;
 
-            _probeInB.copy(_probe).applyMatrix4(matrixAtoB);
-            const inB = classifyPoint(_probeInB, bvhB, localDiagonalB);
-            if (inB === 'boundary') { sawBoundaryProbe = true; continue; }
-            if (inB === 'inside') {
-              crossing = true;
-              return true; // early exit on first proper crossing
+              _probeInB.copy(_probe).applyMatrix4(matrixAtoB);
+              const inB = classifyPoint(_probeInB, bvhB, localDiagonalB);
+              if (inB === 'boundary') { sawBoundaryProbe = true; continue; }
+              if (inB === 'inside') {
+                crossing = true;
+                return true; // early exit on first proper crossing
+              }
             }
           }
         }
+        return false;
+      } catch (err) {
+        caughtError = err;
+        return true; // let bvhcast take its normal-completion path so `_active` clears
       }
-      return false;
     },
   });
+
+  if (caughtError) throw caughtError;
 
   // Abort protocol: bvhcast returning true on abort must never be read as a crossing
   // (docs/...:1926-1930).
