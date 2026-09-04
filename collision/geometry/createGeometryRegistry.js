@@ -2,9 +2,10 @@
 //
 // Wires GeometryRegistry (Task 13) to the real weld/connectivity/BVH implementations.
 // Kept separate from GeometryRegistry.js so that file stays builder-agnostic and
-// testable in isolation. Task 17 (CollisionWorld) calls this factory with the real
-// checkpointPort and resolveGeometryView at runtime -- this file never imports
-// CollisionWorld itself.
+// testable in isolation. A later task (CollisionWorld's own `fromViewer` construction
+// path) calls this factory with the real checkpointPort and resolveGeometryView at
+// runtime, then attaches the result to CollisionWorld via its registry constructor
+// option -- this file never imports CollisionWorld itself.
 
 import { GeometryRegistry } from './GeometryRegistry.js';
 import { compactAndWeld } from './activeRangeCompaction.js';
