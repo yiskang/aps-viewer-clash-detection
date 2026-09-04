@@ -131,6 +131,20 @@ test('dispose() then a new lifecycle call rejects/throws immediately, before any
   assert.throws(() => world.isModelLive(makeModel(1)), WorldDisposedError);
 });
 
+test('a second dispose() call throws WorldDisposedError — dispose is NOT one of the two no-op-on-disposed exceptions', () => {
+  let releaseAllCount = 0;
+  const registry = { releaseAll() { releaseAllCount++; }, releaseEntriesForEpoch() {} };
+  const world = new CollisionWorld({ registry });
+  const model = makeModel(1);
+  world.admitModel(model);
+  world.dispose();
+  assert.equal(releaseAllCount, 1, 'first dispose() must have run its cleanup');
+  assert.throws(() => world.dispose(), WorldDisposedError, 'a second dispose() call must throw, not silently re-run cleanup');
+  assert.equal(releaseAllCount, 1, 'the throwing second call must not have re-run registry.releaseAll()');
+  // The first call's own cleanup effects must not be undone by the second call's throw.
+  assert.equal(world.isLeaseValid({ model, epoch: 1 }), false, 'still disposed/invalid after the second call');
+});
+
 test('two distinct model objects under the same reused modelId, both live, each suspended at a checkpoint — dispose() rejects BOTH, including the old one', async () => {
   const world = new CollisionWorld({ yieldToScheduler: () => new Promise(() => {}) /* never resolves on its own */ });
   const oldModel = { id: 7 };

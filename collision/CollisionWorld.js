@@ -100,6 +100,12 @@ export class CollisionWorld {
   }
 
   dispose() {
+    // dispose() is NOT one of the two deliberate no-op-on-disposed exceptions (isLeaseValid,
+    // evictModel are the only two — docs/...:3380-3391, 3462-3464, 3478-3481) — a second dispose()
+    // call must throw WorldDisposedError, same as every other public method. Guard first, before any
+    // cleanup, so a re-entrant/racing second call cannot re-run cleanup that may not be safe to run
+    // twice (e.g. an unverified GeometryRegistry.releaseAll()).
+    if (this._disposed) throw new WorldDisposedError();
     this._disposed = true; // set FIRST, synchronously, before anything else. docs/...:3380-3391.
     // Each independent cleanup below is attempted regardless of whether an earlier one failed —
     // dispose() is terminal and cannot be retried, so no single failure may strand the others.
