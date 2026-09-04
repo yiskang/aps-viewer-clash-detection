@@ -274,17 +274,18 @@ test('non-dbId groupBy rejected -- M1 supports only groupBy:dbId', async () => {
   );
 });
 
-test("containment / volume-overlap are rejected with Task 20's exact placeholder message", async () => {
+test('every supported mode is accepted; an unknown mode is rejected', async () => {
+  // Task 19 shipped this fixture asserting a placeholder rejection for containment/volume-overlap.
+  // Task 20 wired both modes for real, so the placeholder message is gone and the assertion it
+  // pinned now belongs to test/CollisionWorld.findClashes.dispatch.test.mjs. What remains
+  // load-bearing HERE is the unknown-mode rejection and the fact that mode validation still
+  // happens at entry, before any extraction work.
   const { model, viewer } = makeFixture([{ dbId: 1, children: [{ dbId: 10, fragments: [] }] }]);
   const world = await freshWorld(viewer, { now: frozenClock() });
-  await assert.rejects(
-    world.findClashes(query(model, [10], [10], 'containment')),
-    (err) => err.message === "findClashes: mode 'containment' not yet wired (Task 20)",
-  );
-  await assert.rejects(
-    world.findClashes(query(model, [10], [10], 'volume-overlap')),
-    (err) => err.message === "findClashes: mode 'volume-overlap' not yet wired (Task 20)",
-  );
+  for (const mode of ['surface-intersection', 'containment', 'volume-overlap']) {
+    const result = await world.findClashes(query(model, [10], [10], mode));
+    assert.deepEqual(result.pairs, []);
+  }
   await assert.rejects(world.findClashes(query(model, [10], [10], 'nonsense')), /unsupported mode/);
 });
 

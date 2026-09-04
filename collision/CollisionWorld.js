@@ -11,6 +11,8 @@ import { extractFragments } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
 import { createGeometryRegistry } from './geometry/createGeometryRegistry.js';
 import { surfaceIntersectionQuery } from './query/SurfaceIntersectionQuery.js';
+import { containmentModeQuery } from './query/ContainmentModeQuery.js';
+import { volumeOverlapQuery } from './query/VolumeOverlapQuery.js';
 
 const supportedModes = ['surface-intersection', 'containment', 'volume-overlap'];
 
@@ -44,6 +46,17 @@ function makePlaced(admitted, extractedRecord) {
   });
 }
 
+// The FragmentRef every ClashDiagnostic names. `dbId` always comes from the placed instance's own
+// ownerDbId (first-discovery-wins, captured during extraction), NEVER from the query's own
+// source.dbIds/target.dbIds, which say only where the walk started.
+function fragmentRef(model, placed) {
+  return {
+    modelId: modelIdOf(model),
+    dbId: placed.ownerDbId,
+    fragId: placed.instance.fragmentId,
+  };
+}
+
 // The matrix bvhcast wants: it maps the SECOND bvh's local space into the FIRST bvh's local space
 // (source is always the first operand here), i.e. inverse(sourceWorld) * targetWorld -- the same
 // derivation test/query/SurfaceIntersectionQuery.test.mjs's own `relativeMatrix(a, b)` helper uses.
@@ -51,6 +64,73 @@ function computeRelativeMatrix(sourceWorldMatrix, targetWorldMatrix) {
   const source = new THREE.Matrix4().fromArray(sourceWorldMatrix);
   const target = new THREE.Matrix4().fromArray(targetWorldMatrix);
   return source.invert().multiply(target);
+}
+
+// Adapts one resolved GeometryRegistry record plus this call's own placement into the `Instance`
+// shape ContainmentModeQuery/VolumeOverlapQuery document in their own JSDoc typedefs:
+// `{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix,
+//    aspectRatioExceeded?: boolean }`.
+//
+// Three fields the plan's own snippet dropped, all load-bearing (batch4 reconciliation note items
+// 6/7, each re-verified against the consuming code rather than taken on trust):
+//  - `geometry`  -- ContainmentQuery.anyComponentInside samples `sourceGeometry.attributes.position`
+//                   through `sourceGeometry.index.array`; without it every containment term throws.
+//  - `closedManifold` -- a SINGLE geometry-wide boolean in both consumers' typedefs (used directly,
+//                   never indexed), reduced from GeometryConnectivity's per-component array. Left
+//                   `undefined` when connectivity was not requested, which cannot happen on the two
+//                   modes that read it (`needsConnectivity` is true for both).
+//  - `aspectRatioExceeded` -- the M1 single-geometry aspect-ratio disposition gate in
+//                   VolumeOverlapQuery (its crossing term) and ContainmentModeQuery (its witness
+//                   term). Dropping it silently disables a safety guard rather than failing loudly.
+//
+// `matrix` must be a real THREE.Matrix4: both consumers call `.clone().invert().multiply(...)` on
+// it. Extraction stores world matrices as plain 16-number arrays, so the conversion happens here.
+function toInstance(record, placedWorldMatrix) {
+  return {
+    geometry: record.geometry,
+    bvh: record.bvh,
+    localDiagonal: record.localDiagonal,
+    connectivity: record.connectivity,
+    closedManifold: record.connectivity ? record.connectivity.closedManifold.every(Boolean) : undefined,
+    aspectRatioExceeded: record.aspectRatioExceeded,
+    matrix: new THREE.Matrix4().fromArray(placedWorldMatrix),
+  };
+}
+
+/**
+ * The `SchedulerHandle` ContainmentModeQuery/VolumeOverlapQuery (and, through them,
+ * ContainmentQuery/SurfaceCrossingWitness) actually consume:
+ * `{ elapsedMs(): number, checkpointIfDue(): Promise<void> }` — verified against those modules'
+ * own bodies, NOT the `{ checkpoint() }` shape the plan's snippet assumes.
+ *
+ * It wraps the SAME per-call `checkpoint` callable every other checkpoint in this findClashes call
+ * uses, so a composed sub-query's between-stage yields share one frame-budget accumulator with the
+ * broad phase and the pair boundary. That sharing is exactly what makes the round-9 counterexample
+ * (a pair whose composed stages are each individually under budget but sum past it) reachable.
+ *
+ * `checkpointIfDue` is deliberately `async` — always a Promise, even on the port's synchronous fast
+ * path — because its callers uniformly `await` it. The port call INSIDE it still branches on the
+ * return value (`const pending = checkpoint(); if (pending) await pending;`), so the not-due path
+ * costs no yield of its own, only the one microtask its callers' own `await` already implies.
+ *
+ * `elapsedMs` reports time since this pair's own entry, reset on every real yield. That is the
+ * baseline SurfaceCrossingWitness needs: it cannot pause mid-bvhcast, so it only READS this to
+ * abort a traversal that has already outrun frameBudgetMs since the last yield. A baseline taken at
+ * findClashes entry instead would report the whole call's elapsed time and abort every witness
+ * traversal on any non-trivial query.
+ */
+function createComposedStageScheduler(checkpoint, now) {
+  let sinceMs = now();
+  return {
+    elapsedMs: () => now() - sinceMs,
+    checkpointIfDue: async () => {
+      const pending = checkpoint();
+      if (pending) {
+        await pending;
+        sinceMs = now();
+      }
+    },
+  };
 }
 
 function emptyStatistics() {
@@ -409,7 +489,7 @@ export class CollisionWorld {
    * Entry -> extraction -> capacity-gated admission -> broad phase -> narrow phase -> aggregation.
    *
    * Milestone 1 restrictions, all rejected loudly rather than silently degraded: single-model
-   * queries only, `groupBy: 'dbId'` only, and (until Task 20) `mode: 'surface-intersection'` only.
+   * queries only and `groupBy: 'dbId'` only. All three query modes are supported.
    *
    * @param {{ source: {model: Object, dbIds: number[]}, target: {model: Object, dbIds: number[]},
    *           mode: string, groupBy: 'dbId' }} query
@@ -436,12 +516,9 @@ export class CollisionWorld {
     if (!supportedModes.includes(query.mode)) {
       throw new Error(`findClashes: unsupported mode '${query.mode}'`);
     }
-    if (query.mode !== 'surface-intersection') {
-      // Task 20 replaces this guard with real containment/volume-overlap dispatch inside
-      // _runNarrowPhasePair; until then the modes are rejected explicitly rather than silently
-      // producing surface-intersection results under another name.
-      throw new Error(`findClashes: mode '${query.mode}' not yet wired (Task 20)`);
-    }
+    // (Task 19's `mode !== 'surface-intersection'` placeholder rejection lived here; Task 20's
+    // dispatch in _runNarrowPhasePair now handles all three modes, so the only mode check left is
+    // the supportedModes membership test above.)
 
     const startedAt = this._now();
     const statistics = emptyStatistics();
@@ -596,11 +673,7 @@ export class CollisionWorld {
             // rejected-primitive-range, index-references-invalid-vertex).
             reason: record.reason,
             role,
-            fragment: {
-              modelId: modelIdOf(model),
-              dbId: placed.ownerDbId,
-              fragId: placed.instance.fragmentId,
-            },
+            fragment: fragmentRef(model, placed),
           });
         }
         return null;
@@ -613,12 +686,55 @@ export class CollisionWorld {
     const targetRecord = await buildOne(targetPlaced, 'target');
     if (!targetRecord) return false;
 
-    const relativeMatrix = computeRelativeMatrix(sourcePlaced.worldMatrix, targetPlaced.worldMatrix);
-    // surfaceIntersectionQuery is SYNCHRONOUS and owns a private, traversal-local clock: bvhcast
-    // cannot pause mid-traversal, so there is nothing for this call's shared checkpoint to do
-    // inside it. The pair-boundary checkpoint in findClashes is the one that applies here.
-    const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix);
-    return result.intersects;
+    if (mode === 'surface-intersection') {
+      const relativeMatrix = computeRelativeMatrix(sourcePlaced.worldMatrix, targetPlaced.worldMatrix);
+      // surfaceIntersectionQuery is SYNCHRONOUS and owns a private, traversal-local clock: bvhcast
+      // cannot pause mid-traversal, so there is nothing for this call's shared checkpoint to do
+      // inside it. The pair-boundary checkpoint in findClashes is the one that applies here. This
+      // mode also performs no parity test at all, so it produces no diagnostics of its own.
+      const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix);
+      return result.intersects;
+    }
+
+    // --- The two composed modes. Both take full `Instance` operands (never raw bvh/matrix pairs)
+    // and compute whatever relative matrices they need from those operands' own `matrix` fields, so
+    // computeRelativeMatrix is deliberately NOT called on this path.
+    const sourceInstance = toInstance(sourceRecord, sourcePlaced.worldMatrix);
+    const targetInstance = toInstance(targetRecord, targetPlaced.worldMatrix);
+    const scheduler = createComposedStageScheduler(checkpoint, this._now);
+
+    const sourceFragment = fragmentRef(model, sourcePlaced);
+    const targetFragment = fragmentRef(model, targetPlaced);
+    // Both composed queries return PARTIAL diagnostics -- `{ reason }` or `{ reason, role }`, with
+    // no `scope` and no fragment refs (verified in ContainmentModeQuery/VolumeOverlapQuery's own
+    // `addDiagnostic` bodies; the plan's snippet branches on a `d.scope === 'pair'` field that
+    // those modules never set). Completing them is this layer's job, and every one of them is
+    // PAIR-scoped by construction: they are discovered while evaluating one specific pair, so both
+    // sides are always known and both are always named. `role`, when present, says which operand is
+    // indicted; it never turns the diagnostic into a fragment-scoped one (that scope belongs solely
+    // to normalization/size failures, emitted by buildOne above).
+    const attach = (diagnostics) => {
+      for (const d of diagnostics || []) {
+        statistics.diagnostics.push({
+          scope: 'pair',
+          reason: d.reason,
+          ...(d.role !== undefined ? { role: d.role } : {}),
+          sourceFragment,
+          targetFragment,
+        });
+      }
+    };
+
+    if (mode === 'containment') {
+      // Directed, one direction only: "is any of this source surface inside that target solid".
+      const result = await containmentModeQuery(sourceInstance, targetInstance, { scheduler });
+      attach(result.diagnostics);
+      return result.contained;
+    }
+    // mode === 'volume-overlap' -- the only remaining member of supportedModes.
+    const result = await volumeOverlapQuery(sourceInstance, targetInstance, { scheduler });
+    attach(result.diagnostics);
+    return result.overlap;
   }
 
   // First-discovery-wins per (loadEpoch, geometryIndex): any one fragment carrying that geometry

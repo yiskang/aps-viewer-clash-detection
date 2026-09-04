@@ -19,7 +19,10 @@ import { maxLocalAspectRatio } from '../constants.js';
  * @param {{ position: Float32Array, index: Uint32Array, triangleCount: number }} weldedGeometry
  *   Exactly the resolved shape of GeometryRecord.weldPromise.
  * @returns {{ bvh: import('three-mesh-bvh').MeshBVH, localDiagonal: number, aspectRatio: number,
- *   aspectRatioExceeded: boolean }} `aspectRatio`/`aspectRatioExceeded` are the M1 single-geometry
+ *   aspectRatioExceeded: boolean, geometry: import('three').BufferGeometry }} `geometry` is the
+ *   welded, collision-owned BufferGeometry this BVH was built over (the one
+ *   `ContainmentQuery.anyComponentInside` samples vertices from).
+ *   `aspectRatio`/`aspectRatioExceeded` are the M1 single-geometry
  *   aspect-ratio disposition guard (spec Tolerances section) -- this module only COMPUTES and
  *   surfaces the signal (stays stateless/non-gating per its own objective above); it does NOT itself
  *   reject anything, and neither should Task 14's GeometryRegistry/BlasCache orchestration, which
@@ -68,5 +71,11 @@ export function build(weldedGeometry) {
   const aspectRatio = minExtent > 0 ? maxExtent / minExtent : Infinity;
   const aspectRatioExceeded = aspectRatio > maxLocalAspectRatio;
 
-  return { bvh, localDiagonal, aspectRatio, aspectRatioExceeded };
+  // `geometry` is returned, not merely used locally: ContainmentQuery.anyComponentInside reads the
+  // WELDED geometry directly (`sourceGeometry.index.array` / `.attributes.position`), so
+  // `containment` / `volume-overlap` need it on the resolved GeometryRegistry record. It costs
+  // nothing to surface -- `bvh` already holds a hard reference to this exact object -- and
+  // GeometryRegistry._awaitEntry spreads this whole return value, so no change is needed there or
+  // in BlasCache (batch4 reconciliation note item 6).
+  return { bvh, localDiagonal, aspectRatio, aspectRatioExceeded, geometry };
 }
