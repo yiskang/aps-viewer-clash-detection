@@ -538,8 +538,8 @@ test('stale evictModel(oldModel) releases only the old epoch\'s bucket — new o
   // Two distinct Model objects sharing the same reused numeric `id` (round-14 scenario) — both
   // delegate to the same underlying mock tree, since this fixture only cares about epoch-bucket
   // isolation, not the two objects' geometry actually differing.
-  const oldModelObj = { getInstanceTree: sharedModel.getInstanceTree, getFragmentList: sharedModel.getFragmentList, id: 42 };
-  const newModelObj = { getInstanceTree: sharedModel.getInstanceTree, getFragmentList: sharedModel.getFragmentList, id: 42 };
+  const oldModelObj = { getInstanceTree: sharedModel.getInstanceTree, getObjectTree: sharedModel.getObjectTree, getFragmentList: sharedModel.getFragmentList, id: 42 };
+  const newModelObj = { getInstanceTree: sharedModel.getInstanceTree, getObjectTree: sharedModel.getObjectTree, getFragmentList: sharedModel.getFragmentList, id: 42 };
   const registry = { releaseEntriesForEpoch() {}, releaseAll() {} };
   const world = new CollisionWorld({ registry });
   const oldLease = world.admitModel(oldModelObj);

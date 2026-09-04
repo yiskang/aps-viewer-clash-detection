@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import { extractFragments, ExtractionLimitExceededError } from '../../collision/viewer/ViewerModelAdapter.js';
 import { maxChildrenPerNode, maxFragmentsPerDbId } from '../../collision/constants.js';
+// Importing this fixture also sets globalThis.THREE (if not already set) as a side effect, so
+// extractFragments's default `THREE = globalThis.THREE` resolves in this headless test process --
+// see the comment at the top of mockInstanceTree.mjs.
 import { buildMockModel } from '../fixtures/mockInstanceTree.mjs';
 
 const LOAD_EPOCH = 7;
@@ -259,4 +263,92 @@ test('checkpoint rejection propagates and aborts the walk (used by callers to su
     }),
     FakeDisposedError,
   );
+});
+
+// --- Item A regression: real Viewer out-parameter contract (final whole-branch review, Batch 3) --
+//
+// The real Viewer's FragmentList.getWorldMatrix/getWorldBounds call actual methods on the
+// out-parameter they're given (dstMtx.multiplyMatrices(...); dstBox.copy(...)/applyMatrix4(...))
+// rather than writing fields directly. A plain duck-typed carrier throws the moment a real model
+// has any model-level transform or a moved/exploded fragment. mockInstanceTree.mjs's fake
+// FragmentList now mirrors that real shape (see its own comments), so EVERY test in this file
+// already exercises the real contract -- these tests make the guarantee explicit and add the
+// numeric-correctness + "never leaks a live THREE instance" assertions the review specifically
+// called for.
+
+test('Item A: FragmentList carrier passed by extractFragments exposes real THREE.Matrix4/THREE.Box3 methods, not a duck-typed shim', async () => {
+  const { model } = buildMockModel(
+    [{ dbId: 1, fragments: [101] }],
+    new Map([[101, { geometryIndex: 1 }]]),
+  );
+  const fragList = model.getFragmentList();
+  const originalGetWorldMatrix = fragList.getWorldMatrix.bind(fragList);
+  const originalGetWorldBounds = fragList.getWorldBounds.bind(fragList);
+  let matrixCarrierChecked = false;
+  let boundsCarrierChecked = false;
+  // Wrap the fixture's own methods to assert on the carrier BEFORE mirroring real Viewer
+  // behavior on it -- exactly the property that would make a duck-typed shim throw.
+  fragList.getWorldMatrix = (fragId, dstMtx) => {
+    assert.equal(typeof dstMtx.multiplyMatrices, 'function', 'carrier must expose a real multiplyMatrices method');
+    matrixCarrierChecked = true;
+    return originalGetWorldMatrix(fragId, dstMtx);
+  };
+  fragList.getWorldBounds = (fragId, dstBox) => {
+    assert.equal(typeof dstBox.applyMatrix4, 'function', 'carrier must expose a real applyMatrix4 method');
+    assert.equal(typeof dstBox.copy, 'function', 'carrier must expose a real copy method');
+    boundsCarrierChecked = true;
+    return originalGetWorldBounds(fragId, dstBox);
+  };
+
+  await extractFragments(model, [1], LOAD_EPOCH);
+
+  assert.ok(matrixCarrierChecked, 'getWorldMatrix must have been called with a carrier exposing multiplyMatrices');
+  assert.ok(boundsCarrierChecked, 'getWorldBounds must have been called with a carrier exposing applyMatrix4/copy');
+});
+
+test('Item A: extracted worldMatrix/worldBounds are plain, owned data -- never a live THREE.Matrix4/THREE.Box3/THREE.Vector3 -- and carry the correct numbers through', async () => {
+  const matrix = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 5, 6, 7, 1]; // uniform scale 2 + translate (5,6,7)
+  const bounds = { min: [-1, -2, -3], max: [4, 5, 6] };
+  const { model } = buildMockModel(
+    [{ dbId: 1, fragments: [101] }],
+    new Map([[101, { geometryIndex: 3, matrix, bounds }]]),
+  );
+
+  const result = await extractFragments(model, [1], LOAD_EPOCH);
+  const record = result.get(101);
+
+  // Plain, owned shapes -- the scratch THREE instances used internally must never escape.
+  assert.ok(record.worldMatrix instanceof Float64Array, 'worldMatrix must be a plain Float64Array');
+  assert.ok(!(record.worldMatrix instanceof THREE.Matrix4), 'worldMatrix must never be a live THREE.Matrix4 instance');
+  assert.ok(Array.isArray(record.worldBounds.min), 'worldBounds.min must be a plain number array');
+  assert.ok(Array.isArray(record.worldBounds.max), 'worldBounds.max must be a plain number array');
+  assert.ok(!(record.worldBounds.min instanceof THREE.Vector3), 'worldBounds.min must never be a live THREE.Vector3 instance');
+  assert.ok(!(record.worldBounds.max instanceof THREE.Vector3), 'worldBounds.max must never be a live THREE.Vector3 instance');
+  assert.ok(!(record.worldBounds instanceof THREE.Box3), 'worldBounds must never be a live THREE.Box3 instance');
+
+  // Numeric correctness -- proves the real multiplyMatrices/copy/applyMatrix4 calls actually
+  // threaded the right values through, not merely that nothing threw.
+  assert.deepEqual(Array.from(record.worldMatrix), matrix);
+  assert.deepEqual(record.worldBounds, bounds);
+});
+
+test('Item A: THREE namespace is injectable via options, not only resolved from globalThis', async () => {
+  const { model } = buildMockModel(
+    [{ dbId: 1, fragments: [101] }],
+    new Map([[101, { geometryIndex: 1 }]]),
+  );
+  let injectedMatrixUsed = false;
+  let injectedBoxUsed = false;
+  class TrackingMatrix4 extends THREE.Matrix4 {
+    multiplyMatrices(...args) { injectedMatrixUsed = true; return super.multiplyMatrices(...args); }
+  }
+  class TrackingBox3 extends THREE.Box3 {
+    applyMatrix4(...args) { injectedBoxUsed = true; return super.applyMatrix4(...args); }
+  }
+  const injectedThree = { Matrix4: TrackingMatrix4, Box3: TrackingBox3 };
+
+  await extractFragments(model, [1], LOAD_EPOCH, { THREE: injectedThree });
+
+  assert.ok(injectedMatrixUsed, 'extractFragments must construct scratch objects from the injected THREE namespace');
+  assert.ok(injectedBoxUsed, 'extractFragments must construct scratch objects from the injected THREE namespace');
 });
