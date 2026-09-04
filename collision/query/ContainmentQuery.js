@@ -224,7 +224,14 @@ export async function anyComponentInside(
 
   let samplesUsed = 0;
   let budgetExhausted = false;
-  let anyFlaggedComponentInvolved = false;
+  // Determined up front from sourceConnectivity.closedManifold, NOT incrementally
+  // inside the loop below -- a component's flagged-ness must be known regardless of
+  // whether the sampling budget ever actually reaches that component (final
+  // whole-branch review, Finding 4: the old incremental `if (!closed)
+  // anyFlaggedComponentInvolved = true;`, set only for components actually visited,
+  // let a flagged component skipped entirely by budget exhaustion leave this false,
+  // silently omitting the non-manifold-component diagnostic on a negative result).
+  const anyFlaggedComponentInvolved = sourceConnectivity.closedManifold.some((closed) => !closed);
   let anyClassifiedInside = false;
   let decidingComponentClosed = null;
   let decidingComponentIndex = null;
@@ -236,7 +243,6 @@ export async function anyComponentInside(
     if (budgetExhausted) { unresolvedComponentCount++; continue; }
 
     const closed = sourceConnectivity.closedManifold[componentId];
-    if (!closed) anyFlaggedComponentInvolved = true;
 
     // Derive the component's referenced vertex list, then order it as: stride bucket
     // 0 (spatially-spread stride picks, "stage 1"), then bucket 1, etc. -- so the

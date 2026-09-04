@@ -65,7 +65,14 @@ export function properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, loca
   // not supported") until reload. So: catch everything inside the callback, save it,
   // return true so bvhcast still exits via its normal-completion path and clears its
   // internal state, then rethrow once bvhcast has actually returned.
+  //
+  // `hasCaughtError` is a SEPARATE flag from `caughtError` itself -- JS permits
+  // `throw null`/`throw 0`/`throw undefined`/`throw ''`/`throw false`, all falsy, so a
+  // plain `if (caughtError) throw caughtError;` guard would silently fail to rethrow
+  // one of those and let this function return a fabricated clean result as if the
+  // traversal completed normally (final whole-branch review, Finding 2).
   let caughtError = null;
+  let hasCaughtError = false;
 
   bvhA.bvhcast(bvhB, matrixBtoA, {
     intersectsTriangles(triA, triB) {
@@ -144,12 +151,13 @@ export function properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, loca
         return false;
       } catch (err) {
         caughtError = err;
+        hasCaughtError = true;
         return true; // let bvhcast take its normal-completion path so `_active` clears
       }
     },
   });
 
-  if (caughtError) throw caughtError;
+  if (hasCaughtError) throw caughtError;
 
   // Abort protocol: bvhcast returning true on abort must never be read as a crossing
   // (docs/...:1926-1930).

@@ -69,6 +69,35 @@ test('private-clock time-based abort (mocked clock)', () => {
     'time-based abort carries crossing-budget-exhausted');
 });
 
+test('callback exception does not poison subsequent bvhcast traversals (defect fix, final whole-branch review Finding 1)', () => {
+  // Mirrors ProperCrossingQuery.test.mjs's own exception-containment test: three-mesh-
+  // bvh's bvhcast sets a module-global `_active` flag true at entry and clears it only
+  // on its normal-completion path (no try/finally). If intersectsTriangles were
+  // allowed to let an exception escape straight out of bvhcast, `_active` would stay
+  // stuck true and permanently break every LATER bvhcast-based query in the process
+  // ("Recursive calls to bvhcast not supported") until reload.
+  const a = testInstance(box(3, 3, 3));
+  const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1)); // deep overlap: callback invoked
+  let calls = 0;
+  const throwingNow = () => {
+    calls++;
+    if (calls === 2) throw new Error('injected clock failure');
+    return 0;
+  };
+  assert.throws(
+    () => surfaceIntersectionQuery(a.bvh, b.bvh, relativeMatrix(a, b), { now: throwingNow }),
+    /injected clock failure/,
+    'the injected exception propagates out of surfaceIntersectionQuery, not swallowed');
+
+  // A completely normal, immediately-following call must still succeed -- proves the
+  // callback's catch/return-true/rethrow protocol let bvhcast reach its
+  // normal-completion path and clear `_active` despite the thrown exception (not just
+  // that the exception propagated).
+  const r = surfaceIntersectionQuery(a.bvh, b.bvh, relativeMatrix(a, b));
+  assert.equal(typeof r.intersects, 'boolean',
+    'subsequent traversal is not poisoned by the prior callback exception');
+});
+
 test('open operands, no parity, no diagnostic', () => {
   // This mode performs no parity at all (docs/...:1702, 1838-1840) -- open source AND
   // open target must still report intersection with NO diagnostic whatsoever.

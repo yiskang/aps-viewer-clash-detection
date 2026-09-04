@@ -104,8 +104,9 @@ export function testInstance(geometry, matrix = new THREE.Matrix4()) {
     connectivity,
     closedManifold: connectivity.closedManifold.every(Boolean) && connectivity.componentCount > 0,
     matrix,
-    // Additive fields (batch2-reconciliation-notes.md #7): copied straight through from
-    // ThreeMeshBvhBackend.build()'s own return value, for Tasks 9/11/12's use.
+    // Additive fields (docs/superpowers/specs/2026-08-06-collision-library-milestone1-
+    // design.md's Tolerances section, "Single-geometry aspect ratio"): copied straight
+    // through from ThreeMeshBvhBackend.build()'s own return value, for Tasks 9/11/12's use.
     aspectRatio,
     aspectRatioExceeded,
   };

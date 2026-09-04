@@ -41,37 +41,62 @@ export function surfaceIntersectionQuery(bvhA, bvhB, matrixBtoA, options = {}) {
   let intersects = false;
   let aborted = false;
 
+  // Callback-exception containment: the pinned three-mesh-bvh's bvhcast sets a
+  // module-global `_active` flag true at entry and clears it only on its
+  // normal-completion path (no try/finally). If intersectsTriangles were allowed to
+  // throw straight out of bvhcast, `_active` would stay stuck true and permanently
+  // break every LATER bvhcast-based query in the process ("Recursive calls to bvhcast
+  // not supported") until reload. So: catch everything inside the callback, save it,
+  // return true so bvhcast still exits via its normal-completion path and clears its
+  // internal state, then rethrow once bvhcast has actually returned.
+  //
+  // `hasCaughtError` is a SEPARATE flag from `caughtError` itself -- JS permits
+  // `throw null`/`throw 0`/`throw undefined`/`throw ''`/`throw false`, all falsy, so a
+  // plain `if (caughtError) throw caughtError;` guard would silently fail to rethrow
+  // one of those and let this function return a fabricated clean result as if the
+  // traversal completed normally (final whole-branch review, Finding 2).
+  let caughtError = null;
+  let hasCaughtError = false;
+
   bvhA.bvhcast(bvhB, matrixBtoA, {
     intersectsTriangles(triA, triB) {
-      // Counts callbacks ENTERED, not triangle pairs actually geometrically tested --
-      // the increment happens before the budget check below, so an abort on the
-      // (budget+1)th callback still reports candidatePairsExamined === budget+1 even
-      // though intersectsTriangle is never called for that pair. This is the same
-      // entry-counting convention ProperCrossingQuery's shared budget protocol uses;
-      // stats.candidatePairsExamined is a ceiling on callback invocations, not a
-      // literal "pairs tested" count.
-      candidatePairsExamined++;
-      // Checked at callback entry only -- no probe loop exists in this mode, so
-      // entry-granularity is both adequate and the only granularity there is
-      // (docs/...:2069-2074, "applies unchanged to a traversal with no probe loop").
-      if (candidatePairsExamined > candidateBudget || now() - traversalStart > timeBudgetMs) {
-        aborted = true;
-        return true;
-      }
+      try {
+        // Counts callbacks ENTERED, not triangle pairs actually geometrically tested --
+        // the increment happens before the budget check below, so an abort on the
+        // (budget+1)th callback still reports candidatePairsExamined === budget+1 even
+        // though intersectsTriangle is never called for that pair. This is the same
+        // entry-counting convention ProperCrossingQuery's shared budget protocol uses;
+        // stats.candidatePairsExamined is a ceiling on callback invocations, not a
+        // literal "pairs tested" count.
+        candidatePairsExamined++;
+        // Checked at callback entry only -- no probe loop exists in this mode, so
+        // entry-granularity is both adequate and the only granularity there is
+        // (docs/...:2069-2074, "applies unchanged to a traversal with no probe loop").
+        if (candidatePairsExamined > candidateBudget || now() - traversalStart > timeBudgetMs) {
+          aborted = true;
+          return true;
+        }
 
-      _triA.copy(triA); _triA.needsUpdate = true;
-      _triB.copy(triB); _triB.needsUpdate = true;
+        _triA.copy(triA); _triA.needsUpdate = true;
+        _triB.copy(triB); _triB.needsUpdate = true;
 
-      // No target line requested -- coplanar contact IS an intersection here, so no
-      // coplanar split is needed, and omitting the argument avoids
-      // ExtendedTriangle's coplanar-target warning regardless (docs/...:1838-1840).
-      if (_triA.intersectsTriangle(_triB)) {
-        intersects = true;
-        return true;
+        // No target line requested -- coplanar contact IS an intersection here, so no
+        // coplanar split is needed, and omitting the argument avoids
+        // ExtendedTriangle's coplanar-target warning regardless (docs/...:1838-1840).
+        if (_triA.intersectsTriangle(_triB)) {
+          intersects = true;
+          return true;
+        }
+        return false;
+      } catch (err) {
+        caughtError = err;
+        hasCaughtError = true;
+        return true; // let bvhcast take its normal-completion path so `_active` clears
       }
-      return false;
     },
   });
+
+  if (hasCaughtError) throw caughtError;
 
   // bvhcast returns true on abort too (the only way to stop it early) -- reading that
   // as a hit would fabricate a result out of a timeout (docs/...:1926-1930).

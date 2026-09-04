@@ -12,8 +12,6 @@
 import { anyComponentInside } from './ContainmentQuery.js';
 import { surfaceCrossingWitness } from './SurfaceCrossingWitness.js';
 
-const noopScheduler = { elapsedMs: () => 0, checkpointIfDue: async () => {} };
-
 /**
  * @typedef {{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix, aspectRatioExceeded?: boolean }} Instance
  * @param {Instance} source
@@ -21,7 +19,14 @@ const noopScheduler = { elapsedMs: () => 0, checkpointIfDue: async () => {} };
  * @param {{ containment?: object, witness?: object, scheduler?: object }} [options]
  */
 export async function containmentModeQuery(source, target, options = {}) {
-  const scheduler = options.scheduler ?? noopScheduler;
+  // Default scheduler's `elapsedMs()` must report REAL, increasing wall-clock time
+  // since this call was entered -- SurfaceCrossingWitness has no private clock of its
+  // own by design (it reads only `scheduler.elapsedMs()`), so an always-0 default
+  // scheduler makes frameBudgetMs inert for the witness term on any standalone call
+  // with no injected scheduler (final whole-branch review, Finding 3).
+  const t0 = performance.now();
+  const defaultScheduler = { elapsedMs: () => performance.now() - t0, checkpointIfDue: async () => {} };
+  const scheduler = options.scheduler ?? defaultScheduler;
   const diagnostics = [];
   const addDiagnostic = (reason, role) => {
     if (!diagnostics.some((d) => d.reason === reason && d.role === role)) {
@@ -45,9 +50,10 @@ export async function containmentModeQuery(source, target, options = {}) {
       containerRole: 'target',
       sampledRole: 'source',
       scheduler,
-      // M1 aspect-ratio gating (batch2-reconciliation-notes.md #6; progress.md's
-      // "Ruling: maxLocalAspectRatio/aspectRatioExceeded gating" entry, Tasks 9 & 12
-      // only): `target` plays anyComponentInside's containerRole here, so the gate
+      // M1 aspect-ratio gating (docs/superpowers/specs/2026-08-06-collision-library-
+      // milestone1-design.md's Tolerances section, "Single-geometry aspect ratio";
+      // progress.md's "Ruling: maxLocalAspectRatio/aspectRatioExceeded gating" entry,
+      // Tasks 9 & 12 only): `target` plays anyComponentInside's containerRole here, so the gate
       // reads TARGET's own aspectRatioExceeded signal. This is a pure pass-through --
       // anyComponentInside (Task 9) already owns the actual short-circuit/gating logic.
       targetAspectRatioExceeded: target.aspectRatioExceeded,

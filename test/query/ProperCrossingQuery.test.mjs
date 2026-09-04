@@ -169,6 +169,27 @@ test('callback exception does not poison subsequent bvhcast traversals (defect f
     'subsequent traversal is not poisoned by the prior callback exception');
 });
 
+test('callback exception with a FALSY thrown value still propagates (final whole-branch review Finding 2)', () => {
+  // A plain `if (caughtError) throw caughtError;` rethrow guard is broken for falsy
+  // thrown values -- JS permits `throw null`/`throw 0`/`throw undefined`/`throw ''`/
+  // `throw false`. If the callback ever catches one of those, that guard would
+  // silently fail to rethrow, and this function would return a FABRICATED,
+  // misleadingly-clean result (e.g. crossing:false, aborted:false) as if the traversal
+  // completed normally, when it actually crashed on its first candidate. This test
+  // must fail against the old `if (caughtError)` guard and pass against the fixed
+  // `hasCaughtError` boolean flag.
+  const a = testInstance(box(3, 3, 3));
+  const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1)); // deep overlap: callback invoked
+  let calls = 0;
+  const throwingNow = () => {
+    calls++;
+    if (calls === 2) throw null; // eslint-disable-line no-throw-literal -- deliberately falsy
+    return 0;
+  };
+  assert.throws(() => crossOf(a, b, { now: throwingNow }), (err) => err === null,
+    'a falsy thrown value (null) still propagates out of properCrossingQuery, not silently swallowed into a clean-looking result');
+});
+
 test('time budget aborts strictly mid-probe-loop (round 11 regression)', () => {
   // Round 10's fix checked only at callback entry, letting up to 24 classifyPoint
   // calls (a full 12-probe loop for a confirmed pair) run unchecked. This fixture

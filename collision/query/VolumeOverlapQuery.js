@@ -13,7 +13,6 @@
 import { properCrossingQuery } from './ProperCrossingQuery.js';
 import { anyComponentInside } from './ContainmentQuery.js';
 
-const noopScheduler = { elapsedMs: () => 0, checkpointIfDue: async () => {} };
 const defaultCompareCanonical = () => -1; // always treats `source` as canonical-first
 
 /**
@@ -23,7 +22,15 @@ const defaultCompareCanonical = () => -1; // always treats `source` as canonical
  * @param {{ crossing?: object, containment?: object, scheduler?: object, compareCanonical?: (source: Instance, target: Instance) => number }} [options]
  */
 export async function volumeOverlapQuery(source, target, options = {}) {
-  const scheduler = options.scheduler ?? noopScheduler;
+  // Default scheduler's `elapsedMs()` must report REAL, increasing wall-clock time
+  // since this call was entered, matching ContainmentModeQuery's own default-scheduler
+  // fix (final whole-branch review, Finding 3). Not independently reachable today --
+  // this function never routes anything through SurfaceCrossingWitness -- but kept
+  // consistent with the pattern as defense-in-depth against the same trap if that ever
+  // changes.
+  const t0 = performance.now();
+  const defaultScheduler = { elapsedMs: () => performance.now() - t0, checkpointIfDue: async () => {} };
+  const scheduler = options.scheduler ?? defaultScheduler;
   // Decides ONLY which operand's fields go first into properCrossingQuery, for
   // correct L_canonical scaling (docs/...:1609-1621) -- NEVER which operand this
   // function calls `source`/`target` for diagnostic role-naming, which stay fixed to
@@ -81,8 +88,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       containerRole: 'target',
       sampledRole: 'source',
       scheduler,
-      // M1 aspect-ratio gating (batch2-reconciliation-notes.md #6; Tasks 9 & 12 ruling):
-      // `target` plays anyComponentInside's containerRole here, so the gate reads
+      // M1 aspect-ratio gating (docs/superpowers/specs/2026-08-06-collision-library-
+      // milestone1-design.md's Tolerances section, "Single-geometry aspect ratio";
+      // Tasks 9 & 12 ruling): `target` plays anyComponentInside's containerRole here, so the gate reads
       // TARGET's own aspectRatioExceeded signal.
       targetAspectRatioExceeded: target.aspectRatioExceeded,
     }

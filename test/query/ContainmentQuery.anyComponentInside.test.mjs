@@ -327,6 +327,47 @@ test('yield-then-evict / yield-then-dispose', async () => {
   );
 });
 
+test('non-manifold-component still fires when the flagged component is skipped entirely by budget exhaustion (final whole-branch review Finding 4)', async () => {
+  // Component 0: a box exactly coincident with target on every face (every vertex a
+  // boundary read, so it never resolves and burns the whole sample budget by itself --
+  // same trick as "maxContainmentSamples exhaustion" above). Component 1: an open
+  // (non-closed-manifold) single triangle, placed far away so weld() cannot
+  // accidentally merge it into component 0. maxContainmentSamples is sized smaller
+  // than component 0's own vertex count (8, post-weld) so budgetExhausted becomes true
+  // WHILE STILL PROCESSING component 0 -- component 1 is then skipped entirely by the
+  // `if (budgetExhausted) { unresolvedComponentCount++; continue; }` guard at the top
+  // of the loop, meaning its own `if (!closed)` line never runs.
+  //
+  // The function's own inline comment ("regardless of whether that component's own
+  // sample happened to resolve cleanly") promises non-manifold-component fires
+  // regardless of whether budget ran out before or after reaching a flagged component.
+  // The old incremental `anyFlaggedComponentInvolved = true` (set only inside the loop
+  // body, for components actually visited) breaks that promise for exactly this
+  // ordering. This test must fail against the old incremental-check code and pass
+  // against the up-front `sourceConnectivity.closedManifold.some(...)` fix.
+  const coincidentBox = box(4, 4, 4);
+  const openTriangle = new THREE.BufferGeometry();
+  openTriangle.setAttribute('position', new THREE.Float32BufferAttribute(
+    [100, 0, 0, 101, 0, 0, 100, 1, 0], 3));
+  openTriangle.setIndex([0, 1, 2]);
+
+  const src = testInstance(mergeGeometries([coincidentBox, openTriangle]));
+  const target = testInstance(box(4, 4, 4));
+
+  // Sanity check on the fixture's own component layout before trusting the assertions
+  // below: component 0 must be the closed box, component 1 the open triangle.
+  assert.equal(src.connectivity.componentCount, 2, 'fixture: exactly two components');
+  assert.equal(src.connectivity.closedManifold[0], true, 'fixture: component 0 (box) is closed');
+  assert.equal(src.connectivity.closedManifold[1], false, 'fixture: component 1 (triangle) is open/non-manifold');
+
+  const r = await insideOf(src, target, { mode: 'volume-overlap', maxContainmentSamples: 3 });
+  assert.equal(r.inside, false, 'exhausted before any resolution: not contained');
+  assert.equal(r.budgetExhausted, true, 'budgetExhausted flag set');
+  assert.equal(r.unresolvedComponentCount, 2, 'both components reported unresolved -- component 1 skipped entirely');
+  assert.equal(r.diagnostics.some((d) => d.reason === 'non-manifold-component'), true,
+    'non-manifold-component fires even though the flagged component (1) was never actually sampled');
+});
+
 // --- M1 aspect-ratio disposition guard (Tasks 9 & 12 gate site) ---
 
 test('targetAspectRatioExceeded: short-circuits before any classifyPoint against target', async () => {

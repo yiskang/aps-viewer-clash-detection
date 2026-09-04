@@ -61,6 +61,30 @@ test('budget exhaustion in the witness sub-call', async () => {
   assert.equal(elapsed < 1000, true, `completes within a wall-clock bound (${elapsed.toFixed(1)}ms)`);
 });
 
+test('default scheduler makes frameBudgetMs live for the witness term (final whole-branch review Finding 3)', async () => {
+  // SurfaceCrossingWitness has no private clock of its own by design -- it reads only
+  // scheduler.elapsedMs(). The OLD default scheduler here always reported elapsedMs:
+  // 0, so frameBudgetMs could never trip for a standalone call with no injected
+  // scheduler, and the witness term was bounded only by its own count ceilings.
+  // Isolates the time trigger from both count ceilings by setting
+  // maxCandidatePairsExamined/maxCrossingPairsExamined to Infinity, so the ONLY way
+  // this traversal can ever abort is the DEFAULT scheduler's own real elapsedMs() --
+  // exactly the mechanism Finding 3 fixes. No scheduler option is passed at all.
+  const source = testInstance(comb(0));
+  const target = testInstance(comb(0.05));
+  const t0 = performance.now();
+  const r = await containmentModeQuery(source, target, {
+    witness: { maxCandidatePairsExamined: Infinity, maxCrossingPairsExamined: Infinity },
+  });
+  const elapsed = performance.now() - t0;
+  assert.equal(r.stats.witnessTerm.aborted, true,
+    'default scheduler time budget is live: witness term aborts on real elapsed time, not left to run unbounded to completion');
+  assert.equal(r.stats.witnessTerm.diagnostics.some((d) => d.reason === 'crossing-budget-exhausted'), true,
+    'witness term carries crossing-budget-exhausted');
+  assert.equal(r.contained, false, 'aborted traversal on this input: not contained');
+  assert.ok(elapsed < 1000, `completes within a wall-clock bound well under 1s (${elapsed.toFixed(1)}ms)`);
+});
+
 test('two exactly coincident closed boxes (round 9 counterexample)', async () => {
   const a = testInstance(box(2, 2, 2));
   const b = testInstance(box(2, 2, 2)); // identical geometry, identical transform
@@ -85,8 +109,10 @@ test('checkpoint between vertex and witness terms', async () => {
 });
 
 // --- Aspect-ratio gating (this session's own ruling; second of the two spec-required
-// gate sites, ContainmentModeQuery's target role -- batch2-reconciliation-notes.md #6,
-// progress.md's "Ruling: maxLocalAspectRatio/aspectRatioExceeded gating" entry). ---
+// gate sites, ContainmentModeQuery's target role -- docs/superpowers/specs/2026-08-06-
+// collision-library-milestone1-design.md's Tolerances section, "Single-geometry aspect
+// ratio", and progress.md's "Ruling: maxLocalAspectRatio/aspectRatioExceeded gating"
+// entry). ---
 
 test('aspect-ratio gate: witness term skipped when target.aspectRatioExceeded, overall false', async () => {
   // Duct-through-beam would otherwise resolve contained:true via via:'surface-crossing'

@@ -143,9 +143,10 @@ test('compareCanonical decouples canonical order from public roles', async () =>
 });
 
 // --- M1 aspect-ratio disposition guard threading (task-11 addition; see
-// batch2-reconciliation-notes.md #6 and progress.md's "Ruling: maxLocalAspectRatio/
-// aspectRatioExceeded gating (Tasks 9 & 12 only)" entry). VolumeOverlapQuery does not
-// gate anything itself -- it only threads each anyComponentInside call's own
+// docs/superpowers/specs/2026-08-06-collision-library-milestone1-design.md's
+// Tolerances section, "Single-geometry aspect ratio", and progress.md's "Ruling:
+// maxLocalAspectRatio/aspectRatioExceeded gating (Tasks 9 & 12 only)" entry).
+// VolumeOverlapQuery does not gate anything itself -- it only threads each anyComponentInside call's own
 // containerRole operand's aspectRatioExceeded field through as
 // options.targetAspectRatioExceeded. These tests prove the threading actually
 // happens, not merely that anyComponentInside's own gate (already proven by Task 9's

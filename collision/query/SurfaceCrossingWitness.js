@@ -88,7 +88,14 @@ export function surfaceCrossingWitness(sourceBvh, targetBvh, targetToSourceMatri
   // until reload. So: catch everything inside the callback, save it, return true so
   // bvhcast still exits via its normal-completion path and clears its internal state,
   // then rethrow once bvhcast has actually returned.
+  //
+  // `hasCaughtError` is a SEPARATE flag from `caughtError` itself -- JS permits
+  // `throw null`/`throw 0`/`throw undefined`/`throw ''`/`throw false`, all falsy, so a
+  // plain `if (caughtError) throw caughtError;` guard would silently fail to rethrow
+  // one of those and let this function return a fabricated clean result as if the
+  // traversal completed normally (final whole-branch review, Finding 2).
   let caughtError = null;
+  let hasCaughtError = false;
 
   sourceBvh.bvhcast(targetBvh, targetToSourceMatrix, {
     intersectsTriangles(triA, triB) {
@@ -156,12 +163,13 @@ export function surfaceCrossingWitness(sourceBvh, targetBvh, targetToSourceMatri
         return false;
       } catch (err) {
         caughtError = err;
+        hasCaughtError = true;
         return true; // let bvhcast take its normal-completion path so `_active` clears
       }
     },
   });
 
-  if (caughtError) throw caughtError;
+  if (hasCaughtError) throw caughtError;
 
   const finalWitnessFound = aborted ? false : witnessFound;
   const inconclusive = !aborted && !finalWitnessFound && (sawInconclusiveCandidate || sawBoundaryClassification);
