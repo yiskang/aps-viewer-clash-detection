@@ -366,3 +366,207 @@ test('createCheckpointPort: checkpointing a DIFFERENT operand than the lease via
   // Synchronous throw (evictModel already ran before this call) — see comment above.
   assert.throws(() => port({ model: otherModel, loadEpoch: otherLease.epoch }), ModelEvictedError);
 });
+
+// --- admitCollisionInstances (Task 18) --------------------------------------------------------
+
+import { extractFragments } from '../collision/viewer/ViewerModelAdapter.js';
+import { buildMockModel } from './fixtures/mockInstanceTree.mjs';
+import { maxCollisionInstancesPerEpoch } from '../collision/constants.js';
+import { CapacityExceededError } from '../collision/CollisionWorld.js';
+
+async function extract(model, dbIds, loadEpoch) {
+  return extractFragments(model, dbIds, loadEpoch);
+}
+
+test('admitCollisionInstances: cache hit for an already-resident fragment returns the exact same object reference', async () => {
+  const { model } = buildMockModel([{ dbId: 1, fragments: [1, 2] }], new Map([[1, { geometryIndex: 1 }], [2, { geometryIndex: 2 }]]));
+  const world = new CollisionWorld();
+  const lease = world.admitModel(model);
+  const first = await extract(model, [1], lease.epoch);
+  const admitted1 = world.admitCollisionInstances(lease, first);
+  const second = await extract(model, [1], lease.epoch); // fresh extraction call, e.g. a later findClashes
+  const admitted2 = world.admitCollisionInstances(lease, second);
+  assert.equal(admitted1.get(1), admitted2.get(1), 'must be the exact same object reference across calls');
+  assert.equal(admitted1.get(2), admitted2.get(2));
+});
+
+test('admitCollisionInstances: newly-admitted instances are frozen and shaped { fragmentId, geometryIdentity }', async () => {
+  const { model } = buildMockModel([{ dbId: 1, fragments: [5] }], new Map([[5, { geometryIndex: 3 }]]));
+  const world = new CollisionWorld();
+  const lease = world.admitModel(model);
+  const extracted = await extract(model, [1], lease.epoch);
+  const admitted = world.admitCollisionInstances(lease, extracted);
+  const instance = admitted.get(5);
+  assert.equal(instance.fragmentId, 5);
+  assert.equal(instance.geometryIdentity.geometryIndex, 3);
+  assert.ok(Object.isFrozen(instance));
+  assert.equal(instance.worldMatrix, undefined, 'CollisionInstance must carry NO transform state');
+});
+
+test('admitCollisionInstances: stale lease (model evicted) rejects ModelEvictedError before any capacity logic runs', async () => {
+  const { model } = buildMockModel([{ dbId: 1, fragments: [1] }], new Map([[1, { geometryIndex: 1 }]]));
+  const world = new CollisionWorld();
+  const lease = world.admitModel(model);
+  const extracted = await extract(model, [1], lease.epoch);
+  world.evictModel(model);
+  assert.throws(() => world.admitCollisionInstances(lease, extracted), ModelEvictedError);
+  assert.equal(world._instanceCache.has(lease.epoch), false, 'must never create an orphan bucket for a dead epoch');
+});
+
+test('admitCollisionInstances: disposed world rejects WorldDisposedError before any capacity logic runs', async () => {
+  const { model } = buildMockModel([{ dbId: 1, fragments: [1] }], new Map([[1, { geometryIndex: 1 }]]));
+  const world = new CollisionWorld();
+  const lease = world.admitModel(model);
+  const extracted = await extract(model, [1], lease.epoch);
+  world.dispose();
+  assert.throws(() => world.admitCollisionInstances(lease, extracted), WorldDisposedError);
+});
+
+test('admitCollisionInstances: bucket already at capacity, query MIXES already-resident and one not-yet-resident fragment — entire call rejects, call-wide not partial', () => {
+  // The query's OWN size (3) is far under the limit, so this exercises step 4 (bucket-capacity)
+  // specifically, not step 2 (precheck) — and proves rejection is call-wide: even the two
+  // ALREADY-RESIDENT fragments in this query are not returned, because the call as a whole rejects.
+  const world = new CollisionWorld();
+  const lease = world.admitModel(makeModel('cap-1'));
+  const epoch = lease.epoch;
+  const full = new Map();
+  for (let i = 0; i < maxCollisionInstancesPerEpoch; i++) {
+    full.set(i, { geometryIdentity: { loadEpoch: epoch, geometryIndex: i } });
+  }
+  world.admitCollisionInstances(lease, full); // fill the bucket to exact capacity
+  const query = new Map([
+    [0, full.get(0)],
+    [1, full.get(1)],
+    [999999, { geometryIdentity: { loadEpoch: epoch, geometryIndex: 999999 } }], // the one not-yet-resident id
+  ]);
+  assert.throws(() => world.admitCollisionInstances(lease, query), (err) => {
+    assert.ok(err instanceof CapacityExceededError);
+    assert.equal(err.kind, 'bucket-capacity');
+    return true;
+  });
+  assert.equal(world._instanceCache.get(epoch).size, maxCollisionInstancesPerEpoch, 'bucket must be unchanged by the rejected call');
+  assert.equal(world._instanceCache.get(epoch).has(999999), false);
+});
+
+test('admitCollisionInstances: repeat call querying only already-resident fragments succeeds even at capacity', () => {
+  const world = new CollisionWorld();
+  const lease = world.admitModel(makeModel('cap-2'));
+  const full = new Map();
+  for (let i = 0; i < maxCollisionInstancesPerEpoch; i++) {
+    full.set(i, { geometryIdentity: { loadEpoch: lease.epoch, geometryIndex: i } });
+  }
+  world.admitCollisionInstances(lease, full);
+  const subsetQuery = new Map([[0, full.get(0)], [1, full.get(1)]]);
+  const result = world.admitCollisionInstances(lease, subsetQuery); // must not throw
+  assert.equal(result.size, 2);
+});
+
+test('admitCollisionInstances: walk\'s own unique-fragment count exceeds the limit against an EMPTY bucket — precheck rejects before any bucket lookup', () => {
+  const world = new CollisionWorld();
+  const lease = world.admitModel(makeModel('cap-3'));
+  const tooMany = new Map();
+  for (let i = 0; i < maxCollisionInstancesPerEpoch + 1; i++) {
+    tooMany.set(i, { geometryIdentity: { loadEpoch: lease.epoch, geometryIndex: i } });
+  }
+  assert.throws(() => world.admitCollisionInstances(lease, tooMany), (err) => {
+    assert.ok(err instanceof CapacityExceededError);
+    assert.equal(err.kind, 'call-wide-unique-fragment-precheck');
+    return true;
+  });
+  assert.equal(world._instanceCache.has(lease.epoch), false, 'bucket must never have been created — precheck rejects before any bucket lookup');
+});
+
+test('admitCollisionInstances: precheck (call-wide) is distinct from bucket-capacity check — a fixture that only trips the latter', () => {
+  const world = new CollisionWorld();
+  const lease = world.admitModel(makeModel('cap-4'));
+  const epoch = lease.epoch;
+  const half = Math.floor(maxCollisionInstancesPerEpoch / 2);
+  const firstBatch = new Map();
+  for (let i = 0; i < half; i++) firstBatch.set(i, { geometryIdentity: { loadEpoch: epoch, geometryIndex: i } });
+  world.admitCollisionInstances(lease, firstBatch); // bucket now at half capacity
+
+  const secondBatch = new Map(); // this call's OWN unique count is well under the limit...
+  for (let i = half; i < half + 10; i++) secondBatch.set(i, { geometryIdentity: { loadEpoch: epoch, geometryIndex: i } });
+  world.admitCollisionInstances(lease, secondBatch); // ...succeeds, combined bucket now half+10
+
+  // Now push the bucket to exactly at-capacity, then try one more small call that ALONE would pass
+  // the precheck (its own unique count is tiny) but fails the bucket-capacity check.
+  const fillRest = new Map();
+  for (let i = half + 10; i < maxCollisionInstancesPerEpoch; i++) {
+    fillRest.set(i, { geometryIdentity: { loadEpoch: epoch, geometryIndex: i } });
+  }
+  world.admitCollisionInstances(lease, fillRest); // bucket now exactly at capacity
+
+  const tinyOverflow = new Map([[maxCollisionInstancesPerEpoch + 5, { geometryIdentity: { loadEpoch: epoch, geometryIndex: 1 } }]]);
+  assert.throws(() => world.admitCollisionInstances(lease, tinyOverflow), (err) => {
+    assert.equal(err.kind, 'bucket-capacity'); // NOT call-wide-unique-fragment-precheck
+    return true;
+  });
+});
+
+test('two interleaved calls against the same fragment with a transform mutation between them — canonical/placement separation', async () => {
+  const geometry = new Map([[1, { geometryIndex: 1, matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }]]);
+  const { model } = buildMockModel([{ dbId: 1, fragments: [1] }], geometry);
+  const world = new CollisionWorld();
+  const lease = world.admitModel(model);
+
+  // Call A extracts and builds its own placement snapshot first.
+  const extractedA = await extract(model, [1], lease.epoch);
+  const admittedA = world.admitCollisionInstances(lease, extractedA);
+  const placementA = Object.freeze({
+    instance: admittedA.get(1),
+    worldMatrix: extractedA.get(1).worldMatrix,
+    worldBounds: extractedA.get(1).worldBounds,
+    ownerDbId: extractedA.get(1).ownerDbId,
+  });
+
+  // Mutate the fixture's transform (simulating a live Viewer transform change between calls).
+  geometry.get(1).matrix = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1];
+
+  // Call B extracts fresh (sees the mutated transform) and looks up the SAME canonical instance.
+  const extractedB = await extract(model, [1], lease.epoch);
+  const admittedB = world.admitCollisionInstances(lease, extractedB);
+  assert.equal(admittedB.get(1), admittedA.get(1), 'same canonical CollisionInstance object reference');
+  assert.notDeepEqual(Array.from(extractedB.get(1).worldMatrix), Array.from(placementA.worldMatrix), 'call B must see the mutated transform');
+
+  // Call A's own already-built placement snapshot is untouched.
+  assert.deepEqual(Array.from(placementA.worldMatrix), [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+});
+
+test('stale evictModel(oldModel) releases only the old epoch\'s bucket — new object\'s bucket is unaffected', async () => {
+  const { model: sharedModel } = buildMockModel([{ dbId: 1, fragments: [1] }], new Map([[1, { geometryIndex: 1 }]]));
+  // Two distinct Model objects sharing the same reused numeric `id` (round-14 scenario) — both
+  // delegate to the same underlying mock tree, since this fixture only cares about epoch-bucket
+  // isolation, not the two objects' geometry actually differing.
+  const oldModelObj = { getInstanceTree: sharedModel.getInstanceTree, getFragmentList: sharedModel.getFragmentList, id: 42 };
+  const newModelObj = { getInstanceTree: sharedModel.getInstanceTree, getFragmentList: sharedModel.getFragmentList, id: 42 };
+  const registry = { releaseEntriesForEpoch() {}, releaseAll() {} };
+  const world = new CollisionWorld({ registry });
+  const oldLease = world.admitModel(oldModelObj);
+  const newLease = world.admitModel(newModelObj);
+  assert.notEqual(oldLease.epoch, newLease.epoch);
+
+  const extractedOld = await extract(oldModelObj, [1], oldLease.epoch);
+  world.admitCollisionInstances(oldLease, extractedOld);
+  const extractedNew = await extract(newModelObj, [1], newLease.epoch);
+  const admittedNew = world.admitCollisionInstances(newLease, extractedNew);
+
+  world.evictModel(oldModelObj);
+  assert.equal(world._instanceCache.has(oldLease.epoch), false, 'old epoch bucket released');
+  assert.equal(world._instanceCache.has(newLease.epoch), true, 'new epoch bucket unaffected');
+  const admittedNewAgain = world.admitCollisionInstances(newLease, extractedNew);
+  assert.equal(admittedNewAgain.get(1), admittedNew.get(1), 'new object\'s canonical instances unchanged — same references, no rebuild');
+});
+
+test('dispose() clears the whole CollisionInstance cache wholesale, across every live epoch', async () => {
+  const world = new CollisionWorld();
+  const { model: modelA } = buildMockModel([{ dbId: 1, fragments: [1] }], new Map([[1, { geometryIndex: 1 }]]));
+  const { model: modelB } = buildMockModel([{ dbId: 2, fragments: [2] }], new Map([[2, { geometryIndex: 2 }]]));
+  const leaseA = world.admitModel(modelA);
+  const leaseB = world.admitModel(modelB);
+  world.admitCollisionInstances(leaseA, await extract(modelA, [1], leaseA.epoch));
+  world.admitCollisionInstances(leaseB, await extract(modelB, [2], leaseB.epoch));
+  assert.equal(world._instanceCache.size, 2);
+  world.dispose();
+  assert.equal(world._instanceCache.size, 0);
+});

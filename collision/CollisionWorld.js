@@ -5,6 +5,7 @@
 
 import { WorldDisposedError, ModelEvictedError } from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator } from './scheduler.js';
+import { maxCollisionInstancesPerEpoch } from './constants.js';
 
 function modelIdOf(model) {
   return model && model.id !== undefined ? model.id : model;
@@ -12,6 +13,15 @@ function modelIdOf(model) {
 
 function defaultYieldToScheduler() {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+export class CapacityExceededError extends Error {
+  constructor(kind, details) {
+    super(`CollisionInstance admission rejected (${kind})`);
+    this.name = 'CapacityExceededError';
+    this.kind = kind; // 'call-wide-unique-fragment-precheck' | 'bucket-capacity'
+    Object.assign(this, details);
+  }
 }
 
 export class CollisionWorld {
@@ -120,6 +130,68 @@ export class CollisionWorld {
     // best-effort tombstoned for diagnostic bookkeeping only... NOT load-bearing for correctness").
     this._liveModelByModelId.clear();
     this._liveEpochs.clear();
+  }
+
+  // Deliberately synchronous — the spec's "no await, no reentrant call between check and commit"
+  // guarantee (docs/...:2991-3002) is satisfied for free by JS's single-threaded execution as long
+  // as this method's own body never awaits. Callers MUST invoke this immediately after their own
+  // extraction walk's last possible yield — not after any further await of their own.
+  admitCollisionInstances(lease, uniqueFragments) {
+    // Validate the lease FIRST (disposed, then modelLifecycle/epoch match) — synchronous, so it costs
+    // nothing toward the atomicity guarantee below, but closes a real gap codex-advisor review found:
+    // without this, a caller holding a stale epoch number (e.g. after its own model was evicted)
+    // could silently recreate a bucket for a dead epoch that nothing will ever release again.
+    if (this._disposed) throw new WorldDisposedError();
+    this._assertEpochLive(lease.model, lease.epoch);
+    const loadEpoch = lease.epoch;
+
+    // Step 2 (docs/...:2977-2985): call-wide precheck, before touching any bucket.
+    if (uniqueFragments.size > maxCollisionInstancesPerEpoch) {
+      throw new CapacityExceededError('call-wide-unique-fragment-precheck', {
+        loadEpoch,
+        requested: uniqueFragments.size,
+        limit: maxCollisionInstancesPerEpoch,
+      });
+    }
+
+    // Step 3 (docs/...:2986-2990): look up WITHOUT creating; recompute against CURRENT contents.
+    const existingBucket = this._instanceCache.get(loadEpoch) || null;
+    const missing = [];
+    for (const fragmentId of uniqueFragments.keys()) {
+      if (!existingBucket || !existingBucket.has(fragmentId)) missing.push(fragmentId);
+    }
+
+    // Step 4 (docs/...:2991-3002): same synchronous step, check combined size, then commit.
+    const currentSize = existingBucket ? existingBucket.size : 0;
+    if (currentSize + missing.length > maxCollisionInstancesPerEpoch) {
+      throw new CapacityExceededError('bucket-capacity', {
+        loadEpoch,
+        currentSize,
+        missing: missing.length,
+        limit: maxCollisionInstancesPerEpoch,
+      });
+    }
+
+    // Stage every missing instance fully constructed/frozen BEFORE mutating any shared state, so a
+    // construction failure (however unlikely — Object.freeze on a plain literal cannot realistically
+    // throw, but this keeps the guarantee true by construction rather than by luck) can never leave a
+    // half-committed bucket (codex-advisor review).
+    const staged = missing.map((fragmentId) => {
+      const { geometryIdentity } = uniqueFragments.get(fragmentId);
+      return [fragmentId, Object.freeze({ fragmentId, geometryIdentity })];
+    });
+
+    let bucket = existingBucket;
+    if (!bucket) {
+      bucket = new Map();
+      this._instanceCache.set(loadEpoch, bucket);
+    }
+    for (const [fragmentId, instance] of staged) bucket.set(fragmentId, instance);
+
+    // Return canonical instances for every key the caller asked about — hits and new admissions alike.
+    const result = new Map();
+    for (const fragmentId of uniqueFragments.keys()) result.set(fragmentId, bucket.get(fragmentId));
+    return result;
   }
 
   _releaseEpochScopedState(epoch) {
