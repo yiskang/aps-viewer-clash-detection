@@ -3,12 +3,71 @@
 // The admit/evict/dispose/lease surface that makes every later cache and query safe
 // against model eviction, world disposal, and modelId reuse.
 
+import * as THREE from 'three';
 import { WorldDisposedError, ModelEvictedError } from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator } from './scheduler.js';
-import { maxCollisionInstancesPerEpoch } from './constants.js';
+import { maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, weldEpsilonMeters } from './constants.js';
+import { extractFragments } from './viewer/ViewerModelAdapter.js';
+import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
+import { createGeometryRegistry } from './geometry/createGeometryRegistry.js';
+import { surfaceIntersectionQuery } from './query/SurfaceIntersectionQuery.js';
+
+const supportedModes = ['surface-intersection', 'containment', 'volume-overlap'];
 
 function modelIdOf(model) {
   return model && model.id !== undefined ? model.id : model;
+}
+
+// `weldEpsilonMeters` is declared in METERS; a model whose own unit scale is not meters needs it
+// divided by that scale (constants.js: "1e-4 m / model.getUnitScale()"). getUnitScale is not
+// guaranteed present on every Model-shaped object, and a nonsensical value must not silently
+// produce a NaN/zero/negative epsilon (compactAndWeld throws TypeError on those) -- fall back to
+// the literal, exactly as constants.js documents.
+function resolveWeldEpsilon(model) {
+  const unitScale = typeof model?.getUnitScale === 'function' ? model.getUnitScale() : undefined;
+  if (typeof unitScale !== 'number' || !Number.isFinite(unitScale) || unitScale <= 0) {
+    return weldEpsilonMeters;
+  }
+  return weldEpsilonMeters / unitScale;
+}
+
+// A PlacedInstance pairs the canonical, epoch-cached CollisionInstance (identity + geometry
+// identity, Task 18) with this call's own placement data from the extraction record. ownerDbId is
+// carried through verbatim from extraction's first-discovery-wins capture -- it is NEVER
+// re-derived from query.source.dbIds/query.target.dbIds.
+function makePlaced(admitted, extractedRecord) {
+  return Object.freeze({
+    instance: admitted.get(extractedRecord.fragmentId),
+    worldMatrix: extractedRecord.worldMatrix,
+    worldBounds: extractedRecord.worldBounds,
+    ownerDbId: extractedRecord.ownerDbId,
+  });
+}
+
+// The matrix bvhcast wants: it maps the SECOND bvh's local space into the FIRST bvh's local space
+// (source is always the first operand here), i.e. inverse(sourceWorld) * targetWorld -- the same
+// derivation test/query/SurfaceIntersectionQuery.test.mjs's own `relativeMatrix(a, b)` helper uses.
+function computeRelativeMatrix(sourceWorldMatrix, targetWorldMatrix) {
+  const source = new THREE.Matrix4().fromArray(sourceWorldMatrix);
+  const target = new THREE.Matrix4().fromArray(targetWorldMatrix);
+  return source.invert().multiply(target);
+}
+
+function emptyStatistics() {
+  return {
+    broadPhasePairs: 0,
+    narrowPhasePairs: 0,
+    // blasBuilt/blasCacheHits are reported as 0 for now: GeometryRegistry/BlasCache (Tasks 13-14)
+    // expose no build/hit counters, and inferring them from this side would be a guess. The fields
+    // stay in the shape so consumers can rely on it; instrumenting them belongs with the
+    // performance gate (Task 24), which is what actually needs the numbers.
+    blasBuilt: 0,
+    blasCacheHits: 0,
+    broadPhaseMs: 0,
+    narrowPhaseMs: 0,
+    totalMs: 0,
+    diagnostics: [],
+  };
 }
 
 function defaultYieldToScheduler() {
@@ -43,12 +102,83 @@ export class CollisionWorld {
     this._liveEpochs = new Set();
     this._registry = registry;
     this._instanceCache = new Map(); // Map<loadEpoch, Map<fragmentId, CollisionInstance>> — Task 18
+    // Map<loadEpoch, Model>. Reverse lookup GeometryRegistry cannot do for itself: a GeometryRecord
+    // is keyed (loadEpoch, geometryIndex) and deliberately never holds a Model reference, but
+    // _resolveGeometryView needs the Model object to call viewer.impl.getRenderProxy(model, fragId).
+    // Written alongside _liveEpochs.add in admitModel, cleared alongside it in
+    // _releaseEpochScopedState/dispose, so it can never outlive the epoch it belongs to.
+    this._modelByEpoch = new Map();
+    // Map<loadEpoch, Map<geometryIndex, fragId>>. Any ONE fragment sharing a geometryIndex is
+    // representative — they all resolve to the same raw Viewer geometry — so first-discovery-wins
+    // is sufficient and stable. Populated by _recordRepresentativeFragments, from extraction output.
+    this._representativeFragmentByGeometry = new Map();
+    this._viewer = null;  // set by fromViewer; only _resolveGeometryView reads it
+    this._options = null; // set by fromViewer: { narrowPhase, indexOwnership }
     this._now = now;
     this._yieldToScheduler = yieldToScheduler;
     // NOTE: no accumulator/clock-baseline field here — the frameBudgetMs accumulator is scoped to one
     // findClashes CALL (docs/...: "one performance.now()-based accumulator for the whole call"), never
     // to the whole CollisionWorld instance. See createCheckpointPort() below, which is the ONLY place
     // that timing state lives, freshly, per call.
+  }
+
+  /**
+   * The public construction path: a fully self-wired world with a real GeometryRegistry attached.
+   *
+   * Construction ORDER matters and is deliberate: the world is constructed FIRST, with no registry
+   * (the constructor's `registry` default is null, and dispose()/_releaseEpochScopedState already
+   * guard with `this._registry?.` — a registry-less world is valid, merely inert for geometry), and
+   * only THEN is the registry built against the fully-constructed `world`. Nothing captured in the
+   * closures below can run before this function returns, so there is no bind-before-constructed
+   * hazard.
+   *
+   * The registry's checkpoint port is deliberately NOT `world.createCheckpointPort(lease)`: that
+   * factory is per-findClashes-call and bound to one call's {model, epoch} lease, whereas this one
+   * registry instance is shared across every future call and single-flights builds between them.
+   * It gets the raw scheduler primitive instead, with its OWN long-lived accumulator and an
+   * epoch-only liveness predicate — which is exactly the state a GeometryRecord (keyed by
+   * (loadEpoch, geometryIndex), holding no Model) can be validated against.
+   *
+   * @param {Object|null} viewer  an Autodesk.Viewing.Viewer3D-shaped object; only
+   *   `viewer.impl.getRenderProxy(model, fragId)` is ever called, and only from
+   *   _resolveGeometryView. May be null for lifecycle-only use (no narrow phase reachable).
+   * @param {Object} [options]
+   * @param {'three-mesh-bvh'} [options.narrowPhase]
+   * @param {'clone'} [options.indexOwnership]
+   * @param {() => number} [options.now]  test seam, forwarded to the constructor
+   * @param {() => Promise<void>} [options.yieldToScheduler]  test seam, forwarded to the constructor
+   */
+  static async fromViewer(viewer, options = {}) {
+    const narrowPhase = options.narrowPhase ?? 'three-mesh-bvh';
+    const indexOwnership = options.indexOwnership ?? 'clone';
+    if (narrowPhase !== 'three-mesh-bvh') {
+      throw new Error(
+        `CollisionWorld.fromViewer: unsupported options.narrowPhase '${narrowPhase}' ` +
+        `(only 'three-mesh-bvh' is implemented in Milestone 1)`,
+      );
+    }
+    if (indexOwnership !== 'clone') {
+      throw new Error(
+        `CollisionWorld.fromViewer: unsupported options.indexOwnership '${indexOwnership}' ` +
+        `(only 'clone' is implemented in Milestone 1)`,
+      );
+    }
+
+    const world = new CollisionWorld({ now: options.now, yieldToScheduler: options.yieldToScheduler });
+    world._viewer = viewer ?? null;
+    world._options = Object.freeze({ narrowPhase, indexOwnership });
+
+    const registryCheckpointPort = createRealCheckpointPort({
+      isDisposed: () => world._disposed,
+      isEpochLive: (loadEpoch) => world._isEpochLive(loadEpoch),
+      accumulator: createFrameBudgetAccumulator({ now: world._now }),
+      yieldToScheduler: world._yieldToScheduler,
+    });
+    world._registry = createGeometryRegistry({
+      resolveGeometryView: (loadEpoch, geometryIndex) => world._resolveGeometryView(loadEpoch, geometryIndex),
+      checkpointPort: registryCheckpointPort,
+    });
+    return world;
   }
 
   admitModel(model) {
@@ -65,6 +195,7 @@ export class CollisionWorld {
     const epoch = this._nextLoadEpoch++;
     this._modelLifecycle.set(model, { state: 'live', epoch });
     this._liveEpochs.add(epoch);
+    this._modelByEpoch.set(epoch, model);
     if (model && model.id !== undefined) this._liveModelByModelId.set(model.id, model);
     return Object.freeze({ model, epoch });
   }
@@ -130,6 +261,8 @@ export class CollisionWorld {
     // best-effort tombstoned for diagnostic bookkeeping only... NOT load-bearing for correctness").
     this._liveModelByModelId.clear();
     this._liveEpochs.clear();
+    this._modelByEpoch.clear();
+    this._representativeFragmentByGeometry.clear();
   }
 
   // Deliberately synchronous — the spec's "no await, no reentrant call between check and commit"
@@ -206,6 +339,11 @@ export class CollisionWorld {
       }
     }
     this._instanceCache.delete(epoch); // Task 18's bucket for exactly the outgoing epoch.
+    // Task 19's two epoch-scoped side tables, released on exactly the same boundary — leaving
+    // either behind would keep a dead Model object alive and let a later _resolveGeometryView call
+    // resolve a fragment against an evicted epoch.
+    this._modelByEpoch.delete(epoch);
+    this._representativeFragmentByGeometry.delete(epoch);
   }
 
   // Entry-order check for findClashes (Tasks 19/20 call this at the very top of their own method
@@ -263,5 +401,267 @@ export class CollisionWorld {
       const loadEpoch = ctx.loadEpoch !== undefined ? ctx.loadEpoch : lease.epoch;
       return realPort.checkpoint({ loadEpoch, modelIdHint: modelIdOf(model) });
     };
+  }
+
+  // ---- Task 19: the surface-intersection vertical slice -------------------------------------
+
+  /**
+   * Entry -> extraction -> capacity-gated admission -> broad phase -> narrow phase -> aggregation.
+   *
+   * Milestone 1 restrictions, all rejected loudly rather than silently degraded: single-model
+   * queries only, `groupBy: 'dbId'` only, and (until Task 20) `mode: 'surface-intersection'` only.
+   *
+   * @param {{ source: {model: Object, dbIds: number[]}, target: {model: Object, dbIds: number[]},
+   *           mode: string, groupBy: 'dbId' }} query
+   * @returns {Promise<{ pairs: Array, statistics: Object }>}
+   */
+  async findClashes(query) {
+    // Disposal is checked FIRST, before argument validation and before any operand is touched, so a
+    // disposed world always reports disposal rather than whichever other complaint it might also
+    // have (spec entry order: "disposed first"). _checkEntryLifecycle re-checks it below; that
+    // repetition is deliberate and free.
+    if (this._disposed) throw new WorldDisposedError();
+
+    if (!query || !query.source || !query.target) {
+      throw new Error('findClashes: query must supply both a source and a target operand');
+    }
+    if (!Array.isArray(query.source.dbIds) || !Array.isArray(query.target.dbIds)) {
+      throw new Error('findClashes: query.source.dbIds and query.target.dbIds must both be arrays');
+    }
+    if (query.groupBy !== 'dbId') {
+      throw new Error(
+        `findClashes: unsupported groupBy '${query.groupBy}' (only 'dbId' is implemented in Milestone 1)`,
+      );
+    }
+    if (!supportedModes.includes(query.mode)) {
+      throw new Error(`findClashes: unsupported mode '${query.mode}'`);
+    }
+    if (query.mode !== 'surface-intersection') {
+      // Task 20 replaces this guard with real containment/volume-overlap dispatch inside
+      // _runNarrowPhasePair; until then the modes are rejected explicitly rather than silently
+      // producing surface-intersection results under another name.
+      throw new Error(`findClashes: mode '${query.mode}' not yet wired (Task 20)`);
+    }
+
+    const startedAt = this._now();
+    const statistics = emptyStatistics();
+
+    // Throws WorldDisposedError, then cross-model-query-rejected, then ModelEvictedError, in that
+    // order; lazily admits a never-seen model.
+    const { model, epoch } = this._checkEntryLifecycle(query.source, query.target);
+    const lease = Object.freeze({ model, epoch });
+    // ONE port for this whole call, with one frame-budget accumulator shared by every checkpoint in
+    // it (extraction, broad phase, narrow phase). Its ctx defaults to this lease, so almost every
+    // call site can pass nothing at all.
+    const checkpoint = this.createCheckpointPort(lease);
+
+    // --- Extraction. extractFragments calls checkpoint({ requestedDbId }); the extra field is
+    // simply ignored by the port, so the SAME callable is threaded straight through with no bridge.
+    // `THREE` is deliberately NOT overridden: extraction's own `globalThis.THREE` default is the
+    // Viewer's real r71 global, and reading it there is the one sanctioned crossing point.
+    const sourceExtracted = await extractFragments(model, query.source.dbIds, epoch, { checkpoint });
+    const targetExtracted = await extractFragments(model, query.target.dbIds, epoch, { checkpoint });
+
+    // ---- BEGIN synchronous span. Nothing between the end of extraction and admitCollisionInstances
+    // may await: admission's check-then-commit atomicity guarantee (Task 18) is provided for free by
+    // JS's single-threaded execution only for as long as this span stays await-free. Recording
+    // representative fragments is a pure Map write and is safe to include.
+    if (sourceExtracted.size === 0 || targetExtracted.size === 0) {
+      statistics.totalMs = this._now() - startedAt;
+      return { pairs: [], statistics };
+    }
+    this._recordRepresentativeFragments(epoch, sourceExtracted);
+    this._recordRepresentativeFragments(epoch, targetExtracted);
+    // Which side's record wins per fragmentId is immaterial: admitCollisionInstances reads only
+    // geometryIdentity, which is identical for a given fragmentId regardless of which walk found it.
+    // The per-side ownerDbId/placement is read from each side's OWN record below, never from here.
+    const merged = new Map([...sourceExtracted, ...targetExtracted]);
+    const admitted = this.admitCollisionInstances(lease, merged);
+    // ---- END synchronous span.
+
+    const sourceInstances = [...sourceExtracted.values()].map((rec) => makePlaced(admitted, rec));
+    const targetInstances = [...targetExtracted.values()].map((rec) => makePlaced(admitted, rec));
+
+    // --- Broad phase, pre-scan ceiling first.
+    if (this._exceedsBroadPhaseCeiling(sourceInstances.length, targetInstances.length)) {
+      throw new Error(
+        `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
+        `(${sourceInstances.length} x ${targetInstances.length} > ${maxBroadPhaseInstancePairs})`,
+      );
+    }
+    const broadPhaseStartedAt = this._now();
+    const candidates = await this._runBroadPhaseScan(sourceInstances, targetInstances, statistics, checkpoint);
+    statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
+
+    // --- Narrow phase + aggregation.
+    const narrowPhaseStartedAt = this._now();
+    const pairsByKey = new Map(); // `${sourceDbId}:${targetDbId}` -> ClashPair; ORDERED, never canonicalized
+    const oversizedDiagnosedFragments = new Set();
+    for (const [sourcePlaced, targetPlaced] of candidates) {
+      const pending = checkpoint();
+      if (pending) await pending;
+      const hit = await this._runNarrowPhasePair(
+        sourcePlaced, targetPlaced, query.mode, model, epoch, statistics, oversizedDiagnosedFragments, checkpoint,
+      );
+      statistics.narrowPhasePairs++;
+      if (!hit) continue;
+      const key = `${sourcePlaced.ownerDbId}:${targetPlaced.ownerDbId}`;
+      if (!pairsByKey.has(key)) {
+        const modelId = modelIdOf(model);
+        pairsByKey.set(key, {
+          source: { modelId, dbId: sourcePlaced.ownerDbId },
+          target: { modelId, dbId: targetPlaced.ownerDbId },
+          type: query.mode,
+        });
+      }
+    }
+    statistics.narrowPhaseMs = this._now() - narrowPhaseStartedAt;
+    statistics.totalMs = this._now() - startedAt;
+    return { pairs: [...pairsByKey.values()], statistics };
+  }
+
+  // Division form, never `sourceCount * targetCount > maxBroadPhaseInstancePairs`: the product of
+  // two instance counts can exceed Number.MAX_SAFE_INTEGER and silently compare against a rounded
+  // value, whereas dividing the (small, exact) ceiling by one operand cannot. Strict `>`, so a count
+  // landing exactly ON the ceiling is still allowed.
+  _exceedsBroadPhaseCeiling(sourceCount, targetCount) {
+    if (targetCount === 0) return false;
+    return sourceCount > maxBroadPhaseInstancePairs / targetCount;
+  }
+
+  async _runBroadPhaseScan(sourceInstances, targetInstances, statistics, checkpoint) {
+    const candidates = [];
+    for (let i = 0; i < sourceInstances.length; i++) {
+      for (let j = 0; j < targetInstances.length; j++) {
+        // The checkpoint port is CONDITIONALLY synchronous — it returns undefined outright when no
+        // yield is due. A bare `await checkpoint()` would force a microtask hop on every one of up
+        // to maxBroadPhaseInstancePairs iterations, which is exactly what that contract exists to
+        // avoid. Liveness is still validated synchronously on every call, due or not.
+        const pending = checkpoint();
+        if (pending) await pending;
+        statistics.broadPhasePairs++;
+        if (this._testBroadPhasePair(sourceInstances[i], targetInstances[j])) {
+          candidates.push([sourceInstances[i], targetInstances[j]]);
+        }
+      }
+    }
+    return candidates;
+  }
+
+  // World-space AABB overlap, inclusive on every axis (touching counts — surface-intersection
+  // reports contact, so a broad phase that excluded it would drop real positives).
+  _testBroadPhasePair(sourcePlaced, targetPlaced) {
+    const a = sourcePlaced.worldBounds;
+    const b = targetPlaced.worldBounds;
+    return a.min[0] <= b.max[0] && a.max[0] >= b.min[0]
+        && a.min[1] <= b.max[1] && a.max[1] >= b.min[1]
+        && a.min[2] <= b.max[2] && a.max[2] >= b.min[2];
+  }
+
+  /**
+   * One candidate pair through the geometry registry and the mode's own query.
+   *
+   * `checkpoint` is this call's own port, passed in rather than reconstructed: Task 20's composed
+   * containment/volume-overlap sub-queries need to fire it BETWEEN their internal stages, using the
+   * same accumulator every other checkpoint in this call shares. (This replaces the `this.checkpoint`
+   * the plan's Task 20 draft assumed -- CollisionWorld has no such method; the port is a per-call
+   * factory product.)
+   *
+   * `epoch` is the lease's own load epoch. It is redundant with each operand's
+   * `geometryIdentity.loadEpoch` (they are equal by construction, since both operands came from this
+   * same lease's extraction) and is carried here only to keep the signature the plan's Task 20
+   * section documents; the registry is keyed off the identity, not off this parameter.
+   */
+  async _runNarrowPhasePair(
+    sourcePlaced, targetPlaced, mode, model, epoch, statistics, oversizedDiagnosedFragments, checkpoint,
+  ) {
+    const needsConnectivity = mode !== 'surface-intersection';
+    const buildOne = async (placed, role) => {
+      const identity = placed.instance.geometryIdentity; // { loadEpoch, geometryIndex }
+      const record = await this._registry.getOrBuildGeometry({
+        loadEpoch: identity.loadEpoch,
+        geometryIndex: identity.geometryIndex,
+        ownerModelIdHint: modelIdOf(model), // diagnostic-only, per GeometryRegistry's contract
+        needsConnectivity,
+      });
+      if (record.oversized) {
+        // Diagnosed once per fragment per call: a fragment appearing in many candidate pairs must
+        // not flood statistics.diagnostics with the same verdict.
+        if (!oversizedDiagnosedFragments.has(placed.instance.fragmentId)) {
+          oversizedDiagnosedFragments.add(placed.instance.fragmentId);
+          statistics.diagnostics.push({
+            scope: 'fragment',
+            // The record's OWN reason, never a hardcoded literal — there are several
+            // (geometry-too-large-for-sync-build, unsupported-geometry-layout,
+            // rejected-primitive-range, index-references-invalid-vertex).
+            reason: record.reason,
+            role,
+            fragment: {
+              modelId: modelIdOf(model),
+              dbId: placed.ownerDbId,
+              fragId: placed.instance.fragmentId,
+            },
+          });
+        }
+        return null;
+      }
+      return record;
+    };
+
+    const sourceRecord = await buildOne(sourcePlaced, 'source');
+    if (!sourceRecord) return false;
+    const targetRecord = await buildOne(targetPlaced, 'target');
+    if (!targetRecord) return false;
+
+    const relativeMatrix = computeRelativeMatrix(sourcePlaced.worldMatrix, targetPlaced.worldMatrix);
+    // surfaceIntersectionQuery is SYNCHRONOUS and owns a private, traversal-local clock: bvhcast
+    // cannot pause mid-traversal, so there is nothing for this call's shared checkpoint to do
+    // inside it. The pair-boundary checkpoint in findClashes is the one that applies here.
+    const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix);
+    return result.intersects;
+  }
+
+  // First-discovery-wins per (loadEpoch, geometryIndex): any one fragment carrying that geometry
+  // index resolves to the same raw Viewer geometry, so the first one seen is a valid representative
+  // for every later build request against that index.
+  _recordRepresentativeFragments(loadEpoch, extractedRecords) {
+    let byGeometry = this._representativeFragmentByGeometry.get(loadEpoch);
+    if (!byGeometry) {
+      byGeometry = new Map();
+      this._representativeFragmentByGeometry.set(loadEpoch, byGeometry);
+    }
+    for (const record of extractedRecords.values()) {
+      const { geometryIndex } = record.geometryIdentity;
+      if (!byGeometry.has(geometryIndex)) byGeometry.set(geometryIndex, record.fragmentId);
+    }
+  }
+
+  /**
+   * GeometryRegistry's `resolveGeometryView(loadEpoch, geometryIndex)` dependency: the one place
+   * this library reads raw geometry out of the Viewer.
+   *
+   * Deliberately synchronous end to end. adaptViewerGeometry returns LIVE references into Viewer's
+   * own buffers, and createGeometryRegistry's buildWeld hands the result straight to compactAndWeld
+   * with no intervening await — a promise here would open exactly the gap that rule closes.
+   */
+  _resolveGeometryView(loadEpoch, geometryIndex) {
+    const model = this._modelByEpoch.get(loadEpoch);
+    const fragId = this._representativeFragmentByGeometry.get(loadEpoch)?.get(geometryIndex);
+    // Both are present by construction: findClashes records representative fragments before any
+    // narrow-phase build can be requested, and the epoch's model is registered by admitModel before
+    // extraction even starts. A miss means an internal invariant broke — say so, rather than let
+    // getRenderProxy(undefined, undefined) fail with a cryptic Viewer-side error.
+    if (!model || fragId === undefined) {
+      throw new Error(
+        `CollisionWorld: no representative fragment recorded for geometryIndex ${geometryIndex} ` +
+        `in loadEpoch ${loadEpoch}`,
+      );
+    }
+    // A fragment with no live render proxy (not yet loaded, culled, or already torn down) yields no
+    // geometry; adaptViewerGeometry turns that into an `unsupported` marker, which buildWeld
+    // converts into the documented skip-with-diagnostic outcome rather than a crash.
+    const proxy = this._viewer?.impl?.getRenderProxy(model, fragId);
+    const triangleGeometryView = adaptViewerGeometry(proxy ? proxy.geometry : null);
+    return { triangleGeometryView, weldEpsilon: resolveWeldEpsilon(model) };
   }
 }

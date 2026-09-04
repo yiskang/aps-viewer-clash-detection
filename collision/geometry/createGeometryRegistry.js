@@ -31,6 +31,19 @@ export function createGeometryRegistry({
       // and compactAndWeld MUST run inside the same synchronous span, with no
       // intervening await/yield (Task 14 brief, "Protected invariants").
       const { triangleGeometryView, weldEpsilon } = resolveGeometryView(loadEpoch, geometryIndex);
+      // adaptViewerGeometry (the source of triangleGeometryView) never throws for a raw
+      // geometry it cannot parse -- it returns `{ unsupported: true, reason }` instead
+      // ('unsupported-geometry-layout' / 'rejected-primitive-range'). compactAndWeld's own
+      // contract requires the `unsupported: false` variant ("callers filter oversized/
+      // unsupported layout diagnostics upstream of this function"), and would otherwise read
+      // undefined positions/ranges and produce corrupt output or throw. Filter here, in the
+      // one place every real build funnels through, reusing the exact
+      // { oversized, reason, activeTriangleCount } marker shape GeometryRegistry's own
+      // `weldResult.oversized === true` branch already recognizes -- so an unparseable
+      // geometry produces the documented skip-with-diagnostic outcome, not a crash.
+      if (triangleGeometryView && triangleGeometryView.unsupported === true) {
+        return { oversized: true, reason: triangleGeometryView.reason, activeTriangleCount: 0 };
+      }
       // compactAndWeld performs BOTH the active-range ceiling classification and the
       // weld itself; the ceiling is checked against activeTriangleCount BEFORE any
       // compacted buffer is materialized (spec :1532-1536), so a geometry whose
