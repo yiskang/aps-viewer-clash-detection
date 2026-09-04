@@ -6,10 +6,15 @@
 //
 // Depends ONLY on CollisionWorld's public surface: fromViewer, findClashes, admitModel,
 // isLeaseValid, evictModel, isModelLive, dispose. Never reaches into CollisionWorld internals.
-import { CollisionWorld } from '../../collision/index.js';
-import { WorldDisposedError, ModelEvictedError } from '../../collision/errors.js';
+// collision/index.js is the library's single public entry point (its own header states consumers
+// import from there, never from the individual implementation modules) — CollisionWorld and the
+// error classes all come from that one re-export.
+import { CollisionWorld, WorldDisposedError, ModelEvictedError } from '../../collision/index.js';
 
-const EXTENSION_ID = 'Autodesk.Sandbox.RoomLocator';
+// Exported so wwwroot/viewer.js registers/unregisters under the SAME id this extension uses for its
+// context-menu callback — a duplicated string literal could silently drift and break both
+// registerExtension matching and unregisterContextMenuCallback.
+export const EXTENSION_ID = 'Autodesk.Sandbox.RoomLocator';
 
 // `Autodesk` is a real browser global supplied by viewer3D.js (loaded via a <script> tag before any
 // module code runs — see wwwroot/index.html) and is never imported. In a headless Node test process
@@ -55,6 +60,10 @@ export class RoomLocatorExtension extends ExtensionBase {
     // either registration below ran.
     this._viewer.addEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
     this._viewer.registerContextMenuCallback(EXTENSION_ID, this._onContextMenuBound);
+    // Best-effort snapshot only. In this app's real flow (wwwroot/main.js) the Viewer is constructed
+    // and its extensions loaded BEFORE any model is loaded, so `this._viewer.model` is normally still
+    // undefined here and this leaves `_currentModel` null. locateElementByRoom therefore resolves the
+    // model at ACTION time rather than trusting this snapshot.
     this._currentModel = this._viewer.model ?? this._currentModel;
     return true;
   }
@@ -118,26 +127,45 @@ export class RoomLocatorExtension extends ExtensionBase {
       }
       return null;
     };
-    model.search(
-      this._roomCategoryName,
-      (dbIds) => {
-        const rejection = mapRejection();
-        if (rejection) { settle(rejectFn, rejection); return; }
-        if (this._roomCache.get(model) === thisPromise) resolveFn(dbIds);
-        else rejectFn(new ModelEvictedError(model.id)); // superseded by a fresher call for this model
-      },
-      (searchError) => {
-        const rejection = mapRejection();
-        settle(rejectFn, rejection ?? searchError);
-      },
-      ['Category'],
-      { searchHidden: true },
-    );
+    try {
+      model.search(
+        this._roomCategoryName,
+        (dbIds) => {
+          const rejection = mapRejection();
+          if (rejection) { settle(rejectFn, rejection); return; }
+          if (this._roomCache.get(model) === thisPromise) resolveFn(dbIds);
+          else rejectFn(new ModelEvictedError(model.id)); // superseded by a fresher call for this model
+        },
+        (searchError) => {
+          const rejection = mapRejection();
+          settle(rejectFn, rejection ?? searchError);
+        },
+        ['Category'],
+        { searchHidden: true },
+      );
+    } catch (searchError) {
+      // model.search threw SYNCHRONOUSLY (e.g. "property database not loaded"). `thisPromise` is
+      // already in the cache but no callback will ever settle it, so without this it would stay
+      // permanently pending and every later call for this model would hit the cache-hit fast path and
+      // hang forever. Settle it through the same identity-guarded `settle` helper the callbacks use,
+      // so a pathological `search` that throws AND later calls back cannot double-settle the cache
+      // slot. Returning the (now rejected) `thisPromise` rather than rethrowing gives the immediate
+      // caller the same error while keeping this promise handled (no unhandled-rejection noise).
+      settle(rejectFn, searchError);
+      return thisPromise;
+    }
     return thisPromise;
   }
 
+  // Resolve the model at ACTION time. load() runs before any model exists in this app's real flow, so
+  // a load()-time snapshot is null forever; `_currentModel` is kept only as a fallback for callers/
+  // fixtures that set it explicitly.
   async locateElementByRoom(dbId) {
-    const model = this._currentModel;
+    const model = this._viewer?.model ?? this._currentModel;
+    if (!model) {
+      throw new Error('RoomLocatorExtension: no model is loaded — locateElementByRoom needs a model on the viewer (viewer.model) or a previously cached one.');
+    }
+    this._currentModel = model;
     const roomDbIds = await this._resolveRoomDbIds(model);
     const result = await this._world.findClashes({
       source: { model, dbIds: [dbId] },

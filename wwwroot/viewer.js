@@ -1,6 +1,7 @@
-import { RoomLocatorExtension } from './extensions/RoomLocatorExtension.js';
-
-const ROOM_LOCATOR_EXTENSION_ID = 'Autodesk.Sandbox.RoomLocator';
+// The id is imported, never re-declared here: the extension registers its own context-menu callback
+// under this exact string, so a duplicated literal that drifted would silently break both
+// registerExtension matching and unregisterContextMenuCallback.
+import { RoomLocatorExtension, EXTENSION_ID as ROOM_LOCATOR_EXTENSION_ID } from './extensions/RoomLocatorExtension.js';
 
 async function getAccessToken(callback) {
     try {

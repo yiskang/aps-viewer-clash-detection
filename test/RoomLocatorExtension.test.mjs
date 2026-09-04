@@ -8,7 +8,9 @@
 // `collision/` lives at the repo root, a SIBLING of `wwwroot/`, not nested inside it — every landed
 // collision test imports `../collision/...`, never `../wwwroot/collision/...`.
 import { RoomLocatorExtension } from '../wwwroot/extensions/RoomLocatorExtension.js';
-import { WorldDisposedError, ModelEvictedError } from '../collision/errors.js';
+// Error classes come from the library's single public entry point (collision/index.js re-exports
+// them), matching the import contract that module's own header states.
+import { WorldDisposedError, ModelEvictedError } from '../collision/index.js';
 
 let passes = 0, failures = 0;
 function check(name, actual, expected, note = '') {
@@ -210,6 +212,65 @@ async function extensionWithFakeWorld() {
   let threw = false;
   try { ext._onBeforeModelUnload({}); } catch (err) { threw = /event\.model/.test(err.message); }
   check('BEFORE_MODEL_UNLOAD_EVENT handler fails clearly if event.model is ever undefined (typings say event: any)', threw, true);
+}
+
+// === fix round 1, Finding 1: the model is resolved at ACTION time, not from a load() snapshot ===
+// Reproduces this app's REAL sequence (wwwroot/main.js): initViewer() constructs the Viewer and loads
+// its extensions FIRST, and loadModel() runs later — so load() always sees `viewer.model` undefined
+// and `_currentModel` stays null forever. Before the fix, locateElementByRoom passed that null
+// straight to world.admitModel(), which throws (the real CollisionWorld keys a WeakMap by the model),
+// and onContextMenu's catch swallowed it: "Locate Room" silently did nothing, every time.
+{
+  const viewer = makeMockViewer();
+  const ext = new RoomLocatorExtension(viewer, {});
+  ext._world = makeFakeWorld();
+  check('extension constructed before any model exists: _currentModel is null', ext._currentModel, null);
+  const model = makeMockModel(10);
+  model.search = (text, onSuccess) => onSuccess([1000, 1001]);
+  viewer.model = model; // the model loads LATER, exactly as loadModel() does in the real app
+  let clashSourceModel = null;
+  ext._world.findClashes = async ({ source, target }) => {
+    clashSourceModel = source.model;
+    return { pairs: [{ source: { dbId: source.dbIds[0] }, target: { dbId: target.dbIds[0] } }], statistics: { diagnostics: [] } };
+  };
+  let rooms = null, thrown = null;
+  try { rooms = await ext.locateElementByRoom(42); } catch (err) { thrown = err; }
+  check('locateElementByRoom resolves the live viewer.model at call time when _currentModel was never set',
+    thrown ? `threw ${thrown.constructor.name}: ${thrown.message}` : rooms.join(','), '1000');
+  check('locateElementByRoom acted on the live viewer model object', clashSourceModel === model, true);
+}
+{
+  // ...and with genuinely no model anywhere, it fails CLEARLY rather than repeating the silent null.
+  const { ext } = await extensionWithFakeWorld();
+  let message = '';
+  try { await ext.locateElementByRoom(1); } catch (err) { message = err.message; }
+  check('locateElementByRoom with no model at all throws a clear error, not a cryptic null failure', /no model is loaded/.test(message), true);
+}
+
+// === fix round 1, Finding 2: a SYNCHRONOUS model.search throw must not poison the cache ==========
+// thisPromise is cached before model.search runs (deliberate, see the implementation comment). If
+// search throws synchronously, no callback ever settles that promise — before the fix it stayed in
+// _roomCache permanently pending, so every later call took the cache-hit fast path and hung forever.
+{
+  const { ext } = await extensionWithFakeWorld();
+  const model = makeMockModel(11);
+  const boom = new Error('property database not loaded');
+  let searchCalls = 0;
+  model.search = (text, onSuccess) => {
+    searchCalls++;
+    if (searchCalls === 1) throw boom;
+    onSuccess([1100]);
+  };
+  let caught = null;
+  try { await ext._resolveRoomDbIds(model); } catch (err) { caught = err; }
+  check('synchronous model.search throw: first call rejects with that very error', caught === boom, true);
+  check('synchronous model.search throw: no permanently-pending cache entry left behind', ext._roomCache.has(model), false);
+  // Raced against a timeout so a regression reports a clean FAIL instead of hanging the whole file.
+  const hungSentinel = new Promise((resolve) => { setTimeout(() => resolve('HUNG (cached forever-pending promise)'), 250); });
+  const secondCall = ext._resolveRoomDbIds(model).then((dbIds) => dbIds.length, (err) => `rejected: ${err.message}`);
+  const outcome = await Promise.race([secondCall, hungSentinel]);
+  check('after a synchronous search throw, the second call resolves via a fresh search (never hangs)', outcome, 1);
+  check('after a synchronous search throw, the second call really did re-invoke model.search', searchCalls, 2);
 }
 
 console.log(`\n  ${passes} passed, ${failures} failed`);
