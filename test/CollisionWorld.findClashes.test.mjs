@@ -189,6 +189,53 @@ test('surface-intersection really is a SURFACE test: a fully-contained box is no
   assert.equal(result.pairs.length, 0, 'containment without surface crossing is not a surface intersection');
 });
 
+test('relative matrix direction: locally-offset target geometry pins inverse(source)*target', async () => {
+  // Every OTHER narrow-phase fixture in this file pairs origin-centred boxes under pure world
+  // translations, which is symmetric under negation of the relative offset: two such boxes at world
+  // (0,0,0) and (1,0,0) intersect whether the relative matrix is T(+1) or T(-1). That symmetry means
+  // those fixtures cannot see a direction error at all -- reversing computeRelativeMatrix's operands,
+  // or replacing it outright with an identity matrix, leaves them all green.
+  //
+  // This fixture breaks the symmetry deliberately: the TARGET's raw geometry is a unit box translated
+  // 4 units along +X in its OWN local space, so the target mesh sits nowhere near its own local
+  // origin. Written out on the X axis, with source world T(10) and target world T(7):
+  //
+  //   source local box   [-1, 1]                       (world [9, 11])
+  //   target local box   [3.5, 4.5]                    (world [10.5, 11.5])
+  //   inverse(source)*target = T(-3)  -> target local maps to [0.5, 1.5]   -> HIT   (correct)
+  //   inverse(target)*source = T(+3)  -> target local maps to [6.5, 7.5]   -> miss  (reversed)
+  //   identity               = T(0)   -> target local stays  [3.5, 4.5]    -> miss  (stubbed out)
+  //   target world alone     = T(7)   -> [10.5, 11.5]                      -> miss
+  //   source world alone     = T(10)  -> [13.5, 14.5]                      -> miss
+  //
+  // Under the correct direction the target straddles the source's +X face (its Y/Z extents sit
+  // strictly inside the source's), so this is a genuine SURFACE crossing, not the containment case
+  // the fixture above proves is deliberately not a hit.
+  //
+  // Neither operand's world matrix is the identity either, so a helper that simply returned one of
+  // its two arguments unchanged is caught as well. Task 20 reuses this same helper for its
+  // containment / volume-overlap dispatch, where a reversed direction would produce silently wrong
+  // answers with no crash -- hence a direction regression that fails loudly, here, first.
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [10, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(1, 1, 1).translate(4, 0, 0), at: [7, 0, 0] },
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes(query(model, [10], [20]));
+  assert.equal(result.statistics.broadPhasePairs, 1);
+  assert.equal(result.statistics.narrowPhasePairs, 1, 'the pair DID reach the narrow phase');
+  assert.equal(
+    result.pairs.length, 1,
+    'only inverse(source)*target places the locally-offset target inside the source; a reversed or ' +
+    'identity relative matrix reports no hit here',
+  );
+  assert.equal(result.pairs[0].source.dbId, 10);
+  assert.equal(result.pairs[0].target.dbId, 20);
+});
+
 // === empty / edge cases ========================================================================
 
 test('elements with no fragments: empty pairs, zeroed statistics, no throw', async () => {
