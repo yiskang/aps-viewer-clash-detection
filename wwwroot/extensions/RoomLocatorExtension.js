@@ -1,0 +1,174 @@
+// wwwroot/extensions/RoomLocatorExtension.js
+//
+// A thin CollisionWorld consumer: resolves the current model's "room" dbIds (cached per Model
+// object, admit-before-search) and, given a selected element's dbId, uses
+// CollisionWorld.findClashes({mode: 'containment'}) to find which room(s) contain it.
+//
+// Depends ONLY on CollisionWorld's public surface: fromViewer, findClashes, admitModel,
+// isLeaseValid, evictModel, isModelLive, dispose. Never reaches into CollisionWorld internals.
+import { CollisionWorld } from '../../collision/index.js';
+import { WorldDisposedError, ModelEvictedError } from '../../collision/errors.js';
+
+const EXTENSION_ID = 'Autodesk.Sandbox.RoomLocator';
+
+// `Autodesk` is a real browser global supplied by viewer3D.js (loaded via a <script> tag before any
+// module code runs — see wwwroot/index.html) and is never imported. In a headless Node test process
+// (this extension's own unit fixtures — no live Viewer, per this task's scope) that global does not
+// exist at all, and `class X extends Autodesk.Viewing.Extension` would throw a ReferenceError at
+// MODULE-EVALUATION time (the `extends` heritage clause is evaluated immediately when the class
+// declaration runs, not lazily at instantiation). `typeof Autodesk` is the standard safe check for a
+// possibly-undeclared global. In the browser this resolves to the real Extension base class and the
+// real event-name constant; in Node it falls back to a minimal stand-in with identical behavior for
+// what this extension actually uses, so the fixtures can construct and drive a real
+// RoomLocatorExtension instance with no Viewer SDK loaded.
+const ViewingNS = typeof Autodesk !== 'undefined' ? Autodesk.Viewing : undefined;
+const ExtensionBase = ViewingNS?.Extension ?? class {
+  constructor(viewer, options) {
+    this.viewer = viewer;
+    this.options = options;
+  }
+};
+// Verified string value from node_modules/@types/forge-viewer/index.d.ts:324 (see task brief).
+const BEFORE_MODEL_UNLOAD_EVENT = ViewingNS?.BEFORE_MODEL_UNLOAD_EVENT ?? 'beforeModelUnload';
+
+export class RoomLocatorExtension extends ExtensionBase {
+  constructor(viewer, options = {}) {
+    super(viewer, options);
+    // Stored explicitly under this class's own underscore-private convention (matching
+    // CollisionWorld's own `_viewer` field) rather than relying on whatever the base Extension
+    // class does with `this.viewer` — this is also the seam the test fixtures inject/inspect.
+    this._viewer = viewer;
+    this._roomCategoryName = options.roomCategoryName ?? 'Revit Rooms';
+    this._roomCache = new Map(); // Model -> Promise<number[]>
+    this._world = null;
+    this._currentModel = null;
+    this._onBeforeModelUnloadBound = (event) => this._onBeforeModelUnload(event);
+    this._onContextMenuBound = (menu, status) => this.onContextMenu(menu, status);
+  }
+
+  // Step 1 of Data Flow: load() calls ONLY CollisionWorld.fromViewer, to completion, before
+  // returning. No room resolution, no eager BLAS building.
+  async load() {
+    this._world = await CollisionWorld.fromViewer(this._viewer, this.options);
+    // Registered only AFTER fromViewer() resolves, inside this same call — if fromViewer() had
+    // rejected, this method's own returned promise already rejected with that same error before
+    // either registration below ran.
+    this._viewer.addEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
+    this._viewer.registerContextMenuCallback(EXTENSION_ID, this._onContextMenuBound);
+    this._currentModel = this._viewer.model ?? this._currentModel;
+    return true;
+  }
+
+  // unload() ordering is deliberate and spec-documented as imperfect-but-accepted: dispose() first,
+  // THEN listener/menu removal, THEN cache clear. A repeated unload() call re-throws
+  // WorldDisposedError from the second dispose() before steps 2/3 run, stranding listener/menu
+  // removal and the cache clear for that invocation — accepted because Viewer3D.tearDown wraps each
+  // extension's own unload() in try/catch, so the throw is swallowed rather than propagating. This is
+  // NOT silently "fixed" here beyond what the spec specifies; per-step isolation remains open/unsettled
+  // per the spec.
+  unload() {
+    this._world.dispose();
+    this._viewer.removeEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
+    this._viewer.unregisterContextMenuCallback(EXTENSION_ID);
+    this._roomCache.clear();
+    return true;
+  }
+
+  // world.evictModel(event.model) — the exact object — AND drop that object's room-cache entry,
+  // unconditionally and independent of evictModel (world.dispose() never touches the extension-owned
+  // room cache). Typings declare `event: any`. Defensively verify `event.model` exists rather than
+  // let a missing field surface as a cryptic downstream TypeError.
+  _onBeforeModelUnload(event) {
+    if (!event || !event.model) {
+      throw new Error('RoomLocatorExtension: BEFORE_MODEL_UNLOAD_EVENT fired with no event.model — typings declare `event: any`; this handler cannot proceed without the model object.');
+    }
+    this._world.evictModel(event.model);
+    this._roomCache.delete(event.model);
+  }
+
+  // Correct mechanism: admit the model BEFORE starting the search, so success/error callbacks always
+  // validate a real lease rather than ambiguous "never seen" state.
+  //
+  // The resolve/reject pair is captured via the executor and the promise is cached BEFORE
+  // model.search is invoked (deliberately NOT nesting the model.search call inside the Promise
+  // executor itself) — a real Viewer's Model.search always calls back asynchronously, but this
+  // extension's own unit fixtures deliberately invoke onSuccess/onError SYNCHRONOUSLY to exercise
+  // the identity-guard logic directly. Calling model.search only after `thisPromise` is fully
+  // constructed and cached avoids both a self-referential TDZ read of `thisPromise` and a window
+  // where a synchronous callback would race the cache.set() below.
+  async _resolveRoomDbIds(model) {
+    if (this._roomCache.has(model)) return this._roomCache.get(model);
+    const lease = this._world.admitModel(model); // throws synchronously if tombstoned/disposed
+    let resolveFn, rejectFn;
+    const thisPromise = new Promise((resolve, reject) => { resolveFn = resolve; rejectFn = reject; });
+    this._roomCache.set(model, thisPromise);
+
+    const settle = (fn, ...args) => {
+      if (this._roomCache.get(model) === thisPromise) this._roomCache.delete(model); // unconditional, identity-guarded
+      fn(...args);
+    };
+    const mapRejection = () => {
+      if (!this._world.isLeaseValid(lease)) {
+        try {
+          this._world.isModelLive(model);
+        } catch (err) {
+          if (err instanceof WorldDisposedError) return err;
+        }
+        return new ModelEvictedError(model.id);
+      }
+      return null;
+    };
+    model.search(
+      this._roomCategoryName,
+      (dbIds) => {
+        const rejection = mapRejection();
+        if (rejection) { settle(rejectFn, rejection); return; }
+        if (this._roomCache.get(model) === thisPromise) resolveFn(dbIds);
+        else rejectFn(new ModelEvictedError(model.id)); // superseded by a fresher call for this model
+      },
+      (searchError) => {
+        const rejection = mapRejection();
+        settle(rejectFn, rejection ?? searchError);
+      },
+      ['Category'],
+      { searchHidden: true },
+    );
+    return thisPromise;
+  }
+
+  async locateElementByRoom(dbId) {
+    const model = this._currentModel;
+    const roomDbIds = await this._resolveRoomDbIds(model);
+    const result = await this._world.findClashes({
+      source: { model, dbIds: [dbId] },
+      target: { model, dbIds: roomDbIds },
+      mode: 'containment',
+      groupBy: 'dbId',
+    });
+    return result.pairs.map((pair) => pair.target.dbId);
+  }
+
+  onContextMenu(menu, status) {
+    if (!status.hasSelected) return;
+    const selection = this._viewer.getSelection();
+    if (!selection || selection.length === 0) return;
+    const dbId = selection[0];
+    menu.push({
+      title: 'Locate Room',
+      target: async () => {
+        try {
+          const roomDbIds = await this.locateElementByRoom(dbId);
+          if (roomDbIds.length === 0) {
+            // "No candidate rooms" contract — surface, do not throw.
+            console.warn('RoomLocatorExtension: no containing room found for dbId', dbId);
+            return;
+          }
+          this._viewer.isolate(roomDbIds);
+          this._viewer.fitToView(roomDbIds);
+        } catch (err) {
+          console.error('RoomLocatorExtension: locate failed', err);
+        }
+      },
+    });
+  }
+}

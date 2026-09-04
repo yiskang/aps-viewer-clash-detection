@@ -1,3 +1,7 @@
+import { RoomLocatorExtension } from './extensions/RoomLocatorExtension.js';
+
+const ROOM_LOCATOR_EXTENSION_ID = 'Autodesk.Sandbox.RoomLocator';
+
 async function getAccessToken(callback) {
     try {
         const resp = await fetch('/api/auth/token');
@@ -15,8 +19,10 @@ async function getAccessToken(callback) {
 export function initViewer(container) {
     return new Promise(function (resolve, reject) {
         Autodesk.Viewing.Initializer({ env: 'AutodeskProduction', getAccessToken }, function () {
+            Autodesk.Viewing.theExtensionManager.registerExtension(ROOM_LOCATOR_EXTENSION_ID, RoomLocatorExtension);
             const extensions = [
-                'Autodesk.DocumentBrowser'
+                'Autodesk.DocumentBrowser',
+                ROOM_LOCATOR_EXTENSION_ID,
             ];
 
             const config = { extensions };
