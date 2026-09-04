@@ -68,16 +68,18 @@ export async function extractFragments(model, requestedDbIds, loadEpoch, { check
   const results = new Map(); // fragmentId -> ExtractedFragmentRecord, unique across the WHOLE call
 
   for (const requestedDbId of requestedDbIds) {
-    // NOTE for whoever threads in the real Viewer-readiness checkpoint (not yet implemented):
-    // `checkpoint()` here is unconditionally awaited, unlike GeometryRegistry._runPhase's
-    // branch-on-pending pattern (collision/geometry/GeometryRegistry.js, matching
-    // scheduler.js's "returns undefined synchronously when nothing is due" contract). A bare
-    // `await` still yields a microtask even when the call resolves synchronously, which is an
-    // unnecessary extra window for eviction to race the very check Item D added this ordering
-    // to protect against. Out of scope for this fix wave (this file's `checkpoint` today is
-    // just a test-provided hook, not yet the real scheduler-backed port) -- worth revisiting
-    // once the real checkpointPort is wired in here.
-    if (checkpoint) await checkpoint({ requestedDbId });
+    // Branch on the return value rather than a bare `await checkpoint(...)` -- matches
+    // GeometryRegistry._runPhase's own pattern and scheduler.js's documented contract
+    // (checkpoint() returns undefined SYNCHRONOUSLY on the not-due fast path, a real Promise
+    // only when a yield is actually due). A bare `await` on `undefined` still inserts one
+    // microtask boundary before the continuation runs, which would otherwise widen the exact
+    // window Item D's ordering (model-accessor reads deferred until after this call) exists to
+    // close: on the synchronous fast path, this keeps "checkpoint validated liveness" and
+    // "this code reads the model" in the SAME tick, with no gap for an eviction to land in.
+    if (checkpoint) {
+      const pending = checkpoint({ requestedDbId });
+      if (pending) await pending;
+    }
 
     if (!instanceTree) {
       // Deferred until after the FIRST checkpoint call (never read before it) so a future
@@ -139,7 +141,10 @@ export async function extractFragments(model, requestedDbIds, loadEpoch, { check
       // Push in reverse so pop() yields children in original left-to-right order (depth-first).
       for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
 
-      if (checkpoint && stack.length > 0) await checkpoint({ requestedDbId });
+      if (checkpoint && stack.length > 0) {
+        const pending = checkpoint({ requestedDbId });
+        if (pending) await pending;
+      }
     }
   }
 

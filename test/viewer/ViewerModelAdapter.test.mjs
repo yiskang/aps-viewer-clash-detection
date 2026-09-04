@@ -352,3 +352,39 @@ test('Item A: THREE namespace is injectable via options, not only resolved from 
   assert.ok(injectedMatrixUsed, 'extractFragments must construct scratch objects from the injected THREE namespace');
   assert.ok(injectedBoxUsed, 'extractFragments must construct scratch objects from the injected THREE namespace');
 });
+
+test('Item D fix round 2: checkpoint returning undefined (not a Promise) inserts NO microtask boundary before the model is read', () => {
+  // Per scheduler.js's documented contract (also GeometryRegistry._runPhase's own pattern),
+  // a real checkpointPort returns undefined SYNCHRONOUSLY on the not-due fast path. A bare
+  // `await checkpoint(...)` would suspend extractFragments even on that undefined return --
+  // widening the exact eviction-race window Item D's read-ordering exists to close. The fix
+  // branches on the return value and only awaits a truthy (real Promise) result.
+  //
+  // Proof strategy: call extractFragments with a synchronous checkpoint that always returns
+  // undefined, then check -- SYNCHRONOUSLY, with no await/microtask turn in between -- whether
+  // the model accessor already ran. With the fix (and this fully-synchronous fixture/checkpoint
+  // combination, which never has anything genuine to await), the whole walk completes before
+  // extractFragments(...) even returns control to this line. With the pre-fix bare `await`, the
+  // very first checkpoint call would have suspended immediately, leaving this false here.
+  const { model } = buildMockModel(
+    [{ dbId: 1, fragments: [101] }],
+    new Map([[101, { geometryIndex: 1 }]]),
+  );
+  let accessorCalledSynchronously = false;
+  const originalGetObjectTree = model.getObjectTree.bind(model);
+  model.getObjectTree = (...args) => {
+    accessorCalledSynchronously = true;
+    return originalGetObjectTree(...args);
+  };
+  const syncCheckpoint = () => undefined; // the real checkpointPort's not-due fast path
+
+  const promise = extractFragments(model, [1], LOAD_EPOCH, { checkpoint: syncCheckpoint });
+
+  assert.equal(
+    accessorCalledSynchronously,
+    true,
+    'model accessor must run in the SAME synchronous continuation as a checkpoint() call that returns undefined -- no microtask boundary may be inserted on that fast path',
+  );
+
+  return promise; // still let the test runner await/observe any late rejection
+});
