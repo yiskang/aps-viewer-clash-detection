@@ -380,7 +380,8 @@ async function main() {
 
     const c6 = await page.evaluate(async () => {
       const THREE = await import('three');
-      return window.__perfProbes.extractionCostAndAabbOverhead(window.viewer.model, THREE);
+      const { extractFragments } = await import('/collision/viewer/ViewerModelAdapter.js');
+      return window.__perfProbes.extractionCostAndAabbOverhead(window.viewer.model, THREE, extractFragments);
     });
 
     const c7 = await page.evaluate((ceiling) => window.__perfProbes.widestNodeFanout(window.viewer.model, ceiling), maxChildrenPerNode);
@@ -479,7 +480,18 @@ async function main() {
 // imports it as a sweep target. Without this, every `npm test` run would try to launch a real
 // browser and hit a possibly-absent localhost:8080 server, which is exactly the kind of stray
 // side effect this repo's own conventions warn against.
-const isMainModule = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+//
+// `argv[1]`-based detection alone is NOT sufficient: Node's `--test` sweep sets `process.argv[1]`
+// to this file's own path when it imports it as a candidate, identical to a direct `node
+// test/performance/run-gate.mjs` invocation -- confirmed by direct probe during the Batch-5 final
+// review (finding I-1). The real discriminator is `process.env.NODE_TEST_CONTEXT`, which Node sets
+// to `'child-v8'` for every file `--test` sweeps in and leaves unset otherwise. `package.json`'s
+// `test` script (`scripts/run-tests.mjs`) now passes `node --test` an explicit list of only this
+// repo's own `*.test.mjs` files (this file does not match that suffix), which already prevents the
+// sweep from reaching this file at all -- this env-var check is defense-in-depth in case a future
+// change reintroduces a bare, unscoped `node --test`.
+const isMainModule = !process.env.NODE_TEST_CONTEXT
+  && process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMainModule) {
   main().catch((err) => {
     console.error(err);

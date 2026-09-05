@@ -132,12 +132,12 @@ fanout-ceiling probe) — so none of Task 23's own recorded numbers are affected
 
 | # | Criterion (pass/fail line) | Cold run | Warm run | Verdict |
 |---|---|---|---|---|
-| 1 | Worst-case span ≤ **24.8ms** (excl. 3 named spans; 2 provisional exceptions: criteria 7, 8) | max labeled span (excl. total-wallclock) = **4.8ms** (`narrow-phase-pair`) | max labeled span (excl. total-wallclock) = **1.8ms** (`composed-narrow-phase-stage`) | **PASS**, both runs, with large margin |
+| 1 | Worst-case span ≤ **24.8ms** (excl. 3 named spans; 2 provisional exceptions: criteria 7, 8) | max labeled span (excl. total-wallclock) = **6.8ms** (`composed-narrow-phase-stage`; a later run recorded 7.7ms) | max labeled span (excl. total-wallclock) = **1.8ms** (`composed-narrow-phase-stage`) | **PASS**, both runs, with large margin |
 | 2 | Every tripped budget emits correct diagnostic, never freeze/fabricated clash | 1 diagnostic: `crossing-budget-exhausted` (pair scope, real source/target fragment IDs) | same diagnostic, same pair | **PASS** |
 | 3 | Per-candidate/per-build costs recorded next to `measure.mjs`'s synthetic figures | `narrowPhaseMs/narrowPhasePairs` = 401.5/1291 ≈ **0.311ms/candidate** | 142.3/1291 ≈ **0.110ms/candidate** | Recorded — see comparison section below |
 | 4 | `classifyPoint` / crossing-probe / `SurfaceCrossingWitness` probe worst-case cost measured | `classifyMs=0`, `crossingMs=0`, `witnessMs=0.5ms` (one live sample, dbId 232's fragment) | — (single live-model probe, not repeated cold/warm) | **PASS** — negligible, as the spec's own reasoning assumed |
-| 5 | Weld / connectivity / BVH each measured **individually** at `maxSyncTriangleCount` (≤19.84ms each) | weld **14.4–16.9ms**, connectivity **7.5–8.6ms**, bvh-construction **11.5–13.3ms** (6 fresh runs of `measure-geometry-phases.mjs`, this task) | — (Task 23's own harness; not part of the live cold/warm run) | **PASS**, each phase individually, every run, with margin — see history note below |
-| 6 | Largest-dbId extraction cost; broad-phase total + longest inter-yield span; `performance.now()` vs AABB-test cost; candidate-list size at ceiling | extraction (widest dbId 474, 84 fragments): **<0.1ms**; broad-phase total **38.3ms**, longest inter-yield span **0.9ms**; `performance.now()` **0.069µs**/call vs AABB test **0.006µs**/call; candidate-list size **70,356** (7% of the 1,000,000 ceiling) | broad-phase total **13.9ms**, longest inter-yield span **0.4ms** | **PASS** (extraction/broad-phase both cheap); **finding**: `performance.now()` costs ~11x MORE than the AABB test it brackets — non-negligible relative overhead, see note below |
+| 5 | Weld / connectivity / BVH each measured **individually** at `maxSyncTriangleCount` (≤19.84ms each) | weld **14.4–16.9ms**, connectivity **7.5–8.6ms**, bvh-construction **11.5–13.3ms** (6 fresh runs of `measure-geometry-phases.mjs`, this task); a further dedicated 15-run re-test (Batch-5 final review, finding I-6) measured weld **13.48–14.24ms**, connectivity **7.22–7.84ms**, bvh-construction **10.68–12.40ms** — every one of the 21 combined fresh runs stays comfortably under the 19.84ms margin | — (Task 23's own harness; not part of the live cold/warm run) | **PASS (25/26 total real bvh-construction samples across two implementation sessions plus a dedicated 15-run re-test comfortably clear the margin), 1 historical anomaly not reproduced** — see history note below |
+| 6 | Largest-dbId extraction cost; broad-phase total + longest inter-yield span; `performance.now()` vs AABB-test cost; candidate-list size at ceiling | **re-measured after finding I-3 (Batch-5 final review) fixed `extractionCostAndAabbOverhead` to actually call the real `extractFragments`, not a duplicate of criterion 9's tree-enumeration walk — the number below differs from what was previously reported, since it now measures something genuinely different.** Extraction (widest dbId 474, 84/84 fragments, real `extractFragments` call): **<0.1ms**; broad-phase total **14.9ms**, longest inter-yield span **0.6ms**; `performance.now()` **0.072µs**/call vs AABB test **0.007µs**/call; candidate-list size **70,356** (7% of the 1,000,000 ceiling) | broad-phase total **13.9ms**, longest inter-yield span **0.3ms** | **PASS** (extraction/broad-phase both cheap, and extraction now genuinely exercises the pipeline it's named for); **finding**: `performance.now()` costs ~10x MORE than the AABB test it brackets — non-negligible relative overhead, see note below |
 | 7 | `enumNodeChildren` at fanout ceiling: `maxChildrenPerNode+1` invocations, abort observed | — | — | **NOT EXERCISED** — widest node (dbId 232, `PLATEA`) has only 124 children; ceiling is 10,000 |
 | 8 | Capacity-admission recompute-and-commit separate from precheck; precheck-rejects-before-mutation confirmed | commit span **0.4ms** | commit span **0.1ms** | Commit cost **PASS** (well under 24.8ms, a provisional-exception label regardless); precheck-reject half **NOT EXERCISED** — model's total population (5,425) is far below `maxCollisionInstancesPerEpoch` (20,000); no real over-capacity query is constructible from this model |
 | 9 | `enumNodeFragments` on densest-fragment node, measured (no ceiling to enforce) | dbId 474, **84 fragments** (1.68% of the 5,000 ceiling), **<0.1ms** | — | **PASS/measured** — negligible cost at this model's real density |
@@ -147,6 +147,20 @@ fanout-ceiling probe) — so none of Task 23's own recorded numbers are affected
 
 *(Criteria 7/8-precheck/11: `NOT EXERCISED` per this model's own real limits — recorded as required
 gate findings, never silently converted into a passing number.)*
+
+**Note on criterion 6's `performance.now()`-vs-AABB-test finding**: this gate's own measurement
+found `performance.now()` costs roughly an order of magnitude more than the single AABB-overlap test
+it brackets (0.072µs vs 0.007µs/call this run). That is exactly the cost this same finding prompted a
+closer look at in `collision/scheduler.js`'s checkpoint/span-recorder hook: an earlier version of
+`checkpoint()` called `performance.now()` and wrote its `lastSpanAt` bookkeeping on EVERY checkpoint
+evaluation, whether or not a span recorder was actually installed — contradicting that module's own
+documented "zero cost when unset" claim, and, at this design's up-to-1,000,000-checkpoint broad-phase
+scale, a real (if per-call small) tax on every production query, instrumented or not. Fixed (Batch-5
+final review, finding I-5): the `performance.now()` read and `lastSpanAt` bookkeeping are now gated
+behind a single `_spanRecorder` truthiness check, so an uninstrumented query pays none of this cost —
+see `collision/scheduler.js`'s own `createCheckpointPort` and `test/performance/README.md`'s
+instrumentation-surface section for the fixed contract and its edge-case handling (a recorder
+installed mid-run reports its first span as `0` rather than an inflated value).
 
 ## Comparison against `spike/measure.mjs`'s synthetic figures
 
@@ -160,15 +174,34 @@ re-run fresh for this task, 6 samples): **14.4–16.9ms / 7.5–8.6ms / 11.5–1
 well inside the 19.84ms per-phase margin line — the real evidence that promotes `maxSyncTriangleCount`
 from "reasoned" to "measured" (see Constant revisions below).
 
-**One documented anomaly, not reproduced by this task's own 6 samples**: Task 23's own report recorded
-an *observed range* for `bvh-construction` across its earlier sampling of **11.7–30.0ms** — the
-high end of that range would have exceeded BOTH the 19.84ms per-phase margin AND the 24.8ms absolute
-ceiling. This task's own 6 fresh runs (this session, same sandbox) never reproduced anything above
-13.3ms. Recorded honestly rather than silently reconciled: the 12,000 figure is kept on the strength
-of the *overwhelming majority* of samples (10 of 11 total, across both tasks) clearing the margin
-comfortably, but this is a genuine, unresolved variance worth a closer look in a future round if it
-recurs — not dismissed as impossible, since it was independently observed once already under this
-same sandbox's conditions.
+**One documented anomaly, re-tested and not reproduced across 21 combined additional samples**:
+Task 23's own report recorded an *observed range* for `bvh-construction` across its earlier sampling
+of **11.7–30.0ms** — the high end of that range would have exceeded BOTH the 19.84ms per-phase
+margin AND the 24.8ms absolute ceiling. Task 24's own 6 fresh runs (its own session, same sandbox)
+never reproduced anything above 13.3ms. **The plan's own literal decision rule has no retest
+exception**: "if any phase exceeds [19.84ms] at 12,000 triangles, lower `maxSyncTriangleCount`
+until a re-run clears all three phases," unconditionally. Rather than either applying that rule
+mechanically off a single unreproduced historical sample, or dismissing the sample outright with no
+further check, the coordinator's own session ruling on this finding (Batch-5 final review, finding
+I-6; `progress.md`'s "Ruling" entry) introduced a one-time, explicit exception for exactly this
+situation: one more dedicated check before either keeping or revising the constant — an additional
+**15 fresh runs**, specifically targeting `bvh-construction` reproduction, under otherwise-idle
+conditions, with the constant to be revised for real if that dedicated re-test reproduced anything
+exceeding the margin. Result: **zero of the 15 new
+samples exceeded 19.84ms** (bvh-construction range this re-test: **10.68–12.40ms**; weld
+**13.48–14.24ms**; connectivity **7.22–7.84ms** — every phase, every run, comfortably inside the
+margin, and in fact tighter/lower than Task 24's own 6-sample range). Combined across both
+implementation sessions plus this dedicated re-test, `bvh-construction` now has **26 total real
+samples, 25 of which comfortably clear the margin** — only the single original 30.0ms sample does
+not, and 21 separate re-test attempts since (Task 24's 6 plus this fix wave's 15) have never
+reproduced it. Ruling: this is very likely a one-off environmental/scheduling artifact (GC pause,
+thermal, sandbox contention) coincident with Task 23's original session, not a real property of the
+12,000-triangle ceiling itself — `maxSyncTriangleCount` is **kept unrevised**, but the verdict is
+recorded as **PASS (25/26 total real samples comfortably clear the margin), 1 historical anomaly not
+reproduced under two dedicated re-tests — treated as environmental noise, not evidence requiring a
+constant revision; flagged for continued monitoring should it recur in a future run**, matching
+language to actual evidence rather than either overclaiming a clean pass or destabilizing a working
+constant on one flaky sample.
 
 ## Caveats on this run's own evidence (per `test/performance/README.md`'s documented measurement gaps)
 
@@ -180,11 +213,13 @@ same sandbox's conditions.
   visible in this run's own aggregate cross-check (narrow/broad-phase `statistics` totals divided by
   their own pair counts show no outlier average), but this is a structural gap in the harness, not
   proof no such violation ever occurred.
-- **Cross-port absorption check (criterion 1)**: `narrow-phase-pair`'s single highest span this run
-  (4.8ms, cold) was cross-checked against `GeometryRegistry`'s own separate `weld`/`connectivity`/
-  `bvh-construction` spans in the same log (max 1.7/0.7/1.0ms) — 4.8ms is consistent with "this
-  specific pair triggered a fresh geometry build via the registry's own port, plus real narrow-phase
-  work," not a hidden/inflated cross-port artifact. No red flag found.
+- **Cross-port absorption check (criterion 1)**: `composed-narrow-phase-stage`'s single highest span
+  this run (6.8ms, cold — the real criterion-1 max labeled span, see the corrected row above) was
+  cross-checked against `GeometryRegistry`'s own separate `weld`/`connectivity`/`bvh-construction`
+  spans in the same log (max 1.7/0.7/1.0ms) and against `narrow-phase-pair`'s own highest span
+  (4.8ms, the same run's second-highest label) — 6.8ms is consistent with "this composed-query stage
+  boundary absorbed a fresh geometry build via the registry's own port, plus real narrow-phase work,"
+  not a hidden/inflated cross-port artifact. No red flag found.
 - **Criterion 10's `dispose()` multi-epoch caveat**: only the real model's epoch could carry real
   `GeometryRegistry`/`CollisionInstance` content (fabricated extra "model" objects, used purely to
   inflate the live-epoch count, cannot carry real geometry). This measures "sweep cost does not grow
@@ -198,11 +233,27 @@ same sandbox's conditions.
 ## Constant revisions
 
 - **`maxSyncTriangleCount` (12,000, provisional): kept, not revised.** Every phase (weld,
-  connectivity, BVH construction), measured individually across 6 fresh runs at the exact 12,000
-  ceiling, clears the 19.84ms per-phase margin line comfortably (worst observed: connectivity at
-  8.6ms, 43% of the margin). This is graduated from "reasoned" to "measured" by this task's own run,
-  with the one caveat recorded above (Task 23's own historical 30.0ms `bvh-construction` outlier,
-  not reproduced here, flagged for continued monitoring rather than silently dropped).
+  connectivity, BVH construction), measured individually across Task 24's 6 fresh runs plus the
+  Batch-5 final review's own dedicated 15-run re-test (finding I-6) at the exact 12,000 ceiling —
+  21 combined fresh runs total — clears the 19.84ms per-phase margin line comfortably (worst single
+  measurement across all 21, any phase: **weld at 16.9ms** — Task 24's own high end, not reproduced
+  by this review's own 15-run re-test, which stayed within 13.48–14.24ms for weld — 85.2% of the
+  margin; connectivity's own worst was 8.6ms, 43% of the margin, and bvh-construction's own worst
+  was 13.3ms, 67% of the margin). **PASS (25/26 total real bvh-construction samples across two
+  implementation sessions comfortably clear the margin), 1 historical `bvh-construction` anomaly
+  (30.0ms, from Task 23's own earlier sampling) not reproduced under a dedicated 15-run re-test —
+  treated as environmental/scheduling noise (GC pause, thermal, sandbox contention), not evidence
+  requiring a constant revision; flagged for continued monitoring should it recur in a future
+  run.** The plan's own literal decision rule (`docs/superpowers/plans/2026-09-03-collision-
+  library-milestone1-implementation.md`) is unconditional: "if any phase exceeds [19.84ms] at
+  12,000 triangles, lower `maxSyncTriangleCount` until a re-run clears all three phases" — it does
+  not, by itself, carry any dedicated-retest exception. That exception (treating one unreproduced
+  historical outlier as noise rather than an automatic trigger) was added by the coordinator's own
+  session ruling on finding I-6 (`progress.md`'s "Ruling (I-6...)" entry), specifically for this
+  situation, not by the original plan text itself. Applying that ruling here: since the dedicated
+  15-run re-test did not itself reproduce a margin-exceeding sample (see the "One documented
+  anomaly" section above for the full 15-run data and reasoning), the ruling's retain-the-constant
+  branch applies, and 12,000 stands.
 - **`maxCollisionInstancesPerEpoch` (20,000, this plan's own reasoned default): kept, not revised.**
   This gate's own criterion-12 measurement is the first real evidence against it: this model's entire
   5,425-fragment population, once fully queried across a realistic multi-call session, retains at

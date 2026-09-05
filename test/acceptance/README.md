@@ -102,43 +102,28 @@ this repo's existing `spike/fixtures.mjs`-style reporting convention. `test/acce
   No parallel run against the old CSG extension is included anywhere in this test (deliberately out
   of scope for this milestone).
 
-## Status as of the last run recorded here: FAIL (real defect found, not a credentials/model blocker)
+## Status as of the last run recorded here: PASS (the milestone's primary acceptance criterion is met)
 
-Environment verification (Step 1) succeeded: `.env` credentials are present, the server starts
-cleanly, and `GET /api/models/<acceptance-urn>/status` returned `HTTP 200` with
-`{"status":"success","progress":"complete","messages":[]}` -- the acceptance model is translated
-and servable under these credentials. **This is not a "Blocked" run** -- the script ran end to end
-against a live Viewer and a real model, and found a genuine defect.
+Re-verified end to end against a live server and a live Viewer instance (2026-09-05, Batch-5 final
+review fix wave): both tiers pass cleanly, 13/13 assertions.
 
-**Tier 1 fails**: `RoomLocatorExtension.locateElementByRoomDetailed` reports `roomDbIds: []` with
-diagnostic `unsupported-geometry-layout` for the bathtub itself (`role: 'source'`), so no room is
-ever isolated and the isolation-wait step times out. **Tier 2 aborts before its numeric assertions**
-for the identical reason (`adaptViewerGeometry` rejects the same fragment).
+**Tier 1**: bathtub name search resolves to exactly one dbId; the right-click lands on it; the real
+"Locate Room" context-menu item isolates exactly `[3885]` (Master Bath 207); `window.THREE.REVISION`
+stays `'71'` before and after the query; zero failed `/vendor/` responses/requests;
+`BufferGeometryUtils.js` requested and resolved successfully.
 
-**Root cause, confirmed at the source level against the real, official Autodesk Viewer 7.124.2
-bundle (not inferred from this sandbox's runtime alone)**: `collision/viewer/ViewerGeometryAdapter
-.js`'s `resolvePositions()` does not recognize the geometry shape this Viewer version's
-`LeanBufferGeometry` class actually produces for a plain (non-mobile/non-F2D) interleaved 3D mesh.
-Decompiling the real `viewer3D.js` bundle shows `LeanBufferGeometry.prototype.setInterleavedBuffer`
-consumes the loader's `mesh.vblayout` descriptor to build `this.attributes[attrName]` (each with its
-own `.offset`/`.itemOffset`/`.itemSize`/`.bytesPerItem`), but **never stores `.vblayout` back onto
-the geometry object itself** -- confirmed live: every one of 50 sampled render-proxy geometries in
-this acceptance model (`viewer.impl.getRenderProxy(model, fragId).geometry`) is a `LeanBufferGeometry`
-with a real, fully-populated `.vb` (Float32Array) and numeric `.vbstride`, but `.vblayout` is absent
-(`hasOwnProperty` false) and `.attributes.position.array` is `undefined` by design (`findBufferAttribute`
-in the bundle explicitly constructs `new BufferAttribute(undefined, itemSize)` for a truly-interleaved
-attribute) -- so none of `resolvePositions()`'s three priority branches (`vblayout.position.offset`;
-`attributes.position.data.array`; `attributes.position.array`) match. The real, correct offset lives
-at `geometry.attributes.position.offset` (or the identical `.itemOffset` alias), which the adapter
-never checks.
+**Tier 2**: the bathtub has exactly 1003 world-space vertices post-weld; Master Bath 207 (dbId 3885)
+classifies exactly 907 of them inside; exactly 13 other rooms are present, every one scoring exactly
+0 -- matching `spike/FINDINGS.md`'s known-in-advance ground truth precisely.
 
-This is a **coverage gap in `ViewerGeometryAdapter.js`, not a bug in this test, not a credentials/model
-availability blocker, and (per direct inspection of the real Viewer bundle's source) not an artifact
-of this run's headless/software-rendering/`--single-process` sandbox** -- the missing `.vblayout`
-field is how the shipped `LeanBufferGeometry` class works for every classic-SVF model in every
-environment. See the coordinator's Task 22 report
-(`.superpowers/sdd/2026-09-03-collision-library-milestone1-implementation/task-22-report.md`) for
-full detail, evidence, and a second-opinion review (`codex-advisor`) that concurred with this
-diagnosis. `test/acceptance/room-locator.acceptance.mjs` itself is complete, correct, and will start
-passing once `ViewerGeometryAdapter.js` gains a fourth branch recognizing this shape (out of this
-task's scope to fix).
+**History**: an earlier run of this same script (predating this fix wave) found `Tier 1`/`Tier 2`
+both genuinely failing with `unsupported-geometry-layout` for the bathtub fragment --
+`collision/viewer/ViewerGeometryAdapter.js`'s `resolvePositions()` did not yet recognize the geometry
+shape the real Autodesk Viewer 7.124.2 bundle's `LeanBufferGeometry` class produces for a plain
+(non-mobile/non-F2D) interleaved 3D mesh (full root-cause detail, confirmed against the decompiled
+`viewer3D.js` bundle, is preserved in the coordinator's Task 22 report,
+`.superpowers/sdd/2026-09-03-collision-library-milestone1-implementation/task-22-report.md`). That
+was a genuine coverage gap in `ViewerGeometryAdapter.js`, not a bug in this test -- it was fixed by
+adding a fourth branch to `resolvePositions()` recognizing this shape (commits `c498ea5`/`adb88e0`,
+same batch as this fix wave), and this re-run confirms the fix holds against the real acceptance
+model end to end.

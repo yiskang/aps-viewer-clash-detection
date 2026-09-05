@@ -57,20 +57,29 @@ function makeHarness() {
     markCheckpointed: () => { forcedDue = false; accumulator.markCheckpointed(); },
   };
   let yieldResolvers = [];
-  // Patch performance.now() BEFORE constructing the port: createCheckpointPort captures its own
-  // `lastSpanAt = performance.now()` baseline at construction time, so the fake clock must
+  // Patch performance.now() BEFORE constructing any port: createCheckpointPort conditionally
+  // captures a `lastSpanAt = performance.now()` baseline at construction time (only when a span
+  // recorder is ALREADY installed then -- see scheduler.js's own comment), so the fake clock must
   // already be in place for that baseline to be comparable to later fake-clock reads.
   const realPerformanceNow = performance.now.bind(performance);
   let fakePerfNow = 0;
   performance.now = () => fakePerfNow;
-  const port = createCheckpointPort({
-    isDisposed: () => false,
-    isEpochLive: () => true,
-    accumulator: wrappedAccumulator,
-    yieldToScheduler: () => new Promise((resolve) => { yieldResolvers.push(resolve); }),
-  });
+  // Exposed separately from the default `port` below (most tests just want one port, constructed
+  // before any recorder exists, matching the original suite's own baseline) so the recorder-
+  // lifecycle tests can construct a FRESH port at a controlled moment -- e.g. after a recorder is
+  // already installed, to exercise the "installed before construction" baseline-capture path.
+  function constructPort() {
+    return createCheckpointPort({
+      isDisposed: () => false,
+      isEpochLive: () => true,
+      accumulator: wrappedAccumulator,
+      yieldToScheduler: () => new Promise((resolve) => { yieldResolvers.push(resolve); }),
+    });
+  }
+  const port = constructPort();
   return {
     port,
+    constructPort,
     advanceClock: (ms) => { mockNow += ms; fakePerfNow += ms; },
     forceDue: () => { forcedDue = true; },
     resolveNextYield: () => { yieldResolvers.shift()?.(); },
@@ -146,6 +155,98 @@ test('label bracketing: the real-yield branch resets the baseline AFTER the yiel
     port.checkpoint({ loadEpoch: 1, label: 'after-yield' });
     const afterYieldSpan = spans.find((s) => s.label === 'after-yield');
     assert.equal(afterYieldSpan.ms, 0, 'baseline was reset AFTER the yield resolved, so no paused time leaks into the next span');
+  } finally {
+    clearSpanRecorder();
+    restore();
+  }
+});
+
+// --- level 1b: recorder-lifecycle transitions (codex-advisor finding, Batch-5 final review's
+// I-5 follow-up fix -- `lastSpanAt` must never survive a recorder identity change) -------------
+
+test('recorder lifecycle: installed BEFORE port construction captures a real construction-time baseline (not a spurious first-span 0)', () => {
+  const { constructPort, advanceClock, restore } = makeHarness();
+  const spans = [];
+  setSpanRecorder((label, ms) => spans.push({ label, ms }));
+  try {
+    // Matches the common real-usage order (setSpanRecorder, THEN findClashes constructs its own
+    // checkpoint port internally) -- a recorder is already active when this port is built.
+    const port = constructPort();
+    advanceClock(7); // real synchronous work between construction and the first checkpoint call
+    port.checkpoint({ loadEpoch: 1, label: 'first' });
+    assert.equal(spans.length, 1);
+    assert.equal(spans[0].ms, 7, 'first span should reflect real elapsed time since construction, not be forced to 0');
+  } finally {
+    clearSpanRecorder();
+    restore();
+  }
+});
+
+test('recorder lifecycle: cleared then reinstalled on the same port does not leak the untracked gap into the next span', () => {
+  const { port, advanceClock, restore } = makeHarness();
+  const spansA = [];
+  setSpanRecorder((label, ms) => spansA.push({ label, ms }));
+  try {
+    port.checkpoint({ loadEpoch: 1, label: 'tracked' });
+    advanceClock(2);
+    clearSpanRecorder();
+    advanceClock(1000); // a large gap while no recorder was installed at all
+    const spansB = [];
+    setSpanRecorder((label, ms) => spansB.push({ label, ms }));
+    port.checkpoint({ loadEpoch: 1, label: 'after-reinstall' });
+    assert.equal(spansA.length, 1, 'A never sees the post-reinstall checkpoint');
+    assert.equal(spansB.length, 1);
+    assert.equal(spansB[0].ms, 0, 'first span after reinstall must not include the 1000ms untracked gap');
+  } finally {
+    clearSpanRecorder();
+    restore();
+  }
+});
+
+test("recorder lifecycle: recorder A replaced directly by recorder B does not leak A-era timing into B's first span", () => {
+  const { port, advanceClock, restore } = makeHarness();
+  const spansA = [];
+  setSpanRecorder((label, ms) => spansA.push({ label, ms }));
+  try {
+    port.checkpoint({ loadEpoch: 1, label: 'under-a' });
+    advanceClock(500);
+    const spansB = [];
+    setSpanRecorder((label, ms) => spansB.push({ label, ms })); // replaces A directly -- no clear in between
+    port.checkpoint({ loadEpoch: 1, label: 'under-b' });
+    assert.equal(spansA.length, 1, 'A never sees the second checkpoint (it was replaced first)');
+    assert.equal(spansB.length, 1);
+    assert.equal(spansB[0].ms, 0, "B's first span must not include the 500ms elapsed under A");
+  } finally {
+    clearSpanRecorder();
+    restore();
+  }
+});
+
+test("recorder lifecycle: recorder cleared while a due checkpoint's yield is in flight does not corrupt a later real span", async () => {
+  const { port, advanceClock, forceDue, resolveNextYield, restore } = makeHarness();
+  const spansA = [];
+  setSpanRecorder((label, ms) => spansA.push({ label, ms }));
+  try {
+    port.checkpoint({ loadEpoch: 1, label: 'before' });
+    advanceClock(4);
+    forceDue();
+    const pending = port.checkpoint({ loadEpoch: 1, label: 'triggers-yield' });
+    assert.ok(pending, 'a due checkpoint must return a real Promise');
+    assert.equal(spansA.at(-1).ms, 4);
+
+    // Recorder cleared WHILE the yield is still pending -- the resumed continuation must notice
+    // this (not blindly call performance.now()/write lastSpanAt as if A were still active).
+    clearSpanRecorder();
+    advanceClock(1000);
+    resolveNextYield();
+    await pending;
+
+    // A brand-new recorder installed only after resume.
+    const spansB = [];
+    setSpanRecorder((label, ms) => spansB.push({ label, ms }));
+    port.checkpoint({ loadEpoch: 1, label: 'after-resume' });
+    assert.equal(spansB.length, 1);
+    assert.equal(spansB[0].ms, 0, 'span after a post-clear-during-yield reinstall must not include any of the paused/untracked time');
   } finally {
     clearSpanRecorder();
     restore();

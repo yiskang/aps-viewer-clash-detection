@@ -2,10 +2,13 @@
 
 This directory builds the **measurement mechanism** for Milestone 1's twelve performance-gate
 pass criteria (`docs/superpowers/specs/2026-08-06-collision-library-milestone1-design.md:4660-4796`).
-It does **not** run the real gate -- that is Task 24's job, once an MEP-scale model is available
-(as of this writing, none exists in this repo -- see `test/README.md`'s "Known risk" section).
-Everything here is sanity-checked to run and produce a plausible, well-shaped answer; none of it
-is checked against the real 24.8ms/etc. ceilings.
+Running the real gate itself is `run-gate.mjs` (Task 24) -- it HAS now run, against a real,
+adequately-scaled model; see
+`docs/superpowers/specs/milestone-1-performance-gate-disposition.md` for the full, criterion-by-
+criterion writeup of that run's real numbers and verdicts. Everything else here (the instrumentation
+mechanism itself: `checkpoint-recorder.mjs`, `browser-probes.mjs`, `measure-geometry-phases.mjs`) was
+sanity-checked at the time it was built to run and produce a plausible, well-shaped answer, ahead of
+`run-gate.mjs` existing to drive it against the real ceilings.
 
 ## What's here
 
@@ -26,6 +29,15 @@ is checked against the real 24.8ms/etc. ceilings.
   `page.addScriptTag({ path: 'test/performance/browser-probes.mjs' })`. Answers every criterion
   that needs a live Viewer/DOM/model (see "The instrumentation surface" below for the full
   criterion-by-criterion mapping).
+- **`run-gate.mjs`** (Task 24) -- the largest file in this directory, and the one that actually RUNS
+  the gate: a Playwright driver that loads a real, adequately-scaled model (see the disposition
+  document's "Model used" section), selects a real dbId pair via a fragment-bearing-frontier walk,
+  injects `browser-probes.mjs`, drives the real cold-then-warm `volume-overlap` protocol against one
+  shared `CollisionWorld`, and writes the full 12-criteria report to `test/performance/results/`
+  (gitignored). Run it directly with `npm run test:performance:gate` (or `node
+  test/performance/run-gate.mjs`; `MEP_URN=<urn>` overrides the model). See
+  `docs/superpowers/specs/milestone-1-performance-gate-disposition.md` for the write-up of what it
+  found.
 
 ## The instrumentation surface (what stable hook does this harness use?)
 
@@ -39,10 +51,19 @@ export function clearSpanRecorder() { ... }
 `createCheckpointPort(...)`'s returned `checkpoint(ctx)` now accepts an optional `ctx.label`
 (a stable, distinct string per call site). On every `checkpoint()` invocation -- whether or not a
 real yield ends up happening -- it brackets the synchronous span since that same port's own
-previous checkpoint call (or the port's construction, for the very first call) and reports it via
-`setSpanRecorder`'s callback under that label. This is a true no-op when `setSpanRecorder` was
-never called (a single `_spanRecorder?.(...)` null-check per checkpoint evaluation) -- production
-code runs through this path on every real query, instrumented or not.
+previous TRACKED checkpoint call and reports it via `setSpanRecorder`'s callback under that label.
+"Tracked" matters: the port's `lastSpanAt` baseline is lazy (`null` until a span recorder is
+actually installed and a checkpoint runs while it's present), NOT captured unconditionally at port
+construction -- so the very first labeled span reported on a port (whether that's genuinely the
+port's first checkpoint call, or a recorder was only installed partway through this port's life,
+after some earlier checkpoints already ran untracked) is honestly reported as `0`, never an
+inflated span reaching back to port construction or to some earlier untracked point. This is a true
+no-op when `setSpanRecorder` was never called -- a single `_spanRecorder` truthiness check per
+checkpoint evaluation gates BOTH the `performance.now()` read and the `lastSpanAt` bookkeeping, not
+merely the recorder callback itself (fixed in the Batch-5 final review, finding I-5: an earlier
+version of this code read `performance.now()` and wrote `lastSpanAt` unconditionally on every
+checkpoint, whether or not a recorder was installed, contradicting this exact zero-cost claim) --
+production code runs through this path on every real query, instrumented or not.
 
 Every existing checkpoint call site in the library was given a stable, distinct label as part of
 this task:
@@ -98,10 +119,15 @@ never evidence that criterion 1 passed.
    modern `three` package as `THREE` -- see "Two THREE namespaces" below).
 5. Weld/connectivity/BVH individually at `maxSyncTriangleCount` -- `measure-geometry-phases.mjs`.
 6. Largest-dbId extraction cost + AABB-test overhead -- `window.__perfProbes.
-   extractionCostAndAabbOverhead(model, THREE)` (the real, modern `three` package -- see "Two
-   THREE namespaces" below); the broad-phase scan's own total cost and longest
-   inter-yield span come from `recorder.spansByLabel('broad-phase-scan')` after a real
-   `findClashes` run, same mechanism as criterion 1.
+   extractionCostAndAabbOverhead(model, THREE, extractFragments)` (`THREE` the real, modern `three`
+   package -- see "Two THREE namespaces" below; `extractFragments` the real
+   `collision/viewer/ViewerModelAdapter.js` export, imported by the caller the same way
+   `probeCosts` above receives its own real `collision/` module references -- fixed in the
+   Batch-5 final review, finding I-3: an earlier version of this probe never called
+   `extractFragments` at all, making its number a byte-identical duplicate of criterion 9's own
+   tree-enumeration walk); the broad-phase scan's own total cost and longest inter-yield span
+   come from `recorder.spansByLabel('broad-phase-scan')` after a real `findClashes` run, same
+   mechanism as criterion 1.
 7. One `enumNodeChildren` call at the fanout ceiling -- `window.__perfProbes.
    widestNodeFanout(model, maxChildrenPerNode)`.
 8. Capacity-admission recompute-and-commit, separate from precheck --
@@ -124,13 +150,15 @@ with a synthetic number presented as equivalent.
 
 ### Known gaps this task deliberately does NOT close
 
-`CollisionWorld` exposes **no** `getEpochCollisionInstanceCount(epoch)` (or equivalent) diagnostic
-accessor as of this task. This is confirmed absent from the current method list, and is the
-expected gap the brief anticipated -- `capacityPrecheckRejects` and `identityCacheRetainedSize`
-both fail closed with `{ exercised: false, reason: '...' }` rather than reaching into an
-undocumented internal `Map` by guessing a field name. If Task 24 needs these answered, it should
-add one minimal read-only accessor (the same class of small, explicitly-scoped addition as
-`scheduler.js`'s `setSpanRecorder`), or report the absence itself in its disposition document.
+`CollisionWorld` exposed **no** `getEpochCollisionInstanceCount(epoch)` (or equivalent) diagnostic
+accessor as of this task (Task 23) -- confirmed absent from the method list at the time, and the
+expected gap the brief anticipated. **Task 24 has since added it** (`collision/CollisionWorld.js`),
+the same class of small, explicitly-scoped addition as `scheduler.js`'s `setSpanRecorder`, so
+`identityCacheRetainedSize` now exercises it directly rather than failing closed (see the disposition
+document's criterion-12 row for the real, measured number this unlocked). `capacityPrecheckRejects`
+is unaffected -- it remains unwired into `run-gate.mjs` (M-3, a separate, still-open finding, not
+this gap) and its own `{ exercised: false, ... }` fail-closed guard is left in place regardless of
+the accessor's availability, since nothing calls it with a real over-capacity query today.
 
 Similarly, there is no `ViewerModelAdapter.getRangeCount(model, fragId)` accessor --
 `mostFragmentedGeometryNormalization` derives an equivalent range count itself, by running the real

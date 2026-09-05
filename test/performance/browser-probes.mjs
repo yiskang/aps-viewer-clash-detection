@@ -64,10 +64,16 @@
 //   - collision/query/SurfaceCrossingWitness.js: `surfaceCrossingWitness(sourceBvh, targetBvh,
 //     targetToSourceMatrix, sourceLocalDiagonal, targetLocalDiagonal, options)` -- a plain
 //     function, NOT a `.probe()` method.
-//   - There is no `ViewerModelAdapter.getRangeCount(model, fragId)` accessor, and no
-//     `CollisionWorld.getEpochCollisionInstanceCount(epoch)` diagnostic accessor -- both are
-//     confirmed absent. Probes that need them fail closed into NOT_EXERCISED rather than
-//     guessing at an undocumented internal field.
+//   - There is no `ViewerModelAdapter.getRangeCount(model, fragId)` accessor (confirmed absent;
+//     `mostFragmentedGeometryNormalization` below derives an equivalent range count from
+//     `adaptViewerGeometry`'s own `ranges` field instead). `CollisionWorld.
+//     getEpochCollisionInstanceCount(epoch)` WAS absent when this file was first written (Task 23)
+//     -- Task 24 added it (`collision/CollisionWorld.js`), so `identityCacheRetainedSize` below now
+//     exercises it directly rather than failing closed; its
+//     `typeof world.getEpochCollisionInstanceCount !== 'function'` check remains as a defensive
+//     fail-closed guard, not because the accessor is expected to be missing.
+//     `capacityPrecheckRejects` below could equally exercise it now, but remains unwired into
+//     `run-gate.mjs` (a separate, still-open finding -- see that function's own doc comment).
 
 (function () {
   // This file is meant to be injected into a live Viewer page via Playwright's
@@ -229,18 +235,29 @@
       return { exercised: true, classifyMs, crossingMs, witnessMs };
     },
 
-    /** Criterion 6: extraction cost for the largest requested dbId, plus broad-phase's own
-     *  numbers that AREN'T already captured by the shared span log (candidate-list size at the
-     *  ceiling, and performance.now()-vs-AABB-test relative cost). The broad-phase scan's own
-     *  total cost and its longest inter-yield span come from
+    /** Criterion 6: extraction cost for the largest requested dbId -- via the REAL
+     *  `extractFragments` function (finding I-3, Batch-5 final review: an earlier version of this
+     *  probe timed only a raw `tree.enumNodeFragments(...)` walk, never calling `extractFragments`
+     *  at all, which made its number a byte-identical duplicate of `widestFragmentOwner` (criterion
+     *  9)'s own walk+timing rather than measuring the real per-fragment
+     *  `getWorldMatrix`/`getWorldBounds`/adapter cost the criterion is named for) -- plus
+     *  broad-phase's own numbers that AREN'T already captured by the shared span log
+     *  (candidate-list size at the ceiling, and performance.now()-vs-AABB-test relative cost). The
+     *  broad-phase scan's own total cost and its longest inter-yield span come from
      *  recorder.spansByLabel('broad-phase-scan') after a real findClashes run -- this function
      *  supplies the two numbers that mechanism can't.
      *
      *  @param THREE the real, modern (r185) `three` package, NOT `window.THREE` (the Viewer's own
      *    bundled r71 global) -- r71's Box3 does not reliably expose the same modern API
      *    (`.intersectsBox`) this probe relies on; see probeCosts's own doc comment for the full
-     *    rationale behind this split. */
-    extractionCostAndAabbOverhead(model, THREE) {
+     *    rationale behind this split. `window.THREE` is still used internally, but ONLY for
+     *    `extractFragments`'s own `THREE` option below, per ViewerModelAdapter.js's contract that
+     *    its extraction scratch Matrix4/Box3 must be a genuine Viewer-side object.
+     *  @param extractFragments the real `collision/viewer/ViewerModelAdapter.js` export -- the
+     *    caller imports it via dynamic `import()` inside `page.evaluate` and hands it in here,
+     *    matching `probeCosts`'s own pattern above (this file carries no ES module imports; see
+     *    header). */
+    async extractionCostAndAabbOverhead(model, THREE, extractFragments) {
       let widest = { dbId: null, fragmentCount: 0 };
       const tree = model.getInstanceTree();
       walkTree(model, (dbId) => {
@@ -249,9 +266,9 @@
         if (n > widest.fragmentCount) widest = { dbId, fragmentCount: n };
       });
       const rec = new CheckpointRecorder();
+      const loadEpoch = 0; // diagnostic-only probe, not a real CollisionWorld lease -- matches probeCosts's own convention above.
       const h1 = rec.start('extraction-largest-dbid');
-      let extracted = 0;
-      tree.enumNodeFragments(widest.dbId, () => { extracted++; }, false);
+      const extracted = await extractFragments(model, [widest.dbId], loadEpoch, { checkpoint: undefined, THREE: window.THREE });
       const extractionMs = h1.end();
 
       // performance.now() vs one AABB-overlap test, relative cost.
@@ -269,6 +286,7 @@
         exercised: true,
         widestDbId: widest.dbId,
         fragmentCount: widest.fragmentCount,
+        extractedFragmentCount: extracted.size,
         extractionMs,
         perfNowCostMicros: perfNowCostEach * 1000,
         aabbTestCostMicros: aabbCostEach * 1000,
@@ -300,10 +318,15 @@
     },
 
     /** Criterion 8 (precheck half): assert the call-wide precheck rejects before any bucket
-     *  lookup/CollisionInstance construction, at/near maxCollisionInstancesPerEpoch. Requires
-     *  CollisionWorld to expose a way to observe "was any CollisionInstance constructed" -- it
-     *  does not (confirmed: no getEpochCollisionInstanceCount or equivalent accessor exists), so
-     *  this records that gap rather than guessing at an undocumented internal counter. */
+     *  lookup/CollisionInstance construction, at/near maxCollisionInstancesPerEpoch. Needs
+     *  CollisionWorld to expose a way to observe "was any CollisionInstance constructed" -- it did
+     *  not when this probe was first written (Task 23, confirmed absent then); Task 24 added
+     *  `getEpochCollisionInstanceCount(epoch)`, so this probe could now exercise the real precheck
+     *  path, but nothing in `run-gate.mjs` currently calls `capacityPrecheckRejects` with a real
+     *  over-capacity query (a separate, still-open gap -- this model's total fragment population is
+     *  far below `maxCollisionInstancesPerEpoch`, so no real over-capacity query exists to pass it).
+     *  The `typeof` guard below remains a defensive fail-closed check, not an expectation that the
+     *  accessor is missing. */
     async capacityPrecheckRejects(world, overCapacityQuery) {
       if (typeof world.getEpochCollisionInstanceCount !== 'function') {
         return NOT_EXERCISED('CollisionWorld exposes no diagnostic accessor to confirm zero CollisionInstance constructions occurred before rejection -- see criterion 12 note in this same file');
@@ -388,12 +411,14 @@
 
     /** Criterion 12: CollisionInstance identity-cache retained size after a realistic session.
      *  Caller drives N findClashes calls first; this just reads back the resulting bucket size.
-     *  No such accessor exists on CollisionWorld today (confirmed) -- fails closed per the spec's
-     *  own instruction for exactly this situation (docs/...:4793-4795) rather than reaching into
-     *  an undocumented internal Map by guessing a field name. */
+     *  No such accessor existed on CollisionWorld when this probe was first written (Task 23,
+     *  confirmed absent then) -- Task 24 added `CollisionWorld.getEpochCollisionInstanceCount
+     *  (epoch)` (the spec's own instruction for exactly this situation, docs/...:4793-4795), so
+     *  this probe now exercises it directly; the `typeof` guard below remains a defensive
+     *  fail-closed check, not an expectation that the accessor is missing. */
     identityCacheRetainedSize(world, epoch) {
       if (typeof world.getEpochCollisionInstanceCount !== 'function') {
-        return NOT_EXERCISED('CollisionWorld exposes no diagnostic accessor for per-epoch CollisionInstance bucket size -- add a minimal read-only accessor (e.g. world.getEpochCollisionInstanceCount(epoch)) as part of a later task, the same way collision/scheduler.js gained setSpanRecorder in Task 23, rather than reaching into an undocumented internal Map by guessing a field name');
+        return NOT_EXERCISED('CollisionWorld exposes no diagnostic accessor for per-epoch CollisionInstance bucket size -- expected world.getEpochCollisionInstanceCount(epoch) to exist (added in Task 24) but it is missing on this world instance');
       }
       return { exercised: true, epoch, retainedCount: world.getEpochCollisionInstanceCount(epoch) };
     },

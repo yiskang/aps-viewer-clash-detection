@@ -56,6 +56,7 @@
 import { chromium } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PORT = process.env.PORT || 8080;
 const BASE_URL = `http://localhost:${PORT}`;
@@ -362,13 +363,32 @@ async function main() {
   await writeFile(path.join(RESULTS_DIR, 'run-report.json'), JSON.stringify(results, null, 2));
 }
 
-// main()'s own promise rejection handler, not a `finally` inside main, guarantees run-report.json
-// is written and the browser doesn't leak on a thrown assertion (e.g. Tier 2's room-count guard) --
-// browser.close() is called before the success-path write above, and this catch handler writes
-// whatever was accumulated in `results` even when main() never reaches that line.
-main().catch(async (err) => {
-  console.error(err);
-  process.exitCode = 1;
-  await browser?.close().catch(() => {});
-  await writeFile(path.join(RESULTS_DIR, 'run-report.json'), JSON.stringify({ ...results, fatalError: String(err) }, null, 2)).catch(() => {});
-});
+// Guard against Node's `node --test` default discovery, which sweeps in every .js/.mjs file under
+// any directory literally named `test` (confirmed by the Batch-5 final review, finding I-1) -- this
+// file previously ran main() unconditionally at module top level, meaning a bare `npm test` (`node
+// --test` with no path filter) would launch a real Chromium and drive a real live-server acceptance
+// run as a side effect of the unit-test command, hitting a possibly-absent localhost:8080 server and
+// clobbering this script's own run-report.json with a spurious connection-refused failure. Run
+// main() only when this file is the actual entry point (`node test/acceptance/room-locator.
+// acceptance.mjs`): `argv[1]`-based detection alone is NOT sufficient, since Node's `--test` sweep
+// sets `process.argv[1]` to this file's own path when it imports it as a candidate, identical to a
+// direct invocation -- the real discriminator is `process.env.NODE_TEST_CONTEXT`, which Node sets to
+// `'child-v8'` for every file `--test` sweeps in and leaves unset otherwise. `package.json`'s `test`
+// script (`scripts/run-tests.mjs`) now passes `node --test` an explicit list of only this repo's own
+// `*.test.mjs` files (this file does not match that suffix), which already prevents the sweep from
+// reaching this file at all -- this env-var check is defense-in-depth in case a future change
+// reintroduces a bare, unscoped `node --test`.
+const isMainModule = !process.env.NODE_TEST_CONTEXT
+  && process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (isMainModule) {
+  // main()'s own promise rejection handler, not a `finally` inside main, guarantees run-report.json
+  // is written and the browser doesn't leak on a thrown assertion (e.g. Tier 2's room-count guard) --
+  // browser.close() is called before the success-path write above, and this catch handler writes
+  // whatever was accumulated in `results` even when main() never reaches that line.
+  main().catch(async (err) => {
+    console.error(err);
+    process.exitCode = 1;
+    await browser?.close().catch(() => {});
+    await writeFile(path.join(RESULTS_DIR, 'run-report.json'), JSON.stringify({ ...results, fatalError: String(err) }, null, 2)).catch(() => {});
+  });
+}

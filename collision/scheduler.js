@@ -33,8 +33,19 @@ import { frameBudgetMs } from './constants.js';
 // test/performance/checkpoint-recorder.mjs (the sink this hook reports into) and
 // test/performance/README.md for the full instrumentation-surface writeup.
 let _spanRecorder = null;
-export function setSpanRecorder(fn) { _spanRecorder = fn; }
-export function clearSpanRecorder() { _spanRecorder = null; }
+// Bumped on every `setSpanRecorder`/`clearSpanRecorder` call (install, clear, OR a direct
+// replacement of one recorder with another) -- the recorder-lifecycle fix for a gap a second-
+// opinion review (codex-advisor) found in this module's own `lastSpanAt` baseline (Batch-5 final
+// review, finding I-5 follow-up): without this, a port's `lastSpanAt` timestamp could survive a
+// recorder being cleared-then-reinstalled or swapped for a different one, so the NEXT span
+// reported after that change would silently include the entire untracked gap in between,
+// attributed to the NEW recorder as if it were real synchronous work. Every `createCheckpointPort`
+// port compares its own last-seen generation against this counter on every checkpoint call and
+// discards (resets to `null`) any baseline that predates the current generation -- see
+// `createCheckpointPort` below for the full mechanism.
+let _spanRecorderGeneration = 0;
+export function setSpanRecorder(fn) { _spanRecorder = fn; _spanRecorderGeneration++; }
+export function clearSpanRecorder() { _spanRecorder = null; _spanRecorderGeneration++; }
 // Reports one labeled span directly, bypassing the checkpoint helper entirely -- for the one call
 // site (CollisionWorld.admitCollisionInstances's capacity-admission recompute-and-commit) that has
 // nothing to checkpoint against (it is deliberately 100% synchronous, zero awaits) but still needs
@@ -107,32 +118,87 @@ export function createCheckpointPort({ isDisposed, isEpochLive, accumulator, yie
     }
   }
 
-  // Baseline for this port's own labeled-span bracketing (Task 23): starts at port construction
-  // (the call's own start), then resets after every checkpoint() invocation below -- fast path or
-  // real yield alike -- so the NEXT span always measures only the synchronous work done since the
-  // previous checkpoint, never time spent paused inside an actual yield.
-  let lastSpanAt = performance.now();
+  // Baseline for this port's own labeled-span bracketing (Task 23; recorder-lifecycle fix, Batch-5
+  // final review finding I-5). Two invariants, both load-bearing:
+  //
+  //   1. ZERO COST WHEN UNSET: if no span recorder is installed for this port's entire life, this
+  //      port's `checkpoint()` never calls `performance.now()` or writes `lastSpanAt` at all --
+  //      gated behind `if (_spanRecorder)` below, restoring this module's own documented "zero
+  //      cost when unset (a single null-check per checkpoint evaluation)" guarantee (an earlier
+  //      version read `performance.now()` and wrote `lastSpanAt` UNCONDITIONALLY on every
+  //      checkpoint, which finding I-5 caught).
+  //   2. A SPAN NEVER SPANS ACROSS A RECORDER CHANGE: `lastSpanAt`'s validity is tied to
+  //      `_spanRecorderGeneration` (bumped by every `setSpanRecorder`/`clearSpanRecorder` call). If
+  //      the active recorder changed since this port last checked -- installed for the first time,
+  //      cleared then reinstalled, or swapped for a different recorder entirely, including while a
+  //      due checkpoint's own yield was still in flight -- any previously-tracked `lastSpanAt`
+  //      belongs to a DIFFERENT recorder's timeline (or no recorder at all) and must not leak into
+  //      the new one's first reported span. `lastSeenGeneration` starts at a value that can never
+  //      equal a real generation (`-1`; the counter only ever holds non-negative values), so the
+  //      very first checkpoint on a fresh port always re-evaluates against whatever is active then.
+  //
+  // One deliberate exception to "lazy, only-on-first-checkpoint" baselining: if a recorder is
+  // ALREADY installed at the moment this port is constructed (the common real-usage pattern --
+  // `setSpanRecorder(...)` is called once before `findClashes`, which then constructs this port
+  // internally), the baseline is captured right here, at construction, rather than deferred to the
+  // first `checkpoint()` call. Without this, the very first span this port would ever report
+  // reduces to a meaningless `0` (no prior checkpoint to measure from), discarding the real
+  // construction-to-first-checkpoint synchronous span for the overwhelmingly common case. This one
+  // conditional `performance.now()` read happens at most once per port construction (i.e. once per
+  // `findClashes` call), never per checkpoint -- utterly unlike the up-to-1,000,000-checkpoint cost
+  // finding I-5 was about, and only paid at all when a recorder is already active (when unset,
+  // invariant 1 above still holds exactly: zero `performance.now()` calls of any kind).
+  let lastSpanAt = _spanRecorder ? performance.now() : null;
+  let lastSeenGeneration = _spanRecorder ? _spanRecorderGeneration : -1;
 
   return {
     checkpoint({ loadEpoch, modelIdHint, label } = {}) {
       // Entry validation is ALWAYS synchronous, whether or not a yield follows -- an
       // invalid entry must reject before any yield is even attempted.
       validate(loadEpoch, modelIdHint);
-      const nowMs = performance.now();
-      if (label !== undefined) {
-        reportSpan(label, nowMs - lastSpanAt);
+      if (_spanRecorder) {
+        if (lastSeenGeneration !== _spanRecorderGeneration) {
+          // The active recorder changed since this port last saw it (or this is the very first
+          // checkpoint on a port that had no recorder at construction time) -- discard whatever
+          // baseline this port was carrying; it does not belong to the CURRENT recorder's timeline.
+          lastSpanAt = null;
+          lastSeenGeneration = _spanRecorderGeneration;
+        }
+        const nowMs = performance.now();
+        if (label !== undefined) {
+          reportSpan(label, lastSpanAt === null ? 0 : nowMs - lastSpanAt);
+        }
+        if (!accumulator.isDue()) {
+          lastSpanAt = nowMs; // fast path -- no yield to account for, reset right here
+          return undefined; // synchronous fast path -- no Promise, no microtask forced
+        }
+        return (async () => {
+          await yieldToScheduler();
+          accumulator.markCheckpointed();
+          validate(loadEpoch, modelIdHint);
+          // Reset AFTER the real yield completes, not before -- otherwise the next span would
+          // wrongly count this yield's own paused duration as synchronous work. The recorder may
+          // have been cleared (or swapped) WHILE this yield was in flight -- re-check rather than
+          // assuming the pre-yield state still holds: if unset now, there is nothing to track and
+          // no clock read to spend on it (the next checkpoint's own generation check reconciles
+          // whatever recorder turns out to be active by then).
+          if (_spanRecorder) {
+            lastSpanAt = performance.now();
+            lastSeenGeneration = _spanRecorderGeneration;
+          } else {
+            lastSpanAt = null;
+          }
+        })();
       }
+      // No recorder installed: skip performance.now()/lastSpanAt bookkeeping entirely (the actual
+      // zero-cost path the module's own doc comment promises).
       if (!accumulator.isDue()) {
-        lastSpanAt = nowMs; // fast path -- no yield to account for, reset right here
         return undefined; // synchronous fast path -- no Promise, no microtask forced
       }
       return (async () => {
         await yieldToScheduler();
         accumulator.markCheckpointed();
         validate(loadEpoch, modelIdHint);
-        // Reset AFTER the real yield completes, not before -- otherwise the next span would
-        // wrongly count this yield's own paused duration as synchronous work.
-        lastSpanAt = performance.now();
       })();
     },
   };
