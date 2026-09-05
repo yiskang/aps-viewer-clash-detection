@@ -191,7 +191,7 @@ Everywhere else a probe does its own THREE math (constructing an identity matrix
 timing), it must be handed the real r185 `THREE` (via dynamic `import('three')` inside
 `page.evaluate`, exactly like `test/acceptance/room-locator.acceptance.mjs`'s own Tier 2 does) --
 `probeCosts(model, sampleDbId, modules)` takes this as `modules.THREE`, and
-`extractionCostAndAabbOverhead(model, THREE)` takes it as its own second positional argument.
+`extractionCostAndAabbOverhead(model, THREE, extractFragments)` takes it as its own second positional argument.
 
 ### `weld`/`connectivity`/`bvh-construction` are measured with a direct, per-build-local bracket
 ### -- NOT through the shared checkpoint port (fixed after a codex-advisor finding)

@@ -104,8 +104,11 @@ this repo's existing `spike/fixtures.mjs`-style reporting convention. `test/acce
 
 ## Status as of the last run recorded here: PASS (the milestone's primary acceptance criterion is met)
 
-Re-verified end to end against a live server and a live Viewer instance (2026-09-05, Batch-5 final
-review fix wave): both tiers pass cleanly, 13/13 assertions.
+Re-verified end to end against a live server and a live Viewer instance (2026-09-05, clean
+re-verification against the final committed Batch-5 tree at `7548fde`, run after confirming the
+working tree was clean of any stash/uncommitted-change artifacts): both tiers pass cleanly, 12/12
+assertions (the real count from this run's own `run-report.json`/console output -- an earlier status
+note here had claimed 13/13, which did not match the actual number of checks the script emits).
 
 **Tier 1**: bathtub name search resolves to exactly one dbId; the right-click lands on it; the real
 "Locate Room" context-menu item isolates exactly `[3885]` (Master Bath 207); `window.THREE.REVISION`
