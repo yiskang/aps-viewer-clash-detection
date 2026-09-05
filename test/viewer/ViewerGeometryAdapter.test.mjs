@@ -448,6 +448,25 @@ test('lean Viewer BufferAttribute: itemSize omitted entirely still resolves (ite
   assert.equal(result.unsupported, false, 'absence of itemSize must not itself cause rejection');
 });
 
+test('lean Viewer BufferAttribute guard also excludes a .data-shaped position attribute rejected by Priority 2 (coordinator review round 1 finding)', () => {
+  // A malformed geometry carrying a valid .vb/.vbstride AND an interleaved-shaped
+  // attributes.position.data with an invalid nested stride (NaN): Priority 2 itself
+  // rejects this (its own stride check catches the NaN), Priority 3 doesn't match
+  // (.array is undefined), and without the `!positionAttr.data` guard this would fall
+  // through and be silently misread by Priority 4 at the wrong offset/stride instead
+  // of staying unsupported.
+  const vb = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = {
+    vb,
+    vbstride: 3,
+    attributes: { position: { data: { array: new Float32Array([9, 9, 9, 9]), stride: NaN }, offset: 0 } },
+    ib: QUAD_INDEX,
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'a .data-shaped position attribute rejected by Priority 2 must not fall through to Priority 4');
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
 test('existing-path-still-wins: attributes.position.array present takes Priority 3, not the new Priority 4 branch', () => {
   // Even with .vb/.vbstride also present (as they always are for Viewer-internal
   // geometry), a present .array must still resolve via the existing Priority 3

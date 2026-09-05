@@ -109,8 +109,13 @@ function resolvePositions(geometry) {
   // `new BufferAttribute(undefined, itemSize)` with `attr.offset = attr.itemOffset =
   // <the real offset>` and `.array` left `undefined` by design -- so this branch is
   // gated on `.array` being absent, which is mutually exclusive with Priority 2/3
-  // above (both require `.array` present).
-  if (geometry.vb && isValidPositiveInteger(geometry.vbstride) && positionAttr && !positionAttr.array) {
+  // above (both require `.array` present). Also require `!positionAttr.data`: a
+  // malformed geometry can carry a valid `.vb`/`.vbstride` alongside a `.data`-shaped
+  // (would-be InterleavedBufferAttribute) position attribute that Priority 2 itself
+  // rejects (e.g. an invalid nested `.data.stride`) -- without this guard, that
+  // rejected attribute falls through and gets silently misread here instead of
+  // staying unsupported (coordinator review round 1 finding).
+  if (geometry.vb && isValidPositiveInteger(geometry.vbstride) && positionAttr && !positionAttr.array && !positionAttr.data) {
     const offset = typeof positionAttr.offset !== 'undefined' ? positionAttr.offset : positionAttr.itemOffset;
     // Offsets/strides are array-element indices, never fractional -- a fractional
     // value here would read as undefined/NaN downstream (codex-review round 2
