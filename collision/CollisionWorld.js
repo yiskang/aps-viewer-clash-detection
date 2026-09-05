@@ -375,6 +375,18 @@ export class CollisionWorld {
     return entry?.state === 'live';
   }
 
+  // Minimal, read-only diagnostic accessor (Task 24, performance-gate criteria 8/12) -- the same
+  // class of small, explicitly-scoped addition as scheduler.js's setSpanRecorder (Task 23). Reads
+  // `_instanceCache`'s existing per-epoch bucket size; adds no new state and changes no existing
+  // behavior. Returns 0 for an epoch with no bucket (never yet admitted, or already evicted) rather
+  // than throwing -- callers use this purely to observe the identity-cache's retained size and to
+  // confirm a capacity-precheck rejection left the bucket untouched, never as a liveness check (use
+  // isModelLive/isLeaseValid for that).
+  getEpochCollisionInstanceCount(epoch) {
+    if (this._disposed) throw new WorldDisposedError();
+    return this._instanceCache.get(epoch)?.size ?? 0;
+  }
+
   dispose() {
     // dispose() is NOT one of the two deliberate no-op-on-disposed exceptions (isLeaseValid,
     // evictModel are the only two — docs/...:3380-3391, 3462-3464, 3478-3481) — a second dispose()
