@@ -19,6 +19,20 @@ directly (§3.5, §4.4, §5.1-§5.2, §6.1-§6.6, §7.1a, §9.2, §11, §15 all 
 inline "review fix" notes at each site); the review's remaining findings on candidate-budget semantics
 and statistics-field granularity are recorded as open items in §15 rather than resolved here.
 
+**Second revision note.** This version additionally incorporates a targeted design-resolution pass
+scoped to exactly three previously-open blockers: model-alignment/model-transform TLAS invalidation
+(§6.5, new §6.7, §9.2, §10), TLAS candidate-budget semantics (new §9.3, plus a correctness fix to
+§7.1a's target-scope filter), and finalized `Statistics` field semantics for the TLAS path (new §7.5).
+This pass was itself independently reviewed by a `codex-advisor` (high effort) consult before being
+written into this document; see
+`docs/superpowers/specs/collision-library-m2-targeted-design-resolution-disposition.md` for the full
+disposition, including one genuine correctness bug this pass found and fixed in already-accepted text
+(§7.1a's target-scope filter incorrectly compared a TLAS-matched primitive's `ownerDbId` directly
+against the caller's requested `dbIds`, which silently produces false-negative exclusions for any
+`targets` entry whose requested dbId is an assembly root — exactly the same `ownerDbId`-vs-requested-
+dbId mismatch §4.4 already documents for source self-exclusion, just not yet applied to the target-side
+filter).
+
 ---
 
 ## 1. M2 goals and non-goals
@@ -41,8 +55,11 @@ geometry; GPU collision; physics/continuous collision; a custom BVH implementati
 none is needed); a worker/off-main-thread rewrite without benchmark justification; a full
 clash-management dashboard/workflow; Milestone-3 coordination semantics; general Viewer
 document-replacement continuity (only the specific federated-query behaviors this spec defines are
-in scope); fragment/placement transform-change invalidation for an already-open TLAS entry (§15,
-flagged for explicit human confirmation — the default disposition below treats this as out of scope).
+in scope); Viewer explode, animation, or arbitrary per-fragment dynamic-transform support.
+Model-level placement changes used for federated coordination (alignment, translation, rotation, and
+equivalent model-level transforms) **are** in scope and are supported via explicit, caller-controlled
+TLAS invalidation (§6.7), not silently assumed away — see §6.5 for the resulting placement-freshness
+contract.
 
 ---
 
@@ -551,32 +568,45 @@ already commits to reusing from `GeometryRegistry` — the stale in-flight promi
 raced against, the same "at most one phase unresolved on an entry at a time" discipline
 `GeometryRegistry.js:1482-1484`'s own comment already documents for a structurally identical hazard.
 
-### 6.5 Placement-freshness assumption — explicit, not silent
+### 6.5 Placement-freshness contract — resolved
 
-**This is the one place this spec deliberately introduces a new limitation relative to M1's own
-behavior, and it must be stated plainly rather than discovered later.**
+**This subsection is resolved by the targeted design-resolution pass; the first-draft's open item
+asking for explicit human confirmation (formerly §15 item 1) is closed.** Human decision: Milestone 2
+**must** support model-level placement changes used for federated coordination — model alignment,
+translation, rotation, and equivalent model-level transforms — invalidating a cached TLAS. Milestone 2
+explicitly does **not** need to support Viewer explode, animation, arbitrary per-fragment dynamic
+transforms, or high-frequency visualization-only displacement.
 
-M1 does not cache placement across calls: `extractFragments` re-reads `worldMatrix`/`worldBounds`
-fresh from the Viewer's `FragmentList` on **every** `findClashes` call
-(`ViewerModelAdapter.js:37-48,110-111`); the `CollisionInstance` identity cache (`_instanceCache`)
-retains only `{fragmentId, geometryIdentity}` (`CollisionWorld.js:461`), never placement — which is
-exactly why §6.1 introduces `_placementByEpoch` as new, M2-only state rather than reusing
-`_instanceCache` for a purpose it was never built for. A TLAS entry built at time T and reused at time
-T+1 (§6.4's revision check only protects against *new admissions*, not *moved* fragments) is only
-correct if nothing under that epoch moved between T and T+1.
+As established in §6.1/§6.4, `extractFragments` re-reads `worldMatrix`/`worldBounds` fresh from the
+Viewer's `FragmentList` on every call, but a cached TLAS entry does not automatically observe a
+placement change the way a per-call linear scan does — the cache is exactly the mechanism that must be
+told, explicitly, when a placement changed underneath it.
 
-**Default disposition for M2**: a TLAS entry assumes static world placement for the life of its
-`loadEpoch` — i.e., between admission and eviction, a model's fragments are assumed not to move
-(no explode view, no live transform edits, no animation) for the purposes of TLAS-accelerated
-queries. This is declared, not silently assumed:
+**Default disposition, as resolved**: a TLAS entry's underlying placement data is treated as static
+**unless and until the caller explicitly invalidates it** via `invalidateModelPlacement(model)` (§6.7)
+— not static unconditionally, as the first draft assumed. Concretely:
 
-- No Viewer transform-change event is wired to invalidate a live TLAS entry in M2.
-- `broadPhase: 'linear'` (§3.5) remains available and is placement-fresh on every call (it re-reads
-  `worldBounds` from the same per-call extraction M1 already does) — the escape hatch for any
-  workflow that cannot accept this assumption.
-- This is flagged in §15 as requiring explicit human confirmation before implementation, together
-  with a fallback design (rebuild TLAS fresh per call, forfeiting the cache) if the answer is "no,
-  M2 must handle mid-session transforms."
+- No Viewer transform-change event is wired to invalidate a live TLAS entry automatically in M2 — this
+  remains true; invalidation is caller-controlled and explicit, never inferred from a Viewer event, per
+  the M2 prompt's own instruction not to rely on an assumed Viewer event unless independently verified
+  and intentionally adopted (none is, here).
+- A caller that performs a model-alignment/move/rotate operation **must** call
+  `invalidateModelPlacement(model)` (§6.7) after the transform is committed and visible through the
+  Viewer's own `getWorldMatrix`/`getWorldBounds` accessors — this is a caller-contract precondition
+  `CollisionWorld` cannot itself verify (it has no independent way to know whether the Viewer's internal
+  `FragmentList` state already reflects the new transform), so the contract is stated here explicitly
+  rather than left implicit.
+- `broadPhase: 'linear'` (§3.5) remains available, is always placement-fresh on every call regardless
+  of any invalidation call having been made, and needs no invalidation call at all — it never reads
+  from `_placementByEpoch`/the TLAS cache in the first place (§7.4). This is the correctness escape
+  hatch for any workflow that cannot tolerate the TLAS path's cache semantics, exactly as originally
+  stated.
+- Calling `invalidateModelPlacement` at animation/per-frame rate is not a supported usage pattern: each
+  call forces a full placement re-read and TLAS rebuild for that epoch at the next TLAS-consuming query
+  (§6.7), which produces **correct but pathologically slow** behavior for a workflow calling it every
+  frame — this is exactly why explode/animation remain explicit non-goals (§1) rather than "technically
+  works." `invalidateModelPlacement` is designed for a bounded number of discrete coordination actions
+  (align model A to model B once, then query), not continuous manipulation.
 
 ### 6.6 Eviction/disposal
 
@@ -591,6 +621,188 @@ queries. This is declared, not silently assumed:
   (`CollisionWorld.js:400-405`, same defensive try/catch), plus `this._placementByEpoch.clear()`/
   `this._placementRevisionByEpoch.clear()` alongside the existing wholesale-clear calls
   (`CollisionWorld.js:406-412`).
+
+### 6.7 Model-placement invalidation (alignment/move/rotate support)
+
+**New public method**: `invalidateModelPlacement(model)`. This is the explicit, caller-controlled
+signal the workflow in the M2 prompt requires: *Model A and Model B are loaded → a model-alignment
+tool applies a model-level move/rotate/transform → the alignment workflow informs `CollisionWorld`
+that the model's placement changed → the model's placement revision increments → any cached TLAS for
+that epoch becomes stale → the next TLAS-backed query re-reads current world matrices/world bounds and
+rebuilds before use.*
+
+#### 6.7.1 Contract
+
+```js
+world.invalidateModelPlacement(model);
+```
+
+- Throws `WorldDisposedError` if the world is disposed — the standard contract every public method
+  except `evictModel`/`isLeaseValid` already follows (`CollisionWorld.js:338-344,346-358` — these two,
+  not `dispose`, are M1's own documented non-throwing exceptions; `dispose()` itself throws
+  `WorldDisposedError` on a second call like any other public method, per its own comment at
+  `CollisionWorld.js:392-393`).
+- Throws `ModelEvictedError(modelIdOf(model))` if the model was ever evicted — resolved via the
+  existing `_modelLifecycle` `WeakMap` (`CollisionWorld.js:224-225,321-326`), the same reverse
+  model→epoch lookup `admitModel`/`isLeaseValid`/`evictModel` already use. No new reverse-lookup
+  structure is introduced.
+- No-ops if the model was never admitted (`_modelLifecycle.get(model)` is `undefined`) — nothing to
+  invalidate.
+- Otherwise: resolves `epoch = _modelLifecycle.get(model).epoch` and performs the revision-bump/
+  dirty-marking sequence in §6.7.2.
+
+#### 6.7.2 Revision and generational-invalidation tracking
+
+**One canonical staleness counter, not two.** `_placementRevisionByEpoch` (§6.4) remains the single
+source of truth for "has this epoch's placement changed since a given `TlasEntry` was built" — both a
+new-admission ("growth") and an explicit invalidation bump the same counter. A `TlasEntry`'s
+`builtAtRevision` mismatching the epoch's current revision means "rebuild," full stop, regardless of
+which of the two causes produced the mismatch.
+
+What differs between the two causes is **what a rebuild must do before it can trust
+`_placementByEpoch`'s current contents**:
+
+- **Growth** (a new fragment admitted): the newly-written entry is already fresh (extraction always
+  reads live Viewer state when it writes a genuinely new entry, §6.7.4) and every other existing entry
+  in the epoch's map is untouched — nothing needs to be re-read; a rebuild only needs to run the
+  packed-tree builder over the map's current contents.
+- **Invalidation** (`invalidateModelPlacement` was called): every *existing* entry's
+  `worldMatrix`/`worldBounds` may now be stale — a rebuild must first re-read them from the Viewer
+  before trusting the map.
+
+**New field**: `_placementInvalidatedAtRevision: Map<loadEpoch, revision>` — not a boolean `Set`.
+`invalidateModelPlacement` performs, synchronously, in one step:
+
+1. `const revision = (this._placementRevisionByEpoch.get(epoch) ?? 0) + 1;`
+2. `this._placementRevisionByEpoch.set(epoch, revision);`
+3. `this._placementInvalidatedAtRevision.set(epoch, revision);`
+
+Recording the exact revision the invalidation produced (rather than a bare boolean) is what makes the
+generation-aware compare-and-publish in §6.7.3 possible: a refresh attempt can tell whether the
+invalidation it is responding to is still the *current* one, or whether a second invalidation has
+superseded it while the refresh was in flight.
+
+A TLAS-consuming query, on finding `entry.builtAtRevision !== _placementRevisionByEpoch.get(epoch)`,
+checks whether `_placementInvalidatedAtRevision.get(epoch)` is defined and `>= entry.builtAtRevision`
+(i.e., an invalidation happened since this entry was last built) — if so, it must run the
+refresh-then-rebuild path (§6.7.3) rather than the growth-only rebuild-from-current-map path.
+
+#### 6.7.3 Refresh is staged and published atomically, never mutated in place
+
+**Why in-place mutation is wrong**: `_placementByEpoch`'s per-epoch map is shared, readable state. A
+refresh that re-reads and overwrites its entries one at a time, yielding at checkpoints between reads
+(the same discipline `extractFragments`'s own subtree walk already uses for large populations, §3.3),
+would let a concurrent reader — another `findClashes` call touching the same epoch, or this call's own
+later self-exclusion/provenance lookups (§4.4, §3.4) — observe a mixture of already-refreshed
+(post-transform) and not-yet-refreshed (pre-transform) records for the *same* epoch mid-refresh. That
+is exactly the kind of "possibly-wrong-answer" hazard §9.2/§10 already treat as unacceptable for
+lifecycle changes generally.
+
+**Required mechanism**: build a private, unpublished replacement map (or an equivalent set of
+replacement records — implementation detail) as the refresh walk proceeds, re-reading
+`worldMatrix`/`worldBounds` via the exact same primitives `extractFragments` already uses
+(`fragList.getWorldMatrix(fragId, scratchMatrix)` / `fragList.getWorldBounds(fragId, scratchBox)`,
+`ViewerModelAdapter.js:37-48`) for every `fragmentId` already present in
+`_placementByEpoch.get(epoch)` — `ownerDbId`/`geometryIdentity`/`modelId` are carried over unchanged
+(alignment does not change tree topology or geometry identity, only transform). The shared
+`_placementByEpoch` map is **not touched** while this walk is in progress.
+
+When the walk completes, **synchronously, with no further await in between** (this is the
+compare-and-publish step, and it must be atomic with respect to the checks it depends on):
+
+1. Verify the world is not disposed and the model's lease is still live (`_isEpochLive(epoch)`/
+   `isLeaseValid`-equivalent).
+2. Verify `_placementRevisionByEpoch.get(epoch)` and `_placementInvalidatedAtRevision.get(epoch)` still
+   equal exactly the values captured when this refresh attempt began.
+3. If both hold: publish — replace `_placementByEpoch.get(epoch)`'s entries with the staged replacement
+   map, clear `_placementInvalidatedAtRevision.delete(epoch)` (since this refresh's own captured
+   revision is still current), and proceed to rebuild the `TlasEntry` from the now-current map,
+   recording `builtAtRevision` as the (still-current) revision.
+4. If either check fails: **discard the staged replacement entirely.** A failed disposal/eviction check
+   aborts the query as usual (§9.2/§10). A failed revision/invalidation check means a *second*
+   invalidation (or new admission) landed while this refresh was reading Viewer state — the staged data
+   is now itself stale before it was ever published; the caller retries (the next TLAS-consuming query
+   attempt re-enters this same lazy-build/refresh path, which will now correctly respond to whichever
+   invalidation is actually current). The first, superseded refresh attempt must never clear the
+   second invalidation's marker — that is precisely what the compare-in-step-2 prevents.
+
+This reuses no new concurrency primitive beyond what §6.3 already commits this design to (the
+`GeometryRegistry`-style insert-first-then-build/single-flight/cancellation-race pattern) — the refresh
+is simply one more phase of the same kind of build the TLAS entry already goes through, gated by one
+more precondition check at its publish point.
+
+#### 6.7.4 Extraction remains write-once per fragment; only an explicit refresh may overwrite
+
+**Correction to §6.1's phrasing.** §6.1 describes `_placementByEpoch` as populated "at the same site
+extraction already produces this exact data," which could be misread as "extraction refreshes an entry
+every time it touches that fragment again." That is not the intended contract and must not be the
+implementation: if `extractFragments`/`extractAllFragments` encounters a `fragmentId` that **already**
+has an entry in `_placementByEpoch.get(epoch)` (e.g., a later call re-requests an overlapping dbId), it
+must **not** overwrite that existing entry — only a fragment with **no** existing entry is inserted (a
+new entry, which also increments `_placementRevisionByEpoch` as "growth," §6.4). This is what makes
+`_placementInvalidatedAtRevision`/§6.7.3's refresh the **only** legitimate writer of an *existing*
+fragment's placement — extraction stays purely additive to this table, exactly the "capture once,
+append-only" discipline §6.1 already intends and `_recordRepresentativeFragments` already models
+elsewhere in M1. A call's own call-local `PlacedInstance`/`ExtractedFragmentRecord` values (used for
+that call's own narrow-phase/self-exclusion work) are unaffected by this rule and continue to reflect a
+genuinely fresh per-call read, exactly as M1 already does — the two are allowed to diverge for the
+freshness gap between refreshes, which is precisely the accepted static-until-invalidated contract
+(§6.5).
+
+#### 6.7.5 A query must not invalidate itself
+
+**A real hazard the first draft of this resolution missed, caught by an independent `codex-advisor`
+review of this pass before it was written here (see the disposition report).** A cross-model query
+snapshots each captured model's placement revision at query entry for later mid-query comparison
+(§9.2). But that same query's **own** extraction work can admit genuinely new fragments into
+an epoch it captured (ordinary growth, §6.4) — which increments `_placementRevisionByEpoch` for that
+epoch. Comparing the query's original entry-time snapshot against the post-admission current revision
+would make the query detect its **own** writes as an external change and incorrectly abort itself.
+
+**Required mechanism**: each query tracks its own **expected revision per captured epoch**, not merely
+a static entry-time snapshot:
+
+- At query entry, `expectedRevisionByEpoch.set(epoch, currentRevision)` for every captured epoch,
+  exactly as already planned.
+- **Before** performing its own genuinely-new-fragment insertion into `_placementByEpoch` for a
+  captured epoch (§6.4/§6.7.4's growth path), the query first compares
+  `_placementRevisionByEpoch.get(epoch)` against its **own** `expectedRevisionByEpoch.get(epoch)`. If
+  they differ, some *other* write already happened that this query never accounted for — abort right
+  there (§9.2, §10), **before** attempting the insertion at all. This pre-insertion check is what
+  prevents the query from silently absorbing a foreign change into its own bookkeeping: without it, a
+  query that inserts unconditionally and merely updates its own `expectedRevisionByEpoch` to whatever
+  the resulting revision number happens to be would mask an intervening external bump it never
+  actually validated against (its own next self-consistent update would make current and expected
+  match again, and the external change would never be caught).
+- If the pre-insertion check passes, the insertion and the resulting `_placementRevisionByEpoch`
+  increment happen synchronously, and — in that same synchronous step, before any further await — the
+  query updates its **own** `expectedRevisionByEpoch.set(epoch, newRevision)` to match.
+- The mid-query revalidation (§9.2) compares `_placementRevisionByEpoch.get(epoch)` against **this
+  query's own tracked `expectedRevisionByEpoch.get(epoch)`**, not the original entry-time value, at
+  every checkpoint/shared-await/return boundary point 7 already requires. A mismatch found there means
+  some write happened to that epoch's revision that this query did **not** itself perform and account
+  for via the pre-insertion check above — i.e., a different concurrent caller's extraction growth, or
+  an explicit `invalidateModelPlacement` call from anywhere — and that is exactly the condition that
+  must abort the query (§9.2, §10).
+
+**Consequence, stated plainly**: this makes the abort condition uniform and simple — "any revision
+change to a captured epoch not caused by this query's own synchronous writes aborts the query" —
+rather than trying to distinguish "benign growth from another caller" from "alignment-caused
+invalidation" at the point of decision. The cost is real and worth naming: a long-running cross-model
+query racing a *different*, unrelated `findClashes` call that happens to admit new fragments into a
+captured epoch will abort and must be retried by its caller, even though no alignment ever happened.
+This is treated as an acceptable, symmetric extension of the already-accepted §9.2.4 contract
+("eviction of any captured model aborts the whole query, full stop, no partial-federation result") to
+a second class of uncoordinated change, not a new category of strictness invented for this pass alone.
+
+#### 6.7.6 Compatibility
+
+Every M1/M2 identity, lifecycle, and eviction/disposal invariant already established (§4.1, §6.6) is
+unaffected — `invalidateModelPlacement` only touches the new `_placementRevisionByEpoch`/
+`_placementInvalidatedAtRevision` tables and the TLAS cache, never `_instanceCache`, `_modelByEpoch`,
+`_modelLifecycle`, or `_liveEpochs`. `evictModel`/`dispose` gain no new responsibility beyond §6.6's
+existing `Map.delete`/`Map.clear` calls for the new tables, since an evicted epoch's placement state is
+already released at the same boundary.
 
 ---
 
@@ -639,33 +851,72 @@ the target epoch's frame) rather than a second, source-side TLAS. This is a deli
 earlier broader query) contains dbIds `10, 11, 12` would emit candidates for all three, silently
 returning results for elements the caller never asked about.
 
-**Required filter**: after a TLAS query emits primitive-range matches (§7.1/§7.2) and before the
-exact retest (§7.3), every matched primitive is checked against the *calling query's own* target
-membership for that operand:
+**`[targeted design-resolution, correctness fix]` Required filter — corrected from the first draft's
+`ownerDbId`-vs-requested-`dbIds` comparison, which was wrong for an assembly-rooted target request.**
+§4.4 already establishes, for the *source* side, that `extractFragments`'s first-discovery-wins capture
+assigns each fragment's `ownerDbId` to whichever tree node the walk *directly* discovered it under —
+for an assembly-rooted selection, a descendant fragment's `ownerDbId` can be a **child** dbId different
+from the single dbId actually requested. The same is true on the **target** side: a `targets` entry
+requesting `dbIds: [ASSEMBLY_ID]` produces extracted fragments whose individual `ownerDbId` values are
+the assembly's *children*, not `ASSEMBLY_ID` itself. A filter that checked
+`matchedPrimitive.ownerDbId ∈ requestedDbIds` directly (the first draft of this section) would
+therefore **incorrectly exclude** every one of those legitimate descendant fragments — a false-negative
+correctness bug, not merely an imprecision, caught during this pass by an independent `codex-advisor`
+review before being written here (see the disposition report).
 
-- `targets` entry has explicit `dbIds` → matched primitive's `ownerDbId` must be in that entry's
-  requested set (an O(1) `Set.has` check against the caller's own requested-dbId set, built once per
-  call).
-- `targets` entry omits `dbIds` (whole-model scope, §3.2) → no filter; every matched primitive in
-  that epoch is in scope, by definition.
+**Corrected filter**: for each `targets` entry with explicit `dbIds`, build the entry's own
+extracted-fragment-membership set once per call — `extractFragments(model, dbIds, epoch)`'s own output
+`Map<fragmentId, ...>` (the same primitive §4.4 already uses for source self-exclusion) — and check
+`matchedPrimitive.fragmentId ∈ thatEntrysExtractedFragmentIds` (still an O(1) `Set`/`Map.has` per
+candidate; the cost of computing the membership set itself is paid once per call, not per candidate). A
+`targets` entry that omits `dbIds` (whole-model scope, §3.2) still applies no filter — every matched
+primitive in that epoch is in scope, by definition, unchanged from the first draft.
 
-This filter is per-call, not baked into the cached TLAS entry itself — the same cached tree correctly
-serves both a narrow explicit-dbIds query and a later whole-model query against the same epoch, with
-the filter (not the tree) carrying the difference.
+**Duplicate/overlapping `targets` entries for the same model**: if two or more `targets` entries name
+the same `Model` object (§9.2 point 1 already collapses these to one *lease*, but not, in the first
+draft, one *filter*), their extracted-fragment-membership sets are **unioned** into one effective
+per-epoch filter for that model — never queried as two separate per-entry TLAS passes, which would
+otherwise perform genuinely duplicate traversal work against the same target epoch. If **any** entry
+for that model omits `dbIds` (whole-model scope), whole-model scope wins for that epoch — a broader
+entry is never narrowed by a coexisting narrower one. This closes a real gap the first draft of §9.2
+point 1 only addressed at the lease level, not the filter level.
+
+This filter — corrected or not — remains per-call, not baked into the cached TLAS entry itself: the
+same cached tree correctly serves both a narrow explicit-`dbIds` query and a later whole-model query
+against the same epoch, with the filter (not the tree) carrying the difference.
 
 ### 7.1b Candidate dedup and ordering (`[review fix, Critical #3, partial]`)
 
 The M2 prompt's own required-scope list (§"Candidate ownership/dedup") asks for deterministic
 candidate ordering and no duplicate narrow-phase work. Two mechanisms already in this spec, restated
 together here for traceability: §3.4's `(sourceEpoch, sourceDbId, targetEpoch, targetDbId)` dedup key
-prevents a duplicate *result* pair; a candidate-level dedup (preventing the *narrow phase itself* from
-re-running on the same `(sourceFragmentId, targetFragmentId)` pair twice within one call, e.g. if a
-target's dbId-membership filter above and a future `bvhcast` path could in principle emit the same
-leaf-pair from two different traversal branches) is tracked as an open item in §15 rather than fully
-specified here — the M1 baseline's own linear broad phase has no duplicate-candidate hazard in the
-first place (its double loop visits each `(i,j)` pair exactly once), so this is a genuinely new
-concern introduced by the TLAS's tree-shaped traversal, not a carried-over M1 gap. Deterministic
-ordering: `_runBroadPhaseScan`'s existing per-call, insertion-order candidate list is preserved
+prevents a duplicate *result* pair. **Candidate-level dedup (preventing the narrow phase itself from
+re-running on the same `(sourceFragmentId, targetFragmentId)` pair twice within one call) is resolved
+by this pass, `[targeted design-resolution]`, as: no dedup mechanism is required for M2's adopted
+traversal pattern, because that pattern is structurally dedup-free by construction** — not because a
+dedup step was added. This holds given the following binding invariants, which this spec now commits
+to as part of §5.2/§7.1's contract, not left implicit:
+
+- the packed tree partitions primitives into disjoint leaf ranges (one primitive-buffer entry per
+  `(loadEpoch, fragmentId)`, one root range, no overlapping ranges) — a property `buildPackedTree`
+  already guarantees and §5.2 already requires the adapter to preserve;
+- M2 performs only the single-shape query pattern adopted in §7.1 (one box query per admitted source
+  `CollisionInstance` against one target epoch's TLAS) — never the deferred TLAS-vs-TLAS `bvhcast`
+  (§7.2), which is the only traversal shape where the same candidate pair could plausibly be reached
+  via two different traversal branches;
+- each admitted source instance is queried exactly once per call (§7.1's own iteration), and each
+  distinct target epoch is queried exactly once per source instance (§7.1a's union-filter resolution,
+  above, folding duplicate `targets` entries into one query rather than one query per entry);
+- a traversal attempt that aborts (e.g. the candidate-budget exhaustion in §9.3, or a placement-refresh
+  publish failure retried per §6.7.3) always starts its candidate accumulation fresh on retry — never
+  appends to a partial array left over from a discarded attempt.
+
+Given these, a single per-source-instance traversal cannot emit the same target primitive twice, and
+the traversal pattern as a whole cannot reach the same `(sourceFragmentId, targetFragmentId)` pair via
+two independent paths. **If the deferred TLAS-vs-TLAS `bvhcast` (§7.2) is ever adopted**, this
+conclusion no longer holds automatically — that is exactly the point at which a real candidate-level
+dedup mechanism would need to be designed, consistent with `bvhcast` already being deferred rather than
+adopted in M2. Deterministic ordering: `_runBroadPhaseScan`'s existing per-call, insertion-order candidate list is preserved
 unchanged for `broadPhase:'linear'`; the TLAS path's own candidate order is a function of the packed
 tree's own build order (deterministic for a fixed input set and build-strategy configuration, §5.2,
 but not defined here to match the linear path's specific order) — §12's differential fixtures compare
@@ -720,6 +971,80 @@ Unchanged M1 `_runBroadPhaseScan`/`_testBroadPhasePair` (`CollisionWorld.js:765-
 the new `broadPhase` option (§3.5). For a cross-model call, this runs once per `(sourceEpoch,
 targetEpoch)` pair in the query's operand set — same O(n×m) shape as M1, just invoked per involved
 model pair rather than once for the whole (single-model) call.
+
+### 7.5 `Statistics` field contract for the TLAS path — resolved
+
+**Resolved by this pass**, closing the ambiguity §7.1b/§14.3 both flagged ("candidate count" meaning
+three different things) and finalizing the field-level shape §16's compatibility table previously left
+open.
+
+#### 7.5.1 New additive fields
+
+All new fields are always present in `Statistics` (`emptyStatistics()`, `CollisionWorld.js:191-206`,
+gains these alongside its existing zero-defaulted fields, the same pattern `blasBuilt`/`blasCacheHits`
+already use) and default to `0` — never conditionally omitted, including for `broadPhase: 'linear'`
+calls and for a call that returns zero results:
+
+| Field | Stage | Meaning |
+|---|---|---|
+| `tlasLeafRangeEmissions` | 1 | Raw TLAS leaf/range hits from traversal, summed across every per-source-instance query in the call, *before* expansion into per-primitive candidates. |
+| `tlasPrimitiveCandidatePairs` | 2 | Every individual primitive-index candidate produced by expanding a leaf/range match, summed across the whole call, counted *before* the target-scope filter (§7.1a) and source self-exclusion (§4.4) are applied. This is exactly the running counter §9.3.1 checks against `maxTlasCandidatePairs`. |
+| `tlasExactRetestSurvivors` | 3 | Candidates that passed `_testBroadPhasePair` (§7.3), summed across the call. |
+| `tlasNarrowPhaseInputPairs` | 4 | Unique fragment pairs actually handed to narrow phase. Equal to `tlasExactRetestSurvivors` for M2's adopted traversal pattern, given §7.1b's structural no-dedup guarantee — kept as a separate field anyway, both for forward-compatibility with a future `bvhcast` path (§7.2) where the two could genuinely diverge once real dedup is needed, and because an unexpected divergence under M2's current design would itself be a useful bug signal in a test assertion. |
+| `tlasBuilds` | — | Count of TLAS builds/rebuilds *this call itself* performed (§6.4/§6.7.3), whether triggered by growth staleness, invalidation staleness, or a first-ever build for a never-built epoch. |
+| `tlasCacheHits` | — | Count of times this call found an already-warm, non-stale `TlasEntry` and queried it directly with no build/refresh. |
+| `tlasSharedBuildWaits` | — | Count of times this call had to await a *different* concurrent caller's already-in-flight build/refresh (§6.3's single-flight sharing) rather than performing or avoiding a build itself. Without this field, `tlasBuildMs: 0` alone cannot distinguish "this call's target TLAS was already warm" from "this call spent its whole broad phase blocked waiting on someone else's build" — a distinction the performance gate (§14) needs. |
+| `tlasBuildMs` | — | Wall-clock time *this call itself* spent performing a build (§6.4) or a placement refresh (§6.7.3) it initiated — `0` for a cache hit and `0` for a call that only awaited another caller's shared build (that wait is reflected in `broadPhaseMs`, not here — see §7.5.3). |
+| `tlasQueryMs` | — | Wall-clock time this call spent in its own synchronous TLAS traversal, primitive expansion, filtering, and exact-retest work (stages 1-3 above), locally timed per call. |
+
+#### 7.5.2 Cross-path field semantics and the inequality chain
+
+**`broadPhasePairs` (existing M1 field, `CollisionWorld.js:193,775`) is generalized, compatibly, to one
+canonical cross-path meaning: the count of candidate pairs whose exact `_testBroadPhasePair` predicate
+was evaluated during broad phase.** This is not a behavior change for any existing caller: under
+`broadPhase: 'linear'` the field's numeric value is byte-for-byte unchanged (the linear scan already
+retests every one of its Cartesian pairs, so "pairs examined" and "pairs exact-retested" already
+coincide exactly for that path, per the code as it stands today — this is a documentation-level
+generalization of an already-true fact, not a new computation). Under `broadPhase: 'tlas'`,
+`broadPhasePairs` counts every candidate that survived the target-scope/self-exclusion filters and was
+handed to `_testBroadPhasePair` — **not** `tlasPrimitiveCandidatePairs` (an earlier draft of this
+resolution incorrectly claimed these two were equal; they are not, because filtering happens between
+expansion and the exact retest, and filtering is expected to remove real candidates in the ordinary
+case, e.g. any query whose target scope is a proper subset of an epoch's admitted population).
+
+This gives one field, one canonical meaning, directly comparable between the two broad-phase
+implementations — satisfying "field names must have one canonical meaning" and "linear-vs-TLAS
+comparability" simultaneously, rather than requiring a cross-reference table between differently-scoped
+linear-only and tlas-only fields (the more conservative alternative this pass considered and rejected,
+per the disposition report).
+
+**The resulting inequality chain, which any TLAS-path statistics-consistency test should assert
+directly:**
+
+```
+tlasPrimitiveCandidatePairs  >=  broadPhasePairs            (filtering removes candidates)
+broadPhasePairs              >=  tlasExactRetestSurvivors    (not every retested pair passes)
+tlasExactRetestSurvivors     ==  tlasNarrowPhaseInputPairs   (§7.1b's structural no-dedup guarantee)
+tlasNarrowPhaseInputPairs    ==  narrowPhasePairs             (same set, same meaning, under either path)
+```
+
+`narrowPhasePairs` (existing M1 field, `CollisionWorld.js:194,739`) needs no change to its own meaning
+— it is already model-agnostic (§8's "no change" finding) and equals `tlasNarrowPhaseInputPairs` for a
+`broadPhase: 'tlas'` call, exactly as it already equals the linear path's own narrow-phase input count
+today.
+
+#### 7.5.3 Timing-field ownership under shared builds
+
+`broadPhaseMs` (existing field, `CollisionWorld.js:201,727`) **keeps its existing end-to-end meaning
+unchanged**: total wall-clock time this call's broad phase took, as observed by this call, including
+any waiting/yielding at checkpoints — a superset measurement that `tlasBuildMs`/`tlasQueryMs` break
+down further for a `broadPhase: 'tlas'` call, not a value either of those two replaces. Scheduler span
+labels (`'tlas-build'`/`'tlas-broad-phase-query'`, §9.1) are global, shared-clock instrumentation and
+must not be conflated with a single call's own attributable statistics under concurrency —
+`tlasBuildMs` counts only work *this call itself* initiated (a build or refresh it started and is
+responsible for), never time spent merely awaiting another concurrent caller's already-in-flight build
+(that wait shows up in `broadPhaseMs`'s end-to-end total and in `tlasSharedBuildWaits`'s count, but
+contributes `0` to this call's own `tlasBuildMs`).
 
 ---
 
@@ -815,6 +1140,124 @@ insufficient: it satisfies liveness for the epoch currently in flight, but says 
    internal logic already checkpointed, and (ii) synchronously immediately before every `return`
    statement in a cross-model `findClashes` call, success or empty-result alike — not only at the
    existing per-iteration checkpoint call sites.
+8. **`[targeted design-resolution]` The composite checkpoint additionally revalidates captured
+   placement revisions, not just epoch liveness.** At every point that point 7 already requires (existing
+   per-iteration checkpoints, immediately after any await on a shared/cross-caller resource,
+   immediately before every return), the composite check also compares each captured epoch's current
+   `_placementRevisionByEpoch` value against this query's own tracked `expectedRevisionByEpoch`
+   (§6.7.5 — not the query's original entry-time snapshot, to avoid a query invalidating itself via its
+   own ordinary extraction growth). A mismatch aborts the whole query with `ModelPlacementChangedError`
+   (§10), the same "abort the whole query, never return a partial/possibly-stale result" contract point
+   4 already establishes for eviction. **Validation precedence at each check point**: disposed
+   (`WorldDisposedError`) → evicted/invalid lease (`ModelEvictedError`) → placement-revision mismatch
+   (`ModelPlacementChangedError`) — checked in that order, matching the existing convention that a more
+   fundamental lifecycle failure (the world itself, then the model's admission) is diagnosed before a
+   narrower one (this model's placement). **Scope**: this revalidation applies only to a query running
+   `broadPhase:'tlas'` for the epoch in question — a `broadPhase:'linear'` call never consults
+   `_placementByEpoch`/a cached TLAS for its own correctness (§6.5) and would gain nothing from this
+   check but spurious aborts from unrelated concurrent growth; a call that mixes modes across its
+   operand set (not exposed in M2's own context-menu UI, but possible for a direct library caller
+   passing an explicit per-call `broadPhase` override, §3.5) only revalidates placement revisions for
+   the epochs it is actually consulting via TLAS.
+
+### 9.3 TLAS candidate-budget semantics
+
+**Resolved by this pass.** M1's Cartesian precheck, `_exceedsBroadPhaseCeiling(sourceCount,
+targetCount)`/`maxBroadPhaseInstancePairs` (`CollisionWorld.js:698-703,760-763`), is checked once per
+call, *before* any broad-phase work runs, because for the linear scan the total work **is** exactly
+`sourceCount × targetCount` — a value computable with zero traversal cost. Under `broadPhase: 'tlas'`
+this precondition does not hold: the whole reason a TLAS exists is that real traversal cost is **not**
+proportional to the Cartesian product, and a precheck against that product would reject queries the
+TLAS was built specifically to make cheap. **`maxBroadPhaseInstancePairs`/`_exceedsBroadPhaseCeiling`
+is therefore not applied under `broadPhase: 'tlas'` at all** — a different budget model is required,
+defined here.
+
+#### 9.3.1 What is bounded, and where
+
+A TLAS candidate count is not knowable in advance the way a Cartesian product is — nothing is known
+about how many primitives a query box will actually hit until the traversal runs. The budget is
+therefore an **incremental, checked-as-you-go running counter**, not an upfront precheck:
+
+- **Counted quantity**: every individual primitive-index candidate produced when a TLAS leaf/range
+  match (§7.1) is expanded into per-primitive candidates — **before** the target-scope membership
+  filter (§7.1a) and source self-exclusion (§4.4) are applied to that candidate, and before the
+  exact-AABB retest (§7.3) runs. This is deliberately upstream of both filters: the CPU/memory cost of
+  expanding a leaf range into individual primitive candidates is already incurred at expansion time
+  regardless of whether a given candidate is later filtered out, so bounding only the *post-filter*
+  survivors would leave the actual unbounded-expansion work outside the budget entirely — exactly the
+  gap a budget exists to close.
+- **Scope**: one running counter for the **entire `findClashes` call**, accumulated across every
+  admitted source `CollisionInstance`'s query against every distinct target epoch touched by that call
+  — not reset per source instance and not reset per `(sourceEpoch, targetEpoch)` pair. This mirrors
+  M1's own existing scope (M1's `_exceedsBroadPhaseCeiling` is checked once per whole call, since M1
+  only ever has one source/target pair per call); the goal is bounding the aggregate cost of one
+  `findClashes` invocation, and a per-pair-only ceiling would let total call cost grow unboundedly as
+  `limit × (number of target epochs in the call)`. A federated call touching many target models each
+  individually under a per-pair ceiling could still blow up in aggregate under a per-pair-only rule —
+  the whole-call scope is what actually bounds the call.
+- **New constant**: `maxTlasCandidatePairs` — the semantic contract (this section) is defined now; the
+  tuned numeric value is deferred to implementation/the performance gate (§14), per the M2 prompt's own
+  instruction not to invent a provisional ceiling ahead of measurement.
+
+#### 9.3.2 Exhaustion behavior
+
+Permit exactly `maxTlasCandidatePairs` expanded candidates for the call. On the attempted
+`(limit + 1)`-th expansion, traversal for the current source-instance/target-epoch pair terminates and
+the call throws:
+
+```js
+CapacityExceededError('tlas-candidate-budget', {
+  limit: maxTlasCandidatePairs,
+  completed: maxTlasCandidatePairs,
+  attempted: maxTlasCandidatePairs + 1,
+  sourceEpoch,   // the pair being processed when the ceiling was reached — diagnostic, not a
+  targetEpoch,   // statement that the budget itself is scoped per-pair (it remains whole-call)
+})
+```
+
+Reusing `CapacityExceededError` (`CollisionWorld.js:212-219`) with a new `kind` follows the class's own
+existing discriminated-`kind` pattern (`'call-wide-unique-fragment-precheck'`/`'bucket-capacity'`
+today) rather than introducing a new error class — this failure mode ("too much candidate work for
+this call") is the same semantic family as the existing kinds. **Required accompanying fix**: the
+class's constructor message (`` `CollisionInstance admission rejected (${kind})` ``,
+`CollisionWorld.js:214`) is specific to instance-admission failures and is misleading for a
+traversal-exhaustion `kind` — generalize the message (e.g. a `kind`-keyed message lookup, or a more
+generic template) as part of implementing this `kind`; this is a small, compatible touch to an
+existing class's human-readable text, not a change to its `{name, kind, ...details}` structural
+contract, so no consumer reasonably depending on that shape is affected.
+
+**Deterministic, no silent truncation**: exhaustion always throws — a call that hits the ceiling never
+returns a partial `pairs` result silently reported as complete, matching M1's own "no criterion
+silently converted to a pass" discipline (§14) and the general "abort rather than return a
+possibly-wrong result" posture this spec already commits to for lifecycle/placement hazards (§9.2,
+§6.7).
+
+#### 9.3.3 Callback-safe termination — do not throw from inside the traversal callback
+
+`[targeted design-resolution, implementation-safety requirement]` §7.1 already documents that the
+vendored traversal machinery's own callback-driven paths (`bvhcast`, and equally the
+box-query/`shapecast`-family traversal `CollisionInstanceBVH`'s single-shape queries use) are **not**
+wrapped in `try/finally` internally — an exception escaping a traversal callback can leave
+module-global traversal state corrupted for every later call in the process. The candidate-budget check
+therefore **must not** throw `CapacityExceededError` directly from inside the expansion callback.
+Instead: when the running counter would exceed the limit, record the pending error in a call-scoped
+variable and return the traversal API's own normal "stop, do not descend further" signal from the
+callback (the same early-termination return-value convention the traversal already supports for an
+ordinary "this subtree cannot match" result) — letting the traversal call return and clean up normally
+— and only **after** the traversal call has returned to `CollisionWorld`'s own code does the stored
+`CapacityExceededError` actually get thrown. This keeps the budget check symmetric with the exact
+hazard §7.1 already flags for future `bvhcast` callback exception containment (§7.2's own
+requirement), rather than reintroducing that hazard here.
+
+#### 9.3.4 What this budget does not bound
+
+Stated explicitly so the performance gate (§14) and any future reader do not over-read this section's
+guarantee: this budget bounds primitive-candidate expansion, the resulting candidate storage, the
+exact-retest work those candidates cause, and the narrow-phase input count that follows. It does
+**not** bound a TLAS build itself (§6.4's `'tlas-build'` atomic span — already an accepted
+unbounded-but-atomic cost category, §9.1), internal (non-leaf) BVH node visits that produce no
+candidate, or the number of empty/disjoint per-source-instance traversals a call performs. Those remain
+governed by the existing atomic-span acceptance already established in §9.1, unchanged by this section.
 
 ---
 
@@ -840,6 +1283,17 @@ insufficient: it satisfies liveness for the epoch currently in flight, but says 
   `scheduler.js:1-8`) rather than a diagnostic entry, since a TLAS build failure means the broad phase
   cannot be trusted for that epoch at all — this is categorically different from a single fragment's
   geometry being transiently unavailable.
+- **New error, `[targeted design-resolution]`**: `ModelPlacementChangedError`, thrown when a
+  cross-model query's mid-query placement-revalidation (§9.2 point 8) detects that a captured model's
+  placement revision changed for a reason the query did not itself cause (§6.7.5) — distinct from
+  `ModelEvictedError` because the model is still live; this is "the input may have moved out from under
+  this in-flight query," a different diagnostic fact than "the model is gone," even though both abort
+  the whole query under the same no-partial-result contract. Shape, mirroring `ModelEvictedError`'s own
+  convention (`errors.js:21-27`) but carrying enough detail to distinguish a stale expectation from a
+  live value, since `modelId` alone is not guaranteed unique under Viewer modelId reuse (§4.1):
+  ```js
+  ModelPlacementChangedError = { modelId, loadEpoch, expectedRevision, actualRevision }
+  ```
 - **Whole-model extraction capacity** (§3.3): a `targets` entry with `dbIds` omitted that would exceed
   `maxCollisionInstancesPerEpoch` throws the existing `CapacityExceededError` (`CollisionWorld.js:212-219`),
   unchanged shape, `kind: 'bucket-capacity'` or `'call-wide-unique-fragment-precheck'` exactly as
@@ -1008,18 +1462,21 @@ federated model set, cold (no TLAS/BLAS cached) then warm (both fully built/cach
 2. TLAS query cost per source instance, cold vs. warm (target TLAS already cached from a prior call).
 3. Candidate count: TLAS path vs. linear-oracle path, for the identical query — TLAS's count is
    expected to be smaller for a realistic federated/fragment-dense case per the M2 prompt's own
-   framing, but this spec requires it be **measured**, not assumed. `[review fix, Important #5,
-   partial]` "Candidate count" is ambiguous across three different stages this spec's own §7
-   distinguishes (leaf-range emissions, exact-retest survivors, narrow-phase inputs) — the gate must
-   record all three separately, not one field claimed to mean all of them, or the two broad-phase
-   paths' numbers are not actually comparable. `Statistics`'s exact field-level shape for this (new
-   fields vs. redefining `broadPhasePairs`'s existing meaning) is not finalized by this spec — tracked
-   in §15.
+   framing, but this spec requires it be **measured**, not assumed. `[targeted design-resolution]`
+   `Statistics`'s field-level shape for this is now finalized (§7.5): record
+   `tlasLeafRangeEmissions`, `tlasPrimitiveCandidatePairs`, `broadPhasePairs`,
+   `tlasExactRetestSurvivors`, and `tlasNarrowPhaseInputPairs` separately for the TLAS run, and
+   `broadPhasePairs`/`narrowPhasePairs` for the linear run — §7.5.2's inequality chain is what makes
+   the two paths' numbers actually comparable, not a single shared field claimed to mean all stages
+   at once.
 4. Wall-clock: TLAS path (cold, then warm) vs. linear-oracle path, for the identical query.
 5. Memory/cache behavior: TLAS entry retained size, and its growth relative to `_instanceCache`'s own
    already-measured retention behavior (M1's own criterion 12,
    `milestone-1-performance-gate-disposition.md`'s table — this is a direct extension of an existing
-   measured criterion, not a new methodology).
+   measured criterion, not a new methodology). Report `tlasBuilds`/`tlasCacheHits`/
+   `tlasSharedBuildWaits` (§7.5.1) alongside cold/warm timing so a `0` `tlasBuildMs` on a given run can
+   be attributed correctly (already-warm cache vs. blocked on another caller's in-flight build) rather
+   than read as ambiguous.
 6. Fragment/instance counts for whichever federated model set is actually used — recorded plainly,
    same convention M1's own gate uses to make every criterion's scale explicit and auditable.
 
@@ -1039,14 +1496,15 @@ Ranked by how much they gate implementation start, most-blocking first. Updated 
 are now settled by direct evidence; items marked `[new]` were surfaced by that review and were not in
 the first draft at all.
 
-1. **Placement-freshness assumption for a cached TLAS (§6.5) — requires explicit human confirmation.**
-   Default disposition adopted by this spec: TLAS entries assume static placement for the life of a
-   `loadEpoch` (§6.4's admission-revision mechanism catches *new admissions*, but nothing catches a
-   fragment that *moved*); no transform-change invalidation in M2. If this is unacceptable (e.g. the
-   target Viewer app supports live model manipulation while a `CollisionWorld` session is active), the
-   TLAS design in §6 needs a placement-revision key that also tracks transform changes (not just
-   admissions) or an explicit rebuild trigger before implementation — this is a real fork in the
-   design, not a tuning constant. Still the single most consequential open item in this spec.
+1. ~~Placement-freshness assumption for a cached TLAS (§6.5) — requires explicit human
+   confirmation.~~ **`[resolved]`** Human decision made: M2 must support model-alignment/move/rotate
+   invalidating a cached TLAS; explode/animation/arbitrary per-fragment dynamic transforms remain
+   unsupported. Resolved via an explicit, caller-controlled `invalidateModelPlacement(model)` (§6.7),
+   layered on the same `_placementRevisionByEpoch` staleness mechanism §6.4 already established, with
+   a generational `_placementInvalidatedAtRevision` marker, a staged/atomically-published refresh
+   (§6.7.3), and a query-self-invalidation-avoidance rule (§6.7.5) needed once a query's own ordinary
+   growth is distinguished from an externally-caused revision change. See §6.5 for the resulting
+   placement-freshness contract.
 2. ~~Authoritative Viewer API for "every currently loaded model."~~ **`[resolved]`** Confirmed:
    `viewer.getAllModels(): Model[]` (`node_modules/@types/forge-viewer/index.d.ts:1272`) — see §3.2.
    Source-model resolution is similarly resolved via `viewer.getAggregateSelection()`
@@ -1080,23 +1538,26 @@ the first draft at all.
    app-level change this spec's implementation must include, not something "the existing app already
    does." Not blocking (the fix is simple and now specified), but flagged so it is not missed as an
    implementation-planning line item.
-9. **`[new]` Candidate-budget/precheck semantics under `broadPhase:'tlas'` are undefined.** M1's
-   `_exceedsBroadPhaseCeiling`/`maxBroadPhaseInstancePairs` precheck (`CollisionWorld.js:698-703`,
-   `sourceCount × targetCount` Cartesian check) is exactly the kind of check the TLAS exists to make
-   unnecessary for a realistic case (a small source against a huge target population), but this spec
-   does not yet say whether/how that precheck applies under `broadPhase:'tlas'`, whether it applies
-   per-`(sourceEpoch,targetEpoch)` pair or once for the whole federated call, or what ceiling (if any)
-   bounds TLAS-emitted candidates before the exact retest (§7.3) and narrow phase run. Needs a
-   dedicated design pass — likely a *replacement* budget scoped to "candidates surviving retest," not
-   a reapplication of the Cartesian-product check the TLAS is specifically meant to route around —
-   before implementation; the M2 prompt's own required "candidate-budget behavior... diagnostics for
-   budget exhaustion" coverage is not yet satisfied by this spec as written.
-10. **`[new]` `Statistics` field semantics need to be finalized for the TLAS path.** §7.1b/§14.3 flag
-    that "candidate count" means three different things across this spec (leaf-range emissions,
-    exact-retest survivors, narrow-phase inputs) and that a true candidate-level dedup guarantee (as
-    opposed to the result-level dedup §3.4 already defines) is not yet specified for the TLAS
-    traversal path. Both need resolution before `Statistics`'s exact shape (additive new fields, per
-    §14.3's own note, most likely) can be considered final.
+9. ~~Candidate-budget/precheck semantics under `broadPhase:'tlas'` are undefined.~~ **`[resolved]`**
+   Resolved in §9.3: `maxBroadPhaseInstancePairs`'s Cartesian precheck is not applied under
+   `broadPhase:'tlas'`; a new `maxTlasCandidatePairs` bounds primitive-candidate expansion (stage 2,
+   pre-filter) with a whole-call-scoped, incremental, checked-as-you-go running counter, exhausted via
+   a reused `CapacityExceededError('tlas-candidate-budget', ...)`, terminated callback-safely (§9.3.3)
+   rather than by throwing from inside vendored traversal machinery. Resolving this also surfaced and
+   fixed a genuine correctness bug in the already-accepted §7.1a target-scope filter (it compared a
+   matched primitive's `ownerDbId` directly against a `targets` entry's requested `dbIds`, which
+   silently produces false-negative exclusions for any assembly-rooted target request — the same
+   `ownerDbId`-vs-requested-dbId hazard §4.4 already documents for source self-exclusion, not
+   previously applied to the target side); see §7.1a's corrected text and the disposition report.
+10. ~~`Statistics` field semantics need to be finalized for the TLAS path.~~ **`[resolved]`**
+    Resolved in §7.5: five new additive candidate/traversal fields
+    (`tlasLeafRangeEmissions`/`tlasPrimitiveCandidatePairs`/`tlasExactRetestSurvivors`/
+    `tlasNarrowPhaseInputPairs`, plus build-attribution counters `tlasBuilds`/`tlasCacheHits`/
+    `tlasSharedBuildWaits`) and two new timing fields (`tlasBuildMs`/`tlasQueryMs`, with explicit
+    ownership semantics under shared/single-flight builds, §7.5.3). `broadPhasePairs` is generalized,
+    compatibly (zero behavior change for `broadPhase:'linear'` callers), to one canonical cross-path
+    meaning — count of candidates exact-retested — rather than kept linear-only; §7.5.2's inequality
+    chain formalizes exactly how the paths' numbers relate and are compared.
 
 ---
 
@@ -1116,7 +1577,9 @@ the first draft at all.
 | `extractFragments(model, requestedDbIds, ...)` per-dbId-subtree walk (`ViewerModelAdapter.js`) | **Preserved unchanged**, still used for explicit `dbIds` targets; a **new sibling primitive** `extractAllFragments` added for whole-model scope (§3.3), not a modification of the existing one. |
 | `createCheckpointPort`'s `{isDisposed, isEpochLive, accumulator, yieldToScheduler}` contract (`scheduler.js:101-110`) | **Preserved unchanged** at the module level; `CollisionWorld` supplies a composite `isEpochLive` closing over a captured multi-epoch lease set for cross-model calls (§9.2.5) — no change to `collision/scheduler.js` itself. |
 | `frameBudgetMs` does not preempt synchronous atomic work | **Preserved, restated, extended** to cover TLAS build/query as new atomic-span categories (§9.1) — no change to the underlying claim. |
-| `ClashPair`/`Statistics`/diagnostic shapes (`CollisionWorld.js:743-748`, `errors.js`) | **`ClashPair` gains an additive `model` field per operand** (§3.4, `[review fix]` — `modelId` alone is not correctness-bearing under Viewer modelId reuse); `Statistics`'s own field-level shape for TLAS-path candidate counting is **not yet finalized** (§15 item 10). Diagnostic entry shapes unchanged. |
+| `ClashPair`/`Statistics`/diagnostic shapes (`CollisionWorld.js:743-748`, `errors.js`) | **`ClashPair` gains an additive `model` field per operand** (§3.4, `[review fix]` — `modelId` alone is not correctness-bearing under Viewer modelId reuse). **`Statistics` gains nine additive TLAS-path fields, finalized in §7.5**; `broadPhasePairs`'s canonical meaning is generalized (compatibly — zero behavior change for `broadPhase:'linear'`) to "candidates exact-retested," per §7.5.2. **New `ModelPlacementChangedError`** (§10, §6.7) joins the `WorldDisposedError`/`ModelEvictedError` lifecycle-error family. Existing fragment-/pair-scoped diagnostic entry shapes unchanged. |
+| (M2-new) `_placementRevisionByEpoch` only tracked new-admission staleness (§6.4, first draft) | **Extended, not replaced** — the same counter also tracks explicit alignment invalidation (§6.7), disambiguated via a new generational `_placementInvalidatedAtRevision` marker; growth-only staleness still needs no Viewer re-read, invalidation staleness does (§6.7.2). |
+| `CapacityExceededError` kinds (`'call-wide-unique-fragment-precheck'`/`'bucket-capacity'`, `CollisionWorld.js:216`) | **Extended additively** with a new `kind: 'tlas-candidate-budget'` (§9.3.2) for TLAS candidate-expansion exhaustion; existing kinds/shape unchanged, constructor message generalized to not literally claim "admission rejected" for a non-admission `kind`. |
 | `evictModel`/`dispose` non-throw contracts (`CollisionWorld.js:346-370,390-413`) | **Preserved unchanged**; TLAS cache release calls, plus the new `_placementByEpoch`/`_placementRevisionByEpoch` table releases, added alongside existing registry release calls, held to the same non-throw contract (§6.6). |
 | `_instanceCache` scope (`{fragmentId, geometryIdentity}` only, `CollisionWorld.js:461`) | **Preserved unchanged, not repurposed.** `[review fix]` M2 adds a genuinely new, separate epoch-scoped table (`_placementByEpoch`, §6.1) for placement rather than misreading `_instanceCache` as already holding it — the first draft of this spec incorrectly assumed the latter. |
 | M1 linear broad phase as correctness oracle | **Preserved as a first-class, always-available mode** (`broadPhase:'linear'`), not merely "kept for old tests" — required by §12's differential fixtures for the life of this design. |
@@ -1162,18 +1625,27 @@ remaining findings (candidate-budget/precheck semantics under TLAS mode, and `St
 granularity for candidate counting) were **not** resolved inline — they need real design work, not a
 quick patch — and are recorded as new open items 9-10 in §15 instead.
 
-**Design decisions requiring human confirmation before implementation** (full detail in §15,
-renumbered — items are no longer 1:1 with the first draft's list):
-1. Whether TLAS entries may assume static placement for the life of an epoch (no transform-change
-   invalidation in M2), or whether live in-session model manipulation must be supported. **Still the
-   top blocking item** — unchanged by the review pass, since no repository evidence settles it either
-   way (§15 item 1).
-2. Source self-exclusion granularity — default corrected to fragment-set membership (§4.4), still
+**This version additionally incorporates one targeted design-resolution pass** (a `codex-advisor`
+consult, high effort, run against this pass's draft resolutions before they were written into this
+document — see
+`docs/superpowers/specs/collision-library-m2-targeted-design-resolution-disposition.md` for the full
+disposition). It resolves the three items that were genuinely blocking implementation planning in the
+prior revision: model-alignment/model-transform TLAS invalidation (§6.5, §6.7, §9.2, §10 — a human
+decision that M2 must support this, previously an open confirmation item, is now designed, not merely
+default-adopted), TLAS candidate-budget semantics (§9.3, previously undefined), and finalized
+`Statistics` field semantics for the TLAS path (§7.5, previously ambiguous). Resolving the
+candidate-budget item also surfaced and fixed one genuine correctness bug in already-accepted text:
+§7.1a's target-scope filter compared a TLAS-matched primitive's `ownerDbId` directly against a
+`targets` entry's requested `dbIds`, which silently produces false-negative exclusions for any
+assembly-rooted target request (the same hazard §4.4 already documents and correctly handles for
+source self-exclusion, simply not yet applied to the mirror-image target-side filter) — now corrected
+to use extracted-fragment-set membership, consistent with §4.4's own resolution.
+
+**Design decisions requiring human confirmation before implementation** (full detail in §15; items 1
+and 4 from the prior revision's list are now resolved by this pass, not merely confirmed — see above):
+1. Source self-exclusion granularity — default corrected to fragment-set membership (§4.4), still
    wants confirmation against real fixtures (§15 item 3).
-3. Sourcing a real two-or-more-model federated fixture for §12/§13/§14 (§15 item 4).
-4. Candidate-budget/precheck semantics under `broadPhase:'tlas'` — genuinely unresolved, needs a
-   dedicated design pass before implementation, not merely a human confirmation of a stated default
-   (§15 item 9, no default is proposed).
+2. Sourcing a real two-or-more-model federated fixture for §12/§13/§14 (§15 item 4).
 
 **M1 contracts that change** (none of the *stabilized correctness* invariants — identity, ordering,
 lifecycle non-throw guarantees — change; only *internal bookkeeping keys and the public result shape's
@@ -1183,15 +1655,13 @@ check layered on top of the unchanged single-epoch checkpoint port (§9.2), and 
 additive `model` field (§3.4). No narrow-phase query module changes, no `GeometryRegistry`/`BlasCache`
 changes, no removal of any existing public field.
 
-**Is this spec ready for review?** Closer than the first draft, but **not yet ready for
-implementation planning** — this is a materially different answer from the first draft's, and is
-itself the point of running the review pass before reporting completion rather than after. Item 4
-above (candidate-budget semantics) is a real, unresolved design gap, not a "confirm and proceed"
-item like the others — the M2 prompt's own required scheduling-model coverage
-("candidate-budget behavior... diagnostics for budget exhaustion") is not yet satisfied by this
-document. Recommend one more targeted design pass on §15 items 9-10 specifically before this spec is
-treated as final; items 1-3 above can be resolved by human confirmation alone and do not block that
-follow-up pass from starting in parallel. Proceeding straight to an implementation plan before either
-the human-confirmation items or the budget-semantics design pass lands would be the wrong call for a
-document at this stage — the architecture in §5-§9 is sound and does not need to be revisited, but
-this document is not yet a complete enough contract to build against.
+**Is this spec ready for implementation planning?** Yes, with two non-blocking items still open for
+human/logistics confirmation, not design work: source self-exclusion granularity's real-fixture
+confirmation (§15 item 3) and sourcing a real two-or-more-model federated fixture (§15 item 4) — both
+can proceed in parallel with implementation planning and do not gate its start, exactly as the prior
+revision already characterized them. The three items that genuinely did gate implementation planning
+— model-placement invalidation, TLAS candidate-budget semantics, and `Statistics` field finalization —
+are now resolved with concrete, reviewed designs (§6.7, §9.3, §7.5) rather than deferred defaults or
+open questions. The architecture in §5-§9 remains sound and unrevisited beyond these three targeted
+resolutions and the one correctness fix (§7.1a) they surfaced; no other section of this document was
+reopened, per this pass's own explicit scope.
