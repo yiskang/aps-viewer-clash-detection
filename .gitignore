@@ -483,5 +483,6 @@ dist/
 .claude.local.md
 .superpowers/
 .claude/worktrees/
+test/acceptance/results/
 
 !.claude/settings.local.json

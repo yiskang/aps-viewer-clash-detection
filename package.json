@@ -8,7 +8,8 @@
     "build:vendor": "node scripts/sync-vendor.mjs",
     "prestart": "npm run build:vendor",
     "pretest": "npm run build:vendor",
-    "test": "node --test"
+    "test": "node --test",
+    "test:acceptance": "node test/acceptance/room-locator.acceptance.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -31,6 +32,7 @@
     "three-mesh-bvh": "0.9.14"
   },
   "devDependencies": {
-    "@types/forge-viewer": "*"
+    "@types/forge-viewer": "*",
+    "playwright": "^1.62.1"
   }
 }

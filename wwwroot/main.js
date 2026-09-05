@@ -6,6 +6,7 @@ import { normalizeUrn, urnFromHash, shouldLoadFromHash } from './urn.js';
 let lastRequestedUrn = '';
 
 initViewer(document.getElementById('preview')).then(viewer => {
+    window.viewer = viewer;
     setupUrnInput(viewer);
 });
 
