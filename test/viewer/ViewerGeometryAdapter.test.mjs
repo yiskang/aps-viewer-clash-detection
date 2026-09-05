@@ -326,6 +326,146 @@ test('Finding 4: fractional drawRange.count is rejected', () => {
   assert.equal(result.unsupported, true, 'fractional drawRange.count must be rejected');
 });
 
+// REGRESSION: the real classic-SVF geometry shape produced by Autodesk's official
+// viewer3D.js v7.124.2 bundle (`LeanBufferGeometry.prototype.setInterleavedBuffer`
+// sets `.vb`/`.vbstride` but never `.vblayout`; `findBufferAttribute` constructs a
+// lean `BufferAttribute(undefined, itemSize)` with the real offset on `.offset`/
+// `.itemOffset` and `.array` left undefined) previously fell through all three
+// existing branches and was misclassified as unsupported-geometry-layout, breaking
+// every fragment in a real acceptance model. See task-22-report.md, "The central
+// finding".
+test('lean Viewer BufferAttribute (.vb/.vbstride, positionAttr.offset, no .array, no .vblayout): resolves via Priority 4', () => {
+  const vb = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    1, 1, 0,
+    0, 1, 0,
+  ]); // stride 3, position offset 0
+  const geometry = {
+    vb,
+    vbstride: 3,
+    attributes: { position: { offset: 0, itemSize: 3 } },
+    ib: QUAD_INDEX,
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, false);
+  assert.equal(result.positions, vb);
+  assert.equal(result.positionStride, 3);
+  assert.equal(result.positionOffset, 0);
+  assert.equal(result.index, QUAD_INDEX);
+  assert.equal(result.activeTriangleCount, 2);
+});
+
+test('lean Viewer BufferAttribute with nonzero offset via itemOffset fallback (no .offset field)', () => {
+  const vb = new Float32Array([
+    9, 9, 0, 0, 0,
+    9, 9, 1, 0, 0,
+    9, 9, 1, 1, 0,
+    9, 9, 0, 1, 0,
+  ]); // stride 5, position at offset 2, filler at 0-1
+  const geometry = {
+    vb,
+    vbstride: 5,
+    attributes: { position: { itemOffset: 2, itemSize: 3 } }, // no .offset field
+    ib: QUAD_INDEX,
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, false);
+  assert.equal(result.positionStride, 5);
+  assert.equal(result.positionOffset, 2);
+  const x1 = result.positions[1 * result.positionStride + result.positionOffset];
+  assert.equal(x1, 1, 'must read from the itemOffset-derived offset, not the filler columns');
+});
+
+test('lean Viewer BufferAttribute: NaN offset is rejected, not propagated', () => {
+  const vb = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = { vb, vbstride: 3, attributes: { position: { offset: NaN } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true);
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('lean Viewer BufferAttribute: negative offset is rejected', () => {
+  const vb = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = { vb, vbstride: 3, attributes: { position: { offset: -1 } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true);
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('lean Viewer BufferAttribute: Infinity offset is rejected', () => {
+  const vb = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = { vb, vbstride: 3, attributes: { position: { offset: Infinity } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true);
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('lean Viewer BufferAttribute: offset + 3 > vbstride is rejected (no room for x,y,z)', () => {
+  const vb = new Float32Array([0, 0, 9, 1, 0, 9, 1, 1, 9, 0, 1, 9]); // stride 3, offset 1
+  const geometry = { vb, vbstride: 3, attributes: { position: { offset: 1 } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'offset + 3 > vbstride must be rejected for the lean layout too');
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('lean Viewer BufferAttribute: fractional offset is rejected (codex-review round 2 finding)', () => {
+  const vb = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = { vb, vbstride: 3, attributes: { position: { offset: 0.5 } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'fractional offset must be rejected, not read as positions[0.5] -> undefined/NaN');
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('lean Viewer BufferAttribute: fractional vbstride is rejected (codex-review round 2 finding)', () => {
+  const vb = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = { vb, vbstride: 3.5, attributes: { position: { offset: 0 } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'fractional vbstride must be rejected');
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('lean Viewer BufferAttribute: itemSize 2 (undersized, no room for z) is rejected (codex-review round 2 finding)', () => {
+  // Same class of bug Finding 3 already guards for Priority 3: an itemSize smaller
+  // than 3 means the attribute's own declared shape doesn't actually hold a full
+  // x,y,z triple, even though offset+3 <= vbstride happens to hold numerically.
+  const vb = new Float32Array([
+    0, 0, 9, 9, 9,
+    1, 0, 9, 9, 9,
+    1, 1, 9, 9, 9,
+    0, 1, 9, 9, 9,
+  ]);
+  const geometry = { vb, vbstride: 5, attributes: { position: { offset: 0, itemSize: 2 } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, true, 'itemSize < 3 must be rejected even when offset+3 <= vbstride numerically holds');
+  assert.equal(result.reason, 'unsupported-geometry-layout');
+});
+
+test('lean Viewer BufferAttribute: itemSize omitted entirely still resolves (itemSize is optional metadata)', () => {
+  const vb = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = { vb, vbstride: 3, attributes: { position: { offset: 0 } }, ib: QUAD_INDEX };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, false, 'absence of itemSize must not itself cause rejection');
+});
+
+test('existing-path-still-wins: attributes.position.array present takes Priority 3, not the new Priority 4 branch', () => {
+  // Even with .vb/.vbstride also present (as they always are for Viewer-internal
+  // geometry), a present .array must still resolve via the existing Priority 3
+  // branch -- confirms the new branch's `!positionAttr.array` guard actually gates.
+  const otherVb = new Float32Array([9, 9, 9, 9, 9, 9]); // deliberately wrong data
+  const geometry = {
+    vb: otherVb,
+    vbstride: 3,
+    attributes: { position: { array: QUAD_POSITIONS_PLAIN, itemSize: 3 } },
+    index: { array: QUAD_INDEX },
+  };
+  const result = adaptViewerGeometry(geometry);
+  assert.equal(result.unsupported, false);
+  assert.equal(result.positions, QUAD_POSITIONS_PLAIN, 'must resolve via Priority 3, not the new vb-based branch');
+  assert.equal(result.positionStride, 3);
+  assert.equal(result.positionOffset, 0);
+});
+
 test('REGRESSION: real THREE.BufferGeometry with default drawRange (Infinity)', () => {
   // three.js sets drawRange = { start: 0, count: Infinity } by default, meaning "draw all".
   // This is a legitimate sentinel value, not invalid input — Infinity is clamped by

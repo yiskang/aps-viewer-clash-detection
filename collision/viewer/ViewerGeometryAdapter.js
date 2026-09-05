@@ -41,9 +41,22 @@ function isValidNonNegativeInteger(n) {
   return isValidNonNegativeNumber(n) && Number.isInteger(n);
 }
 
+function isValidPositiveInteger(n) {
+  // Same rationale as isValidNonNegativeInteger (Finding 4): a stride is an
+  // array-element index distance, never a fractional quantity.
+  return isValidPositiveNumber(n) && Number.isInteger(n);
+}
+
 function resolvePositions(geometry) {
-  // Priority 1: Viewer-internal interleaved layout (spec:1154-1159) -- confirmed
-  // universal across SVF/SVF2/OTG in Viewer 7.124.2.
+  // Priority 1: Viewer-internal interleaved layout keyed off an explicit
+  // `geometry.vblayout` descriptor (spec:1154-1159). This shape is still provisional --
+  // decompiling the official viewer3D.js v7.124.2 bundle shows
+  // `LeanBufferGeometry.prototype.setInterleavedBuffer` sets `this.vb`/`this.vbstride`
+  // but never stores `this.vblayout` on the geometry object (it's consumed into
+  // per-attribute descriptors during load and discarded), and it was never observed
+  // across 50 sampled render-proxy geometries from a real classic-SVF acceptance
+  // model. Kept in case some other Viewer/format path nobody has tested yet does
+  // produce it -- see Priority 4 below for the confirmed real classic-SVF shape.
   if (
     geometry.vb &&
     isValidPositiveNumber(geometry.vbstride) &&
@@ -87,6 +100,39 @@ function resolvePositions(geometry) {
     // always 0 here, so this alone also guarantees offset + 3 <= stride.
     if (stride < 3) return null;
     return { positions: positionAttr.array, positionStride: stride, positionOffset: 0 };
+  }
+
+  // Priority 4: Viewer-internal lean BufferAttribute shape -- the real classic-SVF
+  // layout, confirmed by decompiling the official viewer3D.js v7.124.2 bundle and by
+  // live sampling 50 render-proxy geometries from a real acceptance model. For a
+  // genuinely interleaved attribute, `findBufferAttribute` constructs
+  // `new BufferAttribute(undefined, itemSize)` with `attr.offset = attr.itemOffset =
+  // <the real offset>` and `.array` left `undefined` by design -- so this branch is
+  // gated on `.array` being absent, which is mutually exclusive with Priority 2/3
+  // above (both require `.array` present).
+  if (geometry.vb && isValidPositiveInteger(geometry.vbstride) && positionAttr && !positionAttr.array) {
+    const offset = typeof positionAttr.offset !== 'undefined' ? positionAttr.offset : positionAttr.itemOffset;
+    // Offsets/strides are array-element indices, never fractional -- a fractional
+    // value here would read as undefined/NaN downstream (codex-review round 2
+    // finding). Reuse the existing integer-checking helpers rather than the plain
+    // isValidNonNegativeNumber this branch's first draft used, which accepted 0.5.
+    if (!isValidNonNegativeInteger(offset)) return null;
+    // If itemSize is explicitly present on the lean attribute (the real Viewer
+    // bundle's findBufferAttribute always supplies it for position), it must declare
+    // room for x,y,z, matching Priority 3's equivalent check for the standard
+    // non-interleaved shape (codex-review round 2 finding: an inconsistent itemSize
+    // of 2 here would silently read an adjacent attribute's value as z).
+    if (typeof positionAttr.itemSize !== 'undefined' && !(isValidPositiveInteger(positionAttr.itemSize) && positionAttr.itemSize >= 3)) {
+      return null;
+    }
+    // Finding 3: enough room in each stride for x,y,z without reading into the next
+    // vertex's data.
+    if (offset + 3 > geometry.vbstride) return null;
+    return {
+      positions: geometry.vb,
+      positionStride: geometry.vbstride,
+      positionOffset: offset,
+    };
   }
 
   return null;
