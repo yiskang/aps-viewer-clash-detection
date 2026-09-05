@@ -140,6 +140,16 @@ synchronous walk of every fragment in the model before the timed span even start
 is called once per fragment to find the widest one) -- expect this to take noticeably longer than
 the probe's own reported `ms` on a large real model; Task 24 should not be surprised by that.
 
+A cancelled/aborted `GeometryRegistry` build (its cancellation signal wins the `Promise.race` in
+`_runPhase` -- e.g. the owning epoch is evicted mid-build) can still report a labeled span for
+whichever phase was in flight: the `try`/`finally` bracket around `builderFn()` reports the span
+once that abandoned async work eventually settles, regardless of whether the settlement is ever
+actually consumed by anything. This is pre-existing behavior of the cancellation model this task's
+fix built on top of (the race/cleanup semantics were not changed here), and is arguably correct --
+real CPU time was genuinely spent on that phase's work even though the result was discarded -- but
+Task 24 should be aware a span can appear in the log for a build whose own result was thrown away,
+not only for builds that completed and were actually used.
+
 ### Two THREE namespaces -- do not conflate them
 
 A live Viewer page always has TWO different `three` instances loaded: `window.THREE` is the
@@ -199,7 +209,44 @@ full before/after reasoning. Criterion 5's real per-phase numbers still come fro
 `measure-geometry-phases.mjs`, which measures one isolated build directly via `CheckpointRecorder.
 around()` and was never subject to either problem above.
 
-### Loop-based labels' own narrower caveat: the last iteration's tail may go unflushed
+### A SECOND cross-port hazard, in the opposite direction: `narrow-phase-pair` can silently absorb
+### `GeometryRegistry`'s own yielded (not synchronous) wall-clock time
+
+The codex-advisor-caught bug above was about `GeometryRegistry`'s three phase labels being wrongly
+measured through a shared port. There is a mirror-image hazard the fix does NOT touch, found during
+this task's own follow-up review: `_runNarrowPhasePair` (`CollisionWorld.js`) `await`s
+`this._registry.getOrBuildGeometry(...)` BETWEEN two `narrow-phase-pair` checkpoint calls -- and
+`GeometryRegistry`'s own `checkpointPort` (constructed once in `CollisionWorld.fromViewer`, around
+lines 295-304) is a SEPARATE, world-scoped port instance from the per-`findClashes`-call port
+`narrow-phase-pair`'s own `lastSpanAt` baseline belongs to. This measured task's own weld/
+connectivity/bvh-construction figures (7-20ms per phase, see "Running the sanity checks" below)
+already exceed `frameBudgetMs` (8ms), so a live query realistically DOES take a real yield through
+the registry's own port while building a not-yet-cached geometry mid-narrow-phase.
+
+That yield is a genuine pause -- real wall-clock time spent NOT running this library's own code,
+waiting on `yieldToScheduler` (a macrotask turn) -- but the per-call port has no way to know it
+happened: its own `lastSpanAt` was set at the PREVIOUS `narrow-phase-pair` checkpoint and is not
+touched again until the NEXT one, so the entire elapsed duration -- genuine synchronous narrow-phase
+work PLUS the registry's own yielded pause, indistinguishable from each other in this measurement
+-- gets reported as one `narrow-phase-pair` span. This can make a perfectly well-behaved query (one
+that yielded correctly, just via a DIFFERENT port) look like a criterion-1 violation under
+`recorder.longestSpan('narrow-phase-pair')`, which is exactly the metric Task 24 reads for that
+criterion. Unlike the `GeometryRegistry` bug above (which could hide a real violation), this hazard
+runs the other way: it can manufacture a FALSE POSITIVE.
+
+**Mitigation available today, no new code needed**: `CollisionWorld.findClashes`'s own return value
+already carries `statistics.broadPhaseMs`/`narrowPhaseMs`/`totalMs` -- real wall-clock durations for
+each stage, computed independently of the labeled-span mechanism (Task 19). If a `narrow-phase-pair`
+span looks suspiciously long, cross-check it against `statistics.narrowPhaseMs` for that same call:
+a genuine synchronous violation should show up as an outlier RELATIVE TO the narrow phase's own
+total elapsed time and pair count, whereas a registry-yield artifact will correlate with however
+long that specific pair's geometry build actually took (itself independently knowable from
+`measure-geometry-phases.mjs`'s per-phase figures, or from `GeometryRegistry`'s own now-fixed
+`weld`/`connectivity`/`bvh-construction` spans in the SAME log). Task 24 should read a `narrow-phase-
+pair` outlier as "investigate," not "confirmed violation," until cross-checked this way.
+
+### Loop-based labels' own narrower caveat: the last iteration's tail may go unflushed --
+### and this gap is invisible to BOTH detection mechanisms this harness has
 
 `narrow-phase-pair`/`broad-phase-scan`/`extraction-node-visit`/`extraction-node-descend`/
 `composed-narrow-phase-stage` are each called at the TOP of a loop iteration (or composed-stage
@@ -209,13 +256,25 @@ recurring label -- but the very LAST iteration's body, after the final checkpoin
 following checkpoint call (of the same or any label) to flush it, so it may go unrecorded, or get
 folded into whatever DIFFERENT checkpoint fires next elsewhere in the call (e.g. broad phase's
 final pair's cost could be silently absorbed into `narrow-phase-pair`'s first span instead of
-`broad-phase-scan`'s). This is a real, bounded gap -- at most one iteration's cost per loop, per
-call -- documented here rather than fixed by adding an explicit final-flush bracket to each hot
-loop, which this task judged out of scope given the added complexity/regression-risk to
-`CollisionWorld`'s narrow/broad-phase loops for a single-iteration-worst-case gap. Task 24 should
-be aware that a criterion-1 violation landing exactly on a loop's last iteration could be missed or
-misattributed by this mechanism; the Long Tasks API cross-check (see above) is one partial,
-independent backstop for exactly this kind of gap, though only above its own ~50ms floor.
+`broad-phase-scan`'s).
+
+This is more consequential than "one iteration's cost might be misattributed": **a genuine
+24.8-49ms criterion-1 violation landing on a loop's LAST iteration is invisible to BOTH of this
+harness's detection mechanisms at once.** The manual span log has nothing to flush it, per the
+above. The Long Tasks API cross-check (see "Why the manual `performance.now()` bracketing path"
+above) only fires at or above roughly 50ms -- so a violation in the 24.8-49ms range sitting
+specifically on an unflushed last iteration would clear NEITHER bar and simply not appear anywhere
+in the recorded evidence, not even as an "unattributed longtask" entry. This is a real, bounded gap
+(at most one iteration's cost per loop, per call) -- documented here rather than fixed by adding an
+explicit final-flush bracket to each hot loop, which this task judged out of scope given the added
+complexity/regression-risk to `CollisionWorld`'s narrow/broad-phase loops for a single-iteration
+worst case. The same aggregate `statistics.broadPhaseMs`/`narrowPhaseMs`/`totalMs` cross-check
+described above is a partial mitigation here too: dividing a stage's aggregate wall-clock time by
+its own pair/iteration count gives an AVERAGE that a single unflushed 40ms outlier would still skew
+upward, even though no individual span names it -- not a substitute for a real per-span reading, but
+a signal that something in that stage is worth a closer look. Task 24 should be aware that a
+criterion-1 violation landing exactly on a loop's last iteration could be missed entirely by this
+mechanism, not merely misattributed.
 
 The unlabeled `checkpoint()` call inside `createComposedStageScheduler` (used by ContainmentModeQuery/
 VolumeOverlapQuery's own composed sub-query stages) has ALSO been given a label

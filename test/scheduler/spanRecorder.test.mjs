@@ -230,6 +230,11 @@ test('every existing checkpoint call site reports a labeled span through a real 
     for (const expected of [
       'extraction-node-visit', 'extraction-node-descend', 'broad-phase-scan', 'narrow-phase-pair',
       'capacity-admission-commit', 'weld', 'connectivity', 'bvh-construction',
+      // 'containment' mode routes through ContainmentModeQuery's composed sampling/witness
+      // stages, which share the per-call port via createComposedStageScheduler -- confirms that
+      // checkpoint's own label (fixed alongside the GeometryRegistry bug -- see
+      // test/performance/README.md) actually fires, not just that this fixture happens to reach it.
+      'composed-narrow-phase-stage',
     ]) {
       assert.ok(labels.has(expected), `expected label '${expected}' to have been reported at least once`);
     }
@@ -276,11 +281,18 @@ test('GeometryRegistry: weld/connectivity/bvh-construction spans measure their O
   const spans = [];
   setSpanRecorder((label, ms) => spans.push({ label, ms }));
   try {
-    // Deliberately widely-separated durations: if the old bug (label threaded through the
-    // checkpoint call, off-by-one) were still present, 'connectivity' would report something
-    // close to weld's ~20ms, and 'bvh-construction' would report something close to
-    // connectivity's ~2ms -- both would be clearly, robustly distinguishable from each phase's
-    // own much smaller target duration even under heavy system-load jitter.
+    // Deliberately widely-separated durations, so each phase's OWN reported span is clearly,
+    // robustly distinguishable from the others' even under heavy system-load jitter. NOTE: this
+    // test's stub checkpointPort below (`{ checkpoint: () => undefined }`) ignores whatever ctx
+    // it's called with entirely, including a `label` field -- so this test does NOT literally
+    // reproduce the original off-by-one bug mechanism if `_runPhase` were reverted to threading
+    // `label` through the checkpoint call (that revert would make this stub report NO spans at
+    // all, since the stub never calls reportSpan itself, rather than reproducing the specific
+    // "connectivity receives weld's duration" mislabeling the real scheduler.js port produced).
+    // It IS still a legitimate, non-tautological regression guard: it fails on that revert (via
+    // total absence of spans instead of via label-swapped values), and directly asserts the
+    // CORRECTED behavior this fix landed on -- each phase's span is reported by a local bracket
+    // around its own builderFn(), independent of whatever the checkpointPort does.
     const registry = new GeometryRegistry({
       buildWeld: async () => { busyWaitMs(20); return { position: new Float32Array(3), index: new Uint32Array(3), triangleCount: 1 }; },
       buildConnectivity: async () => { busyWaitMs(2); return { componentCount: 1, componentOf: new Int32Array(1), closedManifold: [true] }; },
@@ -297,12 +309,12 @@ test('GeometryRegistry: weld/connectivity/bvh-construction spans measure their O
     assert.ok(bvhSpan, 'a bvh-construction span must be reported');
 
     assert.ok(weldSpan.ms >= 15, `weld span should reflect its own ~20ms busy-wait, got ${weldSpan.ms}`);
-    // The regression check: under the old bug, connSpan.ms/bvhSpan.ms would each be close to
-    // weldSpan.ms (~20ms, the PRECEDING phase's duration) rather than their own much smaller
-    // target. A generous margin below weldSpan.ms is used rather than a tight upper bound on
-    // connSpan/bvhSpan themselves, to stay robust to real system-load timing jitter.
-    assert.ok(connSpan.ms < weldSpan.ms / 2, `connectivity span (${connSpan.ms}ms) must not be anywhere near weld's own ~20ms duration (${weldSpan.ms}ms) -- that would mean it's still measuring the PRECEDING phase, the exact bug this fixes`);
-    assert.ok(bvhSpan.ms < weldSpan.ms / 2, `bvh-construction span (${bvhSpan.ms}ms) must not be anywhere near weld's own ~20ms duration (${weldSpan.ms}ms) -- that would mean it's still measuring the PRECEDING phase, the exact bug this fixes`);
+    // Guards the corrected direct-reporting behavior: each span should reflect its OWN phase's
+    // busy-wait target, not get inflated toward a much larger, unrelated duration. A generous
+    // margin below weldSpan.ms is used rather than a tight upper bound on connSpan/bvhSpan
+    // themselves, to stay robust to real system-load timing jitter.
+    assert.ok(connSpan.ms < weldSpan.ms / 2, `connectivity span (${connSpan.ms}ms) should reflect its own ~2ms busy-wait, not weld's much larger ~20ms (${weldSpan.ms}ms)`);
+    assert.ok(bvhSpan.ms < weldSpan.ms / 2, `bvh-construction span (${bvhSpan.ms}ms) should reflect its own ~1ms busy-wait, not weld's much larger ~20ms (${weldSpan.ms}ms)`);
   } finally {
     clearSpanRecorder();
   }
