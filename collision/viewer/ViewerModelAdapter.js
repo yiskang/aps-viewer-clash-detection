@@ -77,7 +77,7 @@ export async function extractFragments(model, requestedDbIds, loadEpoch, { check
     // close: on the synchronous fast path, this keeps "checkpoint validated liveness" and
     // "this code reads the model" in the SAME tick, with no gap for an eviction to land in.
     if (checkpoint) {
-      const pending = checkpoint({ requestedDbId });
+      const pending = checkpoint({ requestedDbId, label: 'extraction-node-visit' });
       if (pending) await pending;
     }
 
@@ -142,7 +142,7 @@ export async function extractFragments(model, requestedDbIds, loadEpoch, { check
       for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
 
       if (checkpoint && stack.length > 0) {
-        const pending = checkpoint({ requestedDbId });
+        const pending = checkpoint({ requestedDbId, label: 'extraction-node-descend' });
         if (pending) await pending;
       }
     }

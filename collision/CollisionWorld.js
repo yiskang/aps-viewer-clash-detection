@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import {
   WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
 } from './errors.js';
-import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator } from './scheduler.js';
+import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
 import { maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, weldEpsilonMeters } from './constants.js';
 import { extractFragments } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
@@ -162,13 +162,24 @@ function toInstance(record, placedWorldMatrix) {
  * abort a traversal that has already outrun frameBudgetMs since the last yield. A baseline taken at
  * findClashes entry instead would report the whole call's elapsed time and abort every witness
  * traversal on any non-trivial query.
+ *
+ * `checkpoint()` below is labeled (Task 23, fixed after a codex-advisor review finding): an
+ * earlier draft called it unlabeled, which meant the real synchronous work a composed containment/
+ * volume-overlap sub-query does BETWEEN its own internal stages (sampling, witness, etc.) was
+ * silently discarded from the span log entirely -- the checkpoint still resets the shared per-call
+ * port's own `lastSpanAt` baseline regardless of whether a label is given, so an unlabeled call
+ * here erases that synchronous work from the next labeled span's measurement without ever
+ * reporting it under any label of its own. Labeling it fixes that -- it is reused across every
+ * `checkpointIfDue` call site (same recurring pattern as `narrow-phase-pair`/`broad-phase-scan`),
+ * so it is subject to the SAME "last iteration's tail may go unflushed" caveat those two labels
+ * have, documented in test/performance/README.md, but is no longer silently dropped altogether.
  */
 function createComposedStageScheduler(checkpoint, now) {
   let sinceMs = now();
   return {
     elapsedMs: () => now() - sinceMs,
     checkpointIfDue: async () => {
-      const pending = checkpoint();
+      const pending = checkpoint({ label: 'composed-narrow-phase-stage' });
       if (pending) {
         await pending;
         sinceMs = now();
@@ -568,7 +579,10 @@ export class CollisionWorld {
     return (ctx = {}) => {
       const model = ctx.model !== undefined ? ctx.model : lease.model;
       const loadEpoch = ctx.loadEpoch !== undefined ? ctx.loadEpoch : lease.epoch;
-      return realPort.checkpoint({ loadEpoch, modelIdHint: modelIdOf(model) });
+      // `label`, when the caller supplies one, is threaded straight through to the real port so
+      // its Task-23 span-recorder hook can bracket the synchronous span since the previous
+      // checkpoint call under that stable, distinct name (see collision/scheduler.js).
+      return realPort.checkpoint({ loadEpoch, modelIdHint: modelIdOf(model), label: ctx.label });
     };
   }
 
@@ -681,7 +695,13 @@ export class CollisionWorld {
     // geometryIdentity, which is identical for a given fragmentId regardless of which walk found it.
     // The per-side ownerDbId/placement is read from each side's OWN record below, never from here.
     const merged = new Map([...sourceExtracted, ...targetExtracted]);
+    // Capacity-admission recompute-and-commit (performance-gate criterion 8) has no checkpoint
+    // call to hook (admitCollisionInstances is deliberately 100% synchronous, zero awaits -- that
+    // is the whole point of its check-then-commit atomicity guarantee), so this reports the span
+    // directly via scheduler.js's reportSpan rather than through the checkpoint mechanism.
+    const admissionStartedAt = this._now();
     const admitted = this.admitCollisionInstances(lease, merged);
+    reportSpan('capacity-admission-commit', this._now() - admissionStartedAt);
     // ---- END synchronous span.
 
     const sourceInstances = [...sourceExtracted.values()].map((rec) => makePlaced(admitted, rec));
@@ -699,7 +719,7 @@ export class CollisionWorld {
     const pairsByKey = new Map(); // `${sourceDbId}:${targetDbId}` -> ClashPair; ORDERED, never canonicalized
     const oversizedDiagnosedFragments = new Set();
     for (const [sourcePlaced, targetPlaced] of candidates) {
-      const pending = checkpoint();
+      const pending = checkpoint({ label: 'narrow-phase-pair' });
       if (pending) await pending;
       const hit = await this._runNarrowPhasePair(
         sourcePlaced, targetPlaced, query.mode, model, epoch, statistics, oversizedDiagnosedFragments, checkpoint,
@@ -738,7 +758,7 @@ export class CollisionWorld {
         // yield is due. A bare `await checkpoint()` would force a microtask hop on every one of up
         // to maxBroadPhaseInstancePairs iterations, which is exactly what that contract exists to
         // avoid. Liveness is still validated synchronously on every call, due or not.
-        const pending = checkpoint();
+        const pending = checkpoint({ label: 'broad-phase-scan' });
         if (pending) await pending;
         statistics.broadPhasePairs++;
         if (this._testBroadPhasePair(sourceInstances[i], targetInstances[j])) {

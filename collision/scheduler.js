@@ -20,6 +20,29 @@
 import { WorldDisposedError, ModelEvictedError } from './errors.js';
 import { frameBudgetMs } from './constants.js';
 
+// ---- Optional diagnostic span-recorder hook (Task 23) -----------------------------------------
+// No-op by default; zero cost when unset (a single null-check per checkpoint evaluation). This is
+// the load-bearing fix for the performance gate's criterion 1: an external harness cannot
+// otherwise observe internal synchronous spans between this library's own yield points, since a
+// wrapper around one outer `await world.findClashes(...)` call measures total wall-clock across
+// every internal `await`, not the uninterrupted synchronous span between two of them.
+//
+// `setSpanRecorder`/`clearSpanRecorder` are module-level, not per-port -- Task 23/24's harness
+// wires ONE recorder for the whole measured run (potentially spanning several findClashes calls
+// and/or GeometryRegistry builds, each of which owns its own checkpoint port instance). See
+// test/performance/checkpoint-recorder.mjs (the sink this hook reports into) and
+// test/performance/README.md for the full instrumentation-surface writeup.
+let _spanRecorder = null;
+export function setSpanRecorder(fn) { _spanRecorder = fn; }
+export function clearSpanRecorder() { _spanRecorder = null; }
+// Reports one labeled span directly, bypassing the checkpoint helper entirely -- for the one call
+// site (CollisionWorld.admitCollisionInstances's capacity-admission recompute-and-commit) that has
+// nothing to checkpoint against (it is deliberately 100% synchronous, zero awaits) but still needs
+// to report a labeled span for criterion 8.
+export function reportSpan(label, ms) {
+  _spanRecorder?.(label, ms);
+}
+
 /**
  * A per-SCOPE elapsed-time accumulator, where "scope" is decided by whoever
  * constructs the port (spec:3106: each findClashes call owns its own accumulator;
@@ -69,7 +92,10 @@ function defaultYield() {
  * @param {(loadEpoch: number) => boolean} deps.isEpochLive
  * @param {ReturnType<typeof createFrameBudgetAccumulator>} deps.accumulator
  * @param {() => Promise<void>} [deps.yieldToScheduler]
- * @returns {{ checkpoint: (ctx: { loadEpoch: number, modelIdHint?: (number|string) }) => (undefined | Promise<void>) }}
+ * @returns {{ checkpoint: (ctx: { loadEpoch: number, modelIdHint?: (number|string), label?: string }) => (undefined | Promise<void>) }}
+ *   `label`, when supplied, is a stable, distinct string identifying this call site -- used only to
+ *   bracket a Task-23 labeled span (see `setSpanRecorder` above); it has no effect on checkpoint
+ *   semantics and callers that never pass one behave exactly as before.
  */
 export function createCheckpointPort({ isDisposed, isEpochLive, accumulator, yieldToScheduler = defaultYield }) {
   function validate(loadEpoch, modelIdHint) {
@@ -81,18 +107,32 @@ export function createCheckpointPort({ isDisposed, isEpochLive, accumulator, yie
     }
   }
 
+  // Baseline for this port's own labeled-span bracketing (Task 23): starts at port construction
+  // (the call's own start), then resets after every checkpoint() invocation below -- fast path or
+  // real yield alike -- so the NEXT span always measures only the synchronous work done since the
+  // previous checkpoint, never time spent paused inside an actual yield.
+  let lastSpanAt = performance.now();
+
   return {
-    checkpoint({ loadEpoch, modelIdHint } = {}) {
+    checkpoint({ loadEpoch, modelIdHint, label } = {}) {
       // Entry validation is ALWAYS synchronous, whether or not a yield follows -- an
       // invalid entry must reject before any yield is even attempted.
       validate(loadEpoch, modelIdHint);
+      const nowMs = performance.now();
+      if (label !== undefined) {
+        reportSpan(label, nowMs - lastSpanAt);
+      }
       if (!accumulator.isDue()) {
+        lastSpanAt = nowMs; // fast path -- no yield to account for, reset right here
         return undefined; // synchronous fast path -- no Promise, no microtask forced
       }
       return (async () => {
         await yieldToScheduler();
         accumulator.markCheckpointed();
         validate(loadEpoch, modelIdHint);
+        // Reset AFTER the real yield completes, not before -- otherwise the next span would
+        // wrongly count this yield's own paused duration as synchronous work.
+        lastSpanAt = performance.now();
       })();
     },
   };

@@ -10,6 +10,7 @@
 // is exercised in isolation with stub builders in test/geometry/GeometryRegistry.test.mjs.
 
 import { WorldDisposedError, ModelEvictedError } from '../errors.js';
+import { reportSpan } from '../scheduler.js';
 
 function makeCancellationSignal() {
   let rejectSignal;
@@ -114,7 +115,7 @@ export class GeometryRegistry {
 
     entry.weldPromise = this._runPhase(loadEpoch, geometryIndex, entry, () =>
       this._buildWeld(loadEpoch, geometryIndex, ownerModelIdHint)
-    );
+    , 'weld');
 
     // `tail` is reassigned synchronously every time a phase is scheduled below, so
     // phase ORDER is fixed at schedule time, never at settle time -- this is what
@@ -143,7 +144,7 @@ export class GeometryRegistry {
       if (entry.weldWasOversized) return null; // never read by any real caller.
       return this._runPhase(loadEpoch, geometryIndex, entry, () =>
         this._buildConnectivity(entry.weldedGeometry)
-      );
+      , 'connectivity');
     });
     // May legitimately go unread (e.g. a surface-intersection caller sharing an
     // entry a containment caller built) -- prevent a spurious unhandledRejection.
@@ -157,7 +158,7 @@ export class GeometryRegistry {
         if (entry.weldWasOversized) return null;
         return this._runPhase(loadEpoch, geometryIndex, entry, () =>
           this._buildAcceleration(entry.weldedGeometry)
-        );
+        , 'bvh-construction');
       })
       .then((accel) => {
         // 'ready' is record-level and mode-independent: weld+BVH both resolved,
@@ -169,7 +170,36 @@ export class GeometryRegistry {
     return entry.accelerationPromise;
   }
 
-  _runPhase(loadEpoch, geometryIndex, entry, builderFn) {
+  // `label` (Task 23) identifies which of the three phases (weld/connectivity/bvh-construction)
+  // this particular call is timing -- passed through by each of this method's three call sites
+  // above rather than inferred here, since this one method's body has no way to tell which
+  // builderFn it was handed.
+  //
+  // IMPORTANT (fixed after a codex-advisor finding during this task's own review): `label` is
+  // NOT threaded into the checkpoint() call below. An earlier draft did exactly that, which is
+  // wrong on two counts the advisor's review caught by reading the actual call sequence:
+  //   (a) off-by-one attribution -- the checkpoint fires BEFORE builderFn ever runs, so a span
+  //       reported there measures whatever happened SINCE THE PREVIOUS checkpoint call, i.e. the
+  //       PRECEDING phase's own work (or, for the very first phase, idle time since world/port
+  //       construction) -- never this phase's own upcoming duration. Concretely: the 'weld'
+  //       checkpoint reports pre-build idle time, 'connectivity' silently receives weld's actual
+  //       duration, and 'bvh-construction' receives connectivity's -- while BVH's own duration is
+  //       never reported at all (nothing calls checkpoint again afterward within this build).
+  //   (b) this method's checkpointPort is a single world-scoped instance shared across every
+  //       concurrent geometry build for the life of the world (unlike the per-findClashes-call
+  //       port broad-phase-scan/narrow-phase-pair spans come from) -- so even fixing (a) alone
+  //       would leave two interleaved builds able to reset each other's shared `lastSpanAt`
+  //       baseline, which can not just OVER-report but fully HIDE a genuine long span (build A
+  //       yields, build B's own checkpoint resets the baseline before A's resumed synchronous
+  //       work is ever measured against it).
+  // The fix used here sidesteps both: builderFn() is bracketed directly with a LOCAL
+  // performance.now() timer, reported via the exported reportSpan(label, ms) helper -- entirely
+  // decoupled from the shared port's own baseline, so it can never cross-attribute between
+  // concurrent builds, and it measures exactly the phase it's named after. The checkpoint() call
+  // itself keeps its original, unlabeled liveness/yield purpose unchanged; try/finally reports
+  // the span even if builderFn rejects, so a slow phase that then throws is still a criterion-1
+  // finding, not a silently discarded one.
+  _runPhase(loadEpoch, geometryIndex, entry, builderFn, label) {
     const attempt = (async () => {
       // scheduler.js's own contract: checkpoint() returns undefined synchronously on
       // the "not due" fast path and only returns a real Promise when a yield is
@@ -179,7 +209,12 @@ export class GeometryRegistry {
       // still propagates correctly since this whole block runs inside an async IIFE.
       const pending = this._checkpointPort.checkpoint({ loadEpoch });
       if (pending) await pending;
-      return builderFn();
+      const startedAt = performance.now();
+      try {
+        return await builderFn();
+      } finally {
+        reportSpan(label, performance.now() - startedAt);
+      }
     })();
     // Every phase races the entry's one cancellation signal, including a lazily
     // started connectivity build against an already-'ready' entry (spec :1475-1477).
