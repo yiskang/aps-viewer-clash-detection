@@ -11,6 +11,14 @@ from https://tutorials.autodesk.io.
 
 ![thumbnail](thumbnail.png)
 
+## Collision detection library
+
+This repo also hosts a Viewer-side collision/clash-detection library (`collision/`), currently at
+Milestone 1. See [`collision/README.md`](collision/README.md) for usage, supported query modes,
+the quick-start example, and known limitations, and
+[`wwwroot/extensions/RoomLocatorExtension.js`](wwwroot/extensions/RoomLocatorExtension.js) for the
+reference sample integration.
+
 ## Development
 
 ### Prerequisites
