@@ -294,12 +294,196 @@ test('source and target sharing the same model have their fragment ids unioned, 
   const epoch = world.admitModel(modelA).epoch;
   // The ADMISSION-ARITHMETIC claim under test: fragment 100 (reachable from BOTH source's [10] and
   // the target entry's [10, 20]) is admitted exactly ONCE -- 2 CollisionInstances total (100, 200),
-  // never 3. `result.pairs.length` is a SEPARATE, incidental consequence of this fixture's own
-  // choice to let dbId 10 appear on both sides: it genuinely produces TWO candidate pairs (the
-  // degenerate self-pair 10-vs-10, two coincident identical boxes -- a real surface-intersection
-  // hit -- plus the real 10-vs-20 hit), not proof of any double-admission bug.
+  // never 3.
   assert.equal(world.getEpochCollisionInstanceCount(epoch), 2, 'fragment 100 counted once, not twice');
-  assert.equal(result.pairs.length, 2, 'the incidental self-pair (10,10) plus the real (10,20) hit');
+  // `result.pairs.length` is now 1, not 2 (Task 7/8's documented, deliberate self-exclusion behavior
+  // change): before self-exclusion existed, this fixture's own choice to let dbId 10 appear on BOTH
+  // sides produced a degenerate self-pair (10-vs-10, two coincident identical boxes -- a real
+  // surface-intersection hit under the OLD unconditional broad phase) in addition to the real
+  // (10,20) hit. Self-exclusion now removes fragment 100 from the target side entirely (it is the
+  // source's own extracted fragment, same epoch), so only the real (10,20) hit remains.
+  assert.equal(result.pairs.length, 1, 'self-exclusion removes the (10,10) self-pair; only the real (10,20) hit remains');
+});
+
+// === Task 7/8: source self-exclusion, epoch-qualified dedup, operand-local provenance ============
+
+test('legacy {model, dbIds} shape: an overlapping dbId on both sides is self-excluded (documented M1 behavior change)', async () => {
+  // M1 never had a self-exclusion concept: `_runBroadPhaseScan`'s original unconditional Cartesian
+  // loop counted and retested every pair, including a pathological self-pair from a caller passing an
+  // overlapping dbId on both source and target. Task 8 applies self-exclusion UNIFORMLY, including to
+  // this plain legacy `{model, dbIds}` shape -- this is the one narrow, deliberate, documented
+  // behavior change to broadPhasePairs's numeric value and to `pairs` for this specific scenario.
+  const { modelA, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    fragSpecsA: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [10] },
+    target: { model: modelA, dbIds: [10, 20] }, // LEGACY shape, dbId 10 shared with source
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  // Only the real (10,20) hit; the (10,10) self-pair is excluded and never even counted.
+  assert.equal(result.pairs.length, 1);
+  assert.equal(result.pairs[0].source.dbId, 10);
+  assert.equal(result.pairs[0].target.dbId, 20);
+  assert.equal(result.statistics.broadPhasePairs, 1, 'the self-pair is never counted, not merely filtered post-hoc');
+});
+
+test('source self-exclusion is assembly-rooted (spec §4.4): excludes by fragmentId membership, not by the requested source dbId', async () => {
+  // The source query requests only the PARENT assembly dbId (0). Extraction's own depth-first walk
+  // discovers fragments actually OWNED by CHILD dbIds 10 and 20 (first-discovery-wins ownerDbId
+  // capture) -- neither child dbId was ever "requested" as source. The target scope independently
+  // names those same two child dbIds. Every one of those fragments must still be excluded, because
+  // exclusion is keyed by (loadEpoch, fragmentId) membership in the source's own extracted set, never
+  // by dbId-level equality against the literal source.dbIds the caller supplied.
+  const { modelA, viewer } = makeTwoModelFixture({
+    rootNodesA: [{
+      dbId: 0,
+      children: [
+        { dbId: 10, fragments: [100] },
+        { dbId: 20, fragments: [200] },
+        { dbId: 30, fragments: [300] }, // a third child, NOT in target scope -- must survive untouched
+      ],
+    }],
+    fragSpecsA: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [50, 0, 0] }, // far away, disjoint AABB
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [0] }, // only the PARENT assembly dbId requested
+    target: { model: modelA, dbIds: [10, 20, 30] }, // child dbIds the assembly walk itself discovered
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  // Every fragment the source's own assembly walk discovered (100 under dbId 10, 200 under dbId 20)
+  // is excluded from the target side, even though the source's own query.source.dbIds named only the
+  // parent (0), never 10 or 20 directly. dbId 30's fragment is far away (disjoint AABB) and was never
+  // part of the source's own extraction to begin with, so it correctly produces zero pairs on its own
+  // merits, not because of self-exclusion.
+  assert.deepEqual(result.pairs, []);
+  assert.equal(result.statistics.broadPhasePairs, 0, 'every candidate pair was self-excluded before being counted');
+});
+
+test('dedup key is epoch-qualified: the same numeric dbId in two different target models both clash with source and are NOT collapsed', async () => {
+  // modelA carries the source (dbId 1) AND a target-side dbId 5, coincident with the source's own
+  // box. modelB carries its OWN target-side dbId 5 (same numeric dbId, a DIFFERENT model/epoch),
+  // also coincident with the source. Both must appear as distinct pairs.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children: [{ dbId: 1, fragments: [100] }, { dbId: 5, fragments: [500] }] }],
+    fragSpecsA: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      500: { geometryIndex: 1, geometry: box(2, 2, 2), at: [0, 0, 0] },
+    },
+    rootNodesB: [{ dbId: 5, fragments: [5000] }],
+    fragSpecsB: { 5000: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelA, dbIds: [5] }, { model: modelB, dbIds: [5] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(result.pairs.length, 2, 'both same-numeric-dbId-5 targets, in two different models, appear as distinct pairs');
+  const byModelId = new Map(result.pairs.map((p) => [p.target.modelId, p]));
+  assert.equal(byModelId.get(modelA.id).target.dbId, 5);
+  assert.equal(byModelId.get(modelA.id).target.model, modelA);
+  assert.equal(byModelId.get(modelB.id).target.dbId, 5);
+  assert.equal(byModelId.get(modelB.id).target.model, modelB);
+});
+
+test('ClashPair carries an additive model reference per operand, alongside modelId (=== identity, not deep-equal)', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [100] }],
+    fragSpecsA: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 2, fragments: [200] }],
+    fragSpecsB: { 200: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [2] }] },
+    mode: 'volume-overlap', groupBy: 'dbId', broadPhase: 'linear',
+  });
+  assert.equal(result.pairs.length, 1);
+  assert.equal(result.pairs[0].source.model, modelA, 'source.model is the REAL modelA object (===)');
+  assert.equal(result.pairs[0].target.model, modelB, 'target.model is the REAL modelB object (===)');
+  assert.equal(result.pairs[0].source.modelId, modelA.id, 'modelId is untouched/additive alongside model');
+  assert.equal(result.pairs[0].target.modelId, modelB.id);
+});
+
+test('fragment-diagnostic dedup is (loadEpoch, fragmentId)-keyed, not bare fragmentId: two epochs sharing a numeric fragmentId both get diagnosed', async () => {
+  // Two DIFFERENT models (hence different epochs) each own a fragment numbered 999 (same numeric
+  // fragmentId, different model/epoch). Both are made OVERSIZED via an unsupported raw-geometry shape
+  // (a deliberately non-THREE object, matching this repo's existing oversized-fixture convention),
+  // and both must be diagnosed -- a bare-fragmentId Set would incorrectly suppress the second.
+  const notARealGeometry = { attributes: {}, index: null }; // no resolvable position attribute
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [1] }, { dbId: 999, fragments: [999] }],
+    fragSpecsA: {
+      1: { geometryIndex: 0, geometry: box(50, 50, 50), at: [0, 0, 0] },
+      999: { geometryIndex: 1, geometry: notARealGeometry, bounds: { min: [0, 0, 0], max: [1, 1, 1] } },
+    },
+    rootNodesB: [{ dbId: 999, fragments: [999] }],
+    fragSpecsB: {
+      999: { geometryIndex: 0, geometry: notARealGeometry, bounds: { min: [0, 0, 0], max: [1, 1, 1] } },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelA, dbIds: [999] }, { model: modelB, dbIds: [999] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  const oversizedDiagnostics = result.statistics.diagnostics.filter((d) => d.scope === 'fragment' && d.role === 'target');
+  assert.equal(oversizedDiagnostics.length, 2, 'both epochs own fragmentId 999 -- both must be diagnosed, not deduped away');
+  const modelIds = oversizedDiagnostics.map((d) => d.fragment.modelId).sort();
+  assert.deepEqual(modelIds, [modelA.id, modelB.id].sort());
+});
+
+test('operand-local model/epoch: a fragment-scoped diagnostic on a cross-model pair names the CORRECT per-operand model', async () => {
+  const notARealGeometry = { attributes: {}, index: null }; // no resolvable position attribute
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [1] }],
+    fragSpecsA: { 1: { geometryIndex: 0, geometry: box(50, 50, 50), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 2, fragments: [2] }],
+    fragSpecsB: { 2: { geometryIndex: 0, geometry: notARealGeometry, bounds: { min: [0, 0, 0], max: [1, 1, 1] } } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [2] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  const targetDiagnostic = result.statistics.diagnostics.find((d) => d.scope === 'fragment' && d.role === 'target');
+  assert.ok(targetDiagnostic, 'the oversized target fragment must be diagnosed');
+  assert.equal(targetDiagnostic.fragment.modelId, modelB.id, 'target-side diagnostic must name modelB, never modelA');
+});
+
+test('single-model dedup-key spot-check: the new epoch-qualified key partitions identically to the old bare dbId:dbId key', async () => {
+  // Completion criteria (Task 7): for a single-model call, sourceOperand.epoch === targetOperand.epoch
+  // always, so the new key `${sourceEpoch}:${sourceDbId}:${targetEpoch}:${targetDbId}` reduces to the
+  // OLD key `${sourceDbId}:${targetDbId}`'s information content plus a redundant-but-harmless epoch
+  // prefix shared by every entry -- the UNIQUENESS PARTITION over a set of (sourceDbId, targetDbId)
+  // pairs is identical either way. Verified directly here rather than merely asserted.
+  const pairs = [[10, 20], [10, 20], [20, 10], [10, 21]];
+  const sharedEpoch = 7;
+  const oldKeys = pairs.map(([s, t]) => `${s}:${t}`);
+  const newKeys = pairs.map(([s, t]) => `${sharedEpoch}:${s}:${sharedEpoch}:${t}`);
+  const partitionOf = (keys) => {
+    const groups = new Map();
+    keys.forEach((k, i) => {
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    });
+    return [...groups.values()].map((idxs) => idxs.slice().sort().join(',')).sort();
+  };
+  assert.deepEqual(partitionOf(newKeys), partitionOf(oldKeys), 'identical uniqueness partition, old key vs new key');
 });
 
 // === Step 8: input validation ====================================================================
@@ -376,4 +560,157 @@ test("broadPhase: 'tlas' is accepted with the LEGACY {model, dbIds} target shape
   const world = await freshWorld(viewer, { now: frozenClock() });
   const result = await world.findClashes({ ...baseQuery(modelA), target: { model: modelA, dbIds: [] }, broadPhase: 'tlas' });
   assert.deepEqual(result.pairs, []);
+});
+
+// === Task 8: cross-model linear-oracle broad phase (the shippable milestone) ====================
+
+test('THE MILESTONE: source has a same-model AND a cross-model Hard Clash -- both aggregate in one pairs array, genuinely non-empty end-to-end', async () => {
+  // Source (modelA dbId 1) clashes with:
+  //  - a SAME-MODEL target (modelA dbId 2), and
+  //  - a CROSS-MODEL target (modelB dbId 1),
+  // both coincident boxes, both real surface-intersection hits. Neither target is the source itself.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children: [{ dbId: 1, fragments: [10] }, { dbId: 2, fragments: [20] }] }],
+    fragSpecsA: {
+      10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      20: { geometryIndex: 1, geometry: box(2, 2, 2), at: [0, 0, 0] },
+    },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelA, dbIds: [2] }, { model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'linear',
+  });
+  assert.equal(result.pairs.length, 2, 'both the same-model and cross-model Hard Clash aggregate together');
+  const sameModelPair = result.pairs.find((p) => p.target.model === modelA);
+  const crossModelPair = result.pairs.find((p) => p.target.model === modelB);
+  assert.ok(sameModelPair, 'the same-model clash (modelA dbId 2) must be present');
+  assert.ok(crossModelPair, 'the cross-model clash (modelB dbId 1) must be present');
+  assert.equal(sameModelPair.target.dbId, 2);
+  assert.equal(sameModelPair.source.model, modelA);
+  assert.equal(crossModelPair.target.dbId, 1);
+  assert.equal(crossModelPair.source.model, modelA);
+  assert.equal(crossModelPair.source.dbId, 1);
+  // The source itself is correctly excluded: modelA dbId 1 does NOT appear as its own target, even
+  // though it was never explicitly listed in the targets scope above (nothing to exclude here by
+  // construction, but this documents that the fixture is not accidentally self-clashing).
+  assert.equal(result.pairs.some((p) => p.target.model === modelA && p.target.dbId === 1), false);
+});
+
+test('whole-model target scope (targets:[{model}], no dbIds) against a dense model finds every real clash via extractAllFragments', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [
+      { dbId: 1, fragments: [100] }, // clashes with source
+      { dbId: 2, fragments: [200] }, // does NOT clash (disjoint AABB)
+      { dbId: 3, fragments: [300] }, // clashes with source
+    ],
+    fragSpecsB: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [50, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [0, 0, 0] },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB }] }, // dbIds omitted -- whole-model scope
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(result.pairs.length, 2, 'both real clashes (dbId 1 and dbId 3) found, the disjoint dbId 2 correctly excluded');
+  const targetDbIds = result.pairs.map((p) => p.target.dbId).sort();
+  assert.deepEqual(targetDbIds, [1, 3]);
+});
+
+test("an explicit broadPhase:'tlas' request runs the SAME linear scan and finds the correct real clash (documented placeholder behavior, not yet a real TLAS dispatch)", async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  assert.equal(result.pairs.length, 1, "broadPhase:'tlas' finds the real clash via the same linear scan today");
+  assert.equal(result.pairs[0].target.model, modelB);
+});
+
+test('O(n*m)-per-pair shape, single target epoch: broadPhasePairs equals sourceCount*targetCount exactly', async () => {
+  // Baseline sanity check before the two-epoch discriminator test below: 2 source instances x 3
+  // target instances, one single target epoch -- broadPhasePairs must be exactly 6.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [
+      { dbId: 1, fragments: [10] },
+      { dbId: 2, fragments: [20] },
+    ],
+    fragSpecsA: {
+      10: { geometryIndex: 0, geometry: box(0.01, 0.01, 0.01), at: [1000, 0, 0] }, // disjoint from everything
+      20: { geometryIndex: 1, geometry: box(0.01, 0.01, 0.01), at: [1000, 0, 0] },
+    },
+    rootNodesB: [
+      { dbId: 1, fragments: [100] },
+      { dbId: 2, fragments: [200] },
+      { dbId: 3, fragments: [300] },
+    ],
+    fragSpecsB: {
+      100: { geometryIndex: 0, geometry: box(0.01, 0.01, 0.01), at: [2000, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(0.01, 0.01, 0.01), at: [2000, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(0.01, 0.01, 0.01), at: [2000, 0, 0] },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1, 2] }, // 2 source instances
+    target: { targets: [{ model: modelB, dbIds: [1, 2, 3] }] }, // 1 target epoch, 3 instances
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(result.statistics.broadPhasePairs, 6, '2 source x 3 target instances, one target epoch');
+  assert.equal(result.pairs.length, 0, 'all fixtures are deliberately AABB-disjoint');
+});
+
+test('O(n*m)-per-pair shape across TWO target epochs: broadPhasePairs is the SUM, not a merged product', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [
+      { dbId: 1, fragments: [10] },
+      { dbId: 2, fragments: [20] },
+    ],
+    fragSpecsA: {
+      10: { geometryIndex: 0, geometry: box(0.01, 0.01, 0.01), at: [1000, 0, 0] },
+      20: { geometryIndex: 1, geometry: box(0.01, 0.01, 0.01), at: [1000, 0, 0] },
+    },
+    rootNodesB: [
+      { dbId: 1, fragments: [100] },
+      { dbId: 2, fragments: [200] },
+      { dbId: 3, fragments: [300] },
+    ],
+    fragSpecsB: {
+      100: { geometryIndex: 0, geometry: box(0.01, 0.01, 0.01), at: [2000, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(0.01, 0.01, 0.01), at: [2000, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(0.01, 0.01, 0.01), at: [2000, 0, 0] },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  // Source has 2 instances (dbIds 1,2 in modelA). Target has TWO distinct epochs: modelA's own dbId 3
+  // (needs adding) is unavailable here without a third dbId in rootNodesA -- instead, target epoch #1
+  // is modelA's dbIds [1,2] themselves (2 instances -- self-excluded entirely, since they ARE the
+  // source's own fragments) and target epoch #2 is modelB's dbIds [1,2,3] (3 instances, none
+  // self-excluded, all disjoint). A merged-Cartesian-product implementation that failed to scope
+  // self-exclusion PER GROUP could double-count or cross-contaminate; the correct SUM is
+  // 0 (all 4 modelA candidates self-excluded, never counted) + 6 (2 source x 3 modelB instances,
+  // none self-excluded) = 6.
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1, 2] },
+    target: { targets: [{ model: modelA, dbIds: [1, 2] }, { model: modelB, dbIds: [1, 2, 3] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(result.statistics.broadPhasePairs, 6, '0 (all self-excluded) + 6 (2x3 cross-model), summed per target epoch');
+  assert.equal(result.pairs.length, 0, 'all real candidates are AABB-disjoint');
 });

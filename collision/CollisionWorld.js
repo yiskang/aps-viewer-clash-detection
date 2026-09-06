@@ -215,6 +215,25 @@ function collectDistinctModels(sourceModel, targetsEntries) {
   return [...models];
 }
 
+// ---- Task 7/8: source self-exclusion -----------------------------------------------------------
+
+// A candidate target instance is excluded iff its (loadEpoch, fragmentId) is literally a fragment
+// the SOURCE OPERAND'S OWN extraction walk discovered -- design spec §4.4's assembly-rooted rule,
+// NOT dbId-level equality. A source query rooted at an assembly/parent dbId can discover fragments
+// actually OWNED by child dbIds (extraction's own first-discovery-wins ownerDbId capture); every one
+// of those discovered fragments must be excluded from the target side even though only the parent
+// dbId was ever "requested" as source.
+//
+// `sourceOperand.fragmentIds` is `sourceExtracted` itself (a `Map<fragmentId, record>` scoped to the
+// source's own single epoch) -- membership, not identity, is what this checks. Comparing epochs
+// FIRST is sufficient and equivalent to a per-epoch `Map<epoch, Map>` lookup precisely because M2's
+// source operand is always exactly one epoch; this also makes the check `false` immediately, at zero
+// map-lookup cost, for the overwhelmingly common case of a genuinely cross-model target group whose
+// epoch never equals the source's own.
+function isSourceOwnFragment(sourceOperand, targetEpoch, targetFragmentId) {
+  return targetEpoch === sourceOperand.epoch && sourceOperand.fragmentIds.has(targetFragmentId);
+}
+
 function emptyStatistics() {
   return {
     broadPhasePairs: 0,
@@ -745,16 +764,14 @@ export class CollisionWorld {
    * in this method revalidates the FULL captured lease set, not just whichever epoch a given
    * sub-step happens to touch.
    *
-   * KNOWN LIMITATION, deliberately deferred to Tasks 7/8 (not this task's scope -- see this
-   * method's own inline notes below at the narrow-phase dispatch call): `_runNarrowPhasePair`'s
-   * signature still takes one shared `model`/`epoch` pair, used only for diagnostic labeling
-   * (FragmentRef.modelId, GeometryRegistry's diagnostic-only ownerModelIdHint) -- NOT for geometry
-   * resolution, which already correctly resolves per-operand via each record's own
-   * `geometryIdentity.loadEpoch`. A genuinely non-empty cross-model call therefore already computes
-   * geometrically CORRECT hit/no-hit verdicts, but mislabels target-side diagnostics with the
-   * source model's id, and pair-dedup keys purely by `dbId:dbId` (two different target models
-   * sharing a numeric dbId would collapse). Tasks 7/8 fix both by threading per-operand
-   * `{model, epoch}` through the broad/narrow-phase candidate tuple.
+   * Tasks 7/8: the broad phase runs once per distinct TARGET epoch (`targetGroups`), applying source
+   * self-exclusion (`isSourceOwnFragment`, spec §4.4's assembly-rooted rule) before a candidate pair
+   * is ever counted or retested, and the narrow phase threads real per-operand `{model, epoch}` pairs
+   * (`sourceOperand`/`targetOperand`) through `_runNarrowPhasePair` and `fragmentRef` -- every
+   * diagnostic and every `ClashPair.source`/`target` names its OWN operand's model, never a single
+   * call-wide shared one. Pair-dedup is epoch-qualified
+   * (`` `${sourceEpoch}:${sourceDbId}:${targetEpoch}:${targetDbId}` ``), so two different target
+   * models sharing a numeric dbId no longer collapse into one pair.
    *
    * @param {{ source: {model: Object, dbIds: number[]},
    *           target: {model: Object, dbIds: number[]} | {targets: Array<{model: Object, dbIds?: number[]}>},
@@ -817,6 +834,14 @@ export class CollisionWorld {
     if (query.broadPhase !== undefined && query.broadPhase !== 'tlas' && query.broadPhase !== 'linear') {
       throw new Error(`findClashes: unsupported broadPhase '${query.broadPhase}'`);
     }
+    // Task 8: `broadPhase` is validated above as an enum, but no branch in this method actually
+    // dispatches on its VALUE yet -- `_runBroadPhaseScan` (the linear oracle) is the only broad-phase
+    // implementation that exists before Batch 3/4's TLAS work lands. An explicit `broadPhase:'tlas'`
+    // request therefore silently runs the SAME linear scan `broadPhase:'linear'`/the omitted default
+    // would, rather than throwing "not yet implemented" -- a deliberate, explicit choice (not an
+    // oversight) so a caller opting into 'tlas' early gets a correct, if not-yet-accelerated, result
+    // instead of a hard failure. This is a placeholder, not a compatibility guarantee: once Batch 3/4
+    // wires a real TLAS path, `broadPhase:'tlas'` will dispatch to it instead.
 
     const startedAt = this._now();
     const statistics = emptyStatistics();
@@ -942,11 +967,22 @@ export class CollisionWorld {
     // is lost by checking early -- but a call that is going to be REJECTED must not first consume
     // maxCollisionInstancesPerEpoch headroom via admitCollisionInstances or pollute any epoch's
     // representative-fragment map, neither of which is undone on the throw.
-    if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, targetTotalCount)) {
-      throw new Error(
-        `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
-        `(${sourceExtracted.size} x ${targetTotalCount} > ${maxBroadPhaseInstancePairs})`,
-      );
+    //
+    // Task 8 Step 5: checked ONCE PER DISTINCT TARGET EPOCH (`sourceExtracted.size x bucket.size`),
+    // never as a single call-wide product against the SUM across every target epoch -- the ceiling's
+    // own mathematical shape is already a single-pair product, and generalizing it to "one check per
+    // pair in the call" (rather than one check per whole call) is this task's own deliberate design
+    // choice: a call touching many small target models must not be rejected merely because their
+    // SUM happens to exceed the ceiling when no single (source, target-epoch) pair does. This is a
+    // genuine judgment call the spec's own §9.3.1 text does not settle for the *linear* ceiling --
+    // that section is scoped to the *TLAS* whole-call budget only.
+    for (const [epoch, bucket] of targetRecordsByEpoch) {
+      if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, bucket.size)) {
+        throw new Error(
+          `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
+          `(${sourceExtracted.size} x ${bucket.size} > ${maxBroadPhaseInstancePairs})`,
+        );
+      }
     }
     this._recordRepresentativeFragments(sourceEpoch, sourceExtracted);
     for (const [epoch, bucket] of targetRecordsByEpoch) this._recordRepresentativeFragments(epoch, bucket);
@@ -1002,44 +1038,64 @@ export class CollisionWorld {
     const sourceInstances = [...sourceExtracted.values()].map(
       (rec) => makePlaced(admittedByEpoch.get(sourceEpoch), rec),
     );
-    const targetInstances = [];
+    // Task 8: one group PER DISTINCT TARGET EPOCH, built from `targetRecordsByEpoch`'s own FINAL,
+    // already-merged buckets (never from raw `targetsEntries` -- a duplicate `targets` entry for the
+    // same model has already been folded into that one bucket by the extraction loop above). Each
+    // group carries its own `targetOperand` ({model, epoch}), reused verbatim across every candidate
+    // that group produces (never reallocated per candidate) so self-exclusion and per-operand
+    // narrow-phase provenance (Task 7) can be applied per group.
+    const targetGroups = [];
     for (const [epoch, bucket] of targetRecordsByEpoch) {
-      const admitted = admittedByEpoch.get(epoch);
-      for (const rec of bucket.values()) targetInstances.push(makePlaced(admitted, rec));
+      const targetOperand = { model: leaseByEpoch.get(epoch).model, epoch };
+      targetGroups.push({
+        targetOperand,
+        instances: [...bucket.values()].map((rec) => makePlaced(admittedByEpoch.get(epoch), rec)),
+      });
     }
 
-    // --- Broad phase. Its ceiling was already enforced above, against the extraction counts these
-    // two arrays are built from one-for-one, and deliberately BEFORE the admission/bookkeeping side
-    // effects -- so there is no second check here.
+    // The source's own operand descriptor, threaded through both the broad phase (self-exclusion)
+    // and the narrow phase (operand-local provenance). `fragmentIds` is `sourceExtracted` itself --
+    // membership in it is exactly what `isSourceOwnFragment` checks (spec §4.4's assembly-rooted
+    // rule), never re-derived or copied.
+    const sourceOperand = { model: sourceLease.model, epoch: sourceEpoch, fragmentIds: sourceExtracted };
+
+    // --- Broad phase. Its ceiling was already enforced above, per target epoch, against the
+    // extraction counts these groups are built from one-for-one, and deliberately BEFORE the
+    // admission/bookkeeping side effects -- so there is no second check here.
     const broadPhaseStartedAt = this._now();
-    const candidates = await this._runBroadPhaseScan(sourceInstances, targetInstances, statistics, checkpoint);
+    const candidates = await this._runBroadPhaseScan(sourceOperand, sourceInstances, targetGroups, statistics, checkpoint);
     statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
 
     // --- Narrow phase + aggregation.
     //
-    // `model`/`epoch` below are deliberately still the SOURCE's own single lease, unchanged in
-    // shape from pre-Task-6 -- _runNarrowPhasePair's signature is explicitly OUT OF SCOPE for this
-    // task (Tasks 7/8 thread real per-operand {model, epoch} through it instead). See this method's
-    // own JSDoc above for what that defers and why it does not affect hit/no-hit correctness.
-    const model = sourceLease.model;
-    const epoch = sourceEpoch;
+    // Task 7: every candidate now carries its OWN target operand (`targetOperand`, from the
+    // broad-phase tuple); `sourceOperand` (built above) is constant for the whole call. Both are
+    // threaded through `_runNarrowPhasePair` so every diagnostic and every `ClashPair` side names its
+    // own operand's model -- never a single call-wide shared one.
     const narrowPhaseStartedAt = this._now();
-    const pairsByKey = new Map(); // `${sourceDbId}:${targetDbId}` -> ClashPair; ORDERED, never canonicalized
+    // `${sourceEpoch}:${sourceDbId}:${targetEpoch}:${targetDbId}` -> ClashPair; ORDERED, never
+    // canonicalized. Epoch-qualified so two different target models sharing a numeric dbId (or a
+    // target dbId numerically equal to a source dbId in a DIFFERENT model) never collapse together.
+    const pairsByKey = new Map();
     const oversizedDiagnosedFragments = new Set();
-    for (const [sourcePlaced, targetPlaced] of candidates) {
+    for (const [sourcePlaced, targetPlaced, targetOperand] of candidates) {
       const pending = checkpoint({ label: 'narrow-phase-pair' });
       if (pending) await pending;
       const hit = await this._runNarrowPhasePair(
-        sourcePlaced, targetPlaced, query.mode, model, epoch, statistics, oversizedDiagnosedFragments, checkpoint,
+        sourcePlaced, targetPlaced, query.mode, sourceOperand, targetOperand,
+        statistics, oversizedDiagnosedFragments, checkpoint,
       );
       statistics.narrowPhasePairs++;
       if (!hit) continue;
-      const key = `${sourcePlaced.ownerDbId}:${targetPlaced.ownerDbId}`;
+      const key = `${sourceOperand.epoch}:${sourcePlaced.ownerDbId}:${targetOperand.epoch}:${targetPlaced.ownerDbId}`;
       if (!pairsByKey.has(key)) {
-        const modelId = modelIdOf(model);
         pairsByKey.set(key, {
-          source: { modelId, dbId: sourcePlaced.ownerDbId },
-          target: { modelId, dbId: targetPlaced.ownerDbId },
+          source: {
+            modelId: modelIdOf(sourceOperand.model), dbId: sourcePlaced.ownerDbId, model: sourceOperand.model,
+          },
+          target: {
+            modelId: modelIdOf(targetOperand.model), dbId: targetPlaced.ownerDbId, model: targetOperand.model,
+          },
           type: query.mode,
         });
       }
@@ -1062,19 +1118,40 @@ export class CollisionWorld {
     return sourceCount > maxBroadPhaseInstancePairs / targetCount;
   }
 
-  async _runBroadPhaseScan(sourceInstances, targetInstances, statistics, checkpoint) {
+  // Task 8: runs once per distinct TARGET epoch in `targetGroups` -- one nested (i,j) scan per
+  // group, source instances always the outer-of-the-two-nested loops, so `broadPhasePairs` accumulates
+  // as the SUM of each group's own `sourceInstances.length * group.instances.length`, never a single
+  // merged Cartesian product across groups (which would double-count or cross-contaminate epochs).
+  //
+  // Self-exclusion (`isSourceOwnFragment`) is applied BEFORE `broadPhasePairs` is incremented and
+  // before `_testBroadPhasePair` ever runs -- a self-excluded pair is never counted and never
+  // retested (matches Task 13's own later TLAS-path ordering: filter, then count, then retest). This
+  // is a genuine, narrow, deliberate behavior change versus M1: M1 had no self-exclusion concept and
+  // counted/retested every pair unconditionally, including a pathological self-pair from a caller
+  // passing an overlapping dbId on both sides. That legacy single-model shape is NOT special-cased --
+  // self-exclusion applies uniformly to it too (see the dedicated compatibility test).
+  //
+  // `_testBroadPhasePair` itself is reused byte-for-byte, never modified.
+  async _runBroadPhaseScan(sourceOperand, sourceInstances, targetGroups, statistics, checkpoint) {
     const candidates = [];
-    for (let i = 0; i < sourceInstances.length; i++) {
-      for (let j = 0; j < targetInstances.length; j++) {
-        // The checkpoint port is CONDITIONALLY synchronous — it returns undefined outright when no
-        // yield is due. A bare `await checkpoint()` would force a microtask hop on every one of up
-        // to maxBroadPhaseInstancePairs iterations, which is exactly what that contract exists to
-        // avoid. Liveness is still validated synchronously on every call, due or not.
-        const pending = checkpoint({ label: 'broad-phase-scan' });
-        if (pending) await pending;
-        statistics.broadPhasePairs++;
-        if (this._testBroadPhasePair(sourceInstances[i], targetInstances[j])) {
-          candidates.push([sourceInstances[i], targetInstances[j]]);
+    for (const group of targetGroups) {
+      const { targetOperand, instances: targetInstances } = group;
+      for (let i = 0; i < sourceInstances.length; i++) {
+        for (let j = 0; j < targetInstances.length; j++) {
+          // The checkpoint port is CONDITIONALLY synchronous — it returns undefined outright when no
+          // yield is due. A bare `await checkpoint()` would force a microtask hop on every one of up
+          // to maxBroadPhaseInstancePairs iterations, which is exactly what that contract exists to
+          // avoid. Liveness is still validated synchronously on every call, due or not.
+          const pending = checkpoint({ label: 'broad-phase-scan' });
+          if (pending) await pending;
+          const targetPlaced = targetInstances[j];
+          if (isSourceOwnFragment(sourceOperand, targetOperand.epoch, targetPlaced.instance.fragmentId)) {
+            continue; // never counted, never retested -- source self-exclusion (spec §4.4)
+          }
+          statistics.broadPhasePairs++; // counted immediately before the exact predicate runs
+          if (this._testBroadPhasePair(sourceInstances[i], targetPlaced)) {
+            candidates.push([sourceInstances[i], targetPlaced, targetOperand]);
+          }
         }
       }
     }
@@ -1100,36 +1177,45 @@ export class CollisionWorld {
    * the plan's Task 20 draft assumed -- CollisionWorld has no such method; the port is a per-call
    * factory product.)
    *
-   * `epoch` is the lease's own load epoch. It is redundant with each operand's
-   * `geometryIdentity.loadEpoch` (they are equal by construction, since both operands came from this
-   * same lease's extraction) and is carried here only to keep the signature the plan's Task 20
-   * section documents; the registry is keyed off the identity, not off this parameter.
+   * Task 7: `sourceOperand`/`targetOperand` (each `{model, epoch}`) replace the single shared
+   * `model, epoch` pair Task 19/20 originally passed. Every diagnostic-facing use of a `model`
+   * inside this method (FragmentRef.modelId via `fragmentRef`, GeometryRegistry's diagnostic-only
+   * `ownerModelIdHint`) now reads the CORRECT per-operand model -- source-side always
+   * `sourceOperand.model`, target-side always `targetOperand.model`, never one shared value. Real
+   * geometry resolution is UNAFFECTED by this change: it was already, and remains, keyed off each
+   * operand's own `placed.instance.geometryIdentity.loadEpoch`, never off either operand param here.
    */
   async _runNarrowPhasePair(
-    sourcePlaced, targetPlaced, mode, model, epoch, statistics, oversizedDiagnosedFragments, checkpoint,
+    sourcePlaced, targetPlaced, mode, sourceOperand, targetOperand, statistics, oversizedDiagnosedFragments, checkpoint,
   ) {
     const needsConnectivity = mode !== 'surface-intersection';
-    // Diagnosed once per fragment per call, shared by BOTH fragment-scoped skip reasons below: a
-    // fragment appearing in many candidate pairs must not flood statistics.diagnostics with the same
-    // verdict, whichever of the two it is.
-    const diagnoseFragmentOnce = (placed, role, reason) => {
-      if (oversizedDiagnosedFragments.has(placed.instance.fragmentId)) return;
-      oversizedDiagnosedFragments.add(placed.instance.fragmentId);
+    // Diagnosed once per (epoch, fragment) per call, shared by BOTH fragment-scoped skip reasons
+    // below: a fragment appearing in many candidate pairs must not flood statistics.diagnostics with
+    // the same verdict, whichever of the two it is. Keyed by `${operand.epoch}:${fragmentId}`, NOT
+    // bare fragmentId (Task 7 Step 3) -- fragmentId is only unique WITHIN one model's own
+    // fragment-index space, so two different epochs can legitimately share a numeric fragmentId; a
+    // bare-fragmentId Set would silently suppress the second epoch's own, genuinely distinct,
+    // diagnostic (unreachable in M1's single-epoch-per-call world, reachable once two epochs are in
+    // play in one call, per spec §4.2).
+    const diagnoseFragmentOnce = (placed, role, reason, operand) => {
+      const key = `${operand.epoch}:${placed.instance.fragmentId}`;
+      if (oversizedDiagnosedFragments.has(key)) return;
+      oversizedDiagnosedFragments.add(key);
       statistics.diagnostics.push({
         scope: 'fragment',
         reason,
         role,
-        fragment: fragmentRef(model, placed),
+        fragment: fragmentRef(operand.model, placed),
       });
     };
-    const buildOne = async (placed, role) => {
+    const buildOne = async (placed, role, operand) => {
       const identity = placed.instance.geometryIdentity; // { loadEpoch, geometryIndex }
       let record;
       try {
         record = await this._registry.getOrBuildGeometry({
           loadEpoch: identity.loadEpoch,
           geometryIndex: identity.geometryIndex,
-          ownerModelIdHint: modelIdOf(model), // diagnostic-only, per GeometryRegistry's contract
+          ownerModelIdHint: modelIdOf(operand.model), // diagnostic-only, per GeometryRegistry's contract
           needsConnectivity,
         });
       } catch (err) {
@@ -1151,7 +1237,7 @@ export class CollisionWorld {
         // (and permanently); widening representatives to a retry list is a separate design change.
         // The `role` and `fragment` fields therefore say WHICH PAIR was skipped, not necessarily
         // which fragment id the Viewer had no proxy for -- the error's own `fragId` does that.
-        diagnoseFragmentOnce(placed, role, 'geometry-not-yet-available');
+        diagnoseFragmentOnce(placed, role, 'geometry-not-yet-available', operand);
         return null;
       }
       if (record.oversized) {
@@ -1170,15 +1256,15 @@ export class CollisionWorld {
         // emitted once per epoch, not once per pair. That is a pre-existing behavioural deviation
         // from the spec text, recorded here rather than silently reinterpreted; the batch-4 fix wave
         // was scoped to the missing-proxy half of this problem only.
-        diagnoseFragmentOnce(placed, role, record.reason);
+        diagnoseFragmentOnce(placed, role, record.reason, operand);
         return null;
       }
       return record;
     };
 
-    const sourceRecord = await buildOne(sourcePlaced, 'source');
+    const sourceRecord = await buildOne(sourcePlaced, 'source', sourceOperand);
     if (!sourceRecord) return false;
-    const targetRecord = await buildOne(targetPlaced, 'target');
+    const targetRecord = await buildOne(targetPlaced, 'target', targetOperand);
     if (!targetRecord) return false;
 
     // Every query mode's own diagnostics are PARTIAL -- `{ reason }` or `{ reason, role }`, with no
@@ -1191,11 +1277,13 @@ export class CollisionWorld {
     // to the geometry-availability/normalization/size failures buildOne emits above).
     //
     // The two FragmentRefs are built lazily, inside the empty check: the overwhelmingly common case
-    // is a pair with no diagnostics at all, and this runs once per narrow-phase pair.
+    // is a pair with no diagnostics at all, and this runs once per narrow-phase pair. Each side uses
+    // its OWN operand's model (Task 7) -- never one shared value, so a cross-model pair's diagnostic
+    // correctly names each side's real model.
     const attach = (diagnostics) => {
       if (!diagnostics || diagnostics.length === 0) return;
-      const sourceFragment = fragmentRef(model, sourcePlaced);
-      const targetFragment = fragmentRef(model, targetPlaced);
+      const sourceFragment = fragmentRef(sourceOperand.model, sourcePlaced);
+      const targetFragment = fragmentRef(targetOperand.model, targetPlaced);
       for (const d of diagnostics) {
         statistics.diagnostics.push({
           scope: 'pair',
