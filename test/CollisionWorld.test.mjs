@@ -196,15 +196,6 @@ test('_checkEntryLifecycle: disposed is checked before cross-model check', () =>
   );
 });
 
-test('_checkEntryLifecycle: cross-model rejected before either operand is admitted', () => {
-  const world = new CollisionWorld();
-  const source = makeModel(1);
-  const target = makeModel(2);
-  assert.throws(() => world._checkEntryLifecycle({ model: source }, { model: target }));
-  assert.equal(world.isModelLive(source), false, 'must not have been lazily admitted by the failed check');
-  assert.equal(world.isModelLive(target), false);
-});
-
 test('_checkEntryLifecycle: evicted operand rejects ModelEvictedError', () => {
   const world = new CollisionWorld();
   const model = makeModel(1);

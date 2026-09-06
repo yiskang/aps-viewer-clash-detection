@@ -10,7 +10,7 @@ import {
 } from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
 import { maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, weldEpsilonMeters } from './constants.js';
-import { extractFragments } from './viewer/ViewerModelAdapter.js';
+import { extractFragments, extractAllFragments } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
 import { createGeometryRegistry } from './geometry/createGeometryRegistry.js';
 import { surfaceIntersectionQuery } from './query/SurfaceIntersectionQuery.js';
@@ -187,6 +187,32 @@ function createComposedStageScheduler(checkpoint, now) {
       }
     },
   };
+}
+
+// ---- Task 6: cross-model operand normalization -------------------------------------------------
+
+// Normalizes `query.target` into a uniform internal shape: `{model, dbIds}[]`. The legacy
+// `{model, dbIds}` target becomes a synthetic one-entry array, so every later step (extraction,
+// admission, and later tasks' broad/narrow phase) operates on one shape regardless of which the
+// caller supplied. `dbIds` is carried through EXACTLY as the caller supplied it, including
+// `undefined` (a `targets` entry's whole-model-scope sentinel, validated in findClashes's own
+// Step-8 checks before this is ever called).
+function normalizeTargets(target) {
+  if (Array.isArray(target?.targets)) return target.targets;
+  return [{ model: target.model, dbIds: target.dbIds }];
+}
+
+// Snapshots and DEDUPLICATES every distinct Model object across source + every targets entry, at
+// query entry, before any extraction begins (design spec §9.2 points 1-3). Two targets entries (or
+// a target entry sharing the source's own model) naming the same Model object collapse to one
+// lease -- `Set` dedups by object identity, which is exactly "the same Model object" for the
+// lifetime of one findClashes call. Source is inserted FIRST so `distinctModels[0]` is always the
+// source's own model, a deterministic choice createCompositeCheckpointPort's "primary lease" relies
+// on (see its own comment).
+function collectDistinctModels(sourceModel, targetsEntries) {
+  const models = new Set([sourceModel]);
+  for (const entry of targetsEntries) models.add(entry.model);
+  return [...models];
 }
 
 function emptyStatistics() {
@@ -481,6 +507,49 @@ export class CollisionWorld {
     return result;
   }
 
+  // Task 6: side-effect-free mirror of admitCollisionInstances's own real check
+  // (CollisionWorld.js's own step 2/4 above) -- computes whether an admission WOULD succeed,
+  // without touching `_instanceCache`. Used to preflight EVERY epoch a multi-model findClashes call
+  // touches, all before committing any of them, so a later epoch's capacity failure can never leave
+  // an earlier epoch partially admitted (design-review-fixed: extraction size alone is NOT the real
+  // check -- an epoch that already holds instances only fails on currentSize + genuinely-NEW-id
+  // count, which this replicates exactly).
+  //
+  // `uniqueFragments` here must already be the UNION of every source/target extraction touching
+  // this one epoch in this call (a duplicate targets entry for the same model, or the source and a
+  // target sharing a model, are unioned BEFORE preflighting -- exactly as the real commit step
+  // unions them, `findClashes`'s own `perEpochUnique` construction).
+  //
+  // Returns `{ok: true}` or `{ok: false, reason, details}` -- `reason` is one of the SAME kind
+  // strings (`'call-wide-unique-fragment-precheck'` / `'bucket-capacity'`) admitCollisionInstances
+  // itself throws under, and `details` mirrors that method's own CapacityExceededError payload
+  // field-for-field, so a preflight rejection and a (hypothetical) real-commit rejection for the
+  // same input are indistinguishable to a caller.
+  _preflightCollisionInstanceAdmission(lease, uniqueFragments) {
+    const loadEpoch = lease.epoch;
+    if (uniqueFragments.size > maxCollisionInstancesPerEpoch) {
+      return {
+        ok: false,
+        reason: 'call-wide-unique-fragment-precheck',
+        details: { loadEpoch, requested: uniqueFragments.size, limit: maxCollisionInstancesPerEpoch },
+      };
+    }
+    const existingBucket = this._instanceCache.get(loadEpoch) || null;
+    let missingCount = 0;
+    for (const fragmentId of uniqueFragments.keys()) {
+      if (!existingBucket || !existingBucket.has(fragmentId)) missingCount++;
+    }
+    const currentSize = existingBucket ? existingBucket.size : 0;
+    if (currentSize + missingCount > maxCollisionInstancesPerEpoch) {
+      return {
+        ok: false,
+        reason: 'bucket-capacity',
+        details: { loadEpoch, currentSize, missing: missingCount, limit: maxCollisionInstancesPerEpoch },
+      };
+    }
+    return { ok: true };
+  }
+
   _releaseEpochScopedState(epoch) {
     if (this._registry && typeof this._registry.releaseEntriesForEpoch === 'function') {
       try {
@@ -500,15 +569,22 @@ export class CollisionWorld {
     this._representativeFragmentByGeometry.delete(epoch);
   }
 
-  // Entry-order check for findClashes (Tasks 19/20 call this at the very top of their own method
-  // body). docs/...:2830-2837, 3533-3543.
-  _checkEntryLifecycle(source, target) {
+  // Entry-order check for findClashes's single-distinct-model path (Tasks 19/20 originally called
+  // this at the very top of their own method body). docs/...:2830-2837, 3533-3543.
+  //
+  // Task 6: the `source.model !== target.model` cross-model rejection this method used to throw
+  // has been REMOVED -- cross-model queries are now in scope (see findClashes's own
+  // collectDistinctModels-driven multi-lease capture, which handles the truly-multi-model case
+  // directly via `admitModel` per distinct model). This method is kept, unmodified otherwise, for
+  // exactly the single-distinct-model path (findClashes calls it only when
+  // `distinctModels.length === 1`), so its own direct unit tests
+  // (test/CollisionWorld.test.mjs) and the legacy single-model call path both keep the identical
+  // disposed-then-evicted-then-lazy-admission behavior and ordering they always had. `target` is
+  // now an unused parameter (the only thing it was ever read for is the branch just removed) --
+  // kept so the existing two-argument call shape (including test/CollisionWorld.test.mjs's own
+  // direct calls) needs no signature change.
+  _checkEntryLifecycle(source, target) { // eslint-disable-line no-unused-vars
     if (this._disposed) throw new WorldDisposedError();
-    if (source.model !== target.model) {
-      const err = new Error('CollisionWorld.findClashes: cross-model queries are out of scope in Milestone 1');
-      err.code = 'cross-model-query-rejected';
-      throw err;
-    }
     const model = source.model;
     const entry = this._modelLifecycle.get(model);
     if (entry?.state === 'evicted') throw new ModelEvictedError(modelIdOf(model));
@@ -572,6 +648,21 @@ export class CollisionWorld {
     }
   }
 
+  // Task 6: composite multi-lease liveness assertion -- disposed, THEN every captured lease's own
+  // epoch still live, in that order (same "disposed first" precedence every other check in this
+  // class uses). Used at every point design spec §9.2 point 7 requires a full-lease-set revalidation
+  // that is NOT already covered by a single-epoch-scoped check: immediately before findClashes's own
+  // return statements (success and empty-result alike), and by createCompositeCheckpointPort both
+  // before AND after any real scheduler yield. For a single-model call `leases` has exactly one
+  // entry, so this is a cheap, harmless restatement of what `_assertEpochLive`/the real checkpoint
+  // port already check for that one lease.
+  _assertLeasesStillLive(leases) {
+    if (this._disposed) throw new WorldDisposedError();
+    for (const lease of leases) {
+      if (!this._isEpochLive(lease.epoch)) throw new ModelEvictedError(modelIdOf(lease.model));
+    }
+  }
+
   // Reverse-lookup predicate for the real checkpoint port primitive (collision/scheduler.js's
   // createCheckpointPort's own isEpochLive dependency) and for Task 19's separate GeometryRegistry
   // checkpoint port (isEpochLive: (loadEpoch) => world._isEpochLive(loadEpoch)). Safe and equivalent
@@ -605,29 +696,89 @@ export class CollisionWorld {
     };
   }
 
+  // Task 6: a composite wrapper around ONE real per-call checkpoint port (createCheckpointPort,
+  // unchanged) that revalidates EVERY captured lease -- not just the single lease the real port
+  // itself is scoped to -- both BEFORE delegating to the real port and, when the real port actually
+  // yields, AGAIN after that yield resolves.
+  //
+  // The after-yield revalidation is NOT redundant with the real port's own post-yield check
+  // (collision/scheduler.js's own validate-await-validate sequence): that check only re-validates
+  // whichever single `loadEpoch` THIS call's `ctx` named (or this port's own primary lease, by
+  // default) -- a DIFFERENT captured epoch, evicted during that same yield, would otherwise escape
+  // detection until whatever this call's NEXT checkpoint happens to be (codex-advisor review
+  // finding for this task: checking only before delegation leaves exactly that window open).
+  //
+  // Reuses ONE real port/accumulator, built from an arbitrary "primary" lease (`leases[0]`, always
+  // the query's own source model -- see collectDistinctModels) -- its own isEpochLive/isDisposed
+  // callbacks are world-global, not lease-specific, so which lease is "primary" affects nothing but
+  // which loadEpoch a caller's un-labeled `ctx` defaults to. This keeps the frame-budget accumulator
+  // shared exactly once across the whole call, as every other checkpoint port in this design is.
+  //
+  // Still conditionally synchronous end to end: `undefined` when the real port has nothing due (no
+  // Promise, no microtask boundary, after the synchronous pre-check above), a real Promise only when
+  // the real port itself decides a yield is due.
+  createCompositeCheckpointPort(leases) {
+    const realCheckpoint = this.createCheckpointPort(leases[0]);
+    return (ctx = {}) => {
+      this._assertLeasesStillLive(leases);
+      const pending = realCheckpoint(ctx);
+      if (!pending) return undefined;
+      return (async () => {
+        await pending;
+        this._assertLeasesStillLive(leases);
+      })();
+    };
+  }
+
   // ---- Task 19: the surface-intersection vertical slice -------------------------------------
 
   /**
    * Entry -> extraction -> capacity-gated admission -> broad phase -> narrow phase -> aggregation.
    *
-   * Milestone 1 restrictions, all rejected loudly rather than silently degraded: single-model
-   * queries only and `groupBy: 'dbId'` only. All three query modes are supported.
+   * `groupBy: 'dbId'` only, all three query modes supported.
    *
-   * @param {{ source: {model: Object, dbIds: number[]}, target: {model: Object, dbIds: number[]},
-   *           mode: string, groupBy: 'dbId' }} query
+   * Task 6: cross-model queries are no longer rejected. `target` accepts either the legacy
+   * `{model, dbIds}` shape (unchanged, single target model) or `{targets: [{model, dbIds?}, ...]}`
+   * (one or more target models; a `targets` entry's `dbIds` may be omitted as a whole-model-scope
+   * sentinel). See `normalizeTargets`/`collectDistinctModels` above. Every distinct Model object
+   * across source + every targets entry is leased (admitted) up front, and every checkpoint/return
+   * in this method revalidates the FULL captured lease set, not just whichever epoch a given
+   * sub-step happens to touch.
+   *
+   * KNOWN LIMITATION, deliberately deferred to Tasks 7/8 (not this task's scope -- see this
+   * method's own inline notes below at the narrow-phase dispatch call): `_runNarrowPhasePair`'s
+   * signature still takes one shared `model`/`epoch` pair, used only for diagnostic labeling
+   * (FragmentRef.modelId, GeometryRegistry's diagnostic-only ownerModelIdHint) -- NOT for geometry
+   * resolution, which already correctly resolves per-operand via each record's own
+   * `geometryIdentity.loadEpoch`. A genuinely non-empty cross-model call therefore already computes
+   * geometrically CORRECT hit/no-hit verdicts, but mislabels target-side diagnostics with the
+   * source model's id, and pair-dedup keys purely by `dbId:dbId` (two different target models
+   * sharing a numeric dbId would collapse). Tasks 7/8 fix both by threading per-operand
+   * `{model, epoch}` through the broad/narrow-phase candidate tuple.
+   *
+   * @param {{ source: {model: Object, dbIds: number[]},
+   *           target: {model: Object, dbIds: number[]} | {targets: Array<{model: Object, dbIds?: number[]}>},
+   *           mode: string, groupBy: 'dbId', broadPhase?: 'linear'|'tlas' }} query
    * @returns {Promise<{ pairs: Array, statistics: Object }>}
    */
   async findClashes(query) {
     // Disposal is checked FIRST, before argument validation and before any operand is touched, so a
     // disposed world always reports disposal rather than whichever other complaint it might also
-    // have (spec entry order: "disposed first"). _checkEntryLifecycle re-checks it below; that
-    // repetition is deliberate and free.
+    // have (spec entry order: "disposed first"). _checkEntryLifecycle/admitModel re-check it below;
+    // that repetition is deliberate and free.
     if (this._disposed) throw new WorldDisposedError();
 
     if (!query || !query.source || !query.target) {
       throw new Error('findClashes: query must supply both a source and a target operand');
     }
-    if (!Array.isArray(query.source.dbIds) || !Array.isArray(query.target.dbIds)) {
+    if (!Array.isArray(query.source.dbIds)) {
+      throw new Error('findClashes: query.source.dbIds and query.target.dbIds must both be arrays');
+    }
+    // The legacy `{model, dbIds}` target shape still requires `dbIds` to be an array, exactly as
+    // before (Protected Invariant: legacy behavior unchanged verbatim) -- but only when the NEW
+    // `targets` shape isn't the one actually supplied; a `targets` call is validated by its own
+    // per-entry rules below instead.
+    if (!Array.isArray(query.target.targets) && !Array.isArray(query.target.dbIds)) {
       throw new Error('findClashes: query.source.dbIds and query.target.dbIds must both be arrays');
     }
     if (query.groupBy !== 'dbId') {
@@ -642,89 +793,212 @@ export class CollisionWorld {
     // dispatch in _runNarrowPhasePair now handles all three modes, so the only mode check left is
     // the supportedModes membership test above.)
 
+    // --- Task 6, Step 8: new query-shape validation, in this precedence order (disposed already
+    // checked above; these run after the pre-existing groupBy/mode checks and before any
+    // admitModel/lease-capture call).
+    if (Array.isArray(query.target.targets) && query.target.targets.length === 0) {
+      throw new Error('findClashes: targets must be non-empty when supplied');
+    }
+    if (query.target.dbIds !== undefined && query.target.targets !== undefined) {
+      throw new Error('findClashes: target must be either {model,dbIds} or {targets}, not both');
+    }
+    if (Array.isArray(query.target.targets)) {
+      for (const entry of query.target.targets) {
+        if (!entry || entry.model === undefined || entry.model === null) {
+          throw new Error('findClashes: every targets entry must supply a model');
+        }
+        // An explicit `dbIds: undefined` remains the whole-model-scope sentinel; `dbIds: null` is
+        // REJECTED, not silently treated as omitted -- entry.dbIds !== undefined is true for null.
+        if (entry.dbIds !== undefined && !Array.isArray(entry.dbIds)) {
+          throw new Error('findClashes: targets entry dbIds must be an array when supplied');
+        }
+      }
+    }
+    if (query.broadPhase !== undefined && query.broadPhase !== 'tlas' && query.broadPhase !== 'linear') {
+      throw new Error(`findClashes: unsupported broadPhase '${query.broadPhase}'`);
+    }
+
     const startedAt = this._now();
     const statistics = emptyStatistics();
 
-    // Throws WorldDisposedError, then cross-model-query-rejected, then ModelEvictedError, in that
-    // order; lazily admits a never-seen model.
-    const { model, epoch } = this._checkEntryLifecycle(query.source, query.target);
+    // --- Operand normalization and multi-lease capture (design spec §9.2 points 1-3), before any
+    // extraction begins. `targetsEntries` is the uniform `{model, dbIds}[]` shape every later step
+    // operates on; `distinctModels` is the deduplicated (by object identity) set of every Model
+    // object this call touches, source included, source always first.
+    const targetsEntries = normalizeTargets(query.target);
+    const distinctModels = collectDistinctModels(query.source.model, targetsEntries);
+    if (this._disposed) throw new WorldDisposedError();
+    // Single-distinct-model calls (the legacy path, and a multi-`targets`-entry call that happens
+    // to name only ONE model throughout) go through `_checkEntryLifecycle` unchanged -- identical
+    // disposed-then-evicted-then-lazy-admission behavior/ordering to every pre-Task-6 test's own
+    // expectations. A genuinely multi-model call leases every distinct model directly via the same
+    // public `admitModel` each of those single-model leases would otherwise go through.
+    const leases = distinctModels.length === 1
+      ? [this._checkEntryLifecycle(query.source, query.target)]
+      : distinctModels.map((m) => this.admitModel(m)); // throws ModelEvictedError per M1 admitModel contract
+    const leaseByModel = new Map(leases.map((l) => [l.model, l]));
+
     // Instance-tree readiness wait, immediately after the entry-order lifecycle checks and BEFORE
     // any extraction (docs/superpowers/specs/instance-tree-readiness-decision.md, "Hook point for
-    // implementation"). Cross-model queries are rejected above, so both operands are the SAME model
-    // object in Milestone 1 -- one wait per call, nothing to deduplicate.
+    // implementation") -- generalized across EVERY distinct model this call captured, not just one.
+    // `_awaitObjectTreeReady` is keyed by model, not by call, so this is safe to invoke once per
+    // distinct model even though a legacy single-model call already did so exactly once before.
     //
-    // Branch on the return value; do NOT bare-`await` it. On the ready path this must not even cost
-    // a microtask boundary (see _awaitObjectTreeReady's own comment).
-    const pendingObjectTree = this._awaitObjectTreeReady(model);
-    if (pendingObjectTree) {
+    // Branch on each return value; do NOT bare-`await` any of them. On the all-ready fast path this
+    // must not even cost a microtask boundary (see _awaitObjectTreeReady's own comment) -- so
+    // `Promise.all` is only invoked when at least one wait is genuinely pending.
+    const pendingObjectTreeWaits = [];
+    for (const lease of leases) {
+      const pending = this._awaitObjectTreeReady(lease.model);
+      if (pending) pendingObjectTreeWaits.push(pending);
+    }
+    if (pendingObjectTreeWaits.length > 0) {
       // A REAL wait can last as long as the Viewer's property-database load, i.e. seconds -- far
-      // wider a window than any other gap in this method -- so the entry-order lifecycle checks are
-      // re-run across it. Without this, an eviction or disposal landing mid-wait could still be
+      // wider a window than any other gap in this method -- so the FULL captured lease set is
+      // revalidated across it. Without this, an eviction or disposal landing mid-wait could still be
       // reported as a SUCCESSFUL empty result: extraction's own first checkpoint is what normally
       // catches such a race (one non-empty operand is enough for that), but it never fires AT ALL
-      // when BOTH dbIds arrays are empty -- ViewerModelAdapter's per-dbId loop body never runs --
-      // and the empty-extraction branch below then returns { pairs: [] } as a success.
+      // when every dbIds scope is empty -- ViewerModelAdapter's per-dbId loop body never runs -- and
+      // the empty-extraction branch below then returns { pairs: [] } as a success.
       try {
-        await pendingObjectTree;
+        await Promise.all(pendingObjectTreeWaits);
       } finally {
-        // In `finally`, deliberately: these run on the failure path too, and a throw here REPLACES a
-        // pending ObjectTreeUnavailableError -- which is the correct precedence. Disposal outranks
-        // "the tree could not be built", in the same order the entry checks above use (disposed
-        // first, then evicted).
-        if (this._disposed) throw new WorldDisposedError();
-        this._assertEpochLive(model, epoch);
+        // In `finally`, deliberately: this runs on the failure path too, and a throw here REPLACES a
+        // pending ObjectTreeUnavailableError -- which is the correct precedence. Disposal (and any
+        // OTHER captured model's eviction) outranks "the tree could not be built", in the same order
+        // the entry checks above use (disposed first, then evicted).
+        this._assertLeasesStillLive(leases);
       }
     }
-    const lease = Object.freeze({ model, epoch });
-    // ONE port for this whole call, with one frame-budget accumulator shared by every checkpoint in
-    // it (extraction, broad phase, narrow phase). Its ctx defaults to this lease, so almost every
-    // call site can pass nothing at all.
-    const checkpoint = this.createCheckpointPort(lease);
 
-    // --- Extraction. extractFragments calls checkpoint({ requestedDbId }); the extra field is
-    // simply ignored by the port, so the SAME callable is threaded straight through with no bridge.
-    // `THREE` is deliberately NOT overridden: extraction's own `globalThis.THREE` default is the
-    // Viewer's real r71 global, and reading it there is the one sanctioned crossing point.
-    const sourceExtracted = await extractFragments(model, query.source.dbIds, epoch, { checkpoint });
-    const targetExtracted = await extractFragments(model, query.target.dbIds, epoch, { checkpoint });
+    // ONE composite checkpoint port for this whole call (Task 6): revalidates every captured lease
+    // on every checkpoint call, then delegates to ONE real per-call port/accumulator (keyed off the
+    // source's own lease, `leases[0]`) shared by every checkpoint site in this call (extraction,
+    // broad phase, narrow phase) -- unconditionally, even for a single-model call, since a
+    // one-element composite check is a harmless, cheap restatement of what the real port already
+    // checks internally.
+    const checkpoint = this.createCompositeCheckpointPort(leases);
+
+    // --- Extraction. Source is always exactly one model (query.source.model); its own dbIds are
+    // walked via extractFragments, unchanged from pre-Task-6 behavior.
+    const sourceLease = leaseByModel.get(query.source.model);
+    const sourceEpoch = sourceLease.epoch;
+    // `THREE` is deliberately NOT overridden anywhere in this method: extraction's own
+    // `globalThis.THREE` default is the Viewer's real r71 global, and reading it there is the one
+    // sanctioned crossing point.
+    const sourceExtracted = await extractFragments(query.source.model, query.source.dbIds, sourceEpoch, { checkpoint });
+
+    // One extraction per `targets` entry, each against ITS OWN model's own lease/epoch, merged into
+    // `Map<epoch, Map<fragmentId, record>>` -- NEVER a single flat `Map<fragmentId, record>` across
+    // different models' extractions (codex-advisor review finding for this task): `fragmentId` is
+    // only unique WITHIN one model's own fragment-index space, so two different models can both
+    // legitimately own a fragment numbered, say, 42 -- keying a merged map by bare fragmentId across
+    // models would silently clobber one with the other. Bare-fragmentId keying stays correct only
+    // INSIDE one epoch's own bucket, exactly like `_instanceCache` itself
+    // (`Map<loadEpoch, Map<fragmentId, CollisionInstance>>`).
+    const targetRecordsByEpoch = new Map();
+    for (const entry of targetsEntries) {
+      const entryLease = leaseByModel.get(entry.model);
+      const entryEpoch = entryLease.epoch;
+      let records;
+      if (Array.isArray(entry.dbIds)) {
+        records = await extractFragments(entry.model, entry.dbIds, entryEpoch, { checkpoint });
+      } else {
+        // Whole-model-scope sentinel (`entry.dbIds === undefined`, validated above). Task 6 wires
+        // the EXTRACTION call itself so the shape survives end-to-end; fully consuming this scope
+        // through the broad/narrow phase for a genuinely non-empty call is Task 8's job.
+        const wholeModel = await extractAllFragments(entry.model, entryEpoch, { checkpoint });
+        records = wholeModel.records;
+        for (const diagnostic of wholeModel.diagnostics) statistics.diagnostics.push(diagnostic);
+      }
+      let bucket = targetRecordsByEpoch.get(entryEpoch);
+      if (!bucket) { bucket = new Map(); targetRecordsByEpoch.set(entryEpoch, bucket); }
+      // First-write-wins across duplicate `targets` entries touching the same model/epoch -- mirrors
+      // extractFragments's own first-discovery-wins ownerDbId convention, rather than letting a
+      // later duplicate entry silently overwrite an earlier one's captured ownerDbId.
+      for (const [fragId, rec] of records) {
+        if (!bucket.has(fragId)) bucket.set(fragId, rec);
+      }
+    }
+    let targetTotalCount = 0;
+    for (const bucket of targetRecordsByEpoch.values()) targetTotalCount += bucket.size;
 
     // ---- BEGIN synchronous span. Nothing between the end of extraction and admitCollisionInstances
     // may await: admission's check-then-commit atomicity guarantee (Task 18) is provided for free by
     // JS's single-threaded execution only for as long as this span stays await-free. Recording
     // representative fragments is a pure Map write and is safe to include.
-    if (sourceExtracted.size === 0 || targetExtracted.size === 0) {
+    if (sourceExtracted.size === 0 || targetTotalCount === 0) {
       statistics.totalMs = this._now() - startedAt;
+      // Return-site revalidation (design spec §9.2 point 7b): the empty-extraction fast path may
+      // have run through ZERO checkpoint calls at all (every dbIds scope empty means no per-dbId
+      // loop body ever ran), so nothing has re-validated the captured lease set since entry -- this
+      // closes exactly that gap for a genuinely multi-model call.
+      this._assertLeasesStillLive(leases);
       return { pairs: [], statistics };
     }
     // The broad-phase ceiling is checked HERE -- before any side effect, not just before the scan
     // (finding 19-2). Extraction size and admitted-instance count are the same number for this
     // check's purposes (every extracted fragment becomes exactly one CollisionInstance), so nothing
     // is lost by checking early -- but a call that is going to be REJECTED must not first consume
-    // maxCollisionInstancesPerEpoch headroom via admitCollisionInstances or pollute the epoch's
+    // maxCollisionInstancesPerEpoch headroom via admitCollisionInstances or pollute any epoch's
     // representative-fragment map, neither of which is undone on the throw.
-    if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, targetExtracted.size)) {
+    if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, targetTotalCount)) {
       throw new Error(
         `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
-        `(${sourceExtracted.size} x ${targetExtracted.size} > ${maxBroadPhaseInstancePairs})`,
+        `(${sourceExtracted.size} x ${targetTotalCount} > ${maxBroadPhaseInstancePairs})`,
       );
     }
-    this._recordRepresentativeFragments(epoch, sourceExtracted);
-    this._recordRepresentativeFragments(epoch, targetExtracted);
-    // Which side's record wins per fragmentId is immaterial: admitCollisionInstances reads only
-    // geometryIdentity, which is identical for a given fragmentId regardless of which walk found it.
-    // The per-side ownerDbId/placement is read from each side's OWN record below, never from here.
-    const merged = new Map([...sourceExtracted, ...targetExtracted]);
-    // Capacity-admission recompute-and-commit (performance-gate criterion 8) has no checkpoint
-    // call to hook (admitCollisionInstances is deliberately 100% synchronous, zero awaits -- that
-    // is the whole point of its check-then-commit atomicity guarantee), so this reports the span
-    // directly via scheduler.js's reportSpan rather than through the checkpoint mechanism.
+    this._recordRepresentativeFragments(sourceEpoch, sourceExtracted);
+    for (const [epoch, bucket] of targetRecordsByEpoch) this._recordRepresentativeFragments(epoch, bucket);
+
+    // Build each distinct epoch's own UNIONED `uniqueFragments` map (source + every target group
+    // touching that epoch, merged) -- the same merge this method already performed per-call before
+    // Task 6 (`merged`, single epoch), generalized across every epoch this call touches. Which
+    // side's record wins per fragmentId is immaterial WITHIN one epoch: admitCollisionInstances
+    // reads only geometryIdentity, identical for a given fragmentId regardless of which walk found
+    // it. The per-side ownerDbId/placement is read from each side's OWN original record below,
+    // never from this union.
+    const perEpochUnique = new Map(); // epoch -> Map<fragmentId, record>
+    const mergeIntoEpoch = (epoch, recordsMap) => {
+      let bucket = perEpochUnique.get(epoch);
+      if (!bucket) { bucket = new Map(); perEpochUnique.set(epoch, bucket); }
+      for (const [fragId, rec] of recordsMap) {
+        if (!bucket.has(fragId)) bucket.set(fragId, rec);
+      }
+    };
+    mergeIntoEpoch(sourceEpoch, sourceExtracted);
+    for (const [epoch, bucket] of targetRecordsByEpoch) mergeIntoEpoch(epoch, bucket);
+
+    // Capacity-admission: PREFLIGHT every epoch first (read-only, `_preflightCollisionInstanceAdmission`
+    // -- mirrors admitCollisionInstances's own real bucket-size-plus-missing-count check, never
+    // extraction size alone), and only if ALL preflights pass does any epoch's REAL, mutating
+    // admission run -- in one synchronous, await-free phase, so a later epoch's capacity failure
+    // can never leave an earlier epoch partially admitted. Nothing in this whole span awaits, so
+    // (JS being single-threaded) no other code can run between the first preflight and the last
+    // commit -- a true zero-partial-commit guarantee against a capacity rejection specifically, not
+    // a general transaction guarantee against a reentrant callback or an unrelated synchronous
+    // exception.
+    const leaseByEpoch = new Map(leases.map((l) => [l.epoch, l]));
+    for (const [epoch, uniqueFragments] of perEpochUnique) {
+      const preflight = this._preflightCollisionInstanceAdmission(leaseByEpoch.get(epoch), uniqueFragments);
+      if (!preflight.ok) throw new CapacityExceededError(preflight.reason, preflight.details);
+    }
     const admissionStartedAt = this._now();
-    const admitted = this.admitCollisionInstances(lease, merged);
+    const admittedByEpoch = new Map();
+    for (const [epoch, uniqueFragments] of perEpochUnique) {
+      admittedByEpoch.set(epoch, this.admitCollisionInstances(leaseByEpoch.get(epoch), uniqueFragments));
+    }
     reportSpan('capacity-admission-commit', this._now() - admissionStartedAt);
     // ---- END synchronous span.
 
-    const sourceInstances = [...sourceExtracted.values()].map((rec) => makePlaced(admitted, rec));
-    const targetInstances = [...targetExtracted.values()].map((rec) => makePlaced(admitted, rec));
+    const sourceInstances = [...sourceExtracted.values()].map(
+      (rec) => makePlaced(admittedByEpoch.get(sourceEpoch), rec),
+    );
+    const targetInstances = [];
+    for (const [epoch, bucket] of targetRecordsByEpoch) {
+      const admitted = admittedByEpoch.get(epoch);
+      for (const rec of bucket.values()) targetInstances.push(makePlaced(admitted, rec));
+    }
 
     // --- Broad phase. Its ceiling was already enforced above, against the extraction counts these
     // two arrays are built from one-for-one, and deliberately BEFORE the admission/bookkeeping side
@@ -734,6 +1008,13 @@ export class CollisionWorld {
     statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
 
     // --- Narrow phase + aggregation.
+    //
+    // `model`/`epoch` below are deliberately still the SOURCE's own single lease, unchanged in
+    // shape from pre-Task-6 -- _runNarrowPhasePair's signature is explicitly OUT OF SCOPE for this
+    // task (Tasks 7/8 thread real per-operand {model, epoch} through it instead). See this method's
+    // own JSDoc above for what that defers and why it does not affect hit/no-hit correctness.
+    const model = sourceLease.model;
+    const epoch = sourceEpoch;
     const narrowPhaseStartedAt = this._now();
     const pairsByKey = new Map(); // `${sourceDbId}:${targetDbId}` -> ClashPair; ORDERED, never canonicalized
     const oversizedDiagnosedFragments = new Set();
@@ -757,6 +1038,10 @@ export class CollisionWorld {
     }
     statistics.narrowPhaseMs = this._now() - narrowPhaseStartedAt;
     statistics.totalMs = this._now() - startedAt;
+    // Return-site revalidation (design spec §9.2 point 7b): closes the gap between the LAST
+    // checkpoint call above and this successful return, across which the pairs map / statistics are
+    // assembled with no checkpoint call of their own.
+    this._assertLeasesStillLive(leases);
     return { pairs: [...pairsByKey.values()], statistics };
   }
 

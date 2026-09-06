@@ -255,21 +255,6 @@ test('elements with no fragments: empty pairs, zeroed statistics, no throw', asy
   assert.deepEqual(result.statistics.diagnostics, []);
 });
 
-test('cross-model query rejects', async () => {
-  const a = makeFixture([{ dbId: 1, fragments: [] }]);
-  const b = makeFixture([{ dbId: 1, fragments: [] }]);
-  const world = await freshWorld(a.viewer, { now: frozenClock() });
-  await assert.rejects(
-    world.findClashes({
-      source: { model: a.model, dbIds: [1] },
-      target: { model: b.model, dbIds: [1] },
-      mode: 'surface-intersection',
-      groupBy: 'dbId',
-    }),
-    (err) => err.code === 'cross-model-query-rejected',
-  );
-});
-
 test('non-dbId groupBy rejected -- M1 supports only groupBy:dbId', async () => {
   const { model, viewer } = makeFixture([{ dbId: 1, children: [{ dbId: 10, fragments: [] }] }]);
   const world = await freshWorld(viewer, { now: frozenClock() });
