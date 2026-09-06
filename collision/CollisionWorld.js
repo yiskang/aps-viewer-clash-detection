@@ -979,11 +979,19 @@ export class CollisionWorld {
     // a general transaction guarantee against a reentrant callback or an unrelated synchronous
     // exception.
     const leaseByEpoch = new Map(leases.map((l) => [l.epoch, l]));
+    // `admissionStartedAt` is captured BEFORE the preflight loop, not between preflight and commit
+    // (reviewer-caught finding, this task): `_now` is a constructor-injected clock seam, and the
+    // "nothing between check and commit" atomicity guarantee above must not rest on an unverified
+    // assumption that an injected `_now` is pure/non-reentrant. With the timer call moved here, the
+    // only things between the LAST preflight and the FIRST real commit are `Map` reads/writes --
+    // no function call of any kind, injected clock included. This widens what
+    // 'capacity-admission-commit' measures to include the preflight loop itself, which is more
+    // accurate, not a regression (preflight is real work this call now always does).
+    const admissionStartedAt = this._now();
     for (const [epoch, uniqueFragments] of perEpochUnique) {
       const preflight = this._preflightCollisionInstanceAdmission(leaseByEpoch.get(epoch), uniqueFragments);
       if (!preflight.ok) throw new CapacityExceededError(preflight.reason, preflight.details);
     }
-    const admissionStartedAt = this._now();
     const admittedByEpoch = new Map();
     for (const [epoch, uniqueFragments] of perEpochUnique) {
       admittedByEpoch.set(epoch, this.admitCollisionInstances(leaseByEpoch.get(epoch), uniqueFragments));
