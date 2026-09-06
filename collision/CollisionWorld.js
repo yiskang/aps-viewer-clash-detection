@@ -13,6 +13,7 @@ import { maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, weldEpsilonM
 import { extractFragments, extractAllFragments } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
 import { createGeometryRegistry } from './geometry/createGeometryRegistry.js';
+import { TlasCache } from './tlas/TlasCache.js';
 import { surfaceIntersectionQuery } from './query/SurfaceIntersectionQuery.js';
 import { containmentModeQuery } from './query/ContainmentModeQuery.js';
 import { volumeOverlapQuery } from './query/VolumeOverlapQuery.js';
@@ -325,6 +326,11 @@ export class CollisionWorld {
     // already-present fragment never bumps it. Task 11's invalidateModelPlacement also bumps this
     // (a different kind of change: existing placements going stale, not new fragments arriving).
     this._placementRevisionByEpoch = new Map();
+    // Task 10 (M2 Batch 3): null until fromViewer constructs it (mirrors this._registry's own
+    // "constructed after the world, wired against it" pattern) -- a world built directly via the
+    // constructor (bypassing fromViewer, as some lifecycle-only tests do) has no TLAS path
+    // reachable, exactly like a registry-less world has no narrow phase reachable.
+    this._tlasCache = null;
     this._viewer = null;  // set by fromViewer; only _resolveGeometryView reads it
     this._options = null; // set by fromViewer: { narrowPhase, indexOwnership }
     this._now = now;
@@ -390,6 +396,33 @@ export class CollisionWorld {
     world._registry = createGeometryRegistry({
       resolveGeometryView: (loadEpoch, geometryIndex) => world._resolveGeometryView(loadEpoch, geometryIndex),
       checkpointPort: registryCheckpointPort,
+    });
+    // Task 10 (M2 Batch 3): own long-lived checkpoint port, mirroring registryCheckpointPort's own
+    // construction immediately above -- a fresh accumulator shared across every future TLAS build
+    // this world ever runs, never scoped to one findClashes call.
+    const tlasCheckpointPort = createRealCheckpointPort({
+      isDisposed: () => world._disposed,
+      isEpochLive: (loadEpoch) => world._isEpochLive(loadEpoch),
+      accumulator: createFrameBudgetAccumulator({ now: world._now }),
+      yieldToScheduler: world._yieldToScheduler,
+    });
+    world._tlasCache = new TlasCache({
+      // Reads _placementByEpoch fresh on every call -- never a stale snapshot -- so a rebuild
+      // triggered by growth or by Task 11's invalidateModelPlacement refresh always sees current
+      // state. An epoch with no placement entries yet (never extracted, or already released)
+      // builds an empty TLAS rather than throwing -- consistent with CollisionInstanceBVH's own
+      // documented support for a zero-record BVH.
+      buildPrimitives: (loadEpoch) => {
+        const placementByFragment = world._placementByEpoch.get(loadEpoch);
+        const records = [];
+        if (placementByFragment) {
+          for (const [fragmentId, placement] of placementByFragment) {
+            records.push({ fragmentId, ...placement });
+          }
+        }
+        return records;
+      },
+      checkpointPort: tlasCheckpointPort,
     });
     return world;
   }
@@ -490,6 +523,11 @@ export class CollisionWorld {
     this._representativeFragmentByGeometry.clear();
     this._placementByEpoch.clear();
     this._placementRevisionByEpoch.clear();
+    try {
+      this._tlasCache?.releaseAll?.();
+    } catch {
+      // dispose() is contractually non-throwing -- same defense-in-depth posture as _registry above.
+    }
   }
 
   // Deliberately synchronous — the spec's "no await, no reentrant call between check and commit"
@@ -617,6 +655,15 @@ export class CollisionWorld {
     // Task 9's two epoch-scoped side tables, released on the same boundary.
     this._placementByEpoch.delete(epoch);
     this._placementRevisionByEpoch.delete(epoch);
+    // Task 10: same defensive try/catch pattern as _registry.releaseEntriesForEpoch above -- held
+    // to the same non-throw contract evictModel/dispose already guarantee, even though TlasCache
+    // itself is fully controlled and verified non-throwing by design. `?.` guards the registry-
+    // less/TLAS-less world case (constructed directly, bypassing fromViewer).
+    try {
+      this._tlasCache?.releaseEntryForEpoch(epoch);
+    } catch {
+      // Defense in depth, not a substitute for TlasCache's own non-throw contract.
+    }
   }
 
   // Entry-order check for findClashes's single-distinct-model path (Tasks 19/20 originally called
