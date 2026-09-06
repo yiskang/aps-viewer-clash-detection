@@ -1058,6 +1058,10 @@ export class CollisionWorld {
     // `'target'` for extractAllFragments's own diagnostics (its own interface contract) and
     // `modelId` is fixed per epoch, so `(epoch, fragId, reason)` alone is a total key here.
     const pushedWholeModelDiagnosticKeys = new Set();
+    // Task 12 (M2 Batch 4): built as a byproduct of this SAME extraction loop -- purely additive
+    // here, exactly like Task 9's _recordPlacement was when it first landed. Not yet consumed by
+    // any broad-phase path (Task 13's job); see _addToTargetScopeFilter's own comment.
+    const targetScopeFilter = new Map();
     for (const entry of targetsEntries) {
       const entryLease = leaseByModel.get(entry.model);
       const entryEpoch = entryLease.epoch;
@@ -1077,6 +1081,7 @@ export class CollisionWorld {
           statistics.diagnostics.push(diagnostic);
         }
       }
+      this._addToTargetScopeFilter(targetScopeFilter, entry.model, entry.dbIds, records);
       let bucket = targetRecordsByEpoch.get(entryEpoch);
       if (!bucket) { bucket = new Map(); targetRecordsByEpoch.set(entryEpoch, bucket); }
       // First-write-wins across duplicate `targets` entries touching the same model/epoch -- mirrors
@@ -1540,6 +1545,33 @@ export class CollisionWorld {
     });
     attach(result.diagnostics);
     return result.overlap;
+  }
+
+  // Task 12 (M2 Batch 4): the plan's own `buildTargetScopeFilter`, reworked to consume records the
+  // extraction loop in findClashes ALREADY produced for each `targets` entry, rather than
+  // re-extracting a second time (per the plan's own reconciliation note). `filterByModel` is
+  // Map<Model, Set<fragmentId>|'whole-model'>, mutated in place -- one call per `targets` entry,
+  // in entry order.
+  //
+  // Whole-model scope (dbIds === undefined) always wins for a model, in EITHER processing order: a
+  // later narrower entry for a model already marked 'whole-model' must not downgrade it back to a
+  // Set (checked before the narrow-entry union path runs), and a whole-model entry processed AFTER
+  // an existing narrower Set simply overwrites it (the `dbIds === undefined` branch above always
+  // sets the sentinel unconditionally). `records` is a `Map<fragmentId, record>` -- fragmentId-keyed,
+  // never ownerDbId-keyed, so an assembly-rooted entry's own descendant fragments (discovered under
+  // child dbIds, not the requested root) are correctly included: this filter is built from the SAME
+  // fragmentId set extraction's own first-discovery-wins walk already produced, never re-derived
+  // from ownerDbId membership (the false-negative bug the plan's own §7.1a text found and fixed).
+  _addToTargetScopeFilter(filterByModel, model, dbIds, records) {
+    if (dbIds === undefined) {
+      filterByModel.set(model, 'whole-model');
+      return;
+    }
+    if (filterByModel.get(model) === 'whole-model') return; // already whole-model -- nothing narrower overrides it
+    const existing = filterByModel.get(model);
+    const union = existing instanceof Set ? existing : new Set();
+    for (const fragmentId of records.keys()) union.add(fragmentId);
+    filterByModel.set(model, union);
   }
 
   // First-discovery-wins per (loadEpoch, geometryIndex): any one fragment carrying that geometry
