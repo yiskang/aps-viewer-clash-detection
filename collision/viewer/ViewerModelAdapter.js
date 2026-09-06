@@ -36,12 +36,15 @@ export class ExtractionLimitExceededError extends Error {
 // FragmentList call returns and before anything else touches it, preserving the
 // runtime-isolation rule (spec:979-983 -- "only numbers cross the Viewer/collision boundary").
 
-function readWorldMatrix(fragList, fragId, scratchMatrix) {
+// Exported (Batch 3 whole-batch review, Minor finding #9) so Task 11's placement refresh
+// (CollisionWorld.js's _refreshPlacementForEpoch) can reuse these verbatim instead of duplicating
+// them -- both re-read the exact same FragmentList primitives into a caller-owned scratch object.
+export function readWorldMatrix(fragList, fragId, scratchMatrix) {
   fragList.getWorldMatrix(fragId, scratchMatrix);
   return Float64Array.from(scratchMatrix.elements);
 }
 
-function readWorldBounds(fragList, fragId, scratchBox) {
+export function readWorldBounds(fragList, fragId, scratchBox) {
   fragList.getWorldBounds(fragId, scratchBox);
   return {
     min: [scratchBox.min.x, scratchBox.min.y, scratchBox.min.z],

@@ -180,3 +180,46 @@ test('the checkpoint port is consulted before buildPrimitives runs, using the re
   assert.equal(checkpointCalls, 1);
   assert.deepEqual(seen, [7]);
 });
+
+// === Batch 3 whole-batch review fix pass ==========================================================
+
+test('Important #1: a build that rejects (checkpoint throws for a disposed/dead epoch) does not leave a permanently-stuck entry behind', async () => {
+  let shouldThrow = true;
+  const checkpointPort = { checkpoint: () => { if (shouldThrow) throw new Error('epoch is dead'); return undefined; } };
+  let buildCount = 0;
+  const buildPrimitives = async () => { buildCount++; return []; };
+  const cache = new TlasCache({ buildPrimitives, checkpointPort });
+
+  await assert.rejects(() => cache.getEntry(1, 1), /epoch is dead/);
+  assert.equal(cache.getBuiltAtRevision(1), undefined, 'no lingering entry after the rejection');
+  assert.equal(buildCount, 0, 'checkpoint threw before buildPrimitives ever ran');
+
+  shouldThrow = false;
+  const after = await cache.getEntry(1, 1);
+  assert.equal(after.outcome, 'built', 'a later call builds fresh instead of re-rejecting off a stale entry');
+  assert.equal(buildCount, 1);
+});
+
+test('Important #1: a rejecting build does not clobber a newer build that already replaced it', async () => {
+  // The rejection-cleanup fix's own identity check: if a SECOND, successful build for a higher
+  // revision has already replaced the map slot by the time the FIRST (rejecting) build's catch
+  // block runs, the cleanup must not delete the newer entry out from under it.
+  let call = 0;
+  let rejectFirst;
+  const buildPrimitives = () => {
+    call++;
+    if (call === 1) return new Promise((_resolve, reject) => { rejectFirst = reject; });
+    return Promise.resolve([]);
+  };
+  const cache = new TlasCache({ buildPrimitives, checkpointPort: stubCheckpointPort() });
+
+  const first = cache.getEntry(1, 1); // starts building, will reject later
+  const second = await cache.getEntry(1, 2); // supersedes it with a successful higher-revision build
+  assert.equal(second.outcome, 'built');
+
+  rejectFirst(new Error('late rejection'));
+  await assert.rejects(() => first, /late rejection/);
+
+  // The second build's entry must still be intact -- untouched by the first's cleanup.
+  assert.equal(cache.getBuiltAtRevision(1), 2);
+});

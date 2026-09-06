@@ -10,7 +10,7 @@ import {
 } from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
 import { maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, weldEpsilonMeters } from './constants.js';
-import { extractFragments, extractAllFragments } from './viewer/ViewerModelAdapter.js';
+import { extractFragments, extractAllFragments, readWorldMatrix, readWorldBounds } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
 import { createGeometryRegistry } from './geometry/createGeometryRegistry.js';
 import { TlasCache } from './tlas/TlasCache.js';
@@ -1588,15 +1588,19 @@ export class CollisionWorld {
   // tested but has no production caller until Task 13's own trigger condition lands) when it
   // observes a cached TlasCache entry stale specifically DUE TO an invalidation (not ordinary
   // growth): `entry.builtAtRevision !== _placementRevisionByEpoch.get(epoch)` AND
-  // `_placementInvalidatedAtRevision.get(epoch) >= entry.builtAtRevision`.
+  // `(_placementInvalidatedAtRevision.get(epoch) ?? -1) >= (entry.builtAtRevision ?? -1)` -- the
+  // `?? -1` coercions matter (Batch 3 whole-batch review, Minor finding #8): `builtAtRevision` is
+  // `undefined` for a never-built epoch (`TlasCache.getBuiltAtRevision`'s own documented
+  // convention), and an unguarded `>=` against `undefined` is always `false`, which would silently
+  // fail to treat "invalidated before its first-ever build" as invalidation-stale (exactly the
+  // scenario codex-review's own Critical #2 finding described).
   //
   // Re-reads worldMatrix/worldBounds fresh for every fragmentId ALREADY present in
   // _placementByEpoch.get(epoch), via the exact same primitives extractFragments uses
-  // (fragList.getWorldMatrix/getWorldBounds, ViewerModelAdapter.js:39-50) -- never touching the
-  // shared map until the compare-and-publish step below succeeds. `_placementByEpoch`'s shared map
-  // is never mutated in place mid-refresh -- only swapped wholesale at that step (protected
-  // invariant).
-  async _refreshPlacementForEpoch(epoch, expectedRevision, expectedInvalidationRevision, { checkpoint } = {}) {
+  // (readWorldMatrix/readWorldBounds, ViewerModelAdapter.js) -- never touching the shared map
+  // until the compare-and-publish step below succeeds. `_placementByEpoch`'s shared map is never
+  // mutated in place mid-refresh -- only swapped wholesale at that step (protected invariant).
+  async _refreshPlacementForEpoch(epoch, expectedRevision, expectedInvalidationRevision, { checkpoint, THREE = globalThis.THREE } = {}) {
     // Entry liveness guard, BEFORE any model read -- same discipline extractAllFragments's own
     // preflight checkpoint uses ("checkpoint validates liveness before this code ever touches the
     // model"). Task 13's own trigger always validates liveness (via the composite checkpoint)
@@ -1608,10 +1612,15 @@ export class CollisionWorld {
     if (this._disposed) throw new WorldDisposedError();
     if (!this._isEpochLive(epoch)) throw new ModelEvictedError(epoch);
     const model = this._modelByEpoch.get(epoch);
-    const current = this._placementByEpoch.get(epoch);
+    // `?? new Map()` (Batch 3 whole-batch review, Minor finding #6): an epoch that was admitted and
+    // invalidated but never actually extracted (findClashes never ran for it) has no
+    // _placementByEpoch entry yet -- not reachable under Task 13's own planned ordering (a
+    // TLAS-consuming query only reaches this refresh after its own extraction has already
+    // populated the map), but this keeps the method correct standalone rather than relying on that
+    // caller ordering. An empty `current` simply stages and publishes an empty map.
+    const current = this._placementByEpoch.get(epoch) ?? new Map();
     const fragList = model.getFragmentList();
     const staged = new Map();
-    const THREE = globalThis.THREE;
     const scratchMatrix = new THREE.Matrix4();
     const scratchBox = new THREE.Box3();
     for (const [fragmentId, oldRecord] of current) {
@@ -1619,16 +1628,11 @@ export class CollisionWorld {
         const pending = checkpoint({ loadEpoch: epoch, label: 'placement-refresh-fragment' });
         if (pending) await pending;
       }
-      fragList.getWorldMatrix(fragmentId, scratchMatrix);
-      fragList.getWorldBounds(fragmentId, scratchBox);
-      staged.set(fragmentId, {
-        worldMatrix: Float64Array.from(scratchMatrix.elements),
-        worldBounds: {
-          min: [scratchBox.min.x, scratchBox.min.y, scratchBox.min.z],
-          max: [scratchBox.max.x, scratchBox.max.y, scratchBox.max.z],
-        },
+      staged.set(fragmentId, Object.freeze({
+        worldMatrix: readWorldMatrix(fragList, fragmentId, scratchMatrix),
+        worldBounds: readWorldBounds(fragList, fragmentId, scratchBox),
         ownerDbId: oldRecord.ownerDbId, modelId: oldRecord.modelId, // carried over unchanged
-      });
+      }));
     }
     // Compare-and-publish, synchronous, no further await in between:
     if (this._disposed) throw new WorldDisposedError();
@@ -1644,6 +1648,13 @@ export class CollisionWorld {
     }
     this._placementByEpoch.set(epoch, staged);
     this._placementInvalidatedAtRevision.delete(epoch); // this refresh's own captured revision is still current
+    // Batch 3 whole-batch review, Important finding #3: the revision number itself does NOT change
+    // from a refresh (only the DATA the revision-keyed cache serves does) -- TlasCache.getEntry's
+    // own 'hit' check is keyed purely on revision equality, so without this, a TLAS built before
+    // the refresh would incorrectly keep being served as a 'hit' for the SAME revision number after
+    // the underlying placement data has changed underneath it. Releasing the cached entry forces
+    // any subsequent getEntry for this epoch to rebuild from the freshly-published data.
+    this._tlasCache?.releaseEntryForEpoch(epoch);
     return { published: true };
   }
 

@@ -142,6 +142,14 @@ must surface this, not silently treat it as a clean negative (see the reference 
 - **`dispose()`** — terminal. Releases everything the world owns. **Every other public method
   throws `WorldDisposedError` on a disposed world, and so does a second `dispose()` call** — a
   disposed `CollisionWorld` cannot be reused; construct a new one via `fromViewer` instead.
+- **`invalidateModelPlacement(model)`** — marks an admitted model's placement (worldMatrix/
+  worldBounds) stale, for federated coordination scenarios (alignment, translation, rotation, and
+  equivalent model-level transforms). Throws `WorldDisposedError`/`ModelEvictedError`, no-ops for a
+  never-admitted model. **M2 Batch 3 status: this method is a reachable no-op today.** It records
+  the invalidation, but nothing in the current TLAS-broad-phase path reads that record yet — a
+  later milestone task wires the trigger that actually re-reads placement from the Viewer before
+  the next TLAS-backed query. Calling it today has no observable effect on `findClashes` results;
+  do not rely on it for correctness until that wiring lands.
 
 Errors thrown across this surface (`collision/index.js` re-exports all of them):
 `WorldDisposedError`, `ModelEvictedError`, `RenderProxyUnavailableError` (transient, handled

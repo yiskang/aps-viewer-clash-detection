@@ -71,7 +71,14 @@ test('a genuinely new fragment is inserted into _placementByEpoch and bumps the 
 
   await world.findClashes(query(model, [10], [20]));
 
-  assert.equal(world._placementRevisionByEpoch.get(epoch), 2, 'two genuinely new fragments (100, 200)');
+  // The revision bumps ONCE PER _recordPlacement CALL that inserted at least one new fragment, not
+  // once per new fragment (Batch 3 whole-batch review, Minor finding #10 -- the original comment
+  // here implied the latter). This call touches two epoch-scoped call sites (source's own
+  // sourceExtracted, then the target group's own bucket), each contributing exactly one fragment
+  // and each triggering its own +1 -- landing on 2 here is a coincidence of "one new fragment per
+  // call", not evidence of per-fragment counting; see the dedicated call-vs-fragment-count test
+  // below for that distinction made explicit.
+  assert.equal(world._placementRevisionByEpoch.get(epoch), 2, 'two _recordPlacement calls each contributed exactly one new fragment');
   const placement100 = world._placementByEpoch.get(epoch).get(100);
   assert.ok(placement100, 'fragment 100 must be recorded');
   assert.equal(placement100.ownerDbId, 10);
@@ -176,4 +183,29 @@ test('a target group whose model differs from source records its own placement u
   assert.equal(sourcePlacement.modelId, sourceFixture.model.id);
   assert.equal(targetPlacement.modelId, targetModel.id);
   assert.equal(targetPlacement.ownerDbId, 2);
+});
+
+test('the revision bumps once per _recordPlacement CALL with growth, not once per new fragment within that call', async () => {
+  // One target group with THREE new fragments in a SINGLE _recordPlacement call must bump the
+  // revision by exactly 1, not 3 -- Batch 3 whole-batch review, Minor finding #10.
+  const { model, viewer } = makeFixture(
+    [{ dbId: 0, children: [
+      { dbId: 10, fragments: [100] },
+      { dbId: 20, children: [{ dbId: 21, fragments: [200] }, { dbId: 22, fragments: [201] }, { dbId: 23, fragments: [202] }] },
+    ] }],
+    {
+      100: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(1, 1, 1), at: [5, 0, 0] },
+      201: { geometryIndex: 1, geometry: box(1, 1, 1), at: [6, 0, 0] },
+      202: { geometryIndex: 1, geometry: box(1, 1, 1), at: [7, 0, 0] },
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const epoch = world.admitModel(model).epoch;
+
+  await world.findClashes(query(model, [10], [20])); // target dbId 20's subtree has 3 fragments, one call
+
+  assert.equal(world._placementRevisionByEpoch.get(epoch), 2,
+    'source call (1 new fragment) + target call (3 new fragments, one call) = 2 bumps, not 4');
+  assert.equal(world._placementByEpoch.get(epoch).size, 4, 'all 4 fragments are still recorded');
 });
