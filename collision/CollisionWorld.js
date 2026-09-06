@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import {
   WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
-  CapacityExceededError,
+  CapacityExceededError, ModelPlacementChangedError,
 } from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
 import {
@@ -848,17 +848,64 @@ export class CollisionWorld {
   // Still conditionally synchronous end to end: `undefined` when the real port has nothing due (no
   // Promise, no microtask boundary, after the synchronous pre-check above), a real Promise only when
   // the real port itself decides a yield is due.
-  createCompositeCheckpointPort(leases) {
+  // Task 14 (M2 Batch 4): `tlasConsultedEpochs` (default empty -- every pre-Task-14 caller, and
+  // every `broadPhase:'linear'` call, passes none) arms placement-revision revalidation for exactly
+  // those epochs. Scoped deliberately (spec §9.2 point 8's own closing note): "a broadPhase:'linear'
+  // call never consults `_placementByEpoch`/a cached TLAS for its own correctness and would gain
+  // nothing from this check but spurious aborts from unrelated concurrent growth." Snapshotting
+  // `expectedRevisionByEpoch` HERE, at true query entry (before this call's own extraction/
+  // `_recordPlacement` ever touches any of these epochs), is what makes `_recordPlacement`'s own
+  // pre-insertion compare-and-abort + sync-forward (spec §6.7.5's self-invalidation-avoidance rule)
+  // correct: this query's OWN later growth is synced INTO this same map as it happens, so only a
+  // change this query did NOT itself cause is ever detected as a mismatch below.
+  createCompositeCheckpointPort(leases, tlasConsultedEpochs = new Set()) {
     const realCheckpoint = this.createCheckpointPort(leases[0]);
-    return (ctx = {}) => {
+    const expectedRevisionByEpoch = new Map(
+      [...tlasConsultedEpochs].map((epoch) => [epoch, this._placementRevisionByEpoch.get(epoch) ?? 0]),
+    );
+    // Precedence, matching this class's own established "disposed, then evicted" convention,
+    // extended one level narrower here: disposed -> evicted (both already enforced by
+    // `_assertLeasesStillLive`, called immediately before this) -> placement-revision mismatch.
+    const assertPlacementUnchanged = () => {
+      for (const [epoch, expected] of expectedRevisionByEpoch) {
+        const actual = this._placementRevisionByEpoch.get(epoch) ?? 0;
+        if (actual !== expected) {
+          const model = this._modelByEpoch.get(epoch);
+          throw new ModelPlacementChangedError({
+            modelId: modelIdOf(model), loadEpoch: epoch, expectedRevision: expected, actualRevision: actual,
+          });
+        }
+      }
+    };
+    const port = (ctx = {}) => {
       this._assertLeasesStillLive(leases);
+      assertPlacementUnchanged();
       const pending = realCheckpoint(ctx);
       if (!pending) return undefined;
       return (async () => {
         await pending;
         this._assertLeasesStillLive(leases);
+        assertPlacementUnchanged();
       })();
     };
+    // Exposed so `_recordPlacement`'s own pre-insertion compare-and-abort check (Task 9, extended
+    // here) can sync THIS query's own growth-triggered revision bumps into this SAME map, after
+    // that check passes -- see `_recordPlacement`'s own comment.
+    port.expectedRevisionByEpoch = expectedRevisionByEpoch;
+    // codex-advisor review (Task 14): a SYNCHRONOUS, disposed -> evicted -> placement-revision check
+    // with the SAME precedence/logic the port itself runs on every checkpoint call -- but return-site
+    // revalidation (design spec §9.2 point 7b) and the object-tree-readiness wait's own revalidation
+    // do NOT go through a checkpoint call at all (no yield to schedule around), so they previously
+    // called only `_assertLeasesStillLive`, silently exempting them from placement revalidation. A
+    // stale result could therefore still be returned if an external change landed during the LAST
+    // shared-resource await before a return (e.g. a GeometryRegistry build another caller is also
+    // awaiting) or during a real, potentially multi-second object-tree readiness wait. Exposed here
+    // so `findClashes` can call it at exactly those points, matching the port's own checks exactly.
+    port.assertCurrent = () => {
+      this._assertLeasesStillLive(leases);
+      assertPlacementUnchanged();
+    };
+    return port;
   }
 
   // ---- Task 19: the surface-intersection vertical slice -------------------------------------
@@ -1002,6 +1049,30 @@ export class CollisionWorld {
       : distinctModels.map((m) => this.admitModel(m)); // throws ModelEvictedError per M1 admitModel contract
     const leaseByModel = new Map(leases.map((l) => [l.model, l]));
 
+    // Task 14: the set of epochs THIS query will consult via a cached TLAS -- every distinct epoch
+    // among the query's own `targetsEntries`' models. Known immediately from `leaseByModel`, with NO
+    // extraction needed: WHICH epochs are targets is fixed by which MODELS are targets, not by which
+    // fragments extraction later finds within them. Empty for `effectiveBroadPhase !== 'tlas'`
+    // (never armed for a linear call, per spec §9.2 point 8's own scope).
+    const tlasConsultedEpochs = effectiveBroadPhase === 'tlas'
+      ? new Set(targetsEntries.map((entry) => leaseByModel.get(entry.model).epoch))
+      : new Set();
+
+    // ONE composite checkpoint port for this whole call (Task 6): revalidates every captured lease
+    // on every checkpoint call, then delegates to ONE real per-call port/accumulator (keyed off the
+    // source's own lease, `leases[0]`) shared by every checkpoint site in this call (extraction,
+    // broad phase, narrow phase) -- unconditionally, even for a single-model call, since a
+    // one-element composite check is a harmless, cheap restatement of what the real port already
+    // checks internally.
+    //
+    // codex-advisor review (Task 14): constructed HERE -- immediately after lease capture, BEFORE
+    // the object-tree readiness wait below -- not after it (an earlier draft placed this call after
+    // that wait, which meant `expectedRevisionByEpoch`'s own revision snapshot silently absorbed any
+    // external change landing during a REAL, potentially multi-second readiness wait as the accepted
+    // baseline, rather than catching it). "Query entry" (spec §9.2 point 8, this method's own design
+    // intent) means truly the earliest point every captured epoch is known, which is here.
+    const checkpoint = this.createCompositeCheckpointPort(leases, tlasConsultedEpochs);
+
     // Instance-tree readiness wait, immediately after the entry-order lifecycle checks and BEFORE
     // any extraction (docs/superpowers/specs/instance-tree-readiness-decision.md, "Hook point for
     // implementation") -- generalized across EVERY distinct model this call captured, not just one.
@@ -1030,18 +1101,13 @@ export class CollisionWorld {
         // In `finally`, deliberately: this runs on the failure path too, and a throw here REPLACES a
         // pending ObjectTreeUnavailableError -- which is the correct precedence. Disposal (and any
         // OTHER captured model's eviction) outranks "the tree could not be built", in the same order
-        // the entry checks above use (disposed first, then evicted).
-        this._assertLeasesStillLive(leases);
+        // the entry checks above use (disposed first, then evicted). Task 14 (codex-advisor review):
+        // `checkpoint.assertCurrent()`, not a bare `_assertLeasesStillLive` -- this wait can run as
+        // long as the Viewer's own property-database load, by far the widest gap in this whole
+        // method, so a placement change landing during it must be caught here too, not just liveness.
+        checkpoint.assertCurrent();
       }
     }
-
-    // ONE composite checkpoint port for this whole call (Task 6): revalidates every captured lease
-    // on every checkpoint call, then delegates to ONE real per-call port/accumulator (keyed off the
-    // source's own lease, `leases[0]`) shared by every checkpoint site in this call (extraction,
-    // broad phase, narrow phase) -- unconditionally, even for a single-model call, since a
-    // one-element composite check is a harmless, cheap restatement of what the real port already
-    // checks internally.
-    const checkpoint = this.createCompositeCheckpointPort(leases);
 
     // --- Extraction. Source is always exactly one model (query.source.model); its own dbIds are
     // walked via extractFragments, unchanged from pre-Task-6 behavior.
@@ -1116,8 +1182,10 @@ export class CollisionWorld {
       // Return-site revalidation (design spec §9.2 point 7b): the empty-extraction fast path may
       // have run through ZERO checkpoint calls at all (every dbIds scope empty means no per-dbId
       // loop body ever ran), so nothing has re-validated the captured lease set since entry -- this
-      // closes exactly that gap for a genuinely multi-model call.
-      this._assertLeasesStillLive(leases);
+      // closes exactly that gap for a genuinely multi-model call. `checkpoint.assertCurrent()` (Task
+      // 14, codex-advisor review) -- placement, not just liveness, per §9.2 point 8's own explicit
+      // "immediately before every return" requirement.
+      checkpoint.assertCurrent();
       return { pairs: [], statistics };
     }
     // The broad-phase ceiling is checked HERE -- before any side effect, not just before the scan
@@ -1242,12 +1310,14 @@ export class CollisionWorld {
     }
     this._recordRepresentativeFragments(sourceEpoch, sourceExtracted);
     for (const [epoch, bucket] of targetRecordsByEpoch) this._recordRepresentativeFragments(epoch, bucket);
-    // Task 9: same call sites, one more sibling write -- the placement index is purely additive
-    // and read by nothing yet (Task 10's TlasCache is the first consumer), so recording it here
-    // changes no existing behavior.
-    this._recordPlacement(sourceEpoch, leaseByEpoch.get(sourceEpoch).model, sourceExtracted);
+    // Task 9: same call sites, one more sibling write. `checkpoint.expectedRevisionByEpoch` (Task
+    // 14) is passed to BOTH -- an empty map for a `broadPhase:'linear'`-effective call (a no-op,
+    // exactly the pre-Task-14 behavior), or the real armed map for a `'tlas'`-effective call, so
+    // this query's OWN growth into a TLAS-consulted epoch (source included, on the rare occasion its
+    // own epoch coincides with a target epoch) is synced forward rather than misread as external.
+    this._recordPlacement(sourceEpoch, leaseByEpoch.get(sourceEpoch).model, sourceExtracted, checkpoint.expectedRevisionByEpoch);
     for (const [epoch, bucket] of targetRecordsByEpoch) {
-      this._recordPlacement(epoch, leaseByEpoch.get(epoch).model, bucket);
+      this._recordPlacement(epoch, leaseByEpoch.get(epoch).model, bucket, checkpoint.expectedRevisionByEpoch);
     }
     const admittedByEpoch = new Map();
     for (const [epoch, uniqueFragments] of perEpochUnique) {
@@ -1327,8 +1397,12 @@ export class CollisionWorld {
     statistics.totalMs = this._now() - startedAt;
     // Return-site revalidation (design spec §9.2 point 7b): closes the gap between the LAST
     // checkpoint call above and this successful return, across which the pairs map / statistics are
-    // assembled with no checkpoint call of their own.
-    this._assertLeasesStillLive(leases);
+    // assembled with no checkpoint call of their own. `checkpoint.assertCurrent()` (Task 14,
+    // codex-advisor review): the real failure mode this closes -- an external placement change
+    // landing while the LAST candidate pair's own narrow phase awaits a shared GeometryRegistry
+    // build (surface-intersection performs no checkpoint of its own between that await and this
+    // return) must still be caught here, not silently returned as a stale-but-successful result.
+    checkpoint.assertCurrent();
     return { pairs: [...pairsByKey.values()], statistics };
   }
 
@@ -1617,13 +1691,41 @@ export class CollisionWorld {
   // _placementByEpoch.get(epoch) is NEVER overwritten by ordinary extraction -- only
   // invalidateModelPlacement's staged refresh (Task 11) may overwrite an EXISTING entry. Only a
   // genuinely new fragmentId is inserted, which also bumps the epoch's revision as "growth".
-  _recordPlacement(loadEpoch, model, extractedRecords) {
+  //
+  // `expectedRevisionByEpoch` (Task 14, M2 Batch 4): the SAME map `createCompositeCheckpointPort`
+  // attached to this call's own `checkpoint` -- empty for a `broadPhase:'linear'`-effective call
+  // (every check below becomes a no-op, exactly this method's pre-Task-14 behavior), or armed with
+  // this call's own TLAS-consulted epochs' revisions as captured AT TRUE QUERY ENTRY.
+  //
+  // Pre-insertion compare-and-abort, BEFORE this call's own insertion below (spec §9.2 point 8): if
+  // this epoch is tracked and its CURRENT revision already differs from what was captured at query
+  // entry, a DIFFERENT actor already changed it for a reason this query never caused -- abort now,
+  // before this query's own insertion could compound the confusion (e.g. publishing on top of a
+  // refresh's own already-staged data, or masking the external change behind this call's own bump).
+  _recordPlacement(loadEpoch, model, extractedRecords, expectedRevisionByEpoch) {
+    // codex-advisor review (Task 14): `modelIdOf(model)` reads externally-owned `model.id`, read
+    // ONCE here, BEFORE the pre-insertion comparison below -- not after it, as an earlier draft had
+    // it (only for the write-once loop's own later use). If `model.id` were ever an accessor with a
+    // side effect (e.g. synchronously calling `invalidateModelPlacement`), reading it AFTER the
+    // comparison but BEFORE the growth-sync step would let that side effect's own revision bump get
+    // silently absorbed by this call's OWN growth-sync as if it were self-caused, never compared
+    // against. Reading it first closes that reentrancy window regardless of whether the Viewer SDK
+    // actually has such an accessor today -- free, and removes the assumption entirely.
+    const modelId = modelIdOf(model);
+    if (expectedRevisionByEpoch?.has(loadEpoch)) {
+      const currentRevision = this._placementRevisionByEpoch.get(loadEpoch) ?? 0;
+      const expected = expectedRevisionByEpoch.get(loadEpoch);
+      if (currentRevision !== expected) {
+        throw new ModelPlacementChangedError({
+          modelId, loadEpoch, expectedRevision: expected, actualRevision: currentRevision,
+        });
+      }
+    }
     let placementByFragment = this._placementByEpoch.get(loadEpoch);
     if (!placementByFragment) {
       placementByFragment = new Map();
       this._placementByEpoch.set(loadEpoch, placementByFragment);
     }
-    const modelId = modelIdOf(model);
     let grew = false;
     for (const record of extractedRecords.values()) {
       if (placementByFragment.has(record.fragmentId)) continue; // write-once: never overwrite
@@ -1634,7 +1736,15 @@ export class CollisionWorld {
       grew = true;
     }
     if (grew) {
-      this._placementRevisionByEpoch.set(loadEpoch, (this._placementRevisionByEpoch.get(loadEpoch) ?? 0) + 1);
+      const newRevision = (this._placementRevisionByEpoch.get(loadEpoch) ?? 0) + 1;
+      this._placementRevisionByEpoch.set(loadEpoch, newRevision);
+      // Task 14, spec §6.7.5's self-invalidation-avoidance: sync THIS query's OWN growth-triggered
+      // bump forward into expectedRevisionByEpoch. Without this, createCompositeCheckpointPort's own
+      // LATER comparison would see this query's OWN insertion as an external change and falsely
+      // abort its own call.
+      if (expectedRevisionByEpoch?.has(loadEpoch)) {
+        expectedRevisionByEpoch.set(loadEpoch, newRevision);
+      }
     }
   }
 

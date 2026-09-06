@@ -664,3 +664,265 @@ test('invalidateModelPlacement before a broadPhase:"tlas" query triggers a real 
     'the refresh must receive THIS call\'s own composite checkpoint, not run un-preemptibly');
   assert.equal(result.pairs.length, 1, 'the query still finds the real clash after refreshing');
 });
+
+// === Task 14: placement-revision revalidation on the composite checkpoint =======================
+//
+// Deviates from the plan's own suggested test file (test/CollisionWorld.placementInvalidation.test.mjs)
+// -- added here instead, where the two-model TLAS fixture (`makeTwoModelFixture`) this task's own
+// cross-model scenarios need already lives, rather than duplicating it into that (single-model-only)
+// file. All scenarios are genuinely about TLAS-consuming queries specifically (this task's own
+// stated scope), so this is a better home for them.
+
+test('Task 14: an externally-caused placement-revision change on a captured TLAS-consulted epoch aborts the whole query', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  // Prime the epoch first (a first-ever build has nothing to "change" yet -- this test is about a
+  // change landing DURING an in-progress query, not about the very first build).
+  await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  let firstPairSeen = false;
+  const originalTestPair = world._testBroadPhasePair.bind(world);
+  world._testBroadPhasePair = (...args) => {
+    if (!firstPairSeen) { firstPairSeen = true; world.invalidateModelPlacement(modelB); } // a DIFFERENT, external actor
+    return originalTestPair(...args);
+  };
+  let caught = null;
+  try {
+    await world.findClashes({
+      source: { model: modelA, dbIds: [1] },
+      target: { targets: [{ model: modelB, dbIds: [1] }] },
+      mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+    });
+  } catch (err) {
+    caught = err;
+  }
+  assert.equal(firstPairSeen, true, 'the external change really did land mid-query');
+  const { ModelPlacementChangedError } = await import('../collision/errors.js');
+  assert.ok(caught instanceof ModelPlacementChangedError, `expected ModelPlacementChangedError, got ${caught?.constructor?.name}`);
+  assert.equal(caught.modelId, modelB.id);
+  assert.equal(typeof caught.loadEpoch, 'number');
+  assert.equal(typeof caught.expectedRevision, 'number');
+  assert.equal(typeof caught.actualRevision, 'number');
+  assert.notEqual(caught.expectedRevision, caught.actualRevision, 'ModelPlacementChangedError carries the real mismatch, not two equal numbers');
+});
+
+test('Task 14: the query does NOT invalidate itself via its own ordinary extraction growth, across TWO distinct target epochs', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  // Two target groups sharing NO prior state -- modelA's own dbId 1 fragment growing into ITS OWN
+  // epoch's placement table (same-model target, self-excluded from the actual pairs) and modelB's
+  // dbId 1 growing into a SECOND epoch -- both are this query's OWN first-ever extraction into each
+  // epoch (genuine growth), never an external change.
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelA, dbIds: [1] }, { model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  assert.equal(result.pairs.length, 1, 'the real cross-model clash is found -- the call must NOT have self-aborted');
+  assert.equal(result.pairs[0].target.model, modelB);
+});
+
+test('Task 14: the pre-insertion compare-and-abort check catches a foreign revision bump BEFORE this query\'s own insertion into that epoch', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  // Admit modelB (the TARGET) up front so invalidateModelPlacement (no-op for a never-admitted
+  // model) has a real lease to act on the moment it's called, before this query's own admitModel
+  // call for modelB even runs.
+  world.admitModel(modelB);
+  const originalRecordPlacement = world._recordPlacement.bind(world);
+  let recordPlacementCalls = 0;
+  let caughtDuringSourceInsertion = false;
+  world._recordPlacement = (loadEpoch, model, extractedRecords, expectedRevisionByEpoch) => {
+    recordPlacementCalls++;
+    if (recordPlacementCalls === 1) {
+      // This is the SOURCE epoch's own insertion (findClashes records source before any target) --
+      // a foreign actor bumps modelB's (the TARGET's) placement revision here, BEFORE this query's
+      // own _recordPlacement for modelB's epoch has run at all.
+      world.invalidateModelPlacement(modelB);
+      try {
+        return originalRecordPlacement(loadEpoch, model, extractedRecords, expectedRevisionByEpoch);
+      } catch (err) {
+        caughtDuringSourceInsertion = true;
+        throw err;
+      }
+    }
+    return originalRecordPlacement(loadEpoch, model, extractedRecords, expectedRevisionByEpoch);
+  };
+  let caught = null;
+  try {
+    await world.findClashes({
+      source: { model: modelA, dbIds: [1] },
+      target: { targets: [{ model: modelB, dbIds: [1] }] },
+      mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+    });
+  } catch (err) {
+    caught = err;
+  }
+  assert.equal(caughtDuringSourceInsertion, false, 'the source epoch\'s own insertion is untracked (not the epoch that was bumped) -- it must succeed normally');
+  const { ModelPlacementChangedError } = await import('../collision/errors.js');
+  assert.ok(caught instanceof ModelPlacementChangedError,
+    `the SECOND _recordPlacement call (modelB's own epoch) must catch the foreign bump BEFORE its own insertion, got ${caught?.constructor?.name}`);
+  assert.equal(recordPlacementCalls, 2, 'both the source and target _recordPlacement calls ran (the abort happens INSIDE the second, not by skipping it)');
+});
+
+test('Task 14: placement-revision revalidation is scoped to broadPhase:"tlas" epochs only -- a pure linear call is unaffected by unrelated concurrent growth', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'linear',
+  });
+  let firstPairSeen = false;
+  const originalTestPair = world._testBroadPhasePair.bind(world);
+  world._testBroadPhasePair = (...args) => {
+    if (!firstPairSeen) { firstPairSeen = true; world.invalidateModelPlacement(modelB); }
+    return originalTestPair(...args);
+  };
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'linear',
+  });
+  assert.equal(firstPairSeen, true, 'the unrelated concurrent change really did land mid-query');
+  assert.equal(result.pairs.length, 1, 'a pure linear call never consults _placementByEpoch/a cached TLAS -- it must NOT abort on this');
+});
+
+test('Task 14: validation precedence at every checkpoint is disposed -> evicted -> placement-revision mismatch', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  let firstPairSeen = false;
+  const originalTestPair = world._testBroadPhasePair.bind(world);
+  world._testBroadPhasePair = (...args) => {
+    if (!firstPairSeen) {
+      firstPairSeen = true;
+      world.invalidateModelPlacement(modelB); // BOTH conditions true simultaneously --
+      world.dispose();                        // disposal must win.
+    }
+    return originalTestPair(...args);
+  };
+  const { WorldDisposedError } = await import('../collision/errors.js');
+  let caught = null;
+  try {
+    await world.findClashes({
+      source: { model: modelA, dbIds: [1] },
+      target: { targets: [{ model: modelB, dbIds: [1] }] },
+      mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+    });
+  } catch (err) {
+    caught = err;
+  }
+  assert.equal(firstPairSeen, true);
+  assert.ok(caught instanceof WorldDisposedError, `disposed must win over a placement-revision mismatch, got ${caught?.constructor?.name}`);
+});
+
+test('Task 14 (2nd codex-advisor pass): a placement change landing during a real, deferred object-tree readiness wait is caught before the empty-extraction fast-path return', async () => {
+  // codex-advisor review, finding #2: the revision snapshot used to be taken AFTER this wait (an
+  // earlier draft's own ordering bug), so a change landing during a REAL multi-second wait was
+  // silently absorbed as the accepted baseline. Verifies the fix: the snapshot happens at true
+  // lease-capture time, before this wait even starts.
+  let fireSuccess = null;
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [] }], // empty source -- exercises the FAST-PATH return specifically
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    modelOptionsB: {
+      objectTreeReady: false,
+      settleObjectTree: (onSuccess, _onError, instanceTree) => { fireSuccess = () => onSuccess(instanceTree); },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  // The target model must already be admitted (a real lease) for invalidateModelPlacement to have
+  // any effect -- true here regardless, since findClashes's own lease-capture step runs BEFORE the
+  // readiness wait it's about to block on.
+  const pending = world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0)); // let findClashes reach the readiness wait
+  world.invalidateModelPlacement(modelB); // lands WHILE the wait is still pending
+  fireSuccess();
+  const { ModelPlacementChangedError } = await import('../collision/errors.js');
+  let caught = null;
+  try {
+    await pending;
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof ModelPlacementChangedError,
+    `expected ModelPlacementChangedError from the readiness-wait's own revalidation, got ${caught?.constructor?.name}`);
+});
+
+test('Task 14 (2nd codex-advisor pass): a placement change landing during the LAST candidate\'s shared geometry-build await is caught before the final success return', async () => {
+  // codex-advisor review, finding #1's own real failure mode: "invalidate a tracked target while
+  // the final candidate is awaiting a shared GeometryRegistry build. Surface-intersection performs
+  // no later checkpoint, and the query can return a stale result." Verifies the fix:
+  // checkpoint.assertCurrent() at the final return now catches exactly this.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const originalGetOrBuildGeometry = world._registry.getOrBuildGeometry.bind(world._registry);
+  let hookFired = false;
+  world._registry.getOrBuildGeometry = async (...args) => {
+    if (!hookFired) {
+      hookFired = true;
+      // Simulate: this candidate's own geometry build is a REAL await another concurrent caller is
+      // also sharing -- an external actor invalidates modelB's placement WHILE this is in flight.
+      await Promise.resolve();
+      world.invalidateModelPlacement(modelB);
+    }
+    return originalGetOrBuildGeometry(...args);
+  };
+  const { ModelPlacementChangedError } = await import('../collision/errors.js');
+  let caught = null;
+  try {
+    await world.findClashes({
+      source: { model: modelA, dbIds: [1] },
+      target: { targets: [{ model: modelB, dbIds: [1] }] },
+      mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+    });
+  } catch (err) {
+    caught = err;
+  }
+  assert.equal(hookFired, true, 'the injected await really did run during this call\'s own narrow phase');
+  assert.ok(caught instanceof ModelPlacementChangedError,
+    `expected ModelPlacementChangedError from the final return's own revalidation, got ${caught?.constructor?.name}`);
+});
