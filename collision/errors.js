@@ -81,3 +81,41 @@ export class ObjectTreeUnavailableError extends Error {
     this.cause = cause;
   }
 }
+
+/**
+ * Thrown when a cross-model query's mid-query placement-revalidation (design spec §9.2 point 8)
+ * detects that a captured model's placement revision changed for a reason the query did not
+ * itself cause (§6.7.5). Distinct from ModelEvictedError: the model is still live, but the input
+ * geometry may have moved out from under this in-flight query.
+ */
+export class ModelPlacementChangedError extends Error {
+  constructor({ modelId, loadEpoch, expectedRevision, actualRevision } = {}) {
+    super(
+      `Model ${modelId} (loadEpoch ${loadEpoch}) placement changed mid-query: ` +
+      `expected revision ${expectedRevision}, observed ${actualRevision}`,
+    );
+    this.name = 'ModelPlacementChangedError';
+    this.modelId = modelId;
+    this.loadEpoch = loadEpoch;
+    this.expectedRevision = expectedRevision;
+    this.actualRevision = actualRevision;
+  }
+}
+
+const CAPACITY_EXCEEDED_MESSAGES = {
+  'call-wide-unique-fragment-precheck': (kind) => `CollisionInstance admission rejected (${kind})`,
+  'bucket-capacity': (kind) => `CollisionInstance admission rejected (${kind})`,
+  'tlas-candidate-budget': () => 'TLAS candidate-expansion budget exceeded for this findClashes call',
+  'whole-model-enumeration': (kind) => `CollisionInstance admission rejected (${kind})`, // Task 5's own kind, added here
+};
+
+export class CapacityExceededError extends Error {
+  constructor(kind, details) {
+    const messageFn = CAPACITY_EXCEEDED_MESSAGES[kind]
+      ?? ((k) => `CollisionInstance admission rejected (${k})`); // unknown kind: preserve old text
+    super(messageFn(kind));
+    this.name = 'CapacityExceededError';
+    this.kind = kind;
+    Object.assign(this, details);
+  }
+}

@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import {
   WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
+  CapacityExceededError,
 } from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
 import { maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, weldEpsilonMeters } from './constants.js';
@@ -202,6 +203,17 @@ function emptyStatistics() {
     narrowPhaseMs: 0,
     totalMs: 0,
     diagnostics: [],
+    // --- M2 additive fields (design spec §7.5.1), always present, default 0, never
+    // conditionally omitted -- including for broadPhase:'linear' calls.
+    tlasLeafRangeEmissions: 0,
+    tlasPrimitiveCandidatePairs: 0,
+    tlasExactRetestSurvivors: 0,
+    tlasNarrowPhaseInputPairs: 0,
+    tlasBuilds: 0,
+    tlasCacheHits: 0,
+    tlasSharedBuildWaits: 0,
+    tlasBuildMs: 0,
+    tlasQueryMs: 0,
   };
 }
 
@@ -209,14 +221,9 @@ function defaultYieldToScheduler() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-export class CapacityExceededError extends Error {
-  constructor(kind, details) {
-    super(`CollisionInstance admission rejected (${kind})`);
-    this.name = 'CapacityExceededError';
-    this.kind = kind; // 'call-wide-unique-fragment-precheck' | 'bucket-capacity'
-    Object.assign(this, details);
-  }
-}
+export { CapacityExceededError }; // re-exported, not redeclared -- every existing `instanceof
+                                 // CapacityExceededError` check anywhere in the codebase still
+                                 // passes, since it is the SAME class object.
 
 export class CollisionWorld {
   constructor({ registry = null, now = () => performance.now(), yieldToScheduler = defaultYieldToScheduler } = {}) {

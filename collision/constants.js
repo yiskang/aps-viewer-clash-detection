@@ -56,3 +56,10 @@ export const maxBroadPhaseInstancePairs = 1_000_000;    // provisional
 // findClashes calls in one session. MUST be revised by the performance gate (Task 24)
 // once real per-epoch retention is measured (spec:4786-4795).
 export const maxCollisionInstancesPerEpoch = 20_000;
+
+// Bounds primitive-candidate expansion under broadPhase:'tlas' (design spec §9.3). Unlike
+// maxBroadPhaseInstancePairs, this cannot be precomputed as a Cartesian product -- traversal
+// cost is not known until it runs -- so it is checked incrementally, not as an upfront precheck.
+// Provisional: revise per the M2 performance gate (Task 21), same posture constants.js already
+// documents for maxCollisionInstancesPerEpoch above.
+export const maxTlasCandidatePairs = 200_000;

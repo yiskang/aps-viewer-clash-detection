@@ -10,5 +10,6 @@
 export { CollisionWorld, CapacityExceededError } from './CollisionWorld.js';
 export {
   WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
+  ModelPlacementChangedError,
 } from './errors.js';
 export { ExtractionLimitExceededError } from './viewer/ViewerModelAdapter.js';
