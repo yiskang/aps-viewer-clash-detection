@@ -687,10 +687,11 @@ test('an unsupported broadPhase value is rejected', async () => {
 });
 
 test("broadPhase: 'tlas' is accepted with the LEGACY {model, dbIds} target shape too", async () => {
-  // 'tlas' broad-phase execution itself is Tasks 7/8+'s job (not yet wired) -- this only proves the
-  // ENUM VALUE passes Step 8's validation rather than being rejected as "unsupported broadPhase". An
-  // empty-dbIds call takes the empty-extraction fast path regardless of which broad phase would
-  // eventually run, so this is a pure validation spot-check, not a broad-phase behavior test.
+  // An empty-dbIds call takes the empty-extraction fast path regardless of which broad phase would
+  // eventually run, so this is a pure validation spot-check (the enum value passes Step 8's
+  // validation rather than being rejected as "unsupported broadPhase"), not a broad-phase behavior
+  // test -- see test/CollisionWorld.tlasTraversal.test.mjs (Task 13, M2 Batch 4) for real
+  // broadPhase:'tlas' execution coverage, now that it dispatches to a real accelerated path.
   const { modelA, viewer } = makeTwoModelFixture();
   const world = await freshWorld(viewer, { now: frozenClock() });
   const result = await world.findClashes({ ...baseQuery(modelA), target: { model: modelA, dbIds: [] }, broadPhase: 'tlas' });
@@ -761,7 +762,7 @@ test('whole-model target scope (targets:[{model}], no dbIds) against a dense mod
   assert.deepEqual(targetDbIds, [1, 3]);
 });
 
-test("an explicit broadPhase:'tlas' request runs the SAME linear scan and finds the correct real clash (documented placeholder behavior, not yet a real TLAS dispatch)", async () => {
+test("an explicit broadPhase:'tlas' request finds the correct real clash via the real accelerated path (Task 13, M2 Batch 4)", async () => {
   const { modelA, modelB, viewer } = makeTwoModelFixture({
     rootNodesA: [{ dbId: 1, fragments: [10] }],
     fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
@@ -774,13 +775,19 @@ test("an explicit broadPhase:'tlas' request runs the SAME linear scan and finds 
     target: { targets: [{ model: modelB, dbIds: [1] }] },
     mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
   });
-  assert.equal(result.pairs.length, 1, "broadPhase:'tlas' finds the real clash via the same linear scan today");
+  assert.equal(result.pairs.length, 1, "broadPhase:'tlas' finds the real clash via the real TLAS-accelerated broad phase");
   assert.equal(result.pairs[0].target.model, modelB);
 });
 
 test('O(n*m)-per-pair shape, single target epoch: broadPhasePairs equals sourceCount*targetCount exactly', async () => {
   // Baseline sanity check before the two-epoch discriminator test below: 2 source instances x 3
-  // target instances, one single target epoch -- broadPhasePairs must be exactly 6.
+  // target instances, one single target epoch -- broadPhasePairs must be exactly 6. This is an
+  // O(n*m)-SCAN-specific invariant (M1's own linear broad phase counts EVERY pair unconditionally,
+  // before any spatial pre-filter) -- broadPhase:'linear' pinned explicitly (Task 13, M2 Batch 4):
+  // the `targets` shape now defaults to 'tlas', whose own coarse spatial query never even visits an
+  // AABB-disjoint pair (this fixture's fragments are deliberately 1000 units apart), so TLAS's own
+  // broadPhasePairs would correctly stay 0 here -- a genuine, expected divergence in the STATISTIC
+  // (never in the returned `pairs`), not a bug.
   const { modelA, modelB, viewer } = makeTwoModelFixture({
     rootNodesA: [
       { dbId: 1, fragments: [10] },
@@ -805,13 +812,15 @@ test('O(n*m)-per-pair shape, single target epoch: broadPhasePairs equals sourceC
   const result = await world.findClashes({
     source: { model: modelA, dbIds: [1, 2] }, // 2 source instances
     target: { targets: [{ model: modelB, dbIds: [1, 2, 3] }] }, // 1 target epoch, 3 instances
-    mode: 'surface-intersection', groupBy: 'dbId',
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'linear',
   });
   assert.equal(result.statistics.broadPhasePairs, 6, '2 source x 3 target instances, one target epoch');
   assert.equal(result.pairs.length, 0, 'all fixtures are deliberately AABB-disjoint');
 });
 
 test('O(n*m)-per-pair shape across TWO target epochs: broadPhasePairs is the SUM, not a merged product', async () => {
+  // Same O(n*m)-SCAN-specific invariant as above -- broadPhase:'linear' pinned explicitly for the
+  // same reason (this fixture's fragments are also deliberately AABB-disjoint by 1000 units).
   const { modelA, modelB, viewer } = makeTwoModelFixture({
     rootNodesA: [
       { dbId: 1, fragments: [10] },
@@ -844,7 +853,7 @@ test('O(n*m)-per-pair shape across TWO target epochs: broadPhasePairs is the SUM
   const result = await world.findClashes({
     source: { model: modelA, dbIds: [1, 2] },
     target: { targets: [{ model: modelA, dbIds: [1, 2] }, { model: modelB, dbIds: [1, 2, 3] }] },
-    mode: 'surface-intersection', groupBy: 'dbId',
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'linear',
   });
   assert.equal(result.statistics.broadPhasePairs, 6, '0 (all self-excluded) + 6 (2x3 cross-model), summed per target epoch');
   assert.equal(result.pairs.length, 0, 'all real candidates are AABB-disjoint');

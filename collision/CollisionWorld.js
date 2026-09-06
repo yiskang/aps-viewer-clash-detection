@@ -9,7 +9,9 @@ import {
   CapacityExceededError,
 } from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
-import { maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, weldEpsilonMeters } from './constants.js';
+import {
+  maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, maxTlasCandidatePairs, weldEpsilonMeters,
+} from './constants.js';
 import { extractFragments, extractAllFragments, readWorldMatrix, readWorldBounds } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
 import { createGeometryRegistry } from './geometry/createGeometryRegistry.js';
@@ -960,14 +962,25 @@ export class CollisionWorld {
     if (query.broadPhase !== undefined && query.broadPhase !== 'tlas' && query.broadPhase !== 'linear') {
       throw new Error(`findClashes: unsupported broadPhase '${query.broadPhase}'`);
     }
-    // Task 8: `broadPhase` is validated above as an enum, but no branch in this method actually
-    // dispatches on its VALUE yet -- `_runBroadPhaseScan` (the linear oracle) is the only broad-phase
-    // implementation that exists before Batch 3/4's TLAS work lands. An explicit `broadPhase:'tlas'`
-    // request therefore silently runs the SAME linear scan `broadPhase:'linear'`/the omitted default
-    // would, rather than throwing "not yet implemented" -- a deliberate, explicit choice (not an
-    // oversight) so a caller opting into 'tlas' early gets a correct, if not-yet-accelerated, result
-    // instead of a hard failure. This is a placeholder, not a compatibility guarantee: once Batch 3/4
-    // wires a real TLAS path, `broadPhase:'tlas'` will dispatch to it instead.
+    // Task 13 (M2 Batch 4): `broadPhase:'tlas'` now dispatches to a REAL accelerated path
+    // (`_runTlasBroadPhase`) rather than silently falling back to the linear scan -- the
+    // placeholder behavior this comment used to document (a Batch 3-era stopgap) no longer applies.
+    //
+    // spec §3.5 (an already-accepted review fix, "Important #2") requires a SHAPE-DEPENDENT
+    // default: the new `targets` shape defaults to 'tlas', the legacy `{model,dbIds}` shape keeps
+    // defaulting to 'linear' (byte-for-byte M1 compatibility, including placement freshness). An
+    // earlier draft of this task deferred implementing this default (reasoning that two dozen+
+    // pre-existing `targets`-shape tests with no explicit `broadPhase` would silently flip onto a
+    // brand-new path) -- a codex-advisor review of this task's own diff correctly pushed back: those
+    // tests are exactly the blast-radius detection this change needs, and in fact one of them is
+    // what surfaced this task's own Critical finding (see `_runTlasBroadPhase`'s own comment on
+    // resolving hits through the CURRENT call's target instances, never the cached placement table).
+    // Computed ONCE, right here, and used for both this default AND the maxBroadPhaseInstancePairs
+    // ceiling bypass below (spec §9.3, "not applied under broadPhase:'tlas' at all" -- the ceiling's
+    // own O(sourceCount x targetCount) precheck is meaningless for a TLAS call, whose real cost is
+    // NOT proportional to that product, and would reject queries the TLAS exists specifically to
+    // make cheap).
+    const effectiveBroadPhase = query.broadPhase ?? (Array.isArray(query.target.targets) ? 'tlas' : 'linear');
 
     const startedAt = this._now();
     const statistics = emptyStatistics();
@@ -1133,20 +1146,28 @@ export class CollisionWorld {
     // (`isSourceOwnFragment`'s own epoch-equality gate -- M2's source is always exactly one epoch),
     // so only that one group's count needs adjusting; every other (genuinely cross-model) group's
     // raw `bucket.size` is already exact, by construction, since self-exclusion never touches it.
-    for (const [epoch, bucket] of targetRecordsByEpoch) {
-      let effectiveTargetCount = bucket.size;
-      if (epoch === sourceEpoch) {
-        let selfExcludedCount = 0;
-        for (const fragId of bucket.keys()) {
-          if (sourceExtracted.has(fragId)) selfExcludedCount++;
+    // Task 13 fix (codex-advisor review, High #2): this Cartesian precheck is meaningless -- and
+    // actively wrong -- for `broadPhase:'tlas'` (spec §9.3: "not applied under broadPhase:'tlas' at
+    // all"). A spatially disjoint TLAS query whose raw extraction counts alone exceed this ceiling
+    // must still be allowed to run (and correctly produce zero candidates) rather than being
+    // rejected before the TLAS ever runs; the SEPARATE, TLAS-specific `maxTlasCandidatePairs`
+    // budget (checked incrementally inside `_runTlasBroadPhase`) is what actually bounds its cost.
+    if (effectiveBroadPhase !== 'tlas') {
+      for (const [epoch, bucket] of targetRecordsByEpoch) {
+        let effectiveTargetCount = bucket.size;
+        if (epoch === sourceEpoch) {
+          let selfExcludedCount = 0;
+          for (const fragId of bucket.keys()) {
+            if (sourceExtracted.has(fragId)) selfExcludedCount++;
+          }
+          effectiveTargetCount = bucket.size - selfExcludedCount;
         }
-        effectiveTargetCount = bucket.size - selfExcludedCount;
-      }
-      if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, effectiveTargetCount)) {
-        throw new Error(
-          `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
-          `(${sourceExtracted.size} x ${effectiveTargetCount} > ${maxBroadPhaseInstancePairs})`,
-        );
+        if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, effectiveTargetCount)) {
+          throw new Error(
+            `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
+            `(${sourceExtracted.size} x ${effectiveTargetCount} > ${maxBroadPhaseInstancePairs})`,
+          );
+        }
       }
     }
 
@@ -1263,7 +1284,9 @@ export class CollisionWorld {
     // extraction counts these groups are built from one-for-one, and deliberately BEFORE the
     // admission/bookkeeping side effects -- so there is no second check here.
     const broadPhaseStartedAt = this._now();
-    const candidates = await this._runBroadPhaseScan(sourceOperand, sourceInstances, targetGroups, statistics, checkpoint);
+    const candidates = effectiveBroadPhase === 'tlas'
+      ? await this._runTlasBroadPhase(sourceOperand, sourceInstances, targetGroups, targetScopeFilter, statistics, checkpoint)
+      : await this._runBroadPhaseScan(sourceOperand, sourceInstances, targetGroups, statistics, checkpoint);
     statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
 
     // --- Narrow phase + aggregation.
@@ -1688,6 +1711,218 @@ export class CollisionWorld {
     // any subsequent getEntry for this epoch to rebuild from the freshly-published data.
     this._tlasCache?.releaseEntryForEpoch(epoch);
     return { published: true };
+  }
+
+  // Task 13: fetches this epoch's TLAS entry against the CURRENT expected revision, refreshing
+  // placement first if an invalidation is pending, and retrying on TlasCache's own
+  // {outcome:'superseded'} signal by re-deriving the current revision fresh each time -- NEVER
+  // retrying with a stale value (Task 10's own caller contract). This is the first production
+  // caller of both _refreshPlacementForEpoch (Task 11) and TlasCache.getEntry (Task 10), and the
+  // first production caller of _refreshPlacementForEpoch's own `checkpoint` option -- threaded
+  // through from findClashes's composite checkpoint (`checkpoint`, this call's own per-call port),
+  // so a refresh over a large placement table actually yields under this call's shared frame
+  // budget instead of running unpreemptibly (the deferred half of Task 11's own finding, explicitly
+  // carried forward to this task rather than implemented speculatively ahead of a real caller).
+  //
+  // `statistics` is threaded in and updated DIRECTLY here (codex-advisor review, Medium #5): an
+  // earlier draft measured/attributed tlasBuilds/tlasCacheHits/tlasSharedBuildWaits/tlasBuildMs in
+  // the CALLER after this whole method returned, which silently mis-attributed (or dropped to zero)
+  // any real work done in an EARLIER loop iteration whenever a later iteration changed the final
+  // outcome (e.g. a genuine refresh's own elapsed time, followed by a 'superseded' retry and then a
+  // final 'shared-wait' -- the refresh time is real, paid-for work, not zero). Attributing per
+  // iteration, as each sub-step actually happens, is correct regardless of how many times this loop
+  // retries before returning.
+  async _getTlasEntryForEpoch(epoch, checkpoint, statistics) {
+    for (;;) {
+      // Re-validate liveness on every iteration -- a retry loop racing a genuine eviction must
+      // abort, not spin. (Full disposed/evicted/placement-revision precedence at every checkpoint
+      // in this call is enforced by the composite checkpoint at its own call sites; this is an
+      // additional, local guard specific to this retry loop's own safety.)
+      if (this._disposed) throw new WorldDisposedError();
+      if (!this._isEpochLive(epoch)) throw new ModelEvictedError(modelIdOf(this._modelByEpoch.get(epoch)));
+
+      let expectedRevision = this._placementRevisionByEpoch.get(epoch) ?? 0;
+      const invalidatedAt = this._placementInvalidatedAtRevision.get(epoch);
+      // `?? -1`: a never-built epoch's builtAtRevision is undefined (TlasCache's own documented
+      // convention), always < any real invalidation revision, so a pending invalidation is honored
+      // even on a cold first build (Batch 3 whole-batch review, Minor finding #8's own coercion
+      // discipline, reused here for the same reason).
+      const cachedBuiltAtRevision = this._tlasCache.getBuiltAtRevision(epoch) ?? -1;
+      if (invalidatedAt !== undefined && invalidatedAt >= cachedBuiltAtRevision) {
+        const refreshStartedAt = this._now();
+        const { published } = await this._refreshPlacementForEpoch(epoch, expectedRevision, invalidatedAt, { checkpoint });
+        // This call genuinely spent this wall-clock time getting a usable, current entry, REGARDLESS
+        // of what happens next (a superseded retry below, or a subsequent hit/shared-wait rather than
+        // a fresh build) -- never silently dropped to zero. No dedicated "refresh time" statistic
+        // exists in spec §7.5.1's own 9-field list, and tlasBuildMs is the closest fit (this repo's
+        // own established convention: reuse an existing bucket over inventing a new field ahead of a
+        // real, spec-authorized need).
+        statistics.tlasBuildMs += this._now() - refreshStartedAt;
+        if (!published) continue; // superseded by a second invalidation/growth mid-refresh -- retry with fresh state
+        expectedRevision = this._placementRevisionByEpoch.get(epoch); // re-read: the refresh may have changed it
+      }
+
+      const getEntryStartedAt = this._now();
+      const result = await this._tlasCache.getEntry(epoch, expectedRevision);
+      const getEntryElapsed = this._now() - getEntryStartedAt;
+      if (result.outcome === 'superseded') continue; // Task 10's contract: never retry with the stale value that was just superseded
+
+      // codex-advisor review, High #4 (SECOND pass -- the first attempt, checking only the
+      // invalidation marker, missed a real interleaving a follow-up review caught): a DIFFERENT
+      // concurrent call can refresh this SAME epoch, publish a NEWER revision, and CLEAR the
+      // invalidation marker (`_refreshPlacementForEpoch`'s own successful-publish side effect) --
+      // all while THIS call's own `getEntry` above was in flight. `recheckInvalidatedAt` would then
+      // be `undefined` (cleared by that other call), silently passing the marker-only check even
+      // though `_placementRevisionByEpoch` has since moved past THIS call's own `expectedRevision`.
+      // The unconditional revision-equality check below catches this regardless of the marker's own
+      // state; the marker check is kept as defense in depth for a case the revision check alone
+      // would not distinguish (a marker set for a FUTURE revision this loop hasn't reached yet,
+      // possible on a very first, never-built epoch where `expectedRevision` and the eventual built
+      // revision can coincide numerically while an invalidation is still pending against it).
+      //
+      // Statistics attribution happens BEFORE this staleness check, not after (a second real bug a
+      // follow-up review caught in the first pass's placement): a `built`/`shared-wait` outcome
+      // represents REAL, already-incurred work/wait, and must be counted even if this exact result
+      // is about to be discarded and retried -- silently dropping it under-reports genuine cost. A
+      // `hit`, by contrast, incurred no real cost (a bare Map lookup), so it is deliberately counted
+      // ONLY after this result is confirmed non-stale (counting a stale, about-to-be-discarded 'hit'
+      // would overstate cache effectiveness for a result nothing ever actually used).
+      if (result.outcome === 'built') { statistics.tlasBuilds++; statistics.tlasBuildMs += getEntryElapsed; }
+      else if (result.outcome === 'shared-wait') { statistics.tlasSharedBuildWaits++; }
+
+      if (this._disposed) throw new WorldDisposedError();
+      if (!this._isEpochLive(epoch)) throw new ModelEvictedError(modelIdOf(this._modelByEpoch.get(epoch)));
+      const recheckInvalidatedAt = this._placementInvalidatedAtRevision.get(epoch);
+      const recheckBuiltAtRevision = this._tlasCache.getBuiltAtRevision(epoch) ?? -1;
+      const revisionMovedOn = (this._placementRevisionByEpoch.get(epoch) ?? 0) !== expectedRevision;
+      const invalidationRaced = recheckInvalidatedAt !== undefined && recheckInvalidatedAt >= recheckBuiltAtRevision;
+      if (revisionMovedOn || invalidationRaced) continue; // built/shared-wait work above is already attributed; retry with fresh state
+
+      if (result.outcome === 'hit') statistics.tlasCacheHits++; // only counted once confirmed non-stale, see comment above
+      return result;
+    }
+  }
+
+  // Task 13: runs once per distinct TARGET epoch in `targetGroups`, querying each admitted SOURCE
+  // instance against that epoch's own (lazily built/cached) TLAS. Mirrors _runBroadPhaseScan's own
+  // ordering discipline (target-scope filter and source self-exclusion applied BEFORE a candidate
+  // is counted or retested), plus the TLAS-specific candidate-expansion budget (spec §9.3.1),
+  // checked upstream of BOTH filters via `onLeafRange`'s own raw leaf-expansion count -- NOT via
+  // `onCandidate`, which only fires for primitives that already pass CollisionInstanceBVH's own
+  // per-primitive exact-overlap re-test and would therefore under-report raw expansion (see
+  // CollisionInstanceBVH.js's own header comment on this exact point, and this method's own
+  // dedicated codex-advisor consult: a leaf whose primitives never individually pass that re-test
+  // could otherwise let a budget overflow escape detection entirely, since onCandidate would never
+  // fire for it at all). This budget check is CONSERVATIVE-RANGE, not literally per-primitive-exact
+  // (codex-advisor review, Medium #5): it adds a WHOLE leaf's raw `count` before checking against
+  // the limit, so the internal counter can overshoot the nominal limit by up to one leaf's worth
+  // before the check fires and traversal stops -- it never UNDER-throws (a genuine overflow is
+  // never silently missed), and the thrown error's own `completed`/`attempted` fields are always
+  // the exact spec-mandated `{limit, limit+1}` regardless of the real overshoot amount, so this
+  // never affects returned results (the call throws either way) -- only how much EXTRA raw
+  // expansion work happens in the single leaf that finally trips it. Documented rather than adding
+  // a new per-primitive `onRawCandidate` callback to CollisionInstanceBVH: that would cost one JS
+  // callback per raw primitive on every call (including every call that stays well under budget) to
+  // fix an imprecision that is provably harmless to correctness.
+  //
+  // codex-advisor review, Critical #1: a TLAS-matched record is used ONLY as a spatial hit / a
+  // fragmentId signal, NEVER as the source of `ownerDbId`/placement data for the resulting
+  // candidate. `_placementByEpoch` is a write-once, EPOCH-WIDE table (Task 9) -- once a fragmentId
+  // is recorded there, it is never overwritten by ordinary re-extraction, and extraction's own
+  // first-discovery-wins `ownerDbId` promise is explicitly scoped to ONE call only, with NO
+  // cross-call stability guarantee (ViewerModelAdapter.js's own extractFragments: "this module
+  // makes no cross-call OR cross-node stability promise beyond 'first write wins'" -- the repo even
+  // has a dedicated fixture for one fragment reported under a DIFFERENT dbId across two calls). A
+  // fragment resolved via the cached placement table could therefore report a STALE ownerDbId the
+  // linear path (which always re-derives ownerDbId from THIS call's own fresh extraction via
+  // `makePlaced`) would never produce -- a genuine, reproducible tlas-vs-linear divergence, not a
+  // theoretical one. The 'whole-model' scope (no Set filter) compounds this: a fragment admitted by
+  // an EARLIER call remains in the epoch-wide placement/TLAS forever (write-once) even after the
+  // CURRENT call's own `extractAllFragments` would no longer include it (e.g. it has since become
+  // not-loaded) -- `scopeFragmentSet` alone cannot catch this, since 'whole-model' means "no Set to
+  // check against" by design.
+  //
+  // Fixed by building `currentByFragmentId` -- a `Map<fragmentId, PlacedInstance>` from THIS group's
+  // own `instances` (built moments earlier in `findClashes`, from THIS call's own fresh extraction,
+  // exactly like the linear path's own `targetInstances`) -- and requiring membership in it for
+  // EVERY resolved candidate, for BOTH scope kinds uniformly: an explicit-dbIds entry's own Set
+  // membership check and this membership check always agree (both are built from the identical
+  // per-entry extraction records, in the same loop, per Task 12's own construction), so this adds
+  // no new false exclusions there; for 'whole-model', this is the ONLY membership check, and it is
+  // exactly the current-call, current-state Set the linear path itself implicitly uses (a fragment
+  // is a candidate iff `targetGroup.instances` -- this call's OWN extraction result -- contains it).
+  // `targetScopeFilter`/`scopeFragmentSet` is still consulted first (Task 12's own committed,
+  // separately-tested deliverable), as a cheap early-exit for the narrow-scope case; it is now
+  // provably redundant with (never disagrees with) the membership check for correctness purposes,
+  // kept for that early-exit value and to keep Task 12's own wiring genuinely "consumed" as its own
+  // task description promised.
+  async _runTlasBroadPhase(sourceOperand, sourceInstances, targetGroups, targetScopeFilter, statistics, checkpoint) {
+    const candidates = [];
+    let candidateBudgetUsed = 0;
+    let pendingCapacityError = null;
+
+    outer: for (const group of targetGroups) {
+      const { targetOperand, instances: targetInstances } = group;
+      const modelFilter = targetScopeFilter.get(targetOperand.model);
+      const scopeFragmentSet = modelFilter instanceof Set ? modelFilter : null; // null = whole-model, no Set filter
+      const currentByFragmentId = new Map();
+      for (const placed of targetInstances) currentByFragmentId.set(placed.instance.fragmentId, placed);
+
+      const { bvh } = await this._getTlasEntryForEpoch(targetOperand.epoch, checkpoint, statistics);
+
+      for (const sourcePlaced of sourceInstances) {
+        const pending = checkpoint({ label: 'tlas-broad-phase-query', loadEpoch: sourceOperand.epoch });
+        if (pending) await pending;
+
+        const queryStartedAt = this._now();
+        const [minX, minY, minZ] = sourcePlaced.worldBounds.min;
+        const [maxX, maxY, maxZ] = sourcePlaced.worldBounds.max;
+        const { truncated } = bvh.queryBox([minX, minY, minZ], [maxX, maxY, maxZ], {
+          // Stage 1 (spec §7.5.1 tlasLeafRangeEmissions) AND the budget check both live here,
+          // fired BEFORE per-primitive exact-overlap filtering -- exactly the "upstream of both
+          // [target-scope/self-exclusion] filters" ordering §9.3.1 requires, and upstream of
+          // CollisionInstanceBVH's own internal exact-overlap gate too (which is not one of the
+          // two filters §9.3.1 means, but would otherwise silently narrow what this budget sees).
+          onLeafRange: (offset, count) => {
+            statistics.tlasLeafRangeEmissions++;
+            if (pendingCapacityError) return 'stop'; // already flagged by an earlier leaf THIS CALL -- stop expanding further
+            candidateBudgetUsed += count;
+            statistics.tlasPrimitiveCandidatePairs += count;
+            if (candidateBudgetUsed > maxTlasCandidatePairs) {
+              // Exact contract values (spec §9.3.2), not the raw overshoot amount -- "permit
+              // exactly maxTlasCandidatePairs... on the attempted (limit+1)-th expansion..." --
+              // this leaf's own raw count may itself carry candidateBudgetUsed past the limit by
+              // more than 1 (conservative-range accounting, see this method's own header comment);
+              // the ERROR's fields stay exact regardless.
+              pendingCapacityError = new CapacityExceededError('tlas-candidate-budget', {
+                limit: maxTlasCandidatePairs, completed: maxTlasCandidatePairs, attempted: maxTlasCandidatePairs + 1,
+                sourceEpoch: sourceOperand.epoch, targetEpoch: targetOperand.epoch,
+              });
+              return 'stop'; // never reaches this leaf's own per-primitive loop (CollisionInstanceBVH.js)
+            }
+            return undefined;
+          },
+          onCandidate: (builderPositionIndex) => {
+            const record = bvh.recordAt(builderPositionIndex); // the ONLY valid resolution path (Task 3) -- fragmentId/spatial hit only, see this method's own header comment
+            if (scopeFragmentSet && !scopeFragmentSet.has(record.fragmentId)) return undefined; // filtered out, not a candidate
+            if (isSourceOwnFragment(sourceOperand, targetOperand.epoch, record.fragmentId)) return undefined; // self-excluded
+            const targetPlaced = currentByFragmentId.get(record.fragmentId);
+            if (!targetPlaced) return undefined; // NOT part of THIS call's own current target scope/state (Critical #1 fix) -- e.g. a stale whole-model-cached fragment
+            statistics.broadPhasePairs++; // counted immediately before the exact predicate, matching the linear path's own ordering
+            if (this._testBroadPhasePair(sourcePlaced, targetPlaced)) {
+              candidates.push([sourcePlaced, targetPlaced, targetOperand]);
+            }
+            return undefined;
+          },
+        });
+        statistics.tlasQueryMs += this._now() - queryStartedAt;
+        if (truncated && pendingCapacityError) break outer; // stop ALL further traversal, throw below
+      }
+    }
+    if (pendingCapacityError) throw pendingCapacityError; // thrown AFTER every traversal call returned (spec §9.3.3), never inside a shapecast callback
+    statistics.tlasExactRetestSurvivors = candidates.length; // stage-3 count
+    statistics.tlasNarrowPhaseInputPairs = candidates.length; // == retest survivors, spec §7.1b's no-dedup guarantee
+    return candidates;
   }
 
   /**

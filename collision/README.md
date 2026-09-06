@@ -145,11 +145,11 @@ must surface this, not silently treat it as a clean negative (see the reference 
 - **`invalidateModelPlacement(model)`** — marks an admitted model's placement (worldMatrix/
   worldBounds) stale, for federated coordination scenarios (alignment, translation, rotation, and
   equivalent model-level transforms). Throws `WorldDisposedError`/`ModelEvictedError`, no-ops for a
-  never-admitted model. **M2 Batch 3 status: this method is a reachable no-op today.** It records
-  the invalidation, but nothing in the current TLAS-broad-phase path reads that record yet — a
-  later milestone task wires the trigger that actually re-reads placement from the Viewer before
-  the next TLAS-backed query. Calling it today has no observable effect on `findClashes` results;
-  do not rely on it for correctness until that wiring lands.
+  never-admitted model. **M2 Batch 4 status: real, wired.** A `broadPhase:'tlas'` query
+  (`findClashes`'s own default for the new `targets` shape — see below) re-reads placement fresh
+  from the Viewer before consulting a stale TLAS entry, triggered by this method's own invalidation
+  record. `broadPhase:'linear'` never consults this record at all (it re-derives placement fresh
+  from extraction on every call, unconditionally) and gains nothing from calling this method.
 
 Errors thrown across this surface (`collision/index.js` re-exports all of them):
 `WorldDisposedError`, `ModelEvictedError`, `RenderProxyUnavailableError` (transient, handled
@@ -192,7 +192,30 @@ lives even for multi-instance/nested elements.
   pairs are found via a plain world-space AABB overlap scan (`O(sourceCount × targetCount)`,
   capped by `maxBroadPhaseInstancePairs`) — there is no spatial acceleration structure (e.g. a
   TLAS) over instances yet. Fine at the scale M1 was measured against; a future milestone's problem
-  to accelerate further.
+  to accelerate further. **Superseded by M2 for the new `targets` shape** — see below.
+
+## M2: `broadPhase` and the TLAS-accelerated path
+
+`findClashes` accepts an optional `broadPhase: 'linear' | 'tlas'`. The default is **shape-dependent**
+(spec §3.5): the legacy `target: {model, dbIds}` shape defaults to `'linear'` (byte-for-byte M1
+compatibility, including placement freshness on every call); the new `target: {targets: [...]}`
+shape defaults to `'tlas'`. Either shape may pass `broadPhase` explicitly to override its own
+default — `'linear'` always forces the M1 scan unchanged, and is the correctness oracle both
+fixtures and any doubt about the TLAS path can fall back to (`test/CollisionWorld.tlasTraversal.test.mjs`'s
+own differential tests assert `'tlas'` and `'linear'` always produce identical `pairs`).
+
+`maxTlasCandidatePairs` (`collision/constants.js`) bounds TLAS candidate expansion, checked
+incrementally during traversal (not an upfront precheck like `maxBroadPhaseInstancePairs`, which is
+not applied at all under `broadPhase:'tlas'` — a TLAS call's real cost is not proportional to
+`sourceCount × targetCount`, so that precheck would reject queries the TLAS exists to make cheap).
+The budget check is **conservative-range, not per-primitive-exact**: it is driven by
+`CollisionInstanceBVH.queryBox`'s own `onLeafRange` raw leaf-expansion count (upstream of the
+target-scope filter, self-exclusion, and the exact-overlap retest — spec §9.3.1), so a single leaf
+whose count crosses the limit can push the internal counter past it by up to that leaf's own size
+before the check fires. This never under-throws (a genuine overflow is never silently missed) and
+never affects returned results (the call throws regardless) — the thrown
+`CapacityExceededError('tlas-candidate-budget', ...)`'s `completed`/`attempted` fields are always
+exactly `{limit, limit + 1}`, per spec §9.3.2, regardless of the real overshoot amount.
 - **Extreme local aspect-ratio ceiling.** `maxLocalAspectRatio = 10,000` (max/min local AABB
   extent) is the declared supported bound — gated on `containment`'s **target** operand
   (`ContainmentModeQuery.js`) and on **both** operands of `volume-overlap` (`VolumeOverlapQuery.js`);

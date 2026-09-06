@@ -1,7 +1,9 @@
 // test/CollisionWorld.tlasTraversal.test.mjs
 //
-// Task 12 (M2 Batch 4): target-scope membership filter. Task 13 extends this same file with the
-// atomic TLAS traversal integration tests.
+// Task 12 (M2 Batch 4): target-scope membership filter.
+// Task 13 (M2 Batch 4): the atomic TLAS traversal integration -- `_runTlasBroadPhase`,
+// `_getTlasEntryForEpoch`, `_resolvePlacedFromTlasRecord`, and findClashes's real dispatch on
+// `query.broadPhase === 'tlas'`.
 //
 // `CollisionWorld._addToTargetScopeFilter(filterByModel, model, dbIds, records)` is the plan's own
 // `buildTargetScopeFilter` reworked to consume records findClashes's EXISTING per-targets-entry
@@ -17,6 +19,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { CollisionWorld } from '../collision/CollisionWorld.js';
+import { CapacityExceededError } from '../collision/errors.js';
+import { maxTlasCandidatePairs, maxCollisionInstancesPerEpoch } from '../collision/constants.js';
 import { extractFragments, extractAllFragments } from '../collision/viewer/ViewerModelAdapter.js';
 import { buildMockModel } from './fixtures/mockInstanceTree.mjs';
 
@@ -44,9 +48,10 @@ function makeFixture(rootNodes, fragSpecs = {}, modelOptions = {}) {
 }
 
 function noopCheckpoint() { return undefined; }
+function frozenClock() { return () => 0; }
 
-async function freshWorld() {
-  return CollisionWorld.fromViewer(null, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
+async function freshWorld(viewer = null, extra = {}) {
+  return CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone', ...extra });
 }
 
 test('an explicit-dbIds targets entry filters TLAS candidates to that entry\'s extracted fragment set', async () => {
@@ -126,4 +131,536 @@ test('a targets entry with dbIds omitted applies no filter at all (every matched
   world._addToTargetScopeFilter(filterByModel, model, undefined, records);
   assert.equal(filterByModel.get(model), 'whole-model',
     'the sentinel, not a Set built from the whole-model records -- callers treat this as "no filter"');
+});
+
+// === Task 13: atomic TLAS traversal integration =================================================
+
+/**
+ * Two independent models sharing one viewer -- mirrors
+ * test/CollisionWorld.findClashes.crossModel.test.mjs's own `makeTwoModelFixture`, duplicated here
+ * rather than imported (that file does not export it; this file's own single-model `makeFixture`
+ * above is not reusable for a two-model case).
+ */
+function makeTwoModelFixture(opts = {}) {
+  const {
+    rootNodesA = [{ dbId: 1, fragments: [] }], fragSpecsA = {}, modelOptionsA = {},
+    rootNodesB = [{ dbId: 1, fragments: [] }], fragSpecsB = {}, modelOptionsB = {},
+  } = opts;
+  const rawGeometryByFragIdA = new Map();
+  const fragmentGeometryA = new Map();
+  for (const [fragIdKey, spec] of Object.entries(fragSpecsA)) {
+    const fragId = Number(fragIdKey);
+    const at = spec.at || [0, 0, 0];
+    fragmentGeometryA.set(fragId, { geometryIndex: spec.geometryIndex, matrix: translationMatrix(at), bounds: spec.bounds || (spec.geometry ? boundsOf(spec.geometry, at) : { min: at, max: at }) });
+    if (spec.geometry) rawGeometryByFragIdA.set(fragId, spec.geometry);
+  }
+  const rawGeometryByFragIdB = new Map();
+  const fragmentGeometryB = new Map();
+  for (const [fragIdKey, spec] of Object.entries(fragSpecsB)) {
+    const fragId = Number(fragIdKey);
+    const at = spec.at || [0, 0, 0];
+    fragmentGeometryB.set(fragId, { geometryIndex: spec.geometryIndex, matrix: translationMatrix(at), bounds: spec.bounds || (spec.geometry ? boundsOf(spec.geometry, at) : { min: at, max: at }) });
+    if (spec.geometry) rawGeometryByFragIdB.set(fragId, spec.geometry);
+  }
+  const modelA = { ...buildMockModel(rootNodesA, fragmentGeometryA, modelOptionsA).model, id: 1, getUnitScale: () => 1 };
+  const modelB = { ...buildMockModel(rootNodesB, fragmentGeometryB, modelOptionsB).model, id: 2, getUnitScale: () => 1 };
+  const viewer = {
+    impl: {
+      getRenderProxy(queriedModel, fragId) {
+        const map = queriedModel === modelA ? rawGeometryByFragIdA : queriedModel === modelB ? rawGeometryByFragIdB : null;
+        const geometry = map?.get(fragId);
+        return geometry ? { geometry } : null;
+      },
+    },
+  };
+  return { modelA, modelB, viewer };
+}
+
+test('broadPhase:"tlas" and broadPhase:"linear" produce IDENTICAL pairs for the same cross-model fixture', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [
+      { dbId: 1, fragments: [100] }, // clashes
+      { dbId: 2, fragments: [200] }, // disjoint AABB, does not clash
+      { dbId: 3, fragments: [300] }, // clashes
+    ],
+    fragSpecsB: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [50, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [0, 0, 0] },
+    },
+  });
+  const runQuery = async (broadPhase) => {
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    return world.findClashes({
+      source: { model: modelA, dbIds: [1] },
+      target: { targets: [{ model: modelB, dbIds: [1, 2, 3] }] },
+      mode: 'surface-intersection', groupBy: 'dbId', broadPhase,
+    });
+  };
+  const key = (p) => `${p.source.modelId}:${p.source.dbId}:${p.target.modelId}:${p.target.dbId}`;
+  const linearResult = await runQuery('linear');
+  const tlasResult = await runQuery('tlas');
+  assert.equal(linearResult.pairs.length, 2, 'sanity: the fixture has exactly 2 real clashes');
+  assert.deepEqual(linearResult.pairs.map(key).sort(), tlasResult.pairs.map(key).sort());
+});
+
+test('broadPhase:"tlas" and broadPhase:"linear" agree for a whole-model target scope too', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [
+      { dbId: 1, fragments: [100] },
+      { dbId: 2, fragments: [200] },
+      { dbId: 3, fragments: [300] },
+    ],
+    fragSpecsB: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [50, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [0, 0, 0] },
+    },
+  });
+  const runQuery = async (broadPhase) => {
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    return world.findClashes({
+      source: { model: modelA, dbIds: [1] },
+      target: { targets: [{ model: modelB }] }, // whole-model scope
+      mode: 'surface-intersection', groupBy: 'dbId', broadPhase,
+    });
+  };
+  const key = (p) => `${p.source.modelId}:${p.source.dbId}:${p.target.modelId}:${p.target.dbId}`;
+  const linearResult = await runQuery('linear');
+  const tlasResult = await runQuery('tlas');
+  assert.equal(linearResult.pairs.length, 2);
+  assert.deepEqual(linearResult.pairs.map(key).sort(), tlasResult.pairs.map(key).sort());
+});
+
+test('a narrow explicit-dbIds target scope excludes a spatially-overlapping fragment the TLAS itself still covers (Task 12 filter applied on the TLAS path)', async () => {
+  // dbId 2's fragment genuinely overlaps the source -- but this call's own targets entry requests
+  // ONLY dbId 1, so the TLAS-path result must exclude dbId 2's candidate even though the shared
+  // per-epoch TLAS (built from the WHOLE epoch's placement table) would otherwise surface it.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }, { dbId: 2, fragments: [200] }],
+    fragSpecsB: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [0, 0, 0] }, // also overlaps source
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  // Prime the epoch's placement table / TLAS with BOTH dbIds first (whole-model scope), so the
+  // cached TLAS genuinely contains dbId 2's fragment before the narrow-scope call below runs.
+  await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'linear',
+  });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] }, // narrow -- dbId 2 excluded from SCOPE, not from the TLAS
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  assert.equal(result.pairs.length, 1);
+  assert.equal(result.pairs[0].target.dbId, 1);
+});
+
+test('CRITICAL regression: a repeated real query re-extracting the SAME fragment under a DIFFERENT dbId reports the CURRENT ownerDbId via broadPhase:"tlas", matching linear exactly -- never the FIRST call\'s now-stale cached ownerDbId', async () => {
+  // codex-advisor review, Critical #1, reproduced end-to-end with two REAL sequential findClashes
+  // calls on the SAME world (the exact class of case the fresh-world-only differential tests above
+  // structurally cannot catch). Fragment 100 is reachable under BOTH target dbIds 1 and 2 (a real,
+  // already-tested extraction scenario -- test/viewer/ViewerModelAdapter.test.mjs's own "reported
+  // under two of the call's own requested dbIds" fixture, here split across two SEPARATE calls
+  // instead of one call's own two dbIds).
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }, { dbId: 2, fragments: [100] }], // fragment 100 shared by both dbIds
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+
+  const first = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] }, // fragment 100 admitted with ownerDbId 1
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  assert.equal(first.pairs.length, 1);
+  assert.equal(first.pairs[0].target.dbId, 1, 'sanity: the FIRST call reports ownerDbId 1');
+
+  const second = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [2] }] }, // SAME fragment 100, now requested via dbId 2
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  assert.equal(second.pairs.length, 1);
+  assert.equal(second.pairs[0].target.dbId, 2,
+    'the SECOND call must report the CURRENT ownerDbId (2), never the FIRST call\'s stale cached ownerDbId (1)');
+
+  // Cross-check against the linear oracle for the exact same second call, on a fresh world (the
+  // linear path has no cross-call cache to go stale in the first place -- this just confirms the
+  // TLAS result above genuinely matches what "correct" means here).
+  const linearWorld = await freshWorld(viewer, { now: frozenClock() });
+  const linearResult = await linearWorld.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [2] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'linear',
+  });
+  assert.equal(linearResult.pairs[0].target.dbId, 2);
+});
+
+test('CRITICAL regression: whole-model scope excludes a fragment historically admitted into the SAME epoch\'s placement table but absent from the CURRENT call\'s own real extraction', async () => {
+  // codex-advisor review, Critical #1's second manifestation, end-to-end. Fragment 999 is seeded
+  // DIRECTLY into modelB's epoch (simulating a fragment some now-irrelevant earlier mechanism
+  // admitted -- write-once, never removed by ordinary extraction) but is NOT part of modelB's real
+  // mock tree at all, so a real `extractAllFragments` walk can never discover it. A genuinely
+  // whole-model findClashes call must still exclude it: 'whole-model' scope has no Set filter of
+  // its own to catch this, so this is testing THIS task's own current-instances membership fix, not
+  // Task 12's filter.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const leaseB = world.admitModel(modelB);
+  const historical = new Map([[999, {
+    fragmentId: 999,
+    geometryIdentity: { loadEpoch: leaseB.epoch, geometryIndex: 0 },
+    worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [2, 2, 2] }, // co-located with source, would spuriously clash
+    ownerDbId: 999,
+  }]]);
+  world._recordPlacement(leaseB.epoch, modelB, historical);
+  world.admitCollisionInstances(leaseB, historical);
+
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB }] }, // whole-model -- must reflect ONLY the real tree's own fragment 100
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  assert.equal(result.pairs.length, 1);
+  assert.equal(result.pairs[0].target.dbId, 1, 'only the real clash (dbId 1, fragment 100) -- the historical phantom (999) must never surface');
+});
+
+test('maxTlasCandidatePairs is enforced incrementally across the WHOLE call, upstream of the target-scope filter', async () => {
+  // Pre-seed one target epoch's placement/instance tables directly with (maxCollisionInstancesPerEpoch
+  // - 1) co-located synthetic fragments, bypassing extraction entirely (this scale would be slow and
+  // pointless to build via a real tree walk, and admitCollisionInstances/`_recordPlacement` are the
+  // exact same tables a real extraction would populate). Leaves headroom for exactly ONE more real
+  // fragment (dbId 42), which this test's OWN call requests explicitly -- a narrow scope that would
+  // reduce the FINAL candidate set to just that one fragment, even though raw TLAS expansion (built
+  // from the epoch's WHOLE placement table) is co-located with every source instance and therefore
+  // re-encounters all (maxCollisionInstancesPerEpoch) fragments on EVERY source instance's own query.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children: Array.from({ length: 11 }, (_, i) => ({ dbId: 1000 + i, fragments: [1000 + i] })) }],
+    rootNodesB: [{ dbId: 42, fragments: [999_999] }],
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const leaseB = world.admitModel(modelB);
+  const preSeeded = new Map();
+  for (let i = 0; i < maxCollisionInstancesPerEpoch - 1; i++) {
+    const fragmentId = 500_000 + i;
+    preSeeded.set(fragmentId, {
+      fragmentId, // _recordPlacement keys off record.fragmentId, NOT the Map's own key -- both must agree
+      geometryIdentity: { loadEpoch: leaseB.epoch, geometryIndex: 0 },
+      worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [0, 0, 0] },
+      ownerDbId: 42,
+    });
+  }
+  world._recordPlacement(leaseB.epoch, modelB, preSeeded);
+  world.admitCollisionInstances(leaseB, preSeeded);
+  assert.equal(world.getEpochCollisionInstanceCount(leaseB.epoch), maxCollisionInstancesPerEpoch - 1);
+
+  // 11 co-located source instances x (maxCollisionInstancesPerEpoch, once dbId 42's own fragment is
+  // added by this call's own extraction) raw candidates each >> maxTlasCandidatePairs (200,000).
+  const sourceDbIds = Array.from({ length: 11 }, (_, i) => 1000 + i);
+  let caught = null;
+  try {
+    await world.findClashes({
+      source: { model: modelA, dbIds: sourceDbIds },
+      target: { targets: [{ model: modelB, dbIds: [42] }] }, // narrow -- would filter 19,999 of the 20,000 raw candidates away
+      mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+    });
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof CapacityExceededError);
+  assert.equal(caught.kind, 'tlas-candidate-budget');
+  assert.equal(caught.limit, maxTlasCandidatePairs);
+  assert.equal(caught.completed, maxTlasCandidatePairs);
+  assert.equal(caught.attempted, maxTlasCandidatePairs + 1);
+});
+
+test('a TLAS candidate-budget overflow never throws from inside a shapecast callback -- queryBox itself returns cleanly, truncated', async () => {
+  // Focused unit-level proof, isolated from findClashes's own plumbing: a single onLeafRange
+  // report that alone exceeds the budget must make queryBox return {truncated:true} with NO
+  // exception escaping queryBox itself -- the caller (_runTlasBroadPhase) is what throws, and only
+  // after queryBox has already returned.
+  const world = await freshWorld();
+  let candidateBudgetUsed = 0;
+  let pendingCapacityError = null;
+  const records = [];
+  for (let i = 0; i < 5; i++) {
+    records.push({ loadEpoch: 1, fragmentId: i, ownerDbId: i, modelId: 'm', worldBounds: { min: [0, 0, 0], max: [1, 1, 1] } });
+  }
+  const { CollisionInstanceBVH } = await import('../collision/tlas/CollisionInstanceBVH.js');
+  const bvh = new CollisionInstanceBVH(records);
+  let candidateCalls = 0;
+  let thrown = null;
+  let truncated;
+  try {
+    ({ truncated } = bvh.queryBox([0, 0, 0], [1, 1, 1], {
+      onLeafRange: (offset, count) => {
+        candidateBudgetUsed += count;
+        if (candidateBudgetUsed > 3) { // artificially tiny "budget" for this isolated test
+          pendingCapacityError = new CapacityExceededError('tlas-candidate-budget', { limit: 3, completed: 3, attempted: 4 });
+          return 'stop';
+        }
+        return undefined;
+      },
+      onCandidate: () => { candidateCalls++; },
+    }));
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown, null, 'queryBox itself must never throw for a budget overflow signaled via onLeafRange');
+  assert.equal(truncated, true);
+  assert.ok(pendingCapacityError, 'the caller-side flag was set, ready for the CALLER to throw after queryBox returns');
+  void world; // fixture symmetry only -- this test does not need a real CollisionWorld call
+});
+
+test('statistics inequality chain holds for a real TLAS-path call', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const { statistics } = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  assert.ok(statistics.tlasPrimitiveCandidatePairs >= statistics.broadPhasePairs);
+  assert.ok(statistics.broadPhasePairs >= statistics.tlasExactRetestSurvivors);
+  assert.equal(statistics.tlasExactRetestSurvivors, statistics.tlasNarrowPhaseInputPairs);
+  assert.equal(statistics.tlasNarrowPhaseInputPairs, statistics.narrowPhasePairs);
+});
+
+test('tlasBuilds/tlasCacheHits correctly attribute a cold build vs. a warm reuse', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const query = {
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  };
+  const first = await world.findClashes(query);
+  assert.ok(first.statistics.tlasBuilds >= 1);
+  assert.equal(first.statistics.tlasCacheHits, 0);
+  const second = await world.findClashes(query);
+  assert.equal(second.statistics.tlasBuilds, 0, 'the SAME unchanged epoch must not rebuild');
+  assert.ok(second.statistics.tlasCacheHits >= 1);
+});
+
+test('_getTlasEntryForEpoch attributes tlasBuilds/tlasSharedBuildWaits/tlasCacheHits/tlasBuildMs correctly per TlasCache outcome', async () => {
+  // Focused unit test of the attribution logic itself (moved INTO _getTlasEntryForEpoch, per
+  // codex-advisor review Medium #5, so it is correct even across an internal retry loop), stubbing
+  // world._tlasCache.getEntry/getBuiltAtRevision directly rather than forcing genuine build
+  // concurrency through the full stack -- TlasCache's own hit/built/shared-wait/superseded outcomes
+  // are already exhaustively tested at its own level (test/tlas/TlasCache.test.mjs).
+  const world = await freshWorld();
+  world._modelByEpoch.set(1, {});
+  world._liveEpochs.add(1);
+  const bvh = {};
+
+  for (const [outcome, expect] of [
+    ['built', { tlasBuilds: 1, tlasSharedBuildWaits: 0, tlasCacheHits: 0, buildMsPositive: true }],
+    ['shared-wait', { tlasBuilds: 0, tlasSharedBuildWaits: 1, tlasCacheHits: 0, buildMsPositive: false }],
+    ['hit', { tlasBuilds: 0, tlasSharedBuildWaits: 0, tlasCacheHits: 1, buildMsPositive: false }],
+  ]) {
+    world._tlasCache.getEntry = async () => ({ bvh, outcome, builtAtRevision: 0 });
+    world._tlasCache.getBuiltAtRevision = () => 0;
+    const statistics = { tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0 };
+    const result = await world._getTlasEntryForEpoch(1, () => undefined, statistics);
+    assert.equal(result.bvh, bvh);
+    assert.equal(statistics.tlasBuilds, expect.tlasBuilds, `outcome=${outcome}`);
+    assert.equal(statistics.tlasSharedBuildWaits, expect.tlasSharedBuildWaits, `outcome=${outcome}`);
+    assert.equal(statistics.tlasCacheHits, expect.tlasCacheHits, `outcome=${outcome}`);
+    if (!expect.buildMsPositive) assert.equal(statistics.tlasBuildMs, 0, `outcome=${outcome}: tlasBuildMs must stay 0 -- this call only shared/hit an existing build`);
+  }
+});
+
+test('_getTlasEntryForEpoch attributes a refresh\'s own real elapsed time to tlasBuildMs even when the eventual outcome is shared-wait, never silently dropping it to zero', async () => {
+  // codex-advisor review, Medium #5's own concrete scenario: a genuine refresh happens (real time
+  // spent), then the SAME iteration's getEntry call resolves to 'shared-wait' -- the refresh time
+  // must still be counted, not lost because the final outcome isn't 'built'.
+  let clock = 0;
+  const world = await freshWorld(null, { now: () => (clock += 3) });
+  world._modelByEpoch.set(1, {});
+  world._liveEpochs.add(1);
+  world._placementByEpoch.set(1, new Map());
+  world._placementRevisionByEpoch.set(1, 5);
+  world._placementInvalidatedAtRevision.set(1, 5); // pending invalidation -- triggers a refresh
+  let refreshCalls = 0;
+  world._refreshPlacementForEpoch = async () => {
+    refreshCalls++;
+    world._placementInvalidatedAtRevision.delete(1); // mirrors the REAL method's own successful-publish side effect
+    return { published: true };
+  };
+  let builtAtRevision = -1; // never built yet -- matches TlasCache.getBuiltAtRevision's own documented convention
+  world._tlasCache.getEntry = async (epoch, expectedRevision) => {
+    builtAtRevision = expectedRevision; // simulate: the cache now reports this revision as built
+    return { bvh: {}, outcome: 'shared-wait' };
+  };
+  world._tlasCache.getBuiltAtRevision = () => builtAtRevision;
+  const statistics = { tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0 };
+  await world._getTlasEntryForEpoch(1, () => undefined, statistics);
+  assert.equal(refreshCalls, 1);
+  assert.equal(statistics.tlasSharedBuildWaits, 1);
+  assert.ok(statistics.tlasBuildMs > 0, 'the refresh\'s own real elapsed time must be counted, not dropped to zero');
+});
+
+test('a genuine revision bump racing getEntry (not just an invalidation marker) is caught and retried, even when the marker is already cleared', async () => {
+  // codex-advisor review, High #4, SECOND pass: a DIFFERENT concurrent call can refresh this same
+  // epoch, publish a NEWER revision, and CLEAR the invalidation marker -- all while THIS call's own
+  // getEntry was in flight. Checking only the marker (the first-pass fix) missed this: the marker
+  // being gone must NOT be read as "still fresh." The unconditional revision-equality recheck must
+  // catch it regardless.
+  const world = await freshWorld();
+  world._modelByEpoch.set(1, {});
+  world._liveEpochs.add(1);
+  world._placementRevisionByEpoch.set(1, 1);
+  let getEntryCalls = 0;
+  world._tlasCache.getEntry = async (epoch, expectedRevision) => {
+    getEntryCalls++;
+    if (getEntryCalls === 1) {
+      // Simulate: while THIS call's own getEntry was "in flight", a DIFFERENT concurrent call
+      // published revision 2 and cleared any invalidation marker -- nothing here ever set one.
+      world._placementRevisionByEpoch.set(1, 2);
+      return { bvh: { which: 'stale' }, outcome: 'built', builtAtRevision: expectedRevision };
+    }
+    return { bvh: { which: 'fresh' }, outcome: 'hit', builtAtRevision: expectedRevision };
+  };
+  world._tlasCache.getBuiltAtRevision = () => 2; // whatever the second call sees is irrelevant to this test
+  const statistics = { tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0 };
+  const result = await world._getTlasEntryForEpoch(1, () => undefined, statistics);
+  assert.equal(getEntryCalls, 2, 'the stale (revision 1) result must be discarded and retried, never returned directly');
+  assert.equal(result.bvh.which, 'fresh');
+  // codex-advisor review, Medium #5's own reproduction: the FIRST attempt's real 'built' work must
+  // still be counted, not silently dropped just because it was discarded and retried.
+  assert.equal(statistics.tlasBuilds, 1, 'the discarded first attempt\'s real build work must still be attributed');
+  assert.equal(statistics.tlasCacheHits, 1, 'the retry\'s own successful hit must also be attributed');
+});
+
+test('a TLAS build failure aborts the whole call as an error, never as "no candidates from this epoch"', async () => {
+  const world = await freshWorld();
+  const sourceOperand = { model: {}, epoch: 99, fragmentIds: new Map() };
+  const sourceInstances = [{ instance: { fragmentId: 1 }, worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [1, 1, 1] }, ownerDbId: 1 }];
+  const targetGroups = [{ targetOperand: { model: {}, epoch: 1 }, instances: [] }];
+  world._getTlasEntryForEpoch = async () => { throw new Error('tlas build boom'); };
+  const statistics = { tlasLeafRangeEmissions: 0, tlasPrimitiveCandidatePairs: 0, tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0, tlasQueryMs: 0, broadPhasePairs: 0 };
+  await assert.rejects(
+    world._runTlasBroadPhase(sourceOperand, sourceInstances, targetGroups, new Map(), statistics, () => undefined),
+    /tlas build boom/,
+  );
+});
+
+test('_runTlasBroadPhase resolves a TLAS hit through the CURRENT call\'s own target instances, never the cached placement table\'s ownerDbId', async () => {
+  // codex-advisor review, Critical #1's own regression: a fragment's ownerDbId in the epoch-wide
+  // placement table can be STALE relative to this call's own current extraction (extraction's own
+  // first-discovery-wins promise is scoped to ONE call, never cross-call-stable). This is a direct
+  // unit-level proof that _runTlasBroadPhase reads ownerDbId from the group's OWN `instances`
+  // (current-call data), never from `_placementByEpoch`.
+  const world = await freshWorld();
+  const bvh = {
+    recordAt: () => ({ fragmentId: 1 }),
+    queryBox: (min, max, { onLeafRange, onCandidate }) => {
+      onLeafRange(0, 1);
+      onCandidate(0);
+      return { truncated: false };
+    },
+  };
+  world._modelByEpoch.set(1, {});
+  world._liveEpochs.add(1);
+  world._tlasCache.getEntry = async () => ({ bvh, outcome: 'hit', builtAtRevision: 0 });
+  world._tlasCache.getBuiltAtRevision = () => 0;
+  // Deliberately STALE cached placement -- ownerDbId 999 -- which must NEVER be consulted.
+  world._placementByEpoch.set(1, new Map([[1, { worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [1, 1, 1] }, ownerDbId: 999, modelId: 'm' }]]));
+
+  const sourceOperand = { model: {}, epoch: 99, fragmentIds: new Map() };
+  const sourceInstances = [{ instance: { fragmentId: 42 }, worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [1, 1, 1] }, ownerDbId: 7 }];
+  const currentTargetPlaced = Object.freeze({
+    instance: { fragmentId: 1 }, worldMatrix: new THREE.Matrix4().toArray(),
+    worldBounds: { min: [0, 0, 0], max: [1, 1, 1] }, ownerDbId: 2, // the CURRENT, correct ownerDbId
+  });
+  const targetGroups = [{ targetOperand: { model: {}, epoch: 1 }, instances: [currentTargetPlaced] }];
+  const statistics = { tlasLeafRangeEmissions: 0, tlasPrimitiveCandidatePairs: 0, tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0, tlasQueryMs: 0, broadPhasePairs: 0 };
+  const candidates = await world._runTlasBroadPhase(sourceOperand, sourceInstances, targetGroups, new Map(), statistics, () => undefined);
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0][1].ownerDbId, 2, 'ownerDbId must come from the CURRENT call\'s own target instance, never the cached placement table');
+});
+
+test('a whole-model scope excludes a historically-admitted fragment the CURRENT call\'s own extraction no longer includes', async () => {
+  // codex-advisor review, Critical #1's second manifestation: 'whole-model' scope disables the
+  // Set-based filter entirely, so without the current-instances membership check, a fragment
+  // admitted by an EARLIER call (and never removed from the write-once placement table) would
+  // remain an eligible TLAS candidate even after THIS call's own extraction excludes it.
+  const world = await freshWorld();
+  const bvh = {
+    recordAt: () => ({ fragmentId: 999 }), // historically-admitted, no longer in THIS call's own scope
+    queryBox: (min, max, { onLeafRange, onCandidate }) => {
+      onLeafRange(0, 1);
+      onCandidate(0);
+      return { truncated: false };
+    },
+  };
+  world._modelByEpoch.set(1, {});
+  world._liveEpochs.add(1);
+  world._tlasCache.getEntry = async () => ({ bvh, outcome: 'hit', builtAtRevision: 0 });
+  world._tlasCache.getBuiltAtRevision = () => 0;
+
+  const sourceOperand = { model: {}, epoch: 99, fragmentIds: new Map() };
+  const sourceInstances = [{ instance: { fragmentId: 42 }, worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [1, 1, 1] }, ownerDbId: 7 }];
+  // 'whole-model' filter (no Set) -- CURRENT call's own extraction found NOTHING (empty instances).
+  const targetGroups = [{ targetOperand: { model: {}, epoch: 1 }, instances: [] }];
+  const targetScopeFilter = new Map([[targetGroups[0].targetOperand.model, 'whole-model']]);
+  const statistics = { tlasLeafRangeEmissions: 0, tlasPrimitiveCandidatePairs: 0, tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0, tlasQueryMs: 0, broadPhasePairs: 0 };
+  const candidates = await world._runTlasBroadPhase(sourceOperand, sourceInstances, targetGroups, targetScopeFilter, statistics, () => undefined);
+  assert.deepEqual(candidates, [], 'the historically-admitted fragment must be excluded -- it is not part of THIS call\'s own current target scope');
+});
+
+test('invalidateModelPlacement before a broadPhase:"tlas" query triggers a real placement refresh, threading this call\'s own checkpoint through', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const query = {
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  };
+  await world.findClashes(query); // builds the epoch's first TLAS entry
+  world.invalidateModelPlacement(modelB);
+
+  const refreshCalls = [];
+  const originalRefresh = world._refreshPlacementForEpoch.bind(world);
+  world._refreshPlacementForEpoch = (...args) => { refreshCalls.push(args); return originalRefresh(...args); };
+
+  const result = await world.findClashes(query);
+  assert.equal(refreshCalls.length, 1, 'the invalidation must trigger exactly one refresh on the next tlas-consuming query');
+  assert.equal(typeof refreshCalls[0][3]?.checkpoint, 'function',
+    'the refresh must receive THIS call\'s own composite checkpoint, not run un-preemptibly');
+  assert.equal(result.pairs.length, 1, 'the query still finds the real clash after refreshing');
 });
