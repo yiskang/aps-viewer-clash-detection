@@ -186,9 +186,31 @@ implementer's judgment)**: `extractAllFragments` must define, explicitly:
   attribute a fragment to, unlike `extractFragments`'s own `node`-as-`ownerDbId` capture,
   `ViewerModelAdapter.js:113` — the owning dbId must come from the fragment's own reverse lookup,
   e.g. `instanceTree.findNodeForFragId`/equivalent, confirmed before implementation);
-- handling for a fragment index with no live fragment (holes), a hidden/culled fragment, and a
-  fragment whose owning dbId cannot be resolved — each must produce a diagnostic (§10), never a
-  silently-dropped or silently-malformed primitive;
+- **Target-eligibility policy (`[I-3 disposition]`, binding — corrects this bullet's original text)**:
+  whole-model scope means every *collision-eligible* model fragment, not every currently-*visible*
+  one. Concretely:
+  - a fragment index with no live fragment (a hole) is excluded and diagnosed (§10);
+  - a fragment whose owning dbId cannot be resolved is excluded and diagnosed (§10);
+  - a **hidden** fragment (`instanceTree.isNodeHidden(ownerDbId) === true`) remains eligible and is
+    enumerated normally, producing no diagnostic — hidden is a visibility/display state, not a
+    structural-validity state, and `extractFragments`'s existing per-dbId subtree walk (§3.3 above,
+    protected/unchanged) already includes hidden fragments with no exclusion of its own. Whole-model
+    scope must not silently diverge from that established, protected behavior;
+  - Viewer/render-time culling (camera-frustum culling) is **not** an M2 collision-eligibility state
+    and must not have a diagnostic requirement: it is a transient, per-frame render-loop decision with
+    no corresponding stored state anywhere in `FragmentList`/`InstanceTree` for a static enumeration to
+    observe. This corrects the original text's erroneous "hidden/culled" pairing, which fabricated an
+    unimplementable requirement (see `docs/superpowers/specs/collision-library-m2-i3-target-eligibility-
+    disposition.md`);
+  - transient geometry availability (e.g. geometry not yet streamed in) is diagnosed through the
+    already-established collision pipeline/diagnostics (`geometry-not-yet-available`, §10), not through
+    a separate whole-model-only eligibility rule.
+
+  This policy applies identically regardless of which M2 extraction primitive a `targets` entry
+  resolves through: an explicit-dbIds entry (`extractFragments`) and a whole-model entry
+  (`extractAllFragments`) must converge on the same target-eligibility semantics for the same
+  underlying fragments, so `targets: [{model}]` and `targets: [{model, dbIds}]` never disagree merely
+  because they used different extraction primitives.
 - the `maxCollisionInstancesPerEpoch` ceiling (§3.3 above) is checked **during** enumeration, not only
   after a potentially-unbounded intermediate `Map` has already been built — mirroring
   `admitCollisionInstances`'s own "precheck before any side effect" discipline

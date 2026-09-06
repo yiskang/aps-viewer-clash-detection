@@ -956,7 +956,7 @@ export class CollisionWorld {
     // `targets: [{model: B}, {model: B}]`) each run `extractAllFragments(B, ...)` independently --
     // extraction re-work stays as-is (out of scope for this fix) -- but pushing EVERY diagnostic
     // from EACH run into `statistics.diagnostics` double-counts a genuine diagnostic (e.g.
-    // `fragment-hidden` for one specific fragment) that only happened once. Deduped THIS CALL using
+    // `fragment-not-loaded` for one specific fragment) that only happened once. Deduped THIS CALL using
     // the same discipline `oversizedDiagnosedFragments` already applies on the narrow-phase side:
     // keyed by a composite of every field that makes one diagnostic entry unique. `role` is always
     // `'target'` for extractAllFragments's own diagnostics (its own interface contract) and

@@ -28,6 +28,15 @@ hidden/culled fragments to *each* produce a diagnostic and be excluded from `rec
 silently included as a normal placed instance. Final reason strings, the `dbId` sentinel, and the
 hidden-fragment accessor are all settled below so Task 5 does not need to re-derive them.
 
+> **SUPERSEDED (2026-09-06) — hidden-fragment policy only.** Batch 2 whole-batch review (finding I-3)
+> surfaced that this excluded/diagnosed hidden-fragment policy made `extractAllFragments` disagree with
+> `extractFragments`'s own (protected, unchanged) hidden-inclusive behavior. The plan owner ruled
+> hidden fragments remain collision-eligible; `extractAllFragments` no longer excludes or diagnoses
+> them. See `docs/superpowers/specs/collision-library-m2-i3-target-eligibility-disposition.md` and
+> the corrected `2026-09-05-collision-library-milestone2-design.md` §3.3. Every accessor-existence and
+> "culled has no stored state" finding on this page is unaffected and remains the authoritative
+> evidence — only the hidden-fragment POLICY conclusion above is superseded.
+
 ## Target Viewer Context
 
 - **Resolution:** `exact`, `7.124.2`.
@@ -337,7 +346,17 @@ diagnostic entry**, using the shape `{scope: 'fragment', reason, role: 'target',
 | Not loaded / excluded from loading | `fragList.isNotLoaded(fragId) === true` | `'fragment-not-loaded'` | `null` (never resolved — check happens before any `getDbIds` call) |
 | Index-range hole (defensive; not reproduced in this build's normal load path) | no live data at `fragId` (mechanism unconfirmed — see Version/Context Scope) | `'fragment-index-hole'` | `null` |
 | Owning dbId unresolvable | `fragList.getDbIds(fragId) === undefined` | `'fragment-owner-unresolvable'` | `null` |
-| Hidden | `instanceTree.isNodeHidden(ownerDbId) === true`, checked **after** `ownerDbId` is resolved | `'fragment-hidden'` | the real, resolved `ownerDbId` (a number) |
+| ~~Hidden~~ **SUPERSEDED — see below** | ~~`instanceTree.isNodeHidden(ownerDbId) === true`, checked **after** `ownerDbId` is resolved`~~ | ~~`'fragment-hidden'`~~ | ~~the real, resolved `ownerDbId` (a number)~~ |
+
+**Hidden-fragment row superseded (2026-09-06):** the plan owner resolved Batch 2 whole-batch-review
+finding I-3 by ruling that hidden fragments remain collision-eligible and are enumerated normally by
+`extractAllFragments`, producing no diagnostic — see
+`docs/superpowers/specs/collision-library-m2-i3-target-eligibility-disposition.md` for the full
+disposition, and `docs/superpowers/specs/2026-09-05-collision-library-milestone2-design.md` §3.3 for
+the corrected binding spec text. This changes the POLICY built on top of this note's evidence only; the
+evidence itself (`instanceTree.isNodeHidden(dbId)` is a real, public, officially-documented accessor,
+confirmed live in Evidence §§1,3) remains accurate and is not retracted — `extractAllFragments` simply
+no longer calls it.
 
 **Why `'fragment-index-hole'` and `'fragment-not-loaded'` are kept as two distinct reasons rather
 than merged:** they describe genuinely different conditions. `isNotLoaded` is a real, source-
@@ -409,6 +428,15 @@ render-loop state with no corresponding stored data and is therefore out of scop
 extraction-time diagnostic. This note does not make that amendment itself — only the plan owner
 can change binding spec text — but records the recommendation here so it is not lost.
 
+> **ACTED UPON (2026-09-06).** The plan owner's actual resolution went further than dropping only
+> "culled": Batch 2 whole-batch review finding I-3 additionally established that the "hidden" half
+> of this requirement itself needed correcting, not just "culled" — hidden fragments are now ruled
+> collision-eligible (not diagnosed/excluded at all), for consistency with `extractFragments`'s own
+> protected, hidden-inclusive behavior. See
+> `docs/superpowers/specs/collision-library-m2-i3-target-eligibility-disposition.md` and design
+> spec §3.3 (corrected). This recommendation's "culled" analysis remains accurate and is why culled
+> stays undiagnosed; its "keep hidden diagnosed" half is superseded.
+
 ## Revalidation Needed
 
 `required: true`, trigger: `viewer-version`. Re-confirm `findNodeForFragId`'s absence,
@@ -428,6 +456,15 @@ behavior described here before relying on this note against any Viewer build oth
    see Target Viewer Context).
 
 ## Evidence Details — What Task 5 should implement against
+
+> **HISTORICAL — the `isNodeHidden` step below is superseded, do not implement against it.** This
+> snippet documents what Task 5 originally implemented. The hidden-fragment branch (`if
+> (instanceTree.isNodeHidden(ownerDbId)) { ... }`) was removed from `extractAllFragments` per the
+> I-3 disposition (see the notice above and
+> `docs/superpowers/specs/collision-library-m2-i3-target-eligibility-disposition.md`) — a hidden
+> fragment now falls through to normal record construction, and `instanceTree`/`getObjectTree()` is
+> no longer read by this function at all. Every other line of this snippet (`getCount`, `getDbIds`,
+> `isNotLoaded`) is still accurate.
 
 ```js
 // Confirmed accessor names + diagnostic policy for extractAllFragments
@@ -464,6 +501,11 @@ for (let fragId = 0; fragId < count; fragId++) {
 ```
 
 ## Recommended Next Action
+
+**HISTORICAL — Task 5 has since completed, and the I-3 disposition has since superseded the
+`isNodeHidden` portion of this recommendation (see the notices above).** Preserved verbatim below
+for the audit trail; do not treat the `instanceTree.isNodeHidden(ownerDbId)` clause as current
+guidance.
 
 Task 5 may proceed to implement `extractAllFragments` using `fragList.getCount()` +
 `fragList.getDbIds(fragId)` + `fragList.isNotLoaded(fragId)` + `instanceTree.isNodeHidden

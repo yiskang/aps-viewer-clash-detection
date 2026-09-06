@@ -57,8 +57,8 @@ test('an unresolvable owner (getDbIds returns undefined) is excluded from record
   ]);
 });
 
-test('a hidden fragment is excluded from records and diagnosed with its real resolved dbId', async () => {
-  const { model } = buildMockModel(
+test('I-3: a hidden fragment remains eligible -- included in records, no diagnostic, isNodeHidden never consulted', async () => {
+  const { model, stats } = buildMockModel(
     [
       { dbId: 1, fragments: [0] },
       { dbId: 2, fragments: [1] },
@@ -67,10 +67,23 @@ test('a hidden fragment is excluded from records and diagnosed with its real res
     { hiddenDbIds: [2] },
   );
   const { records, diagnostics } = await extractAllFragments(model, LOAD_EPOCH, {});
-  assert.deepEqual([...records.keys()], [0]);
-  assert.deepEqual(diagnostics, [
-    { scope: 'fragment', reason: 'fragment-hidden', role: 'target', fragment: { modelId: model, dbId: 2, fragId: 1 } },
-  ]);
+  assert.deepEqual([...records.keys()].sort(), [0, 1]);
+  assert.equal(records.get(1).ownerDbId, 2);
+  assert.deepEqual(diagnostics, []);
+  assert.equal(stats.isNodeHiddenCalls, 0, 'extractAllFragments must never call isNodeHidden -- hidden is not a checked state');
+});
+
+test('I-3: extractFragments and extractAllFragments converge on the same hidden-fragment eligibility', async () => {
+  const { model } = buildMockModel(
+    [{ dbId: 2, fragments: [1] }],
+    new Map(),
+    { hiddenDbIds: [2] },
+  );
+  const viaAll = await extractAllFragments(model, LOAD_EPOCH, {});
+  const viaExplicit = await extractFragments(model, [2], LOAD_EPOCH);
+  assert.ok(viaAll.records.has(1), 'whole-model scope must include the hidden fragment');
+  assert.ok(viaExplicit.has(1), 'explicit-dbIds scope must include the hidden fragment (protected M1 behavior)');
+  assert.equal(viaAll.records.get(1).ownerDbId, viaExplicit.get(1).ownerDbId);
 });
 
 test('a 2D-style array-returning getDbIds is excluded and diagnosed via fragment-owner-unresolvable, never crashes', async () => {

@@ -921,7 +921,10 @@ test('I-2: a duplicate-model whole-model targets entry produces each real extrac
     fragSpecsB: {
       0: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
     },
-    modelOptionsB: { hiddenDbIds: [2] }, // dbId 2's fragment (1) is hidden -- ONE real diagnostic
+    // I-3 disposition retired hidden-fragment diagnostics (hidden fragments are eligible, no longer
+    // diagnosed) -- this dedup fixture uses a not-loaded fragment instead, a different diagnosable
+    // condition that still exercises the same diagnostic-dedup mechanism I-2 fixed.
+    modelOptionsB: { notLoadedFragIds: [1] }, // dbId 2's fragment (1) is not loaded -- ONE real diagnostic
   });
   const world = await freshWorld(viewer, { now: frozenClock() });
   const result = await world.findClashes({
@@ -931,11 +934,11 @@ test('I-2: a duplicate-model whole-model targets entry produces each real extrac
     target: { targets: [{ model: modelB }, { model: modelB }] },
     mode: 'surface-intersection', groupBy: 'dbId',
   });
-  const hiddenDiagnostics = result.statistics.diagnostics.filter((d) => d.reason === 'fragment-hidden');
-  assert.equal(hiddenDiagnostics.length, 1,
-    'dbId 2s fragment-hidden condition happened once and must appear once, not once per duplicate targets entry');
-  assert.equal(hiddenDiagnostics[0].fragment.fragId, 1);
-  assert.equal(hiddenDiagnostics[0].fragment.dbId, 2);
+  const notLoadedDiagnostics = result.statistics.diagnostics.filter((d) => d.reason === 'fragment-not-loaded');
+  assert.equal(notLoadedDiagnostics.length, 1,
+    'fragId 1s fragment-not-loaded condition happened once and must appear once, not once per duplicate targets entry');
+  assert.equal(notLoadedDiagnostics[0].fragment.fragId, 1);
+  assert.equal(notLoadedDiagnostics[0].fragment.dbId, null);
 });
 
 // === M-2: representative-fragment recording moved AFTER the full admission preflight ===============
@@ -1028,4 +1031,32 @@ test('M-2 hardening (codex-advisor consult on the I-1/M-2 reordering): a reentra
   assert.ok(callCount >= 6, 'the reentrant clock call this test targets must actually have fired');
   assert.equal(world._representativeFragmentByGeometry.get(leaseBBefore.epoch)?.size ?? 0, 0,
     'the evicted epochs representative-fragment map must stay empty -- caught before _recordRepresentativeFragments ever ran for it');
+});
+
+// === I-3: whole-model and explicit-dbIds `targets` paths converge on hidden-fragment eligibility ===
+
+test('I-3: targets:[{model}] and targets:[{model,dbIds}] agree a hidden target fragment is eligible -- same pair, no exclusion diagnostic', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [0] }],
+    fragSpecsA: { 0: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 2, fragments: [0] }],
+    fragSpecsB: { 0: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] } }, // overlaps modelA's fragment 0
+    modelOptionsB: { hiddenDbIds: [2] }, // the ENTIRE target fragment's owning dbId is hidden
+  });
+
+  const runQuery = (target) => CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' })
+    .then((world) => world.findClashes({
+      source: { model: modelA, dbIds: [1] },
+      target,
+      mode: 'surface-intersection', groupBy: 'dbId',
+    }));
+
+  const viaWholeModel = await runQuery({ targets: [{ model: modelB }] });
+  const viaExplicitDbIds = await runQuery({ targets: [{ model: modelB, dbIds: [2] }] });
+
+  for (const result of [viaWholeModel, viaExplicitDbIds]) {
+    assert.equal(result.pairs.length, 1, 'the hidden target fragment must still clash -- it is eligible, not excluded');
+    assert.equal(result.pairs[0].target.dbId, 2);
+    assert.deepEqual(result.statistics.diagnostics, [], 'no exclusion diagnostic for a hidden-but-eligible fragment');
+  }
 });

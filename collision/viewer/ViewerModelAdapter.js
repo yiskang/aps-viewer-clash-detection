@@ -179,6 +179,13 @@ function modelIdOf(model) {
 // verifiable backing state. Likewise 'fragment-index-hole' is not implemented as a reachable
 // branch: every backing array (vizflags, boxes, fragments.fragId2dbId) is dense and pre-sized to
 // getCount() in this build, so there is no structural index-range hole to detect.
+//
+// Hidden fragments are ELIGIBLE, not diagnosed or excluded (I-3 disposition, binding, see
+// docs/superpowers/specs/collision-library-m2-i3-target-eligibility-disposition.md and design
+// spec §3.3): a hidden fragment is enumerated exactly like any other structurally-valid fragment.
+// Whole-model scope must not silently diverge from extractFragments's own (protected, unchanged)
+// per-dbId subtree walk, which never checks hidden state at all and always includes a hidden
+// fragment's fragments -- this primitive never reads `instanceTree.isNodeHidden` for that reason.
 export async function extractAllFragments(model, loadEpoch, { checkpoint, THREE = globalThis.THREE } = {}) {
   // Preflight checkpoint, BEFORE any model read -- mirrors extractFragments's own "checkpoint
   // validates liveness before this code ever touches the model" discipline (see the comment above
@@ -194,13 +201,12 @@ export async function extractAllFragments(model, loadEpoch, { checkpoint, THREE 
   }
 
   const fragList = model.getFragmentList();
-  const instanceTree = model.getObjectTree(); // used only for the hidden check below
   const count = fragList.getCount(); // dense range 0..count-1, no index-range holes in this build
 
   // Enumeration-capacity bound: maxCollisionInstancesPerEpoch also serves as a ceiling on
   // fragList.getCount() itself, checked BEFORE any fragment is visited -- not only checked against
   // successful record insertions. Without this, a model reporting a very large getCount() with most
-  // fragments landing in one of the diagnostic branches below (not loaded / unresolvable / hidden)
+  // fragments landing in one of the diagnostic branches below (not loaded / unresolvable owner)
   // could scan the entire range and accumulate an unbounded diagnostics array without ever tripping
   // a successful-insertion-count check.
   if (count > maxCollisionInstancesPerEpoch) {
@@ -247,14 +253,7 @@ export async function extractAllFragments(model, loadEpoch, { checkpoint, THREE 
       continue;
     }
 
-    // 3. Hidden -- checked only AFTER ownerDbId has resolved to a real number. dbId is the real
-    // resolved ownerDbId here, never null.
-    if (instanceTree.isNodeHidden(ownerDbId)) {
-      pushDiagnostic('fragment-hidden', ownerDbId, fragId);
-      continue;
-    }
-
-    // 4. Build the record -- same readWorldMatrix/readWorldBounds helpers extractFragments already
+    // 3. Build the record -- same readWorldMatrix/readWorldBounds helpers extractFragments already
     // uses (reused verbatim, never duplicated), plus the same geometry-identity construction.
     if (!scratchMatrix) {
       scratchMatrix = new THREE.Matrix4();
