@@ -53,8 +53,10 @@ hidden-fragment accessor are all settled below so Task 5 does not need to re-der
 
 Both evidence classes below were obtained **against the exact same digest-verified artifact**:
 `sha256 12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e` — identical to the value
-already on file in this Agent Kit's own prior M1 adjudication
-(`docs/research/collision-detection-m1-api-evidence-benchmark-geometry-access-adjudication.md`,
+already on file in this Agent Kit's own prior M1 adjudication (in the **sibling
+`aps-viewer-agent-kit` repo, not this repo** — this repo has no `docs/research/` directory):
+`aps-viewer-agent-kit` repo:
+`docs/research/collision-detection-m1-api-evidence-benchmark-geometry-access-adjudication.md`,
 same URL/version, same 295,263/295,264-line decoded file size), and independently re-verified in
 this session by two paths: (a) the Viewer's own `crypto.subtle.digest('SHA-256', ...)` computed
 live in the browser against the bundle the page had actually loaded, and (b) a fresh `fetch()` of
@@ -249,9 +251,10 @@ search/read of that exact artifact (all line numbers below are from this decoded
   shell on this session's own fetch attempt (an SPA-shell failure per this skill's own documented
   limitation, not a definitive absence-check) — recorded as `retrieval_result: partial`, not relied
   upon. Absence of an official `FragmentList` page is instead established by this Agent Kit's own
-  prior, live-verified (2026-08-26) adjudication
-  (`docs/research/collision-detection-m1-api-evidence-benchmark-geometry-access-adjudication.md`
-  §1.5), which confirms `FragmentList` has no Reference Guide page of its own and is not among the
+  prior, live-verified (2026-08-26) adjudication — in the **sibling `aps-viewer-agent-kit` repo,
+  not this repo**: `aps-viewer-agent-kit` repo:
+  `docs/research/collision-detection-m1-api-evidence-benchmark-geometry-access-adjudication.md`
+  §1.5, which confirms `FragmentList` has no Reference Guide page of its own and is not among the
   small enumerated set of classes the official `Autodesk.Viewing.Private` namespace index actually
   disclaims (`InstanceTree`, `Preferences`, `PropDbLoader`, `PropertyDatabase`,
   `ViewerPreferences`) — reused here as Branch-C-style corroboration, not re-verified fresh this
@@ -385,6 +388,27 @@ own candidates/assumptions and reality) are: (1) `findNodeForFragId` vs.
 symmetric case in §3.3's phrasing when only "hidden" is actually implementable ("Resolved for Task
 5" above) — both flagged explicitly per the task brief's instruction to do so.
 
+**Spec defect, not just an implementation gap — flagged for the plan owner, not resolved here.**
+Discrepancy (2) is stronger than "an ambiguity Task 5 must interpret." Binding §3.3 literally
+requires that "a hidden/culled fragment ... must produce a diagnostic," worded as a single
+conjoined requirement. This note's own evidence (Evidence §1's culling-state search and Evidence
+§2's confirmation that no vizflag, InstanceTree method, or any other queryable state exists for
+camera-frustum culling in this build) establishes that **no implementation can ever satisfy the
+"culled" half of that requirement** — there is nothing to query, so a culled fragment will, in
+Task 5's actual code, be silently included as a normal record with no diagnostic (the correct
+outcome, per "Resolved for Task 5" above, which explicitly instructs Task 5 not to invent an
+unfireable `'fragment-culled'` reason just to appear compliant). That is a **defect in §3.3's own
+text**, not a gap this evidence note or Task 5 can close by trying harder: the requirement as
+written cannot be met by any implementation built on this Viewer version's actual data model.
+**Recommendation:** the plan owner should correct §3.3 in a follow-up disposition-doc-style
+amendment (the same pattern this plan already uses elsewhere, e.g.
+`docs/superpowers/specs/collision-library-m2-targeted-design-resolution-disposition.md`) to drop
+"culled" from its literal diagnostic requirement, scoping §3.3 to "a hidden fragment ... must
+produce a diagnostic" only, with an explicit note that camera-frustum culling is transient
+render-loop state with no corresponding stored data and is therefore out of scope for any
+extraction-time diagnostic. This note does not make that amendment itself — only the plan owner
+can change binding spec text — but records the recommendation here so it is not lost.
+
 ## Revalidation Needed
 
 `required: true`, trigger: `viewer-version`. Re-confirm `findNodeForFragId`'s absence,
@@ -449,7 +473,10 @@ Task 5 scaffold
 `model.getFragmentList().getDbIds(fragId)`, and using the reason strings/sentinel/exclusion policy
 settled under "Resolved for Task 5" above. No further evidence-gathering is required before
 Task 5 begins; the open `runtime_gap`s above are either immaterial to Task 5's core implementation
-or explicitly deferred to Task 5's own judgment.
+or explicitly deferred to Task 5's own judgment. Separately, and not blocking Task 5: the plan
+owner should schedule the §3.3 "culled" text amendment recommended in the Contradictions section
+above — that is a binding-spec text fix, tracked independently of Task 5's own implementation
+work.
 
 ## Revision history
 
@@ -468,3 +495,13 @@ or explicitly deferred to Task 5's own judgment.
   independent re-read of the binding spec's §3.3 text. See "Resolved for Task 5" for the
   substantive changes; corrected wording throughout the Evidence Summary/Details sections; added
   exact source line-number citations.
+- **Revision 3** (this document): addresses a task-review pass's two Important findings — (1)
+  strengthened the "culled" discrepancy in Contradictions into an explicit recommendation that the
+  plan owner amend §3.3's own text (drop "culled" from its literal diagnostic requirement, since no
+  implementation can ever satisfy it — this note's own evidence already proved that, but did not
+  previously say so as a spec-text recommendation); (2) qualified both citations of
+  `docs/research/collision-detection-m1-api-evidence-benchmark-geometry-access-adjudication.md`
+  with their actual location — the sibling `aps-viewer-agent-kit` repo, not this repo (this repo
+  has no `docs/research/` directory). A third, Minor finding (the plan's own Task 5 scaffold sketch
+  is missing 2 of the 4 diagnostic branches and still shows `dbId: undefined`) was deferred by the
+  task reviewer and is not addressed in this revision.
