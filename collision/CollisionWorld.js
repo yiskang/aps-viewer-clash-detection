@@ -197,9 +197,23 @@ function createComposedStageScheduler(checkpoint, now) {
 // caller supplied. `dbIds` is carried through EXACTLY as the caller supplied it, including
 // `undefined` (a `targets` entry's whole-model-scope sentinel, validated in findClashes's own
 // Step-8 checks before this is ever called).
+//
+// M-3 fix (Batch 2 whole-batch review): every returned entry -- and each entry's own `dbIds` array,
+// when present -- is a SHALLOW COPY, never the caller's own object/array by reference. Without this,
+// a caller mutating its own query object after the call starts (findClashes re-reads these entries
+// across real `await`s: object-tree readiness, extraction checkpoints) could change behavior
+// mid-flight. `model` itself is intentionally NOT copied (copying an object reference changes
+// nothing; `model` identity is exactly what the rest of this method keys leases/epochs off of).
+// `dbIds: undefined` (the whole-model-scope sentinel) is preserved exactly -- `.slice()` is only
+// ever called when `dbIds` is genuinely an array, never turning a real `undefined` into `[]`.
 function normalizeTargets(target) {
-  if (Array.isArray(target?.targets)) return target.targets;
-  return [{ model: target.model, dbIds: target.dbIds }];
+  if (Array.isArray(target?.targets)) {
+    return target.targets.map((entry) => ({
+      model: entry.model,
+      dbIds: entry.dbIds !== undefined ? entry.dbIds.slice() : undefined,
+    }));
+  }
+  return [{ model: target.model, dbIds: target.dbIds !== undefined ? target.dbIds.slice() : undefined }];
 }
 
 // Snapshots and DEDUPLICATES every distinct Model object across source + every targets entry, at
@@ -819,6 +833,22 @@ export class CollisionWorld {
     if (query.target.dbIds !== undefined && query.target.targets !== undefined) {
       throw new Error('findClashes: target must be either {model,dbIds} or {targets}, not both');
     }
+    // M-1 fix (Batch 2 whole-batch review): Task 6 added "every targets entry must supply a model"
+    // validation for the NEW `targets`-array shape (below) but left `query.source.model` and a
+    // legacy (non-`targets`) `query.target.model` unchecked -- a missing/null model there used to
+    // fail cleanly in M1 but now silently proceeds into `collectDistinctModels` -> a `Set`
+    // containing `undefined`/`null` -> `admitModel(undefined)` -> an internal
+    // "Invalid value used as weak map key" TypeError, AFTER already consuming a global `loadEpoch`
+    // for the OTHER, valid model in the call. Checked here, at the SAME point in the validation
+    // sequence as the targets-entry check below and BEFORE any lease capture, so this rejection
+    // path never wastes an epoch.
+    if (query.source.model === undefined || query.source.model === null) {
+      throw new Error('findClashes: query.source must supply a model');
+    }
+    if (!Array.isArray(query.target.targets)
+      && (query.target.model === undefined || query.target.model === null)) {
+      throw new Error('findClashes: query.target must supply a model');
+    }
     if (Array.isArray(query.target.targets)) {
       for (const entry of query.target.targets) {
         if (!entry || entry.model === undefined || entry.model === null) {
@@ -922,6 +952,16 @@ export class CollisionWorld {
     // INSIDE one epoch's own bucket, exactly like `_instanceCache` itself
     // (`Map<loadEpoch, Map<fragmentId, CollisionInstance>>`).
     const targetRecordsByEpoch = new Map();
+    // I-2 fix (Batch 2 whole-batch review): two `targets` entries naming the SAME model (e.g.
+    // `targets: [{model: B}, {model: B}]`) each run `extractAllFragments(B, ...)` independently --
+    // extraction re-work stays as-is (out of scope for this fix) -- but pushing EVERY diagnostic
+    // from EACH run into `statistics.diagnostics` double-counts a genuine diagnostic (e.g.
+    // `fragment-hidden` for one specific fragment) that only happened once. Deduped THIS CALL using
+    // the same discipline `oversizedDiagnosedFragments` already applies on the narrow-phase side:
+    // keyed by a composite of every field that makes one diagnostic entry unique. `role` is always
+    // `'target'` for extractAllFragments's own diagnostics (its own interface contract) and
+    // `modelId` is fixed per epoch, so `(epoch, fragId, reason)` alone is a total key here.
+    const pushedWholeModelDiagnosticKeys = new Set();
     for (const entry of targetsEntries) {
       const entryLease = leaseByModel.get(entry.model);
       const entryEpoch = entryLease.epoch;
@@ -934,7 +974,12 @@ export class CollisionWorld {
         // through the broad/narrow phase for a genuinely non-empty call is Task 8's job.
         const wholeModel = await extractAllFragments(entry.model, entryEpoch, { checkpoint });
         records = wholeModel.records;
-        for (const diagnostic of wholeModel.diagnostics) statistics.diagnostics.push(diagnostic);
+        for (const diagnostic of wholeModel.diagnostics) {
+          const key = `${entryEpoch}:${diagnostic.fragment.fragId}:${diagnostic.reason}`;
+          if (pushedWholeModelDiagnosticKeys.has(key)) continue;
+          pushedWholeModelDiagnosticKeys.add(key);
+          statistics.diagnostics.push(diagnostic);
+        }
       }
       let bucket = targetRecordsByEpoch.get(entryEpoch);
       if (!bucket) { bucket = new Map(); targetRecordsByEpoch.set(entryEpoch, bucket); }
@@ -976,16 +1021,33 @@ export class CollisionWorld {
     // SUM happens to exceed the ceiling when no single (source, target-epoch) pair does. This is a
     // genuine judgment call the spec's own §9.3.1 text does not settle for the *linear* ceiling --
     // that section is scoped to the *TLAS* whole-call budget only.
+    //
+    // I-1 fix (Batch 2 whole-batch review): this check must be reconciled against the count the
+    // scan will ACTUALLY produce, not the raw pre-exclusion `bucket.size`. `_runBroadPhaseScan`
+    // applies source self-exclusion (`isSourceOwnFragment`) FIRST and only counts/tests surviving
+    // pairs -- so a same-model target group whose fragments substantially overlap the source's own
+    // extracted set (e.g. source ⊆ target scope) can have a raw product that exceeds the ceiling
+    // while the scan itself would evaluate far fewer, or even zero, real pairs. Self-exclusion can
+    // only ever apply to the ONE target group (if any) sharing the source's own epoch
+    // (`isSourceOwnFragment`'s own epoch-equality gate -- M2's source is always exactly one epoch),
+    // so only that one group's count needs adjusting; every other (genuinely cross-model) group's
+    // raw `bucket.size` is already exact, by construction, since self-exclusion never touches it.
     for (const [epoch, bucket] of targetRecordsByEpoch) {
-      if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, bucket.size)) {
+      let effectiveTargetCount = bucket.size;
+      if (epoch === sourceEpoch) {
+        let selfExcludedCount = 0;
+        for (const fragId of bucket.keys()) {
+          if (sourceExtracted.has(fragId)) selfExcludedCount++;
+        }
+        effectiveTargetCount = bucket.size - selfExcludedCount;
+      }
+      if (this._exceedsBroadPhaseCeiling(sourceExtracted.size, effectiveTargetCount)) {
         throw new Error(
           `findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs ` +
-          `(${sourceExtracted.size} x ${bucket.size} > ${maxBroadPhaseInstancePairs})`,
+          `(${sourceExtracted.size} x ${effectiveTargetCount} > ${maxBroadPhaseInstancePairs})`,
         );
       }
     }
-    this._recordRepresentativeFragments(sourceEpoch, sourceExtracted);
-    for (const [epoch, bucket] of targetRecordsByEpoch) this._recordRepresentativeFragments(epoch, bucket);
 
     // Build each distinct epoch's own UNIONED `uniqueFragments` map (source + every target group
     // touching that epoch, merged) -- the same merge this method already performed per-call before
@@ -994,6 +1056,10 @@ export class CollisionWorld {
     // reads only geometryIdentity, identical for a given fragmentId regardless of which walk found
     // it. The per-side ownerDbId/placement is read from each side's OWN original record below,
     // never from this union.
+    //
+    // Built here, BEFORE the preflight loop below, purely because the preflight needs it -- this
+    // construction is pure local-Map bookkeeping with no side effect on world state, so moving it
+    // earlier than its pre-M-2-fix position changes nothing about ordering guarantees.
     const perEpochUnique = new Map(); // epoch -> Map<fragmentId, record>
     const mergeIntoEpoch = (epoch, recordsMap) => {
       let bucket = perEpochUnique.get(epoch);
@@ -1014,20 +1080,46 @@ export class CollisionWorld {
     // commit -- a true zero-partial-commit guarantee against a capacity rejection specifically, not
     // a general transaction guarantee against a reentrant callback or an unrelated synchronous
     // exception.
+    //
+    // M-2 fix (Batch 2 whole-batch review): `_recordRepresentativeFragments` now runs strictly
+    // AFTER this whole preflight loop, for EVERY epoch (not just the ceiling checks above, which
+    // were already side-effect-free). Task 6 previously ran it before this loop, so a capacity
+    // failure on one epoch (say, target model B) left representative-fragment state already WRITTEN
+    // for every OTHER epoch the call touched (source's epoch, any other target epoch) even though
+    // those epochs had nothing to do with the failure. The preflight loop is read-only by its own
+    // design, so moving it earlier is safe and does not change its own semantics -- it only narrows
+    // the window in which representative-fragment state can be written to "after every epoch is
+    // already known to be admissible."
     const leaseByEpoch = new Map(leases.map((l) => [l.epoch, l]));
     // `admissionStartedAt` is captured BEFORE the preflight loop, not between preflight and commit
     // (reviewer-caught finding, this task): `_now` is a constructor-injected clock seam, and the
     // "nothing between check and commit" atomicity guarantee above must not rest on an unverified
-    // assumption that an injected `_now` is pure/non-reentrant. With the timer call moved here, the
-    // only things between the LAST preflight and the FIRST real commit are `Map` reads/writes --
-    // no function call of any kind, injected clock included. This widens what
-    // 'capacity-admission-commit' measures to include the preflight loop itself, which is more
-    // accurate, not a regression (preflight is real work this call now always does).
+    // assumption that an injected `_now` is pure/non-reentrant. This widens what
+    // 'capacity-admission-commit' measures to include the preflight loop AND (per the M-2 fix above)
+    // the representative-fragment recording that now sits between preflight and commit -- both are
+    // plain synchronous Map reads/writes with no clock read of their own, so neither reintroduces
+    // the injected-clock-purity concern that motivated capturing this timestamp here rather than
+    // between preflight and commit; the span is simply reporting more of the real work this call now
+    // always does before it can commit anything.
     const admissionStartedAt = this._now();
+    // codex-advisor review (I-1/M-2 reordering consult): `this._now()` immediately above is itself
+    // an injected, not-guaranteed-pure/non-reentrant clock seam (see this span's own surrounding
+    // comment). `_preflightCollisionInstanceAdmission` is deliberately read-only and does NOT check
+    // lease liveness -- so if that clock call somehow disposed the world or evicted a captured model
+    // (a real, if theoretical, reentrancy hazard given no documented non-reentrant contract exists
+    // for an injected clock anywhere in this codebase), the preflight loop below would still run
+    // against a now-dead epoch, and `_recordRepresentativeFragments` would then recreate
+    // representative-fragment state for it before `admitCollisionInstances`'s own `_assertEpochLive`
+    // eventually caught the stale lease and threw. Asserting here, before the preflight loop and
+    // before any representative-fragment write, closes that gap at its earliest possible point
+    // rather than leaving it to be caught only downstream.
+    this._assertLeasesStillLive(leases);
     for (const [epoch, uniqueFragments] of perEpochUnique) {
       const preflight = this._preflightCollisionInstanceAdmission(leaseByEpoch.get(epoch), uniqueFragments);
       if (!preflight.ok) throw new CapacityExceededError(preflight.reason, preflight.details);
     }
+    this._recordRepresentativeFragments(sourceEpoch, sourceExtracted);
+    for (const [epoch, bucket] of targetRecordsByEpoch) this._recordRepresentativeFragments(epoch, bucket);
     const admittedByEpoch = new Map();
     for (const [epoch, uniqueFragments] of perEpochUnique) {
       admittedByEpoch.set(epoch, this.admitCollisionInstances(leaseByEpoch.get(epoch), uniqueFragments));

@@ -581,6 +581,79 @@ test('a targets entry with no model is rejected', async () => {
   );
 });
 
+// === M-1: symmetric model-presence validation for query.source.model / legacy query.target.model ==
+
+test('M-1: a missing query.source.model is rejected with a clear Error, consuming no epoch', async () => {
+  const { modelA, viewer } = makeTwoModelFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await assert.rejects(
+    world.findClashes({
+      source: { model: undefined, dbIds: [] },
+      target: { model: modelA, dbIds: [] },
+      mode: 'surface-intersection', groupBy: 'dbId',
+    }),
+    /query\.source must supply a model/,
+  );
+  // No epoch was consumed by the rejected call: admitting a never-before-seen model now still
+  // yields epoch 1, the very first epoch this world would ever mint.
+  const lease = world.admitModel(modelA);
+  assert.equal(lease.epoch, 1, 'the rejected call must not have consumed any epoch');
+});
+
+test('M-1: a null query.source.model is rejected with a clear Error', async () => {
+  const { modelA, viewer } = makeTwoModelFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await assert.rejects(
+    world.findClashes({
+      source: { model: null, dbIds: [] },
+      target: { model: modelA, dbIds: [] },
+      mode: 'surface-intersection', groupBy: 'dbId',
+    }),
+    /query\.source must supply a model/,
+  );
+});
+
+test('M-1: a missing legacy query.target.model is rejected with a clear Error, consuming no epoch', async () => {
+  const { modelA, viewer } = makeTwoModelFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await assert.rejects(
+    world.findClashes({
+      source: { model: modelA, dbIds: [] },
+      target: { model: undefined, dbIds: [] },
+      mode: 'surface-intersection', groupBy: 'dbId',
+    }),
+    /query\.target must supply a model/,
+  );
+  const lease = world.admitModel(modelA);
+  assert.equal(lease.epoch, 1, 'the rejected call must not have consumed any epoch, including the VALID source model\'s');
+});
+
+test('M-1: a null legacy query.target.model is rejected with a clear Error', async () => {
+  const { modelA, viewer } = makeTwoModelFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await assert.rejects(
+    world.findClashes({
+      source: { model: modelA, dbIds: [] },
+      target: { model: null, dbIds: [] },
+      mode: 'surface-intersection', groupBy: 'dbId',
+    }),
+    /query\.target must supply a model/,
+  );
+});
+
+test('M-1: a missing model in the NEW targets-array shape is still rejected by its own existing check (unchanged)', async () => {
+  const { modelA, viewer } = makeTwoModelFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await assert.rejects(
+    world.findClashes({
+      source: { model: modelA, dbIds: [] },
+      target: { targets: [{ model: undefined, dbIds: [] }] },
+      mode: 'surface-intersection', groupBy: 'dbId',
+    }),
+    /every targets entry must supply a model/,
+  );
+});
+
 test('a targets entry dbIds present but not an array is rejected; dbIds:null is rejected too', async () => {
   const { modelA, modelB, viewer } = makeTwoModelFixture();
   const world = await freshWorld(viewer, { now: frozenClock() });
@@ -775,4 +848,184 @@ test('O(n*m)-per-pair shape across TWO target epochs: broadPhasePairs is the SUM
   });
   assert.equal(result.statistics.broadPhasePairs, 6, '0 (all self-excluded) + 6 (2x3 cross-model), summed per target epoch');
   assert.equal(result.pairs.length, 0, 'all real candidates are AABB-disjoint');
+});
+
+// === I-1: broad-phase ceiling reconciled against the POST-self-exclusion count =====================
+
+test('I-1: same-model query where source is fully contained in the target scope no longer falsely trips the ceiling', async () => {
+  // 1001 source fragments; the target scope is the IDENTICAL 1001 dbIds (source ⊆ target, in fact
+  // source === target here). The RAW pre-self-exclusion product (1001 x 1001 = 1,002,001) exceeds
+  // maxBroadPhaseInstancePairs (1,000,000) -- the OLD code (finding I-1) threw
+  // "broad-phase candidate count exceeds maxBroadPhaseInstancePairs" here even though EVERY one of
+  // those candidate pairs is self-excluded (every target fragment IS a source fragment, same epoch),
+  // so the REAL scan evaluates exactly ZERO pairs. The fix must reconcile the ceiling against that
+  // true post-exclusion count and let this call through.
+  const dbIds = Array.from({ length: 1001 }, (_, i) => 1000 + i);
+  const children = dbIds.map((dbId) => ({ dbId, fragments: [dbId] }));
+  const fragSpecsA = {};
+  for (const dbId of dbIds) fragSpecsA[dbId] = { geometryIndex: dbId, at: [dbId, 0, 0] };
+  const { modelA, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children }],
+    fragSpecsA,
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds }, // 1001 source fragments
+    target: { model: modelA, dbIds }, // legacy shape, IDENTICAL scope to source (same model/epoch)
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.deepEqual(result.pairs, [], 'every candidate is self-excluded, so there are zero real pairs');
+  assert.equal(result.statistics.broadPhasePairs, 0,
+    'every one of the raw 1001x1001 candidates is self-excluded before ever being counted');
+});
+
+test('I-1: a partially-overlapping same-model scope uses the TRUE post-exclusion count, not the raw product, for the ceiling', async () => {
+  // A companion to the "fully contained" case above: the target scope OVERLAPS the source's own
+  // extracted set on some fragments (self-excluded) and contains additional, genuinely distinct
+  // fragments (never self-excluded). The raw product would trip the ceiling; the true post-exclusion
+  // count must not.
+  const overlapDbIds = Array.from({ length: 1000 }, (_, i) => 2000 + i); // shared with source -- self-excluded
+  const extraDbIds = Array.from({ length: 1 }, (_, i) => 3000 + i); // target-only, genuinely new
+  const allTargetDbIds = [...overlapDbIds, ...extraDbIds];
+  const children = allTargetDbIds.map((dbId) => ({ dbId, fragments: [dbId] }));
+  const fragSpecsA = {};
+  for (const dbId of allTargetDbIds) fragSpecsA[dbId] = { geometryIndex: dbId, at: [dbId, 0, 0] };
+  const { modelA, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children }],
+    fragSpecsA,
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  // sourceCount = 1000 (overlapDbIds only), targetCount (raw) = 1001 (overlap + extra). Raw product =
+  // 1,001,000 > 1,000,000 (would have falsely rejected under the OLD code). True post-exclusion
+  // target count = 1 (only extraDbIds' single fragment survives self-exclusion), so the true product
+  // is 1000, nowhere near the ceiling.
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: overlapDbIds },
+    target: { model: modelA, dbIds: allTargetDbIds },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(result.statistics.broadPhasePairs, 1000,
+    '1000 source instances x 1 surviving (non-self-excluded) target instance');
+  assert.deepEqual(result.pairs, [], 'fixtures are deliberately non-overlapping in space (distinct at[] positions)');
+});
+
+// === I-2: extraction-diagnostic dedup for a duplicate-model targets entry ==========================
+
+test('I-2: a duplicate-model whole-model targets entry produces each real extraction diagnostic exactly once, not twice', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [] }],
+    rootNodesB: [
+      { dbId: 1, fragments: [0] },
+      { dbId: 2, fragments: [1] },
+    ],
+    fragSpecsB: {
+      0: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+    },
+    modelOptionsB: { hiddenDbIds: [2] }, // dbId 2's fragment (1) is hidden -- ONE real diagnostic
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [] },
+    // Duplicate whole-model targets entry naming the SAME model twice -- extractAllFragments(modelB)
+    // runs twice, and its diagnostics array must not be pushed into statistics.diagnostics twice.
+    target: { targets: [{ model: modelB }, { model: modelB }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  const hiddenDiagnostics = result.statistics.diagnostics.filter((d) => d.reason === 'fragment-hidden');
+  assert.equal(hiddenDiagnostics.length, 1,
+    'dbId 2s fragment-hidden condition happened once and must appear once, not once per duplicate targets entry');
+  assert.equal(hiddenDiagnostics[0].fragment.fragId, 1);
+  assert.equal(hiddenDiagnostics[0].fragment.dbId, 2);
+});
+
+// === M-2: representative-fragment recording moved AFTER the full admission preflight ===============
+
+test("M-2: a capacity-preflight failure on a LATER epoch leaves NO epoch's representative-fragment state populated", async () => {
+  // Same fixture shape as the pre-existing "multi-model call failing the ceiling on the SECOND
+  // target model leaves ZERO instances committed to the first" test above, but asserting the OTHER
+  // half of the M-2 fix: not just the instance-cache bucket, but the REPRESENTATIVE-FRAGMENT map for
+  // every epoch this call touched (including epochs that had nothing to do with the failure) must
+  // also stay empty.
+  const sourceChildren = [{ dbId: 1, fragments: [1] }];
+  const smallTargetChildren = [{ dbId: 2, fragments: [2] }];
+  const overCount = maxCollisionInstancesPerEpoch + 1; // 20,001
+  const fragsPerDbId = 5000;
+  const bigChildren = [];
+  let assigned = 0;
+  while (assigned < overCount) {
+    const count = Math.min(fragsPerDbId, overCount - assigned);
+    const dbId = 9000 + bigChildren.length;
+    bigChildren.push({ dbId, fragments: Array.from({ length: count }, (_, i) => 100_000 + assigned + i) });
+    assigned += count;
+  }
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children: [...sourceChildren, ...smallTargetChildren] }],
+    fragSpecsA: {
+      1: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+      2: { geometryIndex: 1, geometry: box(1, 1, 1), at: [0, 0, 0] },
+    },
+    rootNodesB: [{ dbId: 0, children: bigChildren }],
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const leaseA = world.admitModel(modelA);
+
+  await assert.rejects(world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelA, dbIds: [2] }, { model: modelB, dbIds: bigChildren.map((c) => c.dbId) }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  }), CapacityExceededError);
+
+  assert.equal(world.getEpochCollisionInstanceCount(leaseA.epoch), 0,
+    'the first (small) target model must have ZERO instances committed when a LATER epoch fails preflight');
+  // M-2: modelA/source's own REPRESENTATIVE-FRAGMENT map must ALSO stay empty -- the admission
+  // preflight for the whole call now runs, for every epoch, strictly BEFORE
+  // _recordRepresentativeFragments runs for ANY of them, so modelB's later capacity failure can no
+  // longer leave modelA's map populated the way Task 6's ordering did.
+  assert.equal(world._representativeFragmentByGeometry.get(leaseA.epoch)?.size ?? 0, 0,
+    "modelA/source epoch's representative-fragment map must stay empty after modelB's later capacity failure");
+  const leaseB = world.admitModel(modelB);
+  assert.equal(world._representativeFragmentByGeometry.get(leaseB.epoch)?.size ?? 0, 0,
+    "the failing epoch's own representative-fragment map must also stay empty (pre-existing M1 guarantee, unchanged)");
+});
+
+test('M-2 hardening (codex-advisor consult on the I-1/M-2 reordering): a reentrant injected clock that evicts a captured model exactly when the admission-preflight timer is captured is caught immediately, before any representative-fragment state is (re)written', async () => {
+  // codex-advisor's review of the I-1/M-2 reordering flagged a gap: `admissionStartedAt = this._now()`
+  // reads an injected, not-guaranteed-pure/non-reentrant clock. If that clock call itself disposed
+  // the world or evicted a captured model, the (read-only, liveness-blind) preflight loop would still
+  // run against a now-dead epoch, and `_recordRepresentativeFragments` would RECREATE representative-
+  // fragment state for it (evictModel's own `_releaseEpochScopedState` already deleted that epoch's
+  // entry) before `admitCollisionInstances`'s own `_assertEpochLive` eventually caught the stale
+  // lease downstream. The fix adds `this._assertLeasesStillLive(leases)` immediately after that timer
+  // capture, closing the gap at its earliest possible point.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [1] }],
+    fragSpecsA: { 1: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [1] }],
+    fragSpecsB: { 1: { geometryIndex: 0, geometry: box(1, 1, 1), at: [50, 0, 0] } },
+  });
+  let world;
+  let callCount = 0;
+  // Empirically verified (one-off stack-trace probe against this exact fixture shape -- a single
+  // source dbId/fragment against a single cross-model target dbId/fragment, `broadPhase` omitted):
+  // the 6th call to this injected clock is EXACTLY `admissionStartedAt = this._now()`. This is an
+  // internal-implementation-count dependency, acknowledged as somewhat fragile to unrelated future
+  // changes in this call's own checkpoint/timing shape -- but it is the only way to land a reentrant
+  // side effect at that EXACT boundary from outside the class, and the fixture is deliberately the
+  // smallest possible shape (1 fragment per side) to keep the count small and stable.
+  const reentrantClock = () => {
+    callCount++;
+    if (callCount === 6) world.evictModel(modelB);
+    return 0;
+  };
+  world = await freshWorld(viewer, { now: reentrantClock });
+  const leaseBBefore = world.admitModel(modelB); // captures modelB's epoch before the call; findClashes's
+  // own internal admitModel(modelB) is idempotent against this, so it changes nothing about the call.
+  await assert.rejects(world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  }), ModelEvictedError);
+  assert.ok(callCount >= 6, 'the reentrant clock call this test targets must actually have fired');
+  assert.equal(world._representativeFragmentByGeometry.get(leaseBBefore.epoch)?.size ?? 0, 0,
+    'the evicted epochs representative-fragment map must stay empty -- caught before _recordRepresentativeFragments ever ran for it');
 });
