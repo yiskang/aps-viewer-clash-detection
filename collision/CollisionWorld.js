@@ -326,6 +326,16 @@ export class CollisionWorld {
     // already-present fragment never bumps it. Task 11's invalidateModelPlacement also bumps this
     // (a different kind of change: existing placements going stale, not new fragments arriving).
     this._placementRevisionByEpoch = new Map();
+    // Task 11 (M2 Batch 3): Map<loadEpoch, revision>. Set by invalidateModelPlacement to the SAME
+    // revision number it just bumped _placementRevisionByEpoch to -- distinguishes "this epoch's
+    // revision changed because of an explicit invalidation" from "...because ordinary extraction
+    // discovered new fragments" (Task 13's own refresh-vs-rebuild trigger condition needs this
+    // distinction; a pure-growth revision bump must never trigger a placement re-read from the
+    // Viewer, only a genuine invalidation should). Deleted once a refresh successfully publishes
+    // for the exact revision it names; a second invalidation arriving mid-refresh overwrites it
+    // with its own newer revision rather than being erased by the first refresh's cleanup (see
+    // _refreshPlacementForEpoch below).
+    this._placementInvalidatedAtRevision = new Map();
     // Task 10 (M2 Batch 3): null until fromViewer constructs it (mirrors this._registry's own
     // "constructed after the world, wired against it" pattern) -- a world built directly via the
     // constructor (bypassing fromViewer, as some lifecycle-only tests do) has no TLAS path
@@ -486,6 +496,24 @@ export class CollisionWorld {
     return entry?.state === 'live';
   }
 
+  // Task 11 (M2 Batch 3): marks an admitted model's placement (worldMatrix/worldBounds) as stale
+  // for federated coordination -- alignment, translation, rotation, and equivalent model-level
+  // transforms (spec §6.7). Does NOT touch _instanceCache/_modelByEpoch/_modelLifecycle/
+  // _liveEpochs (spec §6.7.6) -- this is purely a placement-staleness signal; identity/lifecycle
+  // state is untouched. No-ops for a never-admitted model rather than throwing: unlike
+  // evictModel/isLeaseValid, this IS one of the ordinary "every public method throws
+  // WorldDisposedError once disposed" methods (no special no-op-on-disposed exception here).
+  invalidateModelPlacement(model) {
+    if (this._disposed) throw new WorldDisposedError();
+    const entry = this._modelLifecycle.get(model);
+    if (entry?.state === 'evicted') throw new ModelEvictedError(modelIdOf(model));
+    if (!entry) return; // never admitted -- nothing to invalidate
+    const epoch = entry.epoch;
+    const revision = (this._placementRevisionByEpoch.get(epoch) ?? 0) + 1;
+    this._placementRevisionByEpoch.set(epoch, revision);
+    this._placementInvalidatedAtRevision.set(epoch, revision);
+  }
+
   // Minimal, read-only diagnostic accessor (Task 24, performance-gate criteria 8/12) -- the same
   // class of small, explicitly-scoped addition as scheduler.js's setSpanRecorder (Task 23). Reads
   // `_instanceCache`'s existing per-epoch bucket size; adds no new state and changes no existing
@@ -523,6 +551,7 @@ export class CollisionWorld {
     this._representativeFragmentByGeometry.clear();
     this._placementByEpoch.clear();
     this._placementRevisionByEpoch.clear();
+    this._placementInvalidatedAtRevision.clear();
     try {
       this._tlasCache?.releaseAll?.();
     } catch {
@@ -655,6 +684,9 @@ export class CollisionWorld {
     // Task 9's two epoch-scoped side tables, released on the same boundary.
     this._placementByEpoch.delete(epoch);
     this._placementRevisionByEpoch.delete(epoch);
+    // Task 11's marker, released on the same boundary (codex-review flagged this table's release
+    // was missing from Task 9's own step -- Task 9 was written before this table existed).
+    this._placementInvalidatedAtRevision.delete(epoch);
     // Task 10: same defensive try/catch pattern as _registry.releaseEntriesForEpoch above -- held
     // to the same non-throw contract evictModel/dispose already guarantee, even though TlasCache
     // itself is fully controlled and verified non-throwing by design. `?.` guards the registry-
@@ -1549,6 +1581,70 @@ export class CollisionWorld {
     if (grew) {
       this._placementRevisionByEpoch.set(loadEpoch, (this._placementRevisionByEpoch.get(loadEpoch) ?? 0) + 1);
     }
+  }
+
+  // Task 11 (M2 Batch 3): staged/atomic-publish placement refresh, triggered from the TLAS-
+  // consuming query path (Task 13, not yet wired -- this method is complete and independently
+  // tested but has no production caller until Task 13's own trigger condition lands) when it
+  // observes a cached TlasCache entry stale specifically DUE TO an invalidation (not ordinary
+  // growth): `entry.builtAtRevision !== _placementRevisionByEpoch.get(epoch)` AND
+  // `_placementInvalidatedAtRevision.get(epoch) >= entry.builtAtRevision`.
+  //
+  // Re-reads worldMatrix/worldBounds fresh for every fragmentId ALREADY present in
+  // _placementByEpoch.get(epoch), via the exact same primitives extractFragments uses
+  // (fragList.getWorldMatrix/getWorldBounds, ViewerModelAdapter.js:39-50) -- never touching the
+  // shared map until the compare-and-publish step below succeeds. `_placementByEpoch`'s shared map
+  // is never mutated in place mid-refresh -- only swapped wholesale at that step (protected
+  // invariant).
+  async _refreshPlacementForEpoch(epoch, expectedRevision, expectedInvalidationRevision, { checkpoint } = {}) {
+    // Entry liveness guard, BEFORE any model read -- same discipline extractAllFragments's own
+    // preflight checkpoint uses ("checkpoint validates liveness before this code ever touches the
+    // model"). Task 13's own trigger always validates liveness (via the composite checkpoint)
+    // before calling this method, so this is defense in depth for this private method's own
+    // robustness, not a substitute for that caller contract: without it, an already-dead epoch's
+    // `_modelByEpoch.get(epoch)` (already deleted by evictModel/dispose) would throw a raw
+    // TypeError on the very next line instead of the correct, diagnosable ModelEvictedError/
+    // WorldDisposedError.
+    if (this._disposed) throw new WorldDisposedError();
+    if (!this._isEpochLive(epoch)) throw new ModelEvictedError(epoch);
+    const model = this._modelByEpoch.get(epoch);
+    const current = this._placementByEpoch.get(epoch);
+    const fragList = model.getFragmentList();
+    const staged = new Map();
+    const THREE = globalThis.THREE;
+    const scratchMatrix = new THREE.Matrix4();
+    const scratchBox = new THREE.Box3();
+    for (const [fragmentId, oldRecord] of current) {
+      if (checkpoint) {
+        const pending = checkpoint({ loadEpoch: epoch, label: 'placement-refresh-fragment' });
+        if (pending) await pending;
+      }
+      fragList.getWorldMatrix(fragmentId, scratchMatrix);
+      fragList.getWorldBounds(fragmentId, scratchBox);
+      staged.set(fragmentId, {
+        worldMatrix: Float64Array.from(scratchMatrix.elements),
+        worldBounds: {
+          min: [scratchBox.min.x, scratchBox.min.y, scratchBox.min.z],
+          max: [scratchBox.max.x, scratchBox.max.y, scratchBox.max.z],
+        },
+        ownerDbId: oldRecord.ownerDbId, modelId: oldRecord.modelId, // carried over unchanged
+      });
+    }
+    // Compare-and-publish, synchronous, no further await in between:
+    if (this._disposed) throw new WorldDisposedError();
+    if (!this._isEpochLive(epoch)) throw new ModelEvictedError(modelIdOf(model));
+    if (
+      this._placementRevisionByEpoch.get(epoch) !== expectedRevision
+      || this._placementInvalidatedAtRevision.get(epoch) !== expectedInvalidationRevision
+    ) {
+      // Superseded by a second invalidation/growth while this refresh was reading Viewer state --
+      // discard the staged map entirely. Do NOT clear _placementInvalidatedAtRevision -- that would
+      // erase the SECOND invalidation's own marker.
+      return { published: false };
+    }
+    this._placementByEpoch.set(epoch, staged);
+    this._placementInvalidatedAtRevision.delete(epoch); // this refresh's own captured revision is still current
+    return { published: true };
   }
 
   /**
