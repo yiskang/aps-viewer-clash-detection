@@ -313,6 +313,18 @@ export class CollisionWorld {
     // representative — they all resolve to the same raw Viewer geometry — so first-discovery-wins
     // is sufficient and stable. Populated by _recordRepresentativeFragments, from extraction output.
     this._representativeFragmentByGeometry = new Map();
+    // Task 9 (M2 Batch 3): Map<loadEpoch, Map<fragmentId, {worldBounds, worldMatrix, ownerDbId,
+    // modelId}>>. A genuinely NEW, separate table from _instanceCache (spec §16's explicit
+    // correction of the design's own first draft) -- _instanceCache stays scoped to
+    // {fragmentId, geometryIdentity} only. Write-once per fragment: populated by _recordPlacement,
+    // at the same extraction call sites _recordRepresentativeFragments already uses. Consumed by
+    // Task 10's TlasCache (buildPrimitives) and Task 11's invalidateModelPlacement refresh.
+    this._placementByEpoch = new Map();
+    // Task 9: Map<loadEpoch, number>. Bumped only when _recordPlacement inserts at least one
+    // genuinely new fragmentId ("growth") for that epoch -- ordinary re-extraction of an
+    // already-present fragment never bumps it. Task 11's invalidateModelPlacement also bumps this
+    // (a different kind of change: existing placements going stale, not new fragments arriving).
+    this._placementRevisionByEpoch = new Map();
     this._viewer = null;  // set by fromViewer; only _resolveGeometryView reads it
     this._options = null; // set by fromViewer: { narrowPhase, indexOwnership }
     this._now = now;
@@ -476,6 +488,8 @@ export class CollisionWorld {
     this._liveEpochs.clear();
     this._modelByEpoch.clear();
     this._representativeFragmentByGeometry.clear();
+    this._placementByEpoch.clear();
+    this._placementRevisionByEpoch.clear();
   }
 
   // Deliberately synchronous — the spec's "no await, no reentrant call between check and commit"
@@ -600,6 +614,9 @@ export class CollisionWorld {
     // resolve a fragment against an evicted epoch.
     this._modelByEpoch.delete(epoch);
     this._representativeFragmentByGeometry.delete(epoch);
+    // Task 9's two epoch-scoped side tables, released on the same boundary.
+    this._placementByEpoch.delete(epoch);
+    this._placementRevisionByEpoch.delete(epoch);
   }
 
   // Entry-order check for findClashes's single-distinct-model path (Tasks 19/20 originally called
@@ -1120,6 +1137,13 @@ export class CollisionWorld {
     }
     this._recordRepresentativeFragments(sourceEpoch, sourceExtracted);
     for (const [epoch, bucket] of targetRecordsByEpoch) this._recordRepresentativeFragments(epoch, bucket);
+    // Task 9: same call sites, one more sibling write -- the placement index is purely additive
+    // and read by nothing yet (Task 10's TlasCache is the first consumer), so recording it here
+    // changes no existing behavior.
+    this._recordPlacement(sourceEpoch, leaseByEpoch.get(sourceEpoch).model, sourceExtracted);
+    for (const [epoch, bucket] of targetRecordsByEpoch) {
+      this._recordPlacement(epoch, leaseByEpoch.get(epoch).model, bucket);
+    }
     const admittedByEpoch = new Map();
     for (const [epoch, uniqueFragments] of perEpochUnique) {
       admittedByEpoch.set(epoch, this.admitCollisionInstances(leaseByEpoch.get(epoch), uniqueFragments));
@@ -1451,6 +1475,32 @@ export class CollisionWorld {
     for (const record of extractedRecords.values()) {
       const { geometryIndex } = record.geometryIdentity;
       if (!byGeometry.has(geometryIndex)) byGeometry.set(geometryIndex, record.fragmentId);
+    }
+  }
+
+  // Task 9 (M2 Batch 3): write-once-per-fragment placement index, populated alongside
+  // _recordRepresentativeFragments at the same call sites. A fragmentId ALREADY present in
+  // _placementByEpoch.get(epoch) is NEVER overwritten by ordinary extraction -- only
+  // invalidateModelPlacement's staged refresh (Task 11) may overwrite an EXISTING entry. Only a
+  // genuinely new fragmentId is inserted, which also bumps the epoch's revision as "growth".
+  _recordPlacement(loadEpoch, model, extractedRecords) {
+    let placementByFragment = this._placementByEpoch.get(loadEpoch);
+    if (!placementByFragment) {
+      placementByFragment = new Map();
+      this._placementByEpoch.set(loadEpoch, placementByFragment);
+    }
+    const modelId = modelIdOf(model);
+    let grew = false;
+    for (const record of extractedRecords.values()) {
+      if (placementByFragment.has(record.fragmentId)) continue; // write-once: never overwrite
+      placementByFragment.set(record.fragmentId, {
+        worldBounds: record.worldBounds, worldMatrix: record.worldMatrix,
+        ownerDbId: record.ownerDbId, modelId,
+      });
+      grew = true;
+    }
+    if (grew) {
+      this._placementRevisionByEpoch.set(loadEpoch, (this._placementRevisionByEpoch.get(loadEpoch) ?? 0) + 1);
     }
   }
 
