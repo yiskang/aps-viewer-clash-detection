@@ -49,11 +49,14 @@ export class CollisionInstanceBVH extends BVH {
   }
 
   // { onLeafRange, onCandidate }: onLeafRange(offset, count) fires once per matched leaf, BEFORE
-  // expansion (spec §7.5.1 stage-1 tlasLeafRangeEmissions); onCandidate(builderPositionIndex) fires
-  // once per expanded primitive (stage-2 tlasPrimitiveCandidatePairs). Both callback ARGUMENTS to
-  // onCandidate are builder-position indices -- recordAt(builderPositionIndex) is the only
-  // legitimate way to resolve one to its original record (spec §5.2's "reordered-leaf-to-original-
-  // record mapping" requirement; codex-review Important #4's naming fix).
+  // expansion (spec §7.5.1 stage-1 tlasLeafRangeEmissions). onCandidate(builderPositionIndex) fires
+  // once per primitive that both falls in the expanded range AND exactly overlaps the query box --
+  // NOT one per raw expanded primitive (see the in-loop note below for why Task 13's stage-2
+  // tlasPrimitiveCandidatePairs statistic must be derived from onLeafRange's own `count` instead of
+  // from counting onCandidate calls). The callback ARGUMENT to onCandidate is a builder-position
+  // index -- recordAt(builderPositionIndex) is the only legitimate way to resolve one to its
+  // original record (spec §5.2's "reordered-leaf-to-original-record mapping" requirement;
+  // codex-review Important #4's naming fix).
   queryBox(min, max, { onLeafRange, onCandidate }) {
     let truncated = false;
     let pendingError = null;
