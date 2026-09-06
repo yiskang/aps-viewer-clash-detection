@@ -1868,14 +1868,31 @@ export class CollisionWorld {
         // own established convention: reuse an existing bucket over inventing a new field ahead of a
         // real, spec-authorized need).
         statistics.tlasBuildMs += this._now() - refreshStartedAt;
-        if (!published) continue; // superseded by a second invalidation/growth mid-refresh -- retry with fresh state
+        if (!published) {
+          // Whole-batch review finding #2 (Medium): WITHIN one findClashes call, this epoch's own
+          // `_recordPlacement` already ran once, before broad phase ever started -- so a SECOND
+          // invalidation/growth superseding this refresh can only be externally caused (a DIFFERENT
+          // concurrent call). Report it as Task 14's own public `ModelPlacementChangedError`
+          // immediately, rather than silently absorbing it into another retry iteration -- a
+          // persistently racing external actor would otherwise keep this loop rebuilding/retrying
+          // forever without ever reaching the composite checkpoint Task 14 relies on to bound it.
+          checkpoint.assertCurrent();
+          continue; // superseded by a second invalidation/growth mid-refresh -- retry with fresh state
+        }
         expectedRevision = this._placementRevisionByEpoch.get(epoch); // re-read: the refresh may have changed it
       }
 
       const getEntryStartedAt = this._now();
       const result = await this._tlasCache.getEntry(epoch, expectedRevision);
       const getEntryElapsed = this._now() - getEntryStartedAt;
-      if (result.outcome === 'superseded') continue; // Task 10's contract: never retry with the stale value that was just superseded
+      if (result.outcome === 'superseded') {
+        // Same reasoning as the refresh-supersession case above: TlasCache's own 'superseded'
+        // outcome for THIS epoch can only arise from a DIFFERENT concurrent call's own getEntry
+        // request (target groups are processed sequentially within one findClashes call -- there is
+        // no internal concurrency on the SAME epoch to self-trigger this).
+        checkpoint.assertCurrent();
+        continue; // Task 10's contract: never retry with the stale value that was just superseded
+      }
 
       // codex-advisor review, High #4 (SECOND pass -- the first attempt, checking only the
       // invalidation marker, missed a real interleaving a follow-up review caught): a DIFFERENT
@@ -1906,7 +1923,13 @@ export class CollisionWorld {
       const recheckBuiltAtRevision = this._tlasCache.getBuiltAtRevision(epoch) ?? -1;
       const revisionMovedOn = (this._placementRevisionByEpoch.get(epoch) ?? 0) !== expectedRevision;
       const invalidationRaced = recheckInvalidatedAt !== undefined && recheckInvalidatedAt >= recheckBuiltAtRevision;
-      if (revisionMovedOn || invalidationRaced) continue; // built/shared-wait work above is already attributed; retry with fresh state
+      if (revisionMovedOn || invalidationRaced) {
+        // Whole-batch review finding #2: same reasoning as the two retry points above -- this
+        // epoch's own extraction-driven growth already happened once, before broad phase started,
+        // so ANY further change detected here is externally caused. Report it now.
+        checkpoint.assertCurrent();
+        continue; // built/shared-wait work above is already attributed; retry with fresh state
+      }
 
       if (result.outcome === 'hit') statistics.tlasCacheHits++; // only counted once confirmed non-stale, see comment above
       return result;
@@ -1973,6 +1996,20 @@ export class CollisionWorld {
 
     outer: for (const group of targetGroups) {
       const { targetOperand, instances: targetInstances } = group;
+      // Whole-batch review finding #1 (High): a target group whose OWN extraction found ZERO
+      // fragments this call (e.g. an explicit `dbIds: []` entry, or a genuinely empty whole-model
+      // scope) must never fetch or query that epoch's TLAS at all -- the TLAS is built from
+      // `_placementByEpoch`'s WHOLE, potentially HISTORICALLY-populated epoch table (Task 9), not
+      // scoped to this call's own (here, empty) target instances. Without this guard, a call with
+      // ANOTHER non-empty target group would still traverse this epoch's historical TLAS contents,
+      // charging real candidate budget for fragments `currentByFragmentId` below would reject
+      // anyway -- potentially throwing CapacityExceededError for a group that contributes, and was
+      // always going to contribute, exactly zero real candidates (matching what `_runBroadPhaseScan`
+      // already does for free: its own nested loop's inner bound is `targetInstances.length`, so an
+      // empty group costs it literally zero iterations). This is a traversal/budget ordering gap,
+      // not a disagreement between Task 12's filter and this method's own membership check -- both
+      // already correctly say "empty"; the bug is doing real TLAS work before either ever runs.
+      if (targetInstances.length === 0) continue;
       const modelFilter = targetScopeFilter.get(targetOperand.model);
       const scopeFragmentSet = modelFilter instanceof Set ? modelFilter : null; // null = whole-model, no Set filter
       const currentByFragmentId = new Map();

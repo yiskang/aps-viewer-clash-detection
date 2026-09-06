@@ -49,6 +49,16 @@ function makeFixture(rootNodes, fragSpecs = {}, modelOptions = {}) {
 
 function noopCheckpoint() { return undefined; }
 function frozenClock() { return () => 0; }
+// A checkpoint-port stand-in for unit-level tests calling _getTlasEntryForEpoch/_runTlasBroadPhase
+// directly: real composite checkpoints (Task 14) expose `.assertCurrent()`, which these two methods
+// now call before retrying (whole-batch review finding #2) -- a bare `() => undefined` lacks that
+// property and would throw `TypeError: checkpoint.assertCurrent is not a function` the moment any
+// retry path is exercised.
+function fakeCheckpoint(assertCurrent = () => {}) {
+  const cp = () => undefined;
+  cp.assertCurrent = assertCurrent;
+  return cp;
+}
 
 async function freshWorld(viewer = null, extra = {}) {
   return CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone', ...extra });
@@ -552,7 +562,7 @@ test('a genuine revision bump racing getEntry (not just an invalidation marker) 
   };
   world._tlasCache.getBuiltAtRevision = () => 2; // whatever the second call sees is irrelevant to this test
   const statistics = { tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0 };
-  const result = await world._getTlasEntryForEpoch(1, () => undefined, statistics);
+  const result = await world._getTlasEntryForEpoch(1, fakeCheckpoint(), statistics);
   assert.equal(getEntryCalls, 2, 'the stale (revision 1) result must be discarded and retried, never returned directly');
   assert.equal(result.bvh.which, 'fresh');
   // codex-advisor review, Medium #5's own reproduction: the FIRST attempt's real 'built' work must
@@ -565,7 +575,9 @@ test('a TLAS build failure aborts the whole call as an error, never as "no candi
   const world = await freshWorld();
   const sourceOperand = { model: {}, epoch: 99, fragmentIds: new Map() };
   const sourceInstances = [{ instance: { fragmentId: 1 }, worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [1, 1, 1] }, ownerDbId: 1 }];
-  const targetGroups = [{ targetOperand: { model: {}, epoch: 1 }, instances: [] }];
+  // A non-empty target group -- an empty one (whole-batch review finding #1) is now skipped
+  // entirely, before ever calling _getTlasEntryForEpoch, which would defeat this test's own point.
+  const targetGroups = [{ targetOperand: { model: {}, epoch: 1 }, instances: [{ instance: { fragmentId: 100 } }] }];
   world._getTlasEntryForEpoch = async () => { throw new Error('tlas build boom'); };
   const statistics = { tlasLeafRangeEmissions: 0, tlasPrimitiveCandidatePairs: 0, tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0, tlasQueryMs: 0, broadPhasePairs: 0 };
   await assert.rejects(
@@ -925,4 +937,82 @@ test('Task 14 (2nd codex-advisor pass): a placement change landing during the LA
   assert.equal(hookFired, true, 'the injected await really did run during this call\'s own narrow phase');
   assert.ok(caught instanceof ModelPlacementChangedError,
     `expected ModelPlacementChangedError from the final return's own revalidation, got ${caught?.constructor?.name}`);
+});
+
+// === Whole-batch review (Batch 4, Tasks 12-14) findings ==========================================
+
+test('WHOLE-BATCH REVIEW finding #1 (High): a target group historically populated but currently EMPTY (dbIds: []) alongside another non-empty target must not consume candidate budget or throw', async () => {
+  // Three DISTINCT models, deliberately -- modelA (source), modelB (historically-populated but
+  // THIS call's own dbIds:[] makes it currently empty), modelC (a genuinely non-empty target,
+  // separate from source, so its own real TLAS build can't be confused with modelB's).
+  const modelA = { ...buildMockModel([{ dbId: 1, fragments: [10] }], new Map([[10, { geometryIndex: 0, matrix: translationMatrix([0, 0, 0]), bounds: boundsOf(box(2, 2, 2), [0, 0, 0]) }]])).model, id: 1, getUnitScale: () => 1 };
+  const modelB = { ...buildMockModel([{ dbId: 1, fragments: [100] }], new Map([[100, { geometryIndex: 0 }]])).model, id: 2, getUnitScale: () => 1 };
+  const modelC = { ...buildMockModel([{ dbId: 1, fragments: [200] }], new Map([[200, { geometryIndex: 0, matrix: translationMatrix([0, 0, 0]), bounds: boundsOf(box(2, 2, 2), [0, 0, 0]) }]])).model, id: 3, getUnitScale: () => 1 };
+  const viewer = {
+    impl: {
+      getRenderProxy: (queriedModel, fragId) => (queriedModel === modelA && fragId === 10) || (queriedModel === modelC && fragId === 200)
+        ? { geometry: box(2, 2, 2) } : null,
+    },
+  };
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const leaseB = world.admitModel(modelB);
+  // Historically populate modelB's epoch with SOME co-located fragments (a prior call/mechanism) --
+  // this is the "historically populated" state finding #1 describes. The precise assertion below
+  // (only ONE tlasBuild, for modelC) directly proves modelB's group is skipped BEFORE
+  // _getTlasEntryForEpoch ever runs for it -- kept well within maxCollisionInstancesPerEpoch so
+  // this call's own (zero-growth) admission for modelB's epoch doesn't trip the UNRELATED
+  // bucket-capacity ceiling.
+  const historical = new Map();
+  for (let i = 0; i < 100; i++) {
+    const fragmentId = 900_000 + i;
+    historical.set(fragmentId, {
+      fragmentId, geometryIdentity: { loadEpoch: leaseB.epoch, geometryIndex: 0 },
+      worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [0, 0, 0] },
+      ownerDbId: 999,
+    });
+  }
+  world._recordPlacement(leaseB.epoch, modelB, historical, new Map());
+  // Directly seed _instanceCache too (admitCollisionInstances would reject > maxCollisionInstancesPerEpoch;
+  // this test only needs the TLAS's own raw traversal content, not real per-instance admission).
+  const bucket = new Map();
+  for (const [fragmentId, rec] of historical) bucket.set(fragmentId, { fragmentId, geometryIdentity: rec.geometryIdentity });
+  world._instanceCache.set(leaseB.epoch, bucket);
+
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [] }, { model: modelC, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  assert.equal(result.pairs.length, 1, 'the real cross-model clash (modelA vs modelC) is still found');
+  assert.equal(result.pairs[0].target.model, modelC);
+  assert.equal(result.statistics.tlasBuilds, 1, 'exactly ONE build -- modelC\'s own -- modelB\'s empty target group must never even fetch its TLAS');
+});
+
+test('WHOLE-BATCH REVIEW finding #2 (Medium): a foreign revision bump arriving during getEntry throws ModelPlacementChangedError immediately, before _getTlasEntryForEpoch retries again', async () => {
+  const world = await freshWorld(null, { now: () => 0 });
+  world._modelByEpoch.set(1, {});
+  world._liveEpochs.add(1);
+  world._placementRevisionByEpoch.set(1, 1);
+  let getEntryCalls = 0;
+  world._tlasCache.getEntry = async (epoch, expectedRevision) => {
+    getEntryCalls++;
+    // A DIFFERENT concurrent call bumps the revision WHILE this getEntry call is "in flight".
+    world._placementRevisionByEpoch.set(1, 2);
+    return { bvh: { which: 'stale' }, outcome: 'built', builtAtRevision: expectedRevision };
+  };
+  world._tlasCache.getBuiltAtRevision = () => 2;
+  const statistics = { tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0 };
+  // A REAL composite checkpoint (Task 14), armed for epoch 1, snapshotting revision 1 -- exactly
+  // what findClashes itself would construct for a genuine broadPhase:'tlas' call touching this epoch.
+  const checkpoint = world.createCompositeCheckpointPort([{ model: {}, epoch: 1 }], new Set([1]));
+  let caught = null;
+  try {
+    await world._getTlasEntryForEpoch(1, checkpoint, statistics);
+  } catch (err) {
+    caught = err;
+  }
+  const { ModelPlacementChangedError } = await import('../collision/errors.js');
+  assert.ok(caught instanceof ModelPlacementChangedError,
+    `expected ModelPlacementChangedError reported immediately, got ${caught?.constructor?.name}`);
+  assert.equal(getEntryCalls, 1, 'must throw on the FIRST detection, never silently retry past a foreign revision bump');
 });
