@@ -6,8 +6,10 @@
 // true owning dbId via first-discovery-wins. spec:1080-1146 (ViewerModelAdapter), spec:2838-3013
 // (Data Flow step 3 extraction).
 
-import { maxChildrenPerNode, maxFragmentsPerDbId } from '../constants.js';
+import { maxChildrenPerNode, maxFragmentsPerDbId, maxCollisionInstancesPerEpoch } from '../constants.js';
 import { createGeometryIdentity } from '../geometry/GeometryIdentity.js';
+import { CapacityExceededError } from '../errors.js'; // Task 1's relocation -- NOT from CollisionWorld.js,
+                                                        // which would create a circular import.
 
 export class ExtractionLimitExceededError extends Error {
   constructor(limit, requestedDbId, node, observedCount) {
@@ -149,4 +151,120 @@ export async function extractFragments(model, requestedDbIds, loadEpoch, { check
   }
 
   return results;
+}
+
+// Mirrors CollisionWorld.js's own private `modelIdOf` helper verbatim. Not imported from there --
+// importing CollisionWorld.js here would create a circular import (CollisionWorld.js already
+// imports extractFragments from this module), and this one-line helper is cheap enough to
+// duplicate rather than restructure either module to share it.
+function modelIdOf(model) {
+  return model && model.id !== undefined ? model.id : model;
+}
+
+// extractAllFragments: a whole-model enumeration primitive -- a DIFFERENT walk shape from
+// extractFragments's per-dbId subtree walk above ("every live fragment this model holds," not a
+// parameterization of it, design spec §3.3). A new sibling export; extractFragments itself is
+// untouched by this addition.
+//
+// Accessor names and diagnostic policy below are binding per
+// docs/superpowers/specs/m2-extractAllFragments-viewer-evidence.md's "Resolved for Task 5"
+// section. In particular: the design spec's own candidate accessor
+// (`instanceTree.findNodeForFragId(fragId)`) does NOT exist in the real Viewer build (confirmed
+// absent from source and from a live prototype-chain scan) -- the real reverse lookup is
+// `fragList.getDbIds(fragId)`. See that evidence note for the full citation trail.
+//
+// "Culled" fragments are deliberately NOT diagnosed: the evidence note confirms there is no
+// stored per-fragment/per-node state for camera-frustum culling anywhere in this Viewer build, so
+// inventing an unfireable 'fragment-culled' reason would fabricate a diagnostic with no
+// verifiable backing state. Likewise 'fragment-index-hole' is not implemented as a reachable
+// branch: every backing array (vizflags, boxes, fragments.fragId2dbId) is dense and pre-sized to
+// getCount() in this build, so there is no structural index-range hole to detect.
+export async function extractAllFragments(model, loadEpoch, { checkpoint, THREE = globalThis.THREE } = {}) {
+  // Preflight checkpoint, BEFORE any model read -- mirrors extractFragments's own "checkpoint
+  // validates liveness before this code ever touches the model" discipline (see the comment above
+  // extractFragments's own first `model.getObjectTree()` read). checkpoint()'s liveness validation
+  // (WorldDisposedError/ModelEvictedError) is always synchronous on entry, whether or not a yield
+  // follows (collision/scheduler.js's `validate()` call runs unconditionally before the fast-path
+  // `undefined` return), so this costs nothing on the common fast path and closes a real gap that
+  // reading fragList/instanceTree/getCount() before any checkpoint call would otherwise leave open:
+  // touching a possibly-evicted model before any liveness check has run at all.
+  if (checkpoint) {
+    const pending = checkpoint({ label: 'whole-model-enumeration-start' });
+    if (pending) await pending;
+  }
+
+  const fragList = model.getFragmentList();
+  const instanceTree = model.getObjectTree(); // used only for the hidden check below
+  const count = fragList.getCount(); // dense range 0..count-1, no index-range holes in this build
+
+  // Enumeration-capacity bound: maxCollisionInstancesPerEpoch also serves as a ceiling on
+  // fragList.getCount() itself, checked BEFORE any fragment is visited -- not only checked against
+  // successful record insertions. Without this, a model reporting a very large getCount() with most
+  // fragments landing in one of the diagnostic branches below (not loaded / unresolvable / hidden)
+  // could scan the entire range and accumulate an unbounded diagnostics array without ever tripping
+  // a successful-insertion-count check.
+  if (count > maxCollisionInstancesPerEpoch) {
+    throw new CapacityExceededError('whole-model-enumeration', {
+      loadEpoch,
+      requested: count,
+      limit: maxCollisionInstancesPerEpoch,
+    });
+  }
+
+  const modelId = modelIdOf(model);
+  const records = new Map(); // fragmentId -> ExtractedFragmentRecord, identical shape to extractFragments's own
+  const diagnostics = []; // ClashDiagnostic[] -- same shape _runNarrowPhasePair's diagnoseFragmentOnce already
+                           // produces (CollisionWorld.js:822-830): { scope, reason, role, fragment }.
+  let scratchMatrix = null;
+  let scratchBox = null;
+
+  // role is always 'target' for this primitive -- whole-model extraction is only ever used for
+  // target scope in M2 (per this task's own interface contract).
+  const pushDiagnostic = (reason, dbId, fragId) => {
+    diagnostics.push({ scope: 'fragment', reason, role: 'target', fragment: { modelId, dbId, fragId } });
+  };
+
+  for (let fragId = 0; fragId < count; fragId++) {
+    if (checkpoint) {
+      const pending = checkpoint({ fragId, label: 'whole-model-fragment-visit' });
+      if (pending) await pending;
+    }
+
+    // 1. Excluded from loading, or unloaded -- checked BEFORE any owner lookup at all, so this
+    // diagnostic's dbId is always null (never resolved).
+    if (fragList.isNotLoaded(fragId)) {
+      pushDiagnostic('fragment-not-loaded', null, fragId);
+      continue;
+    }
+
+    // 2. Owning dbId resolution. A plain number for a standard 3D/OTG load; `undefined` when
+    // unresolvable; an ARRAY for a 2D-loaded model (2D support is explicitly out of scope for M2 --
+    // routed into the SAME diagnostic reason as `undefined`, never picked-one-of/crashed/stored as
+    // a number).
+    const ownerDbId = fragList.getDbIds(fragId);
+    if (ownerDbId === undefined || Array.isArray(ownerDbId)) {
+      pushDiagnostic('fragment-owner-unresolvable', null, fragId);
+      continue;
+    }
+
+    // 3. Hidden -- checked only AFTER ownerDbId has resolved to a real number. dbId is the real
+    // resolved ownerDbId here, never null.
+    if (instanceTree.isNodeHidden(ownerDbId)) {
+      pushDiagnostic('fragment-hidden', ownerDbId, fragId);
+      continue;
+    }
+
+    // 4. Build the record -- same readWorldMatrix/readWorldBounds helpers extractFragments already
+    // uses (reused verbatim, never duplicated), plus the same geometry-identity construction.
+    if (!scratchMatrix) {
+      scratchMatrix = new THREE.Matrix4();
+      scratchBox = new THREE.Box3();
+    }
+    const worldMatrix = readWorldMatrix(fragList, fragId, scratchMatrix);
+    const worldBounds = readWorldBounds(fragList, fragId, scratchBox);
+    const geometryIdentity = createGeometryIdentity(loadEpoch, fragList.getGeometryId(fragId));
+    records.set(fragId, Object.freeze({ fragmentId: fragId, geometryIdentity, worldMatrix, worldBounds, ownerDbId }));
+  }
+
+  return { records, diagnostics };
 }

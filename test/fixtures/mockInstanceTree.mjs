@@ -38,6 +38,27 @@ const IDENTITY_MATRIX4 = new THREE.Matrix4();
  *   [options.settleObjectTree]  how a `getObjectTree(onSuccess, onError)` call settles. Default:
  *   `onSuccess(instanceTree)` synchronously. Override to defer it (capture the callbacks and fire
  *   them later), or to drive the onError path.
+ * @param {number} [options.fragmentCount]  what `fragList.getCount()` reports, for
+ *   extractAllFragments's whole-model enumeration walk (Task 5). Defaults to one past the highest
+ *   fragId owned by any node in `rootNodes` (or 0 if none) -- i.e. "exactly as many fragments as
+ *   the tree describes." Set this explicitly higher than any fragId the tree actually owns to
+ *   simulate a real Viewer's sparse `fragId2dbId` lookup miss (`fragList.getDbIds(fragId) ===
+ *   undefined` for an in-range fragId nothing in the tree claims) -- see
+ *   `options.ownerDbIdOverrides` below for a more direct way to force the same outcome, or set it
+ *   far above `maxCollisionInstancesPerEpoch` to exercise the capacity precheck cheaply, with no
+ *   need to materialize a huge tree.
+ * @param {Iterable<number>} [options.hiddenDbIds]  dbIds for which `instanceTree.isNodeHidden`
+ *   reports true. Deliberately keyed by dbId, not fragId: `isNodeHidden` is a per-dbId,
+ *   `ObjectTree`-level accessor in the real Viewer (docs/superpowers/specs/
+ *   m2-extractAllFragments-viewer-evidence.md), never a `FragmentList` one.
+ * @param {Map<number, (number|number[]|undefined)>} [options.ownerDbIdOverrides]  per-fragId
+ *   overrides for what `fragList.getDbIds(fragId)` returns, taking precedence over the tree-derived
+ *   default. An explicit `undefined` value forces an unresolvable owner even for a fragId the tree
+ *   otherwise assigns; an array value simulates a 2D-loaded model's multi-dbId return shape (out of
+ *   scope for M2 -- extractAllFragments must diagnose it, never crash or store the array).
+ * @param {Iterable<number>} [options.notLoadedFragIds]  fragIds for which `fragList.isNotLoaded`
+ *   reports true (excluded from loading, or unloaded -- a real, distinct fragment lifecycle state,
+ *   never a structural index-range hole; see the evidence note above).
  */
 export function buildMockModel(rootNodes, fragmentGeometry, options = {}) {
   const stats = options.stats || {
@@ -51,17 +72,39 @@ export function buildMockModel(rootNodes, fragmentGeometry, options = {}) {
   // calls the SAME method with no arguments to fetch the tree, so only a call carrying callbacks is
   // evidence of the readiness WAIT having run.
   if (stats.getObjectTreeWithCallbacksCalls === undefined) stats.getObjectTreeWithCallbacksCalls = 0;
+  // Task 5 (extractAllFragments) counters -- guarded individually, exactly like
+  // getObjectTreeWithCallbacksCalls above, so a caller-supplied custom `stats` object that predates
+  // these fields gets them initialized to 0 rather than incrementing into NaN.
+  if (stats.getCountCalls === undefined) stats.getCountCalls = 0;
+  if (stats.getDbIdsCalls === undefined) stats.getDbIdsCalls = 0;
+  if (stats.isNotLoadedCalls === undefined) stats.isNotLoadedCalls = 0;
+  if (stats.isNodeHiddenCalls === undefined) stats.isNodeHiddenCalls = 0;
   const objectTreeReady = options.objectTreeReady ?? true;
   const settleObjectTree = options.settleObjectTree
     || ((onSuccess, _onError, tree) => onSuccess(tree));
+  const hiddenDbIds = new Set(options.hiddenDbIds || []);
+  const ownerDbIdOverrides = options.ownerDbIdOverrides || new Map();
+  const notLoadedFragIds = new Set(options.notLoadedFragIds || []);
 
   const nodesById = new Map();
+  // fragId -> owning dbId, derived from the WHOLE tree (every node, not just a requested subtree --
+  // extractAllFragments enumerates every fragment the model holds, independent of which dbIds a
+  // caller might separately request via extractFragments). First occurrence wins, mirroring
+  // extractFragments's own first-discovery-wins convention, even though a well-formed tree should
+  // never assign one fragId to two different owning nodes in the first place.
+  const fragId2dbId = new Map();
   (function index(nodes) {
     for (const node of nodes) {
       nodesById.set(node.dbId, node);
+      for (const fragId of node.fragments || []) {
+        if (!fragId2dbId.has(fragId)) fragId2dbId.set(fragId, node.dbId);
+      }
       if (node.children) index(node.children);
     }
   })(rootNodes);
+
+  const fragmentCount = options.fragmentCount
+    ?? (fragId2dbId.size > 0 ? Math.max(...fragId2dbId.keys()) + 1 : 0);
 
   function enumNodeFragmentsRecursive(node, cb) {
     for (const fragId of node.fragments || []) cb(fragId);
@@ -106,6 +149,13 @@ export function buildMockModel(rootNodes, fragmentGeometry, options = {}) {
       stats.getChildCountCalls++;
       throw new Error('getChildCount must never be called -- removed per invariant-audit finding C-1');
     },
+    // Task 5 (extractAllFragments): the ObjectTree-level, officially-documented hidden check
+    // (docs/superpowers/specs/m2-extractAllFragments-viewer-evidence.md, Evidence §3). Keyed by
+    // dbId, checked only AFTER a fragment's owner has resolved -- never by fragId.
+    isNodeHidden(dbId) {
+      stats.isNodeHiddenCalls++;
+      return hiddenDbIds.has(dbId);
+    },
   };
 
   const fragmentList = {
@@ -134,6 +184,28 @@ export function buildMockModel(rootNodes, fragmentGeometry, options = {}) {
     getGeometryId(fragId) {
       const g = fragmentGeometry.get(fragId);
       return g ? g.geometryIndex : fragId;
+    },
+    // Task 5 (extractAllFragments) accessors below -- extractFragments's own per-dbId subtree walk
+    // never calls any of these; they exist only for the whole-model enumeration primitive's tests.
+    getCount() {
+      stats.getCountCalls++;
+      return fragmentCount;
+    },
+    // Real Viewer behavior: `this.fragments.fragId2dbId[fragId]`, a plain number for a standard
+    // 3D/OTG load, `undefined` for an in-range fragId nothing claims. `options.ownerDbIdOverrides`
+    // takes precedence so a single test can force any of the three shapes (number/array/undefined)
+    // without needing a bespoke tree.
+    getDbIds(fragId) {
+      stats.getDbIdsCalls++;
+      if (ownerDbIdOverrides.has(fragId)) return ownerDbIdOverrides.get(fragId);
+      return fragId2dbId.get(fragId);
+    },
+    // Real Viewer behavior: true means excluded from loading or unloaded -- a genuine, distinct
+    // lifecycle flag (`vizflags[frag] & MeshFlags.MESH_NOTLOADED`), never a structural index-range
+    // hole (see the evidence note cited at the top of extractAllFragments's own module comment).
+    isNotLoaded(fragId) {
+      stats.isNotLoadedCalls++;
+      return notLoadedFragIds.has(fragId);
     },
   };
 
