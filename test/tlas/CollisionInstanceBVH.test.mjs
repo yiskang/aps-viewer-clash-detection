@@ -102,6 +102,26 @@ test('queryBox stops early and reports truncated when onCandidate returns "stop"
   assert.equal(calls, 2);
 });
 
+test('queryBox stops early and reports truncated when onLeafRange returns "stop", never reaching onCandidate for that leaf', () => {
+  // Task 13 (M2 Batch 4): the TLAS candidate-budget check must be able to halt traversal as soon as
+  // a leaf's RAW range (onLeafRange's own count, upstream of the per-primitive exact-overlap gate)
+  // would exceed the budget -- even when NONE of that leaf's primitives ever reach onCandidate (a
+  // real possibility: onCandidate only fires for primitives that individually pass the exact
+  // overlap re-test, so a leaf whose primitives happen to fail that re-test would otherwise never
+  // give the caller a chance to signal 'stop' via onCandidate at all). Honoring 'stop' from
+  // onLeafRange closes that gap; existing callers that never return anything from onLeafRange
+  // (every test above) are unaffected -- `undefined === 'stop'` is always false.
+  const records = [rec(1, [0, 0, 0], [1, 1, 1]), rec(2, [0, 0, 0], [1, 1, 1]), rec(3, [0, 0, 0], [1, 1, 1])];
+  const bvh = new CollisionInstanceBVH(records);
+  let candidateCalls = 0;
+  const { truncated } = bvh.queryBox([0, 0, 0], [1, 1, 1], {
+    onLeafRange: () => 'stop',
+    onCandidate: () => { candidateCalls++; },
+  });
+  assert.equal(truncated, true);
+  assert.equal(candidateCalls, 0, 'onCandidate must never run for a leaf whose own onLeafRange already signaled stop');
+});
+
 test('a callback exception during queryBox is contained: traversal cleans up, then rethrows after returning', () => {
   const records = [rec(1, [0, 0, 0], [1, 1, 1])];
   const bvh = new CollisionInstanceBVH(records);

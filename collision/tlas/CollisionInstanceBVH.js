@@ -82,8 +82,9 @@ export class CollisionInstanceBVH extends BVH {
             return false; // not a match -- keep traversing (irrelevant for a leaf, but correct)
           }
 
+          let leafSignal;
           try {
-            onLeafRange?.(offset, count);
+            leafSignal = onLeafRange?.(offset, count);
           } catch (err) {
             // Callback-exception containment (spec §5.2, §9.3.3) applies to BOTH callbacks, not
             // just onCandidate -- codex-advisor (2026-09-06) flagged the original draft only
@@ -91,6 +92,18 @@ export class CollisionInstanceBVH extends BVH {
             // try/finally-guarded.
             fail(err);
             return true; // stop this range, and the whole traversal, immediately
+          }
+          if (leafSignal === 'stop') {
+            // Task 13 (M2 Batch 4): honoring 'stop' from onLeafRange, not just onCandidate, closes
+            // a real gap -- the TLAS candidate-budget check must fire on RAW leaf expansion (spec
+            // §9.3.1, "upstream of both filters"), but onCandidate only runs for primitives that
+            // individually pass the exact-overlap re-test below, which a budget-exceeding leaf's
+            // own primitives are not guaranteed to do. Purely additive: every existing caller's
+            // onLeafRange returns undefined, and `undefined === 'stop'` is always false, so this
+            // changes nothing for them (codex-advisor, 2026-09-06).
+            truncated = true;
+            return true; // stop this range, and the whole traversal, immediately -- never reaches
+                         // the per-primitive loop below for this leaf.
           }
 
           for (let i = offset; i < offset + count; i++) {
