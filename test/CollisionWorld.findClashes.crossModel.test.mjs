@@ -103,6 +103,16 @@ async function freshWorld(viewer = null, extra = {}) {
 }
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 
+// A box with one face's two triangles removed from the index: still ONE edge-connected component,
+// but not a closed manifold -- GeometryConnectivity reports closedManifold: [false] for it. This is
+// the geometry that makes `unverified-parity-operand` (a PAIR-scoped diagnostic, via `attach()`)
+// reachable end-to-end, per test/CollisionWorld.findClashes.dispatch.test.mjs's own identical helper.
+function openBox(w, h, d) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  g.setIndex(Array.from(g.index.array).slice(6));
+  return g;
+}
+
 // === Step 1's tests, filled in for real =========================================================
 
 test('findClashes no longer rejects source.model !== target.model', async () => {
@@ -341,33 +351,51 @@ test('source self-exclusion is assembly-rooted (spec §4.4): excludes by fragmen
   // exclusion is keyed by (loadEpoch, fragmentId) membership in the source's own extracted set, never
   // by dbId-level equality against the literal source.dbIds the caller supplied.
   const { modelA, viewer } = makeTwoModelFixture({
-    rootNodesA: [{
-      dbId: 0,
-      children: [
-        { dbId: 10, fragments: [100] },
-        { dbId: 20, fragments: [200] },
-        { dbId: 30, fragments: [300] }, // a third child, NOT in target scope -- must survive untouched
-      ],
-    }],
+    rootNodesA: [
+      {
+        dbId: 0,
+        children: [
+          { dbId: 10, fragments: [100] },
+          { dbId: 20, fragments: [200] },
+        ],
+      },
+      // A GENUINELY separate top-level dbId, outside the assembly's own subtree -- the source's
+      // dbIds:[0] walk never reaches it, so it is NOT a source-owned fragment and self-exclusion must
+      // NOT touch it. Its own box is placed far away (disjoint AABB) so it still correctly produces
+      // zero pairs, but for the ordinary "AABB miss" reason -- not because of self-exclusion. This is
+      // what proves self-exclusion doesn't over-exclude / leak onto candidates it has no business
+      // touching.
+      { dbId: 40, fragments: [400] },
+    ],
     fragSpecsA: {
       100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
       200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
-      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [50, 0, 0] }, // far away, disjoint AABB
+      400: { geometryIndex: 2, geometry: box(2, 2, 2), at: [50, 0, 0] }, // far away, disjoint AABB
     },
   });
   const world = await freshWorld(viewer, { now: frozenClock() });
   const result = await world.findClashes({
     source: { model: modelA, dbIds: [0] }, // only the PARENT assembly dbId requested
-    target: { model: modelA, dbIds: [10, 20, 30] }, // child dbIds the assembly walk itself discovered
+    // Target scope: dbIds 10 and 20 (the assembly's own children, source-owned -- must be
+    // self-excluded) PLUS dbId 40 (genuinely outside the source's own extraction -- must survive
+    // self-exclusion and be tested on its own merits).
+    target: { model: modelA, dbIds: [10, 20, 40] },
     mode: 'surface-intersection', groupBy: 'dbId',
   });
   // Every fragment the source's own assembly walk discovered (100 under dbId 10, 200 under dbId 20)
   // is excluded from the target side, even though the source's own query.source.dbIds named only the
-  // parent (0), never 10 or 20 directly. dbId 30's fragment is far away (disjoint AABB) and was never
-  // part of the source's own extraction to begin with, so it correctly produces zero pairs on its own
-  // merits, not because of self-exclusion.
+  // parent (0), never 10 or 20 directly. dbId 40's fragment is NOT source-owned (self-exclusion
+  // correctly leaves it alone) and is far away (disjoint AABB), so it correctly produces zero pairs
+  // on its own merits, not because of self-exclusion.
   assert.deepEqual(result.pairs, []);
-  assert.equal(result.statistics.broadPhasePairs, 0, 'every candidate pair was self-excluded before being counted');
+  // broadPhasePairs === 2, not 0: the source's own dbIds:[0] walk discovers TWO fragments (100 under
+  // child 10, 200 under child 20), so sourceInstances.length === 2. The target group has 3 instances
+  // (fragments 100, 200, 400 under dbIds 10/20/40). Every (source, target) pair whose TARGET is
+  // fragment 100 or 200 is self-excluded (2 target instances x 2 source instances = 4 pairs, never
+  // counted). Only target fragment 400 (dbId 40) survives self-exclusion, paired against EACH of the
+  // 2 source instances = 2 counted pairs (each then fails _testBroadPhasePair on its own
+  // disjoint-AABB merits) -- proving self-exclusion doesn't over-exclude dbId 40's own candidates.
+  assert.equal(result.statistics.broadPhasePairs, 2, 'only dbId 40s 2 candidates (one per source instance) survive self-exclusion');
 });
 
 test('dedup key is epoch-qualified: the same numeric dbId in two different target models both clash with source and are NOT collapsed', async () => {
@@ -463,6 +491,40 @@ test('operand-local model/epoch: a fragment-scoped diagnostic on a cross-model p
   const targetDiagnostic = result.statistics.diagnostics.find((d) => d.scope === 'fragment' && d.role === 'target');
   assert.ok(targetDiagnostic, 'the oversized target fragment must be diagnosed');
   assert.equal(targetDiagnostic.fragment.modelId, modelB.id, 'target-side diagnostic must name modelB, never modelA');
+});
+
+test('operand-local model/epoch: a PAIR-scoped diagnostic (attach()) on a cross-model pair names each side\'s CORRECT own model', async () => {
+  // The test above exercises `diagnoseFragmentOnce` (a FRAGMENT-scoped diagnostic, via `buildOne`'s
+  // oversized-geometry path) -- it does NOT exercise `attach()`, which is what produces PAIR-scoped
+  // diagnostics (`unverified-parity-operand`, `crossing-budget-exhausted`, etc.) and is the OTHER call
+  // site Task 7 changed to use `sourceOperand.model`/`targetOperand.model` instead of one shared
+  // `model`. This test closes that gap: source is a small closed box strictly inside modelB's own
+  // OPEN target box (not a closed manifold) under `containment` mode -- exactly the
+  // `unverified-parity-operand` fixture shape test/CollisionWorld.findClashes.dispatch.test.mjs's own
+  // single-model test uses, ported cross-model.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 10, fragments: [100] }],
+    fragSpecsA: { 100: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 20, fragments: [200] }],
+    fragSpecsB: { 200: { geometryIndex: 0, geometry: openBox(6, 6, 6), at: [0, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [10] },
+    target: { targets: [{ model: modelB, dbIds: [20] }] },
+    mode: 'containment', groupBy: 'dbId',
+  });
+  const parity = result.statistics.diagnostics.find((d) => d.reason === 'unverified-parity-operand');
+  assert.ok(parity, `expected unverified-parity-operand, got ${JSON.stringify(result.statistics.diagnostics.map((d) => d.reason))}`);
+  assert.equal(parity.scope, 'pair');
+  assert.equal(parity.role, 'target');
+  // Each side is attributed to its OWN model -- never one shared value (the exact bug a leftover
+  // single shared `model` param inside `attach()` would produce).
+  assert.equal(parity.sourceFragment.modelId, modelA.id, 'sourceFragment must name modelA');
+  assert.equal(parity.targetFragment.modelId, modelB.id, 'targetFragment must name modelB, never modelA');
+  assert.equal(parity.sourceFragment.dbId, 10);
+  assert.equal(parity.targetFragment.dbId, 20);
+  assert.equal(parity.fragment, undefined, 'a pair-scoped diagnostic must not use the fragment field');
 });
 
 test('single-model dedup-key spot-check: the new epoch-qualified key partitions identically to the old bare dbId:dbId key', async () => {
