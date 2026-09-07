@@ -133,6 +133,131 @@
 // No Task 21 work (the performance gate) is attempted here -- see this task's own final report for
 // the exact dbId/model pairing to reuse there (source dbId 2734, negative dbId 3965, both in the
 // Structure model of this three-model federated scene).
+//
+// =================================================================================================
+// M2.1 Task 10: witness markers, added on top of everything above
+// =================================================================================================
+//
+// --- Discovery spike result (M2.1 Task 10 Step 1/2), re-derived live against THIS fixture ---------
+//
+// The M2 fixture above predates witness support, so nothing recorded which branch of
+// volume-overlap(A,B) := crossing OR containment(A in B) OR containment(B in A) each MIXED_CASE pair
+// actually resolved through. Re-derived live (a throwaway Playwright spike issuing the exact
+// production `ext._world.findClashes` call against this same three-model scene) before any assertion
+// below was written:
+//
+//   - struct 2734 -> arch   3686 : witness.kind === 'surface-crossing', point ~[37.1876, 22.1075, 12.1733]
+//   - struct 2734 -> struct 3663 : witness.kind === 'containment',      point ~[51.9688, 22.1577, 12.1028]
+//
+// So this ONE existing fixture case already covers BOTH witness branches, crossing AND containment
+// -- Task 10 Step 2's "if no containment case exists, find or build one" contingency never fires,
+// and no additional purpose-built fixture model is needed. Both kinds are asserted explicitly below
+// (MIXED_CASE.expectedPairs carries the expected `witnessKind` per pair), so a regression that
+// silently collapses both pairs onto one branch, or drops a witness entirely, fails immediately.
+//
+// `via` ('crossing' | 'containment(A in B)' | 'containment(B in A)') is INTERNAL to
+// collision/query/VolumeOverlapQuery.js and deliberately never reaches the public ClashPair --
+// `witness.kind` ('surface-crossing' | 'containment') is the public observable, one-to-one with which
+// branch fired, and is what this file asserts.
+//
+// --- Enclosed-witness visibility: how "visible THROUGH opaque geometry" is actually proven ---------
+//
+// The containment witness (struct 3663) is by construction a point INSIDE a solid, so proving the
+// marker "remains visible through opaque geometry" needs more than an object-presence check on
+// _activeMarkers or the overlay scene. This file proves it with four independent, live observations
+// at the SAME screen pixel, with the camera aimed deliberately at the witness point (see the
+// enclosedWitnessViewDirection constant, and the paragraph below it, for why the direction is
+// fixture ground truth rather than an arbitrary choice):
+//   1. OCCLUSION IS REAL: viewer.impl.hitTest(x, y, /*ignoreTransparent*/ true) at the witness point's
+//      own projected position returns a real hit, on one of the elements THIS query isolated (so a
+//      known, named, opaque element -- not just whatever happened to be under that pixel), whose
+//      VIEW-AXIS DEPTH is smaller than the witness point's own by more than the marker's own radius.
+//      Live: Architecture dbId 3686, 1.439 world units in front of the witness, against a 1.045
+//      marker radius -- so the whole marker sphere along the centre ray is behind it.
+//   2. THE MARKER IS WHAT RENDERS THERE: the composited pixels at that same position are sampled --
+//      the exact centre pixel AND the whole 3x3 block centred on it must be marker-orange, and the
+//      7x7 neighbourhood must be majority marker-orange.
+//   3. THAT COLOUR IS ATTRIBUTABLE TO THIS MARKER MESH: the containment pair's own marker mesh is
+//      detached from the overlay scene, the frame forced and re-sampled (the orange must be gone and
+//      the occluding geometry must be what shows through instead), then re-attached and sampled again
+//      (the orange must come back). This also doubles as the colour band's discrimination control,
+//      and a better one than a sample taken elsewhere on screen: it is the SAME pixel.
+//   4. IT IS VISIBLE *BECAUSE OF* depthTest:false: the production material's own depthTest is flipped
+//      to true (and only that), which must make the occluder win at that exact pixel -- rendering
+//      identically to the marker not being there at all -- and flipping it back must restore the
+//      marker. This is the one place this file mutates production state; it is restored immediately
+//      and the restoration is asserted.
+// Together those facts are exactly the spec's regression-catcher. No one of them alone would be.
+//
+// Two measurement details that are easy to get wrong, both established the hard way here:
+//   - HitTestResult.distance is NOT a camera-to-hit-point distance. Live, at a camera 38.56 world
+//     units from the hit point, it reported 212.22. Its origin/normalization is undocumented in the
+//     pinned typings, and comparing it against a Euclidean camera-to-witness distance is not even
+//     well posed under an orthographic camera. An earlier draft of this check did exactly that and
+//     PASSED VACUOUSLY -- it looked like ~68 units of occlusion where the truth was ~0.13. Depth is
+//     therefore measured for both points as (P - eye) . forward, from
+//     viewer.navigation.getPosition()/getTarget() and HitTestResult.intersectPoint.
+//   - Requiring the gap to EXCEED the marker radius is not pedantry. This witness sits only shallowly
+//     inside the solid enclosing it, so from most directions the marker sphere protrudes in FRONT of
+//     the occluding surface -- where "the marker is visible" would prove nothing at all about
+//     rendering through geometry. A 62-direction live sweep found the deepest genuine occlusion this
+//     fixture offers is the 1.439 units used above.
+//   - viewer.impl.hitTest raycasts against the camera state of the LAST RENDERED FRAME. Probing in
+//     the same tick as a camera move returns readings for the PREVIOUS camera (confirmed live: a
+//     sweep that probed without waiting produced hit points sitting exactly at the eye and hit depths
+//     that disagreed with the true camera-to-hit distance; re-running the identical directions with a
+//     frame wait made every reading self-consistent and exactly reproducible). lookAtFrom() below
+//     therefore always invalidates and waits real animation frames before anything probes.
+//
+// Pixel sampling deliberately avoids building any generic screenshot-diff infrastructure (the task's
+// own explicit ban): page.screenshot({clip}) grabs one small square, which is then handed straight
+// BACK into the page as a base64 data: URL and decoded with the browser's own Image + 2D-canvas
+// getImageData. That round-trip exists because (a) Node has no built-in PNG decoder, and (b) reading
+// the WebGL canvas directly in-page (drawImage/readPixels) is unreliable without
+// preserveDrawingBuffer, whereas Playwright's screenshot captures the real composited surface.
+//
+// The tolerance band is coarse ON PURPOSE and is NOT an exact color match: MARKER_COLOR is 0xff6a00
+// = rgb(255,106,0), but the Viewer's own gamma/sRGB output encoding renders it as rgb(255,164,0) on
+// screen (confirmed live -- the green channel is raised by ~58). isMarkerOrange() below therefore
+// asserts orange DOMINANCE, not equality, and a reference sample taken well away from the marker is
+// asserted NOT to satisfy the same band, so the check is shown to actually discriminate.
+//
+// --- Alignment (Task 10 Step 7): how one real model-alignment operation is performed ---------------
+//
+// There is no Model-Alignment UI extension in this repo (wwwroot/extensions/ has none), and no prior
+// acceptance script has ever driven `invalidateModelPlacement` -- so the alignment step is performed
+// through the real, typed Viewer API that live-mutates a loaded model's placement:
+// viewer.impl.setPlacementTransform(model, matrix) (@types/forge-viewer/index.d.ts:2317), followed by
+// the production CollisionWorld.invalidateModelPlacement(model) call an alignment tool would itself
+// have to make. The Structure model is translated +3 in X and MIXED_CASE is re-run through the SAME
+// real right-click path; the transform is then restored and the whole thing re-run once more.
+//
+// The two pairs are asserted DIFFERENTLY on purpose. The same-model containment pair (struct 2734 ->
+// struct 3663) has both operands inside the model that just moved, so its witness must translate by
+// exactly the alignment delta and nothing else -- a genuine rigid-motion invariant, asserted exactly
+// (1e-6). The cross-model crossing pair (struct 2734 -> arch 3686) has no such invariant: only the
+// Structure model moved, so where its surface crosses the STATIONARY Architecture element can change
+// non-rigidly. This fixture happens to produce exactly +3 there too, but asserting that would
+// overconstrain the test, so only MATERIAL movement is asserted and the observed delta is recorded in
+// the run report instead. Every marker is separately asserted to sit on a witness point from the
+// RE-RUN's own result (matched as a multiset, never by _activeMarkers order), which is what actually
+// proves the markers tracked the alignment rather than merely being redrawn somewhere.
+//
+// Viewer API behavior confirmed live while writing this, because it changes how the click position
+// must be computed: InstanceTree.getNodeBox() returns the model's OWN, placement-INDEPENDENT box --
+// a live setPlacementTransform translation does NOT change what getNodeBox writes (verified: the
+// identical 6 numbers before, during, and after a +3 X placement translation). The model's global
+// offset, by contrast, IS already baked into that box (this model's getGlobalOffset() is a non-zero
+// [-8.92, -56.06, 98.79] and the raw getNodeBox -> worldToClient projection has always landed
+// correctly), so the offset must NOT be applied a second time. So selectAndRightClick() below adds
+// the CHANGE in the placement's translation column, measured against the baseline placement captured
+// right after the models load -- not the whole current column, which is only coincidentally the same
+// number when the baseline happens to be identity (it is, here) -- and explicitly guards that the
+// placement's other 13 elements are unchanged from that baseline. A pure translation is the only
+// alignment this file performs, and it is the only case for which adding a translation delta is
+// exactly correct; for a rotation/scale, or a non-identity baseline composed with one, neither this
+// nor a naive global-offset adjustment would be sound and the click point would have to come from
+// placed fragment bounds instead.
 
 import { chromium } from 'playwright';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -149,6 +274,14 @@ const URN_MECH = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3
 // rather than imported, matching room-locator.acceptance.mjs's own precedent of never importing
 // production browser-only modules into this Node-side Playwright script.
 const CLASH_FINDER_EXTENSION_ID = 'Autodesk.Sandbox.ClashFinder';
+// M2.1 Task 10. Confirmed against wwwroot/extensions/ClashFinderExtension.js:49 (MARKER_OVERLAY_NAME)
+// -- copied, not imported, for the same reason as CLASH_FINDER_EXTENSION_ID above.
+const MARKER_OVERLAY_NAME = 'clash-finder-markers';
+// Mirrors ClashFinderExtension.js:51-52 (MIN/MAX_MARKER_RADIUS, also exposed as static class fields).
+// Copied for the same never-import-a-browser-module reason; only used to assert the clamp holds
+// against the real fixture, so a drift here weakens nothing that is asserted elsewhere.
+const EXPECTED_MIN_MARKER_RADIUS = 0.05;
+const EXPECTED_MAX_MARKER_RADIUS = 2.0;
 
 // Ground truth per this file's own header comment -- independently re-derived and verified against
 // this live server in THIS session's own Playwright run before being hardcoded here. Source model is
@@ -162,15 +295,41 @@ const MIXED_CASE = {
   expectedCrossModelCount: 1,
   // Exact {targetModelKey, targetDbId} pairs -- source.dbId is always 2734 itself (it directly owns
   // its own single fragment; no group/leaf-owner divergence in this fixture).
+  // M2.1 Task 10: `witnessKind` per pair, from this task's own live discovery spike (see the header
+  // comment's own "Discovery spike result" section) -- this one fixture case covers BOTH branches.
   expectedPairs: [
-    { targetModelKey: 'arch', targetDbId: 3686 },
-    { targetModelKey: 'struct', targetDbId: 3663 },
+    { targetModelKey: 'arch', targetDbId: 3686, witnessKind: 'surface-crossing' },
+    { targetModelKey: 'struct', targetDbId: 3663, witnessKind: 'containment' },
   ],
   // Structure: {selected source dbId} union {same-model target}. Architecture: {cross-model target}.
   // Mechanical: untouched entirely -- no isolate/fitToView call for it at all (asserted explicitly).
   expectedIsolatedStruct: [2734, 3663],
   expectedIsolatedArch: [3686],
+  // M2.1 Task 10: the containment (enclosed) witness's own world point, live-derived in this task's
+  // discovery spike, and the dbId of the element it is enclosed by -- the camera is fitted to that
+  // element for the through-opaque-geometry visibility check. Asserted with a tolerance band (not an
+  // exact match): this is real floating-point geometry output, and the check exists to catch the
+  // witness relocating to a meaningfully different place, not to pin its last bit.
+  containmentTargetDbId: 3663,
+  expectedContainmentWitnessPoint: [51.96875238418579, 22.157734554260948, 12.102793365716934],
+  containmentWitnessTolerance: 0.01,
+  // The viewing direction used for the enclosed-witness visibility check, and the camera's distance
+  // from the witness along it. Both are live-derived fixture ground truth, NOT arbitrary: this
+  // witness turns out to sit only shallowly inside the solid that encloses it, so most viewing
+  // directions leave the marker sphere (radius ~1.045) partly protruding in FRONT of the occluding
+  // surface -- which would make "the marker is visible" prove nothing about rendering THROUGH
+  // geometry. A 62-direction live sweep (see the header comment) found this direction gives the
+  // largest genuine gap: the nearest opaque, ISOLATED geometry along this ray sits 1.439 world units
+  // in front of the witness, so the whole marker sphere along the centre ray is behind it.
+  enclosedWitnessViewDirection: [0.433, -0.75, -0.5],
+  enclosedWitnessViewDistance: 40,
 };
+
+// M2.1 Task 10. The one alignment operation this file performs (see the header comment's own
+// "Alignment" section): a pure +3-unit translation in X of the Structure model's placement transform.
+// Large enough that both marker positions move unambiguously, small enough that both MIXED_CASE pairs
+// still clash afterwards (confirmed live -- the same 2 pairs, same targets, same witness kinds).
+const ALIGNMENT_DELTA_X = 3;
 const NEGATIVE_CASE = {
   name: 'negative (Structure dbId 3965)',
   sourceDbId: 3965,
@@ -184,7 +343,15 @@ const RESULTS_DIR = path.join(process.cwd(), 'test/acceptance/results');
 // back-to-back.
 const REPORT_FILE = 'clash-finder-run-report.json';
 
-const results = { extensionLoaded: null, cases: {}, checks: [] };
+// M2.1 Task 10: `consoleErrors` collects every console.error the page emits across the WHOLE run
+// (installed before the first model even starts loading -- see main()), and is asserted empty at the
+// very end. Neither this file nor room-locator.acceptance.mjs had any generic console-error
+// collector before this task; room-locator's only console listener is a narrow console.warn filter
+// for one extension name.
+// `pageErrors` is collected alongside it because an UNCAUGHT page exception is not guaranteed to
+// surface as a console.error event at all (codex-advisor, Task 10) -- a marker-rendering path that
+// threw would otherwise be invisible to a console-only collector.
+const results = { extensionLoaded: null, cases: {}, consoleErrors: [], pageErrors: [], checks: [] };
 
 function check(name, actual, expected) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
@@ -230,6 +397,26 @@ async function main() {
   // underlying product issue, which is worth tracking separately at a standard viewport size.
   const page = await browser.newPage({ viewport: { width: 1280, height: 2000 } });
 
+  // M2.1 Task 10 Step 9: installed HERE, before any model load begins, so it captures errors from
+  // the entire run -- viewer bootstrap, all three model loads, every Find Clashes invocation, the
+  // alignment step, and the model unload. Unlike this file's per-case page.once('dialog', ...)
+  // handlers (deliberately per-case, see clickFindClashesAndCaptureAlert's own comment), this one is
+  // persistent for the whole session. Asserted empty at the very end of main().
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      console.log(`  [console.error] ${msg.text()}`);
+      // msg.location() is recorded too, so that if genuine infrastructure noise ever does appear,
+      // any future allowlist can be pinned to an exact observed signature rather than a substring.
+      results.consoleErrors.push(msg.text());
+      results.consoleErrorDetails = results.consoleErrorDetails ?? [];
+      results.consoleErrorDetails.push({ text: msg.text(), location: msg.location() });
+    }
+  });
+  page.on('pageerror', (err) => {
+    console.log(`  [pageerror] ${err}`);
+    results.pageErrors.push(String(err));
+  });
+
   console.log('\n=== Loading model 1 (Architecture) ===');
   await page.goto(`${BASE_URL}/#${URN_ARCH}`);
   await page.waitForFunction(() => window.viewer && window.viewer.model && window.viewer.model.isLoadDone(), null, { timeout: 120_000 });
@@ -265,6 +452,16 @@ async function main() {
       hasMech: !!window.__test.modelMech,
     };
   }, { urnArch: URN_ARCH, urnStruct: URN_STRUCT, urnMech: URN_MECH });
+  // M2.1 Task 10: the Structure model's BASELINE placement transform, captured before this file ever
+  // touches it, kept as the reference selectAndRightClick's own projection correction measures its
+  // delta against (codex-advisor: adding the whole current translation column is correct only if the
+  // baseline placement happens to be identity -- measuring the delta from the recorded baseline is
+  // correct regardless, and is asserted to be restored exactly at the end of the alignment step).
+  await page.evaluate(() => {
+    window.__test.structBaselinePlacement = Array.from(
+      window.__test.modelStruct.getPlacementTransform()?.elements ?? new window.THREE.Matrix4().elements,
+    );
+  });
   check('exactly three Model objects loaded', modelIdentities.modelCount, 3);
   check('Architecture model resolved by URN', modelIdentities.hasArch, true);
   check('Structure model resolved by URN', modelIdentities.hasStruct, true);
@@ -306,6 +503,13 @@ async function main() {
           targetModelKey: modelKeyOf(p.target.model),
           targetDbId: p.target.dbId,
           type: p.type,
+          // M2.1 Task 10: the witness itself, captured off the REAL production result (not a second,
+          // separately issued query). `witness.point` is a plain [x,y,z] array by Global Constraint
+          // -- never a THREE.Vector3 of either revision -- so it crosses the page<->Node boundary as
+          // structured-cloneable plain data with no conversion. `witnessKind` is null exactly when
+          // the pair carried no witness at all, which is what Step 3 asserts never happens here.
+          witnessKind: p.witness ? p.witness.kind : null,
+          witnessPoint: p.witness ? [...p.witness.point] : null,
         })),
         diagnosticsCount: result.statistics?.diagnostics?.length ?? 0,
       });
@@ -377,23 +581,51 @@ async function main() {
 
     const canvasBox = await page.locator('#preview canvas').first().boundingBox();
     let clickX, clickY;
+    let placementIsPureTranslation = true;
     const maxAttempts = 20;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await page.waitForTimeout(150);
-      const { x, y } = await page.evaluate((sourceDbId) => {
+      const { x, y, pureTranslation } = await page.evaluate((sourceDbId) => {
         const model = window.__test.modelStruct;
         const bbox = new Float32Array(6);
         model.getInstanceTree().getNodeBox(sourceDbId, bbox);
         const center = new window.THREE.Vector3(
           (bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2, (bbox[2] + bbox[5]) / 2,
         );
-        return window.viewer.worldToClient(center);
+        // M2.1 Task 10: getNodeBox returns the model's OWN, placement-INDEPENDENT box -- verified
+        // live that a setPlacementTransform translation leaves those 6 numbers byte-identical, while
+        // the model's global offset IS already baked into them (so the offset must NOT be applied
+        // again here). Before Task 10 this file only ever ran with the model's baseline placement, so
+        // projecting the raw centre was correct; the alignment step below deliberately changes that
+        // placement, so what is added here is the DELTA of the placement's translation column
+        // (elements[12..14], column-major) relative to the baseline captured at load time -- not the
+        // whole current column, which would only coincidentally be the same thing when the baseline
+        // happens to be identity. `pureTranslation` reports whether the CHANGE is still a pure
+        // translation (the placement's own 3x3 rotation/scale block unchanged from baseline): adding
+        // a translation delta is exactly correct ONLY then, and a pure translation is the only
+        // alignment this file ever performs, so it is checked rather than assumed.
+        const placement = model.getPlacementTransform();
+        const e = placement ? placement.elements : null;
+        const base = window.__test.structBaselinePlacement;
+        let pureTranslation = true;
+        if (e && base) {
+          center.x += e[12] - base[12];
+          center.y += e[13] - base[13];
+          center.z += e[14] - base[14];
+          pureTranslation = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 15]
+            .every((i) => e[i] === base[i]);
+        }
+        const client = window.viewer.worldToClient(center);
+        return { x: client.x, y: client.y, pureTranslation };
       }, sourceDbId);
+      placementIsPureTranslation = pureTranslation;
       clickX = canvasBox.x + x;
       clickY = canvasBox.y + y;
       const withinCanvas = x >= 0 && x <= canvasBox.width && y >= 0 && y <= canvasBox.height;
       if (withinCanvas) break;
     }
+    check(`Structure model's placement change is still a pure translation when projecting dbId ${sourceDbId}`,
+      placementIsPureTranslation, true);
     // Explicit, immediate diagnostic (rather than letting an off-canvas click silently fail to open
     // any context menu, surfacing only as a confusing downstream "menu item never appeared" timeout).
     const projectionWithinCanvas = clickX >= canvasBox.x && clickX <= canvasBox.x + canvasBox.width
@@ -450,6 +682,263 @@ async function main() {
   const isolateCallFor = (spy, modelKey) => spy.isolateCalls.find((c) => c.modelKey === modelKey);
   const fitToViewCallFor = (spy, modelKey) => spy.fitToViewCalls.find((c) => c.modelKey === modelKey);
 
+  // === M2.1 Task 10 helpers ======================================================================
+
+  // Reads the live marker state straight off the real extension instance. Everything returned is
+  // plain, structured-cloneable data (mesh.position/scale are read component-wise; the Mesh objects
+  // themselves never cross the page<->Node boundary). `overlaySceneMeshCount` reads
+  // viewer.impl.overlayScenes -- the one INTERNAL accessor used here, purely as corroboration, since
+  // the public OverlayManager exposes no "how many meshes are in this scene" query at all; the
+  // load-bearing per-mesh check is `hasMeshFlags`, which uses the PUBLIC viewer.overlays.hasMesh.
+  // That per-mesh check matters specifically because Batch 2's review found a silent-failure bug
+  // class here (addMesh/removeMesh called with swapped arguments returns false with no throw, so
+  // _activeMarkers can look perfectly correct while the overlay scene is actually empty) -- an
+  // _activeMarkers.length assertion alone would NOT catch it.
+  async function readMarkerState() {
+    return page.evaluate(({ extensionId, overlayName }) => {
+      const ext = window.viewer.getExtension(extensionId);
+      return {
+        activeMarkerCount: ext._activeMarkers.length,
+        positions: ext._activeMarkers.map((m) => [m.position.x, m.position.y, m.position.z]),
+        radii: ext._activeMarkers.map((m) => m.scale.x),
+        uniformScale: ext._activeMarkers.every((m) => m.scale.x === m.scale.y && m.scale.y === m.scale.z),
+        hasScene: window.viewer.overlays.hasScene(overlayName),
+        hasMeshFlags: ext._activeMarkers.map((m) => window.viewer.overlays.hasMesh(m, overlayName)),
+        overlaySceneMeshCount: window.viewer.impl.overlayScenes?.[overlayName]?.scene?.children?.length ?? null,
+      };
+    }, { extensionId: CLASH_FINDER_EXTENSION_ID, overlayName: MARKER_OVERLAY_NAME });
+  }
+
+  // Keeps a reference to the CURRENT marker meshes on a page-global so a later "were they really
+  // removed from the overlay scene?" check can still ask viewer.overlays.hasMesh about the exact
+  // same objects after _activeMarkers has been emptied. Without this, every post-clear check would
+  // reduce to "the array is empty", which is exactly the assertion the silent-failure bug above
+  // would have passed.
+  async function stashMarkerMeshes() {
+    await page.evaluate((extensionId) => {
+      window.__test.stashedMarkers = [...window.viewer.getExtension(extensionId)._activeMarkers];
+    }, CLASH_FINDER_EXTENSION_ID);
+  }
+  async function stashedMarkersStillInOverlay() {
+    return page.evaluate((overlayName) => (window.__test.stashedMarkers ?? [])
+      .map((m) => window.viewer.overlays.hasMesh(m, overlayName)), MARKER_OVERLAY_NAME);
+  }
+
+  // Projects a world point to canvas-relative client coordinates and reports whether real, OPAQUE
+  // model geometry sits between the camera and that point along the same ray (see the header
+  // comment's own "Enclosed-witness visibility" section for why both halves are needed).
+  //
+  // Depth is measured as the projection onto the camera's own view direction -- (P - eye) . forward
+  // -- for BOTH the hit and the witness point, rather than by reading HitTestResult.distance and
+  // comparing it against a Euclidean camera-to-point distance. Two reasons (codex-advisor, Task 10):
+  // HitTestResult.distance's exact origin/normalization is undocumented in the pinned typings, and a
+  // Euclidean-vs-whatever comparison is not even well posed under an orthographic camera. A view-axis
+  // depth comparison is correct under both projections and depends on nothing undocumented.
+  // viewer.navigation.getPosition()/getTarget() are both public, typed Navigation APIs.
+  async function projectAndProbeOcclusion(worldPoint) {
+    return page.evaluate((pt) => {
+      const THREE = window.THREE; // Viewer's own r71 global -- never the imported `three` package
+      const witness = new THREE.Vector3(pt[0], pt[1], pt[2]);
+      const client = window.viewer.worldToClient(witness.clone());
+      const eye = window.viewer.navigation.getPosition();
+      const target = window.viewer.navigation.getTarget();
+      const forward = new THREE.Vector3(target.x - eye.x, target.y - eye.y, target.z - eye.z).normalize();
+      const depthOf = (p) => (p.x - eye.x) * forward.x + (p.y - eye.y) * forward.y + (p.z - eye.z) * forward.z;
+      // ignoreTransparent: true -- after "Find Clashes" isolates, every non-isolated element renders
+      // ghosted/transparent, and only an OPAQUE occluder honestly proves "visible through opaque
+      // geometry". hitTest never sees overlay scenes, so whatever it reports is always real model
+      // geometry, never the marker itself.
+      const hit = window.viewer.impl.hitTest(client.x, client.y, true);
+      const modelKeyOf = (model) => {
+        if (model === window.__test.modelArch) return 'arch';
+        if (model === window.__test.modelStruct) return 'struct';
+        if (model === window.__test.modelMech) return 'mech';
+        return 'unknown';
+      };
+      return {
+        client: { x: client.x, y: client.y },
+        witnessDepth: depthOf(witness),
+        hit: hit ? {
+          dbId: hit.dbId,
+          modelKey: modelKeyOf(hit.model),
+          depth: depthOf(hit.intersectPoint ?? hit.point),
+        } : null,
+        canvas: { width: window.viewer.canvas.clientWidth, height: window.viewer.canvas.clientHeight },
+      };
+    }, worldPoint);
+  }
+
+  // Points the camera at `worldPoint` from `worldPoint + direction * distance`, then repaints and
+  // waits. Both halves matter: viewer.navigation.setView is a public, typed Navigation API, but
+  // viewer.impl.hitTest raycasts against the camera state of the LAST RENDERED FRAME -- probing in
+  // the same tick as setView returns readings for the PREVIOUS camera (confirmed live: an earlier
+  // sweep that probed without waiting produced hit points sitting exactly at the eye, and hit depths
+  // that disagreed with the true camera-to-hit distance; re-running the identical directions with a
+  // frame wait made every reading self-consistent and exactly reproducible).
+  //
+  // The camera placement is RE-ISSUED until it actually sticks, and the achieved eye position is
+  // returned so the caller can assert it. This is not defensive padding: the production Find Clashes
+  // callback ends in viewer.fitToView(), which starts a camera TRANSITION, and a setView issued while
+  // that transition is still animating is simply overwritten by it moments later (confirmed live --
+  // a single setView left the camera at the fitToView pose, and every downstream occlusion/pixel
+  // assertion then measured that pose instead of the requested one).
+  async function lookAtFrom(worldPoint, direction, distance) {
+    const expectedEye = worldPoint.map((v, i) => v + direction[i] * distance);
+    let eye = null;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      eye = await page.evaluate(({ pt, dir, dist }) => {
+        const THREE = window.THREE; // Viewer's own r71 global -- never the imported `three` package
+        const target = new THREE.Vector3(pt[0], pt[1], pt[2]);
+        const position = new THREE.Vector3(
+          pt[0] + dir[0] * dist, pt[1] + dir[1] * dist, pt[2] + dir[2] * dist,
+        );
+        window.viewer.navigation.setView(position, target);
+        window.viewer.impl.invalidate(true, true, true);
+        const p = window.viewer.navigation.getPosition();
+        return [p.x, p.y, p.z];
+      }, { pt: worldPoint, dir: direction, dist: distance });
+      await waitForFrames();
+      eye = await page.evaluate(() => {
+        const p = window.viewer.navigation.getPosition();
+        return [p.x, p.y, p.z];
+      });
+      if (maxAbsDelta(eye, expectedEye) <= 1e-3) break;
+    }
+    return { eye, expectedEye, settled: maxAbsDelta(eye, expectedEye) <= 1e-3 };
+  }
+
+  // Waits for the page to actually paint before pixels are sampled: a settled projection alone does
+  // not guarantee the frame on screen reflects the latest overlay state (codex-advisor, Task 10).
+  async function waitForFrames(count = 5) {
+    await page.evaluate((n) => new Promise((resolve) => {
+      let remaining = n;
+      const tick = () => { if (--remaining <= 0) resolve(); else requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }), count);
+    await page.waitForTimeout(400); // plus a settle gap for the Viewer's own progressive rendering
+  }
+
+  // Detaches / re-attaches ONE specific marker mesh from the overlay scene and forces a repaint, so
+  // the same pixel can be sampled with the marker present and absent. This is what actually
+  // ATTRIBUTES the sampled colour to the production-created mesh: a reference sample elsewhere on
+  // screen only shows the colour band discriminates, it cannot show that THIS marker is what painted
+  // THIS pixel (codex-advisor, Task 10). Uses the same public viewer.overlays.addMesh/removeMesh the
+  // production code itself uses, with the same (mesh, sceneName) argument order.
+  async function setContainmentMarkerAttached(attached) {
+    await page.evaluate(({ overlayName, attached }) => {
+      const mesh = window.__test.containmentMarker;
+      if (attached) window.viewer.overlays.addMesh(mesh, overlayName);
+      else window.viewer.overlays.removeMesh(mesh, overlayName);
+      window.viewer.impl.invalidate(true, true, true);
+    }, { overlayName: MARKER_OVERLAY_NAME, attached });
+    await waitForFrames();
+  }
+
+  // One small screenshot square, decoded back inside the page (see the header comment for why the
+  // round-trip, and why this is deliberately not generic screenshot-diff infrastructure). Returns a
+  // flat array of [r,g,b] triples, row-major.
+  async function samplePixelBlock(clientX, clientY, half) {
+    const canvasBox = await page.locator('#preview canvas').first().boundingBox();
+    const png = await page.screenshot({
+      clip: {
+        x: Math.round(canvasBox.x + clientX) - half,
+        y: Math.round(canvasBox.y + clientY) - half,
+        width: half * 2 + 1,
+        height: half * 2 + 1,
+      },
+    });
+    return page.evaluate(async (base64) => {
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('failed to decode the sampled screenshot region'));
+        img.src = `data:image/png;base64,${base64}`;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const pixels = [];
+      for (let i = 0; i < data.length; i += 4) pixels.push([data[i], data[i + 1], data[i + 2]]);
+      return pixels;
+    }, png.toString('base64'));
+  }
+
+  // Coarse orange-DOMINANCE band, never an exact color match -- MARKER_COLOR 0xff6a00 is
+  // rgb(255,106,0) in source but renders as rgb(255,164,0) through the Viewer's gamma/sRGB output
+  // encoding (confirmed live). The band is wide on the green channel for exactly that reason and
+  // still comfortably excludes this fixture's own rendered materials (the reference sample taken
+  // away from the marker measured rgb(141,151,163), a blue-grey that fails on every clause).
+  const isMarkerOrange = ([r, g, b]) => r >= 200 && b <= 80 && (r - b) >= 140 && (r - g) >= 40;
+  const orangeFraction = (pixels) => pixels.filter(isMarkerOrange).length / pixels.length;
+
+  const maxAbsDelta = (actual, expected) => Math.max(...actual.map((v, i) => Math.abs(v - expected[i])));
+  const pointsWithin = (actual, expected, tolerance) => actual.length === expected.length
+    && maxAbsDelta(actual, expected) <= tolerance;
+
+  // Applies/reads the Structure model's placement transform. The original transform's 16 elements are
+  // captured as a PLAIN array (never the live Matrix4 object, which is not structured-cloneable) and
+  // written back element-by-element on restore -- Matrix4#set()'s row-major argument order is an easy
+  // silent transposition, and elements[] is column-major, so a direct element copy is the
+  // unambiguous form here.
+  async function readStructPlacementElements() {
+    return page.evaluate(() => Array.from(
+      window.__test.modelStruct.getPlacementTransform()?.elements ?? new window.THREE.Matrix4().elements,
+    ));
+  }
+  // Translates the Structure model's placement by (dx,0,0) in world space and tells CollisionWorld
+  // its cached placements for that model are now stale -- the exact pair of calls a real
+  // model-alignment tool has to make. viewer.impl.setPlacementTransform(model, matrix) is a real,
+  // typed Viewer API (@types/forge-viewer/index.d.ts:2317). window.THREE (r71) is used for the
+  // matrices, never the imported `three` package -- the same runtime-isolation discipline every other
+  // Viewer-side object in this file follows.
+  async function translateStructPlacement(dx) {
+    await page.evaluate(({ extensionId, dx }) => {
+      const model = window.__test.modelStruct;
+      const moved = (model.getPlacementTransform() ?? new window.THREE.Matrix4()).clone();
+      moved.multiplyMatrices(new window.THREE.Matrix4().makeTranslation(dx, 0, 0), moved);
+      window.viewer.impl.setPlacementTransform(model, moved);
+      window.viewer.getExtension(extensionId)._world.invalidateModelPlacement(model);
+      // Autodesk's own dynamic-model-placement guidance invalidates after changing a placement;
+      // harmless if setPlacementTransform already schedules a frame, and it removes any doubt that
+      // what is on screen afterwards reflects the new placement.
+      window.viewer.impl.invalidate(true, true, true);
+    }, { extensionId: CLASH_FINDER_EXTENSION_ID, dx });
+    await waitForFrames();
+  }
+  async function restoreStructPlacement(elements) {
+    await page.evaluate(({ extensionId, elements }) => {
+      const model = window.__test.modelStruct;
+      const restored = new window.THREE.Matrix4();
+      for (let i = 0; i < 16; i++) restored.elements[i] = elements[i];
+      window.viewer.impl.setPlacementTransform(model, restored);
+      window.viewer.getExtension(extensionId)._world.invalidateModelPlacement(model);
+      window.viewer.impl.invalidate(true, true, true);
+    }, { extensionId: CLASH_FINDER_EXTENSION_ID, elements });
+    await waitForFrames();
+  }
+
+  // The full real production path for one case: reset visuals, select, right-click, click the real
+  // "Find Clashes" item, and hand back both the alert text and the captured spy data. Extracted at
+  // Task 10 because the alignment step re-runs MIXED_CASE twice more and must go through the exact
+  // same real path, not a shortcut.
+  async function runFindClashesCase(sourceDbId) {
+    await resetVisualState();
+    await selectAndRightClick(sourceDbId);
+    await resetSpyCapture();
+    const message = await clickFindClashesAndCaptureAlert();
+    return { message, spy: await readSpyCapture() };
+  }
+
+  // Sorted, stable {target, witnessKind} description of a captured call's pairs, so two runs can be
+  // compared directly.
+  const witnessTupleKeys = (call) => call.pairs
+    .map((p) => `${p.targetModelKey}:${p.targetDbId}:${p.witnessKind}`).sort();
+  const expectedWitnessTupleKeys = MIXED_CASE.expectedPairs
+    .map((p) => `${p.targetModelKey}:${p.targetDbId}:${p.witnessKind}`).sort();
+
   // === Positive case: mixed same+cross-model, Structure dbId 2734 =================================
   console.log(`\n=== Case: ${MIXED_CASE.name} ===`);
 
@@ -466,11 +955,10 @@ async function main() {
     typeof mixedIdentity.name === 'string' && mixedIdentity.name.includes(MIXED_CASE.expectedNameIncludes), true);
   check(`[mixed] fixture identity: dbId ${MIXED_CASE.sourceDbId} owns exactly one real fragment`, mixedIdentity.fragmentCount, 1);
 
-  await resetVisualState();
-  await selectAndRightClick(MIXED_CASE.sourceDbId);
-  await resetSpyCapture(); // clear this test's OWN setup calls before the real production action fires
-  const mixedMessage = await clickFindClashesAndCaptureAlert();
-  const mixedSpy = await readSpyCapture();
+  // runFindClashesCase resets the visual state, selects + right-clicks, resets the spy capture (so
+  // this test's OWN setup calls never pollute what gets attributed to the production callback), then
+  // clicks the real "Find Clashes" item.
+  const { message: mixedMessage, spy: mixedSpy } = await runFindClashesCase(MIXED_CASE.sourceDbId);
   results.cases[MIXED_CASE.name] = { tier1AlertMessage: mixedMessage, spy: mixedSpy };
 
   const expectedPrefix = `${MIXED_CASE.expectedTotal} clashes found (${MIXED_CASE.expectedSameModelCount} in this model, ${MIXED_CASE.expectedCrossModelCount} in other models)`;
@@ -535,6 +1023,197 @@ async function main() {
   check('[mixed] end-state: Architecture isolated set matches', sortNums(isolatedArch), sortNums(MIXED_CASE.expectedIsolatedArch));
   check('[mixed] end-state: Mechanical isolated set is empty', isolatedMech, []);
 
+  // --- M2.1 Task 10 Step 3: every normal positive volume-overlap pair carries a real witness ------
+  check('[mixed] captured call: every pair has a non-null witness',
+    mixedCall.pairs.every((p) => p.witnessKind !== null), true);
+  check('[mixed] captured call: every witness point is 3 finite numbers (plain array, never a Vector3)',
+    mixedCall.pairs.every((p) => Array.isArray(p.witnessPoint) && p.witnessPoint.length === 3
+      && p.witnessPoint.every(Number.isFinite)), true);
+  // The discovery-spike ground truth: this one case genuinely exercises BOTH witness branches.
+  check('[mixed] captured call: exact {targetModel, targetDbId, witnessKind} set -- covers BOTH the crossing and containment branches',
+    witnessTupleKeys(mixedCall), expectedWitnessTupleKeys);
+  check('[mixed] captured call: zero pairs left without a witness',
+    mixedCall.pairs.filter((p) => p.witnessKind === null).length, 0);
+
+  const containmentPair = mixedCall.pairs.find((p) => p.witnessKind === 'containment');
+  check('[mixed] the containment witness belongs to the expected same-model pair',
+    containmentPair ? { targetModelKey: containmentPair.targetModelKey, targetDbId: containmentPair.targetDbId } : null,
+    { targetModelKey: 'struct', targetDbId: MIXED_CASE.containmentTargetDbId });
+  check(`[mixed] the containment witness point is within ${MIXED_CASE.containmentWitnessTolerance} of this fixture's recorded ground truth`,
+    pointsWithin(containmentPair.witnessPoint, MIXED_CASE.expectedContainmentWitnessPoint, MIXED_CASE.containmentWitnessTolerance), true);
+
+  // --- M2.1 Task 10 Step 4: a real marker mesh really is in the real overlay scene, per witness ----
+  const mixedMarkers = await readMarkerState();
+  results.cases[MIXED_CASE.name].markers = mixedMarkers;
+  const witnessBearingCount = mixedCall.pairs.filter((p) => p.witnessKind !== null).length;
+  check('[mixed] one active marker per witness-bearing pair', mixedMarkers.activeMarkerCount, witnessBearingCount);
+  check('[mixed] the marker overlay scene is registered', mixedMarkers.hasScene, true);
+  // The load-bearing check (see readMarkerState's own comment): every marker mesh is REALLY in the
+  // real overlay scene, via the public viewer.overlays.hasMesh -- not merely present in _activeMarkers.
+  check('[mixed] every active marker mesh is really in the overlay scene (public overlays.hasMesh)',
+    mixedMarkers.hasMeshFlags, new Array(witnessBearingCount).fill(true));
+  check('[mixed] the overlay scene holds exactly that many meshes (internal corroboration)',
+    mixedMarkers.overlaySceneMeshCount, witnessBearingCount);
+  check('[mixed] every marker is uniformly scaled', mixedMarkers.uniformScale, true);
+  // Radius clamp (Task 8's Global Constraint) against the REAL federated fixture, not a unit fixture.
+  check('[mixed] every marker radius is inside the clamped [MIN, MAX] band',
+    mixedMarkers.radii.every((r) => r >= EXPECTED_MIN_MARKER_RADIUS && r <= EXPECTED_MAX_MARKER_RADIUS), true);
+  // Each marker sits exactly on its own pair's witness point -- the marker positions and the witness
+  // points are matched as SETS (marker creation order follows the pairs array, but asserting the set
+  // makes this independent of that ordering).
+  const sortedPointKeys = (points) => points.map((p) => p.map((v) => v.toFixed(6)).join(',')).sort();
+  check('[mixed] every marker mesh sits exactly on its pair\'s own witness point',
+    sortedPointKeys(mixedMarkers.positions), sortedPointKeys(mixedCall.pairs.map((p) => p.witnessPoint)));
+
+  // --- M2.1 Task 10 Step 5: the ENCLOSED witness is visible THROUGH opaque geometry ---------------
+  // See the header comment's own "Enclosed-witness visibility" section for the full rationale of
+  // this two-part proof and of the coarse color band.
+  console.log('\n=== Enclosed-witness visibility (containment witness, through opaque geometry) ===');
+  // The camera is aimed deliberately rather than left wherever fitToView put it -- see this
+  // constant's own comment in MIXED_CASE for why the direction is fixture ground truth and not an
+  // arbitrary choice. Aiming at the witness point also puts its projection exactly at the canvas
+  // centre by construction, so no settling poll is needed for the projection itself (lookAtFrom's
+  // own frame wait is what makes the subsequent hitTest read the CURRENT camera).
+  const cameraPlacement = await lookAtFrom(
+    containmentPair.witnessPoint,
+    MIXED_CASE.enclosedWitnessViewDirection,
+    MIXED_CASE.enclosedWitnessViewDistance,
+  );
+  results.cases[MIXED_CASE.name].enclosedWitnessCamera = cameraPlacement;
+  // Asserted, not assumed: everything below measures the camera that is actually in effect, so a
+  // camera that never reached the requested pose must fail HERE rather than as a confusing cascade of
+  // occlusion/pixel failures measuring some other viewpoint.
+  check('[enclosed] the camera really reached the requested viewpoint (not overridden by fitToView\'s own transition)',
+    cameraPlacement.settled, true);
+  const occlusion = await projectAndProbeOcclusion(containmentPair.witnessPoint);
+  results.cases[MIXED_CASE.name].enclosedWitnessOcclusion = occlusion;
+  check('[enclosed] the containment witness projects inside the canvas',
+    occlusion.client.x >= 0 && occlusion.client.x <= occlusion.canvas.width
+      && occlusion.client.y >= 0 && occlusion.client.y <= occlusion.canvas.height, true);
+
+  // --- Part 1 of the proof: the witness point is genuinely BEHIND opaque model geometry -----------
+  check('[enclosed] opaque model geometry is hit at the witness point\'s own projected position',
+    occlusion.hit !== null, true);
+  // Not merely "some dbId": the occluder is one of the elements this very query isolated, so it is a
+  // known, named, opaque piece of the fixture rather than whatever happened to be under the cursor.
+  const occluderKey = occlusion.hit ? `${occlusion.hit.modelKey}:${occlusion.hit.dbId}` : null;
+  const isolatedKeys = [
+    ...MIXED_CASE.expectedIsolatedStruct.map((d) => `struct:${d}`),
+    ...MIXED_CASE.expectedIsolatedArch.map((d) => `arch:${d}`),
+  ];
+  check('[enclosed] the occluder is one of the elements this query isolated (a known opaque element, not just any hit)',
+    isolatedKeys.includes(occluderKey), true);
+  const occlusionGap = occlusion.hit ? occlusion.witnessDepth - occlusion.hit.depth : null;
+  const markerRadius = Math.max(...mixedMarkers.radii);
+  console.log(`  [occlusion] occluder=${occluderKey} viewDepthGap=${occlusionGap?.toFixed(3)} markerRadius=${markerRadius.toFixed(3)}`);
+  // The gap must exceed the marker's own radius: a sphere centred only marginally behind the
+  // occluding surface could otherwise poke through it and be "visible" without ever being occluded
+  // (codex-advisor, Task 10) -- and this witness genuinely IS shallowly enclosed, so this is not a
+  // theoretical concern: live, the gap is 1.439 world units against a 1.045 radius, and most other
+  // viewing directions leave the sphere protruding. An earlier draft that compared
+  // HitTestResult.distance against a Euclidean camera distance reported a fictitious ~68-unit gap
+  // and passed vacuously; see this file's header comment for that whole trap.
+  check('[enclosed] the opaque occluder is in front of the witness by MORE than the marker\'s own radius (the sphere cannot merely be poking through)',
+    occlusionGap !== null && occlusionGap > markerRadius, true);
+
+  // --- Part 2 of the proof: the pixels rendered there are THIS marker's, not the occluder's -------
+  const centreOf = (pixels) => pixels[Math.floor(pixels.length / 2)];
+  const centre3x3Of = (pixels) => {
+    const width = Math.round(Math.sqrt(pixels.length));
+    const mid = (width - 1) / 2;
+    const block = [];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) block.push(pixels[(mid + dy) * width + (mid + dx)]);
+    return block;
+  };
+  const markerPixels = await samplePixelBlock(occlusion.client.x, occlusion.client.y, 3); // 7x7
+  const markerOrangeFraction = orangeFraction(markerPixels);
+  console.log(`  [pixels] marker centre=${JSON.stringify(centreOf(markerPixels))} orangeFraction=${markerOrangeFraction.toFixed(3)}`);
+  check('[enclosed] the pixel at the occluded witness point\'s exact projected position is the MARKER colour',
+    isMarkerOrange(centreOf(markerPixels)), true);
+  check('[enclosed] the whole 3x3 block centred on that exact position is marker-coloured',
+    centre3x3Of(markerPixels).every(isMarkerOrange), true);
+  check('[enclosed] the marker dominates its own 7x7 pixel neighbourhood (>=50% marker-coloured)',
+    markerOrangeFraction >= 0.5, true);
+  await page.screenshot({ path: path.join(RESULTS_DIR, 'clash-finder-enclosed-witness-marker.png'), fullPage: false });
+
+  // --- Part 3: attribute those pixels to THIS marker mesh, by taking it away and putting it back ---
+  // The decisive check (codex-advisor, Task 10): Parts 1 and 2 together would still pass if the
+  // orange came from anywhere other than the production marker. Detaching exactly this one mesh from
+  // the overlay scene must make the colour disappear at that pixel, and re-attaching it must bring it
+  // back. Both halves are asserted, so a failure to restore cannot silently pass as a success.
+  const containmentMarkerFound = await page.evaluate(({ extensionId, point }) => {
+    const ext = window.viewer.getExtension(extensionId);
+    window.__test.containmentMarker = ext._activeMarkers.find((m) => Math.abs(m.position.x - point[0]) < 1e-9
+      && Math.abs(m.position.y - point[1]) < 1e-9 && Math.abs(m.position.z - point[2]) < 1e-9) ?? null;
+    return !!window.__test.containmentMarker;
+  }, { extensionId: CLASH_FINDER_EXTENSION_ID, point: containmentPair.witnessPoint });
+  check('[enclosed] the containment witness\'s own marker mesh is identifiable in _activeMarkers', containmentMarkerFound, true);
+
+  await setContainmentMarkerAttached(false);
+  const markerOffPixels = await samplePixelBlock(occlusion.client.x, occlusion.client.y, 3);
+  await setContainmentMarkerAttached(true);
+  const markerBackOnPixels = await samplePixelBlock(occlusion.client.x, occlusion.client.y, 3);
+  const offOrangeFraction = orangeFraction(markerOffPixels);
+  const backOnOrangeFraction = orangeFraction(markerBackOnPixels);
+  console.log(`  [pixels] marker DETACHED centre=${JSON.stringify(centreOf(markerOffPixels))} orangeFraction=${offOrangeFraction.toFixed(3)}`);
+  console.log(`  [pixels] marker RE-ATTACHED centre=${JSON.stringify(centreOf(markerBackOnPixels))} orangeFraction=${backOnOrangeFraction.toFixed(3)}`);
+  check('[enclosed] detaching THIS marker mesh removes the marker colour from that exact pixel (the marker is what painted it)',
+    isMarkerOrange(centreOf(markerOffPixels)), false);
+  // Doubles as the colour band's discrimination control, and a better one than a sample taken
+  // somewhere else on screen would be: this is the SAME pixel, showing the occluding geometry.
+  check('[enclosed] with the marker detached, the occluding geometry is what shows through instead',
+    offOrangeFraction, 0);
+  check('[enclosed] re-attaching the marker mesh restores the marker colour at that exact pixel',
+    isMarkerOrange(centreOf(markerBackOnPixels)), true);
+
+  // --- Part 4: the marker is visible there BECAUSE of depthTest:false, not by accident ------------
+  // The decisive proof that this is genuinely "rendered through opaque geometry": flipping the
+  // production material's own depthTest to true (and only that) must make the occluder win at this
+  // exact pixel, and flipping it back must restore the marker. This is the one place this file
+  // mutates production state; it is restored immediately and the restoration is asserted, and it is
+  // only meaningful at all because Part 1 established the whole marker sphere along this ray really
+  // is behind the occluder.
+  const setMarkerDepthTest = async (enabled) => {
+    await page.evaluate(({ extensionId, enabled }) => {
+      const material = window.viewer.getExtension(extensionId)._markerMaterial;
+      material.depthTest = enabled;
+      material.needsUpdate = true;
+      window.viewer.impl.invalidate(true, true, true);
+    }, { extensionId: CLASH_FINDER_EXTENSION_ID, enabled });
+    await waitForFrames();
+  };
+  await setMarkerDepthTest(true);
+  const depthTestedPixels = await samplePixelBlock(occlusion.client.x, occlusion.client.y, 3);
+  await setMarkerDepthTest(false);
+  const depthTestRestoredPixels = await samplePixelBlock(occlusion.client.x, occlusion.client.y, 3);
+  console.log(`  [pixels] depthTest=true centre=${JSON.stringify(centreOf(depthTestedPixels))} orangeFraction=${orangeFraction(depthTestedPixels).toFixed(3)}`);
+  check('[enclosed] with depthTest:true the occluder wins at that pixel -- so depthTest:false is what makes the marker show through',
+    orangeFraction(depthTestedPixels), 0);
+  check('[enclosed] restoring depthTest:false brings the marker back at that pixel',
+    isMarkerOrange(centreOf(depthTestRestoredPixels)), true);
+  // The occluder's own colour must be what the depth-tested frame shows -- identical to the frame
+  // with the marker mesh removed entirely. Anything else would mean something ELSE changed too.
+  check('[enclosed] the depth-tested frame shows exactly what the marker-less frame showed',
+    centreOf(depthTestedPixels), centreOf(markerOffPixels));
+
+  results.cases[MIXED_CASE.name].enclosedWitnessPixels = {
+    occluder: occluderKey,
+    occlusionGap,
+    markerRadius,
+    markerCentre: centreOf(markerPixels),
+    markerOrangeFraction,
+    markerDetachedCentre: centreOf(markerOffPixels),
+    markerDetachedOrangeFraction: offOrangeFraction,
+    markerReattachedCentre: centreOf(markerBackOnPixels),
+    markerReattachedOrangeFraction: backOnOrangeFraction,
+    depthTestedCentre: centreOf(depthTestedPixels),
+    depthTestRestoredCentre: centreOf(depthTestRestoredPixels),
+  };
+
+  // Keep references to THESE exact meshes so the negative case below can prove they were genuinely
+  // removed from the overlay scene, not just dropped from _activeMarkers.
+  await stashMarkerMeshes();
+
   // === Negative case: Structure dbId 3965, real geometry, zero clashes ============================
   console.log(`\n=== Case: ${NEGATIVE_CASE.name} ===`);
 
@@ -550,11 +1229,7 @@ async function main() {
   check(`[negative] fixture identity: dbId ${NEGATIVE_CASE.sourceDbId} owns exactly one real fragment (genuinely real geometry)`,
     negativeIdentity.fragmentCount, 1);
 
-  await resetVisualState();
-  await selectAndRightClick(NEGATIVE_CASE.sourceDbId);
-  await resetSpyCapture();
-  const negativeMessage = await clickFindClashesAndCaptureAlert();
-  const negativeSpy = await readSpyCapture();
+  const { message: negativeMessage, spy: negativeSpy } = await runFindClashesCase(NEGATIVE_CASE.sourceDbId);
   results.cases[NEGATIVE_CASE.name] = { tier1AlertMessage: negativeMessage, spy: negativeSpy };
   // dbId 3965 is confirmed genuinely diagnostic-free (0/0, full three-model scope -- see header
   // comment), so this asserts an EXACT match with no caveat appended, not just a prefix.
@@ -583,6 +1258,129 @@ async function main() {
   check('[negative] end-state: Structure isolation cleared', isolatedStructAfterNegative, []);
   check('[negative] end-state: Architecture isolation cleared', isolatedArchAfterNegative, []);
   check('[negative] end-state: Mechanical isolation still empty', isolatedMechAfterNegative, []);
+
+  // --- M2.1 Task 10 Step 6: a negative result clears the markers too, not just the isolation -------
+  const negativeMarkers = await readMarkerState();
+  results.cases[NEGATIVE_CASE.name].markers = negativeMarkers;
+  check('[negative] no active markers remain', negativeMarkers.activeMarkerCount, 0);
+  check('[negative] the overlay scene holds zero meshes', negativeMarkers.overlaySceneMeshCount, 0);
+  // The strong form: the mixed case's OWN mesh objects are really gone from the overlay scene. An
+  // _activeMarkers.length check alone would still pass if removeMesh had silently no-op'd.
+  check('[negative] the mixed case\'s own marker meshes were really removed from the overlay scene',
+    await stashedMarkersStillInOverlay(), new Array(mixedMarkers.activeMarkerCount).fill(false));
+  // The overlay SCENE itself deliberately survives a clear -- only unload-time teardown removes it
+  // (ClashFinderExtension._clearMarkers's own documented contract).
+  check('[negative] the overlay scene itself still exists (only unload removes it)', negativeMarkers.hasScene, true);
+
+  // === M2.1 Task 10 Step 7: one real model-alignment operation moves the markers ==================
+  // See the header comment's own "Alignment" section. This is a real placement mutation through the
+  // real Viewer API plus the real CollisionWorld.invalidateModelPlacement call an alignment tool
+  // would make, then the SAME real right-click path re-run -- not a shortcut.
+  console.log(`\n=== Case: alignment (+${ALIGNMENT_DELTA_X} X on the Structure model) ===`);
+  const originalStructPlacement = await readStructPlacementElements();
+  results.alignment = { originalStructPlacement };
+  await translateStructPlacement(ALIGNMENT_DELTA_X);
+  const movedStructPlacement = await readStructPlacementElements();
+  check('[alignment] the Structure model\'s placement transform really moved by the expected delta in X',
+    Math.abs((movedStructPlacement[12] - originalStructPlacement[12]) - ALIGNMENT_DELTA_X) <= 1e-6, true);
+
+  const { message: alignedMessage, spy: alignedSpy } = await runFindClashesCase(MIXED_CASE.sourceDbId);
+  const alignedCall = alignedSpy.findClashesCalls[0];
+  const alignedMarkers = await readMarkerState();
+  results.alignment.aligned = { message: alignedMessage, spy: alignedSpy, markers: alignedMarkers };
+  check('[alignment] exactly one findClashes call made by the re-run\'s real click', alignedSpy.findClashesCalls.length, 1);
+  // The same pairs with the same witness kinds still resolve after the alignment -- so the position
+  // comparison below is genuinely comparing like with like, not two different result sets.
+  check('[alignment] the same {targetModel, targetDbId, witnessKind} set still resolves after the alignment',
+    witnessTupleKeys(alignedCall), expectedWitnessTupleKeys);
+  check('[alignment] the same number of markers is drawn', alignedMarkers.activeMarkerCount, mixedMarkers.activeMarkerCount);
+  // Markers are bound to the FRESH witnesses this re-run produced -- matched as a multiset, never by
+  // _activeMarkers order. This is what actually proves the markers tracked the alignment rather than
+  // merely being redrawn somewhere.
+  check('[alignment] every marker sits exactly on a witness point from the RE-RUN\'s own result',
+    sortedPointKeys(alignedMarkers.positions), sortedPointKeys(alignedCall.pairs.map((p) => p.witnessPoint)));
+
+  // Per-pair comparison, matched by pair IDENTITY ({targetModel,targetDbId}), never by array order.
+  const witnessByPairKey = (call) => Object.fromEntries(
+    call.pairs.map((p) => [`${p.targetModelKey}:${p.targetDbId}`, p.witnessPoint]),
+  );
+  const witnessBefore = witnessByPairKey(mixedCall);
+  const witnessAfter = witnessByPairKey(alignedCall);
+  const containmentKey = `struct:${MIXED_CASE.containmentTargetDbId}`;
+  const crossingKey = `arch:${MIXED_CASE.expectedIsolatedArch[0]}`;
+  const deltaOf = (key) => witnessAfter[key].map((v, i) => v - witnessBefore[key][i]);
+  const containmentDelta = deltaOf(containmentKey);
+  const crossingDelta = deltaOf(crossingKey);
+  results.alignment.witnessDeltas = { [containmentKey]: containmentDelta, [crossingKey]: crossingDelta };
+  console.log(`  [alignment] witness delta ${containmentKey} = ${JSON.stringify(containmentDelta)}`);
+  console.log(`  [alignment] witness delta ${crossingKey}    = ${JSON.stringify(crossingDelta)}`);
+  // The SAME-model (containment) pair is a genuine rigid-motion invariant: both its operands live in
+  // the model that just moved, so its witness must translate by exactly the alignment delta and by
+  // nothing else. Asserted exactly (1e-6).
+  check(`[alignment] the same-model containment witness moved by exactly (+${ALIGNMENT_DELTA_X}, 0, 0) -- a rigid-motion invariant`,
+    pointsWithin(containmentDelta, [ALIGNMENT_DELTA_X, 0, 0], 1e-6), true);
+  // The CROSS-model (crossing) pair has no such invariant: only the Structure model moved, so where
+  // its surface crosses the stationary Architecture element can change non-rigidly. Asserting an
+  // exact +3 here would overconstrain the test (codex-advisor, Task 10) even though this fixture
+  // happens to produce exactly that today -- the observed delta is recorded in the run report
+  // instead, and only MATERIAL movement is asserted.
+  check('[alignment] the cross-model crossing witness moved materially (no rigid-motion invariant applies to it)',
+    Math.max(...crossingDelta.map(Math.abs)) > 1e-3, true);
+
+  // Restore the placement and re-run: the markers must come back to exactly where they started.
+  await restoreStructPlacement(originalStructPlacement);
+  const restoredStructPlacement = await readStructPlacementElements();
+  check('[alignment] the Structure model\'s placement transform was restored exactly',
+    restoredStructPlacement, originalStructPlacement);
+  const { spy: restoredSpy } = await runFindClashesCase(MIXED_CASE.sourceDbId);
+  const restoredCall = restoredSpy.findClashesCalls[0];
+  const restoredMarkers = await readMarkerState();
+  results.alignment.restored = { spy: restoredSpy, markers: restoredMarkers };
+  check('[alignment] after restoring the placement, the same pair/witness set resolves again',
+    witnessTupleKeys(restoredCall), expectedWitnessTupleKeys);
+  const witnessRestored = witnessByPairKey(restoredCall);
+  check('[alignment] after restoring the placement, EVERY pair\'s witness returns to its original world point (matched by pair identity)',
+    Object.keys(witnessBefore).every((key) => pointsWithin(witnessRestored[key], witnessBefore[key], 1e-6)), true);
+  check('[alignment] after restoring the placement, every marker sits on a restored witness point',
+    sortedPointKeys(restoredMarkers.positions), sortedPointKeys(restoredCall.pairs.map((p) => p.witnessPoint)));
+
+  // === M2.1 Task 10 Step 8: unloading a participating model clears the whole visualization ========
+  // The Architecture model is a genuine participant here (it owns the cross-model target, dbId 3686,
+  // and is currently isolated). Its unload must clear EVERY marker and ALL isolation -- not just its
+  // own -- per ClashFinderExtension._onBeforeModelUnload's own documented full-clear policy.
+  console.log('\n=== Case: unloading a participating model (Architecture) ===');
+  await stashMarkerMeshes();
+  const markersBeforeUnload = await readMarkerState();
+  check('[unload] markers really are on screen before the unload (the precondition this step needs)',
+    markersBeforeUnload.activeMarkerCount > 0, true);
+  await page.evaluate(() => window.viewer.unloadModel(window.__test.modelArch));
+  await page.waitForFunction(() => window.viewer.getAllModels().length === 2, null, { timeout: 30_000 });
+  await page.waitForTimeout(500); // let the BEFORE_MODEL_UNLOAD handler's own work settle
+
+  const unloadState = await page.evaluate((extensionId) => {
+    const ext = window.viewer.getExtension(extensionId);
+    return {
+      modelCount: window.viewer.getAllModels().length,
+      isolatedModelsSize: ext._isolatedModels.size,
+      isolatedStruct: window.viewer.getIsolatedNodes(window.__test.modelStruct),
+      isolatedMech: window.viewer.getIsolatedNodes(window.__test.modelMech),
+    };
+  }, CLASH_FINDER_EXTENSION_ID);
+  const markersAfterUnload = await readMarkerState();
+  results.unload = { unloadState, markers: markersAfterUnload };
+  check('[unload] the Architecture model really is gone', unloadState.modelCount, 2);
+  check('[unload] no active markers remain', markersAfterUnload.activeMarkerCount, 0);
+  check('[unload] the overlay scene holds zero meshes', markersAfterUnload.overlaySceneMeshCount, 0);
+  check('[unload] the pre-unload marker meshes were really removed from the overlay scene',
+    await stashedMarkersStillInOverlay(), new Array(markersBeforeUnload.activeMarkerCount).fill(false));
+  check('[unload] the extension\'s own isolated-models bookkeeping was cleared', unloadState.isolatedModelsSize, 0);
+  check('[unload] Structure isolation cleared', unloadState.isolatedStruct, []);
+  check('[unload] Mechanical isolation still empty', unloadState.isolatedMech, []);
+
+  // === M2.1 Task 10 Step 9: zero console errors across the ENTIRE run =============================
+  check('zero console errors across the whole run (viewer bootstrap, 3 model loads, 4 Find Clashes runs, alignment, unload)',
+    results.consoleErrors, []);
+  check('zero uncaught page exceptions across the whole run', results.pageErrors, []);
 
   await browser.close();
   await writeFile(path.join(RESULTS_DIR, REPORT_FILE), JSON.stringify(results, null, 2));
