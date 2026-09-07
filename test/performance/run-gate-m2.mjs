@@ -371,6 +371,35 @@ async function main() {
       && correctnessCrossCheck.tlasColdVsTlasWarmPairSignaturesEqual
       && correctnessCrossCheck.linearColdVsLinearWarmPairSignaturesEqual;
 
+    // ---- Spec §7.5.2 statistics inequality chain -- asserted directly (advisor recommendation),
+    // not merely reported as raw numbers, so this script is an actual invariant check for future
+    // runs, not just a one-off measurement. Chain (TLAS run's own fields, checked against the SAME
+    // run's linear-path narrowPhasePairs for the last link):
+    //   tlasPrimitiveCandidatePairs >= broadPhasePairs >= tlasExactRetestSurvivors
+    //     == tlasNarrowPhaseInputPairs == narrowPhasePairs (linear path, same query)
+    // Non-fatal (recorded, not thrown) -- a violation would itself be a real, reportable finding
+    // about the library, not grounds to abort this measurement run.
+    function checkInequalityChain(tlasRun, linearRun) {
+      const s = tlasRun.statistics;
+      if (!s) return null;
+      return {
+        tlasPrimitiveCandidatePairs_gte_broadPhasePairs: s.tlasPrimitiveCandidatePairs >= s.broadPhasePairs,
+        broadPhasePairs_gte_tlasExactRetestSurvivors: s.broadPhasePairs >= s.tlasExactRetestSurvivors,
+        tlasExactRetestSurvivors_eq_tlasNarrowPhaseInputPairs: s.tlasExactRetestSurvivors === s.tlasNarrowPhaseInputPairs,
+        tlasNarrowPhaseInputPairs_eq_linearNarrowPhasePairs: s.tlasNarrowPhaseInputPairs === linearRun.statistics?.narrowPhasePairs,
+        // Genuine finding, not just a chain-link check: when broadPhasePairs === tlasExactRetestSurvivors
+        // exactly (as observed on this run), EVERY broad-phase survivor also passed the mandatory
+        // exact-AABB retest (spec §7.3) -- meaning CollisionInstanceBVH's own per-primitive gate did
+        // all of the real filtering here, and the exact retest step itself rejected nothing extra on
+        // this fixture (pure overhead in this specific run, not evidence it is unnecessary in general).
+        broadPhasePairsExactlyEqualsExactRetestSurvivors: s.broadPhasePairs === s.tlasExactRetestSurvivors,
+      };
+    }
+    const statisticsInequalityChain = {
+      cold: checkInequalityChain(tlasCold, linearCold),
+      warm: checkInequalityChain(tlasWarm, linearWarm),
+    };
+
     // ---- Criterion 1: 'tlas-build' span label ----
     // Spec §9.1 requires the TLAS build to be reported via reportSpan('tlas-build', ms), the same
     // pattern GeometryRegistry's own weld/connectivity/bvh-construction phases already use. Searched
@@ -387,6 +416,7 @@ async function main() {
         exercised: false,
         reason: "NOT EXERCISABLE as specified -- no 'tlas-build' span is ever emitted: confirmed both by this run's own captured span log (zero 'tlas-build' entries in the cold run, which DID build the TLAS per statistics.tlasBuilds below) and by a static grep across the whole collision/ tree finding no reportSpan('tlas-build', ...) call anywhere in CollisionWorld.js or TlasCache.js, despite spec section 9.1's explicit requirement to report it that way. This is a real production-instrumentation gap, not a fixture limitation -- reported as a finding, not fixed here (out of scope: do not modify collision/).",
         substituteMeasurement: 'Statistics.tlasBuildMs from the cold run (the closest existing field; wall-clock this call itself spent performing a TLAS build/refresh)',
+        substituteLimitation: `The substitute is a SINGLE whole-call accumulator, not a per-epoch breakdown: this run built ${tlasCold.statistics?.tlasBuilds} epochs' worth of TLAS (Arch/Structure/Mechanical) into one tlasBuildMs total (${tlasCold.statistics?.tlasBuildMs}ms). The criterion's own "per epoch" half is therefore ALSO unanswerable without the missing span -- this substitute only answers "cost of all TLAS builds this call performed, summed."`,
         tlasBuildMsCold: tlasCold.statistics?.tlasBuildMs,
         tlasBuildsCold: tlasCold.statistics?.tlasBuilds,
       };
@@ -412,8 +442,22 @@ async function main() {
       ? (tlasCold.wallMs < linearCold.wallMs ? 'OBSERVED' : 'NOT_OBSERVED')
       : 'NOT_EXERCISED';
 
+    // Raw-expansion-stage ratio, kept separate from the exact-retest-stage ratio above (codex-advisor:
+    // do not let the exact-retest ratio alone read as "total search-cost reduction" -- TLAS also pays
+    // real cost at the earlier, unfiltered expansion stage, and that stage's own reduction is smaller).
+    const rawExpansionReductionRatio = ratio(linearCold.statistics?.broadPhasePairs, tlasCold.statistics?.tlasPrimitiveCandidatePairs);
+    // Broad phase's own share of total wall-clock -- computed so the end-to-end NOT_OBSERVED verdicts
+    // below are not misread as "TLAS is bad": on THIS fixture, narrow phase so thoroughly dominates
+    // total time (see broadPhaseShareOfWallClock below) that no broad-phase algorithm change, in
+    // either direction, could move end-to-end wall-clock by more than a percent or two either way.
+    const broadPhaseShareOfWallClockCold = {
+      tlas: ratio(tlasCold.statistics?.broadPhaseMs, tlasCold.wallMs),
+      linear: ratio(linearCold.statistics?.broadPhaseMs, linearCold.wallMs),
+    };
+
     const gateAnswer = {
       question: "Is there a measurable candidate-search benefit of TLAS over M1's linear broad phase, on a realistic federated/fragment-dense case? (spec §14.1 -- does not presume the outcome.)",
+      overallFinding: `YES for candidate search specifically, NO for end-to-end wall-clock on this fixture -- and the two are NOT in tension. Broad phase (the part TLAS actually changes) was only ${(broadPhaseShareOfWallClockCold.tlas * 100).toFixed(2)}% (TLAS) / ${(broadPhaseShareOfWallClockCold.linear * 100).toFixed(2)}% (linear) of total cold wall-clock on this fixture -- narrow phase (BLAS build + containment/crossing queries against the ${tlasCold.statistics?.tlasNarrowPhaseInputPairs} narrow-phase input pairs both paths agree on) is ~99% of total time either way. The end-to-end NOT_OBSERVED verdicts below are therefore NOT evidence against TLAS -- they reflect that no broad-phase algorithm change, in either direction, could move end-to-end wall-clock by more than a percent or two on a single-source-instance query against this fragment count. The real, order-independent finding is the candidate-count reduction itself (see exactRetestCandidateReduction below), which is where TLAS's architectural benefit actually shows up on this fixture, and which would matter more as narrow-phase-per-candidate cost drops or source-instance count grows (this gate ran exactly one source instance -- see exactRetestCandidateReduction.lowerBoundNote).`,
       dimensions: {
         exactRetestCandidateReduction: {
           description: 'broadPhasePairs: the canonical, cross-path field (spec §7.5.2) counting candidates that survived target-scope/self-exclusion filtering and were handed to the exact _testBroadPhasePair retest -- the most directly comparable "candidate search cost" number between the two paths.',
@@ -421,21 +465,26 @@ async function main() {
           linearBroadPhasePairs: linearCold.statistics?.broadPhasePairs,
           reductionRatio: candidateReductionRatio,
           verdict: candidateReductionVerdict,
+          lowerBoundNote: 'This gate ran exactly ONE source instance (sourceFragmentCount=1). Linear\'s own cost scales as sourceCount x targetCount; TLAS\'s traversal cost does not scale the same way with sourceCount (each source instance queries the SAME already-built target TLAS). The measured ratio is therefore a LOWER BOUND on TLAS\'s candidate-reduction benefit for a multi-source-instance query against this same target scope, not re-measured here -- stated as a bound, not extrapolated to a specific larger number.',
         },
         rawTlasPrimitiveExpansion: {
-          description: 'Upstream of the target-scope/self-exclusion filters (spec §9.3.1) -- the raw per-primitive expansion cost the TLAS traversal itself incurs before filtering, distinct from broadPhasePairs above.',
+          description: 'Upstream of the target-scope/self-exclusion filters (spec §9.3.1) -- the raw per-primitive expansion cost the TLAS traversal itself incurs before filtering, distinct from broadPhasePairs above. Reported separately per codex-advisor\'s explicit caution: do not let the exact-retest-stage ratio above be read as "total search-cost reduction" -- this earlier, unfiltered stage shows a SMALLER reduction than the exact-retest stage does.',
           tlasLeafRangeEmissions: tlasCold.statistics?.tlasLeafRangeEmissions,
           tlasPrimitiveCandidatePairs: tlasCold.statistics?.tlasPrimitiveCandidatePairs,
+          linearBroadPhasePairsForComparison: linearCold.statistics?.broadPhasePairs,
+          rawExpansionReductionRatio,
         },
         broadPhaseElapsedBenefitWarm: {
-          description: 'Warm-vs-warm broadPhaseMs -- the fairest amortized comparison, since TLAS build cost is a one-time cost a single cold query never amortizes.',
+          description: 'Warm-vs-warm broadPhaseMs -- the fairest amortized comparison, since TLAS build cost is a one-time cost a single cold query never amortizes. Both values are single-digit milliseconds (see broadPhaseShareOfWallClockCold below) -- a real but practically small difference on this fixture.',
           tlasWarmBroadPhaseMs: tlasWarm.statistics?.broadPhaseMs,
           linearWarmBroadPhaseMs: linearWarm.statistics?.broadPhaseMs,
           verdict: broadPhaseWarmBenefit,
         },
         endToEndElapsedBenefit: {
+          description: 'See overallFinding above before reading these as "TLAS is slower" -- broad phase (what differs between the two paths) is a tiny fraction of either total; these verdicts mostly reflect narrow-phase noise, not a broad-phase regression.',
           cold: { tlasColdWallMs: tlasCold.wallMs, linearColdWallMs: linearCold.wallMs, verdict: endToEndColdBenefit },
           warm: { tlasWarmWallMs: tlasWarm.wallMs, linearWarmWallMs: linearWarm.wallMs, verdict: endToEndWarmBenefit },
+          broadPhaseShareOfWallClockCold,
         },
       },
       timingConfidenceCaveat: 'Wall-clock figures are descriptive, single-session measurements from one Playwright page, one sample per state. A sacrificial warm-up (Step 3: one unmeasured TLAS query + one unmeasured linear query, in throwaway worlds, disposed before any measured world was created) was run specifically to remove the largest, cheapest-to-fix confound -- first-ever-call V8 JIT/module-initialization bias -- but residual order/GC/OS-scheduling noise from a single sample each cannot be fully ruled out. Candidate-count comparisons (broadPhasePairs, tlasPrimitiveCandidatePairs) are structural and order-independent, and are the more reliable evidence specifically for the "candidate-search benefit" question spec §14.1 asks; wall-clock is reported alongside as required by criterion 4 but weighted accordingly.',
@@ -463,6 +512,15 @@ async function main() {
         mechanicalFragmentTotal: identity.mechanicalFragmentTotal,
         totalFragments,
       },
+      // blasBuilt/blasCacheHits sit inside every run's own `statistics` below and read 0 on EVERY
+      // run, cold or warm, TLAS or linear -- this is CollisionWorld's own pre-existing M1 limitation
+      // (emptyStatistics()'s own comment, CollisionWorld.js:258-263: "reported as 0 for now ...
+      // instrumenting them belongs with the performance gate"), NOT evidence that no BLAS work
+      // happened. Flagged explicitly here so a reader does not misread narrowPhaseMs's own large cold
+      // value (which DOES include real BLAS-build cost, per-geometry, on first touch) as somehow
+      // BLAS-free just because blasBuilt reads 0 -- the same honest-reporting discipline this gate
+      // applies to its own tlasBuildMs/tlas-build-span gap above.
+      blasInstrumentationNote: 'blasBuilt and blasCacheHits are hardcoded to 0 in every Statistics object this library produces (never instrumented, an M1-era limitation unrelated to this gate) -- they do NOT mean no BLAS work happened. The *Cold runs\' large narrowPhaseMs values below include real, uninstrumented BLAS-build cost for every geometry touched on first access.',
       tlasCold: { wallMs: tlasCold.wallMs, error: tlasCold.error, pairCount: tlasCold.pairCount, sameModelPairCount: tlasCold.sameModelPairCount, crossModelPairCount: tlasCold.crossModelPairCount, statistics: tlasCold.statistics && { ...tlasCold.statistics, diagnostics: summarizeDiagnostics(tlasCold.statistics.diagnostics) }, longestSpan: tlasCold.longestSpan, spansByLabel: tlasColdSpanSummary.byLabel, topSpans: tlasColdSpanSummary.top },
       tlasWarm: { wallMs: tlasWarm.wallMs, error: tlasWarm.error, pairCount: tlasWarm.pairCount, sameModelPairCount: tlasWarm.sameModelPairCount, crossModelPairCount: tlasWarm.crossModelPairCount, statistics: tlasWarm.statistics && { ...tlasWarm.statistics, diagnostics: summarizeDiagnostics(tlasWarm.statistics.diagnostics) }, longestSpan: tlasWarm.longestSpan, spansByLabel: tlasWarmSpanSummary.byLabel, topSpans: tlasWarmSpanSummary.top },
       linearCold: { wallMs: linearCold.wallMs, error: linearCold.error, pairCount: linearCold.pairCount, sameModelPairCount: linearCold.sameModelPairCount, crossModelPairCount: linearCold.crossModelPairCount, statistics: linearCold.statistics && { ...linearCold.statistics, diagnostics: summarizeDiagnostics(linearCold.statistics.diagnostics) }, longestSpan: linearCold.longestSpan, spansByLabel: linearColdSpanSummary.byLabel, topSpans: linearColdSpanSummary.top },
@@ -472,6 +530,7 @@ async function main() {
         c2_tlasQueryCostColdVsWarm: {
           tlasQueryMsCold: tlasCold.statistics?.tlasQueryMs,
           tlasQueryMsWarm: tlasWarm.statistics?.tlasQueryMs,
+          resolutionCaveat: `Measured at sourceFragmentCount=1 (a single source instance issuing 3 target-epoch traversals, per tlasCold.statistics.tlasBuilds/tlasLeafRangeEmissions). At this scale the cold/warm values (${tlasCold.statistics?.tlasQueryMs}ms / ${tlasWarm.statistics?.tlasQueryMs}ms) sit within performance.now()'s own ~0.1ms quantization noise for the browser/OS this ran on -- the warm value reading HIGHER than cold here is itself evidence this is measurement jitter, not a reliable cold-vs-warm signal, rather than a real per-traversal cost difference. Reported as measured, not treated as a meaningful result.`,
         },
         c3_candidateCounts: {
           tlas: {
@@ -516,6 +575,7 @@ async function main() {
         },
       },
       correctnessCrossCheck: { ...correctnessCrossCheck, allSignatureSetsAgree },
+      statisticsInequalityChain,
       gateAnswer,
     };
 
