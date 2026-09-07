@@ -117,12 +117,21 @@ export class ClashFinderExtension extends ExtensionBase {
   // ordering) -- hardened here so a failed/duplicate unload() never leaves this extension's own
   // context-menu callback or event listener stranded. Isolation is cleared LAST so unload() never
   // leaves a stale highlight from a prior query on screen.
-  // Task 9 (M2.1): a new OUTER finally wraps the entire original body (the dispose/listener-removal
-  // try/finally, plus _clearIsolation()) so marker teardown runs no matter what -- whether dispose()
-  // throws (as documented above) or _clearIsolation() itself throws. Order inside this outer finally
-  // matters: _clearMarkers() (remove every mesh from the overlay scene) MUST run before disposing the
-  // shared geometry/material below it, so those two objects are disposed exactly once, strictly after
-  // every mesh referencing them has already been detached -- disposing them first would leave
+  // Task 9 (M2.1): a new OUTER finally wraps the dispose/listener-removal try/finally so BOTH
+  // _clearIsolation() and marker teardown run no matter what -- whether dispose() throws (as
+  // documented above) or _clearIsolation() itself throws.
+  // [Task 9 review fix, Batch 2 reviewer + codex-advisor] _clearIsolation() originally sat INSIDE the
+  // inner try, alongside dispose(): when dispose() throws, the exception propagated past
+  // _clearIsolation() before it ever ran, leaving _isolatedModels populated while the outer finally's
+  // unconditional _clearMarkers() still ran -- markers vanish but isolation/highlighting remains, a
+  // direct violation of this task's own protected invariant that isolation and markers can never
+  // visually disagree. Fixed by nesting _clearIsolation() into its OWN try/finally inside the outer
+  // finally, immediately ahead of marker teardown: this guarantees _clearIsolation() runs even when
+  // dispose() throws, AND guarantees marker teardown runs even when _clearIsolation() ITSELF throws --
+  // neither cleanup step can be skipped by the other one failing. Order inside this innermost finally
+  // still matters: _clearMarkers() (remove every mesh from the overlay scene) MUST run before disposing
+  // the shared geometry/material below it, so those two objects are disposed exactly once, strictly
+  // after every mesh referencing them has already been detached -- disposing them first would leave
   // dangling meshes pointing at disposed GL resources for whatever render tick still sees them.
   // removeScene (not clearScene) fully unregisters the overlay namespace itself, matching Task 7
   // finding 5: neither removeScene nor clearScene ever disposes geometry/material on their own, which
@@ -136,14 +145,17 @@ export class ClashFinderExtension extends ExtensionBase {
         this._viewer.removeEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
         this._viewer.unregisterContextMenuCallback(EXTENSION_ID);
       }
-      this._clearIsolation();
     } finally {
-      this._clearMarkers();
-      if (this._viewer.overlays.hasScene(MARKER_OVERLAY_NAME)) {
-        this._viewer.overlays.removeScene(MARKER_OVERLAY_NAME);
+      try {
+        this._clearIsolation();
+      } finally {
+        this._clearMarkers();
+        if (this._viewer.overlays.hasScene(MARKER_OVERLAY_NAME)) {
+          this._viewer.overlays.removeScene(MARKER_OVERLAY_NAME);
+        }
+        if (this._markerGeometry) { this._markerGeometry.dispose(); this._markerGeometry = null; }
+        if (this._markerMaterial) { this._markerMaterial.dispose(); this._markerMaterial = null; }
       }
-      if (this._markerGeometry) { this._markerGeometry.dispose(); this._markerGeometry = null; }
-      if (this._markerMaterial) { this._markerMaterial.dispose(); this._markerMaterial = null; }
     }
     return true;
   }

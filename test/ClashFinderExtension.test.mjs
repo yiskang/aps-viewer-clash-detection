@@ -960,18 +960,43 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   check('a post-model-unload resolution triggers NO notify call', alerts.length, 0);
 }
 
-// === unload() disposes markers/overlay scene even if _world.dispose() throws ======================
+// === unload() disposes markers/overlay scene even if _world.dispose() throws, AND (Batch 2 review
+// fix, corroborated by an independent codex-advisor consult) ALSO still clears isolation in that same
+// exceptional case -- isolation and markers must never visually disagree, including when dispose()
+// throws. The original test here proved marker teardown but never populated _isolatedModels first, so
+// it could not detect isolation being left stranded while markers vanished. This version populates
+// BOTH isolation and markers via a real successful Find Clashes call first, so the assertions below can
+// actually distinguish "both cleared together" from "only markers cleared". =========================
 {
-  const { ext, viewer } = extensionWithFakeWorld();
-  ext._addMarkers([{ witness: { kind: 'containment', point: [1, 1, 1] } }]);
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'containment', point: [1, 1, 1] } }],
+    statistics: { diagnostics: [] },
+  });
+  const menu = [];
+  ext.onContextMenu(menu, { hasSelected: true });
+  await menu[0].target();
+  check('setup: isolation is active before unload()', ext._isolatedModels.size, 1);
   check('setup: overlay scene exists before unload()', viewer.overlays.hasScene('clash-finder-markers'), true);
   check('setup: one marker is active before unload()', ext._activeMarkers.length, 1);
+  isolateCalls.length = 0; // reset observation window before unload() itself
+
   ext._world.dispose = () => { throw new Error('boom'); };
   let thrown = null;
   try { ext.unload(); } catch (err) { thrown = err; }
   check('unload() still propagates dispose()\'s own thrown error', thrown?.message, 'boom');
   check('markers are torn down even though dispose() threw', ext._activeMarkers.length, 0);
   check('the overlay scene itself is removed too, not merely emptied', viewer.overlays.hasScene('clash-finder-markers'), false);
+  const clears = isolateCalls.filter((c) => c.dbIds.length === 0).map((c) => c.model);
+  check('isolation is ALSO cleared even though dispose() threw -- markers and isolation never visually disagree',
+    clears.includes(modelA), true);
+  check('_isolatedModels is empty after unload(), even though dispose() threw', ext._isolatedModels.size, 0);
 }
 
 // === shared geometry and material are disposed exactly once on unload, after marker meshes are
