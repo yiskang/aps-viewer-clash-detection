@@ -14,10 +14,11 @@ function setupUrnInput(viewer) {
     const input = document.getElementById('urn');
     const loadButton = document.getElementById('load');
     const browseButton = document.getElementById('browse');
+    const keepCheckbox = document.getElementById('keep-current-models');
 
     const request = (urn) => {
         lastRequestedUrn = urn;
-        onModelSelected(viewer, urn);
+        onModelSelected(viewer, urn, { keepCurrentModels: keepCheckbox.checked });
     };
 
     loadButton.onclick = () => {
@@ -59,7 +60,7 @@ function setupUrnInput(viewer) {
     }
 }
 
-async function onModelSelected(viewer, urn) {
+async function onModelSelected(viewer, urn, { keepCurrentModels = false } = {}) {
     if (window.onModelSelectedTimeout) {
         clearTimeout(window.onModelSelectedTimeout);
         delete window.onModelSelectedTimeout;
@@ -77,15 +78,18 @@ async function onModelSelected(viewer, urn) {
                 break;
             case 'inprogress':
                 showNotification(`Model is being translated (${status.progress})...`);
-                window.onModelSelectedTimeout = setTimeout(onModelSelected, 5000, viewer, urn);
+                // Thread the SAME options through the retry -- a model still translating when the
+                // user checked "load as additional" must still load as additional once translation
+                // finishes, not silently revert to keepCurrentModels:false on retry.
+                window.onModelSelectedTimeout = setTimeout(onModelSelected, 5000, viewer, urn, { keepCurrentModels });
                 break;
             case 'failed':
                 showNotification(`Translation failed. <ul>${status.messages.map(msg => `<li>${JSON.stringify(msg)}</li>`).join('')}</ul>`);
                 break;
             default:
                 clearNotification();
-                loadModel(viewer, urn);
-                break; 
+                loadModel(viewer, urn, { keepCurrentModels });
+                break;
         }
     } catch (err) {
         alert('Could not load model. See the console for more details.');
