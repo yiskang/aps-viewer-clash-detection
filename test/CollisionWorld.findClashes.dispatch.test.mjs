@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { CollisionWorld } from '../collision/CollisionWorld.js';
+import { CollisionWorld, normalizeNarrowPhaseHit } from '../collision/CollisionWorld.js';
 import { buildMockModel } from './fixtures/mockInstanceTree.mjs';
 import { mergeGeometries } from './fixtures/geometry.mjs';
 
@@ -661,4 +661,81 @@ test('_runNarrowPhasePair returns {hit, witness} for volume-overlap and a bare b
 
   const surfaceIntersectionResult = captured.surfaceIntersection;
   assert.equal(typeof surfaceIntersectionResult, 'boolean', 'surface-intersection mode must keep its existing bare-boolean shape');
+});
+
+// === Task review fix: witness must be strictly null, never `false`, for the volume-overlap +
+// buildOne-failure combination =================================================================
+//
+// `_runNarrowPhasePair`'s two `buildOne`-failure early-outs (unchanged shared prep code) return the
+// bare boolean `false` even under `mode === 'volume-overlap'`. `normalizeNarrowPhaseHit` must still
+// produce `witness: null` (never `witness: false`) in that case, or Task 5's `witness === null`
+// checks would silently misbehave.
+
+test('normalizeNarrowPhaseHit(volume-overlap, false): witness is strictly null, never false', () => {
+  // The exact shape `_runNarrowPhasePair` returns from its buildOne-failure early-outs.
+  const { isHit, witness } = normalizeNarrowPhaseHit('volume-overlap', false);
+  assert.equal(isHit, false);
+  assert.strictEqual(witness, null, 'witness must be strictly null, not false');
+});
+
+test('normalizeNarrowPhaseHit(volume-overlap, ...): full contract table', () => {
+  // A structured negative: witness passes through as null.
+  assert.deepEqual(normalizeNarrowPhaseHit('volume-overlap', { hit: false, witness: null }), {
+    isHit: false, witness: null,
+  });
+  // A structured positive with a real witness: passes through unchanged.
+  const point = [1, 2, 3];
+  assert.deepEqual(normalizeNarrowPhaseHit('volume-overlap', { hit: true, witness: { kind: 'crossing', point } }), {
+    isHit: true, witness: { kind: 'crossing', point },
+  });
+  // A structured positive whose witness is itself null (fault-tolerance contract, per the M2.1
+  // spec's own "witness:null is a fault-tolerance contract, not a normal outcome" clarification):
+  // still a real hit, witness stays null.
+  assert.deepEqual(normalizeNarrowPhaseHit('volume-overlap', { hit: true, witness: null }), {
+    isHit: true, witness: null,
+  });
+  // Every non-object/falsy `result` -- what the buildOne-failure early-outs and an absent value both
+  // produce -- must normalize to isHit:false, witness:null, never to isHit:true or witness:false.
+  for (const falsyResult of [false, undefined, null]) {
+    assert.deepEqual(normalizeNarrowPhaseHit('volume-overlap', falsyResult), { isHit: false, witness: null });
+  }
+});
+
+test('normalizeNarrowPhaseHit(containment/surface-intersection, ...): bare-boolean modes are untouched by the witness fix', () => {
+  for (const mode of ['containment', 'surface-intersection']) {
+    assert.deepEqual(normalizeNarrowPhaseHit(mode, true), { isHit: true, witness: undefined });
+    assert.deepEqual(normalizeNarrowPhaseHit(mode, false), { isHit: false, witness: undefined });
+  }
+});
+
+test('a real volume-overlap buildOne failure (missing render proxy) reaches _runNarrowPhasePair as bare false, and normalizeNarrowPhaseHit turns it into isHit:false/witness:null end-to-end', async () => {
+  // Same "permanently missing proxy" shape as the batch-4 fix-wave tests in
+  // test/CollisionWorld.findClashes.test.mjs, but never recovers (unlike that file's transient-miss
+  // fixtures) -- this is what actually drives buildOne's RenderProxyUnavailableError catch, and
+  // therefore _runNarrowPhasePair's `if (!targetRecord) return false;` early-out, under
+  // mode:'volume-overlap'.
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(6, 6, 6), at: [0, 0, 0] },
+    },
+  );
+  const realGetRenderProxy = viewer.impl.getRenderProxy;
+  viewer.impl.getRenderProxy = (queriedModel, fragId) => (fragId === 200 ? null : realGetRenderProxy(queriedModel, fragId));
+
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  let rawResult;
+  const original = world._runNarrowPhasePair.bind(world);
+  world._runNarrowPhasePair = async (...args) => { rawResult = await original(...args); return rawResult; };
+
+  const result = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+
+  assert.equal(result.statistics.narrowPhasePairs, 1, 'the pair must actually reach the narrow phase');
+  assert.strictEqual(rawResult, false, '_runNarrowPhasePair must take the buildOne-failure early-out and return bare false');
+  assert.equal(result.pairs.length, 0, 'a pair whose geometry never resolved must not be reported');
+
+  const normalized = normalizeNarrowPhaseHit('volume-overlap', rawResult);
+  assert.equal(normalized.isHit, false);
+  assert.strictEqual(normalized.witness, null, 'witness must be strictly null for this exact end-to-end path, never false');
 });

@@ -119,9 +119,28 @@ function comparePlacedCanonically(a, b) {
 // would silently break the moment `hit` is a structured NEGATIVE result: `{ hit: false, witness:
 // null }` is still a truthy JS object, so `!hit` evaluates to `false` for it just as it would for
 // `{ hit: true, ... }`, and the loop would stop skipping negative candidates entirely.
-function normalizeNarrowPhaseHit(mode, result) {
+//
+// Task review fix (post-commit 0579b21): `_runNarrowPhasePair`'s pre-existing `buildOne`-failure
+// early-outs return the bare boolean `false` even under `mode === 'volume-overlap'` (that shared
+// prep code is untouched by this task and knows nothing about the mode-specific return shape). A
+// naive `(result && result.witness) ?? null` mishandles that case: `result` is `false`, so
+// `result && result.witness` short-circuits to `false` (not `undefined`/`null`), and `false ?? null`
+// stays `false` -- silently violating the `witness: {kind,point}|null` contract Task 5 depends on
+// (e.g. an `=== null` check). The `typeof result === 'object'` guard below ensures `witness` can
+// only ever come out `null` or a real `{kind,point}` object, never any other falsy value, regardless
+// of what shape `result` turns out to be.
+//
+// Exported (test-only; NOT re-exported from collision/index.js, so the public library surface is
+// unaffected) so this exact contract -- `witness` is never anything but `null` or an object -- can be
+// asserted directly rather than only inferred through findClashes' own (currently witness-blind)
+// output.
+export function normalizeNarrowPhaseHit(mode, result) {
   if (mode === 'volume-overlap') {
-    return { isHit: Boolean(result && result.hit), witness: (result && result.witness) ?? null };
+    const isObjectShape = Boolean(result) && typeof result === 'object';
+    return {
+      isHit: isObjectShape && Boolean(result.hit),
+      witness: isObjectShape ? (result.witness ?? null) : null,
+    };
   }
   return { isHit: Boolean(result), witness: undefined }; // witness is not a concept for these modes
 }
