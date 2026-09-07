@@ -1,5 +1,107 @@
 # Changelog
 
+## v0.2.0 — Collision Library Milestone 2: Federated Clash Finder (recommended tag, not yet created)
+
+Adds cross-model ("federated") clash detection to the Viewer-side collision-detection library
+(`collision/`) and a second reference integration sample,
+`wwwroot/extensions/ClashFinderExtension.js`. See `collision/README.md`'s "M2:
+`broadPhase` and the TLAS-accelerated path" and "Reference sample: Clash Finder" sections for full
+usage docs, and `docs/superpowers/specs/2026-09-05-collision-library-milestone2-design.md` for the
+full design.
+
+### Capabilities
+
+- `findClashes`'s `target` accepts a new `{ targets: [{model, dbIds?}, ...] }` shape alongside the
+  existing legacy `{model, dbIds}` shape — a single call can now query multiple models, including
+  the source's own model, in one federated sweep. An omitted `dbIds` on a `targets` entry is a
+  whole-model-scope sentinel (query every fragment in that model).
+- `mode: 'volume-overlap'` — a third query mode alongside M1's `surface-intersection`/`containment`.
+- `broadPhase: 'tlas' | 'linear'`, with a shape-dependent default (`targets` defaults to `'tlas'`,
+  legacy `{model, dbIds}` keeps M1's `'linear'` default): a per-epoch top-level acceleration
+  structure (`TlasCache`/`CollisionInstanceBVH`) over cached placement, built lazily on first use as
+  a target and rebuilt on growth/invalidation, bounded by an incremental `maxTlasCandidatePairs`
+  budget during traversal. `'linear'` remains the M1-equivalent correctness oracle both fixtures and
+  any doubt about the TLAS path fall back to.
+- Multi-model entry-order/liveness: every distinct model a call touches (source and every `targets`
+  entry) is snapshotted and leased at query entry; eviction of *any* captured model — not just the
+  operand currently being processed — aborts the whole federated query rather than returning a
+  silent partial result.
+- New statistics fields for the TLAS path (`tlasBuilds`, `tlasBuildMs`, `tlasCacheHits`,
+  `tlasSharedBuildWaits`, `tlasQueryMs`, `tlasPrimitiveCandidatePairs`, `tlasExactRetestSurvivors`,
+  `tlasNarrowPhaseInputPairs`, `tlasLeafRangeEmissions`) plus a `'tlas-build'` scheduler/performance
+  span (`reportSpan('tlas-build', ms)`, spec §9.1), reported the same way
+  `GeometryRegistry._runPhase`'s weld/connectivity/bvh-construction phases already are.
+
+### Compatibility notes
+
+- **The legacy `{model, dbIds}` target shape is unchanged from M1, with one narrow, deliberate
+  exception**: source self-exclusion (`isSourceOwnFragment`) now applies to it too, so an
+  overlapping dbId on both `source` and `target` no longer double-counts a pathological self-pair.
+  Describe `'linear'` as "M1-equivalent except for uniform source self-exclusion," not as
+  byte-for-byte identical to M1 in every case.
+- `maxBroadPhaseInstancePairs`'s upfront Cartesian precheck is **not applied at all** under
+  `broadPhase: 'tlas'` — a TLAS call's real cost is not proportional to `sourceCount × targetCount`,
+  so that precheck would reject queries the TLAS exists specifically to make cheap. The separate
+  `maxTlasCandidatePairs` budget is what bounds a TLAS call's cost instead.
+- `CollisionWorld`/`RoomLocatorExtension`'s M1 single-model public surface is unchanged; every M1
+  test continues to pass unmodified. `ClashFinderExtension` is additive, sibling to
+  `RoomLocatorExtension`, and does not alter Room Locator's own behavior.
+
+### Live Viewer acceptance result
+
+`test/acceptance/clash-finder.acceptance.mjs` (Playwright, live Viewer, live 3-discipline federated
+model): **PASS.** Verified against a real coordinated building modeled by three disciplines —
+Architecture host (`Audubon_Architecture_clash_test.rvt`, 5,435 fragments) plus Structure
+(`Audubon_Structure_clash_test.rvt`, 543 fragments) and Mechanical
+(`Audubon_Mechanical_clash_test.rvt`, 1,496 fragments) links, each independently translated and
+loaded as additional models (~7,474 total fragments). Selecting a steel beam (dbId `2734`,
+Structure model) and choosing "Find Clashes" finds 2 pairs (1 cross-model, 1 same-model) with 12
+diagnostics; selecting a real column (dbId `3965`) finds 0 pairs, 0 diagnostics — a genuine,
+diagnostic-free negative. Full write-up: `collision/README.md`'s "Reference sample: Clash Finder"
+section.
+
+### Performance-gate result
+
+`test/performance/run-gate-m2.mjs`, run against the same real 3-discipline federated fixture: a
+genuine **~3.9x reduction** in exact broad-phase retest candidates under `broadPhase: 'tlas'` vs.
+`'linear'` (**1,913** vs. **7,473** `broadPhasePairs`, for the query measured) — but **no measurable
+end-to-end wall-clock improvement** on this fixture's scale, because broad phase is under 0.3% of
+total call time either way; narrow phase dominates both paths equally. The candidate-search benefit
+question (spec §14.1) is answered **yes**; the end-to-end wall-clock picture is a wash at this
+fixture's scale, expected to matter more as narrow-phase-per-candidate cost drops or source-instance
+counts grow. The `'tlas-build'` span criterion, previously NOT EXERCISABLE (no span was ever
+emitted — see Fixes below), is now instrumented and measured directly. `tlasSharedBuildWaits` was
+NOT EXERCISED (no genuine concurrent caller races the same epoch's TLAS build in this gate's
+single-page harness) — a structural gap in the gate's own concurrency, not a library defect. Full
+write-up: `test/performance/README.md`.
+
+### Fixes (closeout pass, after initial M2 completion)
+
+- **`'tlas-build'` scheduler span was never emitted.** Spec §9.1 requires the TLAS build to report a
+  `'tlas-build'` span via `reportSpan(label, ms)`; no such call existed anywhere in
+  `CollisionWorld.js` or `TlasCache.js` despite `statistics.tlasBuilds` correctly counting real
+  builds. Fixed in `TlasCache._startBuild` — a local `performance.now()` timer now brackets the
+  actual build work (`buildPrimitives` + `CollisionInstanceBVH` construction) exactly once per real
+  cold build or growth-triggered rebuild, and never on a warm cache hit or a single-flight shared
+  wait.
+- **`query.source.dbIds` was not defensively copied at `findClashes` entry.** Every target's dbIds
+  were already `.slice()`d by `normalizeTargets` (M1 discipline, extended in M2), but the source
+  side read `query.source.dbIds` directly at extraction time — a caller mutating that array during
+  the call's own async gaps (most notably the instance-tree readiness wait) could change what got
+  extracted, well after the call had already started. Fixed by snapshotting `query.source.dbIds`
+  alongside `targetsEntries`, at the same "before any extraction begins" point normalization already
+  uses.
+
+### Known limitations
+
+See `collision/README.md`'s "Known M2 limitations" section — in summary: no measurable end-to-end
+wall-clock benefit from TLAS on the fixture measured so far (candidate-search benefit is real;
+overall wall-clock is a wash at this scale); `tlasSharedBuildWaits` not exercised by the gate. Three
+pre-existing, out-of-scope items remain tracked as follow-ups, not fixed by this release: a
+`main.js` overlapping status-poll race, multi-model `fitToView` last-call-wins framing under
+concurrent isolate/fit calls, and Room Locator/Clash Finder's independent `CollisionWorld` ownership
+(each extension currently constructs its own).
+
 ## v0.1.0 — Collision Library Milestone 1 (recommended tag, not yet created)
 
 First usable release of the Viewer-side collision-detection library (`collision/`) and its

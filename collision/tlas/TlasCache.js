@@ -42,6 +42,7 @@
 // correctness mechanism.
 
 import { CollisionInstanceBVH } from './CollisionInstanceBVH.js';
+import { reportSpan } from '../scheduler.js';
 
 // Internal-only sentinel distinguishing "this build was cancelled via supersession/eviction/
 // disposal" from any other rejection (a genuine checkpoint liveness failure, or buildPrimitives/
@@ -179,9 +180,37 @@ export class TlasCache {
         const attempt = (async () => {
           const pending = this._checkpointPort.checkpoint({ loadEpoch });
           if (pending) { await pending; bailIfCancelled(); }
-          const records = await this._buildPrimitives(loadEpoch);
-          bailIfCancelled();
-          return new CollisionInstanceBVH(records);
+          // spec §9.1: 'tlas-build' is reported the same way GeometryRegistry._runPhase's own
+          // weld/connectivity/bvh-construction phases are -- a local performance.now() timer
+          // bracketing ONLY the actual build work (never the checkpoint wait above), reported via
+          // reportSpan(label, ms) directly rather than through the shared checkpoint port's own
+          // lastSpanAt baseline (which two concurrent builds would otherwise corrupt for each
+          // other, GeometryRegistry.js:173-217's own documented reason, applying identically here).
+          // The `finally` reports real elapsed work even on a mid-build cancellation (bailIfCancelled
+          // throwing, or buildPrimitives/CollisionInstanceBVH itself throwing) -- this attempt still
+          // did real, atomic, unpreemptible work regardless of whether it goes on to win the race
+          // against entry.cancellationSignal below.
+          //
+          // Known, pre-existing limitation shared with GeometryRegistry.js:211-216 (not new here,
+          // and out of scope to fix as part of this call site): reportSpan()/setSpanRecorder() have
+          // no generation-awareness of their own (unlike createCheckpointPort's separate
+          // lastSpanAt-generation guard, scheduler.js's own comment) -- a build cancelled here keeps
+          // running (JS cannot preempt it) and, if the global recorder is cleared and a DIFFERENT
+          // one installed before this attempt's own await finally settles, its span reports into
+          // that later, unrelated recorder rather than being dropped. A real gap under genuine
+          // concurrent-build cancellation racing a recorder swap (codex-review, M2 closeout pass) --
+          // not exercised by the M2 gate's own single-page, sequential-per-measurement harness
+          // (tlasSharedBuildWaits reads 0 there for the same reason, see collision/README.md).
+          // Fixing this for real means a generation-bound span API in scheduler.js shared by every
+          // direct reportSpan() call site, not a local patch here.
+          const startedAt = performance.now();
+          try {
+            const records = await this._buildPrimitives(loadEpoch);
+            bailIfCancelled();
+            return new CollisionInstanceBVH(records);
+          } finally {
+            reportSpan('tlas-build', performance.now() - startedAt);
+          }
         })();
         // Important finding #2: race the real build against this entry's own cancellation signal
         // so a supersession/eviction/disposal that arrives while the build is still in flight

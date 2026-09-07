@@ -835,6 +835,33 @@ test('readiness wait: extraction does not begin until getObjectTree calls back w
   assert.equal(result.pairs.length, 1, 'and produced the normal result');
 });
 
+test('source dbIds is snapshotted at entry: caller mutation of query.source.dbIds during the readiness wait does not change what gets extracted', async () => {
+  // M2 closeout: normalizeTargets already defensively .slice()s every target's dbIds at entry;
+  // query.source.dbIds had no equivalent snapshot, so a caller mutating its own source-dbIds array
+  // during this call's async gaps (the readiness wait below is the widest one) could change what
+  // extractFragments actually walks, well after the call was made. Uses the SAME readiness-wait
+  // harness as the tests above -- it is the one real async gap between findClashes entry (where the
+  // snapshot must be taken) and the source extraction call that consumes it.
+  let fireSuccess = null;
+  const { model, viewer } = makeFixture(READINESS_TREE, READINESS_FRAGS, {
+    objectTreeReady: false,
+    settleObjectTree: (onSuccess, _onError, instanceTree) => { fireSuccess = () => onSuccess(instanceTree); },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const sourceDbIds = [10];
+  const pending = world.findClashes(query(model, sourceDbIds, [20]));
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Mutate the CALLER's own array after the call has already started, before extraction runs.
+  sourceDbIds.length = 0;
+  sourceDbIds.push(999); // a dbId owning no fragments in this fixture
+
+  fireSuccess();
+  const result = await pending;
+  assert.equal(result.pairs.length, 1,
+    'extraction must use the dbIds snapshotted at entry (dbId 10, which genuinely overlaps dbId 20), not the caller\'s later-mutated array');
+});
+
 test('readiness fast path is CONDITIONALLY SYNCHRONOUS -- it costs no microtask boundary', async () => {
   // Not cosmetic: a bare `await` on an already-ready model would defer everything after it by a
   // microtask, which is exactly the boundary ViewerModelAdapter's own Item-D fix exists to keep

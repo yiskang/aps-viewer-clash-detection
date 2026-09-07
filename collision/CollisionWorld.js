@@ -1036,6 +1036,14 @@ export class CollisionWorld {
     // extraction begins. `targetsEntries` is the uniform `{model, dbIds}[]` shape every later step
     // operates on; `distinctModels` is the deduplicated (by object identity) set of every Model
     // object this call touches, source included, source always first.
+    //
+    // `sourceDbIds` is a defensive copy of `query.source.dbIds`, taken here at entry -- matching
+    // `normalizeTargets`'s own defensive-copy discipline for every target's dbIds (`.slice()`
+    // above). Without this, a caller mutating its own `query.source.dbIds` array during this call's
+    // later async gaps (the instance-tree readiness wait below, in particular) could change what
+    // `extractFragments` actually walks, well after this call already committed to the array it was
+    // handed at entry.
+    const sourceDbIds = query.source.dbIds.slice();
     const targetsEntries = normalizeTargets(query.target);
     const distinctModels = collectDistinctModels(query.source.model, targetsEntries);
     if (this._disposed) throw new WorldDisposedError();
@@ -1116,7 +1124,7 @@ export class CollisionWorld {
     // `THREE` is deliberately NOT overridden anywhere in this method: extraction's own
     // `globalThis.THREE` default is the Viewer's real r71 global, and reading it there is the one
     // sanctioned crossing point.
-    const sourceExtracted = await extractFragments(query.source.model, query.source.dbIds, sourceEpoch, { checkpoint });
+    const sourceExtracted = await extractFragments(query.source.model, sourceDbIds, sourceEpoch, { checkpoint });
 
     // One extraction per `targets` entry, each against ITS OWN model's own lease/epoch, merged into
     // `Map<epoch, Map<fragmentId, record>>` -- NEVER a single flat `Map<fragmentId, record>` across

@@ -11,6 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TlasCache } from '../../collision/tlas/TlasCache.js';
+import { setSpanRecorder, clearSpanRecorder } from '../../collision/scheduler.js';
 
 function stubCheckpointPort() {
   return { checkpoint: () => undefined }; // always-fast-path stub, mirrors GeometryRegistry's own tests
@@ -398,4 +399,41 @@ test('codex-review (third pass): entry.promise exists before any synchronous re-
   const innerResult = await reentrantResult;
   assert.equal(outerResult.outcome, 'built');
   assert.equal(innerResult.outcome, 'shared-wait', 'the re-entrant call shares the same in-flight build via single-flight, no crash');
+});
+
+// --- M2 closeout: 'tlas-build' scheduler span (spec §9.1) --------------------------------------
+//
+// Prior to this fix, no reportSpan('tlas-build', ...) call existed anywhere in TlasCache.js or
+// CollisionWorld.js (collision/README.md's own "Known M2 limitations" section documented this as a
+// real, unaddressed production-instrumentation gap). Fixed by bracketing the actual build work
+// (buildPrimitives + CollisionInstanceBVH construction) inside _startBuild's own attempt IIFE with a
+// local performance.now() timer, mirroring GeometryRegistry._runPhase's weld/connectivity/
+// bvh-construction span convention exactly.
+
+test('a cold build reports exactly one tlas-build span; a warm cache hit reports none', async () => {
+  const buildPrimitives = async () => [];
+  const cache = new TlasCache({ buildPrimitives, checkpointPort: stubCheckpointPort() });
+  const spans = [];
+  setSpanRecorder((label, ms) => spans.push({ label, ms }));
+  try {
+    const cold = await cache.getEntry(1, 1);
+    assert.equal(cold.outcome, 'built');
+    const coldSpans = spans.filter((s) => s.label === 'tlas-build');
+    assert.equal(coldSpans.length, 1, 'a cold build must report exactly one tlas-build span');
+    assert.ok(Number.isFinite(coldSpans[0].ms) && coldSpans[0].ms >= 0);
+
+    spans.length = 0;
+    const warm = await cache.getEntry(1, 1); // same epoch, same revision -- cache hit
+    assert.equal(warm.outcome, 'hit');
+    assert.equal(spans.filter((s) => s.label === 'tlas-build').length, 0,
+      'a warm cache hit must not report a tlas-build span -- it never reaches _startBuild at all');
+
+    spans.length = 0;
+    const rebuilt = await cache.getEntry(1, 2); // higher revision -- growth staleness rebuild
+    assert.equal(rebuilt.outcome, 'built');
+    assert.equal(spans.filter((s) => s.label === 'tlas-build').length, 1,
+      'a rebuild triggered by growth staleness is itself a real build and must report its own span');
+  } finally {
+    clearSpanRecorder();
+  }
 });

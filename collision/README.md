@@ -456,14 +456,6 @@ identity comparisons.
 
 ## Known M2 limitations
 
-- **`'tlas-build'` span is never emitted.** Spec §9.1 requires the TLAS build to report a
-  `'tlas-build'` span via `reportSpan(label, ms)` — the same instrumentation pattern
-  `GeometryRegistry._runPhase`'s own weld/connectivity/bvh-construction phases already use. A
-  static grep across the whole `collision/` tree confirms no `reportSpan('tlas-build', ...)` call
-  exists anywhere in `CollisionWorld.js` or `TlasCache.js`, despite `statistics.tlasBuilds`
-  correctly counting real builds. This is a real, unaddressed production-instrumentation gap dating
-  to an earlier batch (Tasks 10/13), only surfaced by Task 21's performance gate — it is recorded
-  here, not fixed (Task 22 is documentation-only).
 - **No measurable end-to-end wall-clock benefit from TLAS, on the fixture measured so far.** The M2
   performance gate (`test/performance/run-gate-m2.mjs`) ran against a real 3-discipline federated
   fixture (~7,474 total fragments across Architecture/Structure/Mechanical models) and found a
@@ -482,6 +474,18 @@ identity comparisons.
   single Playwright page with no genuine concurrent caller racing the same epoch's TLAS build, so
   the field reads `0` throughout for a structural reason (no exercised code path), not because the
   field itself is broken.
+- **`reportSpan`/`setSpanRecorder` have no generation-awareness at their own direct call sites**
+  (found by codex-review during the closeout pass that added the `'tlas-build'` span above). A
+  build cancelled mid-flight keeps running in the background (JS cannot preempt it); if the global
+  span recorder is cleared and a different one installed before that abandoned build's own
+  `finally` block settles, its span reports into the later, unrelated recorder instead of being
+  dropped. This is not new to `'tlas-build'` — `GeometryRegistry._runPhase`'s weld/connectivity/
+  bvh-construction spans and `CollisionWorld`'s `'capacity-admission-commit'` span share the
+  identical pattern (a local `performance.now()` timer plus `finally { reportSpan(...) }`, raced
+  against a cancellation signal) and the identical gap. Not exercised by the M2 gate's own
+  single-page, sequential-per-measurement harness (see `tlasSharedBuildWaits` above). A real fix
+  needs a generation-bound span API in `collision/scheduler.js` shared by every direct `reportSpan`
+  call site, not a local patch to one of them — tracked as a follow-up, not fixed here.
 
 ## Developer entry points
 
