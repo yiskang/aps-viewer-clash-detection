@@ -46,8 +46,25 @@ function makeMockOverlays() {
     _scenes: scenes, // test-only introspection seam, not part of the real viewer.overlays surface
     hasScene(name) { return scenes.has(name); },
     addScene(name) { if (!scenes.has(name)) scenes.set(name, new Set()); },
-    addMesh(name, mesh) { scenes.get(name)?.add(mesh); },
-    removeMesh(name, mesh) { scenes.get(name)?.delete(mesh); },
+    // Batch 2 whole-batch review Finding 3: the REAL viewer.overlays.addMesh/removeMesh signature is
+    // mesh FIRST, scene name SECOND (viewer3D.js:20650 `addMesh(mesh, sceneName) {`, :20670
+    // `removeMesh(mesh, sceneName) {`; node_modules/@types/forge-viewer/index.d.ts:1470-1471 agrees).
+    // The old mock here mirrored the (buggy) production call order instead of the real API, which is
+    // exactly why 119 passing tests never caught the production argument-order bug. Each method below
+    // now ALSO asserts its own argument shapes, so a future accidental argument-order regression fails
+    // loudly (a TypeError-shaped Error) instead of silently degrading to a no-op Map miss.
+    addMesh(mesh, name) {
+      if (typeof name !== 'string') {
+        throw new Error(`overlays.addMesh(mesh, name): name must be the scene name string, got ${typeof name}`);
+      }
+      scenes.get(name)?.add(mesh);
+    },
+    removeMesh(mesh, name) {
+      if (typeof name !== 'string') {
+        throw new Error(`overlays.removeMesh(mesh, name): name must be the scene name string, got ${typeof name}`);
+      }
+      scenes.get(name)?.delete(mesh);
+    },
     clearScene(name) { scenes.get(name)?.clear(); },
     removeScene(name) { scenes.delete(name); },
   };
@@ -95,10 +112,20 @@ function makeMockModel(id, { boxesByDbId = {} } = {}) {
 // r71 arithmetic (union, getCenter, size, getBoundingSphere, setFromArray, isEmpty) exactly as
 // source-verified against the pinned Viewer 7.124.2 bundle, so radius-clamping math is exercised
 // faithfully rather than stubbed to a constant.
+//
+// [Batch 2 whole-batch review Finding 3 fix] This "source-verified against the bundle" claim was
+// FALSE for one method until this fix round: FakeVector3 used to also implement `setScalar`, which
+// does not exist anywhere in the pinned bundle (`grep -c setScalar viewer3D.js` -> 0) -- the real
+// `window.THREE.Vector3` here is `LmvVector3` (viewer3D.js:199820), whose prototype offers `set`,
+// `setX/Y/Z`, `setComponent`, `setLength`, `multiplyScalar`, `addScalar`, `subScalar`, `clampScalar`,
+// but no `setScalar` (that method was only added to upstream three.js after the r71 vintage this
+// Viewer bundles). `setScalar` has been removed from FakeVector3 below -- its method surface must
+// stay a STRICT SUBSET of what LmvVector3 actually offers, never a speculative superset, precisely
+// because the production code calling a fixture-only method is exactly how this bug shipped past 119
+// passing tests in the first place.
 class FakeVector3 {
   constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
   set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
-  setScalar(s) { this.x = this.y = this.z = s; return this; }
   addVectors(a, b) { this.x = a.x + b.x; this.y = a.y + b.y; this.z = a.z + b.z; return this; }
   subVectors(a, b) { this.x = a.x - b.x; this.y = a.y - b.y; this.z = a.z - b.z; return this; }
   multiplyScalar(s) { this.x *= s; this.y *= s; this.z *= s; return this; }
@@ -630,6 +657,82 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   check('BEFORE_MODEL_UNLOAD_EVENT handler fails clearly if event.model is ever undefined', threw, true);
 }
 
+// === [Batch 2 whole-batch review Finding 6] _onBeforeModelUnload gets the SAME exception-safety
+// discipline unload() already received in Task 9's own fix round: if _world.evictModel(event.model)
+// throws (e.g. a WorldDisposedError), _clearIsolation()/_clearMarkers()/_isolatedModels.delete() must
+// STILL all run rather than being skipped by the propagating throw -- mirrors the existing "unload()
+// disposes markers/overlay scene even if _world.dispose() throws" test above, adapted to this sibling
+// lifecycle site. Populates BOTH isolation and markers via a real successful Find Clashes call first,
+// exactly like that unload() test does, so the assertions below can distinguish "both cleared
+// together" from "only one cleared". ===================================================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'containment', point: [1, 1, 1] } }],
+    statistics: { diagnostics: [] },
+  });
+  const menu = [];
+  ext.onContextMenu(menu, { hasSelected: true });
+  await menu[0].target();
+  check('setup: isolation is active before the model-unload event', ext._isolatedModels.size, 1);
+  check('setup: one marker is active before the model-unload event', ext._activeMarkers.length, 1);
+  isolateCalls.length = 0; // reset observation window before the model-unload event itself
+
+  ext._world.evictModel = () => { throw new Error('WorldDisposedError: model already evicted'); };
+  let thrown = null;
+  try { ext._onBeforeModelUnload({ model: modelA }); } catch (err) { thrown = err; }
+  check('_onBeforeModelUnload still propagates evictModel\'s own thrown error', thrown?.message, 'WorldDisposedError: model already evicted');
+  check('markers are torn down even though evictModel() threw', ext._activeMarkers.length, 0);
+  const clears = isolateCalls.filter((c) => c.dbIds.length === 0).map((c) => c.model);
+  check('isolation is ALSO cleared even though evictModel() threw -- markers and isolation never visually disagree',
+    clears.includes(modelA), true);
+  check('_isolatedModels is empty after _onBeforeModelUnload, even though evictModel() threw', ext._isolatedModels.size, 0);
+  check('the evicted model is dropped from _isolatedModels bookkeeping even though evictModel() threw',
+    ext._isolatedModels.has(modelA), false);
+}
+
+// === [Batch 2 fix-round follow-up, codex-review + coordinator tightening] _onBeforeModelUnload's own
+// Finding-6 fix must ALSO tolerate _clearIsolation() itself throwing (e.g. one of ITS internal
+// viewer.isolate([], model) calls throws) -- the exact same "one throw skips the rest of cleanup" bug
+// class Finding 6 just fixed at the evictModel call site, one layer deeper. Without nesting
+// _clearIsolation() in its OWN try/finally (mirroring unload()'s own existing structure -- see
+// unload()'s comment above), _clearMarkers() and _isolatedModels.delete(event.model) would both be
+// skipped whenever _clearIsolation() throws, even though evictModel() itself succeeded. ===============
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'containment', point: [1, 1, 1] } }],
+    statistics: { diagnostics: [] },
+  });
+  const menu = [];
+  ext.onContextMenu(menu, { hasSelected: true });
+  await menu[0].target();
+  check('setup: isolation is active before the model-unload event', ext._isolatedModels.size, 1);
+  check('setup: one marker is active before the model-unload event', ext._activeMarkers.length, 1);
+
+  // evictModel succeeds normally this time -- the throw comes from _clearIsolation() itself.
+  ext._world.evictModel = () => {};
+  ext._clearIsolation = () => { throw new Error('viewer.isolate threw: model already detached'); };
+  let thrown = null;
+  try { ext._onBeforeModelUnload({ model: modelA }); } catch (err) { thrown = err; }
+  check('_onBeforeModelUnload still propagates _clearIsolation()\'s own thrown error', thrown?.message, 'viewer.isolate threw: model already detached');
+  check('markers are STILL torn down even though _clearIsolation() itself threw', ext._activeMarkers.length, 0);
+  check('the evicted model is STILL dropped from _isolatedModels bookkeeping even though _clearIsolation() itself threw',
+    ext._isolatedModels.has(modelA), false);
+}
+
 // === Task 8 (M2.1): witness marker overlay ==========================================================
 
 // === ClashFinderExtension.js never imports the npm three package — permanent regression guard,
@@ -754,6 +857,60 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const { ext } = extensionWithFakeWorld();
   check('an empty dbIdsByModel falls back to MIN_MARKER_RADIUS, never a misleading MAX', ext._computeMarkerRadius(new Map()), ClashFinderExtension.MIN_MARKER_RADIUS);
   check('_computeMarkerRadius defaults dbIdsByModel to empty when omitted entirely', ext._computeMarkerRadius(), ClashFinderExtension.MIN_MARKER_RADIUS);
+}
+
+// === [Batch 2 whole-batch review Finding 4] a model whose getInstanceTree() returns undefined (the
+// object tree hasn't loaded yet, or failed to load) is skipped defensively rather than throwing a
+// TypeError on `.getNodeBox` of undefined -- this is the ONLY getInstanceTree() call in this repo, so
+// a findClashes call can fully succeed while getInstanceTree() is still undefined on some model =====
+{
+  // (a1) the ONLY model present has no instance tree at all -- falls back to MIN_MARKER_RADIUS,
+  // no throw, exactly like an empty dbIdsByModel.
+  const modelNoTree = { id: 201, getInstanceTree() { return undefined; } };
+  const { ext } = extensionWithFakeWorld();
+  let threw = null;
+  let radius;
+  try {
+    radius = ext._computeMarkerRadius(new Map([[modelNoTree, new Set([1])]]));
+  } catch (err) { threw = err; }
+  check('a model with no instance tree does not throw', threw, null);
+  check('a model with no instance tree (the only one present) falls back to MIN_MARKER_RADIUS', radius, ClashFinderExtension.MIN_MARKER_RADIUS);
+}
+{
+  // (a2) one model has no instance tree, but ANOTHER model in the same call DOES have real bounding
+  // data -- the radius still computes sensibly from the good model, the broken one is just skipped.
+  const modelNoTree = { id: 202, getInstanceTree() { return undefined; } };
+  const goodModel = makeMockModel(203, { boxesByDbId: { 5: { min: [0, 0, 0], max: [50, 50, 50] } } });
+  const { ext } = extensionWithFakeWorld();
+  let threw = null;
+  let radius;
+  try {
+    radius = ext._computeMarkerRadius(new Map([[modelNoTree, new Set([1])], [goodModel, new Set([5])]]));
+  } catch (err) { threw = err; }
+  const expectedRadius = Math.sqrt(50 * 50 * 3) * 0.5 * 0.01;
+  check('a mix of a no-instance-tree model and a good model does not throw', threw, null);
+  check('the good model\'s bounding data alone still drives the computed radius', radius, expectedRadius);
+}
+
+// === [Batch 2 whole-batch review Finding 4] a getNodeBox that writes NaN values (a dbId not tracked
+// in a stale/inconsistent InstanceTree's nodeBoxes) produces MIN_MARKER_RADIUS, not NaN -- NaN
+// poisons min/max such that box.isEmpty() returns false (NaN comparisons are always false), so the
+// pre-existing empty-box guard alone does NOT catch this; a dedicated Number.isFinite check does ====
+{
+  const modelWithNaNBox = {
+    id: 204,
+    getInstanceTree() {
+      return {
+        getNodeBox(dbId, dst) {
+          dst[0] = NaN; dst[1] = NaN; dst[2] = NaN; dst[3] = NaN; dst[4] = NaN; dst[5] = NaN;
+        },
+      };
+    },
+  };
+  const { ext } = extensionWithFakeWorld();
+  const radius = ext._computeMarkerRadius(new Map([[modelWithNaNBox, new Set([1])]]));
+  check('a NaN-producing getNodeBox does not poison the radius into NaN', Number.isNaN(radius), false);
+  check('a NaN-producing getNodeBox falls back to MIN_MARKER_RADIUS', radius, ClashFinderExtension.MIN_MARKER_RADIUS);
 }
 
 // === _clearMarkers removes every active marker mesh from the overlay scene and resets state =======
@@ -1015,6 +1172,46 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   check('shared material is disposed exactly once', materialDisposed, 1);
   check('_markerGeometry reference is cleared after unload()', ext._markerGeometry, null);
   check('_markerMaterial reference is cleared after unload()', ext._markerMaterial, null);
+}
+
+// === [Batch 2 whole-batch review Finding 5] the REAL onContextMenu -> target() -> _addMarkers(pairs,
+// dbIdsByModel) radius-wiring path, driven through a real triggered Find Clashes (not calling
+// _addMarkers directly), with a model whose getInstanceTree().getNodeBox bounding-box data is large
+// enough to land the computed radius STRICTLY BETWEEN MIN_MARKER_RADIUS and MAX_MARKER_RADIUS (not at
+// either clamp). Every OTHER onContextMenu-level test in this file uses a plain makeMockModel with no
+// bounding-box data, so getNodeBox never writes anything, the box stays empty, and the radius is
+// always MIN_MARKER_RADIUS by the empty-box fallback -- meaning changing the real call site's
+// `this._addMarkers(pairs, dbIdsByModel);` to `this._addMarkers(pairs);` (dropping dbIdsByModel
+// entirely) would leave every OTHER test in this file green today. This test proves dbIdsByModel
+// genuinely reaches _addMarkers's radius computation through the real call site. ======================
+{
+  // A cube from (0,0,0) to (50,50,50): bounding-sphere radius = 0.5 * sqrt(3 * 50^2) = 25*sqrt(3), and
+  // MARKER_RADIUS_FRACTION is 0.01 (the file's own documented default -- see the earlier
+  // "small-but-nonzero real box" test's comment above for the same constant), so the clamped radius
+  // is 25*sqrt(3)*0.01 ~= 0.433 -- strictly above MIN_MARKER_RADIUS (0.05) and strictly below
+  // MAX_MARKER_RADIUS (2.0), i.e. genuinely unclamped.
+  const bigBox = { min: [0, 0, 0], max: [50, 50, 50] };
+  const modelA = makeMockModel(301, { boxesByDbId: { 1: bigBox, 2: bigBox } });
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 301, dbId: 1, model: modelA }, target: { modelId: 301, dbId: 2, model: modelA }, witness: { kind: 'surface-crossing', point: [10, 10, 10] } }],
+    statistics: { diagnostics: [] },
+  });
+  const menu = [];
+  ext.onContextMenu(menu, { hasSelected: true });
+  await menu[0].target();
+
+  const expectedRadius = Math.sqrt(3 * 50 * 50) * 0.5 * 0.01;
+  check('setup: expected radius is strictly ABOVE MIN_MARKER_RADIUS (genuinely unclamped, not the MIN fallback)',
+    expectedRadius > ClashFinderExtension.MIN_MARKER_RADIUS, true);
+  check('setup: expected radius is strictly BELOW MAX_MARKER_RADIUS (genuinely unclamped, not the MAX clamp)',
+    expectedRadius < ClashFinderExtension.MAX_MARKER_RADIUS, true);
+  check('setup: one marker was produced by the real onContextMenu wiring', ext._activeMarkers.length, 1);
+  check('the real onContextMenu -> _addMarkers(pairs, dbIdsByModel) call site produces the hand-computed clamped radius, proving dbIdsByModel genuinely reaches the radius computation',
+    ext._activeMarkers[0]?.scale.x, expectedRadius);
 }
 
 // === diagnostics partition (carried-forward requirement, not in the plan's own Task 9 steps): a

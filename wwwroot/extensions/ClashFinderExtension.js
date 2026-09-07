@@ -179,17 +179,41 @@ export class ClashFinderExtension extends ExtensionBase {
     // isolation/markers moments after this handler cleared them, exactly the "isolation and markers
     // must never visually disagree" invariant this task exists to protect.
     this._latestActionToken += 1;
-    this._world.evictModel(event.model);
-    // Task 9 (M2.1): the ENTIRE visualization clears on ANY participating-model unload -- not just
-    // the unloaded model's own isolation/markers. A partial-preservation policy (leave OTHER models'
-    // isolation and markers alone) was shown unsound: those surviving models could be left isolated
-    // with a marker referencing a witness point that, after this unload, no longer has any meaningful
-    // relationship to what's still on screen. _clearIsolation() already iterates ALL of
-    // this._isolatedModels unconditionally, so calling it here already achieves "clear for every
-    // model", matching _clearMarkers()'s own unconditional full-scene clear.
-    this._clearIsolation();
-    this._clearMarkers();
-    this._isolatedModels.delete(event.model);
+    // [Batch 2 whole-batch review Finding 6 fix] wrap evictModel so cleanup still runs even if it
+    // throws (e.g. a WorldDisposedError) -- the SAME defect class unload() itself was already fixed
+    // for in the prior fix round (see unload()'s own structure above for the pattern this mirrors).
+    // Without this, evictModel throwing would skip _clearIsolation()/_clearMarkers()/
+    // _isolatedModels.delete() entirely and let the throw escape into a Viewer event dispatch --
+    // leaving this extension holding isolation/markers referencing a model that's now unloaded, and
+    // later trying viewer.isolate([], <unloaded model>).
+    try {
+      this._world.evictModel(event.model);
+    } finally {
+      // Task 9 (M2.1): the ENTIRE visualization clears on ANY participating-model unload -- not just
+      // the unloaded model's own isolation/markers. A partial-preservation policy (leave OTHER
+      // models' isolation and markers alone) was shown unsound: those surviving models could be left
+      // isolated with a marker referencing a witness point that, after this unload, no longer has any
+      // meaningful relationship to what's still on screen. _clearIsolation() already iterates ALL of
+      // this._isolatedModels unconditionally, so calling it here already achieves "clear for every
+      // model", matching _clearMarkers()'s own unconditional full-scene clear.
+      //
+      // [Batch 2 fix-round follow-up, codex-review + coordinator tightening] _clearIsolation() is
+      // nested in its OWN try/finally here -- the SAME "one throw skips the rest of cleanup" defect
+      // class this Finding-6 fix already guards against at the evictModel call site above, one layer
+      // deeper: if _clearIsolation() itself throws (e.g. one of its internal viewer.isolate([], model)
+      // calls throws), _clearMarkers() and _isolatedModels.delete() below must still run, exactly
+      // mirroring unload()'s own existing structure (see unload()'s own comment above the equivalent
+      // nesting there). Making _clearIsolation()'s OWN internal per-model loop resilient to a SINGLE
+      // failing isolate() call (continue clearing the remaining models rather than aborting the whole
+      // loop) is a separate, broader change intentionally left out of this fix -- see this task's own
+      // report for that out-of-scope finding.
+      try {
+        this._clearIsolation();
+      } finally {
+        this._clearMarkers();
+        this._isolatedModels.delete(event.model);
+      }
+    }
   }
 
   // Identical to RoomLocatorExtension's own helper: wwwroot/viewer.js's getAccessToken error path
@@ -269,6 +293,14 @@ export class ClashFinderExtension extends ExtensionBase {
     const nodeBox = new THREE.Box3();
     for (const [model, dbIdSet] of dbIdsByModel) {
       const instanceTree = model.getInstanceTree();
+      // [Batch 2 whole-batch review Finding 4 fix] model.getInstanceTree() returns undefined until
+      // that model's object tree has loaded (or for a model whose object tree failed to load) --
+      // this is the ONLY getInstanceTree() call in this repo, so a findClashes call can fully succeed
+      // while getInstanceTree() is still falsy on some model. Skip that model's dbIds defensively
+      // (this is a normal, expected condition -- not an error -- so no console noise): the marker
+      // radius still computes from whatever OTHER models/dbIds are present, or falls back to
+      // MIN_MARKER_RADIUS below if this was the only one.
+      if (!instanceTree) continue;
       for (const dbId of dbIdSet) {
         instanceTree.getNodeBox(dbId, rawNodeBox);
         nodeBox.setFromArray(rawNodeBox, 0);
@@ -282,6 +314,13 @@ export class ClashFinderExtension extends ExtensionBase {
     // MIN_MARKER_RADIUS is the more honest fallback here: smallest marker, not a building-sized guess.
     if (box.isEmpty()) return MIN_MARKER_RADIUS;
     const sphere = box.getBoundingSphere(new THREE.Sphere());
+    // [Batch 2 whole-batch review Finding 4 fix] A dbId not tracked in a model's nodeBoxes (a
+    // stale/inconsistent InstanceTree) can make getNodeBox write NaNs into rawNodeBox. NaN poisons
+    // min/max such that box.isEmpty() above returns false (every NaN comparison is false, so neither
+    // `max.x < min.x` etc. is ever true) -- the empty-box guard does NOT catch this case, so it needs
+    // its own explicit check here: a non-finite sphere.radius falls back to the same honest
+    // MIN_MARKER_RADIUS rather than propagating NaN into the marker's scale.
+    if (!Number.isFinite(sphere.radius)) return MIN_MARKER_RADIUS;
     const raw = sphere.radius * MARKER_RADIUS_FRACTION;
     return Math.min(Math.max(raw, MIN_MARKER_RADIUS), MAX_MARKER_RADIUS);
   }
@@ -301,10 +340,24 @@ export class ClashFinderExtension extends ExtensionBase {
     const radius = this._computeMarkerRadius(dbIdsByModel);
     for (const pair of witnessBearing) {
       const mesh = new THREE.Mesh(this._markerGeometry, this._markerMaterial);
-      mesh.scale.setScalar(radius);
+      // [Batch 2 whole-batch review Finding 2 fix] `setScalar` does not exist anywhere in the pinned
+      // Viewer 7.124.2 bundle's THREE (r71) -- `grep -c setScalar viewer3D.js` -> 0. The real
+      // `window.THREE.Vector3` here is LmvVector3 (viewer3D.js:199820); its prototype has `set`
+      // (viewer3D.js:144243) but no `setScalar` (added to upstream three.js only after r71). Using
+      // `.set(radius, radius, radius)` here also matches the `mesh.position.set(...)` call two lines
+      // below it, rather than mixing two different vector-mutation styles for no reason.
+      mesh.scale.set(radius, radius, radius);
       mesh.position.set(pair.witness.point[0], pair.witness.point[1], pair.witness.point[2]);
       mesh.updateMatrixWorld(true);
-      this._viewer.overlays.addMesh(MARKER_OVERLAY_NAME, mesh);
+      // [Batch 2 whole-batch review Finding 1 fix] The real viewer.overlays.addMesh/removeMesh
+      // signature is mesh FIRST, scene name SECOND (viewer3D.js:20650 `addMesh(mesh, sceneName) {`,
+      // whose own JSDoc example is `addMesh([mesh], 'my_scene')`; node_modules/@types/forge-viewer/
+      // index.d.ts:1470 agrees). The old (name, mesh) call order here failed SILENTLY in production:
+      // addMesh's own guard stringifies the swapped Mesh-as-sceneName to "[object Object]", the scene
+      // lookup fails, and it returns false with no throw/console output -- every marker was silently
+      // dropped while _activeMarkers still filled up, making internal state look correct while
+      // nothing rendered.
+      this._viewer.overlays.addMesh(mesh, MARKER_OVERLAY_NAME);
       this._activeMarkers.push(mesh);
     }
   }
@@ -318,7 +371,12 @@ export class ClashFinderExtension extends ExtensionBase {
   // per Task 7 finding 5's gotcha (removeScene/clearScene never dispose materials).
   _clearMarkers() {
     for (const mesh of this._activeMarkers) {
-      this._viewer.overlays.removeMesh(MARKER_OVERLAY_NAME, mesh);
+      // [Batch 2 whole-batch review Finding 1 fix] Same mesh-first, scene-name-second argument order
+      // as addMesh above (viewer3D.js:20670 `removeMesh(mesh, sceneName) {`) -- the old (name, mesh)
+      // order here was the same silent-failure bug: removeMesh's own guard would stringify the
+      // swapped mesh-as-sceneName, fail its scene lookup, and return false with no error, leaving
+      // stale meshes never actually removed from the real overlay scene.
+      this._viewer.overlays.removeMesh(mesh, MARKER_OVERLAY_NAME);
     }
     this._activeMarkers.length = 0;
   }
