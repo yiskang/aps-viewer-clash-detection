@@ -453,6 +453,21 @@ test('align -> invalidateModelPlacement -> next TLAS query rebuilds -> TLAS and 
 // box strictly inside a large one" containment pattern test/CollisionWorld.tlasTraversal.test.mjs's
 // own witness-parity test already established as deterministic and free of the crossing term's
 // real-clock hazard.
+//
+// Task review fix: checking only `notDeepEqual(afterWitness.point, beforeWitness.point)` proves the
+// witness moved but not that it moved to the CORRECT location -- a regression that double-translates
+// the witness, inverts the transform, or reads a wrong-but-still-non-stale matrix would still produce
+// a point that differs from beforeWitness.point and would pass. Fixed with an INDEPENDENT ORACLE (the
+// same technique Task 3's own crossing/containment matrix-selection tests use): model B's containment
+// witness is always one of ITS OWN 8 local box corners (`new THREE.BoxGeometry(1, 1, 1)` is centered
+// on its own local origin, corners at +-0.5 on each axis) transformed by B's OWN known world matrix --
+// built here via `translationMatrix(...)`, the SAME helper this file's fixtures already use to place
+// fragments, never anything CollisionWorld/VolumeOverlapQuery computed internally. (0.5, 0.5, 0.5) is
+// the specific corner this fixture's deterministic vertex-sampling walk
+// (collision/query/ContainmentQuery.js) picks; it stays the SAME corner across both queries below
+// because B only translates between them, never rotates -- so the two expected points differ only by
+// the known [1,0,0] -> [-1,0,0] translation delta, giving a real, non-tautological check on the
+// post-alignment location.
 test('witness point moves to the newly-aligned location after invalidateModelPlacement', async () => {
   const { modelA, modelB, viewer, fragmentGeometryB } = makeTwoModelFixture({
     rootNodesA: [{ dbId: 1, fragments: [10] }],
@@ -469,12 +484,23 @@ test('witness point moves to the newly-aligned location after invalidateModelPla
     mode: 'volume-overlap', groupBy: 'dbId', broadPhase: 'tlas',
   });
 
+  const localWitnessCorner = [0.5, 0.5, 0.5]; // one of B's own 8 local box corners -- see comment above.
+  const worldPointFor = (localPoint, at) =>
+    new THREE.Vector3(...localPoint).applyMatrix4(new THREE.Matrix4().fromArray(translationMatrix(at))).toArray();
+  const assertPointMatches = (actual, expected, label) => {
+    for (let i = 0; i < 3; i += 1) {
+      assert.ok(Math.abs(actual[i] - expected[i]) < 1e-6, `${label}[${i}]: got ${actual[i]}, expected ${expected[i]}`);
+    }
+  };
+
   // 1. A real containment clash already exists before any alignment -- model B's small box starts
   //    fully inside model A's box, off to one side.
   const beforeAlignment = await world.findClashes(overlapQuery());
   assert.equal(beforeAlignment.pairs.length, 1, 'model B starts fully inside model A');
   const beforeWitness = beforeAlignment.pairs[0].witness;
   assert.ok(beforeWitness, 'a witness must be present for the initial containment overlap');
+  assert.equal(beforeWitness.kind, 'containment', 'this fixture is a pure containment overlap, not a crossing');
+  assertPointMatches(beforeWitness.point, worldPointFor(localWitnessCorner, [1, 0, 0]), 'beforeWitness.point');
 
   // 2. Simulate a model-alignment tool moving model B's fragment to a DIFFERENT position, still
   //    fully contained by model A -- the exact fragmentGeometryB.set(...) + invalidateModelPlacement
@@ -487,13 +513,18 @@ test('witness point moves to the newly-aligned location after invalidateModelPla
   world.invalidateModelPlacement(modelB);
 
   // 3. The next TLAS query rebuilds using CURRENT world placement (tlasBuilds === 1 proves the
-  //    invalidation, not an always-rebuild implementation, triggered it) and its witness moves to
-  //    the newly-aligned location -- it is never a stale, reused point from the pre-alignment query.
+  //    invalidation, not an always-rebuild implementation, triggered it) and its witness moves to the
+  //    CORRECT newly-aligned location -- verified against the independent oracle above, not just
+  //    "some different point" (which a double-translate/inverted-transform/wrong-matrix regression
+  //    could still coincidentally satisfy). notDeepEqual is kept too as a cheap, redundant sanity
+  //    check that the two points genuinely differ.
   const afterAlignment = await world.findClashes(overlapQuery());
   assert.equal(afterAlignment.statistics.tlasBuilds, 1, 'invalidation must force a real rebuild of the stale TLAS entry');
   assert.equal(afterAlignment.pairs.length, 1, 'model B is still fully inside model A after alignment, just moved');
   const afterWitness = afterAlignment.pairs[0].witness;
   assert.ok(afterWitness, 'a witness must still be present after alignment');
+  assert.equal(afterWitness.kind, 'containment', 'realignment must not change the witness kind, only its position');
+  assertPointMatches(afterWitness.point, worldPointFor(localWitnessCorner, [-1, 0, 0]), 'afterWitness.point');
   assert.notDeepEqual(afterWitness.point, beforeWitness.point, 'witness must move when the model is realigned');
 });
 
