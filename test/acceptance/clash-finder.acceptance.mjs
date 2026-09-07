@@ -52,34 +52,49 @@
 //       (24397, 13545, 6900, 6901, 24379, 3691, 35885) PLUS 8 cross-model targets in model B
 //       (6900, 24397, 13545, 6901, 24379, 17209, 3691, 35885, including model B's own dbId 17209 --
 //       see above). Diagnostics 67.
-//   - dbId 473 -- independently re-confirmed as returning 0 pairs and 0 diagnostics, both
-//     single-model and federated. IMPORTANT, found during this task's own independent re-verification
-//     (a genuine discrepancy worth flagging prominently, per this task's own instructions): dbId 473
-//     is NOT a real object confirmed geometrically not to overlap anything -- calling the SAME
-//     `extractFragments` helper CollisionWorld.findClashes itself uses (collision/viewer/
-//     ViewerModelAdapter.js) against dbId 473 directly returns a completely EMPTY fragment map (size
-//     0), confirmed both via that direct call and via the live InstanceTree's own
-//     enumNodeFragments/getNodeBox (a null bounding box, zero fragments). dbId 473 has NO extractable
-//     geometry at all. Its "0 pairs, 0 diagnostics" result is therefore CollisionWorld's own
-//     documented empty-extraction fast path (`if (sourceExtracted.size === 0 || targetTotalCount ===
-//     0) { ...; return { pairs: [], statistics }; }`, CollisionWorld.js:1180) -- a legitimate,
-//     intentional success path for a dbId with no geometry -- NOT a narrow-phase containment/crossing
-//     check that genuinely classified real geometry as non-overlapping. This is still used as this
-//     file's negative case (it is a real, reproducible, zero-diagnostic "No clashes found." outcome
-//     through the real UI path, and this task's own checklist only asks for that outcome to be
-//     verified) -- but it is a WEAKER negative than a real object confirmed clear by actual
-//     containment/crossing classification, and this file says so rather than implying otherwise.
-//     Because dbId 473 owns no geometry, it also has no bounding box to project a screen position
-//     from -- see selectAndRightClick()'s own handling of this below.
+//   - TWO negative cases, deliberately of different strength -- see the coordinator's own review of
+//     an earlier draft, which correctly pointed out that a "known negative element" is meant to prove
+//     the real broad/narrow-phase pipeline correctly returns a negative for GEOMETRICALLY REAL,
+//     non-overlapping content, not merely that an empty object trivially returns nothing:
+//
+//     - dbId 26011 ("Fire Department Inlet Connection - 3 Way - Projecting") -- the PRIMARY, stronger
+//       negative case. Confirmed live: a REAL, non-degenerate bounding box
+//       ([10.8819, 44.4312, 3.5449] to [11.7015, 45.1291, 3.5449], real X/Y extent ~0.82x0.70) and
+//       exactly one real extractable fragment (via the SAME `extractFragments` helper
+//       CollisionWorld.findClashes itself uses). Federated scope: 0 pairs, 13 diagnostics (reasons:
+//       geometry-aspect-ratio-exceeds-tolerance-model x4, non-manifold-component x2,
+//       unverified-parity-operand x4, inconclusive-containment x3 -- single-model scope: 0 pairs, 4
+//       diagnostics, the same four reasons once each). This genuinely exercises the real collision
+//       pipeline (broad-phase candidate search, narrow-phase diagnostics) against real geometry and
+//       still correctly lands on zero clashes -- the strong proof this checklist item calls for.
+//       Because its diagnostics are non-zero, its "No clashes found" alert is expected to carry the
+//       same incompleteness caveat the positive case's alert does -- asserted as a prefix/substring
+//       match, never a bare exact-string match, for the same reason as the positive case.
+//
+//     - dbId 473 -- kept as a SECONDARY, explicitly weaker case, documenting a genuine discrepancy
+//       found during this task's own independent re-verification (not deleted -- it is useful,
+//       honestly-labeled documentation in its own right): dbId 473 is NOT a real object confirmed
+//       geometrically not to overlap anything. Calling that SAME `extractFragments` helper against
+//       dbId 473 directly returns a completely EMPTY fragment map (size 0), confirmed both via that
+//       direct call and via the live InstanceTree's own enumNodeFragments/getNodeBox (a null bounding
+//       box, zero fragments). dbId 473 has NO extractable geometry at all. Its "0 pairs, 0
+//       diagnostics" result is therefore CollisionWorld's own documented empty-extraction fast path
+//       (`if (sourceExtracted.size === 0 || targetTotalCount === 0) { ...; return { pairs: [],
+//       statistics }; }`, CollisionWorld.js:1180) -- a legitimate, intentional success path for a
+//       dbId with no geometry -- NOT a narrow-phase containment/crossing check that genuinely
+//       classified real geometry as non-overlapping. Because dbId 473 owns no geometry, it also has
+//       no bounding box to project a screen position from -- see selectAndRightClick()'s own handling
+//       of this below. Its alert is genuinely diagnostic-free (0/0), so it alone is asserted as an
+//       EXACT match with no caveat appended at all.
 //
 // IMPORTANT -- some diagnostics are still expected on the MIXED case (33/67, far fewer than the
-// earlier fixture's 900+/2700+, but still non-zero): per ClashFinderExtension's own design, this
-// means the positive case's alert is still expected to carry an incompleteness caveat. The exact-pair
-// assertions below therefore establish "the library, under real (mildly diagnostic) conditions,
-// currently returns exactly this pair set" as a regression check -- not an independently-proven,
-// diagnostic-free geometric ground truth that these are every physical clash with no more possible.
-// The negative case (dbId 473), by contrast, is genuinely diagnostic-free (0/0, confirmed above), so
-// its alert is asserted as an EXACT match with no caveat appended at all.
+// earlier fixture's 900+/2700+, but still non-zero) and on the dbId-26011 negative case (4/13): per
+// ClashFinderExtension's own design, this means both of those cases' alerts are expected to carry an
+// incompleteness caveat. The exact-pair assertions on the mixed case, and the zero-pairs assertion on
+// dbId 26011, therefore establish "the library, under real (mildly diagnostic) conditions, currently
+// returns exactly this result" as a regression check -- not an independently-proven, diagnostic-free
+// geometric ground truth that these are every physical clash (or lack thereof) with no more possible.
+// Only dbId 473's own result is genuinely diagnostic-free and asserted as an exact bare match.
 //
 // --- Two tiers, but Tier 2 is bound to the REAL production invocation, not a second query ---------
 //
@@ -135,7 +150,7 @@
 //     viewport size, separate from this acceptance test's own stabilization workaround.
 //
 // No Task 21 work (the performance gate) is attempted here -- see this task's own final report for
-// the exact dbId/model pairing to reuse there (source dbId 17209, negative dbId 473, both in a
+// the exact dbId/model pairing to reuse there (source dbId 17209, negative dbId 26011, both in a
 // same-URN-loaded-twice federated scene).
 
 import { chromium } from 'playwright';
@@ -187,8 +202,23 @@ const MIXED_CASE = {
   expectedIsolatedModelA: [17209, 24397, 13545, 6900, 6901, 24379, 3691, 35885],
   expectedIsolatedModelB: [6900, 24397, 13545, 6901, 24379, 17209, 3691, 35885],
 };
-const NEGATIVE_CASE = {
-  name: 'negative (dbId 473)',
+// PRIMARY negative case -- real, non-degenerate geometry (one real fragment, confirmed via
+// extractFragments), genuinely exercising the broad/narrow-phase pipeline and still landing on zero
+// clashes. See header comment for why this is the stronger of the two negative cases.
+const REAL_NEGATIVE_CASE = {
+  name: 'negative (real geometry, dbId 26011)',
+  sourceDbId: 26011,
+  expectedNameIncludes: 'Fire Department Inlet Connection',
+  hasGeometry: true,
+  expectedDiagnosticsCount: 13, // federated scope -- see header comment; not asserted exactly below
+  // (kept here only as documentation of the live-verified number), only that a caveat IS present.
+};
+// SECONDARY negative case -- kept as explicitly-labeled, honest documentation of a genuine
+// discrepancy found during this task's own independent re-verification (see header comment): dbId
+// 473 owns NO extractable geometry at all, so its "0 pairs" result is CollisionWorld's own
+// empty-extraction fast path, not a real containment/crossing check.
+const TRIVIAL_NEGATIVE_CASE = {
+  name: 'negative (trivial, empty-geometry dbId 473)',
   sourceDbId: 473,
   // No name/geometry -- see header comment. checkFixtureIdentity() below asserts this explicitly
   // (zero fragments) instead of a name/leaf check.
@@ -390,23 +420,50 @@ async function main() {
         window.viewer.fitToView(); // no args: fit to the entire visible scene
       }
     }, { sourceDbId, hasGeometry });
-    await page.waitForTimeout(hasGeometry ? 500 : 600); // camera-transition settle
 
-    let x, y;
-    if (hasGeometry) {
-      ({ x, y } = await page.evaluate((sourceDbId) => {
-        const model = window.__test.modelA;
-        const bbox = new Float32Array(6);
-        model.getInstanceTree().getNodeBox(sourceDbId, bbox);
-        const center = new window.THREE.Vector3(
-          (bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2, (bbox[2] + bbox[5]) / 2,
-        );
-        return window.viewer.worldToClient(center);
-      }, sourceDbId));
-    }
     const canvasBox = await page.locator('#preview canvas').first().boundingBox();
-    const clickX = hasGeometry ? canvasBox.x + x : canvasBox.x + canvasBox.width / 2;
-    const clickY = hasGeometry ? canvasBox.y + y : canvasBox.y + canvasBox.height / 2;
+    let clickX, clickY;
+    if (hasGeometry) {
+      // Poll (rather than a single fixed wait) for the projected screen position to actually land
+      // WITHIN the canvas bounds before clicking there. A fixed ~500ms settle (room-locator.
+      // acceptance.mjs's own precedent, fine for a fitToView from a static starting camera) is NOT
+      // always enough here: fitToView's camera-transition ANIMATION takes longer to settle the
+      // FARTHER it has to travel, and a case running right after a PRIOR case's own fitToView (to a
+      // wide, spread-out isolated set) starts from a very different camera position -- confirmed
+      // empirically: projecting immediately (or even after 500ms) for dbId 26011 right after the
+      // mixed case's own wide isolate/fitToView produced x=1959 on a 1280px-wide canvas (genuinely
+      // off-canvas, not just visually off-center), which made the subsequent right-click land outside
+      // the canvas element entirely and silently fail to open any context menu at all -- a confusing
+      // failure mode this polling loop turns into either a settled, correct click or a clear,
+      // immediate diagnostic below.
+      const maxAttempts = 20;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await page.waitForTimeout(150);
+        const { x, y } = await page.evaluate((sourceDbId) => {
+          const model = window.__test.modelA;
+          const bbox = new Float32Array(6);
+          model.getInstanceTree().getNodeBox(sourceDbId, bbox);
+          const center = new window.THREE.Vector3(
+            (bbox[0] + bbox[3]) / 2, (bbox[1] + bbox[4]) / 2, (bbox[2] + bbox[5]) / 2,
+          );
+          return window.viewer.worldToClient(center);
+        }, sourceDbId);
+        clickX = canvasBox.x + x;
+        clickY = canvasBox.y + y;
+        const withinCanvas = x >= 0 && x <= canvasBox.width && y >= 0 && y <= canvasBox.height;
+        if (withinCanvas) break;
+      }
+    } else {
+      await page.waitForTimeout(600); // camera-transition settle for the home-view reset
+      clickX = canvasBox.x + canvasBox.width / 2;
+      clickY = canvasBox.y + canvasBox.height / 2;
+    }
+    // Explicit, immediate diagnostic (rather than letting an off-canvas click silently fail to open
+    // any context menu, surfacing only as a confusing downstream "menu item never appeared" timeout).
+    const projectionWithinCanvas = clickX >= canvasBox.x && clickX <= canvasBox.x + canvasBox.width
+      && clickY >= canvasBox.y && clickY <= canvasBox.y + canvasBox.height;
+    check(`projected screen position for dbId ${sourceDbId} settled within the canvas`, projectionWithinCanvas, true);
+
     await page.mouse.click(clickX, clickY, { button: 'right' });
 
     // Diagnostic, matching room-locator.acceptance.mjs's own precedent: confirms the right-click
@@ -550,31 +607,36 @@ async function main() {
   check('[mixed] end-state: model A isolated set matches', sortNums(isolatedModelA), sortNums(MIXED_CASE.expectedIsolatedModelA));
   check('[mixed] end-state: model B isolated set matches', sortNums(isolatedModelB), sortNums(MIXED_CASE.expectedIsolatedModelB));
 
-  // === Negative case: dbId 473, zero clashes, zero diagnostics ====================================
-  console.log(`\n=== Case: ${NEGATIVE_CASE.name} ===`);
+  // === PRIMARY negative case: dbId 26011, REAL geometry, zero clashes =============================
+  // Runs immediately after the mixed case above so its own isolation-clearing proof (below) has real,
+  // non-empty prior state (left over from the mixed case's own isolate() calls) to meaningfully clear.
+  console.log(`\n=== Case: ${REAL_NEGATIVE_CASE.name} ===`);
 
-  // Fixture-identity guard, adapted for a genuinely geometry-less dbId (see header comment): asserts
-  // the ABSENCE of extractable geometry explicitly, rather than a name/leaf check that would not
-  // apply here.
-  const negativeIdentity = await page.evaluate(async (sourceDbId) => {
+  const realNegativeIdentity = await page.evaluate(async (sourceDbId) => {
+    const it = window.__test.modelA.getInstanceTree();
+    const name = it.getNodeName ? it.getNodeName(sourceDbId) : undefined;
     const { extractFragments } = await import('/collision/viewer/ViewerModelAdapter.js');
     const fragments = await extractFragments(window.__test.modelA, [sourceDbId], 0, { checkpoint: undefined, THREE: window.THREE });
-    return { fragmentCount: fragments.size };
-  }, NEGATIVE_CASE.sourceDbId);
-  check(`[negative] fixture identity: dbId ${NEGATIVE_CASE.sourceDbId} owns zero real fragments (the documented empty-extraction case -- see header comment)`,
-    negativeIdentity.fragmentCount, 0);
+    return { name, fragmentCount: fragments.size };
+  }, REAL_NEGATIVE_CASE.sourceDbId);
+  check(`[real-negative] fixture identity: dbId ${REAL_NEGATIVE_CASE.sourceDbId}'s name includes "${REAL_NEGATIVE_CASE.expectedNameIncludes}"`,
+    typeof realNegativeIdentity.name === 'string' && realNegativeIdentity.name.includes(REAL_NEGATIVE_CASE.expectedNameIncludes), true);
+  check(`[real-negative] fixture identity: dbId ${REAL_NEGATIVE_CASE.sourceDbId} owns exactly one real fragment (genuinely real geometry, unlike the trivial case below)`,
+    realNegativeIdentity.fragmentCount, 1);
 
   await resetVisualState();
-  await selectAndRightClick(NEGATIVE_CASE.sourceDbId, { hasGeometry: false });
+  await selectAndRightClick(REAL_NEGATIVE_CASE.sourceDbId, { hasGeometry: true });
   await resetSpyCapture();
-  const negativeMessage = await clickFindClashesAndCaptureAlert();
-  const negativeSpy = await readSpyCapture();
-  results.cases[NEGATIVE_CASE.name] = { tier1AlertMessage: negativeMessage, spy: negativeSpy };
-  // Unlike the earlier fixture, dbId 473 is confirmed genuinely diagnostic-free (0/0, both scopes --
-  // see header comment), so this asserts an EXACT match with no caveat appended, not just a prefix.
-  check('[negative] alert message is exactly "No clashes found." with no caveat', negativeMessage, 'No clashes found.');
-  check('[negative] captured call: zero pairs', negativeSpy.findClashesCalls[0]?.pairs.length, 0);
-  await page.screenshot({ path: path.join(RESULTS_DIR, `clash-finder-${NEGATIVE_CASE.sourceDbId}-result.png`), fullPage: false });
+  const realNegativeMessage = await clickFindClashesAndCaptureAlert();
+  const realNegativeSpy = await readSpyCapture();
+  results.cases[REAL_NEGATIVE_CASE.name] = { tier1AlertMessage: realNegativeMessage, spy: realNegativeSpy };
+  // Unlike dbId 473 below, dbId 26011 has non-zero diagnostics (13, federated -- see header comment),
+  // so -- exactly like the positive case -- this asserts a PREFIX match plus caveat presence, never a
+  // bare exact-string match.
+  check('[real-negative] alert message starts with "No clashes found."', realNegativeMessage.startsWith('No clashes found.'), true);
+  check('[real-negative] alert message includes the incompleteness caveat', realNegativeMessage.includes('may be incomplete'), true);
+  check('[real-negative] captured call: zero pairs', realNegativeSpy.findClashesCalls[0]?.pairs.length, 0);
+  await page.screenshot({ path: path.join(RESULTS_DIR, `clash-finder-${REAL_NEGATIVE_CASE.sourceDbId}-result.png`), fullPage: false });
 
   // --- restore-visualization check, bound to the REAL isolate() calls _clearIsolation() made ---
   // (an end-state-only check here would be trivially true regardless of whether _clearIsolation() ran
@@ -585,16 +647,50 @@ async function main() {
   // left over from the MIXED case above; asserting that the REAL _clearIsolation() issued
   // isolate([], model) calls for BOTH of those models during THIS click proves the clearing code path
   // genuinely executed, regardless of what the visual end-state already was.) ---
-  const isolateCallForNegative = (isModelAExpected) => negativeSpy.isolateCalls.find((c) => c.isModelA === isModelAExpected && c.isModelB === !isModelAExpected && c.dbIds.length === 0);
-  check('[negative] real isolate([], modelA) called (proves _clearIsolation() iterated the prior case\'s own isolated models)', !!isolateCallForNegative(true), true);
-  check('[negative] real isolate([], modelB) called (same proof, for model B)', !!isolateCallForNegative(false), true);
-  check('[negative] no fitToView() calls on the zero-pairs early-return branch', negativeSpy.fitToViewCalls.length, 0);
+  const isolateCallForRealNegative = (isModelAExpected) => realNegativeSpy.isolateCalls.find((c) => c.isModelA === isModelAExpected && c.isModelB === !isModelAExpected && c.dbIds.length === 0);
+  check('[real-negative] real isolate([], modelA) called (proves _clearIsolation() iterated the prior case\'s own isolated models)', !!isolateCallForRealNegative(true), true);
+  check('[real-negative] real isolate([], modelB) called (same proof, for model B)', !!isolateCallForRealNegative(false), true);
+  check('[real-negative] no fitToView() calls on the zero-pairs early-return branch', realNegativeSpy.fitToViewCalls.length, 0);
 
-  // Corroborating end-state check.
-  const isolatedAAfterNegative = await getIsolatedNodesFor('modelA');
-  const isolatedBAfterNegative = await getIsolatedNodesFor('modelB');
-  check('[negative] end-state: model A isolation cleared', isolatedAAfterNegative, []);
-  check('[negative] end-state: model B isolation cleared', isolatedBAfterNegative, []);
+  const isolatedAAfterRealNegative = await getIsolatedNodesFor('modelA');
+  const isolatedBAfterRealNegative = await getIsolatedNodesFor('modelB');
+  check('[real-negative] end-state: model A isolation cleared', isolatedAAfterRealNegative, []);
+  check('[real-negative] end-state: model B isolation cleared', isolatedBAfterRealNegative, []);
+
+  // === SECONDARY negative case: dbId 473, empty geometry, zero clashes ============================
+  // Runs after the real-negative case above -- by this point ClashFinderExtension's own
+  // `_isolatedModels` bookkeeping is ALREADY empty (the real-negative case's own `_clearIsolation()`
+  // just emptied it), so there is nothing left for THIS case's own isolate([], model) calls to
+  // meaningfully clear -- the isolation-clearing proof lives on the real-negative case above, not
+  // here. This case exists solely to document the empty-geometry discrepancy (see header comment).
+  console.log(`\n=== Case: ${TRIVIAL_NEGATIVE_CASE.name} ===`);
+
+  const trivialNegativeIdentity = await page.evaluate(async (sourceDbId) => {
+    const { extractFragments } = await import('/collision/viewer/ViewerModelAdapter.js');
+    const fragments = await extractFragments(window.__test.modelA, [sourceDbId], 0, { checkpoint: undefined, THREE: window.THREE });
+    return { fragmentCount: fragments.size };
+  }, TRIVIAL_NEGATIVE_CASE.sourceDbId);
+  check(`[trivial-negative] fixture identity: dbId ${TRIVIAL_NEGATIVE_CASE.sourceDbId} owns zero real fragments (the documented empty-extraction case -- see header comment)`,
+    trivialNegativeIdentity.fragmentCount, 0);
+
+  await resetVisualState();
+  await selectAndRightClick(TRIVIAL_NEGATIVE_CASE.sourceDbId, { hasGeometry: false });
+  await resetSpyCapture();
+  const trivialNegativeMessage = await clickFindClashesAndCaptureAlert();
+  const trivialNegativeSpy = await readSpyCapture();
+  results.cases[TRIVIAL_NEGATIVE_CASE.name] = { tier1AlertMessage: trivialNegativeMessage, spy: trivialNegativeSpy };
+  // dbId 473 is confirmed genuinely diagnostic-free (0/0, both scopes -- see header comment), so this
+  // asserts an EXACT match with no caveat appended, not just a prefix.
+  check('[trivial-negative] alert message is exactly "No clashes found." with no caveat', trivialNegativeMessage, 'No clashes found.');
+  check('[trivial-negative] captured call: zero pairs', trivialNegativeSpy.findClashesCalls[0]?.pairs.length, 0);
+  await page.screenshot({ path: path.join(RESULTS_DIR, `clash-finder-${TRIVIAL_NEGATIVE_CASE.sourceDbId}-result.png`), fullPage: false });
+
+  // Corroborating end-state check (the meaningful isolation-CLEARING proof already happened on the
+  // real-negative case above; this just confirms nothing got left behind here either).
+  const isolatedAAfterTrivialNegative = await getIsolatedNodesFor('modelA');
+  const isolatedBAfterTrivialNegative = await getIsolatedNodesFor('modelB');
+  check('[trivial-negative] end-state: model A isolation cleared', isolatedAAfterTrivialNegative, []);
+  check('[trivial-negative] end-state: model B isolation cleared', isolatedBAfterTrivialNegative, []);
 
   await browser.close();
   await writeFile(path.join(RESULTS_DIR, REPORT_FILE), JSON.stringify(results, null, 2));
