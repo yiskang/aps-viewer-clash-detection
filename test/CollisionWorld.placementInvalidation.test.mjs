@@ -327,6 +327,119 @@ test('Minor #13: TlasCache.buildPrimitives (wired in fromViewer) produces a work
   assert.ok(hits.every((r) => r.fragmentId !== undefined), 'every record the real closure builds must carry its fragmentId');
 });
 
+// --- Task 18: model-alignment / placement-invalidation acceptance fixture -------------------------
+//
+// spec:3174-3178, verbatim: "Passes as a synthetic fixture: align -> invalidateModelPlacement ->
+// next TLAS query rebuilds using current world placement -> TLAS and linear oracle agree after
+// alignment. Explode is not part of this acceptance, by design." This exercises the full public
+// surface (findClashes, not the private _refreshPlacementForEpoch tested directly above) across TWO
+// independent models, mirroring test/CollisionWorld.tlasTraversal.test.mjs's own
+// `makeTwoModelFixture` two-model cross-model pattern (that file's helper is not exported, so it is
+// reproduced here, extended only to also return each model's live fragmentGeometry Map so a single
+// fragment's placement can be mutated between calls -- exactly this file's own single-model
+// `makeFixture` convention above, applied to the two-model case this fixture needs).
+
+const boxGeometry = () => new THREE.BoxGeometry(2, 2, 2); // centered at origin: extents [-1,-1,-1]..[1,1,1]
+function boundsOf(geometry, [x, y, z]) {
+  const g = geometry.clone().applyMatrix4(new THREE.Matrix4().makeTranslation(x, y, z));
+  g.computeBoundingBox();
+  return { min: g.boundingBox.min.toArray(), max: g.boundingBox.max.toArray() };
+}
+
+function makeTwoModelFixture({ rootNodesA, fragSpecsA, rootNodesB, fragSpecsB }) {
+  const rawGeometryByFragIdA = new Map();
+  const fragmentGeometryA = new Map();
+  for (const [fragIdKey, spec] of Object.entries(fragSpecsA)) {
+    const fragId = Number(fragIdKey);
+    const at = spec.at || [0, 0, 0];
+    fragmentGeometryA.set(fragId, { geometryIndex: spec.geometryIndex, matrix: translationMatrix(at), bounds: boundsOf(spec.geometry, at) });
+    rawGeometryByFragIdA.set(fragId, spec.geometry);
+  }
+  const rawGeometryByFragIdB = new Map();
+  const fragmentGeometryB = new Map();
+  for (const [fragIdKey, spec] of Object.entries(fragSpecsB)) {
+    const fragId = Number(fragIdKey);
+    const at = spec.at || [0, 0, 0];
+    fragmentGeometryB.set(fragId, { geometryIndex: spec.geometryIndex, matrix: translationMatrix(at), bounds: boundsOf(spec.geometry, at) });
+    rawGeometryByFragIdB.set(fragId, spec.geometry);
+  }
+  const modelA = { ...buildMockModel(rootNodesA, fragmentGeometryA).model, id: 1, getUnitScale: () => 1 };
+  const modelB = { ...buildMockModel(rootNodesB, fragmentGeometryB).model, id: 2, getUnitScale: () => 1 };
+  const viewer = {
+    impl: {
+      getRenderProxy(queriedModel, fragId) {
+        const map = queriedModel === modelA ? rawGeometryByFragIdA : queriedModel === modelB ? rawGeometryByFragIdB : null;
+        const geometry = map?.get(fragId);
+        return geometry ? { geometry } : null;
+      },
+    },
+  };
+  return { modelA, modelB, viewer, fragmentGeometryA, fragmentGeometryB };
+}
+
+test('align -> invalidateModelPlacement -> next TLAS query rebuilds -> TLAS and linear oracle agree after alignment', async () => {
+  // 1. Two models: model A has a fixed 2x2x2 box at the origin. Model B has a 2x2x2 box placed far
+  //    away (no overlap with A) -- the "before alignment" state.
+  const { modelA, modelB, viewer, fragmentGeometryB } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: boxGeometry(), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: boxGeometry(), at: [50, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const alignmentQuery = (broadPhase) => ({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase,
+  });
+  const pairKey = (p) => `${p.source.modelId}:${p.source.dbId}:${p.target.modelId}:${p.target.dbId}`;
+
+  // 2. Query broadPhase:'tlas' BEFORE the move -- no clash yet (also admits both models and builds
+  //    the epoch's first-ever TLAS entry, so step 5 below genuinely exercises a REBUILD).
+  const beforeAlignment = await world.findClashes(alignmentQuery('tlas'));
+  assert.equal(beforeAlignment.pairs.length, 0, 'model B starts far from model A -- no clash before alignment');
+  assert.equal(beforeAlignment.statistics.tlasBuilds, 1, 'sanity: the first-ever query for this epoch is a cold build');
+
+  // codex-advisor review: without this warm-cache repeat, the fixture cannot rule out an
+  // always-rebuild TLAS implementation happening to still find the post-move clash by accident --
+  // prove the SAME unchanged query is served from cache (no rebuild) before invalidation ever runs.
+  const warmRepeat = await world.findClashes(alignmentQuery('tlas'));
+  assert.equal(warmRepeat.pairs.length, 0);
+  assert.equal(warmRepeat.statistics.tlasBuilds, 0, 'an unchanged epoch must be served from cache, not rebuilt, absent invalidation');
+  assert.ok(warmRepeat.statistics.tlasCacheHits >= 1);
+
+  // 3. Simulate a model-alignment tool moving model B's fragment on top of model A's known geometry
+  //    -- update what the mock Viewer's FragmentList.getWorldMatrix/getWorldBounds report for model
+  //    B's fragment 100, exactly this file's own `fragmentGeometry.set(...)` convention above (the
+  //    fixture's fake FragmentList reads fresh from this live Map on every call).
+  fragmentGeometryB.set(100, {
+    geometryIndex: 0,
+    matrix: translationMatrix([0, 0, 0]),
+    bounds: boundsOf(boxGeometry(), [0, 0, 0]),
+  });
+
+  // 4. Tell the world model B's placement is stale.
+  world.invalidateModelPlacement(modelB);
+
+  // 5. Query broadPhase:'tlas' again -- the next TLAS query rebuilds using CURRENT world placement
+  //    and finds the new clash. Asserting tlasBuilds === 1 here (not just the pairs outcome) proves
+  //    invalidateModelPlacement is what triggered the rebuild, not an always-rebuild implementation.
+  const afterAlignment = await world.findClashes(alignmentQuery('tlas'));
+  assert.equal(afterAlignment.statistics.tlasBuilds, 1, 'invalidation must force a real rebuild of the stale TLAS entry');
+  assert.equal(afterAlignment.pairs.length, 1, 'after alignment + invalidation, the rebuilt TLAS finds the real clash');
+  assert.equal(afterAlignment.pairs[0].target.model, modelB);
+
+  // 6. Query broadPhase:'linear' -- it must agree EXACTLY (same pairs set) with the post-alignment
+  //    TLAS result. Explode/continuous movement is never exercised here -- this is one discrete
+  //    alignment action only.
+  const linearOracle = await world.findClashes(alignmentQuery('linear'));
+  assert.deepEqual(
+    linearOracle.pairs.map(pairKey).sort(),
+    afterAlignment.pairs.map(pairKey).sort(),
+    'the linear oracle must agree exactly with the TLAS result after alignment',
+  );
+});
+
 // --- release lifecycle for the new marker ---------------------------------------------------------
 
 test('_placementInvalidatedAtRevision is released on evictModel', async () => {
