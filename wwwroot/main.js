@@ -65,7 +65,12 @@ async function onModelSelected(viewer, urn, { keepCurrentModels = false } = {}) 
         clearTimeout(window.onModelSelectedTimeout);
         delete window.onModelSelectedTimeout;
     }
-    window.location.hash = urn;
+    // The hash identifies the PRIMARY model for share/reload purposes -- an additional
+    // (federated) load must never overwrite it, or a later page reload/share link would only
+    // reproduce the last-loaded model instead of the session's actual primary one.
+    if (!keepCurrentModels) {
+        window.location.hash = urn;
+    }
     try {
         const resp = await fetch(`/api/models/${urn}/status`);
         if (!resp.ok) {
