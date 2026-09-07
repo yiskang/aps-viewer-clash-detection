@@ -110,6 +110,50 @@ function comparePlacedCanonically(a, b) {
   return 0;
 }
 
+// M2.1 Task 5: total order over witness candidates for the SAME dbId-level pair, used to pick the
+// one surviving `witness` when several fragment-pair candidates collapse onto one key. Rank, most to
+// least preferred:
+//   1. a real witness beats a null one (a null witness is `volumeOverlapQuery`'s own fault-tolerance
+//      contract for a hit whose witness point came out non-finite -- never a normal outcome, so any
+//      sibling candidate with a REAL witness should always be preferred over it).
+//   2. among two real witnesses, 'surface-crossing' beats 'containment' (a crossing witness sits
+//      exactly ON the two solids' shared boundary -- more informative and more visually locatable
+//      for a clash marker than "some point of one solid found inside the other").
+//   3. among two real witnesses of the SAME kind, `comparePlacedCanonically` (this file's own
+//      existing (loadEpoch, geometryIndex, fragmentId) total order, reused rather than reimplemented)
+//      breaks the tie off the two candidates' OWN placements, so the winner never depends on which
+//      fragment pair the broad phase happened to visit first.
+//
+// A valid total order for a stable min-reduction: reflexive (every branch compares a value against
+// itself as equal), antisymmetric (swapping a/b negates every branch's sign -- the null-vs-real
+// branch swaps -1/1, the kind branch swaps -1/1, and comparePlacedCanonically is itself
+// antisymmetric), and transitive (the three ranks above are lexicographic: null-ness, then kind,
+// then comparePlacedCanonically's own already-total order) -- so
+// `compareWitnessCandidates(candidate, existing) < 0` inside the aggregation loop below always
+// converges to the SAME winner regardless of arrival order.
+//
+// codex-advisor review (request 20260907-162936-71471-30255): the FIRST version of this function
+// short-circuited `if (!aw && !bw) return 0` before ever reaching the placement tie-break below,
+// which made two null-witness candidates compare EQUAL without regard to which physical fragment
+// pair produced them. The public `witness: null` value was unaffected either way, but the internal
+// `witnessCandidateByKey` entry that survives ties is whichever candidate happens to arrive FIRST
+// under `!existing || compare(...) < 0` -- so the `witness-unavailable` diagnostic's
+// sourceFragment/targetFragment provenance was silently arrival-order-dependent, violating this
+// function's own "total order" contract even though no currently-required test caught it. Falling
+// through to the SAME placement tie-break for the null-vs-null case (rather than returning 0 early)
+// closes that gap: the tie-break runs unconditionally whenever `aw`/`bw` are equally (non-)present,
+// so the diagnostic's blamed fragment pair is now canonically decided, not first-arrival-decided.
+function compareWitnessCandidates(a, b) {
+  const aw = a && a.witness;
+  const bw = b && b.witness;
+  if (Boolean(aw) !== Boolean(bw)) return aw ? -1 : 1;
+  if (aw && bw && aw.kind !== bw.kind) return aw.kind === 'surface-crossing' ? -1 : 1;
+  return (
+    comparePlacedCanonically(a.sourcePlaced, b.sourcePlaced) ||
+    comparePlacedCanonically(a.targetPlaced, b.targetPlaced)
+  );
+}
+
 // M2.1 Task 4: `_runNarrowPhasePair` returns a structured `{ hit, witness }` object for
 // `volume-overlap` (so its `witness` can flow into deterministic dbId-level aggregation, Task 5) but
 // a bare boolean for `containment`/`surface-intersection`, whose return shapes are unchanged.
@@ -1413,6 +1457,13 @@ export class CollisionWorld {
     // canonicalized. Epoch-qualified so two different target models sharing a numeric dbId (or a
     // target dbId numerically equal to a source dbId in a DIFFERENT model) never collapse together.
     const pairsByKey = new Map();
+    // M2.1 Task 5: internal side table, keyed by the SAME `key` string as `pairsByKey`, holding the
+    // single currently-winning witness candidate (per `compareWitnessCandidates`) for each dbId-level
+    // pair. Never exposed publicly -- it exists only so the final witness-unavailable diagnostic pass
+    // below can build a FragmentRef for whichever fragment pair actually decided (or failed to
+    // decide) the final witness, without leaking `sourcePlaced`/`targetPlaced`/`targetOperand`
+    // provenance onto the public ClashPair itself.
+    const witnessCandidateByKey = new Map();
     const oversizedDiagnosedFragments = new Set();
     for (const [sourcePlaced, targetPlaced, targetOperand] of candidates) {
       const pending = checkpoint({ label: 'narrow-phase-pair' });
@@ -1434,10 +1485,51 @@ export class CollisionWorld {
             modelId: modelIdOf(targetOperand.model), dbId: targetPlaced.ownerDbId, model: targetOperand.model,
           },
           type: query.mode,
+          // M2.1 Task 5: only volume-overlap has a witness concept at all. Omitted entirely (never
+          // set to `undefined`) for containment/surface-intersection, so `'witness' in pair` stays
+          // false for those modes -- exactly like today, before this task.
+          ...(query.mode === 'volume-overlap' ? { witness: null } : {}),
         });
+      }
+      // M2.1 Task 5: `source`/`target`/`type` above stay first-discovery-wins -- M2's pair-dedup
+      // identity is UNCHANGED. Only `witness` is order-independent: every fragment-pair candidate
+      // that shares this `key` competes via `compareWitnessCandidates`, and the current winner's
+      // witness (which may itself be `null`) is what ends up on the public ClashPair.
+      if (query.mode === 'volume-overlap') {
+        const candidate = { witness, sourcePlaced, targetPlaced, targetOperand };
+        const existing = witnessCandidateByKey.get(key);
+        if (!existing || compareWitnessCandidates(candidate, existing) < 0) {
+          witnessCandidateByKey.set(key, candidate);
+          pairsByKey.get(key).witness = witness;
+        }
       }
     }
     statistics.narrowPhaseMs = this._now() - narrowPhaseStartedAt;
+
+    // M2.1 Task 5: exactly one `witness-unavailable` diagnostic per dbId-level pair whose FINAL
+    // aggregated witness is still `null`, emitted here after full aggregation -- never per
+    // individual fragment-pair miss. `witnessCandidateByKey` shares `pairsByKey`'s own `key` string,
+    // so the two Maps are iterated together rather than re-deriving `key` from `pair`.
+    for (const [pairKey, pair] of pairsByKey) {
+      if (pair.type !== 'volume-overlap' || pair.witness !== null) continue;
+      const candidate = witnessCandidateByKey.get(pairKey);
+      // Every volume-overlap `pairsByKey` entry gets a `witnessCandidateByKey` entry in the SAME
+      // loop iteration that creates it (both are written unconditionally by the `query.mode ===
+      // 'volume-overlap'` block above, for every hit). A missing candidate here means that
+      // invariant broke -- silently `continue`ing would let a `witness: null` pair escape with NO
+      // diagnostic at all, violating this method's own "never silent" contract (codex-advisor
+      // review, request 20260907-162936-71471-30255: loud failure over a silent skip).
+      if (!candidate) {
+        throw new Error(`findClashes: internal invariant violated -- no witness candidate recorded for pair key '${pairKey}'`);
+      }
+      statistics.diagnostics.push({
+        scope: 'pair',
+        reason: 'witness-unavailable',
+        sourceFragment: fragmentRef(sourceOperand.model, candidate.sourcePlaced),
+        targetFragment: fragmentRef(candidate.targetOperand.model, candidate.targetPlaced),
+      });
+    }
+
     statistics.totalMs = this._now() - startedAt;
     // Return-site revalidation (design spec §9.2 point 7b): closes the gap between the LAST
     // checkpoint call above and this successful return, across which the pairs map / statistics are

@@ -1003,3 +1003,197 @@ test('representative fragments and the epoch->model map are released on eviction
   assert.equal(world._modelByEpoch.has(epoch), false);
   assert.equal(world._representativeFragmentByGeometry.has(epoch), false);
 });
+
+// === M2.1 Task 5: deterministic dbId-level witness aggregation =================================
+//
+// These tests exercise the AGGREGATION LOOP itself (compareWitnessCandidates + insert-or-replace),
+// not volumeOverlapQuery's own witness computation (covered elsewhere). `_runNarrowPhasePair` is
+// fully stubbed to return a SCRIPTED sequence of `{hit, witness}` results by call order -- call
+// order is exactly the candidate-processing order the broad phase feeds the aggregation loop, so
+// this proves the LOOP's own tie-break logic independent of any real geometry computation. The
+// two-fragment-source / one-fragment-target fixture below guarantees exactly 2 narrow-phase calls
+// collapsing onto ONE dbId-level key (source dbId 10, target dbId 20): broad-phase-only `bounds`
+// are supplied directly with no `geometry` at all, since `_runNarrowPhasePair` never really runs.
+
+function twoFragmentPairFixture() {
+  return makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100, 101] }, { dbId: 20, fragments: [200] }] }],
+    {
+      100: { geometryIndex: 0, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+      101: { geometryIndex: 1, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+      200: { geometryIndex: 2, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+    },
+  );
+}
+
+// Scripts `_runNarrowPhasePair` to return `results[call]` in call order, bypassing real geometry
+// resolution entirely -- the aggregation loop under test only cares "the Nth candidate's result",
+// never which physical fragment pair produced it.
+function stubNarrowPhaseSequence(world, results) {
+  let call = 0;
+  world._runNarrowPhasePair = async () => {
+    const result = results[call];
+    call += 1;
+    return result;
+  };
+}
+
+test('a valid witness from one fragment pair outranks a null witness from a sibling fragment pair for the same dbId pair, regardless of arrival order', async () => {
+  const validWitness = { kind: 'containment', point: [1, 2, 3] };
+  for (const order of [[null, validWitness], [validWitness, null]]) {
+    const { model, viewer } = twoFragmentPairFixture();
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    stubNarrowPhaseSequence(world, order.map((witness) => ({ hit: true, witness })));
+    const { pairs } = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+    assert.equal(pairs.length, 1);
+    assert.notEqual(pairs[0].witness, null, "the sibling fragment pair's valid witness must survive aggregation");
+    assert.deepEqual(pairs[0].witness, validWitness, `must win regardless of arrival order (order: ${order.map((w) => w?.kind ?? 'null')})`);
+  }
+});
+
+test('when both a surface-crossing and a containment witness are available for the same dbId pair, surface-crossing wins, regardless of arrival order', async () => {
+  const crossingWitness = { kind: 'surface-crossing', point: [5, 5, 5] };
+  const containmentWitness = { kind: 'containment', point: [1, 1, 1] };
+  for (const order of [[containmentWitness, crossingWitness], [crossingWitness, containmentWitness]]) {
+    const { model, viewer } = twoFragmentPairFixture();
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    stubNarrowPhaseSequence(world, order.map((witness) => ({ hit: true, witness })));
+    const { pairs } = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0].witness.kind, 'surface-crossing', `surface-crossing must win regardless of arrival order (order: ${order.map((w) => w.kind).join(',')})`);
+  }
+});
+
+test('repeated identical queries never change the witness point', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(6, 6, 6), at: [0, 0, 0] },
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const r1 = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+  const r2 = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+  assert.equal(r1.pairs.length, 1);
+  assert.equal(r2.pairs.length, 1);
+  assert.ok(r1.pairs[0].witness, 'witness must be present (a small box strictly inside a large one is a deterministic containment hit)');
+  assert.equal(r1.pairs[0].witness.kind, 'containment');
+  assert.deepEqual(r1.pairs[0].witness, r2.pairs[0].witness);
+});
+
+test('a dbId pair with no valid witness after full aggregation gets exactly one witness-unavailable diagnostic', async () => {
+  const { model, viewer } = twoFragmentPairFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  stubNarrowPhaseSequence(world, [
+    { hit: true, witness: null },
+    { hit: true, witness: null },
+  ]);
+  const { pairs, statistics } = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].witness, null);
+  const witnessDiagnostics = statistics.diagnostics.filter((d) => d.reason === 'witness-unavailable');
+  assert.equal(witnessDiagnostics.length, 1, 'exactly one diagnostic for this dbId pair, not one per fragment-pair miss');
+  assert.equal(witnessDiagnostics[0].scope, 'pair');
+  assert.equal(witnessDiagnostics[0].sourceFragment.dbId, 10);
+  assert.equal(witnessDiagnostics[0].targetFragment.dbId, 20);
+});
+
+test('a witness-unavailable diagnostic never fires when a sibling fragment pair supplied a valid witness', async () => {
+  const { model, viewer } = twoFragmentPairFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  stubNarrowPhaseSequence(world, [
+    { hit: true, witness: null },
+    { hit: true, witness: { kind: 'containment', point: [1, 2, 3] } },
+  ]);
+  const { statistics } = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+  assert.equal(statistics.diagnostics.some((d) => d.reason === 'witness-unavailable'), false);
+});
+
+// codex-advisor review (request 20260907-162936-71471-30255): the tests above change WHICH stub
+// slot returns which witness, but never exercise two candidates that are genuinely tied under
+// `compareWitnessCandidates`'s first two ranks (both real, same kind -- or both null) and can only
+// be told apart by the placement tie-break itself. These two tests close that gap directly.
+
+test('two same-kind witnesses from different physical fragment pairs converge to the SAME point, regardless of arrival order', async () => {
+  // Each PHYSICAL fragment keeps its OWN witness value across both variants below -- only the
+  // aggregation loop's PROCESSING order differs (the physical listing order under dbId 10 is
+  // reversed, and the stub script is reversed right along with it, so frag100 always resolves to
+  // witnessForFrag100 and frag101 always resolves to witnessForFrag101 regardless of which one the
+  // broad phase happens to visit first). Naively swapping which SCRIPTED witness lands on which
+  // call index (as the other reversed-order tests above do) would be the wrong test here: since the
+  // winner is decided by the placement tie-break (comparePlacedCanonically), swapping which VALUE
+  // attaches to which fragment changes the correct answer, not just the winner's identity -- it is
+  // only a genuine order-independence probe if the fragment<->witness association stays fixed and
+  // the loop's OWN iteration order is what varies.
+  const witnessForFrag100 = { kind: 'containment', point: [1, 1, 1] };
+  const witnessForFrag101 = { kind: 'containment', point: [9, 9, 9] };
+  const winners = [];
+  for (const [fragOrder, scriptOrder] of [
+    [[100, 101], [witnessForFrag100, witnessForFrag101]],
+    [[101, 100], [witnessForFrag101, witnessForFrag100]],
+  ]) {
+    const { model, viewer } = makeFixture(
+      [{ dbId: 1, children: [{ dbId: 10, fragments: fragOrder }, { dbId: 20, fragments: [200] }] }],
+      {
+        100: { geometryIndex: 0, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+        101: { geometryIndex: 1, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+        200: { geometryIndex: 2, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+      },
+    );
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    stubNarrowPhaseSequence(world, scriptOrder.map((witness) => ({ hit: true, witness })));
+    const { pairs } = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+    assert.equal(pairs.length, 1);
+    assert.ok(pairs[0].witness, 'a real witness must survive when both candidates are real');
+    winners.push(pairs[0].witness);
+  }
+  assert.deepEqual(winners[0], winners[1], 'the SAME physical fragment (and therefore the SAME witness value) must win regardless of processing order');
+});
+
+// Fragments 100/101 are listed under dbId 10 in DIFFERENT physical orders across the two fixture
+// builds below, so the broad phase itself visits them in different orders -- unlike the stub-order
+// tests above, which only vary which SCRIPTED witness a given call index returns. Both candidates
+// here are scripted `witness: null` regardless of call index, so the only thing that can make the
+// diagnosed FragmentRef differ between the two runs is which physical fragment pair the aggregation
+// loop's own tie-break treats as canonical -- exactly the bug codex-advisor's review caught (the
+// original comparator returned 0 for two nulls without ever reaching the placement tie-break, so the
+// stored candidate -- and therefore the diagnostic's fragId -- was whichever arrived first).
+test('two null-witness candidates for the same dbId pair get the SAME diagnostic fragment provenance, regardless of physical visitation order', async () => {
+  const provenances = [];
+  for (const fragOrder of [[100, 101], [101, 100]]) {
+    const { model, viewer } = makeFixture(
+      [{ dbId: 1, children: [{ dbId: 10, fragments: fragOrder }, { dbId: 20, fragments: [200] }] }],
+      {
+        100: { geometryIndex: 0, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+        101: { geometryIndex: 1, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+        200: { geometryIndex: 2, bounds: { min: [-1, -1, -1], max: [1, 1, 1] } },
+      },
+    );
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    stubNarrowPhaseSequence(world, [
+      { hit: true, witness: null },
+      { hit: true, witness: null },
+    ]);
+    const { statistics } = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+    const witnessDiagnostics = statistics.diagnostics.filter((d) => d.reason === 'witness-unavailable');
+    assert.equal(witnessDiagnostics.length, 1);
+    provenances.push(witnessDiagnostics[0].sourceFragment.fragId);
+  }
+  assert.equal(provenances[0], provenances[1], 'the diagnosed sourceFragment.fragId must be the SAME canonical choice regardless of which physical fragment the broad phase visits first');
+});
+
+test('containment pairs never carry a witness field or a witness-unavailable diagnostic (only volume-overlap has a witness concept)', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(6, 6, 6), at: [0, 0, 0] },
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const result = await world.findClashes(query(model, [10], [20], 'containment'));
+  assert.equal(result.pairs.length, 1);
+  assert.equal('witness' in result.pairs[0], false, 'containment pairs must not carry a witness key at all');
+  assert.equal(result.statistics.diagnostics.some((d) => d.reason === 'witness-unavailable'), false);
+});

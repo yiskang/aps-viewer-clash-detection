@@ -216,6 +216,58 @@ test('broadPhase:"tlas" and broadPhase:"linear" produce IDENTICAL pairs for the 
   assert.deepEqual(linearResult.pairs.map(key).sort(), tlasResult.pairs.map(key).sort());
 });
 
+// M2.1 Task 5: the aggregation loop's witness selection must be independent of BROAD-PHASE
+// TRAVERSAL ORDER too, not just candidate order within one traversal -- `linear` and `tlas` visit
+// the same physical candidates in different orders, so if the aggregation loop's witness pick were
+// arrival-order-dependent, this is exactly the kind of divergence that would surface it. Every
+// dbId-level pair here resolves via a deterministic containment verdict (a small box strictly
+// inside a large one -- no crossing-term real-clock hazard), so both traversals must agree not just
+// on WHICH pairs exist (already covered above) but on each pair's witness kind and point too.
+test('linear and tlas broadPhase produce the SAME witness kind and point for equivalent volume-overlap inputs', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] } },
+    rootNodesB: [
+      { dbId: 1, fragments: [100] }, // fully contains A -> containment witness
+      { dbId: 2, fragments: [200] }, // disjoint AABB, does not clash
+      { dbId: 3, fragments: [300] }, // fully contains A -> containment witness
+    ],
+    fragSpecsB: {
+      100: { geometryIndex: 0, geometry: box(6, 6, 6), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [50, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(6, 6, 6), at: [0, 0, 0] },
+    },
+  });
+  const runQuery = async (broadPhase) => {
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    return world.findClashes({
+      source: { model: modelA, dbIds: [1] },
+      target: { targets: [{ model: modelB, dbIds: [1, 2, 3] }] },
+      mode: 'volume-overlap', groupBy: 'dbId', broadPhase,
+    });
+  };
+  const key = (p) => `${p.source.modelId}:${p.source.dbId}:${p.target.modelId}:${p.target.dbId}`;
+  const linearResult = await runQuery('linear');
+  const tlasResult = await runQuery('tlas');
+  const byKey = (result) => new Map(result.pairs.map((p) => [key(p), p]));
+  const linearByKey = byKey(linearResult);
+  const tlasByKey = byKey(tlasResult);
+  assert.equal(linearByKey.size, 2, 'sanity: exactly 2 real volume-overlap clashes');
+  for (const [k, linearPair] of linearByKey) {
+    const tlasPair = tlasByKey.get(k);
+    assert.ok(tlasPair, `tlas must produce a pair for ${k}`);
+    assert.ok(linearPair.witness, `linear witness must be present for ${k}`);
+    assert.ok(tlasPair.witness, `tlas witness must be present for ${k}`);
+    assert.equal(linearPair.witness?.kind, tlasPair.witness?.kind, `witness kind must match for ${k}`);
+    for (let i = 0; i < 3; i += 1) {
+      assert.ok(
+        Math.abs(linearPair.witness.point[i] - tlasPair.witness.point[i]) < 1e-6,
+        `witness point[${i}] must match within tolerance for ${k}`,
+      );
+    }
+  }
+});
+
 test('broadPhase:"tlas" and broadPhase:"linear" agree for a whole-model target scope too', async () => {
   const { modelA, modelB, viewer } = makeTwoModelFixture({
     rootNodesA: [{ dbId: 1, fragments: [10] }],
