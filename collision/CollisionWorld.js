@@ -110,6 +110,22 @@ function comparePlacedCanonically(a, b) {
   return 0;
 }
 
+// M2.1 Task 4: `_runNarrowPhasePair` returns a structured `{ hit, witness }` object for
+// `volume-overlap` (so its `witness` can flow into deterministic dbId-level aggregation, Task 5) but
+// a bare boolean for `containment`/`surface-intersection`, whose return shapes are unchanged.
+//
+// This normalizes both shapes at the ONE aggregation-loop call site so the loop's own skip gate
+// always reads a real boolean. Without it, `if (!hit) continue;` -- correct for a bare boolean --
+// would silently break the moment `hit` is a structured NEGATIVE result: `{ hit: false, witness:
+// null }` is still a truthy JS object, so `!hit` evaluates to `false` for it just as it would for
+// `{ hit: true, ... }`, and the loop would stop skipping negative candidates entirely.
+function normalizeNarrowPhaseHit(mode, result) {
+  if (mode === 'volume-overlap') {
+    return { isHit: Boolean(result && result.hit), witness: (result && result.witness) ?? null };
+  }
+  return { isHit: Boolean(result), witness: undefined }; // witness is not a concept for these modes
+}
+
 // Adapts one resolved GeometryRegistry record plus this call's own placement into the `Instance`
 // shape ContainmentModeQuery/VolumeOverlapQuery document in their own JSDoc typedefs:
 // `{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix,
@@ -1382,12 +1398,13 @@ export class CollisionWorld {
     for (const [sourcePlaced, targetPlaced, targetOperand] of candidates) {
       const pending = checkpoint({ label: 'narrow-phase-pair' });
       if (pending) await pending;
-      const hit = await this._runNarrowPhasePair(
+      const rawHit = await this._runNarrowPhasePair(
         sourcePlaced, targetPlaced, query.mode, sourceOperand, targetOperand,
         statistics, oversizedDiagnosedFragments, checkpoint,
       );
       statistics.narrowPhasePairs++;
-      if (!hit) continue;
+      const { isHit, witness } = normalizeNarrowPhaseHit(query.mode, rawHit);
+      if (!isHit) continue;
       const key = `${sourceOperand.epoch}:${sourcePlaced.ownerDbId}:${targetOperand.epoch}:${targetPlaced.ownerDbId}`;
       if (!pairsByKey.has(key)) {
         pairsByKey.set(key, {
@@ -1649,7 +1666,7 @@ export class CollisionWorld {
       compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
     });
     attach(result.diagnostics);
-    return result.overlap;
+    return { hit: result.overlap, witness: result.witness ?? null };
   }
 
   // Task 12 (M2 Batch 4): the plan's own `buildTargetScopeFilter`, reworked to consume records the

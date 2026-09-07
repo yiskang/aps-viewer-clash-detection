@@ -571,3 +571,94 @@ test('findClashes no longer rejects containment / volume-overlap with the Task 2
   }
   await assert.rejects(world.findClashes(query(model, [10], [10], 'nonsense')), /unsupported mode/);
 });
+
+// === M2.1 Task 4: _runNarrowPhasePair result-shape integration + aggregation gate =============
+//
+// volumeOverlapQuery (Task 3) now additively returns `witness` on its own result object.
+// `_runNarrowPhasePair` forwards that as a structured `{ hit, witness }` shape for volume-overlap
+// only; containment/surface-intersection keep their bare-boolean shape. The aggregation loop's gate
+// (`if (!hit) continue;`) must therefore read a real boolean regardless of mode -- a structured
+// NEGATIVE result (`{ hit: false, witness: null }`) is a truthy JS object and must never slip past a
+// naive `!hit` check into a spurious ClashPair.
+
+const strictlyContainedFixture = () => makeFixture(
+  [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+  {
+    100: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+    200: { geometryIndex: 1, geometry: box(6, 6, 6), at: [0, 0, 0] },
+  },
+);
+
+test('a negative volume-overlap structured result {hit:false, witness:null} does not become a truthy hit', async () => {
+  // Without this stub the fixture below is a genuine positive (see "a strictly-contained source
+  // still overlaps" above) -- forcing a structured-but-negative shape here proves the AGGREGATION
+  // LOOP's gate reads `.hit`, not object truthiness, rather than merely proving the fixture is
+  // negative to begin with.
+  const { model, viewer } = strictlyContainedFixture();
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const originalRun = world._runNarrowPhasePair.bind(world);
+  world._runNarrowPhasePair = async (...args) => {
+    await originalRun(...args);
+    return { hit: false, witness: null };
+  };
+  const result = await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+  assert.equal(result.pairs.length, 0, 'a stubbed {hit:false,...} must never produce a ClashPair');
+});
+
+test('_runNarrowPhasePair returns {hit, witness} for volume-overlap and a bare boolean for containment/surface-intersection', async () => {
+  // codex-review (medium, request 20260907-160842-40675-17410): the original version of this test
+  // pinned volume-overlap and containment only. A regression that accidentally made
+  // surface-intersection return `{ hit: false, ... }` would slip past `normalizeNarrowPhaseHit`
+  // unnoticed -- its non-volume-overlap branch does `Boolean(result)`, which is `true` for ANY
+  // object, so that regression would silently start emitting spurious surface-intersection
+  // ClashPairs with no test catching it. Pinning surface-intersection's bare-boolean shape here
+  // closes that gap.
+  const captured = {};
+
+  {
+    const { model, viewer } = strictlyContainedFixture();
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    const original = world._runNarrowPhasePair.bind(world);
+    world._runNarrowPhasePair = async (...args) => { captured.volumeOverlap = await original(...args); return captured.volumeOverlap; };
+    await world.findClashes(query(model, [10], [20], 'volume-overlap'));
+  }
+  {
+    const { model, viewer } = strictlyContainedFixture();
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    const original = world._runNarrowPhasePair.bind(world);
+    world._runNarrowPhasePair = async (...args) => { captured.containment = await original(...args); return captured.containment; };
+    await world.findClashes(query(model, [10], [20], 'containment'));
+  }
+  {
+    // A coincident-face fixture that genuinely reaches surface-intersection's real bvhcast path
+    // (same shape as the "surface-intersection mode NEVER requests connectivity" fixture above);
+    // its traversal owns a private real-clock budget, so the performance clock is frozen for the
+    // duration of this call per that same test's rationale.
+    const { model, viewer } = makeFixture(
+      [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+      {
+        100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+        200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+      },
+    );
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    const original = world._runNarrowPhasePair.bind(world);
+    world._runNarrowPhasePair = async (...args) => { captured.surfaceIntersection = await original(...args); return captured.surfaceIntersection; };
+    await withFrozenPerformanceClock(() => world.findClashes(query(model, [10], [20], 'surface-intersection')));
+  }
+
+  const volumeOverlapResult = captured.volumeOverlap;
+  assert.equal(typeof volumeOverlapResult, 'object');
+  assert.notEqual(volumeOverlapResult, null);
+  assert.equal(typeof volumeOverlapResult.hit, 'boolean');
+  assert.ok(
+    volumeOverlapResult.witness === null || typeof volumeOverlapResult.witness === 'object',
+    'witness must be null or a {kind,point} object',
+  );
+
+  const containmentResult = captured.containment;
+  assert.equal(typeof containmentResult, 'boolean', 'containment mode must keep its existing bare-boolean shape');
+
+  const surfaceIntersectionResult = captured.surfaceIntersection;
+  assert.equal(typeof surfaceIntersectionResult, 'boolean', 'surface-intersection mode must keep its existing bare-boolean shape');
+});
