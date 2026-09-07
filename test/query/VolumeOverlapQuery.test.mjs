@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { volumeOverlapQuery } from '../../collision/query/VolumeOverlapQuery.js';
+import { properCrossingQuery } from '../../collision/query/ProperCrossingQuery.js';
 import { box, at, mergeGeometries, testInstance } from '../fixtures/geometry.mjs';
 
 test('baseline: small solid fully inside large solid overlaps', async () => {
@@ -348,4 +349,207 @@ test('crossing-term aspect-ratio gate: sanity -- no flags set, crossing term run
     false,
     'unflagged: no aspect-ratio diagnostic appears'
   );
+});
+
+// --- M2.1 Task 3: world-space witness propagation. `properCrossingQuery` and
+// `anyComponentInside` (Tasks 1/2) return a LOCAL-frame `witnessPoint`;
+// `volumeOverlapQuery` is the only layer with both a leaf witness and both operands'
+// world matrices in scope, so it must transform each leaf witness into world space,
+// validate finiteness, and additively return `witness: {kind, point} | null`. ---
+
+test('crossing overlap additively returns a world-space surface-crossing witness', async () => {
+  // Both operands share a single known non-identity world matrix -- a minimal but
+  // real proof that the returned point is genuinely in WORLD space, not still in
+  // either operand's local frame: if the implementation forgot to transform at all
+  // (returned a local-frame point verbatim), inverse-transforming it by either
+  // operand's matrix would land far outside both solids' local bounding boxes.
+  const shift = at(5, 10, -3);
+  const duct = testInstance(box(20, 0.4, 0.4), shift);
+  const beam = testInstance(box(0.4, 0.4, 20), shift);
+  const r = await volumeOverlapQuery(duct, beam, {});
+  assert.equal(r.overlap, true);
+  assert.equal(r.via, 'crossing');
+  assert.ok(r.witness, 'witness must be present on a positive crossing overlap');
+  assert.equal(r.witness.kind, 'surface-crossing');
+  assert.equal(r.witness.point.length, 3);
+  assert.ok(r.witness.point.every(Number.isFinite), 'witness.point must be 3 finite numbers');
+  assert.ok(!(r.witness.point instanceof THREE.Vector3), 'witness.point must be a plain array, never a THREE.Vector3');
+
+  // Oracle: transform the point back and confirm it still classifies inside both
+  // operands' own local BVHs via the operands' own matrices.
+  const worldPoint = new THREE.Vector3(...r.witness.point);
+  const inDuctLocal = worldPoint.clone().applyMatrix4(duct.matrix.clone().invert());
+  const inBeamLocal = worldPoint.clone().applyMatrix4(beam.matrix.clone().invert());
+  const { classifyPoint } = await import('../../collision/query/ContainmentQuery.js');
+  assert.equal(classifyPoint(inDuctLocal, duct.bvh, duct.localDiagonal), 'inside');
+  assert.equal(classifyPoint(inBeamLocal, beam.bvh, beam.localDiagonal), 'inside');
+});
+
+// The two tests below pin down the crossing branch's matrix-selection logic
+// (`canonicalFirst === source ? source.matrix : target.matrix`) with DISTINCT
+// matrices for the two operands, so a swapped-matrix bug is numerically detectable
+// (not merely geometrically plausible by coincidence). `beam`'s matrix is the
+// `duct`-fixture's own shift composed with a 180 degree rotation about X: since a
+// 180 degree rotation about a principal axis through the origin maps ANY
+// origin-centered axis-aligned box back onto itself, this preserves the exact same
+// real-world crossing geometry as the simpler shared-matrix fixture above (verified
+// empirically: candidatePairsExamined/crossing outcome unaffected), while making
+// `duct.matrix` and `beam.matrix` genuinely different 4x4 matrices -- using the
+// wrong one shifts the resulting world point by a clearly-measurable ~0.37 units,
+// easily outside the assertion tolerance below.
+test('crossing witness uses canonicalFirst\'s real matrix, not the other operand\'s (default order: source is canonicalFirst)', async () => {
+  const ductMatrix = at(5, 10, -3);
+  const beamMatrix = at(5, 10, -3).clone().multiply(new THREE.Matrix4().makeRotationX(Math.PI));
+  const duct = testInstance(box(20, 0.4, 0.4), ductMatrix); // source, default canonicalFirst
+  const beam = testInstance(box(0.4, 0.4, 20), beamMatrix); // target
+  const r = await volumeOverlapQuery(duct, beam, {});
+  assert.equal(r.overlap, true);
+  assert.equal(r.via, 'crossing');
+  assert.ok(r.witness);
+
+  // Independently reproduce the local-frame witness the same way volumeOverlapQuery
+  // does internally (source is canonicalFirst here), then transform it by source's
+  // (duct's) matrix -- the ONLY correct choice for this ordering.
+  const canonicalSecondToFirst = duct.matrix.clone().invert().multiply(beam.matrix);
+  const expected = properCrossingQuery(duct.bvh, beam.bvh, canonicalSecondToFirst, duct.localDiagonal, beam.localDiagonal, {});
+  assert.equal(expected.crossing, true, 'sanity: direct call reproduces the same crossing verdict');
+  const expectedWorld = expected.witnessPoint.clone().applyMatrix4(duct.matrix);
+
+  assert.ok(Math.abs(r.witness.point[0] - expectedWorld.x) < 1e-9);
+  assert.ok(Math.abs(r.witness.point[1] - expectedWorld.y) < 1e-9);
+  assert.ok(Math.abs(r.witness.point[2] - expectedWorld.z) < 1e-9);
+});
+
+test('crossing witness uses canonicalFirst\'s real matrix, not the other operand\'s (forced order: target is canonicalFirst)', async () => {
+  const ductMatrix = at(5, 10, -3);
+  const beamMatrix = at(5, 10, -3).clone().multiply(new THREE.Matrix4().makeRotationX(Math.PI));
+  const duct = testInstance(box(20, 0.4, 0.4), ductMatrix); // source
+  const beam = testInstance(box(0.4, 0.4, 20), beamMatrix); // target
+  const forceTargetFirst = () => 1; // always says target < source
+  const r = await volumeOverlapQuery(duct, beam, { compareCanonical: forceTargetFirst });
+  assert.equal(r.overlap, true);
+  assert.equal(r.via, 'crossing');
+  assert.ok(r.witness);
+
+  // Here target (beam) is canonicalFirst -- the local witness is in BEAM's frame,
+  // and beam.matrix (not source/duct.matrix) is the ONLY correct choice.
+  const canonicalSecondToFirst = beam.matrix.clone().invert().multiply(duct.matrix);
+  const expected = properCrossingQuery(beam.bvh, duct.bvh, canonicalSecondToFirst, beam.localDiagonal, duct.localDiagonal, {});
+  assert.equal(expected.crossing, true, 'sanity: direct call reproduces the same crossing verdict');
+  const expectedWorld = expected.witnessPoint.clone().applyMatrix4(beam.matrix);
+
+  assert.ok(Math.abs(r.witness.point[0] - expectedWorld.x) < 1e-9);
+  assert.ok(Math.abs(r.witness.point[1] - expectedWorld.y) < 1e-9);
+  assert.ok(Math.abs(r.witness.point[2] - expectedWorld.z) < 1e-9);
+});
+
+test('"A in B" containment overlap returns a witness transformed by the container\'s (target\'s) matrix', async () => {
+  // codex-review finding on this task's own draft: the "still classifies inside big"
+  // oracle alone does not discriminate a source/target matrix swap here, because
+  // `smallMatrix` is `bigMatrix` plus only a small (0.5,0.5,0.5) offset -- using the
+  // WRONG (small's) matrix would shift the witness by just that offset, which still
+  // lands inside big's large 6-unit box. Fixed by asserting the EXACT expected
+  // coordinate, computed from the raw local witness (exposed on `r.stats.aInB.witnessPoint`,
+  // Task 2's contract) transformed by the correct (target/big's) matrix -- using
+  // small's matrix instead provably gives a different point ([2.5,3.5,4.5] vs the
+  // correct [2,3,4]), so this now actually discriminates the swap.
+  const bigMatrix = at(1, 2, 3);
+  const smallMatrix = at(1, 2, 3).clone().multiply(new THREE.Matrix4().makeTranslation(0.5, 0.5, 0.5));
+  const small = testInstance(box(1, 1, 1), smallMatrix);
+  const big = testInstance(box(6, 6, 6), bigMatrix);
+  const r = await volumeOverlapQuery(small, big, {});
+  assert.equal(r.overlap, true);
+  assert.equal(r.via, 'containment(A in B)');
+  assert.equal(r.witness.kind, 'containment');
+  assert.equal(r.witness.point.length, 3);
+  assert.ok(r.witness.point.every(Number.isFinite));
+
+  const expectedWorld = r.stats.aInB.witnessPoint.clone().applyMatrix4(big.matrix); // target is the container
+  assert.ok(Math.abs(r.witness.point[0] - expectedWorld.x) < 1e-9);
+  assert.ok(Math.abs(r.witness.point[1] - expectedWorld.y) < 1e-9);
+  assert.ok(Math.abs(r.witness.point[2] - expectedWorld.z) < 1e-9);
+});
+
+test('"B in A" containment overlap returns a witness transformed by the container\'s (source\'s) matrix', async () => {
+  // Same codex-review-driven fix as the A-in-B test above, mirrored: exact
+  // coordinate check against `r.stats.bInA.witnessPoint` transformed by the
+  // correct (source/big's) matrix, which a source/target swap would fail.
+  const bigMatrix = at(1, 2, 3);
+  const smallMatrix = at(1, 2, 3).clone().multiply(new THREE.Matrix4().makeTranslation(0.5, 0.5, 0.5));
+  const big = testInstance(box(6, 6, 6), bigMatrix);
+  const small = testInstance(box(1, 1, 1), smallMatrix);
+  const r = await volumeOverlapQuery(big, small, {}); // source=big, target=small -> forces B-in-A branch
+  assert.equal(r.overlap, true);
+  assert.equal(r.via, 'containment(B in A)');
+  assert.equal(r.witness.kind, 'containment');
+  assert.equal(r.witness.point.length, 3);
+  assert.ok(r.witness.point.every(Number.isFinite));
+
+  const expectedWorld = r.stats.bInA.witnessPoint.clone().applyMatrix4(big.matrix); // source is the container
+  assert.ok(Math.abs(r.witness.point[0] - expectedWorld.x) < 1e-9);
+  assert.ok(Math.abs(r.witness.point[1] - expectedWorld.y) < 1e-9);
+  assert.ok(Math.abs(r.witness.point[2] - expectedWorld.z) < 1e-9);
+});
+
+test('negative overlap result shape is unchanged by witness support', async () => {
+  const a = testInstance(box(2, 2, 2));
+  const sep = testInstance(box(2, 2, 2), at(10, 0, 0));
+  const r = await volumeOverlapQuery(a, sep, {});
+  assert.equal(r.overlap, false);
+  assert.equal(r.via, undefined);
+  // witness is not read on the negative path by any consumer -- assert it's not a
+  // truthy object that a careless caller could mistake for a positive witness, but
+  // don't over-specify.
+  assert.ok(!r.witness, 'a negative overlap result must not carry a truthy witness');
+});
+
+test('a non-finite transformed witness degrades to witness:null without affecting the overlap verdict', async () => {
+  const duct = testInstance(box(20, 0.4, 0.4));
+  const beam = testInstance(box(0.4, 0.4, 20));
+  // Inject a degenerate matrix on one operand AFTER the verdict-relevant BVH/
+  // localDiagonal are built, so the crossing verdict itself is computed from valid
+  // local geometry but the world-space transform step receives a matrix that
+  // produces non-finite output.
+  //
+  // DEVIATION FROM BRIEF: the brief's own snippet reassigns `duct.matrix` to a NaN
+  // matrix as a plain field BEFORE calling volumeOverlapQuery at all. Verified
+  // empirically (against the real, unmodified crossing-detection code this task does
+  // not touch) that this does NOT produce the scenario the brief describes: `duct` is
+  // `source`, which is `canonicalFirst` by default, and `canonicalFirst.matrix` is
+  // read at line ~97 to build `canonicalSecondToFirst` -- the SAME relative transform
+  // properCrossingQuery's own bvhcast candidate-pair detection depends on. A NaN
+  // entry there poisons the transformed AABB comparisons throughout bvhcast, so
+  // candidatePairsExamined comes back 0 and the crossing verdict itself flips to
+  // false -- contradicting the brief's own `assert.equal(r.overlap, true, ...)`. This
+  // is not a hypothetical: running exactly the brief's literal fixture against this
+  // repo's real ProperCrossingQuery/ThreeMeshBvhBackend confirms overlap:false.
+  // The reason is structural, not a fixture-tuning problem: `worldMatrix` in the
+  // crossing branch (collision/query/VolumeOverlapQuery.js, "canonicalFirstIsSource
+  // ? source.matrix : target.matrix") is LITERALLY the same field this task's own
+  // line ~97 already read to compute the crossing verdict -- there is no way to make
+  // one read valid and the other non-finite via a plain field, since both reads
+  // resolve the exact same value. A getter lets the two reads diverge in time
+  // instead: valid on the first read (verdict, unaffected by anything this task
+  // changes), non-finite on the second (this task's own new world-transform step),
+  // which is exactly the "verdict from valid local geometry, non-finite transform"
+  // scenario the brief's comment describes -- just implemented so it actually reaches
+  // that state instead of short-circuiting the verdict to false first.
+  let matrixReads = 0;
+  const validMatrix = new THREE.Matrix4();
+  const nonFiniteMatrix = new THREE.Matrix4().set(
+    NaN, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  );
+  Object.defineProperty(duct, 'matrix', {
+    configurable: true,
+    get() {
+      matrixReads += 1;
+      return matrixReads === 1 ? validMatrix : nonFiniteMatrix;
+    },
+  });
+  const r = await volumeOverlapQuery(duct, beam, {});
+  assert.equal(r.overlap, true, 'the clash verdict must still be reported');
+  assert.equal(r.witness, null, 'a non-finite transform must degrade to witness:null, not throw');
 });

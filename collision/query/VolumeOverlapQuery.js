@@ -10,10 +10,24 @@
 // Evaluated in that order with early exit. Both directions are required for
 // symmetry; the containment terms are "any component," not "the whole of A."
 
+import * as THREE from 'three';
 import { properCrossingQuery } from './ProperCrossingQuery.js';
 import { anyComponentInside } from './ContainmentQuery.js';
 
 const defaultCompareCanonical = () => -1; // always treats `source` as canonical-first
+
+// M2.1 Task 3: transforms a leaf witness (in SOME operand's local frame) into world
+// space via that operand's own world matrix, and validates the result is 3 finite
+// numbers before it is allowed to leave this module as public plain-data. `_worldPoint`
+// is module-level scratch, cloned into a plain array before return -- it never escapes
+// this module as a THREE.Vector3.
+const _worldPoint = new THREE.Vector3();
+
+function toFiniteWorldArray(localPoint, worldMatrix) {
+  _worldPoint.copy(localPoint).applyMatrix4(worldMatrix);
+  const point = [_worldPoint.x, _worldPoint.y, _worldPoint.z];
+  return point.every(Number.isFinite) ? point : null;
+}
 
 /**
  * @typedef {{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix, aspectRatioExceeded?: boolean }} Instance
@@ -103,7 +117,19 @@ export async function volumeOverlapQuery(source, target, options = {}) {
     // closed" or public roles at all.
     if (!source.closedManifold) addDiagnostic('unverified-parity-operand', 'source');
     if (!target.closedManifold) addDiagnostic('unverified-parity-operand', 'target');
-    return { overlap: true, via: 'crossing', diagnostics, stats: { crossing: crossing.stats } };
+    // crossing.witnessPoint is in canonicalFirst's local frame (Task 1) -- transform
+    // it into world space via whichever PHYSICAL operand (source/target) resolved to
+    // canonicalFirst, never the other one (docs spec Sec 0.3).
+    const canonicalFirstIsSource = canonicalFirst === source;
+    const worldMatrix = canonicalFirstIsSource ? source.matrix : target.matrix;
+    const point = toFiniteWorldArray(crossing.witnessPoint, worldMatrix);
+    return {
+      overlap: true,
+      via: 'crossing',
+      diagnostics,
+      stats: { crossing: crossing.stats },
+      witness: point ? { kind: 'surface-crossing', point } : null,
+    };
   }
 
   // Between-term checkpoint: each term below can individually sit under
@@ -140,7 +166,15 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   // diagnostics only), or the final negative path (all three terms' diagnostics).
   if (aInB.inside) {
     mergeDiagnostics(aInB.diagnostics);
-    return { overlap: true, via: 'containment(A in B)', diagnostics, stats: { crossing: crossing.stats, aInB } };
+    // aInB.witnessPoint is in the CONTAINER's (target's) local frame (Task 2).
+    const point = toFiniteWorldArray(aInB.witnessPoint, target.matrix);
+    return {
+      overlap: true,
+      via: 'containment(A in B)',
+      diagnostics,
+      stats: { crossing: crossing.stats, aInB },
+      witness: point ? { kind: 'containment', point } : null,
+    };
   }
 
   await scheduler.checkpointIfDue();
@@ -170,7 +204,15 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   // diagnostics only), or the final negative path (all three terms' diagnostics).
   if (bInA.inside) {
     mergeDiagnostics(bInA.diagnostics);
-    return { overlap: true, via: 'containment(B in A)', diagnostics, stats: { crossing: crossing.stats, aInB, bInA } };
+    // bInA.witnessPoint is in the CONTAINER's (source's) local frame (Task 2).
+    const point = toFiniteWorldArray(bInA.witnessPoint, source.matrix);
+    return {
+      overlap: true,
+      via: 'containment(B in A)',
+      diagnostics,
+      stats: { crossing: crossing.stats, aInB, bInA },
+      witness: point ? { kind: 'containment', point } : null,
+    };
   }
 
   // Negative: no positive term rescued this call, so none of the three terms'
