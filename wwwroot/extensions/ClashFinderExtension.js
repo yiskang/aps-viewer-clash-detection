@@ -117,15 +117,34 @@ export class ClashFinderExtension extends ExtensionBase {
   // ordering) -- hardened here so a failed/duplicate unload() never leaves this extension's own
   // context-menu callback or event listener stranded. Isolation is cleared LAST so unload() never
   // leaves a stale highlight from a prior query on screen.
+  // Task 9 (M2.1): a new OUTER finally wraps the entire original body (the dispose/listener-removal
+  // try/finally, plus _clearIsolation()) so marker teardown runs no matter what -- whether dispose()
+  // throws (as documented above) or _clearIsolation() itself throws. Order inside this outer finally
+  // matters: _clearMarkers() (remove every mesh from the overlay scene) MUST run before disposing the
+  // shared geometry/material below it, so those two objects are disposed exactly once, strictly after
+  // every mesh referencing them has already been detached -- disposing them first would leave
+  // dangling meshes pointing at disposed GL resources for whatever render tick still sees them.
+  // removeScene (not clearScene) fully unregisters the overlay namespace itself, matching Task 7
+  // finding 5: neither removeScene nor clearScene ever disposes geometry/material on their own, which
+  // is exactly why those two disposals are spelled out explicitly here rather than assumed.
   unload() {
     this._latestActionToken += 1;
     try {
-      this._world.dispose();
+      try {
+        this._world.dispose();
+      } finally {
+        this._viewer.removeEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
+        this._viewer.unregisterContextMenuCallback(EXTENSION_ID);
+      }
+      this._clearIsolation();
     } finally {
-      this._viewer.removeEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
-      this._viewer.unregisterContextMenuCallback(EXTENSION_ID);
+      this._clearMarkers();
+      if (this._viewer.overlays.hasScene(MARKER_OVERLAY_NAME)) {
+        this._viewer.overlays.removeScene(MARKER_OVERLAY_NAME);
+      }
+      if (this._markerGeometry) { this._markerGeometry.dispose(); this._markerGeometry = null; }
+      if (this._markerMaterial) { this._markerMaterial.dispose(); this._markerMaterial = null; }
     }
-    this._clearIsolation();
     return true;
   }
 
@@ -138,7 +157,26 @@ export class ClashFinderExtension extends ExtensionBase {
     if (!event || !event.model) {
       throw new Error('ClashFinderExtension: BEFORE_MODEL_UNLOAD_EVENT fired with no event.model — typings declare `event: any`; this handler cannot proceed without the model object.');
     }
+    // [Task 9 review fix, codex-advisor] Invalidate the action token FIRST, before anything else --
+    // the EXACT same race unload() itself already guards against (see unload()'s own comment above):
+    // a findClashes promise that already RESOLVED but whose target() continuation has not yet run (a
+    // pending microtask at the moment this model-unload fires) must see a now-stale token when that
+    // continuation finally runs. Without this, that continuation's `token !== this._latestActionToken`
+    // check would still pass (nothing bumped the token), so it would re-apply isolate/fitToView/
+    // addMarkers referencing a model that was JUST evicted below -- silently resurrecting stale
+    // isolation/markers moments after this handler cleared them, exactly the "isolation and markers
+    // must never visually disagree" invariant this task exists to protect.
+    this._latestActionToken += 1;
     this._world.evictModel(event.model);
+    // Task 9 (M2.1): the ENTIRE visualization clears on ANY participating-model unload -- not just
+    // the unloaded model's own isolation/markers. A partial-preservation policy (leave OTHER models'
+    // isolation and markers alone) was shown unsound: those surviving models could be left isolated
+    // with a marker referencing a witness point that, after this unload, no longer has any meaningful
+    // relationship to what's still on screen. _clearIsolation() already iterates ALL of
+    // this._isolatedModels unconditionally, so calling it here already achieves "clear for every
+    // model", matching _clearMarkers()'s own unconditional full-scene clear.
+    this._clearIsolation();
+    this._clearMarkers();
     this._isolatedModels.delete(event.model);
   }
 
@@ -323,6 +361,7 @@ export class ClashFinderExtension extends ExtensionBase {
           // -- console.error alone is not a surface (see _notifyUser's own rationale above).
           console.error('ClashFinderExtension: find clashes failed', err);
           this._clearIsolation();
+          this._clearMarkers(); // Task 9: markers and isolation are always cleared together, never left disagreeing
           this._notifyUser(`Find Clashes failed for element ${sourceDbId}: ${err?.message ?? err}`);
           return;
         }
@@ -336,21 +375,45 @@ export class ClashFinderExtension extends ExtensionBase {
         // check below, and a caveat mechanism that itself throws would be worse than the silence it
         // exists to replace.
         const diagnostics = result.statistics?.diagnostics ?? [];
+        // Task 9 (M2.1) diagnostics partition: CollisionWorld.findClashes emits a
+        // {scope:'pair', reason:'witness-unavailable'} diagnostic whenever a volume-overlap pair's
+        // clash verdict is completely valid and correct but its witness point (marker location)
+        // simply couldn't be captured. That diagnostic rides the SAME statistics.diagnostics channel
+        // as every genuine completeness signal (e.g. 'bucket-capacity', a real
+        // "the pair/boolean result itself may be incomplete" warning) -- so a naive
+        // `diagnostics.length > 0` check would incorrectly tell the user "the result may be
+        // incomplete" for a fully complete, correctly-evaluated clash result that merely lacks ONE
+        // marker. That directly contradicts the Global Constraint that a clash is never
+        // suppressed/downgraded on account of witness/marker capture failing. Partition into two
+        // buckets: `completenessAffecting` (everything else) alone drives the caveat text below;
+        // `witness-unavailable` entries are presentation-only (no marker drawn for that one pair --
+        // already visually self-evident, no marker at that location) and must never contribute to it.
+        // [Task 9 review fix, codex-advisor] Matches BOTH scope:'pair' AND reason:'witness-unavailable'
+        // -- the full shape CollisionWorld.js's sole production emitter actually produces -- rather
+        // than reason alone, so a hypothetical future (or malformed) diagnostic that reuses the same
+        // reason string under a different scope is never silently swallowed into the presentation-only
+        // bucket it wasn't shown to belong to.
+        const completenessAffecting = diagnostics.filter((d) => !(d?.scope === 'pair' && d?.reason === 'witness-unavailable'));
         // The caveat is surfaced on BOTH outcomes below, not only the empty one -- a non-empty
         // result can also be incomplete (one real clash found, another skipped), and the user acting
         // on a partial isolate deserves to know that as much as the user told "no clashes found"
         // does. This mirrors RoomLocatorExtension's own onContextMenu handling exactly.
-        const caveat = diagnostics.length > 0
-          ? ` The result may be incomplete — ${ClashFinderExtension.describeDiagnostics(diagnostics)}.`
+        const caveat = completenessAffecting.length > 0
+          ? ` The result may be incomplete — ${ClashFinderExtension.describeDiagnostics(completenessAffecting)}.`
           : '';
         if (diagnostics.length > 0) {
+          // Unpartitioned on purpose: this is a dev-facing console log, not the user-facing caveat --
+          // every diagnostic, witness-unavailable included, is still worth a developer's attention.
           console.warn('ClashFinderExtension: findClashes reported diagnostics', diagnostics);
         }
 
-        // Clear whatever this extension isolated on a PRIOR call before applying (or omitting) new
-        // isolation -- unconditional, so a "No clashes found" outcome still restores the viewer to
-        // an unisolated state rather than leaving a stale highlight on screen.
+        // Clear whatever this extension isolated/marked on a PRIOR call before applying (or omitting)
+        // new isolation/markers -- unconditional, so a "No clashes found" outcome still restores the
+        // viewer to an unisolated, marker-free state rather than leaving a stale highlight or marker
+        // from an earlier query on screen. Isolation and markers are cleared together, at this one
+        // call site, so they can never visually disagree (Global Constraint).
         this._clearIsolation();
+        this._clearMarkers();
 
         const pairs = result.pairs;
         if (pairs.length === 0) {
@@ -400,6 +463,13 @@ export class ClashFinderExtension extends ExtensionBase {
           this._viewer.fitToView(dbIds, model);
           this._isolatedModels.add(model);
         }
+
+        // Task 9 (M2.1): apply new markers alongside the new isolation just applied above, using the
+        // SAME dbIdsByModel (radius derives from the combined bounding sphere of everything just
+        // isolated). `pairs` -- not `witnessBearing` -- is passed straight through; _addMarkers itself
+        // owns filtering to witness-bearing pairs (a pair whose witness is null, e.g. from a
+        // witness-unavailable diagnostic above, contributes no marker but is still isolated normally).
+        this._addMarkers(pairs, dbIdsByModel);
 
         // Spec §2 step 11: this report is UNCONDITIONAL, every successful call -- not gated on
         // diagnostics (contrast RoomLocatorExtension's own silent-on-clean-success convention).

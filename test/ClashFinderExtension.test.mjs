@@ -136,10 +136,16 @@ class FakeSphereGeometry {
   constructor(radius, widthSegments, heightSegments) {
     this.radius = radius; this.widthSegments = widthSegments; this.heightSegments = heightSegments;
   }
+  // Task 9 (M2.1): unload() calls .dispose() unconditionally whenever _markerGeometry was ever
+  // created -- a real THREE.SphereGeometry has this method; without it here, any Task 9 unload() test
+  // that creates a marker but doesn't itself override .dispose() would throw a spurious TypeError.
+  dispose() {}
 }
 
 class FakeMeshBasicMaterial {
   constructor(params) { Object.assign(this, params); }
+  // Same rationale as FakeSphereGeometry#dispose above.
+  dispose() {}
 }
 
 class FakeMesh {
@@ -761,6 +767,334 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   ext._clearMarkers();
   check('_clearMarkers empties _activeMarkers', ext._activeMarkers.length, 0);
   check('_clearMarkers removes every mesh from the overlay scene', viewer.overlays._scenes.get('clash-finder-markers').size, 0);
+}
+
+// === Task 9 (M2.1): marker lifecycle integration ====================================================
+// Wires _addMarkers/_clearMarkers into every existing isolation-lifecycle touchpoint, mirroring
+// _clearIsolation()'s own discipline at each site: success/failure/zero-clash paths in
+// onContextMenu, _onBeforeModelUnload, and unload() (the last surviving a throwing _world.dispose()).
+
+// === a successful Find Clashes clears previous markers before adding new ones (not accumulated) ===
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [
+      { source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'surface-crossing', point: [0, 0, 0] } },
+      { source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 3, model: modelA }, witness: { kind: 'containment', point: [1, 1, 1] } },
+    ],
+    statistics: { diagnostics: [] },
+  });
+  const menu1 = [];
+  ext.onContextMenu(menu1, { hasSelected: true });
+  await menu1[0].target();
+  check('first Find Clashes adds one marker per witness-bearing pair', ext._activeMarkers.length, 2);
+
+  world.findClashes = async () => ({
+    pairs: [
+      { source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 4, model: modelA }, witness: { kind: 'surface-crossing', point: [2, 2, 2] } },
+    ],
+    statistics: { diagnostics: [] },
+  });
+  const menu2 = [];
+  ext.onContextMenu(menu2, { hasSelected: true });
+  await menu2[0].target();
+  check('a second Find Clashes clears old markers before adding new ones, not accumulating', ext._activeMarkers.length, 1);
+}
+
+// === a zero-clash result clears previous markers and adds none ====================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'surface-crossing', point: [0, 0, 0] } }],
+    statistics: { diagnostics: [] },
+  });
+  const menu1 = [];
+  ext.onContextMenu(menu1, { hasSelected: true });
+  await menu1[0].target();
+  check('setup: a marker is present before the zero-clash call', ext._activeMarkers.length, 1);
+
+  world.findClashes = async () => ({ pairs: [], statistics: { diagnostics: [] } });
+  const menu2 = [];
+  ext.onContextMenu(menu2, { hasSelected: true });
+  await menu2[0].target();
+  check('a zero-clash result clears previous markers and adds none', ext._activeMarkers.length, 0);
+}
+
+// === a failed query clears previous markers instead of leaving stale ones =========================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'surface-crossing', point: [0, 0, 0] } }],
+    statistics: { diagnostics: [] },
+  });
+  const menu1 = [];
+  ext.onContextMenu(menu1, { hasSelected: true });
+  await menu1[0].target();
+  check('setup: a marker is present before the failing call', ext._activeMarkers.length, 1);
+
+  world.findClashes = async () => { throw new Error('collision engine exploded again'); };
+  const menu2 = [];
+  ext.onContextMenu(menu2, { hasSelected: true });
+  await menu2[0].target();
+  check('a failed query clears previous markers instead of leaving stale ones', ext._activeMarkers.length, 0);
+}
+
+// === a superseded stale action token never restores or clears markers on the losing continuation ===
+// Mirrors the existing "a stale in-flight Find Clashes result never overwrites a NEWER selection's
+// visualization" test's deferred-promise technique above, extended to witness-bearing pairs.
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAllModels = () => [modelA, modelB];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+
+  const pending = [];
+  world.findClashes = () => new Promise((resolve) => { pending.push({ resolve }); });
+
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  const menu1 = [];
+  ext.onContextMenu(menu1, { hasSelected: true });
+  const promise1 = menu1[0].target(); // older, slower action -- suspends inside findClashes
+
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [20] }];
+  const menu2 = [];
+  ext.onContextMenu(menu2, { hasSelected: true });
+  const promise2 = menu2[0].target(); // newer, faster action -- suspends inside findClashes
+
+  check('both stale and fresh marker-producing calls reached findClashes', pending.length, 2);
+
+  // The NEWER call (#2) resolves first, with one witness-bearing pair.
+  pending[1].resolve({
+    pairs: [{ source: { modelId: 1, dbId: 20, model: modelA }, target: { modelId: 2, dbId: 99, model: modelB }, witness: { kind: 'surface-crossing', point: [5, 5, 5] } }],
+    statistics: { diagnostics: [] },
+  });
+  await promise2;
+  check('the newer call\'s marker is applied', ext._activeMarkers.length, 1);
+
+  // The OLDER call (#1) finally resolves LATE, after being superseded, with TWO witness-bearing
+  // pairs -- if the stale-token guard is not marker-aware, this would wrongly clear the newer call's
+  // marker and/or add its own two, silently corrupting what's on screen.
+  pending[0].resolve({
+    pairs: [
+      { source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 1, dbId: 11, model: modelA }, witness: { kind: 'surface-crossing', point: [1, 1, 1] } },
+      { source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 1, dbId: 12, model: modelA }, witness: { kind: 'containment', point: [2, 2, 2] } },
+    ],
+    statistics: { diagnostics: [] },
+  });
+  await promise1;
+  check('a superseded stale action never restores or clears markers on the losing continuation',
+    ext._activeMarkers.length, 1, 'only the LATEST action\'s result should be reflected');
+}
+
+// === unloading any participating model clears both isolation and markers for EVERY model, not
+// just the unloaded model's own -- Global Constraint: model unload clears the ENTIRE visualization ===
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB }, witness: { kind: 'surface-crossing', point: [0, 0, 0] } }],
+    statistics: { diagnostics: [] },
+  });
+  const menu = [];
+  ext.onContextMenu(menu, { hasSelected: true });
+  await menu[0].target();
+  check('setup: two models isolated', ext._isolatedModels.size, 2);
+  check('setup: one marker added', ext._activeMarkers.length, 1);
+
+  ext._onBeforeModelUnload({ model: modelA });
+  check('unloading any participating model clears the ENTIRE visualization\'s markers, not just modelA\'s',
+    ext._activeMarkers.length, 0);
+  check('unloading any participating model clears the ENTIRE visualization\'s isolation', ext._isolatedModels.size, 0);
+}
+
+// === [Task 9 review fix, codex-advisor] a findClashes call that RESOLVED before _onBeforeModelUnload
+// ran, but whose continuation had not yet executed (a pending microtask), must see a stale token once
+// model-unload has bumped it and apply NO isolate/fitToView/addMarkers/notify effects at all -- the
+// SAME race unload() itself already guards against (see the existing "unload()-vs-resolved-promise
+// race" test above), now also guarded at the model-unload site. Without bumping the token here, this
+// continuation would silently resurrect isolation/markers moments after model-unload cleared them. ===
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAllModels = () => [modelA];
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  const alerts = [];
+  ext._notifyUser = (message) => { alerts.push(message); };
+
+  let capturedResolve;
+  world.findClashes = () => new Promise((resolve) => { capturedResolve = resolve; });
+  const menu = [];
+  ext.onContextMenu(menu, { hasSelected: true });
+  const promise = menu[0].target(); // suspends at its own await, inside findClashes
+
+  const tokenBeforeUnload = ext._latestActionToken;
+  ext._onBeforeModelUnload({ model: modelA }); // runs BEFORE this in-flight call's continuation ever gets a chance to run
+  check('model-unload bumped the action token before the pending call could resolve', ext._latestActionToken > tokenBeforeUnload, true);
+
+  // The pending findClashes call finally resolves (successfully) AFTER model-unload already cleared.
+  capturedResolve({
+    pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 1, dbId: 20, model: modelA }, witness: { kind: 'surface-crossing', point: [0, 0, 0] } }],
+    statistics: { diagnostics: [] },
+  });
+  await promise;
+  check('a post-model-unload resolution applies NO isolate/fitToView calls', isolateCalls.length, 0);
+  check('a post-model-unload resolution adds NO markers', ext._activeMarkers.length, 0);
+  check('a post-model-unload resolution triggers NO notify call', alerts.length, 0);
+}
+
+// === unload() disposes markers/overlay scene even if _world.dispose() throws ======================
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  ext._addMarkers([{ witness: { kind: 'containment', point: [1, 1, 1] } }]);
+  check('setup: overlay scene exists before unload()', viewer.overlays.hasScene('clash-finder-markers'), true);
+  check('setup: one marker is active before unload()', ext._activeMarkers.length, 1);
+  ext._world.dispose = () => { throw new Error('boom'); };
+  let thrown = null;
+  try { ext.unload(); } catch (err) { thrown = err; }
+  check('unload() still propagates dispose()\'s own thrown error', thrown?.message, 'boom');
+  check('markers are torn down even though dispose() threw', ext._activeMarkers.length, 0);
+  check('the overlay scene itself is removed too, not merely emptied', viewer.overlays.hasScene('clash-finder-markers'), false);
+}
+
+// === shared geometry and material are disposed exactly once on unload, after marker meshes are
+// removed (Global Constraint: no per-marker geometry/material duplication, and Task 7 finding 5's
+// teardown gotcha -- removeScene/clearScene never dispose materials on their own) =====================
+{
+  const { ext } = extensionWithFakeWorld();
+  ext._addMarkers([{ witness: { kind: 'containment', point: [1, 1, 1] } }]);
+  const geometry = ext._markerGeometry;
+  const material = ext._markerMaterial;
+  let geometryDisposed = 0, materialDisposed = 0;
+  geometry.dispose = () => { geometryDisposed += 1; };
+  material.dispose = () => { materialDisposed += 1; };
+  ext.unload();
+  check('shared geometry is disposed exactly once', geometryDisposed, 1);
+  check('shared material is disposed exactly once', materialDisposed, 1);
+  check('_markerGeometry reference is cleared after unload()', ext._markerGeometry, null);
+  check('_markerMaterial reference is cleared after unload()', ext._markerMaterial, null);
+}
+
+// === diagnostics partition (carried-forward requirement, not in the plan's own Task 9 steps): a
+// witness-unavailable diagnostic means ONLY "no marker for this one pair" -- the clash verdict itself
+// is still fully valid and complete, so it must NOT drive the "may be incomplete" caveat. Only
+// non-witness-unavailable diagnostics may do that. =====================================================
+
+// === a result whose diagnostics contain ONLY a witness-unavailable entry produces NO "may be
+// incomplete" caveat -- the clash is still isolated/reported normally =================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: null }],
+    statistics: { diagnostics: [{ scope: 'pair', reason: 'witness-unavailable' }] },
+  });
+  let notified = '';
+  ext._notifyUser = (message) => { notified = message; };
+  const menu = [];
+  ext.onContextMenu(menu, { hasSelected: true });
+  await menu[0].target();
+  check('a witness-unavailable-ONLY diagnostic produces the plain "N clashes found" report with NO caveat suffix',
+    notified, '1 clashes found (1 in this model, 0 in other models)');
+  check('the pair is still isolated normally despite its witness being unavailable', ext._isolatedModels.size, 1);
+}
+
+// === a non-witness-unavailable diagnostic (e.g. bucket-capacity) still DOES produce the caveat ====
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'surface-crossing', point: [0, 0, 0] } }],
+    statistics: { diagnostics: [{ scope: 'call', reason: 'bucket-capacity' }] },
+  });
+  const alerts = await withCapturedAlerts(async () => {
+    const menu = [];
+    ext.onContextMenu(menu, { hasSelected: true });
+    await menu[0].target();
+  });
+  check('a non-witness-unavailable diagnostic (bucket-capacity) still produces the "may be incomplete" caveat',
+    /may be incomplete/.test(alerts[0] || ''), true);
+  check('the caveat names the bucket-capacity reason', /bucket-capacity/.test(alerts[0] || ''), true);
+}
+
+// === a MIX of witness-unavailable and completeness-affecting diagnostics still produces the caveat,
+// driven only by the non-witness-unavailable entries -- the caveat text itself must not enumerate
+// witness-unavailable as a reason (it's filtered out of describeDiagnostics's own input) =============
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: null }],
+    statistics: { diagnostics: [
+      { scope: 'pair', reason: 'witness-unavailable' },
+      { scope: 'call', reason: 'bucket-capacity' },
+    ] },
+  });
+  const alerts = await withCapturedAlerts(async () => {
+    const menu = [];
+    ext.onContextMenu(menu, { hasSelected: true });
+    await menu[0].target();
+  });
+  check('a mix of witness-unavailable + completeness-affecting diagnostics still produces the caveat',
+    /may be incomplete/.test(alerts[0] || ''), true);
+  check('the caveat is driven by the non-witness-unavailable reason', /bucket-capacity/.test(alerts[0] || ''), true);
+  check('the caveat does NOT enumerate witness-unavailable as a reason (presentation-only, filtered out of describeDiagnostics input)',
+    /witness-unavailable/.test(alerts[0] || ''), false);
+}
+
+// === console.warn's dev-facing diagnostics log stays UNPARTITIONED -- it logs ALL diagnostics,
+// witness-unavailable included, unlike the user-facing caveat above ===================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+  viewer.getAllModels = () => [modelA];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  const diagnostics = [{ scope: 'pair', reason: 'witness-unavailable' }];
+  world.findClashes = async () => ({
+    pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: null }],
+    statistics: { diagnostics },
+  });
+  const originalWarn = console.warn;
+  let warnedWith = null;
+  console.warn = (...args) => {
+    if (args[0] === 'ClashFinderExtension: findClashes reported diagnostics') warnedWith = args[1];
+  };
+  try {
+    const menu = [];
+    ext.onContextMenu(menu, { hasSelected: true });
+    await menu[0].target();
+  } finally {
+    console.warn = originalWarn;
+  }
+  check('console.warn still logs ALL diagnostics, including witness-unavailable ones (dev log unaffected by the partition)',
+    warnedWith === diagnostics, true);
 }
 
 console.log(`\n  ${passes} passed, ${failures} failed`);
