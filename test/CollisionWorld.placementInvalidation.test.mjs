@@ -440,6 +440,63 @@ test('align -> invalidateModelPlacement -> next TLAS query rebuilds -> TLAS and 
   );
 });
 
+// Task 6 (M2.1 Batch 1): proves witness placement is inherently placement-fresh -- witness is
+// computed from the SAME worldMatrix values the clash verdict itself already depends on (Tasks
+// 1-5), so invalidateModelPlacement's rebuild moves the witness point exactly like it moves the
+// verdict, with no separate cache/invalidation path required. Reuses this file's own
+// makeTwoModelFixture/boundsOf/translationMatrix/freshWorld/frozenClock helpers (Task 18 fixture,
+// above) unmodified -- only the query `mode` and the two models' geometry/placement differ, because
+// 'witness' is only a concept for mode: 'volume-overlap' (surface-intersection pairs never carry a
+// witness field at all -- collision/CollisionWorld.js:1491), and this test additionally needs a REAL
+// clash already present BEFORE alignment too (not just after), so the "witness moved" assertion
+// compares two real points instead of trivially passing against `undefined`. Uses the same "small
+// box strictly inside a large one" containment pattern test/CollisionWorld.tlasTraversal.test.mjs's
+// own witness-parity test already established as deterministic and free of the crossing term's
+// real-clock hazard.
+test('witness point moves to the newly-aligned location after invalidateModelPlacement', async () => {
+  const { modelA, modelB, viewer, fragmentGeometryB } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: new THREE.BoxGeometry(6, 6, 6), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    // A small box, fully inside model A's box, off-center so its containment witness position
+    // actually differs once it moves to the opposite side below.
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: new THREE.BoxGeometry(1, 1, 1), at: [1, 0, 0] } },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const overlapQuery = () => ({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'volume-overlap', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+
+  // 1. A real containment clash already exists before any alignment -- model B's small box starts
+  //    fully inside model A's box, off to one side.
+  const beforeAlignment = await world.findClashes(overlapQuery());
+  assert.equal(beforeAlignment.pairs.length, 1, 'model B starts fully inside model A');
+  const beforeWitness = beforeAlignment.pairs[0].witness;
+  assert.ok(beforeWitness, 'a witness must be present for the initial containment overlap');
+
+  // 2. Simulate a model-alignment tool moving model B's fragment to a DIFFERENT position, still
+  //    fully contained by model A -- the exact fragmentGeometryB.set(...) + invalidateModelPlacement
+  //    convention the align -> invalidateModelPlacement fixture above uses.
+  fragmentGeometryB.set(100, {
+    geometryIndex: 0,
+    matrix: translationMatrix([-1, 0, 0]),
+    bounds: boundsOf(new THREE.BoxGeometry(1, 1, 1), [-1, 0, 0]),
+  });
+  world.invalidateModelPlacement(modelB);
+
+  // 3. The next TLAS query rebuilds using CURRENT world placement (tlasBuilds === 1 proves the
+  //    invalidation, not an always-rebuild implementation, triggered it) and its witness moves to
+  //    the newly-aligned location -- it is never a stale, reused point from the pre-alignment query.
+  const afterAlignment = await world.findClashes(overlapQuery());
+  assert.equal(afterAlignment.statistics.tlasBuilds, 1, 'invalidation must force a real rebuild of the stale TLAS entry');
+  assert.equal(afterAlignment.pairs.length, 1, 'model B is still fully inside model A after alignment, just moved');
+  const afterWitness = afterAlignment.pairs[0].witness;
+  assert.ok(afterWitness, 'a witness must still be present after alignment');
+  assert.notDeepEqual(afterWitness.point, beforeWitness.point, 'witness must move when the model is realigned');
+});
+
 // --- release lifecycle for the new marker ---------------------------------------------------------
 
 test('_placementInvalidatedAtRevision is released on evictModel', async () => {
