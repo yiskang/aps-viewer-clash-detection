@@ -923,6 +923,15 @@ At this point `findClashes` for `type: 'volume-overlap'` returns a fully populat
 
 **Completion criteria:** This task requires no code changes — it is complete as recorded above. Task 8 must cite this section rather than re-deriving Viewer API signatures from memory.
 
+**POST-IMPLEMENTATION CORRECTIONS (added during Batch 2's fix round + whole-batch re-review, both independently re-verified against the pinned `viewer3D.js` bundle a second time — do not re-derive these from the findings above, which are left unedited as the historical record of what was originally believed):**
+
+- **Finding 1 above has the `addMesh`/`removeMesh` argument order backwards.** The real signatures are `addMesh(mesh, sceneName)` (`viewer3D.js:20650`, JSDoc example `addMesh([mesh], 'my_scene')`) and `removeMesh(mesh, sceneName)` (`:20670`) — **mesh first, scene name second** — not `(name, mesh)` as written above. Task 8's implementation originally followed the wrong order verbatim; this shipped as a Critical, silently-failing bug (the real API's own guard returns `false` on a bad scene-name lookup, no throw) caught only by a subsequent whole-batch review, not by either task-level review or 119 passing unit tests (whose mocks had also been written to match the wrong order). Fixed in `wwwroot/extensions/ClashFinderExtension.js` and `test/ClashFinderExtension.test.mjs`, commit `cb7ff8f`.
+- **Finding 6 above has the same defect Task 8's implementer independently found and fixed**: `InstanceTree.getNodeBox(dbId, box)`'s second argument is populated as a **flat 6-number array** (`Float32Array`, `[minX,minY,minZ,maxX,maxY,maxZ]`), never a `THREE.Box3` directly. Passing a `THREE.Box3` straight through as `dst` (as an earlier draft of Task 8's own implementation snippet did) silently sets numeric-string properties `'0'..'5'` on it and never touches `.min`/`.max` — every `union()` call becomes a no-op. The correct pattern: allocate a `Float32Array(6)`, call `getNodeBox(dbId, rawArray)`, convert via the public `THREE.Box3#setFromArray(array, offset)`. Also: Finding 6's claim that `getNodeBox` is "the same primitive `fitToView` itself is built on" is inaccurate — the real `fitToView` uses fragment-world-bounds (`enumNodeFragments` + `fragmentList.getWorldBounds`), not `getNodeBox`. Fixed in `ClashFinderExtension.js`'s `_computeMarkerRadius`, commit `f3d5141`.
+- **Not documented as a Task 7 finding at all, but Task 8's own Step 8 implementation snippet (below) used `mesh.scale.setScalar(radius)`, which does not exist anywhere in the pinned Viewer 7.124.2 bundle** (`grep -c setScalar viewer3D.js` → 0 — added to upstream three.js after r71). `window.THREE.Vector3` in this Viewer is `LmvVector3`, whose prototype has `set`/`setX/Y/Z`/`multiplyScalar`/etc. but not `setScalar`. This threw a `TypeError` on the first marker created in a real Viewer session, after isolation was already applied and before the success notification. Correct r71-compatible equivalent: `mesh.scale.set(radius, radius, radius)`. Fixed alongside the `addMesh`/`removeMesh` fix above, same commit.
+- **`InstanceTree`/`Model#getInstanceTree()` (used by `_computeMarkerRadius`) is marked `@deprecated` in the pinned bundle** (`viewer3D.js:17831-17839`, emits a `warnOnce` deprecation message on every call, delegates to `getObjectTree()`). Functionally correct and safe to keep (an exact drop-in replacement is `model.getObjectTree()` called with no callbacks, which returns the tree or `null` synchronously) — not fixed as part of the Batch 2 fix round (kept out of that pass's authorized scope), but worth swapping before or during Task 10's live acceptance pass, partly to keep the console clean during visual verification.
+
+**Why this matters for Task 10/11:** both Critical corrections above were verified by directly grepping the exact pinned bundle this repo already trusts (`/private/tmp/claude-501/viewer3D.js`, SHA-256 `12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e`) — the same standard of evidence this section originally used. Task 10 and Task 11 must read the corrections above, not the original Finding 1/6 text or Task 8's original Step 8 snippet, when citing this section.
+
 ---
 
 ## Task 8: Marker overlay implementation
@@ -1067,22 +1076,24 @@ At this point `findClashes` for `type: 'volume-overlap'` returns a fully populat
     const radius = this._computeMarkerRadius(dbIdsByModel);
     for (const pair of witnessBearing) {
       const mesh = new THREE.Mesh(this._markerGeometry, this._markerMaterial);
-      mesh.scale.setScalar(radius);
+      mesh.scale.set(radius, radius, radius); // NOT setScalar -- doesn't exist in r71, see Task 7's post-implementation corrections
       mesh.position.set(pair.witness.point[0], pair.witness.point[1], pair.witness.point[2]);
       mesh.updateMatrixWorld(true);
-      this._viewer.overlays.addMesh(MARKER_OVERLAY_NAME, mesh);
+      this._viewer.overlays.addMesh(mesh, MARKER_OVERLAY_NAME); // mesh FIRST, see Task 7's post-implementation corrections
       this._activeMarkers.push(mesh);
     }
   }
 
   _clearMarkers() {
     for (const mesh of this._activeMarkers) {
-      this._viewer.overlays.removeMesh(MARKER_OVERLAY_NAME, mesh);
+      this._viewer.overlays.removeMesh(mesh, MARKER_OVERLAY_NAME); // mesh FIRST, see Task 7's post-implementation corrections
     }
     this._activeMarkers.length = 0;
   }
   ```
   Note `_addMarkers` takes `dbIdsByModel` as a parameter (needed for radius computation) rather than reading extension state directly — Task 9 wires the actual call site, which already has `dbIdsByModel` in scope at that point in `onContextMenu`.
+
+  **[Post-implementation correction]** This snippet originally had `mesh.scale.setScalar(radius)` and `addMesh(MARKER_OVERLAY_NAME, mesh)`/`removeMesh(MARKER_OVERLAY_NAME, mesh)` (scene name first) — both wrong against the pinned Viewer 7.124.2 bundle, both shipped as Critical bugs, both caught and fixed in Batch 2's fix round. See Task 7's "POST-IMPLEMENTATION CORRECTIONS" section for the full evidence. The snippet above has been corrected in place (unlike Task 7's own findings text, left as historical record) since this is literal code a future reader could copy verbatim.
 
 - [ ] **Step 9: Run tests to verify they pass**
 
