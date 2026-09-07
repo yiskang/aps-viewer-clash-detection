@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { anyComponentInside } from '../../collision/query/ContainmentQuery.js';
+import { anyComponentInside, classifyPoint } from '../../collision/query/ContainmentQuery.js';
 import { WorldDisposedError, ModelEvictedError } from '../../collision/errors.js';
 import { box, at, mergeGeometries, openBottomedBox, testInstance } from '../fixtures/geometry.mjs';
 
@@ -409,4 +409,34 @@ test('targetAspectRatioExceeded: false (default) leaves existing behavior unaffe
     false,
     'omitted option: no aspect-ratio diagnostic'
   );
+});
+
+// --- M2.1 witness capture (Task 2): witnessPoint / witnessMethod, additive fields ---
+
+test('stage 1/2 conclusive containment returns a container-local witnessPoint with witnessMethod "vertex-sample"', async () => {
+  // Small box deep inside a much larger one: every source vertex is far from the
+  // target's surface, so the very first sample resolves via stage 1 (plain vertex
+  // sampling) -- never falls through to the stage-3 constructed-interior fallback.
+  const smallBox = testInstance(box(0.5, 0.5, 0.5));
+  const bigBox = testInstance(box(4, 4, 4));
+  const r = await insideOf(smallBox, bigBox, { mode: 'volume-overlap' });
+  assert.equal(r.inside, true);
+  assert.ok(r.witnessPoint, 'witnessPoint must be present when inside:true');
+  assert.equal(r.witnessMethod, 'vertex-sample');
+  assert.equal(classifyPoint(r.witnessPoint, bigBox.bvh, bigBox.localDiagonal), 'inside');
+});
+
+test('stage 3 constructed-interior fallback returns a container-local witnessPoint with witnessMethod "constructed-interior"', async () => {
+  // Reuses the "witness stage (component entirely on target surface)" fixture above:
+  // two exactly coincident closed boxes -- every source-surface vertex reads
+  // `boundary` against the target (stage 1/2 exhausts every vertex inconclusively),
+  // forcing volume-overlap mode to fall through to the stage-3 constructed-interior
+  // witness to find the shared volume.
+  const target = testInstance(box(2, 2, 2));
+  const src = testInstance(box(2, 2, 2));
+  const r = await insideOf(src, target, { mode: 'volume-overlap' });
+  assert.equal(r.inside, true);
+  assert.ok(r.witnessPoint, 'witnessPoint must be present when inside:true');
+  assert.equal(r.witnessMethod, 'constructed-interior');
+  assert.equal(classifyPoint(r.witnessPoint, target.bvh, target.localDiagonal), 'inside');
 });

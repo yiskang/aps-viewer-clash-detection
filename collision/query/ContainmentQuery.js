@@ -245,6 +245,8 @@ export async function anyComponentInside(
   let decidingComponentClosed = null;
   let decidingComponentIndex = null;
   let unresolvedComponentCount = 0;
+  let witnessPoint;
+  let witnessMethod;
 
   componentLoop:
   for (const [componentId, tris] of trianglesByComponent) {
@@ -295,6 +297,8 @@ export async function anyComponentInside(
         decidingComponentClosed = closed;
         decidingComponentIndex = componentId;
         componentResolved = true;
+        witnessPoint = _point.clone();
+        witnessMethod = 'vertex-sample';
         break;
       }
       if (c === 'outside') { componentResolved = true; break; }
@@ -318,6 +322,8 @@ export async function anyComponentInside(
         anyClassifiedInside = true;
         decidingComponentClosed = closed;
         decidingComponentIndex = componentId;
+        witnessPoint = witness.witnessPoint;
+        witnessMethod = 'constructed-interior';
         break;
       }
     }
@@ -350,6 +356,8 @@ export async function anyComponentInside(
     unresolvedComponentCount,
     samplesUsed,
     budgetExhausted,
+    witnessPoint,
+    witnessMethod,
   };
 }
 
@@ -466,7 +474,9 @@ async function constructedInteriorWitness(
         if (ownClass !== 'inside') continue;
         _wProbeInTarget.copy(_wProbe).applyMatrix4(sourceToTargetMatrix);
         const targetClass = classifyPoint(_wProbeInTarget, targetBvh, targetLocalDiagonal);
-        if (targetClass === 'inside') return { inside: true, samplesUsed, budgetExhausted };
+        if (targetClass === 'inside') {
+          return { inside: true, samplesUsed, budgetExhausted, witnessPoint: _wProbeInTarget.clone() };
+        }
       }
       if (budgetExhausted) break;
     }
