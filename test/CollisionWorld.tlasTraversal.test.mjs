@@ -1016,3 +1016,304 @@ test('WHOLE-BATCH REVIEW finding #2 (Medium): a foreign revision bump arriving d
     `expected ModelPlacementChangedError reported immediately, got ${caught?.constructor?.name}`);
   assert.equal(getEntryCalls, 1, 'must throw on the FIRST detection, never silently retry past a foreign revision bump');
 });
+
+// === Task 17: synthetic TLAS-vs-linear differential fixtures ====================================
+//
+// Every fixture below runs the IDENTICAL query twice -- once with broadPhase:'tlas', once with
+// broadPhase:'linear' -- and requires an IDENTICAL final `pairs` set (compared as sets of
+// `(sourceModelId, sourceDbId, targetModelId, targetDbId)` tuples, per collision/README.md:112-113's
+// own "insertion-order, not canonicalized" disclaimer -- order is never asserted). `statistics`
+// numeric fields are deliberately NOT required to match between the two runs (the TLAS path's raw
+// candidate count may legitimately exceed the linear oracle's) -- only the post-retest,
+// post-narrow-phase `pairs` set is a correctness requirement.
+//
+// `runBothBroadPhases` (below) is the shared plumbing every RESULT-producing fixture in this section
+// uses: it runs the SAME query against a fresh world under both broadPhase values and asserts the
+// direct pairs-set equality itself, so an individual fixture's own assertions only need to add
+// whatever is SPECIFIC to that fixture's own point (a sanity check on the actual pairs, a
+// narrowPhasePairs count, a post-query world-state check, a diagnostics shape). The one exception is
+// the model-eviction fixture near the end -- it is about a THROWN error, not a `pairs` set, so it
+// loops over both broadPhase values directly instead of going through the helper.
+//
+// Coverage already exercised elsewhere and deliberately NOT duplicated here: two-model federation,
+// cross-model Hard Clash with correct (modelId, dbId) provenance on both operands -- this file's own
+// "broadPhase:'tlas' and broadPhase:'linear' produce IDENTICAL pairs for the same cross-model
+// fixture" test above (source in modelA, real volume-overlap targets in modelB, compared by a key
+// that embeds each operand's modelId).
+
+/**
+ * Runs `query` against a FRESH world twice -- once per broadPhase value -- and asserts the two runs'
+ * `pairs` sets are IDENTICAL (as sorted `(sourceModelId, sourceDbId, targetModelId, targetDbId)`
+ * tuple keys). Returns `{ linear: { world, result }, tlas: { world, result } }` so a caller can still
+ * make its own additional, fixture-specific assertions on either branch's full result or its world's
+ * post-query state.
+ */
+async function runBothBroadPhases(viewer, query) {
+  const key = (p) => `${p.source.modelId}:${p.source.dbId}:${p.target.modelId}:${p.target.dbId}`;
+  const runOne = async (broadPhase) => {
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    const result = await world.findClashes({ ...query, broadPhase });
+    return { world, result };
+  };
+  const linear = await runOne('linear');
+  const tlas = await runOne('tlas');
+  assert.deepEqual(
+    linear.result.pairs.map(key).sort(), tlas.result.pairs.map(key).sort(),
+    'broadPhase:\'tlas\' and broadPhase:\'linear\' must produce an IDENTICAL pairs set for the same query',
+  );
+  return { linear, tlas };
+}
+
+test('SYNTHETIC (Task 17): single-model, single geometry pair, known Hard Clash -- confirms TLAS reduces correctly to M1 single-model behavior', async () => {
+  const { modelA, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }, { dbId: 2, fragments: [20] }],
+    fragSpecsA: {
+      10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      20: { geometryIndex: 1, geometry: box(2, 2, 2), at: [0, 0, 0] }, // coincident boxes -- a real surface-intersection Hard Clash
+    },
+  });
+  const { linear } = await runBothBroadPhases(viewer, {
+    source: { model: modelA, dbIds: [1] },
+    target: { model: modelA, dbIds: [2] }, // legacy single-model shape -- the simplest possible case
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(linear.result.pairs.length, 1, 'sanity: this is a genuine Hard Clash');
+});
+
+test('SYNTHETIC (Task 17): single-model, known non-clash -- AABBs overlap but a fully-contained box has no surface crossing; the pair genuinely reaches narrow phase (the broad-phase retest passes, since the AABBs really do overlap) and narrow phase is what correctly rejects it', async () => {
+  const { modelA, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }, { dbId: 2, fragments: [20] }],
+    fragSpecsA: {
+      10: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] },
+      20: { geometryIndex: 1, geometry: box(6, 6, 6), at: [0, 0, 0] }, // fully contains fragment 10 -- AABBs overlap, no surface crossing
+    },
+  });
+  const { linear, tlas } = await runBothBroadPhases(viewer, {
+    source: { model: modelA, dbIds: [1] },
+    target: { model: modelA, dbIds: [2] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(linear.result.statistics.broadPhasePairs, 1, 'sanity: the AABB-coarse pair DID pass broad phase');
+  assert.equal(linear.result.statistics.narrowPhasePairs, 1, 'linear: the pair genuinely reached narrow phase');
+  assert.equal(tlas.result.statistics.narrowPhasePairs, 1, 'tlas: the pair genuinely reached narrow phase too -- the SAME exact-retest passes in both paths, since the AABBs really do overlap');
+  assert.equal(linear.result.pairs.length, 0, 'containment without surface crossing is not a surface-intersection clash');
+});
+
+test('SYNTHETIC (Task 17): two-model federation, source has a same-model AND a cross-model Hard Clash -- both target epochs are queried and aggregate into ONE pairs array, identically under both broad-phase paths', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children: [{ dbId: 1, fragments: [10] }, { dbId: 2, fragments: [20] }] }],
+    fragSpecsA: {
+      10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      20: { geometryIndex: 1, geometry: box(2, 2, 2), at: [0, 0, 0] },
+    },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+  });
+  const { linear } = await runBothBroadPhases(viewer, {
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelA, dbIds: [2] }, { model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(linear.result.pairs.length, 2, 'sanity: both the same-model and cross-model Hard Clash are found');
+  assert.ok(linear.result.pairs.some((p) => p.target.model === modelA), 'the same-model target epoch was queried');
+  assert.ok(linear.result.pairs.some((p) => p.target.model === modelB), 'the cross-model target epoch was queried');
+});
+
+test('SYNTHETIC (Task 17): source self-exclusion -- a target dbIds set including the source\'s own (loadEpoch, dbId) never appears in pairs, identically under both broad-phase paths', async () => {
+  const { modelA, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 0, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    fragSpecsA: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] }, // genuinely overlaps 100 too -- the real, non-self hit
+    },
+  });
+  const { linear } = await runBothBroadPhases(viewer, {
+    source: { model: modelA, dbIds: [10] },
+    target: { targets: [{ model: modelA, dbIds: [10, 20] }] }, // dbId 10 shared with source -- must never self-clash
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(linear.result.pairs.length, 1, 'only the real (10,20) hit -- the (10,10) self-pair is excluded');
+  assert.equal(linear.result.pairs[0].source.dbId, 10);
+  assert.equal(linear.result.pairs[0].target.dbId, 20);
+});
+
+test('SYNTHETIC (Task 17): whole-model target scope, dense model -- extractAllFragments admits the same population a by-dbId-list extraction would for the same nominal element set, at a non-trivial fraction of the per-epoch ceiling', async () => {
+  const DENSE_COUNT = 5000; // 25% of maxCollisionInstancesPerEpoch (20,000) -- non-trivial, deliberately not the ceiling itself
+  const CLASH_INDEX = 2500;
+  const rootNodesB = Array.from({ length: DENSE_COUNT }, (_, i) => ({ dbId: 1000 + i, fragments: [1000 + i] }));
+  const fragSpecsB = {};
+  for (let i = 0; i < DENSE_COUNT; i++) {
+    fragSpecsB[1000 + i] = i === CLASH_INDEX
+      ? { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } // the ONE real clash
+      : { geometryIndex: 1, at: [10_000 + i, 0, 0] }; // explicit far-away degenerate-point bounds -- never reaches narrow phase
+  }
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB,
+    fragSpecsB,
+  });
+  const { linear, tlas } = await runBothBroadPhases(viewer, {
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB }] }, // whole-model scope -- exercises extractAllFragments
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.equal(linear.result.pairs.length, 1, 'sanity: exactly one real clash amid the dense filler');
+  assert.equal(linear.result.pairs[0].target.dbId, 1000 + CLASH_INDEX);
+  const linearCount = linear.world.getEpochCollisionInstanceCount(linear.world.admitModel(modelB).epoch); // already-admitted lease -- idempotent, no re-extraction
+  const tlasCount = tlas.world.getEpochCollisionInstanceCount(tlas.world.admitModel(modelB).epoch);
+  assert.equal(linearCount, DENSE_COUNT,
+    'whole-model extraction admitted every one of the dense model\'s own fragments -- the same admitted population a by-dbId-list extraction would produce for the same nominal element set');
+  assert.equal(tlasCount, DENSE_COUNT);
+});
+
+test('SYNTHETIC (Task 17): zero clashes, correct negative -- a federated target set with every AABB genuinely disjoint (or self-excluded) returns pairs: [] and no diagnostics, distinct from the diagnosed-incomplete fixture below', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [50, 0, 0] } }, // disjoint AABB
+  });
+  const { linear, tlas } = await runBothBroadPhases(viewer, {
+    source: { model: modelA, dbIds: [1] },
+    // Federated: a same-model entry naming the source's own dbId (self-excluded, zero candidates)
+    // PLUS a cross-model entry with a genuinely disjoint AABB (zero candidates on its own merits).
+    target: { targets: [{ model: modelA, dbIds: [1] }, { model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.deepEqual(linear.result.pairs, [], 'clean negative -- no real clash anywhere in the federated target set');
+  assert.deepEqual(linear.result.statistics.diagnostics, [], 'a clean negative carries no diagnostics');
+  assert.deepEqual(tlas.result.statistics.diagnostics, []);
+});
+
+test('SYNTHETIC (Task 17): diagnosed incomplete result -- a target fragment whose geometry is unavailable is diagnosed with the CORRECT per-operand modelId, even though it belongs to a DIFFERENT model than the source', async () => {
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    // No `geometry` field -- the shared viewer's getRenderProxy has nothing to serve for fragment 100
+    // and returns null, exactly like test/CollisionWorld.findClashes.test.mjs's own established
+    // "transient render-proxy miss" fixture (here left permanently missing -- this fixture is about
+    // the diagnostic's own operand attribution, not about a retry). `bounds` is set explicitly so the
+    // pair genuinely reaches the narrow phase (AABB overlaps the source) before failing there.
+    fragSpecsB: { 100: { geometryIndex: 0, bounds: boundsOf(box(2, 2, 2), [0, 0, 0]) } },
+  });
+  const { linear, tlas } = await runBothBroadPhases(viewer, {
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  const expectedDiagnostic = {
+    scope: 'fragment', reason: 'geometry-not-yet-available', role: 'target',
+    fragment: { modelId: modelB.id, dbId: 1, fragId: 100 },
+  };
+  assert.equal(linear.result.pairs.length, 0, 'no geometry was available, so no verdict may be reported');
+  assert.deepEqual(linear.result.statistics.diagnostics, [expectedDiagnostic],
+    'linear: the diagnostic must name modelB (the operand the fragment actually belongs to), never modelA');
+  assert.deepEqual(tlas.result.statistics.diagnostics, [expectedDiagnostic],
+    'tlas: the SAME diagnostic, with the SAME correct operand attribution');
+});
+
+test('SYNTHETIC (Task 17): model eviction mid-query, cross-model call -- the whole call throws ModelEvictedError rather than returning a partial source-only result, for BOTH broad-phase implementations', async () => {
+  // Companion to test/CollisionWorld.findClashes.crossModel.test.mjs's own "eviction of a captured
+  // NON-current-operand model aborts the whole call" (which already exercises this exact shape, but
+  // only IMPLICITLY through 'tlas' -- the targets-array shape's own default effectiveBroadPhase when
+  // no explicit `broadPhase` field is given). This fixture makes the property explicit for BOTH
+  // broad-phase implementations in one place, using the exact same injected-eviction-via-
+  // `_testBroadPhasePair` pattern (the SAME exact-retest call site the TLAS path itself also uses --
+  // collision/CollisionWorld.js's TLAS candidate loop calls `this._testBroadPhasePair(...)` too).
+  // Not routed through `runBothBroadPhases`: this fixture is about a THROWN error, not a `pairs` set.
+  const { ModelEvictedError } = await import('../collision/errors.js');
+  for (const broadPhase of ['linear', 'tlas']) {
+    const { modelA, modelB, viewer } = makeTwoModelFixture({
+      rootNodesA: [{ dbId: 0, children: [{ dbId: 9000, fragments: [9000] }, { dbId: 9001, fragments: [9001] }] }],
+      fragSpecsA: {
+        9000: { geometryIndex: 0, geometry: box(0.01, 0.01, 0.01), at: [0, 0, 0] },
+        9001: { geometryIndex: 0, geometry: box(0.01, 0.01, 0.01), at: [100, 0, 0] },
+      },
+      rootNodesB: [{ dbId: 1, fragments: [9100] }],
+      fragSpecsB: { 9100: { geometryIndex: 0, geometry: box(0.01, 0.01, 0.01), at: [0, 0, 0] } },
+    });
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    let firstPairSeen = false;
+    const originalTestPair = world._testBroadPhasePair.bind(world);
+    world._testBroadPhasePair = (...args) => {
+      if (!firstPairSeen) { firstPairSeen = true; world.evictModel(modelB); }
+      return originalTestPair(...args);
+    };
+    await assert.rejects(world.findClashes({
+      source: { model: modelA, dbIds: [9000, 9001] },
+      target: { targets: [{ model: modelB, dbIds: [1] }] },
+      mode: 'surface-intersection', groupBy: 'dbId', broadPhase,
+    }), ModelEvictedError, `broadPhase:'${broadPhase}': must reject ModelEvictedError`);
+    assert.equal(firstPairSeen, true, `broadPhase:'${broadPhase}': the eviction really did land mid-scan`);
+  }
+});
+
+// === Task 17 Step 2: self-exclusion granularity -- spec §4.4 open item, CLOSED ===================
+//
+// Spec §4.4's adopted rule (already implemented in production code -- consulted by both the linear
+// and TLAS broad-phase paths via `isSourceOwnFragment`): exclusion is defined over the source's
+// ENTIRE EXTRACTED FRAGMENT SET, not just the requested dbId(s) or a per-pair ownerDbId comparison --
+// a candidate target instance is excluded iff its (loadEpoch, fragmentId) appears ANYWHERE in the
+// source operand's own extracted-fragment map for this call, independent of which specific source
+// instance it happens to be tested against in any one (source, target) pair.
+//
+// A first attempt at this fixture (a single source instance, a single matching target dbId) turned
+// out NOT to discriminate the adopted rule from a plausible alternative: comparing the CANDIDATE'S
+// OWN extracted ownerDbId against the source's extracted ownerDbId for that SAME fragment also
+// happens to give the right answer when only one source instance is in play (codex-advisor review
+// caught this -- the original construction's comment overclaimed a divergence it didn't actually
+// produce). The real divergence needs a source with (at least) TWO instances under DIFFERENT owner
+// dbIds, re-paired CROSS-wise against the WRONG source instance -- exactly what a per-pair "do this
+// pair's two ownerDbIds match" rule would miss:
+//
+//   source instance A: fragment 100, ownerDbId 10
+//   source instance B: fragment 101, ownerDbId 11
+//   target (re-extracted, SAME model, dbIds [10, 11]): fragment 100 (ownerDbId 10), fragment 101 (ownerDbId 11)
+//
+// Both source fragments spatially coincide, so every (source instance, target instance) combination
+// passes the broad phase. A naive rule that excludes a candidate only when THIS PAIR'S two ownerDbIds
+// match would correctly exclude (A, target-100) and (B, target-101) -- but would LEAK (A, target-101)
+// and (B, target-100): a false-positive self-clash between fragments 100 and 101, even though BOTH
+// target fragments are, in fact, part of the source's own extraction (fragmentId membership) -- just
+// reached via the OTHER source instance than the one in this particular pair. The adopted rule checks
+// fragmentId membership against the source's WHOLE extracted set (never per-pair ownerDbId equality)
+// and excludes every one of these four combinations correctly.
+//
+// OUTCOME: CONFIRMED. Both broadPhase:'linear' and broadPhase:'tlas' report pairs: [] AND
+// broadPhasePairs: 0 (self-exclusion runs before the count, so a non-zero count here would itself
+// prove a leak) against the IMPLEMENTED production code below -- it matches the adopted
+// fragment-set-membership semantics, not a per-pair ownerDbId-equality rule (which this fixture WOULD
+// have exposed as a 2-pair leak). This closes spec §4.4's own open item; no discrepancy found, no
+// production code change required.
+test('SYNTHETIC (Task 17, spec §4.4 open item CLOSED): source fragments owned by TWO different child dbIds are excluded from a target scope re-naming both children, even when cross-paired against the OTHER source instance', async () => {
+  const { modelA, viewer } = makeTwoModelFixture({
+    rootNodesA: [
+      {
+        dbId: 0, // the assembly root -- not itself load-bearing for the divergence, kept for realism
+        children: [
+          { dbId: 10, fragments: [100] }, // source instance A -- ownerDbId 10
+          { dbId: 11, fragments: [101] }, // source instance B -- ownerDbId 11, a DIFFERENT owner
+        ],
+      },
+    ],
+    fragSpecsA: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      101: { geometryIndex: 1, geometry: box(2, 2, 2), at: [0, 0, 0] }, // coincident with 100 -- guarantees every cross-pair passes broad phase
+    },
+  });
+  const { linear, tlas } = await runBothBroadPhases(viewer, {
+    source: { model: modelA, dbIds: [0] }, // discovers BOTH instances (A under 10, B under 11)
+    // Re-names BOTH child dbIds as an independent target scope -- re-extracting the SAME two
+    // fragments (100, 101) the source itself already owns. A per-pair ownerDbId-equality rule would
+    // leak the CROSS pairs (A vs target-101, B vs target-100); the adopted fragment-set-membership
+    // rule excludes all four (source instance x target instance) combinations.
+    target: { targets: [{ model: modelA, dbIds: [10, 11] }] },
+    mode: 'surface-intersection', groupBy: 'dbId',
+  });
+  assert.deepEqual(linear.result.pairs, [], 'linear: every source-owned fragment is excluded, including the CROSS-paired combinations a per-pair ownerDbId rule would leak');
+  assert.deepEqual(tlas.result.pairs, [], 'tlas: same outcome -- the adopted fragment-set-membership rule, not a per-pair ownerDbId rule, is what\'s implemented');
+  assert.equal(linear.result.statistics.broadPhasePairs, 0, 'linear: self-exclusion runs BEFORE the count -- a leak would show up here as a non-zero count');
+  assert.equal(tlas.result.statistics.broadPhasePairs, 0, 'tlas: same -- zero candidates ever counted, not merely zero survivors');
+});
