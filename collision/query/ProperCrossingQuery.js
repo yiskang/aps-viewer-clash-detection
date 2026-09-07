@@ -56,6 +56,7 @@ export function properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, loca
   let crossing = false;
   let aborted = false;
   let sawBoundaryProbe = false;
+  let witnessPoint;
 
   // Callback-exception containment: the pinned three-mesh-bvh's bvhcast sets a
   // module-global `_active` flag true at entry and clears it only on its
@@ -143,6 +144,7 @@ export function properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, loca
               if (inB === 'boundary') { sawBoundaryProbe = true; continue; }
               if (inB === 'inside') {
                 crossing = true;
+                witnessPoint = _probe.clone(); // owned clone -- _probe is module-level scratch, reused on every call
                 return true; // early exit on first proper crossing
               }
             }
@@ -174,5 +176,6 @@ export function properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, loca
     inconclusive,
     diagnostics,
     stats: { candidatePairsExamined, crossingPairsExamined },
+    witnessPoint,
   };
 }
