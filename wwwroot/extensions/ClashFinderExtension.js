@@ -37,7 +37,28 @@ const ExtensionBase = ViewingNS?.Extension ?? class {
 // RoomLocatorExtension.js already verified and uses).
 const BEFORE_MODEL_UNLOAD_EVENT = ViewingNS?.BEFORE_MODEL_UNLOAD_EVENT ?? 'beforeModelUnload';
 
+// Task 8 (M2.1): witness marker overlay constants. MARKER_OVERLAY_NAME is the Viewer overlay-scene
+// namespace every viewer.overlays.{addScene,hasScene,addMesh,removeMesh,clearScene,removeScene}
+// call below keys off (Task 7 finding 1: the public viewer.overlays.* facade, not the internal
+// viewer.impl.* path -- functionally identical render path, but the public addScene additionally
+// guards against duplicate-name registration, which the internal createOverlayScene does not).
+// MARKER_RADIUS_FRACTION/MIN/MAX_MARKER_RADIUS are Task 10's own tuning knobs against the real
+// fixture -- these are starting defaults, not final values (Task 7's "Open items" section defers
+// exact tuning to live acceptance). MARKER_COLOR is a placeholder with the same caveat -- Task 10
+// also confirms on-screen color fidelity through the overlay gamma/compositing path.
+const MARKER_OVERLAY_NAME = 'clash-finder-markers';
+const MARKER_RADIUS_FRACTION = 0.01;
+const MIN_MARKER_RADIUS = 0.05; // world units — tune during Task 10 live acceptance against the real fixture
+const MAX_MARKER_RADIUS = 2.0; // world units — tune during Task 10 live acceptance against the real fixture
+const MARKER_COLOR = 0xff6a00; // distinct from the Viewer's default selection theme — confirm visually in Task 10
+
 export class ClashFinderExtension extends ExtensionBase {
+  // Exposed as static class fields too (not just the module-level consts above) so callers/tests
+  // can reference the live values off the class itself (e.g. ClashFinderExtension.MIN_MARKER_RADIUS)
+  // rather than re-declaring the same magic numbers a second time.
+  static MIN_MARKER_RADIUS = MIN_MARKER_RADIUS;
+  static MAX_MARKER_RADIUS = MAX_MARKER_RADIUS;
+
   constructor(viewer, options = {}) {
     super(viewer, options);
     // Underscore-private convention matching CollisionWorld's own `_viewer` field and
@@ -56,6 +77,17 @@ export class ClashFinderExtension extends ExtensionBase {
     // "No clashes found" outcome) can correctly clear prior isolation state before applying (or
     // omitting) new isolation -- spec 11.2 "Clearing/restoring visualization".
     this._isolatedModels = new Set();
+    // Task 8 (M2.1): witness marker overlay state. _activeMarkers is deliberately an ARRAY, not a
+    // Set like _isolatedModels above -- an ordered list of individual THREE.Mesh instances to
+    // remove one at a time in _clearMarkers, not a dedup-by-identity collection (a documented
+    // pattern deviation, not a copy-paste of the Set precedent). _markerGeometry/_markerMaterial
+    // are lazily created (see _ensureMarkerOverlay) and shared across every marker mesh -- Task 7
+    // finding 5's teardown gotcha (removeScene/clearScene never dispose materials, clearScene only
+    // conditionally disposes geometry) is exactly why disposing these two fields is a LATER task's
+    // (Task 9's unload-time teardown) job, not this one's.
+    this._activeMarkers = [];
+    this._markerGeometry = null;
+    this._markerMaterial = null;
     this._onBeforeModelUnloadBound = (event) => this._onBeforeModelUnload(event);
     this._onContextMenuBound = (menu, status) => this.onContextMenu(menu, status);
   }
@@ -135,6 +167,110 @@ export class ClashFinderExtension extends ExtensionBase {
       this._viewer.isolate([], model);
     }
     this._isolatedModels.clear();
+  }
+
+  // Task 8 (M2.1). Lazily creates the ONE shared SphereGeometry/MeshBasicMaterial pair (Global
+  // Constraint: no per-marker geometry/material duplication -- every marker mesh this extension
+  // ever creates reuses these same two objects) and the overlay scene itself, both on first use
+  // rather than at construction (a Clash Finder query that never finds a witness-bearing pair
+  // should never register an overlay scene at all -- see _addMarkers's own early-return below).
+  // `hasScene` is checked before calling `addScene`, per Task 7 finding 1: the public addScene
+  // guards against duplicate names itself, but calling it unconditionally on every _addMarkers
+  // invocation would still be wasteful and untidy against the same underlying registry.
+  _ensureMarkerOverlay() {
+    const THREE = window.THREE; // Viewer's own r71 global -- never import 'three' in this file
+    if (!this._markerGeometry) {
+      this._markerGeometry = new THREE.SphereGeometry(1, 12, 8); // unit sphere — scaled per-instance below
+      this._markerMaterial = new THREE.MeshBasicMaterial({
+        color: MARKER_COLOR,
+        // Task 7 finding 2: depthTest:false genuinely renders a marker through occluding model
+        // geometry (sourced from the render pipeline's RenderContext.renderOverlays plus the
+        // shipped OverlayManager's own JSDoc). depthWrite:false pairs with it, matching LMV's own
+        // selection-overlay convention, so this marker never pollutes a depth buffer other draws
+        // still read.
+        depthTest: false,
+        depthWrite: false,
+      });
+    }
+    if (!this._viewer.overlays.hasScene(MARKER_OVERLAY_NAME)) {
+      this._viewer.overlays.addScene(MARKER_OVERLAY_NAME);
+    }
+  }
+
+  // Derives a marker radius from the combined bounding sphere of every isolated dbId, always
+  // clamped between MIN_MARKER_RADIUS and MAX_MARKER_RADIUS (Global Constraint) -- an unbounded
+  // fraction of a huge federated model's bounding sphere would produce a marker the size of a
+  // building; an unbounded fraction of a tiny model (or of an empty box: see below) would produce
+  // one invisibly small or, worse, an Infinity-derived one that clamps to MAX and reads as a real
+  // measurement it never was.
+  //
+  // InstanceTree.getNodeBox(dbId, dst) -- source-verified against the pinned Viewer 7.124.2 bundle
+  // (ObjectTree.prototype.getNodeBox / InstanceTreeAccess.prototype.getNodeBox) -- writes a FLAT
+  // 6-number array into `dst` (min-x,min-y,min-z,max-x,max-y,max-z), never a THREE.Box3 directly.
+  // This corrects Task 7's own recorded finding 6, which assumed the latter shape; passing a
+  // THREE.Box3 straight through as `dst` would silently set numeric-string properties '0'..'5' on
+  // it and never touch its real .min/.max, making every union below a silent no-op. `Float32Array`
+  // matches getNodeBox's own documented @param type exactly; THREE.Box3#setFromArray(array, offset)
+  // is the public conversion API (Autodesk.Viewing.Math.Box3#setFromArray) back into a Box3.
+  _computeMarkerRadius(dbIdsByModel = new Map()) {
+    const THREE = window.THREE;
+    const box = new THREE.Box3();
+    const rawNodeBox = new Float32Array(6);
+    const nodeBox = new THREE.Box3();
+    for (const [model, dbIdSet] of dbIdsByModel) {
+      const instanceTree = model.getInstanceTree();
+      for (const dbId of dbIdSet) {
+        instanceTree.getNodeBox(dbId, rawNodeBox);
+        nodeBox.setFromArray(rawNodeBox, 0);
+        box.union(nodeBox);
+      }
+    }
+    // An empty box (no dbIds passed, or every dbId's own box came back empty) has no meaningful
+    // bounds to derive a fraction of. getBoundingSphere on an untouched Box3 (min=+Infinity,
+    // max=-Infinity) computes an Infinity-magnitude radius that Math.min/Math.max below would
+    // silently clamp down to MAX_MARKER_RADIUS -- indistinguishable from a genuinely huge model.
+    // MIN_MARKER_RADIUS is the more honest fallback here: smallest marker, not a building-sized guess.
+    if (box.isEmpty()) return MIN_MARKER_RADIUS;
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    const raw = sphere.radius * MARKER_RADIUS_FRACTION;
+    return Math.min(Math.max(raw, MIN_MARKER_RADIUS), MAX_MARKER_RADIUS);
+  }
+
+  // One THREE.Mesh per witness-bearing ClashPair, all sharing the one geometry/material pair from
+  // _ensureMarkerOverlay. If EVERY pair's witness is null, this returns before ever calling
+  // _ensureMarkerOverlay -- the overlay scene itself must stay unregistered, not merely empty, so a
+  // Clash Finder query with no witnesses at all leaves no overlay trace whatsoever. `dbIdsByModel`
+  // defaults to an empty Map (see _computeMarkerRadius's own empty-box fallback) so a caller that
+  // omits it still gets correctly-clamped (if minimally-sized) markers rather than a thrown error.
+  // Task 9 wires the real call site, which already has `dbIdsByModel` in scope in onContextMenu.
+  _addMarkers(pairs, dbIdsByModel = new Map()) {
+    const THREE = window.THREE;
+    const witnessBearing = pairs.filter((pair) => pair.witness);
+    if (witnessBearing.length === 0) return;
+    this._ensureMarkerOverlay();
+    const radius = this._computeMarkerRadius(dbIdsByModel);
+    for (const pair of witnessBearing) {
+      const mesh = new THREE.Mesh(this._markerGeometry, this._markerMaterial);
+      mesh.scale.setScalar(radius);
+      mesh.position.set(pair.witness.point[0], pair.witness.point[1], pair.witness.point[2]);
+      mesh.updateMatrixWorld(true);
+      this._viewer.overlays.addMesh(MARKER_OVERLAY_NAME, mesh);
+      this._activeMarkers.push(mesh);
+    }
+  }
+
+  // Removes every currently-active marker mesh from the overlay scene one at a time (removeMesh,
+  // not clearScene -- this always happens to remove every mesh in the scene today, but staying
+  // symmetric with _activeMarkers being an ordered list of individual meshes rather than treating
+  // this as a blanket "wipe the whole scene" operation). Does NOT dispose the shared geometry/
+  // material, and does NOT call removeScene -- both outlive individual clear/re-add cycles across
+  // repeated Find Clashes queries; only unload-time teardown (a later task) owns disposing them,
+  // per Task 7 finding 5's gotcha (removeScene/clearScene never dispose materials).
+  _clearMarkers() {
+    for (const mesh of this._activeMarkers) {
+      this._viewer.overlays.removeMesh(MARKER_OVERLAY_NAME, mesh);
+    }
+    this._activeMarkers.length = 0;
   }
 
   // Spec 11.2, verbatim rule: the "Find Clashes" entry appears ONLY when viewer.getAggregateSelection()

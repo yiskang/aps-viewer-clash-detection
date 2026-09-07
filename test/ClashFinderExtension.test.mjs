@@ -6,6 +6,13 @@
 // selection shape), the exact findClashes query built from viewer.getAllModels(), same/cross-model
 // classification by object identity, isolate/fitToView Model-grouping, clear/restore semantics,
 // diagnostics caveats, and the concurrency/staleness token guard (codex-review Question #2).
+//
+// Task 8 (M2.1) additions below: witness marker overlay coverage (_ensureMarkerOverlay,
+// _computeMarkerRadius, _addMarkers, _clearMarkers). These need a fake `window.THREE` -- Node has
+// no `window` global and this repo must never import the npm `three` package into
+// ClashFinderExtension.js -- so this file installs a minimal-but-arithmetically-faithful THREE
+// fixture (see "fake window.THREE" section below) rather than stubbing the math away.
+import { readFile } from 'node:fs/promises';
 import { ClashFinderExtension, EXTENSION_ID } from '../wwwroot/extensions/ClashFinderExtension.js';
 import { EXTENSION_ID as ROOM_LOCATOR_EXTENSION_ID } from '../wwwroot/extensions/RoomLocatorExtension.js';
 
@@ -29,6 +36,23 @@ function makeFakeWorld() {
   };
 }
 
+// A minimal `viewer.overlays.*` mock covering the exact public facade Task 7 finding 1 identified
+// as the correct API (not the internal viewer.impl.* path): addScene/hasScene/addMesh/removeMesh/
+// clearScene/removeScene. Tracks scene names and their meshes in a plain Map so tests can assert on
+// both "does the scene exist" and "which meshes are in it" without reaching into Viewer internals.
+function makeMockOverlays() {
+  const scenes = new Map(); // sceneName -> Set<mesh>
+  return {
+    _scenes: scenes, // test-only introspection seam, not part of the real viewer.overlays surface
+    hasScene(name) { return scenes.has(name); },
+    addScene(name) { if (!scenes.has(name)) scenes.set(name, new Set()); },
+    addMesh(name, mesh) { scenes.get(name)?.add(mesh); },
+    removeMesh(name, mesh) { scenes.get(name)?.delete(mesh); },
+    clearScene(name) { scenes.get(name)?.clear(); },
+    removeScene(name) { scenes.delete(name); },
+  };
+}
+
 function makeMockViewer() {
   return {
     addEventListener() {}, removeEventListener() {},
@@ -36,10 +60,110 @@ function makeMockViewer() {
     getAggregateSelection() { return []; },
     getAllModels() { return []; },
     isolate() {}, fitToView() {},
+    overlays: makeMockOverlays(),
   };
 }
 
-function makeMockModel(id) { return { id }; }
+// `boxesByDbId` is an optional `{ [dbId]: { min: [x,y,z], max: [x,y,z] } }` map, consumed only by
+// the marker-radius tests below via `getInstanceTree().getNodeBox(dbId, dst)`. Every other existing
+// call site in this file passes only `id` and is unaffected.
+function makeMockModel(id, { boxesByDbId = {} } = {}) {
+  return {
+    id,
+    getInstanceTree() {
+      return {
+        // Source-verified against the pinned Viewer 7.124.2 bundle (viewer3D.js,
+        // ObjectTree.prototype.getNodeBox / InstanceTreeAccess.prototype.getNodeBox): `dst` is a
+        // FLAT 6-number array (min-x,min-y,min-z,max-x,max-y,max-z), never a THREE.Box3 -- Task 7's
+        // own recorded finding 6 assumed the latter, which this mock deliberately does NOT match,
+        // so a `_computeMarkerRadius` implementation that mishandles the real shape fails here too.
+        getNodeBox(dbId, dst) {
+          const box = boxesByDbId[dbId];
+          if (!box) return;
+          dst[0] = box.min[0]; dst[1] = box.min[1]; dst[2] = box.min[2];
+          dst[3] = box.max[0]; dst[4] = box.max[1]; dst[5] = box.max[2];
+        },
+      };
+    },
+  };
+}
+
+// === fake window.THREE — the r71 subset ClashFinderExtension.js touches ===========================
+// Node has no `window` global and this file must never import the npm `three` package (r185, the
+// collision library's own dependency) -- installing a real THREE build here would risk exactly the
+// confusion Global Constraints forbid in the production file. Vector3/Box3/Sphere reproduce real
+// r71 arithmetic (union, getCenter, size, getBoundingSphere, setFromArray, isEmpty) exactly as
+// source-verified against the pinned Viewer 7.124.2 bundle, so radius-clamping math is exercised
+// faithfully rather than stubbed to a constant.
+class FakeVector3 {
+  constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
+  set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
+  setScalar(s) { this.x = this.y = this.z = s; return this; }
+  addVectors(a, b) { this.x = a.x + b.x; this.y = a.y + b.y; this.z = a.z + b.z; return this; }
+  subVectors(a, b) { this.x = a.x - b.x; this.y = a.y - b.y; this.z = a.z - b.z; return this; }
+  multiplyScalar(s) { this.x *= s; this.y *= s; this.z *= s; return this; }
+  length() { return Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z); }
+  min(v) { this.x = Math.min(this.x, v.x); this.y = Math.min(this.y, v.y); this.z = Math.min(this.z, v.z); return this; }
+  max(v) { this.x = Math.max(this.x, v.x); this.y = Math.max(this.y, v.y); this.z = Math.max(this.z, v.z); return this; }
+}
+
+class FakeSphere {
+  constructor() { this.center = new FakeVector3(); this.radius = 0; }
+}
+
+class FakeBox3 {
+  constructor() {
+    this.min = new FakeVector3(Infinity, Infinity, Infinity);
+    this.max = new FakeVector3(-Infinity, -Infinity, -Infinity);
+  }
+  union(box) { this.min.min(box.min); this.max.max(box.max); return this; }
+  isEmpty() { return this.max.x < this.min.x || this.max.y < this.min.y || this.max.z < this.min.z; }
+  setFromArray(array, offset = 0) {
+    this.min.set(array[offset], array[offset + 1], array[offset + 2]);
+    this.max.set(array[offset + 3], array[offset + 4], array[offset + 5]);
+    return this;
+  }
+  getCenter(target = new FakeVector3()) { return target.addVectors(this.min, this.max).multiplyScalar(0.5); }
+  size(target = new FakeVector3()) { return target.subVectors(this.max, this.min); }
+  getBoundingSphere(target = new FakeSphere()) {
+    target.center = this.getCenter();
+    target.radius = this.size().length() * 0.5;
+    return target;
+  }
+}
+
+class FakeSphereGeometry {
+  constructor(radius, widthSegments, heightSegments) {
+    this.radius = radius; this.widthSegments = widthSegments; this.heightSegments = heightSegments;
+  }
+}
+
+class FakeMeshBasicMaterial {
+  constructor(params) { Object.assign(this, params); }
+}
+
+class FakeMesh {
+  constructor(geometry, material) {
+    this.geometry = geometry;
+    this.material = material;
+    this.position = new FakeVector3();
+    this.scale = new FakeVector3(1, 1, 1);
+  }
+  updateMatrixWorld() {}
+}
+
+// Installed once, at module load -- `node --test` runs each `*.test.mjs` file in its own process
+// (isolation: 'process' is the default), so this global does not leak into other test files in the
+// same `npm test` run.
+globalThis.window = globalThis.window ?? {};
+globalThis.window.THREE = {
+  Vector3: FakeVector3,
+  Box3: FakeBox3,
+  Sphere: FakeSphere,
+  SphereGeometry: FakeSphereGeometry,
+  MeshBasicMaterial: FakeMeshBasicMaterial,
+  Mesh: FakeMesh,
+};
 
 function extensionWithFakeWorld(viewer = makeMockViewer()) {
   const ext = new ClashFinderExtension(viewer, {});
@@ -498,6 +622,145 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   let threw = false;
   try { ext._onBeforeModelUnload({}); } catch (err) { threw = /event\.model/.test(err.message); }
   check('BEFORE_MODEL_UNLOAD_EVENT handler fails clearly if event.model is ever undefined', threw, true);
+}
+
+// === Task 8 (M2.1): witness marker overlay ==========================================================
+
+// === ClashFinderExtension.js never imports the npm three package — permanent regression guard,
+// not a TDD-red step (the import genuinely doesn't exist before Task 8 either) ======================
+{
+  const source = await readFile(new URL('../wwwroot/extensions/ClashFinderExtension.js', import.meta.url), 'utf8');
+  check('ClashFinderExtension.js never imports the collision library\'s r185 three package (ESM from-clause)',
+    /from\s+['"]three['"]/.test(source), false);
+  check('ClashFinderExtension.js never requires the three package (CJS require)',
+    /require\(['"]three['"]\)/.test(source), false);
+}
+
+// === the marker overlay scene and shared geometry/material are created lazily, on first marker,
+// not at construction =================================================================================
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  check('marker overlay scene does not exist before any markers are added', viewer.overlays.hasScene('clash-finder-markers'), false);
+  ext._addMarkers([{ witness: { kind: 'surface-crossing', point: [1, 2, 3] } }]);
+  check('marker overlay scene is created lazily on the first _addMarkers call', viewer.overlays.hasScene('clash-finder-markers'), true);
+  check('one active marker recorded for one witness-bearing pair', ext._activeMarkers.length, 1);
+  check('the marker mesh was actually added to the overlay scene', viewer.overlays._scenes.get('clash-finder-markers').has(ext._activeMarkers[0]), true);
+}
+
+// === multiple markers share one geometry and one material instance — Global Constraint: no
+// per-marker geometry/material duplication ============================================================
+{
+  const { ext } = extensionWithFakeWorld();
+  ext._addMarkers([
+    { witness: { kind: 'surface-crossing', point: [0, 0, 0] } },
+    { witness: { kind: 'containment', point: [1, 1, 1] } },
+  ]);
+  check('two witness-bearing pairs produce two active markers', ext._activeMarkers.length, 2);
+  check('all markers share the same geometry instance', ext._activeMarkers[0].geometry === ext._activeMarkers[1].geometry, true);
+  check('all markers share the same material instance', ext._activeMarkers[0].material === ext._activeMarkers[1].material, true);
+}
+
+// === shared geometry/material are not recreated across separate _addMarkers calls, either =========
+{
+  const { ext } = extensionWithFakeWorld();
+  ext._addMarkers([{ witness: { kind: 'surface-crossing', point: [0, 0, 0] } }]);
+  const [geometry, material] = [ext._markerGeometry, ext._markerMaterial];
+  ext._addMarkers([{ witness: { kind: 'containment', point: [1, 1, 1] } }]);
+  check('shared geometry is not recreated on a second _addMarkers call', ext._markerGeometry === geometry, true);
+  check('shared material is not recreated on a second _addMarkers call', ext._markerMaterial === material, true);
+}
+
+// === _ensureMarkerOverlay guards against re-registering the same scene name (Task 7 finding 1:
+// the internal viewer.impl.createOverlayScene does NOT guard this; the public addScene does — this
+// extension must still only call it once) =============================================================
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  let addSceneCalls = 0;
+  const originalAddScene = viewer.overlays.addScene.bind(viewer.overlays);
+  viewer.overlays.addScene = (name) => { addSceneCalls += 1; originalAddScene(name); };
+  ext._addMarkers([{ witness: { kind: 'surface-crossing', point: [0, 0, 0] } }]);
+  ext._addMarkers([{ witness: { kind: 'containment', point: [1, 1, 1] } }]);
+  check('addScene is called at most once across multiple _addMarkers calls', addSceneCalls, 1);
+}
+
+// === a null-witness ClashPair produces no marker =====================================================
+{
+  const { ext } = extensionWithFakeWorld();
+  ext._addMarkers([{ witness: null }, { witness: { kind: 'containment', point: [1, 1, 1] } }]);
+  check('a null-witness pair contributes no marker; only the witness-bearing pair does', ext._activeMarkers.length, 1);
+}
+
+// === when EVERY pair's witness is null, the overlay scene stays absent — "lazy" all the way
+// through, not just on the very first call =============================================================
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  ext._addMarkers([{ witness: null }]);
+  check('overlay scene stays absent when no pair carries a witness', viewer.overlays.hasScene('clash-finder-markers'), false);
+  check('_activeMarkers stays empty when no pair carries a witness', ext._activeMarkers.length, 0);
+}
+
+// === marker mesh position is set from witness.point ==================================================
+{
+  const { ext } = extensionWithFakeWorld();
+  ext._addMarkers([{ witness: { kind: 'surface-crossing', point: [3, 4, 5] } }]);
+  const [mesh] = ext._activeMarkers;
+  check('marker mesh position.x matches witness.point[0]', mesh.position.x, 3);
+  check('marker mesh position.y matches witness.point[1]', mesh.position.y, 4);
+  check('marker mesh position.z matches witness.point[2]', mesh.position.z, 5);
+}
+
+// === marker radius is clamped between MIN_MARKER_RADIUS and MAX_MARKER_RADIUS regardless of
+// scene scale — dbIdsByModel drives the bounding-sphere computation via getInstanceTree().getNodeBox,
+// the exact shape _addMarkers's own dbIdsByModel argument has at its real onContextMenu call site ===
+{
+  const tinyModel = makeMockModel(101, { boxesByDbId: { 10: { min: [0, 0, 0], max: [0.0001, 0.0001, 0.0001] } } });
+  const { ext } = extensionWithFakeWorld();
+  const tinyRadius = ext._computeMarkerRadius(new Map([[tinyModel, new Set([10])]]));
+  check('a tiny bounding geometry still clamps the radius UP to MIN_MARKER_RADIUS', tinyRadius >= ClashFinderExtension.MIN_MARKER_RADIUS, true);
+  check('MIN_MARKER_RADIUS is exposed as a static class field', typeof ClashFinderExtension.MIN_MARKER_RADIUS, 'number');
+}
+{
+  const bigModel = makeMockModel(102, { boxesByDbId: { 20: { min: [-100000, -100000, -100000], max: [100000, 100000, 100000] } } });
+  const { ext } = extensionWithFakeWorld();
+  const bigRadius = ext._computeMarkerRadius(new Map([[bigModel, new Set([20])]]));
+  check('a huge (km-scale) bounding geometry still clamps the radius DOWN to MAX_MARKER_RADIUS', bigRadius <= ClashFinderExtension.MAX_MARKER_RADIUS, true);
+  check('MAX_MARKER_RADIUS is exposed as a static class field', typeof ClashFinderExtension.MAX_MARKER_RADIUS, 'number');
+}
+
+// === _computeMarkerRadius correctly reads getNodeBox's real flat 6-number output (min-x,min-y,
+// min-z,max-x,max-y,max-z), NOT a THREE.Box3 — source-verified against the pinned Viewer 7.124.2
+// bundle; a wrong assumption here would silently compute an empty box (isEmpty() stays true) and
+// never touch this branch, so this asserts the radius actually reflects the real box's size, not
+// just that it lands in range ==========================================================================
+{
+  const model = makeMockModel(103, { boxesByDbId: { 30: { min: [0, 0, 0], max: [2, 2, 2] } } });
+  const { ext } = extensionWithFakeWorld();
+  const radius = ext._computeMarkerRadius(new Map([[model, new Set([30])]]));
+  // bounding sphere of a [0,0,0]-[2,2,2] box: center (1,1,1), radius = sqrt(3*2^2)/2 = sqrt(12)/2 ≈ 1.732
+  // MARKER_RADIUS_FRACTION (0.01 per the plan default) * 1.732 ≈ 0.0173, clamped up to MIN_MARKER_RADIUS
+  check('a small-but-nonzero real box still clamps to MIN_MARKER_RADIUS (0.01 fraction of ~1.73 is below MIN)',
+    radius, ClashFinderExtension.MIN_MARKER_RADIUS);
+}
+
+// === an empty dbIdsByModel (no dbIds at all) falls back to MIN_MARKER_RADIUS, not an
+// Infinity-derived MAX_MARKER_RADIUS — an empty box has no real measurement to report ================
+{
+  const { ext } = extensionWithFakeWorld();
+  check('an empty dbIdsByModel falls back to MIN_MARKER_RADIUS, never a misleading MAX', ext._computeMarkerRadius(new Map()), ClashFinderExtension.MIN_MARKER_RADIUS);
+  check('_computeMarkerRadius defaults dbIdsByModel to empty when omitted entirely', ext._computeMarkerRadius(), ClashFinderExtension.MIN_MARKER_RADIUS);
+}
+
+// === _clearMarkers removes every active marker mesh from the overlay scene and resets state =======
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  ext._addMarkers([
+    { witness: { kind: 'surface-crossing', point: [0, 0, 0] } },
+    { witness: { kind: 'containment', point: [1, 1, 1] } },
+  ]);
+  check('setup: two markers were added to the overlay scene', viewer.overlays._scenes.get('clash-finder-markers').size, 2);
+  ext._clearMarkers();
+  check('_clearMarkers empties _activeMarkers', ext._activeMarkers.length, 0);
+  check('_clearMarkers removes every mesh from the overlay scene', viewer.overlays._scenes.get('clash-finder-markers').size, 0);
 }
 
 console.log(`\n  ${passes} passed, ${failures} failed`);
