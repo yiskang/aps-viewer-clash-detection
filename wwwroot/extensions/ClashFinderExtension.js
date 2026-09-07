@@ -47,7 +47,7 @@ const BEFORE_MODEL_UNLOAD_EVENT = ViewingNS?.BEFORE_MODEL_UNLOAD_EVENT ?? 'befor
 // exact tuning to live acceptance). MARKER_COLOR is a placeholder with the same caveat -- Task 10
 // also confirms on-screen color fidelity through the overlay gamma/compositing path.
 const MARKER_OVERLAY_NAME = 'clash-finder-markers';
-const MARKER_RADIUS_FRACTION = 0.01;
+const MARKER_RADIUS_FRACTION = 0.002;
 const MIN_MARKER_RADIUS = 0.05; // world units — tune during Task 10 live acceptance against the real fixture
 const MAX_MARKER_RADIUS = 2.0; // world units — tune during Task 10 live acceptance against the real fixture
 const MARKER_COLOR = 0xff6a00; // distinct from the Viewer's default selection theme — confirm visually in Task 10
@@ -257,6 +257,8 @@ export class ClashFinderExtension extends ExtensionBase {
       this._markerGeometry = new THREE.SphereGeometry(1, 12, 8); // unit sphere — scaled per-instance below
       this._markerMaterial = new THREE.MeshBasicMaterial({
         color: MARKER_COLOR,
+        transparent: true,
+        opacity: 0.65,
         // Task 7 finding 2: depthTest:false genuinely renders a marker through occluding model
         // geometry (sourced from the render pipeline's RenderContext.renderOverlays plus the
         // shipped OverlayManager's own JSDoc). depthWrite:false pairs with it, matching LMV's own
