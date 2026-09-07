@@ -12,7 +12,7 @@ router.get('/api/models', async function (req, res, next) {
         res.json(objects.map(o => ({
             name: o.objectKey,
             urn: urnify(o.objectId)
-        })));
+        })).sort((a, b) => a.name.localeCompare(b.name)));
     } catch (err) {
         next(err);
     }
