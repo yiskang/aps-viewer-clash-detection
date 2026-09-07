@@ -20,10 +20,19 @@ const defaultCompareCanonical = () => -1; // always treats `source` as canonical
 // space via that operand's own world matrix, and validates the result is 3 finite
 // numbers before it is allowed to leave this module as public plain-data. `_worldPoint`
 // is module-level scratch, cloned into a plain array before return -- it never escapes
-// this module as a THREE.Vector3.
+// this module as a THREE.Vector3. A missing `localPoint` (a leaf witness absent on a
+// positive verdict -- currently unreachable given Tasks 1/2's own guarantees, but those
+// guarantees live in OTHER files) degrades to `null` here too, the SAME fault-tolerance
+// contract as a non-finite result, rather than throwing out of this function and losing
+// the whole findClashes call (whole-batch review, Batch 1).
+//
+// Exported (test-only; NOT re-exported from collision/index.js, so the public library
+// surface is unaffected -- same convention as CollisionWorld.js's normalizeNarrowPhaseHit)
+// so the missing-localPoint degrade-to-null contract can be asserted directly.
 const _worldPoint = new THREE.Vector3();
 
-function toFiniteWorldArray(localPoint, worldMatrix) {
+export function toFiniteWorldArray(localPoint, worldMatrix) {
+  if (!localPoint) return null;
   _worldPoint.copy(localPoint).applyMatrix4(worldMatrix);
   const point = [_worldPoint.x, _worldPoint.y, _worldPoint.z];
   return point.every(Number.isFinite) ? point : null;

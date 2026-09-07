@@ -117,8 +117,13 @@ function comparePlacedCanonically(a, b) {
 //      contract for a hit whose witness point came out non-finite -- never a normal outcome, so any
 //      sibling candidate with a REAL witness should always be preferred over it).
 //   2. among two real witnesses, 'surface-crossing' beats 'containment' (a crossing witness sits
-//      exactly ON the two solids' shared boundary -- more informative and more visually locatable
-//      for a clash marker than "some point of one solid found inside the other").
+//      strictly inside both solids, near their intersection curve -- ProperCrossingQuery's own probe
+//      acceptance test (`_probe`, ProperCrossingQuery.js) only accepts a candidate when
+//      classifyPoint returns 'inside' against BOTH bvhA and bvhB, explicitly rejecting a 'boundary'
+//      result on either side; the segment-midpoint fallback it is preferred over is only guaranteed
+//      to lie ON the intersection curve, not interior to either solid -- so a crossing witness is
+//      more directly localized to the actual interference than a point of one solid found somewhere
+//      inside the other).
 //   3. among two real witnesses of the SAME kind, `comparePlacedCanonically` (this file's own
 //      existing (loadEpoch, geometryIndex, fragmentId) total order, reused rather than reimplemented)
 //      breaks the tie off the two candidates' OWN placements, so the winner never depends on which

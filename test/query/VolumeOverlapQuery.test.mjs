@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { volumeOverlapQuery } from '../../collision/query/VolumeOverlapQuery.js';
+import { volumeOverlapQuery, toFiniteWorldArray } from '../../collision/query/VolumeOverlapQuery.js';
 import { properCrossingQuery } from '../../collision/query/ProperCrossingQuery.js';
 import { box, at, mergeGeometries, testInstance } from '../fixtures/geometry.mjs';
 
@@ -552,4 +552,18 @@ test('a non-finite transformed witness degrades to witness:null without affectin
   const r = await volumeOverlapQuery(duct, beam, {});
   assert.equal(r.overlap, true, 'the clash verdict must still be reported');
   assert.equal(r.witness, null, 'a non-finite transform must degrade to witness:null, not throw');
+});
+
+test('toFiniteWorldArray degrades to null (not a throw) when localPoint is missing', () => {
+  // Whole-batch review finding: if a leaf query's witnessPoint is ever absent on a
+  // positive verdict (currently unreachable given Tasks 1/2's own guarantees, but that
+  // guarantee lives in TWO OTHER files, not here), this function's own local
+  // fault-tolerance contract must still hold -- degrade to null, the same as the
+  // non-finite-number case, rather than let `_worldPoint.copy(undefined)` throw a
+  // TypeError out of volumeOverlapQuery and lose the whole findClashes query.
+  const identity = new THREE.Matrix4();
+  assert.equal(toFiniteWorldArray(undefined, identity), null,
+    'a missing localPoint must degrade to null, not throw');
+  assert.equal(toFiniteWorldArray(null, identity), null,
+    'a null localPoint must also degrade to null, not throw');
 });
