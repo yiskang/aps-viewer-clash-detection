@@ -1317,3 +1317,108 @@ test('SYNTHETIC (Task 17, spec §4.4 open item CLOSED): source fragments owned b
   assert.equal(linear.result.statistics.broadPhasePairs, 0, 'linear: self-exclusion runs BEFORE the count -- a leak would show up here as a non-zero count');
   assert.equal(tlas.result.statistics.broadPhasePairs, 0, 'tlas: same -- zero candidates ever counted, not merely zero survivors');
 });
+
+// === Task 19: candidate-budget/statistics fixtures -- inequality-chain assertions ================
+
+test('exactly maxTlasCandidatePairs candidates succeeds; maxTlasCandidatePairs + 1 throws', async () => {
+  // Unit-level test of _runTlasBroadPhase directly, mirroring this file's own established
+  // stub-bvh pattern (see "_runTlasBroadPhase resolves a TLAS hit..." and "a whole-model scope
+  // excludes a historically-admitted fragment..." above) rather than constructing 200,000 real
+  // overlapping primitives (too slow/heavy for a unit test) or adding a per-call override for
+  // maxTlasCandidatePairs to CollisionWorld's constructor/fromViewer options (codex-advisor review:
+  // the cross-task interface table treats this as a single global constant, not a per-call
+  // parameter, and CollisionWorld.fromViewer's documented contract is that unknown options are
+  // ignored -- expanding that surface for a one-test-only seam is unwarranted scope creep, and a
+  // permissive numeric override would also need its own defensive validation against null/NaN/
+  // negative/Infinity to avoid silently disabling a real safety ceiling). Instead, the fake BVH's
+  // own queryBox calls onLeafRange directly with a caller-controlled count -- this exercises the
+  // REAL production comparison (`candidateBudgetUsed > maxTlasCandidatePairs`) and the REAL,
+  // actually-imported maxTlasCandidatePairs constant (200,000), with zero production-code changes.
+  async function runWithLeafCount(count) {
+    const world = await freshWorld();
+    const bvh = {
+      recordAt: () => ({ fragmentId: 1 }),
+      queryBox: (min, max, { onLeafRange }) => {
+        const signal = onLeafRange(0, count);
+        return { truncated: signal === 'stop' };
+      },
+    };
+    world._modelByEpoch.set(1, {});
+    world._liveEpochs.add(1);
+    world._tlasCache.getEntry = async () => ({ bvh, outcome: 'hit', builtAtRevision: 0 });
+    world._tlasCache.getBuiltAtRevision = () => 0;
+
+    const sourceOperand = { model: {}, epoch: 99, fragmentIds: new Map() };
+    const sourceInstances = [{ instance: { fragmentId: 42 }, worldMatrix: new THREE.Matrix4().toArray(), worldBounds: { min: [0, 0, 0], max: [1, 1, 1] }, ownerDbId: 7 }];
+    // A non-empty target group -- an empty one (whole-batch review finding #1) is skipped entirely
+    // before this method's own TLAS fetch ever runs, which would defeat this test's own point.
+    const targetGroups = [{ targetOperand: { model: {}, epoch: 1 }, instances: [{ instance: { fragmentId: 100 } }] }];
+    const statistics = { tlasLeafRangeEmissions: 0, tlasPrimitiveCandidatePairs: 0, tlasBuilds: 0, tlasCacheHits: 0, tlasSharedBuildWaits: 0, tlasBuildMs: 0, tlasQueryMs: 0, broadPhasePairs: 0 };
+    const candidates = await world._runTlasBroadPhase(sourceOperand, sourceInstances, targetGroups, new Map(), statistics, () => undefined);
+    return { candidates, statistics };
+  }
+
+  const { statistics: succeedStats } = await runWithLeafCount(maxTlasCandidatePairs);
+  assert.equal(succeedStats.tlasPrimitiveCandidatePairs, maxTlasCandidatePairs,
+    'exactly the limit was counted -- the call completed without throwing');
+
+  let caught = null;
+  try {
+    await runWithLeafCount(maxTlasCandidatePairs + 1);
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof CapacityExceededError, `expected CapacityExceededError, got ${caught?.constructor?.name}`);
+  assert.equal(caught.kind, 'tlas-candidate-budget');
+  assert.equal(caught.limit, maxTlasCandidatePairs);
+  assert.equal(caught.completed, maxTlasCandidatePairs);
+  assert.equal(caught.attempted, maxTlasCandidatePairs + 1);
+});
+
+test('the inequality chain holds across a fixture with real filtering (some candidates excluded by target scope)', async () => {
+  // Reuses this file's own established "a narrow explicit-dbIds target scope excludes a
+  // spatially-overlapping fragment the TLAS itself still covers" fixture (above, Task 13 section):
+  // prime an epoch via a whole-model broadPhase:'linear' call admitting TWO co-located target
+  // fragments (dbIds 1 and 2, both genuinely overlapping the source), then run a SECOND
+  // broadPhase:'tlas' call requesting only dbId 1. The epoch-wide placement table (and its TLAS)
+  // still contains BOTH fragments -- narrowing this call's own target scope does not remove
+  // dbId 2's fragment from the epoch -- so the raw TLAS leaf reports count=2, but only fragment
+  // 100 (dbId 1) survives the target-scope Set filter into broadPhasePairs, giving
+  // tlasPrimitiveCandidatePairs(2) STRICTLY > broadPhasePairs(1) -- confirming the two are not
+  // conflated, per this task's own title. codex-advisor review independently verified this
+  // predicted numeric chain (2 > 1 >= 1 == 1 == 1) before implementation.
+  const { modelA, modelB, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }, { dbId: 2, fragments: [200] }],
+    fragSpecsB: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] }, // real Hard Clash with the source
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [0, 0, 0] }, // also overlaps the source -- the raw candidate the scope filter must exclude
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  // Prime the epoch's placement table / TLAS with BOTH dbIds first (whole-model scope), so the
+  // cached TLAS genuinely contains dbId 2's fragment before the narrow-scope call below runs.
+  await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB }] },
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'linear',
+  });
+  const result = await world.findClashes({
+    source: { model: modelA, dbIds: [1] },
+    target: { targets: [{ model: modelB, dbIds: [1] }] }, // narrow -- dbId 2 excluded from SCOPE, not from the TLAS
+    mode: 'surface-intersection', groupBy: 'dbId', broadPhase: 'tlas',
+  });
+  const { statistics } = result;
+  assert.equal(statistics.tlasPrimitiveCandidatePairs, 2,
+    'both fragments (100 and 200) are still raw TLAS candidates -- the epoch-wide placement table was never narrowed by this call\'s own target scope');
+  assert.equal(statistics.broadPhasePairs, 1, 'only fragment 100 (dbId 1) survives the target-scope filter into broadPhasePairs');
+  assert.ok(statistics.tlasPrimitiveCandidatePairs > statistics.broadPhasePairs,
+    'STRICT inequality -- tlasPrimitiveCandidatePairs and broadPhasePairs are NOT conflated');
+  // The remaining relations in spec §7.5.2's own inequality chain, each asserted explicitly.
+  assert.ok(statistics.broadPhasePairs >= statistics.tlasExactRetestSurvivors);
+  assert.equal(statistics.tlasExactRetestSurvivors, statistics.tlasNarrowPhaseInputPairs);
+  assert.equal(statistics.tlasNarrowPhaseInputPairs, statistics.narrowPhasePairs);
+  assert.equal(result.pairs.length, 1, 'a genuine clash was found, not merely a narrow-phase attempt');
+  assert.equal(result.pairs[0].target.dbId, 1);
+});
