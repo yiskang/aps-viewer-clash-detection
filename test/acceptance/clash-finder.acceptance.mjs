@@ -189,7 +189,7 @@
 //      and the restoration is asserted.
 // Together those facts are exactly the spec's regression-catcher. No one of them alone would be.
 //
-// Two measurement details that are easy to get wrong, both established the hard way here:
+// Three measurement details that are easy to get wrong, all three established the hard way here:
 //   - HitTestResult.distance is NOT a camera-to-hit-point distance. Live, at a camera 38.56 world
 //     units from the hit point, it reported 212.22. Its origin/normalization is undocumented in the
 //     pinned typings, and comparing it against a Euclidean camera-to-witness distance is not even
@@ -219,8 +219,10 @@
 // The tolerance band is coarse ON PURPOSE and is NOT an exact color match: MARKER_COLOR is 0xff6a00
 // = rgb(255,106,0), but the Viewer's own gamma/sRGB output encoding renders it as rgb(255,164,0) on
 // screen (confirmed live -- the green channel is raised by ~58). isMarkerOrange() below therefore
-// asserts orange DOMINANCE, not equality, and a reference sample taken well away from the marker is
-// asserted NOT to satisfy the same band, so the check is shown to actually discriminate.
+// asserts orange DOMINANCE, not equality. What shows the band actually DISCRIMINATES is observation 3
+// above, not a separate reference sample taken elsewhere on screen: the very same pixel, sampled with
+// this marker mesh detached, must fail the band. That is a strictly stronger control -- it holds the
+// pixel, the camera and the frame fixed and changes only the one thing under test.
 //
 // --- Alignment (Task 10 Step 7): how one real model-alignment operation is performed ---------------
 //
@@ -820,10 +822,13 @@ async function main() {
 
   // Detaches / re-attaches ONE specific marker mesh from the overlay scene and forces a repaint, so
   // the same pixel can be sampled with the marker present and absent. This is what actually
-  // ATTRIBUTES the sampled colour to the production-created mesh: a reference sample elsewhere on
-  // screen only shows the colour band discriminates, it cannot show that THIS marker is what painted
-  // THIS pixel (codex-advisor, Task 10). Uses the same public viewer.overlays.addMesh/removeMesh the
-  // production code itself uses, with the same (mesh, sceneName) argument order.
+  // ATTRIBUTES the sampled colour to the production-created mesh (codex-advisor, Task 10). An earlier
+  // draft instead sampled a reference point 150px away; that was dropped and no such sample is taken
+  // anywhere in this file, because it can only show that the colour band discriminates SOMEWHERE --
+  // never that THIS marker is what painted THIS pixel. The detach/re-attach differential below shows
+  // both at once, holding the pixel, camera and frame fixed. Uses the same public
+  // viewer.overlays.addMesh/removeMesh the production code itself uses, with the same
+  // (mesh, sceneName) argument order.
   async function setContainmentMarkerAttached(attached) {
     await page.evaluate(({ overlayName, attached }) => {
       const mesh = window.__test.containmentMarker;
@@ -869,8 +874,9 @@ async function main() {
   // Coarse orange-DOMINANCE band, never an exact color match -- MARKER_COLOR 0xff6a00 is
   // rgb(255,106,0) in source but renders as rgb(255,164,0) through the Viewer's gamma/sRGB output
   // encoding (confirmed live). The band is wide on the green channel for exactly that reason and
-  // still comfortably excludes this fixture's own rendered materials (the reference sample taken
-  // away from the marker measured rgb(141,151,163), a blue-grey that fails on every clause).
+  // still comfortably excludes this fixture's own rendered materials: the occluding geometry at the
+  // sampled pixel measures rgb(131,136,143) -- the value this run's own report records as
+  // markerDetachedCentre -- a blue-grey that fails on every clause.
   const isMarkerOrange = ([r, g, b]) => r >= 200 && b <= 80 && (r - b) >= 140 && (r - g) >= 40;
   const orangeFraction = (pixels) => pixels.filter(isMarkerOrange).length / pixels.length;
 
