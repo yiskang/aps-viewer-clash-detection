@@ -1,5 +1,88 @@
 # Changelog
 
+## v0.2.1 — Clash Witness Marker (recommended tag, not yet created)
+
+Adds a "where to look" witness point and a Viewer-native marker to every positive `volume-overlap`
+Hard Clash pair returned by the Viewer-side collision-detection library (`collision/`), plus the
+lifecycle wiring in the reference sample, `wwwroot/extensions/ClashFinderExtension.js`, to render
+and clear those markers. See `collision/README.md`'s `findClashes(query)` "Result shape" section and
+`docs/superpowers/specs/2026-09-07-collision-library-m2.1-clash-witness-marker-design.md` for the
+full design.
+
+### Capabilities
+
+- `ClashPair.witness` — an additive field, present only when `type === 'volume-overlap'`:
+  `{ kind: 'surface-crossing' | 'containment', point: [x,y,z] } | null`. `point` is a plain
+  `[x,y,z]` array of finite numbers (never a `THREE.Vector3` of either Three.js revision) in Viewer
+  scene/render coordinates (see `collision/README.md`'s coordinate-space contract for the precise
+  definition). For a complete, correctly-evaluated positive `volume-overlap` verdict a
+  non-null witness is the ordinary, expected outcome; `witness: null` is strictly a fault-tolerance
+  outcome, paired with a `statistics.diagnostics` entry (`reason: 'witness-unavailable'`) — a clash
+  is never suppressed or downgraded because witness capture failed.
+- Deterministic fragment-pair → dbId-pair witness aggregation: when multiple fragment-pairs roll
+  into one dbId-level pair, the witness is selected by a total order (a valid witness always
+  outranks a missing one, then `kind` `surface-crossing` before `containment`, then a canonical-
+  placement tie-break) — the same witness is selected regardless of traversal order, and regardless
+  of `broadPhase: 'tlas'` vs. `'linear'`.
+- Viewer-native marker rendering: `ClashFinderExtension` draws one small sphere `Mesh` per
+  witness-bearing `ClashPair`, via `viewer.overlays.addMesh`/`removeMesh` on a dedicated overlay
+  scene, with `depthTest: false` so a marker sitting inside occluding geometry (e.g. inside a wall or
+  duct) stays visible — the entire point of a "where to look" marker. One shared `SphereGeometry`/
+  `MeshBasicMaterial` pair is reused per extension instance, not allocated per marker. Marker radius
+  is `clamp(sceneBoundingSphereRadius * radiusFraction, MIN_MARKER_RADIUS, MAX_MARKER_RADIUS)`. All
+  overlay-layer Three.js objects are constructed from the Viewer's own `window.THREE` (r71), never
+  the collision library's imported `three` (r185), consistent with the existing r71/r185
+  runtime-isolation boundary the library already documents.
+- Marker lifecycle: markers clear and apply together with dbId isolation at the same call sites (so
+  the two visualizations never visually disagree); the extension's `BEFORE_MODEL_UNLOAD_EVENT`
+  handler fires on **any** model unload in the Viewer session (not filtered to models actually
+  participating in the current result) and unconditionally clears the entire clash visualization —
+  isolation and markers, for every model — rather than pruning only state tied to the unloading
+  model, since a partial-preservation policy was shown unsound (a surviving model could be left
+  isolated with a marker whose witness point no longer has any meaningful relationship to what's
+  still on screen); extension `unload()` disposes every tracked marker mesh plus the shared
+  geometry/material and the overlay scene, even if the collision world's own
+  `dispose()` throws.
+
+### Compatibility notes
+
+- `witness` is a new, additive `ClashPair` key — `source`, `target`, and `type` are unchanged, and
+  `containment`/`surface-intersection` pairs are unaffected (no `volume-overlap`-style witness is
+  populated for them in M2.1). No M1/M2 public API changed incompatibly.
+- The existing "the result may be incomplete" caveat (`collision/README.md`'s "Diagnostics — read
+  this before trusting an empty result" section) is now partitioned: a `witness-unavailable`
+  diagnostic no longer contributes to that caveat, since it describes a fully complete, correctly-
+  evaluated pair that simply couldn't produce a marker. The existing developer-facing `console.warn`
+  log remains unpartitioned and still logs every diagnostic, `witness-unavailable` included.
+
+### Live Viewer acceptance result
+
+`test/acceptance/clash-finder.acceptance.mjs` (Playwright, live Viewer, live 3-discipline federated
+model — Architecture/Structure/Mechanical, `Audubon_*_clash_test.rvt`), extended for M2.1: **PASS,
+106/106 live acceptance checks** (multiple consecutive clean runs). The existing known positive case
+(`MIXED_CASE`, Structure dbId `2734`) exercises both witness kinds end-to-end in one selection: its
+cross-model pair (Structure → Architecture, dbId `3686`) resolves via `surface-crossing`, and its
+same-model pair (Structure → Structure, dbId `3663`) resolves via `containment`. The containment
+witness was proven genuinely visible **through occluding geometry** via a 4-part live check: measured
+occlusion depth exceeding the marker radius, a marker-colored pixel at the expected screen location,
+a detach/reattach color differential, and confirmation that `depthTest: false` is load-bearing by
+showing `depthTest: true` reproduces the occluded-away result byte-for-byte. Also verified live:
+alignment-driven marker movement (via `viewer.impl.setPlacementTransform` +
+`invalidateModelPlacement`), negative-case (`NEGATIVE_CASE`) marker clearing with no new markers
+created, full clash-visualization clearing on model unload, and zero console/page errors throughout.
+No production constant tuning was needed — Task 8's default `MIN_MARKER_RADIUS`/
+`MAX_MARKER_RADIUS`/`MARKER_COLOR` rendered correctly against the real fixture (radius resolved
+mid-clamp; marker color visually distinct from the Viewer's own selection highlight). The full unit
+suite is unaffected: 553 pass / 0 fail / 1 todo.
+
+### Known limitations
+
+See `collision/README.md`'s "Known M2.1 limitations" section — in summary: one marker per
+witness-bearing pair with no density cap on marker count for a source with many clashes; no
+click-to-select/tooltip/dashboard interaction on markers (visual only); marker radius is computed
+from local (pre-placement) `InstanceTree` bounds while the witness point itself is world-space (a
+documented, accepted M2.1 simplification, not a bug).
+
 ## v0.2.0 — Collision Library Milestone 2: Federated Clash Finder (recommended tag, not yet created)
 
 Adds cross-model ("federated") clash detection to the Viewer-side collision-detection library

@@ -121,12 +121,36 @@ TLAS-accelerated path" below):
 **Result shape:**
 
 - `pairs`: one entry per distinct `(sourceDbId, targetDbId)` pair with a positive result —
-  `{ source: { modelId, dbId, model }, target: { modelId, dbId, model }, type: <mode> }`. `model` is
-  the real `Model` object reference for that operand — a borrowed identity reference, and the
-  **authoritative** one for same-model/cross-model comparisons (see the Clash Finder sample's own
+  `{ source: { modelId, dbId, model }, target: { modelId, dbId, model }, type: <mode> }`, plus a
+  `witness` key present only when `type === 'volume-overlap'` (see below).
+  `model` is the real `Model` object reference for that operand — a borrowed identity reference, and
+  the **authoritative** one for same-model/cross-model comparisons (see the Clash Finder sample's own
   classification logic below). `modelId` is diagnostic/display-only: it is documented elsewhere in
   this library as reused-under-collision-prone across a session, so never compare on it. Order is
   insertion-order, not canonicalized.
+  - **M2.1: `witness`.** Present as a key **only** on `volume-overlap` pairs — the key is always
+    present (never `undefined`) on a `volume-overlap` pair, but is entirely omitted (not even set to
+    `undefined`) on `containment`/`surface-intersection` pairs, so `'witness' in pair` stays `false`
+    for those modes, exactly as before M2.1 (out of scope per the design). For a `volume-overlap`
+    pair, `witness` is:
+    ```js
+    witness: {
+      kind: 'surface-crossing' | 'containment',
+      point: [x, y, z],   // Viewer scene/render coordinates
+    } | null
+    ```
+    `point` is a plain 3-element array of finite numbers (never a `THREE.Vector3` of either
+    revision) — keeps the public shape framework-agnostic and avoids the r71/r185 ambiguity
+    entirely. For a complete, successfully-evaluated `volume-overlap` Hard Clash with valid geometry
+    and transforms, `witness` is expected to be non-null — every code path that confirms the verdict
+    also captures a geometrically-justified point at that same statement, so a non-null witness is
+    the ordinary, expected outcome, not merely a possibility. The value remains nullable strictly as
+    a fault-tolerance / degraded-result contract: `witness: null` means the clash verdict is still
+    valid, but witness generation or its world-space transform failed or produced a non-finite
+    result; the result carries a corresponding `statistics.diagnostics` entry
+    (`reason: 'witness-unavailable'`), and `ClashFinderExtension` cannot render a marker for that
+    pair. A clash is never suppressed or downgraded because witness capture failed. See the design
+    spec's §1 ("Public result shape") for the full rationale.
 - `statistics`: `{ broadPhasePairs, narrowPhasePairs, blasBuilt, blasCacheHits, broadPhaseMs,
   narrowPhaseMs, totalMs, diagnostics, ...9 M2 fields below }`. `blasBuilt`/`blasCacheHits` are
   currently always reported as `0` — the geometry registry doesn't yet expose build/hit counters to
@@ -180,6 +204,15 @@ and aborted. **A non-empty `diagnostics` array means the boolean/pair result may
 an empty `pairs` array in that situation is not the same statement as "no clash exists." Consumers
 must surface this, not silently treat it as a clean negative (see the reference sample's own
 `describeDiagnostics` / user-facing caveat for the expected pattern).
+
+**M2.1 exception: `reason: 'witness-unavailable'` diagnostics do not count toward that caveat.** A
+`witness-unavailable` entry means a `volume-overlap` pair's verdict was fully and correctly
+evaluated but a marker point could not be captured for it — the pair result itself is complete, not
+incomplete, so `ClashFinderExtension` (and any other consumer) must not fold `witness-unavailable`
+entries into its "result may be incomplete" caveat computation the way it does for every other
+diagnostic reason above. The existing developer-facing `console.warn` log is unpartitioned and still
+logs every diagnostic, `witness-unavailable` included — only the user-facing completeness caveat is
+partitioned.
 
 ## Model lifecycle: admission, eviction, dispose
 
@@ -486,6 +519,27 @@ identity comparisons.
   single-page, sequential-per-measurement harness (see `tlasSharedBuildWaits` above). A real fix
   needs a generation-bound span API in `collision/scheduler.js` shared by every direct `reportSpan`
   call site, not a local patch to one of them — tracked as a follow-up, not fixed here.
+
+## Known M2.1 limitations
+
+- **One marker per witness-bearing pair, no density cap.** `ClashFinderExtension` renders exactly
+  one sphere marker per `volume-overlap` pair whose `witness` is non-null — there is no cap on the
+  total number of markers drawn for a source with many simultaneous clashes, and no clustering/LOD
+  behavior. A source dbId with a large number of positive pairs draws a proportionally large number
+  of markers.
+- **No click-to-select, tooltip, or dashboard interaction on markers.** Markers are visual-only
+  overlay geometry (`viewer.overlays.addMesh`) — there is no picking, hover tooltip, or panel/
+  dashboard row wired to an individual marker in M2.1. Selecting or inspecting a specific clash pair
+  still goes through the existing dbId-based Viewer selection/isolation flow, not through the marker
+  itself.
+- **Marker radius is computed from local (pre-placement) `InstanceTree` bounds; the witness point
+  itself is world-space.** The marker's radius (`clamp(sceneBoundingSphereRadius * radiusFraction,
+  MIN_MARKER_RADIUS, MAX_MARKER_RADIUS)`) is derived from the model's own local bounding-sphere
+  scale, not re-derived per placement transform, while `witness.point` is fully world-space and
+  reflects the model's current placement (including after `invalidateModelPlacement`). This is a
+  documented, accepted M2.1 simplification, not a bug: the marker still moves to the correct
+  world-space location on realignment, only its radius does not additionally scale with a
+  non-uniform placement transform.
 
 ## Developer entry points
 
