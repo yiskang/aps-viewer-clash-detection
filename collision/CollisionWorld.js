@@ -2238,6 +2238,26 @@ export class CollisionWorld {
    * 'geometry-unavailable' needs no diagnostic of its own here -- `resolveGeometryRecord` already
    * pushed one via `diagnoseFragmentOnce` before returning `null`. 'hard-clash-excluded' and
    * 'beyond-threshold' are both clean, conclusive negatives and need no diagnostic either.
+   *
+   * [final fix wave] ONE DOCUMENTED SCOPE OVERLAP between those two bullets. The 'aborted' branch
+   * forwards whatever reason `clearanceQuery` returned, verbatim, into the pair-scoped shape -- and
+   * `clearance-anisotropic-scale-unsupported` is one reason `clearanceQuery` can itself abort with,
+   * from its OWN anchor-inverse guard (never from its top-of-function `validateUniformScale` check,
+   * which this method's own 'anisotropic-scale' branch above has already screened out for both
+   * operands before the query is ever called). So that one reason string, alone among the four, can
+   * appear with EITHER scope: 'fragment' via `diagnoseAnisotropicScaleOnce` above (the ordinary path,
+   * and where every realistic occurrence comes from), or 'pair' via this branch, in the extremely
+   * rare case where an operand's scale is uniform and ACCEPTED by `validateUniformScale` yet small
+   * enough that `Matrix4.invert()`'s `1 / determinant` overflows to Infinity -- a uniform scale
+   * strictly between roughly 1e-108 and 1.8e-103 (subnormal but nonzero determinant); see
+   * ClearanceQuery.js's own guard comment for that measured window. Left as-is deliberately rather
+   * than routed through `diagnoseAnisotropicScaleOnce`: at this point the abort carries no indication
+   * of WHICH operand was the anchor, and re-deriving `clearanceQuery`'s own private anchor-selection
+   * rule here to guess would couple this method to an internal ordering decision that module has
+   * already changed once during M3 -- and the offending operand is not anisotropically scaled at all
+   * in that case, merely numerically too small, so fragment-level dedup would additionally suppress
+   * the diagnostic for later distinct pairs sharing it. Documented in collision/README.md's
+   * diagnostics section and CHANGELOG.md.
    */
   async _runClearanceNarrowPhasePair(
     sourcePlaced, targetPlaced, sourceOperand, targetOperand, clearance, statistics, oversizedDiagnosedFragments,

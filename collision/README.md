@@ -304,9 +304,18 @@ partitioned.
 | Reason | Scope | Emitted when |
 |---|---|---|
 | `clearance-invalid-transform` | **fragment**, deduped per `(epoch, fragmentId)` | Clearance's own admission validation found a non-finite/singular `worldMatrix`, or non-finite/mis-ordered `worldBounds`, for an extracted instance. Fires **before any pair exists** — it is an admission-time filter, not a pair evaluation. |
-| `clearance-anisotropic-scale-unsupported` | **fragment**, deduped per `(epoch, fragmentId)`, one per offending side | An operand's `worldMatrix` failed `validateUniformScale` — anisotropic, sheared, reflected/negative, or otherwise unsupported scale. Diagnosed, never approximated. |
+| `clearance-anisotropic-scale-unsupported` | **fragment**, deduped per `(epoch, fragmentId)`, one per offending side — with one rare exception, see the note below the table | An operand's `worldMatrix` failed `validateUniformScale` — anisotropic, sheared, reflected/negative, or otherwise unsupported scale. Diagnosed, never approximated. |
 | `clearance-hard-clash-precheck-inconclusive` | **pair** (`sourceFragment` + `targetFragment`) | The tri-state Hard-Clash exclusion precheck could neither prove nor disprove volume overlap for this fragment pair (e.g. its crossing term hit `frameBudgetMs`), so the pair was dropped rather than assumed non-overlapping. |
 | `clearance-distance-unavailable` | **pair** (`sourceFragment` + `targetFragment`) | `clearanceQuery` reached `closestPointToGeometry` but could not produce a trustworthy answer: a non-finite local distance, a failed world-space conversion of a closest point, or the two independently-derived world distances disagreeing beyond the documented cross-check tolerance. |
+
+**Scope caveat on `clearance-anisotropic-scale-unsupported`.** It is fragment-scoped on the ordinary
+emission path — the `validateUniformScale` rejection, which is where every realistic occurrence comes
+from — but it **can** be emitted **pair**-scoped (`sourceFragment` + `targetFragment`, no
+`role`/`fragment`, undeduped) in one extremely rare case: `clearanceQuery`'s own anchor-inverse guard
+aborts with this same reason when the anchor operand's scale is uniform and *accepted* by
+`validateUniformScale` yet small enough that `Matrix4.invert()`'s `1 / determinant` overflows to
+`Infinity` — a uniform scale strictly between roughly `1e-108` and `1.8e-103`, i.e. a subnormal but
+nonzero determinant. Consumers that switch on `scope` for this reason must tolerate both shapes.
 
 **All four count toward "the result may be incomplete."** In particular
 `clearance-distance-unavailable` and `clearance-hard-clash-precheck-inconclusive` **do** count —

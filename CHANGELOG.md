@@ -57,7 +57,13 @@ design.
 - **4 new diagnostic reasons:** `clearance-invalid-transform` and
   `clearance-anisotropic-scale-unsupported` (both **fragment**-scoped, deduped per
   `(epoch, fragmentId)` in independent namespaces), `clearance-hard-clash-precheck-inconclusive` and
-  `clearance-distance-unavailable` (both **pair**-scoped). Plus a new
+  `clearance-distance-unavailable` (both **pair**-scoped). One caveat on that scope table:
+  `clearance-anisotropic-scale-unsupported` is fragment-scoped on the ordinary
+  `validateUniformScale`-rejection path, but is emitted **pair**-scoped (undeduped) in the extremely
+  rare case where `clearanceQuery`'s own anchor-inverse guard aborts — an operand whose uniform scale
+  `validateUniformScale` *accepts* yet is small enough (strictly between roughly `1e-108` and
+  `1.8e-103`, i.e. a subnormal but nonzero determinant) that `Matrix4.invert()` overflows to
+  `Infinity`. Plus a new
   `CapacityExceededError('clearance-narrow-phase-budget')` bounded by `maxClearanceNarrowPhasePairs`
   (20,000, provisional), checked as one upfront preflight on the assembled candidate list.
 - **"Find Soft Clashes"** — a second, independent context-menu action in `ClashFinderExtension`, not a
@@ -78,7 +84,11 @@ design.
 
 - Everything M3 adds is **additive**. `mode`'s three existing values, the `target` shapes, `groupBy`,
   `broadPhase`, and every M1/M2/M2.1 statistics and diagnostics field are unchanged. Every existing
-  test continues to pass unmodified.
+  **library**-level test continues to pass unmodified; `test/ClashFinderExtension.test.mjs` (Hard
+  Clash's own reference-sample test) was updated for two disclosed, non-regressive reasons:
+  `menu.length` now reflects the second, intended "Find Soft Clashes" entry, and three pre-existing
+  `MARKER_RADIUS_FRACTION` test constants were corrected to match the real production value (an
+  M2.1-era test/production drift, unrelated to M3).
 - **One real internal refactor, proven behavior-identical:** clearance's narrow phase resolves
   geometry through `resolveGeometryRecord`/`diagnoseFragmentOnce`, genuinely extracted out of
   `_runNarrowPhasePair`'s own private closures, with `_runNarrowPhasePair` rewritten to call the same
