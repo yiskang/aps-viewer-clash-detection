@@ -148,7 +148,12 @@ test('clearanceOverlapPrechecksRun counts excluded candidates too, not just proc
 // dbId 30 is clearly separated (gap 3, still within clearance 5) so its AABBs never touch --
 // classifyHardClashPrecheck's own `skip-precheck` path (ClearanceHardClashPrecheck.js:19-21) means
 // its precheck never runs at all, yet it's still an exact-AABB survivor (candidate) since its AABB
-// min-distance is <= clearance. So this must hold as a strict inequality (2 >= 1).
+// min-distance is <= clearance.
+//
+// codex-review (medium, post-write) finding: asserting only the `<=` inequality would silently pass
+// even if `_runClearanceBroadPhaseScan` stopped counting the separated (skip-precheck) survivor at
+// all -- both counters would collapse to 1 and the weaker assertion would not notice. This fixture's
+// own exact counts are asserted directly instead, so that specific regression is actually caught.
 test('clearanceExactAabbSurvivors >= clearanceOverlapPrechecksRun', async () => {
   const { model, viewer } = makeFixture(
     [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }, { dbId: 30, fragments: [300] }] }],
@@ -165,9 +170,39 @@ test('clearanceExactAabbSurvivors >= clearanceOverlapPrechecksRun', async () => 
     mode: 'clearance', clearance: 5, groupBy: 'dbId', broadPhase: 'linear',
   });
   assert.ok(statistics.clearanceOverlapPrechecksRun <= statistics.clearanceExactAabbSurvivors);
+  assert.equal(statistics.clearanceExactAabbSurvivors, 2, 'both dbId 20 (touching) and dbId 30 (separated-but-in-clearance) must survive');
+  assert.equal(statistics.clearanceOverlapPrechecksRun, 1, 'only dbId 20 (AABB-touching) reaches the precheck; dbId 30 takes skip-precheck');
 });
 
-// === Test 5 (I-5 regression): clearanceHardClashExclusions counts a dbId pair with zero surviving
+// === Test 5: clearanceDistanceQueriesRun excludes hard-clash-excluded and inconclusive candidates ==
+//
+// Reuses the same rotated-box construction as test 3 above (dbId 20: overlapping -> excluded, never
+// reaches clearanceQuery at all; dbId 30: AABB-touching but real solids apart -> proceeds to
+// clearanceQuery). So clearanceDistanceQueriesRun (only the proceed candidate) must be strictly LESS
+// than clearanceExactAabbSurvivors (both candidates, since both pass the exact-AABB test) --
+// verifying the increment-point table's claim that clearanceDistanceQueriesRun is per actual
+// clearanceQuery call, never per candidate.
+test('clearanceDistanceQueriesRun excludes hard-clash-excluded and inconclusive candidates', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }, { dbId: 30, fragments: [300] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), matrix: rotateY(Math.PI / 4) },
+      200: { geometryIndex: 1, geometry: box(1, 1, 1), at: [0.5, 0, 0] }, // overlaps the diamond -> excluded, never reaches clearanceQuery
+      300: { geometryIndex: 2, geometry: box(1, 1, 1), at: [1.6, 0, 1.6] }, // AABB-touches, real solids don't -> proceed, reaches clearanceQuery
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await world.admitModel(model);
+  const { statistics } = await world.findClashes({
+    source: { model, dbIds: [10] }, target: { model, dbIds: [20, 30] },
+    mode: 'clearance', clearance: 5, groupBy: 'dbId', broadPhase: 'linear',
+  });
+  assert.ok(statistics.clearanceDistanceQueriesRun < statistics.clearanceExactAabbSurvivors);
+  assert.equal(statistics.clearanceDistanceQueriesRun, 1, 'only the proceed candidate (dbId 30) reaches clearanceQuery');
+  assert.equal(statistics.clearanceExactAabbSurvivors, 2, 'both candidates survive the exact-AABB test');
+});
+
+// === Test 6 (I-5 regression): clearanceHardClashExclusions counts a dbId pair with zero surviving
 // clearance-distance candidates =====================================================================
 //
 // Source dbId 10 owns TWO fragments (100, 101); target dbId 20 owns one fragment (200) sized and
