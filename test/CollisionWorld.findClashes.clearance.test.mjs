@@ -263,8 +263,22 @@ test('fixture 8: cross-model near-miss pair reported with correct provenance', a
 
 // Fixture 11: linear-vs-TLAS parity. Source dbId 1 (a 2x2x2 box at the origin, face at x=+-1) faces
 // several target dbIds: one near-miss on each side (within clearance), one genuine overlap (proven
-// Hard Clash, excluded from clearance results), and one far away (outside clearance, never a
-// candidate at all). broadPhase:'linear' and broadPhase:'tlas' must agree exactly.
+// Hard Clash, excluded from clearance results), one far away (outside clearance, never a candidate
+// at all), and one DIAGONAL near-miss (Task 13 addition, see below). broadPhase:'linear' and
+// broadPhase:'tlas' must agree exactly.
+//
+// Task 13 addition (closing a deferred Minor from Task 10's review): every target above the diagonal
+// one is offset along a SINGLE axis, so `_runClearanceTlasBroadPhase`'s own broad-phase admission test
+// (the source AABB inflated by `clearance` on every axis independently -- a Chebyshev/L-infinity ball,
+// via bvh.queryBox) and the exact per-candidate retest (`aabbMinDistance(...) <= clearance`, Euclidean/
+// L2, from collision/geometry/AabbDistance.js) can never disagree for those cases alone -- a bug that
+// dropped the exact retest entirely (returning every broad-phase admission as a real candidate) would
+// still pass. dbId 5 below is offset by 2.5 on BOTH x and y (clearance 3): the Chebyshev distance is
+// 2.5 (<=3, so the inflated-box broad phase genuinely ADMITS it as a candidate), but the true Euclidean
+// gap is sqrt(2.5^2+2.5^2) ~= 3.5355 (>3, so the exact retest -- and the real geometric answer -- must
+// REJECT it). This is deliberately NOT a boundary case (the codex-advisor-verified rejection margin is
+// ~0.54, comfortably clear of the clearance=3 threshold): the point is proving the exact-retest layer
+// is actually wired up and does real work, not probing a float-precision edge.
 test('fixture 11: linear and TLAS produce identical clearance pairs on the same federated scene', async () => {
   const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
     rootNodesA: [{ dbId: 1, fragments: [100] }],
@@ -274,12 +288,16 @@ test('fixture 11: linear and TLAS produce identical clearance pairs on the same 
       { dbId: 2, fragments: [201] }, // face at x=-1.5, gap 0.5 -> within clearance 3
       { dbId: 3, fragments: [202] }, // overlaps source (-1..1 vs -0.5..1.5) -> Hard Clash, excluded
       { dbId: 4, fragments: [203] }, // far away -> outside clearance, never a candidate
+      // dbId 5: diagonal offset (2.5, 2.5, 0). Chebyshev gap 2.5 <= clearance 3 (broad phase admits),
+      // Euclidean gap ~3.5355 > clearance 3 (exact retest correctly rejects) -- see comment above.
+      { dbId: 5, fragments: [204] },
     ],
     fragSpecsB: {
       200: { geometryIndex: 0, geometry: box(2, 2, 2), at: [2.5, 0, 0] },
       201: { geometryIndex: 1, geometry: box(2, 2, 2), at: [-2.5, 0, 0] },
       202: { geometryIndex: 2, geometry: box(2, 2, 2), at: [0.5, 0, 0] },
       203: { geometryIndex: 3, geometry: box(2, 2, 2), at: [100, 0, 0] },
+      204: { geometryIndex: 4, geometry: box(2, 2, 2), at: [4.5, 4.5, 0] },
     },
   });
   const world = await freshWorld(viewer, { now: frozenClock() });
@@ -293,11 +311,21 @@ test('fixture 11: linear and TLAS produce identical clearance pairs on the same 
 
   const normalize = (pairs) => pairs.map((p) => `${p.source.dbId}:${p.target.dbId}:${p.distance.toFixed(6)}`).sort();
   assert.deepEqual(normalize(tlasResult.pairs), normalize(linearResult.pairs));
-  assert.equal(tlasResult.pairs.length, 2, 'exactly the two genuine near-misses, not the overlap or the far fragment');
+  assert.equal(tlasResult.pairs.length, 2, 'exactly the two genuine near-misses, not the overlap, the far fragment, or the diagonal one');
+  assert.ok(!tlasResult.pairs.some((p) => p.target.dbId === 5), 'the diagonal candidate must be rejected by the exact retest, not just happen to be absent');
   // TLAS-only counters: populated for the TLAS path, and never for the linear path (asserted
   // elsewhere in this file -- Task 9's own "linear path never populates this" assertion).
   assert.ok(tlasResult.statistics.clearanceExpandedCandidatePairs > 0);
   assert.equal(linearResult.statistics.clearanceExpandedCandidatePairs, 0);
+  // The diagonal candidate (dbId 5) proves genuine broad-phase-vs-exact-retest divergence: it is
+  // admitted by the inflated-box broad phase (counted in clearanceExpandedCandidatePairs) but
+  // rejected by the exact aabbMinDistance retest (never reaches clearanceExactAabbSurvivors) -- so
+  // the expanded count must be strictly greater than the exact-survivor count, not merely equal.
+  assert.ok(
+    tlasResult.statistics.clearanceExpandedCandidatePairs > tlasResult.statistics.clearanceExactAabbSurvivors,
+    `expected the diagonal candidate to be admitted by broad phase but rejected by the exact retest: ` +
+    `expanded=${tlasResult.statistics.clearanceExpandedCandidatePairs}, survivors=${tlasResult.statistics.clearanceExactAabbSurvivors}`,
+  );
   // Design spec §11: the generic M2 TLAS fields are populated identically, by the same code, for a
   // clearance call as for the three pre-existing modes -- every candidate this broad phase returns
   // reaches the shared narrow-phase loop one-for-one, so tlasNarrowPhaseInputPairs must equal
@@ -308,6 +336,21 @@ test('fixture 11: linear and TLAS produce identical clearance pairs on the same 
 });
 
 // Fixture 12: placement invalidation changes the clearance verdict on the next TLAS call.
+//
+// Task 13 addition (closing a deferred Minor from Task 10's review, codex-advisor-verified): the
+// original before/after (moved-away) sequence below does NOT actually prove invalidation works. The
+// clearance narrow phase always re-resolves each candidate's CURRENT worldBounds and re-applies the
+// exact `aabbMinDistance(...) <= clearance` retest regardless of what the TLAS itself returned -- so
+// even a completely stale near-position TLAS that kept emitting the (now far-away) target as a
+// candidate would still get correctly rejected by that retest, and `before.pairs.length === 1` ->
+// `after.pairs.length === 0` would still pass. The direction that actually discriminates a broken
+// invalidation is the REVERSE: a TLAS built while the target is far away can never emit a candidate
+// that only later moved into range -- that is a true stale-TLAS FALSE NEGATIVE (the broad phase would
+// never even offer the fresh in-range fragment to the exact retest), and no downstream exact-retest
+// logic can rescue it. Phase 3 below adds exactly this: after `after.pairs.length === 0` (which just
+// built and cached a far-position TLAS), move the target to a THIRD, new position back within
+// clearance, invalidate again, and assert both the pair reappears AND `tlasBuilds === 1` (proving a
+// genuine rebuild happened on this call, not a stale cache hit that coincidentally still worked).
 test('fixture 12: invalidateModelPlacement changes clearance verdict correctly', async () => {
   const { modelA: sourceModel, modelB: targetModel, viewer, fragmentGeometryB } = makeTwoModelFixture({
     rootNodesA: [{ dbId: 1, fragments: [10] }],
@@ -335,4 +378,20 @@ test('fixture 12: invalidateModelPlacement changes clearance verdict correctly',
 
   const after = await world.findClashes(query);
   assert.equal(after.pairs.length, 0);
+
+  // Phase 3 (Task 13 addition): move back within clearance -- to a NEW position, not the original
+  // [2.5,0,0] -- and invalidate again. A stale-TLAS false negative would keep reporting 0 pairs here
+  // even though the current placement genuinely clashes within clearance.
+  fragmentGeometryB.set(100, {
+    geometryIndex: 0,
+    matrix: translationMatrix([-2.75, 0, 0]), // face at x=-1.75, gap 0.75 from source's face at x=-1
+    bounds: boundsOf(box(2, 2, 2), [-2.75, 0, 0]),
+  });
+  world.invalidateModelPlacement(targetModel);
+
+  const backAgain = await world.findClashes(query);
+  assert.equal(backAgain.statistics.tlasBuilds, 1, 'invalidation must force a real rebuild, not a stale cache hit');
+  assert.equal(backAgain.pairs.length, 1, 'moving back within clearance + invalidation must be detected -- not just the moved-away direction');
+  assert.equal(backAgain.pairs[0].target.model, targetModel);
+  assert.ok(Math.abs(backAgain.pairs[0].distance - 0.75) < 1e-3, `expected distance ~0.75, got ${backAgain.pairs[0].distance}`);
 });
