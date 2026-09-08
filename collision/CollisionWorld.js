@@ -2097,6 +2097,18 @@ export class CollisionWorld {
     const volumeOverlapOptions = {
       scheduler,
       compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
+      // Task reviewer fix (Important #1, fix round): without this, ProperCrossingQuery.js's own
+      // `options.now ?? (() => performance.now())` default (ProperCrossingQuery.js:40) reads the
+      // REAL wall clock inside this precheck's own volumeOverlapQuery call, independent of this
+      // call's own injected `_now` test seam -- an 8ms real-time stall (GC, parallel test load)
+      // mid-traversal can abort the crossing term and flip a genuine proven overlap into
+      // 'inconclusive', making the Hard-Clash exclusion precheck (and anything that depends on it,
+      // e.g. clearanceHardClashExclusions) nondeterministic under a frozen/fake test clock. Reusing
+      // this call's own `this._now` here closes that gap for clearance's own precheck call site. The
+      // IDENTICAL exposure pre-exists, unfixed, in the three pre-existing modes' own
+      // volumeOverlapQuery call in _runNarrowPhasePair -- out of scope here, their code path is a
+      // Protected Invariant and must stay byte-for-byte unchanged.
+      crossing: { now: this._now },
     };
 
     const precheck = await classifyHardClashPrecheck(

@@ -92,6 +92,17 @@ const SINGULAR_MATRIX = [
   0, 0, 0, 1,
 ];
 
+// A well-formed, FINITE, INVERTIBLE worldMatrix (translate(2.5,0,0) * scale(1,2,1)) that still
+// admits cleanly (isValidClearanceTransform, Task 8, checks only finiteness/invertibility) but is
+// NOT uniform scale -- validateUniformScale's own finer-grained gate (ClearanceTransform.js) rejects
+// it. World bounds are computed by hand to match this transform exactly (the box's own local -1..1
+// extent on y is doubled by the scale(1,2,1) before translation), since this fixture's raw `matrix`
+// override bypasses the `at`-only translation the shared bounds helper assumes.
+const ANISOTROPIC_MATRIX = new THREE.Matrix4()
+  .compose(new THREE.Vector3(2.5, 0, 0), new THREE.Quaternion(), new THREE.Vector3(1, 2, 1))
+  .toArray();
+const ANISOTROPIC_BOUNDS = { min: [1.5, -2, -1], max: [3.5, 2, 1] };
+
 // Fixture 17: non-finite/invalid transform -> clearance-invalid-transform diagnostic, pair excluded,
 // never silently dropped with zero diagnostics.
 test('fixture 17: non-finite worldMatrix on a target instance -> clearance-invalid-transform diagnostic, no crash', async () => {
@@ -134,6 +145,41 @@ test('singular (non-invertible) worldMatrix -> clearance-invalid-transform diagn
     mode: 'clearance', clearance: 5, groupBy: 'dbId',
   });
   assert.ok(statistics.diagnostics.some((d) => d.reason === 'clearance-invalid-transform'));
+});
+
+// Task reviewer fix (Important #2, fix round): coverage for _runClearanceNarrowPhasePair's own
+// 'anisotropic-scale' outcome -- a well-formed, finite, invertible transform that survives Task 8's
+// admission-time isValidClearanceTransform gate (which checks only finiteness/invertibility) but
+// still fails validateUniformScale's own, finer-grained gate right before the composed Hard-Clash
+// precheck/distance query. Distinct from fixture 17/the singular-matrix test above: this is a
+// PAIR-scoped diagnostic (found during narrow-phase evaluation), not the fragment-scoped
+// clearance-invalid-transform diagnostic (found during admission-time extraction filtering).
+test('a well-formed but non-uniformly-scaled worldMatrix -> clearance-anisotropic-scale-unsupported diagnostic', async () => {
+  const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [100] }],
+    fragSpecsA: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [200] }],
+    fragSpecsB: {
+      200: {
+        geometryIndex: 0, geometry: box(2, 2, 2), at: [2.5, 0, 0],
+        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS,
+      },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await world.admitModel(sourceModel);
+  await world.admitModel(targetModel);
+
+  const { pairs, statistics } = await world.findClashes({
+    source: { model: sourceModel, dbIds: [1] },
+    target: { targets: [{ model: targetModel }] },
+    mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'linear',
+  });
+
+  assert.equal(pairs.length, 0);
+  const diag = statistics.diagnostics.find((d) => d.reason === 'clearance-anisotropic-scale-unsupported');
+  assert.ok(diag, 'expected a clearance-anisotropic-scale-unsupported diagnostic');
+  assert.equal(diag.scope, 'pair');
 });
 
 test('an invalid instance is never admitted into shared placement state for a clearance call', async () => {

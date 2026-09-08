@@ -189,6 +189,12 @@ test('a real near-miss same-model pair is reported under broadPhase:linear', asy
   assert.ok(pairs[0].witness.sourcePoint && pairs[0].witness.targetPoint);
   assert.equal(statistics.clearanceHits, pairs.length);
   assert.equal(statistics.clearanceExpandedCandidatePairs, 0); // linear path never populates this
+  // Task reviewer fix (Important #2, fix round): this fixture has exactly one source instance and
+  // one non-self-excluded target instance, so exactly one pair is tested in the broad phase and
+  // exactly one candidate reaches narrow-phase evaluation -- these pre-existing, mode-agnostic
+  // counters must be populated for clearance calls exactly like the three existing modes'.
+  assert.equal(statistics.broadPhasePairs, 1);
+  assert.equal(statistics.narrowPhasePairs, 1);
 });
 
 // Fixture 10: multi-fragment dbId, minimum wins, order-independent. Source dbId 10 owns fragments A
