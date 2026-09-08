@@ -52,6 +52,50 @@ function makePlaced(admitted, extractedRecord) {
   });
 }
 
+// M3 clearance-only admission validation: a finite, invertible worldMatrix and finite,
+// correctly-ordered worldBounds. Operates on the RAW extraction-record shape (worldMatrix is a
+// Float64Array of 16 numbers, per extractFragments/extractAllFragments's own readWorldMatrix
+// contract -- makePlaced reads the identical field), never on a PlacedInstance -- this runs BEFORE
+// admission, so no PlacedInstance exists yet. Scoped to the clearance path only (Global
+// Constraints) -- never called from the other three modes' extraction path.
+//
+// Deviation from the plan's own sketch, found while implementing: the sketch guarded with
+// `Array.isArray(m)`, but readWorldMatrix's real contract (ViewerModelAdapter.js) returns a
+// `Float64Array`, and `Array.isArray(new Float64Array(16))` is `false` -- that guard would reject
+// EVERY legitimately-valid worldMatrix, never admitting a single clearance instance. Guarding on
+// `.length` instead (present identically on both `Array` and any TypedArray) is correct for both
+// shapes without weakening the check -- `.length !== 16` and `.some(...)` both work identically on
+// a Float64Array.
+function isValidClearanceTransform(extractedRecord) {
+  const m = extractedRecord.worldMatrix;
+  if (!m || m.length !== 16 || m.some((v) => !Number.isFinite(v))) return false;
+  const det = new THREE.Matrix4().fromArray(m).determinant();
+  if (!Number.isFinite(det) || det === 0) return false;
+  const b = extractedRecord.worldBounds;
+  if (!b || !b.min || !b.max) return false;
+  for (let i = 0; i < 3; i++) {
+    if (!Number.isFinite(b.min[i]) || !Number.isFinite(b.max[i]) || b.min[i] > b.max[i]) return false;
+  }
+  return true;
+}
+
+// Fragment-scoped, deduped per (epoch, fragmentId) -- mirrors `diagnoseFragmentOnce`'s existing
+// pattern exactly (a separate Set here, `clearanceInvalidTransformDiagnosed`, scoped per
+// `findClashes` call, never shared with `oversizedDiagnosedFragments` -- these are two independent
+// dedup namespaces for two independent diagnostic reasons, and conflating them would let one
+// reason's dedup entry incorrectly suppress the other for the same fragment).
+function diagnoseClearanceInvalidTransform(statistics, diagnosedSet, model, epoch, extractedRecord, role) {
+  const key = `${epoch}:${extractedRecord.fragmentId}`;
+  if (diagnosedSet.has(key)) return;
+  diagnosedSet.add(key);
+  statistics.diagnostics.push({
+    scope: 'fragment',
+    reason: 'clearance-invalid-transform',
+    role,
+    fragment: { modelId: modelIdOf(model), dbId: extractedRecord.ownerDbId, fragId: extractedRecord.fragmentId },
+  });
+}
+
 // The FragmentRef every ClashDiagnostic names. `dbId` always comes from the placed instance's own
 // ownerDbId (first-discovery-wins, captured during extraction), NEVER from the query's own
 // source.dbIds/target.dbIds, which say only where the walk started.
@@ -1147,6 +1191,19 @@ export class CollisionWorld {
       ? [this._checkEntryLifecycle(query.source, query.target)]
       : distinctModels.map((m) => this.admitModel(m)); // throws ModelEvictedError per M1 admitModel contract
     const leaseByModel = new Map(leases.map((l) => [l.model, l]));
+    // M3 Task 8: declared here (not built here) so the clearance-only admission-validation
+    // filtering block below (right before `targetTotalCount` is computed) can build and use a
+    // per-epoch lease lookup early, to attribute a target-side `clearance-invalid-transform`
+    // diagnostic to the right model. Deliberately `let`, uninitialized, rather than eagerly built
+    // here (codex-advisor review, this task): eagerly constructing this Map this early would cost
+    // the three pre-existing modes real, if tiny, unconditional work on paths that previously never
+    // built it at all (the empty-extraction fast path in particular, which returns before this
+    // point in the original code) and would shift what the checkpoint port's own frame-budget clock
+    // baseline (`createCompositeCheckpointPort`, just below) measures. Left `undefined` here, it
+    // costs the three pre-existing modes nothing extra; the ORIGINAL `const leaseByEpoch = ...`
+    // call site (now `leaseByEpoch ??= ...`, see its own comment) still builds it at exactly the
+    // same point those modes always built it, so their behavior is unaffected byte-for-byte.
+    let leaseByEpoch;
 
     // Task 14: the set of epochs THIS query will consult via a cached TLAS -- every distinct epoch
     // among the query's own `targetsEntries`' models. Known immediately from `leaseByModel`, with NO
@@ -1269,6 +1326,45 @@ export class CollisionWorld {
         if (!bucket.has(fragId)) bucket.set(fragId, rec);
       }
     }
+
+    // M3 Task 8: clearance-only admission validation, run HERE -- immediately after
+    // `targetRecordsByEpoch` is fully built and BEFORE `targetTotalCount` is computed just below,
+    // and well before any of `_recordRepresentativeFragments`/`_recordPlacement`/
+    // `admitCollisionInstances` run -- never later, and never inside a broad-phase candidate loop
+    // (see this task's brief, "Fix (Critical #4)": a NaN-bounds target might never surface as a TLAS
+    // candidate at all, so per-candidate validation would silently never run for it). Ordering
+    // against `targetTotalCount` matters concretely: that count feeds the empty-extraction fast-path
+    // check immediately below, so it must reflect POST-filter bucket sizes for a `mode:'clearance'`
+    // call, not the stale pre-filter sizes filtering earlier would leave stranded.
+    //
+    // Scoped strictly to `query.mode === 'clearance'` -- the other three modes' extraction/admission
+    // behavior is a protected invariant and must stay byte-for-byte unchanged; this whole block is a
+    // no-op for them.
+    if (query.mode === 'clearance') {
+      // Built HERE, on first need, only for a clearance call -- never eagerly for the three other
+      // modes (see the `let leaseByEpoch;` declaration's own comment above `leaseByModel`).
+      leaseByEpoch = new Map(leases.map((l) => [l.epoch, l]));
+      const clearanceInvalidTransformDiagnosed = new Set();
+      for (const [fragmentId, extractedRecord] of sourceExtracted) {
+        if (!isValidClearanceTransform(extractedRecord)) {
+          sourceExtracted.delete(fragmentId);
+          diagnoseClearanceInvalidTransform(
+            statistics, clearanceInvalidTransformDiagnosed, sourceLease.model, sourceEpoch, extractedRecord, 'source',
+          );
+        }
+      }
+      for (const [epoch, bucket] of targetRecordsByEpoch) {
+        for (const [fragmentId, extractedRecord] of bucket) {
+          if (!isValidClearanceTransform(extractedRecord)) {
+            bucket.delete(fragmentId);
+            diagnoseClearanceInvalidTransform(
+              statistics, clearanceInvalidTransformDiagnosed, leaseByEpoch.get(epoch).model, epoch, extractedRecord, 'target',
+            );
+          }
+        }
+      }
+    }
+
     let targetTotalCount = 0;
     for (const bucket of targetRecordsByEpoch.values()) targetTotalCount += bucket.size;
 
@@ -1378,8 +1474,12 @@ export class CollisionWorld {
     // those epochs had nothing to do with the failure. The preflight loop is read-only by its own
     // design, so moving it earlier is safe and does not change its own semantics -- it only narrows
     // the window in which representative-fragment state can be written to "after every epoch is
-    // already known to be admissible."
-    const leaseByEpoch = new Map(leases.map((l) => [l.epoch, l]));
+    // already known to be admissible." `leaseByEpoch` is now declared earlier (see the M3 Task 8
+    // comment above `leaseByModel`) but, for the three pre-existing modes, is still first BUILT
+    // right here, at exactly this original call site -- `??=` rather than `=` only because a
+    // clearance call may already have built it earlier (above) for its own filtering pass; for
+    // every other mode this is a plain first assignment, identical to the pre-Task-8 `const`.
+    leaseByEpoch ??= new Map(leases.map((l) => [l.epoch, l]));
     // `admissionStartedAt` is captured BEFORE the preflight loop, not between preflight and commit
     // (reviewer-caught finding, this task): `_now` is a constructor-injected clock seam, and the
     // "nothing between check and commit" atomicity guarantee above must not rest on an unverified
