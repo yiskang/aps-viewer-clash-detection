@@ -89,7 +89,7 @@ export const clearanceDistanceCrossCheckCombinedRelativeTolerance =
 // ClearanceQuery inflates the pinned BVH's `maxThreshold` by this relative margin before handing it
 // to `closestPointToGeometry`. Two independent effects put a candidate whose EXACT distance equals
 // `clearance` on the wrong side of the library's own strict `score < maxThreshold` test:
-//  1. float32 node-bound padding, ~2^-24 (1.19e-7) relative -- measured: for an exact world gap of 1
+//  1. float32 node-bound padding, ~2^-23 (1.19e-7) relative -- measured: for an exact world gap of 1
 //     the bounds-level score comes out at 0.9999998807907106, i.e. exactly one float32 epsilon of
 //     padding decides it, not geometry;
 //  2. the residual anisotropy `validateUniformScale` deliberately accepts. Two accepted operands can

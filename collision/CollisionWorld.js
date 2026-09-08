@@ -2223,10 +2223,18 @@ export class CollisionWorld {
    * without re-deriving or guessing it from a placeholder.
    *
    * Every non-hit outcome that represents a genuinely INCOMPLETE verdict (never a clean negative)
-   * pushes its own pair-scoped diagnostic before returning -- 'anisotropic-scale', 'inconclusive',
-   * 'aborted' -- matching this method's own "never silent" contract (codex-advisor review, this
-   * task: the brief's own pseudocode diagnosed 'inconclusive'/'aborted' but silently dropped
-   * 'anisotropic-scale', the one outcome its own aggregation-loop pseudocode had no case for).
+   * pushes its own diagnostic before returning, matching this method's own "never silent" contract
+   * (codex-advisor review, this task: the brief's own pseudocode diagnosed 'inconclusive'/'aborted'
+   * but silently dropped 'anisotropic-scale', the one outcome its own aggregation-loop pseudocode
+   * had no case for). The SCOPE differs by outcome, deliberately:
+   *   - 'inconclusive' and 'aborted' push a PAIR-scoped diagnostic (`scope: 'pair'`, with both
+   *     `sourceFragment` and `targetFragment`) -- each describes one specific fragment-pair
+   *     evaluation, and is emitted once per such pair.
+   *   - 'anisotropic-scale' pushes a FRAGMENT-scoped diagnostic instead (`scope: 'fragment'`,
+   *     deduped per `(epoch, fragmentId)` of the offending operand, one per offending SIDE), via
+   *     `diagnoseAnisotropicScaleOnce` -- anisotropic scale is a property of one operand's own
+   *     worldMatrix, not of the pair (Batch-2 review fix; see that helper's own comment, and
+   *     `diagnoseClearanceInvalidTransform`, the sibling fragment-scoped precedent it mirrors).
    * 'geometry-unavailable' needs no diagnostic of its own here -- `resolveGeometryRecord` already
    * pushed one via `diagnoseFragmentOnce` before returning `null`. 'hard-clash-excluded' and
    * 'beyond-threshold' are both clean, conclusive negatives and need no diagnostic either.

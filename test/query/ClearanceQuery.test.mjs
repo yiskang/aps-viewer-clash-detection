@@ -196,8 +196,11 @@ test('post-filter: a candidate admitted by bounds-level pruning but beyond clear
 // luck: for a true world gap of exactly 1 the pinned library's bounds-level score comes out at
 // 0.9999998807907106 -- 1.192e-7 under the strict `score < maxThreshold` boundary, i.e. EXACTLY one
 // float32 epsilon (2^-23) of conservative node padding, not a numeric margin. maxThresholdLocal now
-// carries an explicit `clearanceTraversalThresholdSafetyMargin` (1e-6), measured at 9.4x more
-// headroom. This probe sits at clearance = 1 - 5e-7: inside the new margin but BELOW the old float32
+// carries an explicit `clearanceTraversalThresholdSafetyMargin` (4e-4, i.e. 4x
+// `clearanceUniformScaleRelativeTolerance`), which per collision/constants.js's own note covers that
+// float32 padding artefact by ~3300x (and the residual-anisotropy term with ~2x headroom) while
+// widening the traversal threshold by only 0.04%.
+// This probe sits at clearance = 1 - 5e-7: inside the new margin but BELOW the old float32
 // padding artefact, so before the change the candidate was pruned away entirely (distance:null) and
 // now the traversal still reaches it and the exact post-filter -- not float32 padding -- decides.
 // Either way `withinClearance` is correctly false; what the margin buys is that the true distance is

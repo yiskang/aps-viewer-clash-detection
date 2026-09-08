@@ -107,8 +107,8 @@ const CAPACITY_EXCEEDED_MESSAGES = {
   'bucket-capacity': (kind) => `CollisionInstance admission rejected (${kind})`,
   'tlas-candidate-budget': () => 'TLAS candidate-expansion budget exceeded for this findClashes call',
   'whole-model-enumeration': (kind) => `CollisionInstance admission rejected (${kind})`, // Task 5's own kind, added here
-  'clearance-narrow-phase-budget': (k) =>
-    `Clearance narrow-phase pair budget exceeded (${k}) — too many candidate pairs for this findClashes call`,
+  'clearance-narrow-phase-budget': (kind) =>
+    `Clearance narrow-phase pair budget exceeded (${kind}) — too many candidate pairs for this findClashes call`,
 };
 
 export class CapacityExceededError extends Error {
