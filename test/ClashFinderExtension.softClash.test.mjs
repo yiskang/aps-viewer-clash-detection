@@ -12,6 +12,17 @@
 // "Find Soft Clashes" context-menu entry; its findClashes({mode:'clearance', clearance}) call shape;
 // and the binding global constraint that Hard Clash's `_latestActionToken` and Soft Clash's own
 // `_latestSoftClashActionToken` are separate counters that never cancel each other's in-flight run.
+//
+// Task 15 (M3, Batch 3) additions: real Soft Clash visualization coverage (two endpoint markers +
+// one connecting line per witness-bearing clearance pair, in a separate overlay scene/color from
+// Hard Clash's own markers). Unlike this file's own Task 14-era comment further down (now stale --
+// see the fake `window.THREE` section below), Soft Clash's real implementation DOES need a fake
+// `window.THREE` fixture, since `_ensureSoftClashOverlay`/`_addSoftClashVisualization` reach for the
+// real Viewer's r71 global exactly like Hard Clash's own `_ensureMarkerOverlay`/`_addMarkers` do --
+// this file installs its own copy of that fixture (extended with THREE.Line/LineBasicMaterial/
+// BufferGeometry), matching test/ClashFinderExtension.test.mjs's own fixture in spirit but kept as
+// this file's own separate copy (each `*.test.mjs` file runs in its own `node --test` process, so
+// nothing is shared or leaked between them).
 import { ClashFinderExtension, EXTENSION_ID } from '../wwwroot/extensions/ClashFinderExtension.js';
 import { CollisionWorld } from '../collision/index.js';
 
@@ -34,17 +45,24 @@ function makeFakeWorld() {
   };
 }
 
-// Minimal `viewer.overlays.*` mock -- this file's own tests never exercise the marker/overlay path
-// (Soft Clash visualization is a Task 15 stub in this task), but ClashFinderExtension's constructor
-// and unload() reference `viewer.overlays`, so a mock viewer must still carry a harmless one.
+// `viewer.overlays.*` mock -- extended for Task 15 with `_addMeshCalls`/`_removeMeshCalls` logs (in
+// ADDITION to the pre-existing `_scenes` introspection seam, kept for the tests that already used
+// it) so tests can assert not just "which meshes ended up in which scene" but "exactly how many
+// addMesh/removeMesh calls fired, with which scene name each time" -- the brief's own Step 1 sketch
+// explicitly wants an exact call COUNT ("addMesh fired 6 times"), which a Set-based scene snapshot
+// alone cannot distinguish from, e.g., the same mesh being added twice.
 function makeMockOverlays() {
   const scenes = new Map();
+  const addMeshCalls = [];
+  const removeMeshCalls = [];
   return {
     _scenes: scenes,
+    _addMeshCalls: addMeshCalls,
+    _removeMeshCalls: removeMeshCalls,
     hasScene(name) { return scenes.has(name); },
     addScene(name) { if (!scenes.has(name)) scenes.set(name, new Set()); },
-    addMesh(mesh, name) { scenes.get(name)?.add(mesh); },
-    removeMesh(mesh, name) { scenes.get(name)?.delete(mesh); },
+    addMesh(mesh, name) { addMeshCalls.push({ mesh, name }); scenes.get(name)?.add(mesh); },
+    removeMesh(mesh, name) { removeMeshCalls.push({ mesh, name }); scenes.get(name)?.delete(mesh); },
     clearScene(name) { scenes.get(name)?.clear(); },
     removeScene(name) { scenes.delete(name); },
   };
@@ -61,9 +79,108 @@ function makeMockViewer() {
   };
 }
 
+// Task 15: `_computeMarkerRadius` (reused as-is by Soft Clash's own `_addSoftClashVisualization`,
+// via its own new min/max-radius parameters) calls `model.getInstanceTree()` for every model in
+// `dbIdsByModel` -- every mock model here must expose it (returning `undefined`, i.e. "this model's
+// object tree has not loaded", the same defensively-handled case `_computeMarkerRadius` already
+// falls back to minRadius for) or that call throws a TypeError. This file's own tests don't exercise
+// radius-clamping math itself (that is test/ClashFinderExtension.test.mjs's own dedicated coverage
+// via its richer `boxesByDbId`-driven fixture) -- only that Soft Clash's visualization renders at
+// all without crashing on a real dbIdsByModel Map.
 function makeMockModel(id) {
-  return { id };
+  return { id, getInstanceTree() { return undefined; } };
 }
+
+// === fake window.THREE — the r71 subset Soft Clash's own visualization touches (Task 15) ==========
+// Node has no `window` global and this repo must never import the npm `three` package into
+// ClashFinderExtension.js -- see test/ClashFinderExtension.test.mjs's own identical rationale for
+// its Hard Clash fixture. This file installs its OWN copy (each `*.test.mjs` file runs in its own
+// `node --test` process, so nothing here leaks into or is shared with that sibling file), extended
+// with THREE.Line/THREE.LineBasicMaterial/THREE.BufferGeometry -- the three APIs Hard Clash's own
+// marker overlay never needed, confirmed available on the real pinned r71 bundle (see this task's
+// dispatch context: THREE.Line/LineBasicMaterial construction and BufferGeometry#setFromPoints all
+// source-verified against the real viewer3D.js, including the Viewer's own internal gizmo/
+// measurement-tool code already calling all three this exact way).
+class FakeVector3 {
+  constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
+  set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
+}
+
+class FakeSphere {
+  constructor() { this.center = new FakeVector3(); this.radius = 0; }
+}
+
+// Minimal Box3 -- this file's own mock models always return `getInstanceTree() -> undefined` (see
+// makeMockModel above), so `_computeMarkerRadius`'s loop never adds anything to this box and it is
+// ALWAYS empty by the time `isEmpty()` is checked; radius-clamping arithmetic itself is exercised by
+// test/ClashFinderExtension.test.mjs's own richer fixture, not duplicated here.
+class FakeBox3 {
+  isEmpty() { return true; }
+}
+
+class FakeSphereGeometry {
+  constructor(radius, widthSegments, heightSegments) {
+    this.radius = radius; this.widthSegments = widthSegments; this.heightSegments = heightSegments;
+  }
+  dispose() {}
+}
+
+class FakeMeshBasicMaterial {
+  constructor(params) { Object.assign(this, params); }
+  dispose() {}
+}
+
+class FakeLineBasicMaterial {
+  constructor(params) { Object.assign(this, params); }
+  dispose() {}
+}
+
+class FakeMesh {
+  constructor(geometry, material) {
+    this.geometry = geometry;
+    this.material = material;
+    this.position = new FakeVector3();
+    this.scale = new FakeVector3(1, 1, 1);
+  }
+  updateMatrixWorld() {}
+}
+
+// setFromPoints -- real THREE.BufferGeometry.prototype.setFromPoints -- is fed an array of
+// THREE.Vector3-shaped points; this fake just records them (arithmetic fidelity is not the point
+// here, only that the two endpoint positions this file's tests supply reach the resulting line).
+class FakeBufferGeometry {
+  setFromPoints(points) { this.points = points; return this; }
+  dispose() {}
+}
+
+class FakeLine {
+  constructor(geometry, material) { this.geometry = geometry; this.material = material; }
+}
+
+// Installed once, at module load -- `node --test` runs each `*.test.mjs` file in its own process
+// (isolation: 'process' is the default), so this global does not leak into other test files.
+globalThis.window = globalThis.window ?? {};
+globalThis.window.THREE = {
+  Vector3: FakeVector3,
+  Box3: FakeBox3,
+  Sphere: FakeSphere,
+  SphereGeometry: FakeSphereGeometry,
+  MeshBasicMaterial: FakeMeshBasicMaterial,
+  LineBasicMaterial: FakeLineBasicMaterial,
+  Mesh: FakeMesh,
+  BufferGeometry: FakeBufferGeometry,
+  Line: FakeLine,
+};
+
+// Task 15: production module-level constants this file's own assertions need to compare against.
+// Not exported by ClashFinderExtension.js (matching MARKER_OVERLAY_NAME/MARKER_COLOR's own existing
+// precedent of staying internal, non-exported constants) -- these literals are kept in exact sync
+// with the real values in wwwroot/extensions/ClashFinderExtension.js by this comment's own cross-
+// reference; a mismatch here would make every assertion below fail loudly, not silently pass.
+const SOFT_CLASH_OVERLAY_NAME = 'clash-finder-soft-markers';
+const SOFT_CLASH_COLOR = 0x2b8fff;
+const MARKER_OVERLAY_NAME = 'clash-finder-markers'; // Hard Clash's own overlay scene name
+const MARKER_COLOR = 0xff6a00; // Hard Clash's own marker color
 
 // Bypasses fromViewer/load() to inject a controllable fake world directly (same seam the sibling
 // Hard Clash test file uses), while still mirroring exactly what load() itself would have set on
@@ -178,7 +295,11 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB];
   world.findClashes = async () => ({
-    pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
+    pairs: [{
+      source: { modelId: 1, dbId: 10, model: modelA },
+      target: { modelId: 2, dbId: 30, model: modelB },
+      witness: { sourcePoint: [1, 2, 3], targetPoint: [4, 5, 6] },
+    }],
     statistics: { diagnostics: [] },
   });
   const isolateCalls = [], fitToViewCalls = [];
@@ -193,11 +314,19 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   check('isolate called once per involved model (source + target)', isolateCalls.length, 2);
   check('fitToView called once per involved model', fitToViewCalls.length, 2);
   check('notify reports the clash count', notified, '1 clashes found (0 in this model, 1 in other models)');
-  // check()'s own actual===expected comparison cannot compare arrays by value -- compare length and
-  // each pair's identity (===, matching the pairs array findClashes itself returned) instead.
-  check('_activeSoftClashObjects tracks the pairs (Task 15 stub): same length', ext._activeSoftClashObjects.length, 1);
-  check('_activeSoftClashObjects tracks the pairs (Task 15 stub): source dbId', ext._activeSoftClashObjects[0]?.source?.dbId, 10);
-  check('_activeSoftClashObjects tracks the pairs (Task 15 stub): target dbId', ext._activeSoftClashObjects[0]?.target?.dbId, 30);
+  // Task 15: real visualization -- one pair renders two markers + one line (3 objects), all in
+  // SOFT_CLASH_OVERLAY_NAME, tracked in _activeSoftClashObjects for later teardown.
+  check('_activeSoftClashObjects tracks the 3 rendered objects (2 markers + 1 line)', ext._activeSoftClashObjects.length, 3);
+  check('all 3 objects were added to the SOFT_CLASH_OVERLAY_NAME scene',
+    viewer.overlays._addMeshCalls.filter((c) => c.name === SOFT_CLASH_OVERLAY_NAME).length, 3);
+  check('none of them were added to Hard Clash\'s own MARKER_OVERLAY_NAME scene',
+    viewer.overlays._addMeshCalls.filter((c) => c.name === MARKER_OVERLAY_NAME).length, 0);
+  const [sourceMesh, targetMesh, line] = ext._activeSoftClashObjects;
+  check('the source marker mesh is positioned at witness.sourcePoint',
+    `${sourceMesh.position.x},${sourceMesh.position.y},${sourceMesh.position.z}`, '1,2,3');
+  check('the target marker mesh is positioned at witness.targetPoint',
+    `${targetMesh.position.x},${targetMesh.position.y},${targetMesh.position.z}`, '4,5,6');
+  check('the connecting line carries both endpoint points', line.geometry.points.length, 2);
 }
 
 // === "No clashes found" is reported unconditionally on a clean soft-clash result ===================
@@ -266,10 +395,11 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   const alerts = [];
   ext._notifyUser = (message) => { alerts.push(message); };
   // Hard Clash's success path calls _addMarkers, which reaches for the real Viewer's `window.THREE`
-  // global -- absent in this headless process (this file, unlike its sibling
-  // ClashFinderExtension.test.mjs, never installs a fake window.THREE, since Soft Clash's own
-  // visualization needs no such fixture). Stubbed out here since this test is about action-token
-  // independence, not marker-overlay geometry.
+  // global. This file DOES install a fake window.THREE (Task 15, see the top of this file) since
+  // Soft Clash's own visualization now needs one too -- but _addMarkers is still stubbed out here on
+  // purpose: this test is about action-token independence, not marker-overlay geometry, and the
+  // pairs below carry no `witness`, so Hard Clash's real _addMarkers would just no-op anyway; the
+  // stub keeps that irrelevant-to-this-test fact from needing re-justification here.
   ext._addMarkers = () => {};
 
   const menu = [];
@@ -348,6 +478,164 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
     isolateCalls.some((c) => c.dbIds.includes(10)) && isolateCalls.some((c) => c.dbIds.includes(77)), true);
   check('Soft Clash notify fired (not silently discarded as stale, mirror direction)',
     alerts.some((m) => /^1 clashes found/.test(m)), true);
+}
+
+// === Task 15: a successful Find Soft Clashes result renders two markers + one line per pair =======
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB, modelC];
+  world.findClashes = async () => ({
+    pairs: [
+      {
+        source: { modelId: 1, dbId: 10, model: modelA },
+        target: { modelId: 2, dbId: 30, model: modelB },
+        witness: { sourcePoint: [0, 0, 0], targetPoint: [1, 0, 0] },
+      },
+      {
+        source: { modelId: 1, dbId: 10, model: modelA },
+        target: { modelId: 3, dbId: 40, model: modelC },
+        witness: { sourcePoint: [5, 5, 5], targetPoint: [6, 6, 6] },
+      },
+    ],
+    statistics: { diagnostics: [] },
+  });
+  const menu = [];
+  ext.onContextMenu(menu, {});
+  await menu.find((m) => m.title === 'Find Soft Clashes').target();
+  const softAddMeshCalls = viewer.overlays._addMeshCalls;
+  check('addMesh fired exactly 6 times (2 markers + 1 line, per pair, for 2 pairs)', softAddMeshCalls.length, 6);
+  check('every addMesh call used SOFT_CLASH_OVERLAY_NAME',
+    softAddMeshCalls.every((c) => c.name === SOFT_CLASH_OVERLAY_NAME), true);
+  check('no addMesh call ever used Hard Clash\'s own MARKER_OVERLAY_NAME',
+    softAddMeshCalls.some((c) => c.name === MARKER_OVERLAY_NAME), false);
+  check('_activeSoftClashObjects tracks all 6 rendered objects', ext._activeSoftClashObjects.length, 6);
+}
+
+// === Task 15: markers/line use SOFT_CLASH_COLOR, distinct from Hard Clash MARKER_COLOR ==============
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  world.findClashes = async () => ({
+    pairs: [{
+      source: { modelId: 1, dbId: 10, model: modelA },
+      target: { modelId: 2, dbId: 30, model: modelB },
+      witness: { sourcePoint: [0, 0, 0], targetPoint: [1, 1, 1] },
+    }],
+    statistics: { diagnostics: [] },
+  });
+  const menu = [];
+  ext.onContextMenu(menu, {});
+  await menu.find((m) => m.title === 'Find Soft Clashes').target();
+  const [sourceMesh, targetMesh, line] = ext._activeSoftClashObjects;
+  check('the source marker mesh uses SOFT_CLASH_COLOR', sourceMesh.material.color, SOFT_CLASH_COLOR);
+  check('the target marker mesh uses SOFT_CLASH_COLOR', targetMesh.material.color, SOFT_CLASH_COLOR);
+  check('the connecting line uses SOFT_CLASH_COLOR', line.material.color, SOFT_CLASH_COLOR);
+  check('the source marker mesh does NOT use Hard Clash\'s MARKER_COLOR',
+    sourceMesh.material.color === MARKER_COLOR, false);
+  check('SOFT_CLASH_COLOR and MARKER_COLOR are themselves distinct literals', SOFT_CLASH_COLOR === MARKER_COLOR, false);
+}
+
+// === Task 15: zero-result Find Soft Clashes clears any prior soft-clash visualization, adds nothing
+// new ==================================================================================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  world.findClashes = async () => ({
+    pairs: [{
+      source: { modelId: 1, dbId: 10, model: modelA },
+      target: { modelId: 2, dbId: 30, model: modelB },
+      witness: { sourcePoint: [0, 0, 0], targetPoint: [1, 1, 1] },
+    }],
+    statistics: { diagnostics: [] },
+  });
+  const menu1 = [];
+  ext.onContextMenu(menu1, {});
+  await menu1.find((m) => m.title === 'Find Soft Clashes').target();
+  check('setup: the first (non-empty) call populated 3 objects', ext._activeSoftClashObjects.length, 3);
+  check('setup: the overlay scene holds 3 meshes/lines', viewer.overlays._scenes.get(SOFT_CLASH_OVERLAY_NAME).size, 3);
+  viewer.overlays._addMeshCalls.length = 0; // reset the observation window before the zero-result call
+
+  world.findClashes = async () => ({ pairs: [], statistics: { diagnostics: [] } });
+  const menu2 = [];
+  ext.onContextMenu(menu2, {});
+  await menu2.find((m) => m.title === 'Find Soft Clashes').target();
+  check('a zero-result call clears _activeSoftClashObjects entirely', ext._activeSoftClashObjects.length, 0);
+  check('a zero-result call removes every prior object from the overlay scene',
+    viewer.overlays._scenes.get(SOFT_CLASH_OVERLAY_NAME).size, 0);
+  check('a zero-result call adds NOTHING new (no addMesh calls at all)', viewer.overlays._addMeshCalls.length, 0);
+}
+
+// === Task 15: a subsequent Find Clashes call does not clear Soft Clash markers, and vice versa
+// (independent overlays) ==============================================================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+
+  // First: a successful Find Soft Clashes populates the SOFT_CLASH_OVERLAY_NAME scene.
+  world.findClashes = async () => ({
+    pairs: [{
+      source: { modelId: 1, dbId: 10, model: modelA },
+      target: { modelId: 2, dbId: 30, model: modelB },
+      witness: { sourcePoint: [0, 0, 0], targetPoint: [1, 1, 1] },
+    }],
+    statistics: { diagnostics: [] },
+  });
+  const menuSoft1 = [];
+  ext.onContextMenu(menuSoft1, {});
+  await menuSoft1.find((m) => m.title === 'Find Soft Clashes').target();
+  check('setup: Soft Clash populated its own 3 objects', ext._activeSoftClashObjects.length, 3);
+  const softObjectsAfterFirstRun = [...ext._activeSoftClashObjects];
+
+  // Then: a successful Find Clashes (Hard Clash) run must NOT touch Soft Clash's own state/scene.
+  world.findClashes = async () => ({
+    pairs: [{
+      source: { modelId: 1, dbId: 10, model: modelA },
+      target: { modelId: 2, dbId: 30, model: modelB },
+      witness: { point: [9, 9, 9] },
+    }],
+    statistics: { diagnostics: [] },
+  });
+  const menuHard = [];
+  ext.onContextMenu(menuHard, {});
+  await menuHard.find((m) => m.title === 'Find Clashes').target();
+  check('Find Clashes populated its own Hard Clash marker (1 object)', ext._activeMarkers.length, 1);
+  check('Soft Clash\'s _activeSoftClashObjects is untouched by Find Clashes',
+    ext._activeSoftClashObjects.length, 3);
+  check('Soft Clash\'s own SOFT_CLASH_OVERLAY_NAME scene still holds all 3 of its objects',
+    softObjectsAfterFirstRun.every((obj) => viewer.overlays._scenes.get(SOFT_CLASH_OVERLAY_NAME).has(obj)), true);
+  check('Find Clashes\' marker landed in MARKER_OVERLAY_NAME, not SOFT_CLASH_OVERLAY_NAME',
+    viewer.overlays._scenes.get(SOFT_CLASH_OVERLAY_NAME).size, 3);
+
+  // Finally (mirror direction): a subsequent Find Soft Clashes run must NOT touch Hard Clash's own
+  // state/scene either.
+  const hardMarkerAfterFirstRun = [...ext._activeMarkers];
+  const menuSoft2 = [];
+  ext.onContextMenu(menuSoft2, {});
+  world.findClashes = async () => ({
+    pairs: [{
+      source: { modelId: 1, dbId: 10, model: modelA },
+      target: { modelId: 2, dbId: 30, model: modelB },
+      witness: { sourcePoint: [2, 2, 2], targetPoint: [3, 3, 3] },
+    }],
+    statistics: { diagnostics: [] },
+  });
+  await menuSoft2.find((m) => m.title === 'Find Soft Clashes').target();
+  check('Hard Clash\'s _activeMarkers is untouched by a subsequent Find Soft Clashes',
+    ext._activeMarkers.length, 1);
+  check('Hard Clash\'s own marker object identity is unchanged', ext._activeMarkers[0] === hardMarkerAfterFirstRun[0], true);
+  check('Hard Clash\'s own MARKER_OVERLAY_NAME scene still holds its 1 marker',
+    viewer.overlays._scenes.get(MARKER_OVERLAY_NAME).size, 1);
+  // Soft Clash's own second run replaced its own 3 objects with a new 3 (clear-then-add, same as
+  // every earlier "Find Soft Clashes clears its own PRIOR visualization" test above establishes).
+  check('Soft Clash\'s second run still (independently) replaced its own 3 objects', ext._activeSoftClashObjects.length, 3);
 }
 
 console.log(`\n  ${passes} passed, ${failures} failed`);

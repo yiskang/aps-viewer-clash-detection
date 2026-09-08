@@ -58,6 +58,22 @@ const MARKER_COLOR = 0xff6a00; // distinct from the Viewer's default selection t
 // MARKER_RADIUS_FRACTION/MIN/MAX_MARKER_RADIUS above are already flagged as provisional.
 const DEFAULT_CLEARANCE = 0.05;
 
+// Task 15 (M3 Batch 3): "Find Soft Clashes" own overlay constants, mirroring Hard Clash's own
+// MARKER_OVERLAY_NAME/MARKER_COLOR constants above but kept as SEPARATE, DISTINCT values (never
+// reused) so both result types can be visualized in the same session without confusion --
+// SOFT_CLASH_OVERLAY_NAME is a completely separate overlay scene from MARKER_OVERLAY_NAME, and
+// SOFT_CLASH_COLOR (blue) is visually distinct from MARKER_COLOR (orange).
+const SOFT_CLASH_OVERLAY_NAME = 'clash-finder-soft-markers';
+const SOFT_CLASH_COLOR = 0x2b8fff; // blue -- distinct from Hard Clash's MARKER_COLOR (orange)
+// Documentary only: _computeMarkerRadius's own refactor below (Task 15) parameterizes min/max
+// radius, but NOT MARKER_RADIUS_FRACTION -- Soft Clash intentionally reuses that same shared
+// internal fraction rather than threading a second one through, since Task 10's tuning already
+// applies to both marker families identically. This constant records that the SAME fraction value
+// is deliberately reused, in case a future change ever DOES need to parameterize the fraction too.
+const SOFT_CLASH_MARKER_RADIUS_FRACTION = MARKER_RADIUS_FRACTION;
+const SOFT_CLASH_MIN_MARKER_RADIUS = 0.05; // world units — same provisional-tuning caveat as MIN_MARKER_RADIUS
+const SOFT_CLASH_MAX_MARKER_RADIUS = 2.0; // world units — same provisional-tuning caveat as MAX_MARKER_RADIUS
+
 export class ClashFinderExtension extends ExtensionBase {
   // Exposed as static class fields too (not just the module-level consts above) so callers/tests
   // can reference the live values off the class itself (e.g. ClashFinderExtension.MIN_MARKER_RADIUS)
@@ -101,6 +117,13 @@ export class ClashFinderExtension extends ExtensionBase {
     // independent, never sharing state, matching the same "separate, independent action" framing as
     // the two action tokens below.
     this._activeSoftClashObjects = [];
+    // Task 15 (M3 Batch 3): lazily created (see _ensureSoftClashOverlay), shared across every
+    // Soft Clash marker/line this extension ever creates -- same "one shared geometry/material
+    // pair, never per-instance duplication" discipline as _markerGeometry/_markerMaterial above,
+    // but its OWN separate objects (never shared with Hard Clash's).
+    this._softClashGeometry = null;
+    this._softClashMaterial = null;
+    this._softClashLineMaterial = null;
     this._onBeforeModelUnloadBound = (event) => this._onBeforeModelUnload(event);
     this._onContextMenuBound = (menu, status) => this.onContextMenu(menu, status);
   }
@@ -303,11 +326,20 @@ export class ClashFinderExtension extends ExtensionBase {
   }
 
   // Derives a marker radius from the combined bounding sphere of every isolated dbId, always
-  // clamped between MIN_MARKER_RADIUS and MAX_MARKER_RADIUS (Global Constraint) -- an unbounded
-  // fraction of a huge federated model's bounding sphere would produce a marker the size of a
-  // building; an unbounded fraction of a tiny model (or of an empty box: see below) would produce
-  // one invisibly small or, worse, an Infinity-derived one that clamps to MAX and reads as a real
-  // measurement it never was.
+  // clamped between minRadius and maxRadius (Global Constraint) -- an unbounded fraction of a huge
+  // federated model's bounding sphere would produce a marker the size of a building; an unbounded
+  // fraction of a tiny model (or of an empty box: see below) would produce one invisibly small or,
+  // worse, an Infinity-derived one that clamps to maxRadius and reads as a real measurement it
+  // never was.
+  //
+  // Task 15 (M3 Batch 3) refactor: `minRadius`/`maxRadius` were previously read directly off the
+  // module-level MIN_MARKER_RADIUS/MAX_MARKER_RADIUS consts inside this method's body, with no way
+  // for a caller to supply different clamp bounds. Soft Clash's own visualization (Task 15) needs
+  // its own SOFT_CLASH_MIN_MARKER_RADIUS/SOFT_CLASH_MAX_MARKER_RADIUS bounds rather than Hard
+  // Clash's -- parameterizing here (defaulting to the ORIGINAL module-level consts) is a
+  // behavior-preserving refactor: Hard Clash's own call site below (`_addMarkers`, unchanged) omits
+  // both new arguments and gets IDENTICAL behavior to before via these defaults. Proven by
+  // `test/ClashFinderExtension.test.mjs` passing unmodified.
   //
   // InstanceTree.getNodeBox(dbId, dst) -- source-verified against the pinned Viewer 7.124.2 bundle
   // (ObjectTree.prototype.getNodeBox / InstanceTreeAccess.prototype.getNodeBox) -- writes a FLAT
@@ -317,7 +349,7 @@ export class ClashFinderExtension extends ExtensionBase {
   // it and never touch its real .min/.max, making every union below a silent no-op. `Float32Array`
   // matches getNodeBox's own documented @param type exactly; THREE.Box3#setFromArray(array, offset)
   // is the public conversion API (Autodesk.Viewing.Math.Box3#setFromArray) back into a Box3.
-  _computeMarkerRadius(dbIdsByModel = new Map()) {
+  _computeMarkerRadius(dbIdsByModel = new Map(), minRadius = MIN_MARKER_RADIUS, maxRadius = MAX_MARKER_RADIUS) {
     const THREE = window.THREE;
     const box = new THREE.Box3();
     const rawNodeBox = new Float32Array(6);
@@ -341,19 +373,19 @@ export class ClashFinderExtension extends ExtensionBase {
     // An empty box (no dbIds passed, or every dbId's own box came back empty) has no meaningful
     // bounds to derive a fraction of. getBoundingSphere on an untouched Box3 (min=+Infinity,
     // max=-Infinity) computes an Infinity-magnitude radius that Math.min/Math.max below would
-    // silently clamp down to MAX_MARKER_RADIUS -- indistinguishable from a genuinely huge model.
-    // MIN_MARKER_RADIUS is the more honest fallback here: smallest marker, not a building-sized guess.
-    if (box.isEmpty()) return MIN_MARKER_RADIUS;
+    // silently clamp down to maxRadius -- indistinguishable from a genuinely huge model.
+    // minRadius is the more honest fallback here: smallest marker, not a building-sized guess.
+    if (box.isEmpty()) return minRadius;
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     // [Batch 2 whole-batch review Finding 4 fix] A dbId not tracked in a model's nodeBoxes (a
     // stale/inconsistent InstanceTree) can make getNodeBox write NaNs into rawNodeBox. NaN poisons
     // min/max such that box.isEmpty() above returns false (every NaN comparison is false, so neither
     // `max.x < min.x` etc. is ever true) -- the empty-box guard does NOT catch this case, so it needs
     // its own explicit check here: a non-finite sphere.radius falls back to the same honest
-    // MIN_MARKER_RADIUS rather than propagating NaN into the marker's scale.
-    if (!Number.isFinite(sphere.radius)) return MIN_MARKER_RADIUS;
+    // minRadius rather than propagating NaN into the marker's scale.
+    if (!Number.isFinite(sphere.radius)) return minRadius;
     const raw = sphere.radius * MARKER_RADIUS_FRACTION;
-    return Math.min(Math.max(raw, MIN_MARKER_RADIUS), MAX_MARKER_RADIUS);
+    return Math.min(Math.max(raw, minRadius), maxRadius);
   }
 
   // One THREE.Mesh per witness-bearing ClashPair, all sharing the one geometry/material pair from
@@ -412,21 +444,90 @@ export class ClashFinderExtension extends ExtensionBase {
     this._activeMarkers.length = 0;
   }
 
-  // Task 14 (M3 Batch 3): "Find Soft Clashes" own visualization teardown, kept fully separate from
-  // _clearMarkers (Hard Clash's own witness-marker overlay) -- these two never share state. Trivial
-  // for now (Task 15 adds real overlay geometry); resets the tracked pairs so a fresh Soft Clash
-  // query, or a "No clashes found" outcome, never leaves a stale visualization from an earlier query.
-  _clearSoftClashVisualization() {
-    this._activeSoftClashObjects = [];
+  // Task 15 (M3 Batch 3): lazily creates the shared SphereGeometry/MeshBasicMaterial/
+  // LineBasicMaterial trio (Global Constraint: no per-marker/per-line geometry or material
+  // duplication -- every Soft Clash mesh/line this extension ever creates reuses these same
+  // objects, EXCEPT each pair's own connecting-line BufferGeometry, which is inherently per-pair
+  // since it encodes that pair's own two endpoint positions) and the overlay scene itself, both on
+  // first use -- same lazy-creation discipline as _ensureMarkerOverlay, but its OWN separate scene
+  // name/objects, never shared with Hard Clash's. `hasScene` is checked before calling `addScene`
+  // for the same reason _ensureMarkerOverlay checks it (Task 7 finding 1).
+  _ensureSoftClashOverlay() {
+    const THREE = window.THREE; // Viewer's own r71 global -- never import 'three' in this file.
+    if (!this._softClashGeometry) {
+      this._softClashGeometry = new THREE.SphereGeometry(1, 12, 8); // unit sphere — scaled per-instance below
+      this._softClashMaterial = new THREE.MeshBasicMaterial({
+        color: SOFT_CLASH_COLOR,
+        transparent: true,
+        opacity: 0.65,
+        // Same depthTest/depthWrite rationale as Hard Clash's own _ensureMarkerOverlay above.
+        depthTest: false,
+        depthWrite: false,
+      });
+      this._softClashLineMaterial = new THREE.LineBasicMaterial({
+        color: SOFT_CLASH_COLOR,
+        transparent: true,
+        opacity: 0.65,
+        depthTest: false,
+      });
+    }
+    if (!this._viewer.overlays.hasScene(SOFT_CLASH_OVERLAY_NAME)) {
+      this._viewer.overlays.addScene(SOFT_CLASH_OVERLAY_NAME);
+    }
   }
 
-  // Task 14 (M3 Batch 3): "Find Soft Clashes" own visualization apply, wired here as a real (if
-  // minimal) method -- never a placeholder that throws -- so the "Find Soft Clashes" success path
-  // below has a real call site. Task 15 fills this in with actual overlay geometry (e.g. highlighting
-  // the narrow-gap regions between each pair's clearance witness); for now it just tracks the pairs
-  // it was given, giving _clearSoftClashVisualization something real to reset.
+  // Task 15 (M3 Batch 3): renders TWO endpoint marker spheres (one at pair.witness.sourcePoint, one
+  // at pair.witness.targetPoint) plus ONE connecting THREE.Line per witness-bearing clearance pair
+  // -- new visual code, not a drop-in reuse of Hard Clash's own single-sphere-per-pair _addMarkers
+  // (the M2.1 inventory confirmed that method renders exactly one sphere at a single
+  // witness.point). A pair without a witness is skipped: per the clearance query's own documented
+  // contract, a clearance pair is only ever emitted with a real witness, but this guard keeps the
+  // method defensively correct if that ever changes. `dbIdsByModel` defaults to an empty Map,
+  // matching `_addMarkers`'s own default -- see `_computeMarkerRadius`'s own empty-box fallback.
   _addSoftClashVisualization(pairs, dbIdsByModel = new Map()) {
-    this._activeSoftClashObjects = pairs;
+    const THREE = window.THREE;
+    this._ensureSoftClashOverlay();
+    const radius = this._computeMarkerRadius(dbIdsByModel, SOFT_CLASH_MIN_MARKER_RADIUS, SOFT_CLASH_MAX_MARKER_RADIUS);
+    for (const pair of pairs) {
+      if (!pair.witness) continue; // per spec, a clearance pair is only ever emitted with a real witness
+      const sourceMesh = new THREE.Mesh(this._softClashGeometry, this._softClashMaterial);
+      sourceMesh.scale.set(radius, radius, radius);
+      sourceMesh.position.set(...pair.witness.sourcePoint);
+      this._viewer.overlays.addMesh(sourceMesh, SOFT_CLASH_OVERLAY_NAME);
+      this._activeSoftClashObjects.push(sourceMesh);
+
+      const targetMesh = new THREE.Mesh(this._softClashGeometry, this._softClashMaterial);
+      targetMesh.scale.set(radius, radius, radius);
+      targetMesh.position.set(...pair.witness.targetPoint);
+      this._viewer.overlays.addMesh(targetMesh, SOFT_CLASH_OVERLAY_NAME);
+      this._activeSoftClashObjects.push(targetMesh);
+
+      // Per-pair BufferGeometry (encodes this pair's own two endpoint positions) -- unlike
+      // _softClashGeometry/_softClashMaterial/_softClashLineMaterial above, this is NOT shared
+      // across pairs, and is disposed per-object in _clearSoftClashVisualization below.
+      const lineGeometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(...pair.witness.sourcePoint), new THREE.Vector3(...pair.witness.targetPoint),
+      ]);
+      const line = new THREE.Line(lineGeometry, this._softClashLineMaterial);
+      this._viewer.overlays.addMesh(line, SOFT_CLASH_OVERLAY_NAME);
+      this._activeSoftClashObjects.push(line);
+    }
+  }
+
+  // Removes every currently-active Soft Clash mesh/line from the overlay scene one at a time
+  // (removeMesh, not clearScene -- same rationale as _clearMarkers above), and disposes each
+  // object's own per-pair line BufferGeometry (the ONLY per-object geometry this extension ever
+  // creates for Soft Clash -- the shared sphere geometry, by contrast, outlives this call, exactly
+  // like _clearMarkers leaves _markerGeometry/_markerMaterial alone). Does NOT dispose
+  // _softClashGeometry/_softClashMaterial/_softClashLineMaterial or call removeScene -- those
+  // outlive individual clear/re-add cycles across repeated Find Soft Clashes queries, matching
+  // _clearMarkers's own documented teardown-ownership split (Task 7 finding 5).
+  _clearSoftClashVisualization() {
+    for (const obj of this._activeSoftClashObjects) {
+      this._viewer.overlays.removeMesh(obj, SOFT_CLASH_OVERLAY_NAME);
+      if (obj.geometry && obj.geometry !== this._softClashGeometry) obj.geometry.dispose(); // per-pair line geometry
+    }
+    this._activeSoftClashObjects = [];
   }
 
   // Spec 11.2, verbatim rule: the "Find Clashes" entry appears ONLY when viewer.getAggregateSelection()
