@@ -596,11 +596,17 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
 
 // === Task 15: a subsequent Find Clashes call does not clear Soft Clash markers, and vice versa
 // (independent overlays) ==============================================================================
+// [narrow fix, post-Batch-3] Strengthened (not replaced) with a real isolate()-call/_isolatedModels
+// union check -- the whole-batch review specifically noted this test never inspected isolate() calls
+// or _isolatedModels, only overlay/marker state, so "independent overlays" alone did not actually
+// prove isolation itself was never silently clobbered across actions.
 {
   const { ext, viewer, world } = extensionWithFakeWorld();
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
 
   // First: a successful Find Soft Clashes populates the SOFT_CLASH_OVERLAY_NAME scene.
   world.findClashes = async () => ({
@@ -659,6 +665,21 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   // Soft Clash's own second run replaced its own 3 objects with a new 3 (clear-then-add, same as
   // every earlier "Find Soft Clashes clears its own PRIOR visualization" test above establishes).
   check('Soft Clash\'s second run still (independently) replaced its own 3 objects', ext._activeSoftClashObjects.length, 3);
+
+  // [narrow fix, post-Batch-3] The real isolation-union check: modelB is shared by both actions
+  // (both this test's Hard Clash and Soft Clash pairs target dbId 30 on modelB), so the FINAL
+  // isolate() call for modelB must still reflect BOTH actions' own current contribution, not just
+  // whichever action ran most recently -- overlay/marker independence alone (already checked above)
+  // does not by itself prove isolation was never silently clobbered.
+  const lastCallForModelA = [...isolateCalls].reverse().find((c) => c.model === modelA);
+  const lastCallForModelB = [...isolateCalls].reverse().find((c) => c.model === modelB);
+  check('the FINAL isolate() call for modelA includes the shared source dbId 10 (contributed by both actions)',
+    lastCallForModelA.dbIds.includes(10), true);
+  check('the FINAL isolate() call for the shared modelB includes dbId 30 (target, contributed by both actions)',
+    lastCallForModelB.dbIds.includes(30), true);
+  check('_isolatedModels still reflects both models after the Hard-then-Soft-then-Soft sequence', ext._isolatedModels.size, 2);
+  check('_isolatedModels has modelA', ext._isolatedModels.has(modelA), true);
+  check('_isolatedModels has modelB', ext._isolatedModels.has(modelB), true);
 }
 
 // === Task 16 (M3 Batch 3): lifecycle wiring -- Soft Clash's own independent cleanup, wired into
@@ -820,6 +841,290 @@ async function extensionWithBothVisualizationsPopulated() {
   const tokenBefore = ext._latestSoftClashActionToken;
   ext.unload();
   check('unload() bumps _latestSoftClashActionToken', ext._latestSoftClashActionToken > tokenBefore, true);
+}
+
+// === [narrow fix, post-Batch-3] Hard -> Soft preserves visibility for both result sets: firing Find
+// Soft Clashes after Find Clashes must UNION their own isolation contributions for any model both
+// share (modelB below), not have Soft Clash's own isolation silently replace Hard Clash's -- the bug
+// this whole fix exists to close. modelC is isolated by Soft Clash only, proving the union still
+// covers a model Hard Clash never touched. ============================================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB, modelC];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return {
+        pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
+        statistics: { diagnostics: [] },
+      };
+    }
+    return { pairs: [], statistics: { diagnostics: [] } };
+  };
+  const menu1 = [];
+  ext.onContextMenu(menu1, {});
+  await menu1.find((m) => m.title === 'Find Clashes').target();
+
+  world.findClashes = async (query) => {
+    if (query.mode === 'clearance') {
+      return {
+        pairs: [
+          { source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 31, model: modelB } },
+          { source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 3, dbId: 50, model: modelC } },
+        ],
+        statistics: { diagnostics: [] },
+      };
+    }
+    return { pairs: [], statistics: { diagnostics: [] } };
+  };
+  const menu2 = [];
+  ext.onContextMenu(menu2, {});
+  await menu2.find((m) => m.title === 'Find Soft Clashes').target();
+
+  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  const modelBFinal = lastCallForModel(modelB);
+  check('after Hard then Soft, the FINAL isolate() call for the shared modelB includes Hard\'s own dbId (30)',
+    modelBFinal.dbIds.includes(30), true);
+  check('...and ALSO includes Soft\'s own dbId (31) -- a true union, not a replacement',
+    modelBFinal.dbIds.includes(31), true);
+  check('modelC (Soft Clash only) is isolated too', lastCallForModel(modelC).dbIds.includes(50), true);
+  check('_isolatedModels reflects the full union of models touched by either action (A, B, C)', ext._isolatedModels.size, 3);
+  check('_isolatedModels has modelC', ext._isolatedModels.has(modelC), true);
+}
+
+// === [narrow fix, post-Batch-3] Mirror direction: Soft -> Hard preserves visibility for both result
+// sets ==================================================================================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB, modelC];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  world.findClashes = async (query) => {
+    if (query.mode === 'clearance') {
+      return {
+        pairs: [
+          { source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 31, model: modelB } },
+          { source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 3, dbId: 50, model: modelC } },
+        ],
+        statistics: { diagnostics: [] },
+      };
+    }
+    return { pairs: [], statistics: { diagnostics: [] } };
+  };
+  const menu1 = [];
+  ext.onContextMenu(menu1, {});
+  await menu1.find((m) => m.title === 'Find Soft Clashes').target();
+
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return {
+        pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
+        statistics: { diagnostics: [] },
+      };
+    }
+    return { pairs: [], statistics: { diagnostics: [] } };
+  };
+  const menu2 = [];
+  ext.onContextMenu(menu2, {});
+  await menu2.find((m) => m.title === 'Find Clashes').target();
+
+  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  const modelBFinal = lastCallForModel(modelB);
+  check('after Soft then Hard, the FINAL isolate() call for the shared modelB includes Soft\'s own dbId (31)',
+    modelBFinal.dbIds.includes(31), true);
+  check('...and ALSO includes Hard\'s own dbId (30) -- a true union, not a replacement (mirror direction)',
+    modelBFinal.dbIds.includes(30), true);
+  check('modelC (Soft Clash only) is still isolated after Hard Clash runs', lastCallForModel(modelC).dbIds.includes(50), true);
+  check('_isolatedModels reflects the full union of models touched by either action (A, B, C), mirror direction',
+    ext._isolatedModels.size, 3);
+}
+
+// === [narrow fix, post-Batch-3] Clearing/failing one mode leaves the other mode's isolation intact:
+// Hard Clash succeeds, then Soft Clash genuinely fails (throws) -- Hard Clash's own isolation must
+// still be applied afterward, not cleared ==============================================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return {
+        pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
+        statistics: { diagnostics: [] },
+      };
+    }
+    return { pairs: [], statistics: { diagnostics: [] } };
+  };
+  const menu1 = [];
+  ext.onContextMenu(menu1, {});
+  await menu1.find((m) => m.title === 'Find Clashes').target();
+  check('setup: Hard Clash isolated both models', ext._isolatedModels.size, 2);
+
+  world.findClashes = async () => { throw new Error('soft clash blew up'); };
+  const menu2 = [];
+  ext.onContextMenu(menu2, {});
+  await menu2.find((m) => m.title === 'Find Soft Clashes').target();
+
+  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  check('after a genuine Soft Clash failure, Hard Clash\'s own modelB isolation is STILL applied (not cleared)',
+    lastCallForModel(modelB)?.dbIds.includes(30), true);
+  check('_isolatedModels still has both models Hard Clash isolated', ext._isolatedModels.size, 2);
+  check('_isolatedModels still has modelA', ext._isolatedModels.has(modelA), true);
+  check('_isolatedModels still has modelB', ext._isolatedModels.has(modelB), true);
+}
+
+// === Mirror direction: Soft Clash succeeds, then Hard Clash resolves with zero pairs -- Soft Clash's
+// own isolation must survive =============================================================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  world.findClashes = async (query) => {
+    if (query.mode === 'clearance') {
+      return {
+        pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 31, model: modelB } }],
+        statistics: { diagnostics: [] },
+      };
+    }
+    return { pairs: [], statistics: { diagnostics: [] } };
+  };
+  const menu1 = [];
+  ext.onContextMenu(menu1, {});
+  await menu1.find((m) => m.title === 'Find Soft Clashes').target();
+  check('setup (mirror): Soft Clash isolated both models', ext._isolatedModels.size, 2);
+
+  world.findClashes = async () => ({ pairs: [], statistics: { diagnostics: [] } }); // Hard Clash: zero pairs
+  const menu2 = [];
+  ext.onContextMenu(menu2, {});
+  await menu2.find((m) => m.title === 'Find Clashes').target();
+
+  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  check('after Hard Clash resolves with zero pairs, Soft Clash\'s own modelB isolation is STILL applied (mirror direction)',
+    lastCallForModel(modelB)?.dbIds.includes(31), true);
+  check('_isolatedModels still has both models Soft Clash isolated (mirror direction)', ext._isolatedModels.size, 2);
+}
+
+// === [narrow fix, post-Batch-3] Clearing both restores normal Viewer visibility: after both actions
+// have contributed isolation, driving both to empty (via unload()) explicitly un-isolates every
+// previously-isolated model (isolate([], model)) and leaves _isolatedModels empty ====================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return {
+        pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
+        statistics: { diagnostics: [] },
+      };
+    }
+    return {
+      pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 31, model: modelB } }],
+      statistics: { diagnostics: [] },
+    };
+  };
+  const menu = [];
+  ext.onContextMenu(menu, {});
+  await menu.find((m) => m.title === 'Find Clashes').target();
+  await menu.find((m) => m.title === 'Find Soft Clashes').target();
+  check('setup: both models are isolated before clearing', ext._isolatedModels.size, 2);
+
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  ext.unload();
+
+  check('unload() explicitly un-isolates modelA (isolate([], modelA))',
+    isolateCalls.some((c) => c.model === modelA && c.dbIds.length === 0), true);
+  check('unload() explicitly un-isolates modelB (isolate([], modelB))',
+    isolateCalls.some((c) => c.model === modelB && c.dbIds.length === 0), true);
+  check('_isolatedModels is empty after both actions\' contributions are cleared together', ext._isolatedModels.size, 0);
+}
+
+// === [narrow fix, post-Batch-3, codex-advisor follow-up] _reconcileIsolation() correctly handles BOTH
+// a replaced (not merely added) contribution for a model already in the union, AND a model dropping
+// out of the union entirely once both actions clear it -- not just the "one action never touches a
+// model" cases the tests above already cover ===========================================================
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  // Hard contributes modelB:{30}; Soft contributes modelB:{31}.
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return { pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }], statistics: { diagnostics: [] } };
+    }
+    return { pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 31, model: modelB } }], statistics: { diagnostics: [] } };
+  };
+  const menu1 = [];
+  ext.onContextMenu(menu1, {});
+  await menu1.find((m) => m.title === 'Find Clashes').target();
+  await menu1.find((m) => m.title === 'Find Soft Clashes').target();
+
+  // Hard now REPLACES its own contribution for modelB with a different dbId (32, not 30) -- a fresh
+  // Find Clashes run, not merely an additional one.
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return { pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 32, model: modelB } }], statistics: { diagnostics: [] } };
+    }
+    return { pairs: [], statistics: { diagnostics: [] } };
+  };
+  const menu2 = [];
+  ext.onContextMenu(menu2, {});
+  await menu2.find((m) => m.title === 'Find Clashes').target();
+
+  const lastCallForModelB = [...isolateCalls].reverse().find((c) => c.model === modelB);
+  check('after Hard replaces its own contribution, the final isolate() call for modelB no longer includes the OLD dbId 30',
+    lastCallForModelB.dbIds.includes(30), false);
+  check('...still includes Soft\'s own untouched dbId 31', lastCallForModelB.dbIds.includes(31), true);
+  check('...and includes Hard\'s NEW dbId 32', lastCallForModelB.dbIds.includes(32), true);
+
+  // Now clear BOTH actions' own contributions for modelB entirely (Hard: zero pairs; Soft: genuine
+  // failure) -- modelB must drop out of the union and receive an explicit isolate([], modelB).
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') return { pairs: [], statistics: { diagnostics: [] } };
+    throw new Error('soft clash blew up (removal test)');
+  };
+  const menu3 = [];
+  ext.onContextMenu(menu3, {});
+  await menu3.find((m) => m.title === 'Find Clashes').target();
+  await menu3.find((m) => m.title === 'Find Soft Clashes').target();
+
+  check('once both actions\' own contributions for modelB are gone, an explicit isolate([], modelB) fires',
+    isolateCalls.some((c) => c.model === modelB && c.dbIds.length === 0), true);
+  check('_isolatedModels no longer includes modelB once both actions have dropped it', ext._isolatedModels.has(modelB), false);
 }
 
 // === r71/r185 isolation: Soft Clash's own visualization code never imports the npm "three" package --

@@ -112,9 +112,23 @@ export class ClashFinderExtension extends ExtensionBase {
     // that should have been treated as superseded/stale. Constructor-only initialization, like
     // _latestActionToken, closes both holes.
     this._latestSoftClashActionToken = 0;
-    // Every Model this extension currently has isolated, so a later call (a fresh Find Clashes, or a
-    // "No clashes found" outcome) can correctly clear prior isolation state before applying (or
-    // omitting) new isolation -- spec 11.2 "Clearing/restoring visualization".
+    // [narrow fix, post-Batch-3] Hard Clash's and Soft Clash's own isolation CONTRIBUTIONS, tracked
+    // independently -- each action only ever replaces its OWN Map wholesale (never the other's), via
+    // _setHardIsolation()/_setSoftIsolation()/_clearIsolation() below. Task 14 established independent
+    // action tokens and Task 15 established independent, coexisting overlay scenes; a single shared
+    // isolation Set contradicted both decisions -- firing one action silently replaced the other's
+    // isolation while its own overlay markers stayed drawn on screen, pointing at now-possibly-hidden
+    // elements. Never mutated directly outside _setHardIsolation/_setSoftIsolation/_clearIsolation.
+    this._hardIsolationByModel = new Map();
+    this._softIsolationByModel = new Map();
+    // Every Model the VIEWER currently has isolated due to this extension -- the per-model UNION of
+    // _hardIsolationByModel and _softIsolationByModel above, computed by _reconcileIsolation() below.
+    // Kept as its own field (not merely derived on demand) because _reconcileIsolation() needs to know
+    // which models were PREVIOUSLY applied, to explicitly un-isolate (`isolate([], model)`) any model
+    // that has dropped out of the union entirely -- the Viewer's own isolate() call has no "remove
+    // just these dbIds" mode, only "replace this model's isolation with exactly this list". Never
+    // mutated directly outside _reconcileIsolation(); callers only ever read it (e.g. existing tests
+    // asserting `.size`/`.has(model)`).
     this._isolatedModels = new Set();
     // Task 8 (M2.1): witness marker overlay state. _activeMarkers is deliberately an ARRAY, not a
     // Set like _isolatedModels above -- an ordered list of individual THREE.Mesh instances to
@@ -319,6 +333,15 @@ export class ClashFinderExtension extends ExtensionBase {
           this._clearIsolation();
         } finally {
           this._clearMarkers();
+          // [narrow fix, post-Batch-3] Defensive fallback, independent of whatever _clearIsolation()
+          // itself did or didn't do (it may have thrown before touching any of these, e.g. if it's
+          // stubbed out entirely in a test) -- explicitly drop the unloading model from every
+          // isolation-related bookkeeping structure. In NORMAL operation this is a no-op:
+          // _clearIsolation() already replaced _hardIsolationByModel/_softIsolationByModel with fresh
+          // empty Maps and reconciled _isolatedModels down to whatever the (now-empty, for both
+          // actions) union actually is, before this finally block even starts.
+          this._hardIsolationByModel.delete(event.model);
+          this._softIsolationByModel.delete(event.model);
           this._isolatedModels.delete(event.model);
         }
       }
@@ -349,15 +372,61 @@ export class ClashFinderExtension extends ExtensionBase {
     return `${diagnostics.length} diagnostic(s): ${reasons.join(', ')}`;
   }
 
-  // Spec 11.2 "Clearing/restoring visualization": viewer.isolate([], model) per model this
-  // extension previously isolated -- called unconditionally before applying (or omitting) new
-  // isolation, so a "No clashes found" outcome or a fresh Find Clashes call both correctly clear
-  // prior isolation state rather than leaving a stale highlight from an earlier query on screen.
-  _clearIsolation() {
-    for (const model of this._isolatedModels) {
-      this._viewer.isolate([], model);
+  // [narrow fix, post-Batch-3] Computes the per-model UNION of _hardIsolationByModel and
+  // _softIsolationByModel, applies it to the Viewer (one isolate() call per model in the union), and
+  // explicitly un-isolates (`isolate([], model)`) any model that was previously applied
+  // (this._isolatedModels) but has now dropped out of the union entirely -- e.g. Hard Clash cleared
+  // its own contribution for a model Soft Clash never touched. Every caller that changes either
+  // action's own contribution Map calls this afterward; no caller ever calls `this._viewer.isolate(...)`
+  // directly anymore.
+  _reconcileIsolation() {
+    const union = new Map();
+    for (const [model, dbIdSet] of this._hardIsolationByModel) {
+      union.set(model, new Set(dbIdSet));
     }
-    this._isolatedModels.clear();
+    for (const [model, dbIdSet] of this._softIsolationByModel) {
+      const existing = union.get(model);
+      if (existing) {
+        for (const dbId of dbIdSet) existing.add(dbId);
+      } else {
+        union.set(model, new Set(dbIdSet));
+      }
+    }
+    for (const [model, dbIdSet] of union) {
+      this._viewer.isolate([...dbIdSet], model);
+    }
+    for (const model of this._isolatedModels) {
+      if (!union.has(model)) {
+        this._viewer.isolate([], model);
+      }
+    }
+    this._isolatedModels = new Set(union.keys());
+  }
+
+  // [narrow fix, post-Batch-3] Replaces Hard Clash's own isolation contribution wholesale (an empty
+  // Map clears it entirely) and reconciles the Viewer's actual isolation to the new union with Soft
+  // Clash's own current contribution, unaffected. Never call `this._viewer.isolate(...)` directly for
+  // Hard Clash's own success/failure/zero-result paths -- always go through this method.
+  _setHardIsolation(dbIdsByModel) {
+    this._hardIsolationByModel = dbIdsByModel;
+    this._reconcileIsolation();
+  }
+
+  // [narrow fix, post-Batch-3] Soft Clash's own equivalent of _setHardIsolation above.
+  _setSoftIsolation(dbIdsByModel) {
+    this._softIsolationByModel = dbIdsByModel;
+    this._reconcileIsolation();
+  }
+
+  // [narrow fix, post-Batch-3] Clears BOTH actions' own isolation contributions (Hard Clash's and
+  // Soft Clash's) and reconciles the Viewer to the resulting (now-empty) union -- used by unload()
+  // and _onBeforeModelUnload(), where the ENTIRE visualization must clear regardless of which action
+  // produced it, unlike _setHardIsolation()/_setSoftIsolation() above which each touch only their
+  // own action's own contribution.
+  _clearIsolation() {
+    this._hardIsolationByModel = new Map();
+    this._softIsolationByModel = new Map();
+    this._reconcileIsolation();
   }
 
   // Task 8 (M2.1). Lazily creates the ONE shared SphereGeometry/MeshBasicMaterial pair (Global
@@ -645,8 +714,13 @@ export class ClashFinderExtension extends ExtensionBase {
           // failure, matching the same _notifyUser channel every other outcome of this workflow uses
           // -- console.error alone is not a surface (see _notifyUser's own rationale above).
           console.error('ClashFinderExtension: find clashes failed', err);
-          this._clearIsolation();
-          this._clearMarkers(); // Task 9: markers and isolation are always cleared together, never left disagreeing
+          // [narrow fix, post-Batch-3] Clear ONLY Hard Clash's own isolation contribution -- Soft
+          // Clash's own contribution (if any) is untouched, and Hard Clash's own markers are cleared
+          // unconditionally right alongside (markers and THIS action's own isolation are still never
+          // left disagreeing with each other; Soft Clash's own overlay is a separate concern this
+          // path no longer touches).
+          this._setHardIsolation(new Map());
+          this._clearMarkers();
           this._notifyUser(`Find Clashes failed for element ${sourceDbId}: ${err?.message ?? err}`);
           return;
         }
@@ -692,16 +766,16 @@ export class ClashFinderExtension extends ExtensionBase {
           console.warn('ClashFinderExtension: findClashes reported diagnostics', diagnostics);
         }
 
-        // Clear whatever this extension isolated/marked on a PRIOR call before applying (or omitting)
-        // new isolation/markers -- unconditional, so a "No clashes found" outcome still restores the
-        // viewer to an unisolated, marker-free state rather than leaving a stale highlight or marker
-        // from an earlier query on screen. Isolation and markers are cleared together, at this one
-        // call site, so they can never visually disagree (Global Constraint).
-        this._clearIsolation();
+        // Markers are Hard Clash's own overlay state, unrelated to the cross-action isolation union
+        // below -- still cleared unconditionally here, exactly as before.
         this._clearMarkers();
 
         const pairs = result.pairs;
         if (pairs.length === 0) {
+          // [narrow fix, post-Batch-3] Clear ONLY Hard Clash's own isolation contribution -- Soft
+          // Clash's own contribution (if any) is untouched; _setHardIsolation's own reconciliation
+          // reapplies the remaining union.
+          this._setHardIsolation(new Map());
           // Spec §2 step 11: "UI reports ... 'No clashes found'" is UNCONDITIONAL, part of every
           // Find Clashes invocation -- unlike RoomLocatorExtension's own quieter success path (which
           // stays silent absent diagnostics, isolation alone being feedback enough there), this
@@ -742,11 +816,18 @@ export class ClashFinderExtension extends ExtensionBase {
           else crossModelCount += 1;
         }
 
+        // [narrow fix, post-Batch-3] Update ONLY Hard Clash's own isolation contribution FIRST; the
+        // reconciliation this triggers applies the union of this new contribution with Soft Clash's
+        // current one, if any. Isolate-before-fit preserves this workflow's original ordering (a
+        // codex-advisor consult during this fix flagged fitting before isolating as an unnecessary
+        // ordering change from the pre-fix behavior, moving the camera before a later isolate() call
+        // could still fail).
+        this._setHardIsolation(dbIdsByModel);
+        // fitToView is per-action camera framing, scoped to exactly what THIS action just found --
+        // never unioned with the other action's own isolation (only the VIEWER's actual isolation
+        // state is unioned, via _setHardIsolation above).
         for (const [model, dbIdSet] of dbIdsByModel) {
-          const dbIds = [...dbIdSet];
-          this._viewer.isolate(dbIds, model);
-          this._viewer.fitToView(dbIds, model);
-          this._isolatedModels.add(model);
+          this._viewer.fitToView([...dbIdSet], model);
         }
 
         // Task 9 (M2.1): apply new markers alongside the new isolation just applied above, using the
@@ -803,7 +884,10 @@ export class ClashFinderExtension extends ExtensionBase {
           // A genuine failure, not a supersession: clear the prior query's isolation/visualization
           // and surface it visibly, mirroring "Find Clashes"'s own genuine-failure handling exactly.
           console.error('ClashFinderExtension: find soft clashes failed', err);
-          this._clearIsolation();
+          // [narrow fix, post-Batch-3] Clear ONLY Soft Clash's own isolation contribution -- Hard
+          // Clash's own contribution (if any) is untouched, and Soft Clash's own overlay is cleared
+          // unconditionally right alongside.
+          this._setSoftIsolation(new Map());
           this._clearSoftClashVisualization();
           this._notifyUser(`Find Soft Clashes failed for element ${sourceDbId}: ${err?.message ?? err}`);
           return;
@@ -823,13 +907,16 @@ export class ClashFinderExtension extends ExtensionBase {
           console.warn('ClashFinderExtension: findClashes (soft clash) reported diagnostics', diagnostics);
         }
 
-        // Isolation is shared visual state (not overlay-specific) -- reuse _clearIsolation()/isolate/
-        // fitToView exactly as "Find Clashes" does. Only the visualization call differs.
-        this._clearIsolation();
+        // Soft Clash's own overlay state, unrelated to the cross-action isolation union below --
+        // still cleared unconditionally here, exactly as before.
         this._clearSoftClashVisualization();
 
         const pairs = result.pairs;
         if (pairs.length === 0) {
+          // [narrow fix, post-Batch-3] Clear ONLY Soft Clash's own isolation contribution -- Hard
+          // Clash's own contribution (if any) is untouched; _setSoftIsolation's own reconciliation
+          // reapplies the remaining union.
+          this._setSoftIsolation(new Map());
           // Spec §2 step 11's "UI reports ... 'No clashes found'" applies identically here --
           // unconditional on every Find Soft Clashes invocation, not just Find Clashes.
           console.warn('ClashFinderExtension: no soft clashes found for dbId', sourceDbId);
@@ -854,11 +941,16 @@ export class ClashFinderExtension extends ExtensionBase {
           else crossModelCount += 1;
         }
 
+        // [narrow fix, post-Batch-3] Update ONLY Soft Clash's own isolation contribution FIRST; the
+        // reconciliation this triggers applies the union of this new contribution with Hard Clash's
+        // current one, if any. Isolate-before-fit preserves this workflow's original ordering (see
+        // the matching Hard Clash comment above for the codex-advisor rationale).
+        this._setSoftIsolation(dbIdsByModel);
+        // fitToView is per-action camera framing, scoped to exactly what THIS action just found --
+        // never unioned with the other action's own isolation (only the VIEWER's actual isolation
+        // state is unioned, via _setSoftIsolation above).
         for (const [model, dbIdSet] of dbIdsByModel) {
-          const dbIds = [...dbIdSet];
-          this._viewer.isolate(dbIds, model);
-          this._viewer.fitToView(dbIds, model);
-          this._isolatedModels.add(model);
+          this._viewer.fitToView([...dbIdSet], model);
         }
 
         // Renders the real Soft Clash overlay geometry for this result set (see
