@@ -85,6 +85,15 @@ const PORT = process.env.PORT || 8080;
 // span set (-> 'NOT EXERCISED') rather than a silently wrong verdict.
 const CLEARANCE_SPAN_LABEL = 'clearance-distance-query';
 
+// Maximum absolute disagreement tolerated between the distance the TLAS path and the linear path
+// report for the SAME result key before this gate calls the run invalid. Both broad phases hand the
+// identical operand pair to the identical `clearanceQuery`, so they should agree bit-for-bit -- two
+// independent live runs measured a max delta of exactly 0 over all 30 shared keys. This is a
+// float-noise allowance around that observed zero, ~5 orders of magnitude tighter than the smallest
+// real distance this fixture reports (~0.0417), so it stays a meaningful check rather than a rubber
+// stamp.
+const MAX_CROSS_PATH_DISTANCE_DELTA = 1e-9;
+
 // Identical to run-gate.mjs/run-gate-m2.mjs's own helper -- see run-gate.mjs's inline comment for
 // the full rationale.
 function resolveProxyFromEnv() {
@@ -289,54 +298,64 @@ async function main() {
         const rec = new window.__CheckpointRecorder();
         const { setSpanRecorder, clearSpanRecorder } = await import('/collision/scheduler.js');
         setSpanRecorder(rec.asSpanRecorder());
-        const world = window[worldHandle];
-        const modelArch = window.__gate.modelArch;
-        const modelStructure = window.__gate.modelStructure;
-        const modelMechanical = window.__gate.modelMechanical;
-        const allModels = window.viewer.getAllModels();
-        const modelTag = (m) => (m === modelArch ? 'arch' : m === modelStructure ? 'structure' : m === modelMechanical ? 'mechanical' : 'unknown');
-        const h = rec.start(`clearance-total-wallclock-${label}`);
-        let result = null;
-        let error = null;
+        // codex-review finding #4 (resource hygiene): `clearSpanRecorder()` must run even if
+        // something between here and the end of this block throws OUTSIDE the findClashes try/catch
+        // below (e.g. the pair-mapping code) -- otherwise the module-global span recorder stays
+        // installed for the rest of the page's life, silently contaminating every later run's span
+        // set. `rec.dispose()` likewise disconnects the CheckpointRecorder's own longtask
+        // PerformanceObserver, which was previously leaked once per measured run.
         try {
-          result = await world.findClashes({
-            mode: 'clearance',
-            clearance,
-            source: { model: modelStructure, dbIds: [sourceDbId] },
-            target: { targets: allModels.map((m) => ({ model: m })) },
-            groupBy: 'dbId',
-            broadPhase,
-          });
-        } catch (e) {
-          error = { message: e.message, name: e.name, kind: e.kind, details: e.details };
+          const world = window[worldHandle];
+          const modelArch = window.__gate.modelArch;
+          const modelStructure = window.__gate.modelStructure;
+          const modelMechanical = window.__gate.modelMechanical;
+          const allModels = window.viewer.getAllModels();
+          const modelTag = (m) => (m === modelArch ? 'arch' : m === modelStructure ? 'structure' : m === modelMechanical ? 'mechanical' : 'unknown');
+          const h = rec.start(`clearance-total-wallclock-${label}`);
+          let result = null;
+          let error = null;
+          try {
+            result = await world.findClashes({
+              mode: 'clearance',
+              clearance,
+              source: { model: modelStructure, dbIds: [sourceDbId] },
+              target: { targets: allModels.map((m) => ({ model: m })) },
+              groupBy: 'dbId',
+              broadPhase,
+            });
+          } catch (e) {
+            error = { message: e.message, name: e.name, kind: e.kind, details: e.details };
+          }
+          const wallMs = h.end();
+          const pairs = result?.pairs ?? null;
+          return {
+            wallMs,
+            error,
+            statistics: result?.statistics ?? null,
+            pairCount: pairs?.length ?? null,
+            sameModelPairCount: pairs?.filter((p) => p.target.model === modelStructure).length ?? null,
+            crossModelPairCount: pairs?.filter((p) => p.target.model !== modelStructure).length ?? null,
+            pairSignatures: pairs
+              ? pairs.map((p) => `${modelTag(p.source.model)}:${p.source.dbId}:${modelTag(p.target.model)}:${p.target.dbId}:${p.type}`).sort()
+              : null,
+            // Keyed distances, so the two broad-phase paths can be compared on the VALUE they report
+            // for each shared key, not merely on which keys they found. Never dumped raw into the
+            // report -- reduced to a single max-absolute-delta below.
+            pairDistances: pairs
+              ? pairs.map((p) => [`${modelTag(p.source.model)}:${p.source.dbId}:${modelTag(p.target.model)}:${p.target.dbId}`, p.distance])
+              : null,
+            // Witness-shape confirmation: a clearance pair's witness is {sourcePoint, targetPoint},
+            // structurally different from a volume-overlap witness ({kind, point}). Counted, not dumped.
+            witnessShapeOk: pairs
+              ? pairs.every((p) => p.witness && Array.isArray(p.witness.sourcePoint) && Array.isArray(p.witness.targetPoint))
+              : null,
+            spans: rec.spans,
+            longestSpan: rec.longestSpan(),
+          };
+        } finally {
+          clearSpanRecorder();
+          rec.dispose();
         }
-        const wallMs = h.end();
-        clearSpanRecorder();
-        const pairs = result?.pairs ?? null;
-        return {
-          wallMs,
-          error,
-          statistics: result?.statistics ?? null,
-          pairCount: pairs?.length ?? null,
-          sameModelPairCount: pairs?.filter((p) => p.target.model === modelStructure).length ?? null,
-          crossModelPairCount: pairs?.filter((p) => p.target.model !== modelStructure).length ?? null,
-          pairSignatures: pairs
-            ? pairs.map((p) => `${modelTag(p.source.model)}:${p.source.dbId}:${modelTag(p.target.model)}:${p.target.dbId}:${p.type}`).sort()
-            : null,
-          // Keyed distances, so the two broad-phase paths can be compared on the VALUE they report
-          // for each shared key, not merely on which keys they found. Never dumped raw into the
-          // report -- reduced to a single max-absolute-delta below.
-          pairDistances: pairs
-            ? pairs.map((p) => [`${modelTag(p.source.model)}:${p.source.dbId}:${modelTag(p.target.model)}:${p.target.dbId}`, p.distance])
-            : null,
-          // Witness-shape confirmation: a clearance pair's witness is {sourcePoint, targetPoint},
-          // structurally different from a volume-overlap witness ({kind, point}). Counted, not dumped.
-          witnessShapeOk: pairs
-            ? pairs.every((p) => p.witness && Array.isArray(p.witness.sourcePoint) && Array.isArray(p.witness.targetPoint))
-            : null,
-          spans: rec.spans,
-          longestSpan: rec.longestSpan(),
-        };
       }, { worldHandle, label, broadPhase, sourceDbId: SOURCE_DB_ID, clearance: CLEARANCE });
     }
 
@@ -360,6 +379,18 @@ async function main() {
     const tlasWarm = await runClearanceQuery('__tlasWorld', 'tlas-warm', 'tlas');
     const tlasWarmSpanSummary = summarizeSpans(tlasWarm.spans);
     console.log(JSON.stringify({ wallMs: tlasWarm.wallMs, error: tlasWarm.error, pairCount: tlasWarm.pairCount, clearanceSpanCount: clearanceSpanMs(tlasWarm).length, statistics: tlasWarm.statistics && { ...tlasWarm.statistics, diagnostics: summarizeDiagnostics(tlasWarm.statistics.diagnostics) } }, null, 2));
+
+    // codex-review finding #4 (resource hygiene): dispose the TLAS world and drop its handle BEFORE
+    // the linear world is built, so the linear measurements do not run under the extra heap pressure
+    // / GC exposure of a fully-populated TLAS+BLAS cache that nothing reads any more. Every value
+    // this gate reports from the TLAS runs (statistics, spans, pair sets) was already returned to
+    // Node above, so nothing below reads `window.__tlasWorld` -- this is a pure release. Deliberate,
+    // documented divergence from run-gate-m2.mjs, which retains its TLAS world because its own
+    // criterion 5 reads TLAS-entry internals after the linear runs; this gate has no such criterion.
+    await page.evaluate(() => {
+      window.__tlasWorld?.dispose();
+      delete window.__tlasWorld;
+    });
 
     // --- Linear world: a genuinely FRESH CollisionWorld (own GeometryRegistry/BlasCache) ---
     const linearLeases = await page.evaluate(async () => {
@@ -612,6 +643,56 @@ async function main() {
       linearWarm: { tlasSpecific: null, shared: checkSharedChain(linearWarm) },
     };
 
+    // ---- codex-review finding #1 (High): correctness-check failures must INVALIDATE the run -------
+    //
+    // Every boolean gathered here was already computed above, but until this block existed not one of
+    // them could change `report.disposition` or the process exit code -- ONLY a thrown query error
+    // could. That left a real false-pass path: a TLAS regression that omits a clash while the linear
+    // path stays correct sets `tlasColdVsLinearColdPairSignaturesEqual: false`, yet the report still
+    // read 'MEASURED', wrote a normal result file, and exited 0. For a script whose entire purpose is
+    // this TLAS-vs-linear correctness comparison, that directly contradicts this milestone's own
+    // constraint that no task silently converts a failure into a passing result. Now wired into the
+    // disposition exactly the way `erroredRuns` already was.
+    //
+    // DELIBERATELY EXCLUDED: the criterion-6 GO/CAUTION/NO-GO verdict. That is a PERFORMANCE finding
+    // the spec explicitly says this script reports rather than gates on -- a genuine NO-GO must never
+    // fail the process or turn the disposition non-MEASURED. Only correctness invariants do that.
+    const validationFailures = [];
+    const requireTrue = (name, value) => {
+      if (value !== true) validationFailures.push({ check: name, observed: value });
+    };
+    requireTrue('correctness.allSignatureSetsAgree', allSignatureSetsAgree);
+    requireTrue('correctness.exactAabbSurvivorsAgree', correctnessCrossCheck.exactAabbSurvivorsAgree);
+    for (const [runName, ok] of Object.entries(correctnessCrossCheck.witnessShapeOk)) {
+      requireTrue(`correctness.witnessShapeOk.${runName}`, ok);
+    }
+    // Cross-path distance agreement, checked on BOTH halves: full key coverage (every pair the run
+    // returned was actually compared, so a shrunken key set cannot pass by comparing nothing) and
+    // value agreement within tolerance. Both observed runs produced 30/30 keys at delta exactly 0.
+    const distanceCheck = correctnessCrossCheck.tlasColdVsLinearColdDistances;
+    requireTrue('correctness.distanceKeyCoverage',
+      distanceCheck !== null && distanceCheck.comparedKeys === tlasCold.pairCount);
+    requireTrue('correctness.distanceValuesAgree',
+      distanceCheck !== null && distanceCheck.maxAbsoluteDelta <= MAX_CROSS_PATH_DISTANCE_DELTA);
+    // Every boolean in the statistics inequality chain -- both groups, all four run states. The
+    // `typeof value !== 'boolean'` guard skips the numeric context fields those objects also carry
+    // (clearanceDistanceQueriesRun/capturedSpanCount), and the object guard skips `tlasSpecific: null`
+    // on the linear runs and the `linearPathNote` string. This is what makes the load-bearing
+    // `distanceQueriesRun_eq_capturedSpanCount` check (proving span capture is not lossy) actually
+    // enforce something rather than merely being printed.
+    for (const [runName, groups] of Object.entries(statisticsInequalityChain)) {
+      for (const [groupName, group] of Object.entries(groups)) {
+        if (!group || typeof group !== 'object') continue;
+        for (const [checkName, value] of Object.entries(group)) {
+          if (typeof value !== 'boolean') continue;
+          requireTrue(`statisticsInequalityChain.${runName}.${groupName}.${checkName}`, value);
+        }
+      }
+    }
+    if (validationFailures.length > 0) {
+      disposition.validationFailureCaveat = `${validationFailures.length} correctness invariant(s) were violated on this run (see report.validationFailures) -- the span population this verdict is drawn from may not describe a correct execution, so treat the verdict as provisional regardless of which way it landed.`;
+    }
+
     // ---- Capacity headroom: real evidence for the provisional maxClearanceNarrowPhasePairs ---------
     // Reported as evidence ONLY. This task measures; it does not revise the constant.
     const narrowPhaseBudgetHeadroom = {
@@ -674,9 +755,15 @@ async function main() {
 
     // ---- Assemble the full report ----
     const anyErrors = erroredRuns.length > 0;
+    const anyValidationFailures = validationFailures.length > 0;
     const report = {
-      disposition: anyErrors ? 'FAILED' : 'MEASURED',
+      // Three distinct, explicit states -- a correctness violation is reported as its own failure
+      // mode rather than being folded into the errored-run one, since the two need different
+      // follow-up (a thrown query vs. a genuine result/statistics divergence). Neither ever reads
+      // 'MEASURED'.
+      disposition: anyErrors ? 'FAILED' : anyValidationFailures ? 'FAILED_VALIDATION' : 'MEASURED',
       erroredRuns: anyErrors ? erroredRuns : undefined,
+      validationFailures: anyValidationFailures ? validationFailures : undefined,
       environment: {
         browserVersion,
         os: `${os.platform()} ${os.release()} (${os.arch()})`,
@@ -795,6 +882,12 @@ async function main() {
 
     if (anyErrors) {
       console.error('\n=== GATE FAILED: one or more runs errored -- see erroredRuns above ===');
+    }
+    if (anyValidationFailures) {
+      console.error(`\n=== GATE FAILED: ${validationFailures.length} correctness invariant(s) violated ===\n`,
+        JSON.stringify(validationFailures, null, 2));
+    }
+    if (anyErrors || anyValidationFailures) {
       process.exitCode = 1;
     }
   } finally {
