@@ -63,3 +63,12 @@ export const maxCollisionInstancesPerEpoch = 20_000;
 // Provisional: revise per the M2 performance gate (Task 21), same posture constants.js already
 // documents for maxCollisionInstancesPerEpoch above.
 export const maxTlasCandidatePairs = 200_000;
+
+// M3 — Soft Clash / Clearance. Provisional: revise against the M3 performance gate's real numbers
+// (test/performance/run-gate-m3.mjs).
+export const maxClearanceNarrowPhasePairs = 20_000;
+
+// M3 — the design spec leaves both qualitative ("a small relative tolerance"); picked here to match
+// the existing weld-epsilon order of magnitude. Provisional, same tuning discipline as above.
+export const clearanceUniformScaleRelativeTolerance = 1e-4;
+export const clearanceDistanceCrossCheckRelativeTolerance = 1e-4;

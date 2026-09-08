@@ -360,6 +360,13 @@ function emptyStatistics() {
     tlasSharedBuildWaits: 0,
     tlasBuildMs: 0,
     tlasQueryMs: 0,
+    clearanceExpandedCandidatePairs: 0,
+    clearanceExactAabbSurvivors: 0,
+    clearanceOverlapPrechecksRun: 0,
+    clearanceHardClashExclusions: 0,
+    clearanceDistanceQueriesRun: 0,
+    clearanceHits: 0,
+    clearanceQueryMs: 0,
   };
 }
 
