@@ -52,12 +52,19 @@ const MIN_MARKER_RADIUS = 0.05; // world units — tune during Task 10 live acce
 const MAX_MARKER_RADIUS = 2.0; // world units — tune during Task 10 live acceptance against the real fixture
 const MARKER_COLOR = 0xff6a00; // distinct from the Viewer's default selection theme — confirm visually in Task 10
 
+// Task 14 (M3 Batch 3): "Find Soft Clashes" default clearance, in world units, used whenever
+// options.defaultClearance is not supplied to the constructor. Provisional value -- Task 18's
+// performance gate (live acceptance against the real fixture) may retune this, exactly like
+// MARKER_RADIUS_FRACTION/MIN/MAX_MARKER_RADIUS above are already flagged as provisional.
+const DEFAULT_CLEARANCE = 0.05;
+
 export class ClashFinderExtension extends ExtensionBase {
   // Exposed as static class fields too (not just the module-level consts above) so callers/tests
   // can reference the live values off the class itself (e.g. ClashFinderExtension.MIN_MARKER_RADIUS)
   // rather than re-declaring the same magic numbers a second time.
   static MIN_MARKER_RADIUS = MIN_MARKER_RADIUS;
   static MAX_MARKER_RADIUS = MAX_MARKER_RADIUS;
+  static DEFAULT_CLEARANCE = DEFAULT_CLEARANCE;
 
   constructor(viewer, options = {}) {
     super(viewer, options);
@@ -88,15 +95,37 @@ export class ClashFinderExtension extends ExtensionBase {
     this._activeMarkers = [];
     this._markerGeometry = null;
     this._markerMaterial = null;
+    // Task 14 (M3 Batch 3): "Find Soft Clashes" own visualization-tracking state, kept SEPARATE from
+    // _activeMarkers above -- Hard Clash's witness-marker overlay and Soft Clash's own visualization
+    // (Task 15 fills in real geometry; this task only tracks the pairs it was last given) are
+    // independent, never sharing state, matching the same "separate, independent action" framing as
+    // the two action tokens below.
+    this._activeSoftClashObjects = [];
     this._onBeforeModelUnloadBound = (event) => this._onBeforeModelUnload(event);
     this._onContextMenuBound = (menu, status) => this.onContextMenu(menu, status);
   }
 
-  // Same ordering discipline as RoomLocatorExtension.load(): CollisionWorld.fromViewer runs to
-  // completion FIRST; the listener/menu-callback registrations only happen after that promise
-  // resolves, inside this same call. If fromViewer() had rejected, load()'s own returned promise
-  // already rejected with that same error before either registration below ran.
+  // Task 14 (M3 Batch 3) fix, post-review: `defaultClearance` resolution/validation runs as the VERY
+  // FIRST statement in load(), before CollisionWorld.fromViewer and before any listener/menu
+  // registration below. The first draft validated it AFTER that existing setup -- a thrown
+  // validation error would then leave a world constructed and callbacks attached despite load()
+  // itself having failed, and a caller retrying load() could double-register. Validating first means
+  // a bad `defaultClearance` throws before any of that setup ever runs, leaving nothing to unwind.
+  //
+  // Same ordering discipline as RoomLocatorExtension.load() for everything AFTER this validation:
+  // CollisionWorld.fromViewer runs to completion first; the listener/menu-callback registrations
+  // only happen after that promise resolves, inside this same call. If fromViewer() had rejected,
+  // load()'s own returned promise already rejected with that same error before either registration
+  // below ran.
   async load() {
+    this._clearance = this.options.defaultClearance ?? DEFAULT_CLEARANCE;
+    if (typeof this._clearance !== 'number' || !Number.isFinite(this._clearance) || this._clearance <= 0) {
+      throw new Error(`ClashFinderExtension: options.defaultClearance must be a finite, positive number, got ${this.options.defaultClearance}`);
+    }
+    // Task 14: Soft Clash's own monotonic action token, SEPARATE from _latestActionToken (Hard
+    // Clash's own, declared in the constructor above and unchanged by this task) -- see the "Find
+    // Soft Clashes" menu entry below for why these two counters must never interact.
+    this._latestSoftClashActionToken = 0;
     this._world = await CollisionWorld.fromViewer(this._viewer, this.options);
     this._viewer.addEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
     this._viewer.registerContextMenuCallback(EXTENSION_ID, this._onContextMenuBound);
@@ -383,6 +412,23 @@ export class ClashFinderExtension extends ExtensionBase {
     this._activeMarkers.length = 0;
   }
 
+  // Task 14 (M3 Batch 3): "Find Soft Clashes" own visualization teardown, kept fully separate from
+  // _clearMarkers (Hard Clash's own witness-marker overlay) -- these two never share state. Trivial
+  // for now (Task 15 adds real overlay geometry); resets the tracked pairs so a fresh Soft Clash
+  // query, or a "No clashes found" outcome, never leaves a stale visualization from an earlier query.
+  _clearSoftClashVisualization() {
+    this._activeSoftClashObjects = [];
+  }
+
+  // Task 14 (M3 Batch 3): "Find Soft Clashes" own visualization apply, wired here as a real (if
+  // minimal) method -- never a placeholder that throws -- so the "Find Soft Clashes" success path
+  // below has a real call site. Task 15 fills this in with actual overlay geometry (e.g. highlighting
+  // the narrow-gap regions between each pair's clearance witness); for now it just tracks the pairs
+  // it was given, giving _clearSoftClashVisualization something real to reset.
+  _addSoftClashVisualization(pairs, dbIdsByModel = new Map()) {
+    this._activeSoftClashObjects = pairs;
+  }
+
   // Spec 11.2, verbatim rule: the "Find Clashes" entry appears ONLY when viewer.getAggregateSelection()
   // -- never viewer.getSelection(), which returns dbIds with no model provenance -- has EXACTLY one
   // entry whose `selection` array has EXACTLY one dbId. Any other shape (no selection, multiple
@@ -545,6 +591,113 @@ export class ClashFinderExtension extends ExtensionBase {
 
         // Spec §2 step 11: this report is UNCONDITIONAL, every successful call -- not gated on
         // diagnostics (contrast RoomLocatorExtension's own silent-on-clean-success convention).
+        const summary = `${pairs.length} clashes found (${sameModelCount} in this model, ${crossModelCount} in other models)`;
+        this._notifyUser(`${summary}${caveat}`);
+      },
+    });
+
+    // Task 14 (M3 Batch 3): "Find Soft Clashes", a SECOND, independent context-menu entry -- same
+    // aggregate-selection gate above, same sourceModel/sourceDbId already resolved for "Find
+    // Clashes". Mirrors that entry's own shape (token capture, try/catch, diagnostics partition,
+    // clear/isolate/fitToView/notify) but against findClashes({mode:'clearance', clearance:
+    // this._clearance}) instead, and using its OWN `_latestSoftClashActionToken` -- Global Constraint
+    // (binding): Hard Clash and Soft Clash use SEPARATE, INDEPENDENT action tokens, so firing one
+    // must never cancel or be affected by an in-flight run of the other. This code path must never
+    // read or write `_latestActionToken` (Hard Clash's own), and the "Find Clashes" entry above must
+    // never read or write `_latestSoftClashActionToken`.
+    menu.push({
+      title: 'Find Soft Clashes',
+      target: async () => {
+        // Captured BEFORE findClashes ever starts, exactly like "Find Clashes" above -- but against
+        // this action's OWN token, so a later "Find Clashes" invocation can never supersede this one
+        // (and vice versa).
+        this._latestSoftClashActionToken += 1;
+        const token = this._latestSoftClashActionToken;
+        let result;
+        try {
+          result = await this._world.findClashes({
+            source: { model: sourceModel, dbIds: [sourceDbId] },
+            target: {
+              // Same whole-model, source-not-filtered-out scope as "Find Clashes" -- see that
+              // entry's own comment above for why this extension must never pre/post-filter the
+              // source element itself.
+              targets: this._viewer.getAllModels().map((model) => ({ model })),
+            },
+            mode: 'clearance', // the fixed mode this "Find Soft Clashes" workflow always uses
+            clearance: this._clearance, // resolved once, in load(), from options.defaultClearance
+            groupBy: 'dbId',
+          });
+        } catch (err) {
+          // A newer Soft Clash action already superseded this one: discard silently -- being
+          // superseded by ANOTHER Soft Clash action is not a failure. (A Hard Clash action running
+          // in between never affects `_latestSoftClashActionToken` at all, so it cannot supersede
+          // this check either way.)
+          if (token !== this._latestSoftClashActionToken) return;
+          // A genuine failure, not a supersession: clear the prior query's isolation/visualization
+          // and surface it visibly, mirroring "Find Clashes"'s own genuine-failure handling exactly.
+          console.error('ClashFinderExtension: find soft clashes failed', err);
+          this._clearIsolation();
+          this._clearSoftClashVisualization();
+          this._notifyUser(`Find Soft Clashes failed for element ${sourceDbId}: ${err?.message ?? err}`);
+          return;
+        }
+        // Re-check AFTER findClashes resolves (success path), same discipline as "Find Clashes".
+        if (token !== this._latestSoftClashActionToken) return;
+
+        // Same diagnostics partition as "Find Clashes" -- `witness-unavailable` is presentation-only
+        // (no visualization drawn for that one pair) and must never contribute to the user-facing
+        // completeness caveat, even though it is still worth a developer's attention below.
+        const diagnostics = result.statistics?.diagnostics ?? [];
+        const completenessAffecting = diagnostics.filter((d) => !(d?.scope === 'pair' && d?.reason === 'witness-unavailable'));
+        const caveat = completenessAffecting.length > 0
+          ? ` The result may be incomplete — ${ClashFinderExtension.describeDiagnostics(completenessAffecting)}.`
+          : '';
+        if (diagnostics.length > 0) {
+          console.warn('ClashFinderExtension: findClashes (soft clash) reported diagnostics', diagnostics);
+        }
+
+        // Isolation is shared visual state (not overlay-specific) -- reuse _clearIsolation()/isolate/
+        // fitToView exactly as "Find Clashes" does. Only the visualization call differs.
+        this._clearIsolation();
+        this._clearSoftClashVisualization();
+
+        const pairs = result.pairs;
+        if (pairs.length === 0) {
+          // Spec §2 step 11's "UI reports ... 'No clashes found'" applies identically here --
+          // unconditional on every Find Soft Clashes invocation, not just Find Clashes.
+          console.warn('ClashFinderExtension: no soft clashes found for dbId', sourceDbId);
+          this._notifyUser(`No clashes found.${caveat}`);
+          return;
+        }
+
+        // Same per-Model-object grouping as "Find Clashes" -- never modelId, always an explicit
+        // `model` arg to isolate/fitToView.
+        const dbIdsByModel = new Map();
+        const addDbId = (model, dbId) => {
+          if (!dbIdsByModel.has(model)) dbIdsByModel.set(model, new Set());
+          dbIdsByModel.get(model).add(dbId);
+        };
+        addDbId(sourceModel, sourceDbId);
+
+        let sameModelCount = 0, crossModelCount = 0;
+        for (const pair of pairs) {
+          addDbId(pair.source.model, pair.source.dbId);
+          addDbId(pair.target.model, pair.target.dbId);
+          if (pair.target.model === sourceModel) sameModelCount += 1;
+          else crossModelCount += 1;
+        }
+
+        for (const [model, dbIdSet] of dbIdsByModel) {
+          const dbIds = [...dbIdSet];
+          this._viewer.isolate(dbIds, model);
+          this._viewer.fitToView(dbIds, model);
+          this._isolatedModels.add(model);
+        }
+
+        // Task 15 fills in real overlay geometry here; for now this call site is wired and tracks
+        // the pairs it was given (see _addSoftClashVisualization's own comment above).
+        this._addSoftClashVisualization(pairs, dbIdsByModel);
+
         const summary = `${pairs.length} clashes found (${sameModelCount} in this model, ${crossModelCount} in other models)`;
         this._notifyUser(`${summary}${caveat}`);
       },

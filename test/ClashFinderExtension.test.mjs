@@ -224,14 +224,19 @@ check('EXTENSION_ID is exactly Autodesk.Sandbox.ClashFinder', EXTENSION_ID, 'Aut
 check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSION_ID !== ROOM_LOCATOR_EXTENSION_ID, true);
 
 // === context-menu entry appears only when aggregate selection is exactly one model, one dbId =====
+// Task 14 (M3 Batch 3) update: onContextMenu now pushes a SECOND, independent "Find Soft Clashes"
+// entry right after "Find Clashes" under this exact same gate -- menu.length is now 2, not 1. The
+// "Find Clashes" entry itself, and this gate, are otherwise unchanged (see
+// test/ClashFinderExtension.softClash.test.mjs for "Find Soft Clashes"'s own dedicated coverage).
 {
   const { ext, viewer } = extensionWithFakeWorld();
   const modelA = makeMockModel(1);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [42] }];
   const menu = [];
   ext.onContextMenu(menu, { hasSelected: true });
-  check('menu entry appears for exactly one model, one dbId', menu.length, 1);
-  check('menu entry title is "Find Clashes"', menu[0]?.title, 'Find Clashes');
+  check('menu now carries both entries for exactly one model, one dbId', menu.length, 2);
+  check('the first menu entry title is still "Find Clashes"', menu[0]?.title, 'Find Clashes');
+  check('the second menu entry title is "Find Soft Clashes"', menu[1]?.title, 'Find Soft Clashes');
 }
 
 // === context-menu entry does NOT appear for no selection ==========================================
