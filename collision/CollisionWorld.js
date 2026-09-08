@@ -266,6 +266,40 @@ export function normalizeNarrowPhaseHit(mode, result) {
 // Note what is deliberately NOT here: any identity field. Canonical ordering is decided from the
 // PlacedInstances at the call site (comparePlacedCanonically above), so this object stays exactly
 // the shape both consumers' typedefs declare.
+// Extracted from _runNarrowPhasePair's own private buildOne/diagnoseFragmentOnce closures (M3 Task 9)
+// so clearance's narrow phase can resolve geometry through the IDENTICAL path the three existing
+// modes already use, rather than a second, divergent one. Pure refactor: _runNarrowPhasePair below is
+// rewritten to call these same functions, with the full existing regression suite proving zero
+// observable behavior change for surface-intersection/containment/volume-overlap.
+function diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, role, reason, operand) {
+  const key = `${operand.epoch}:${placed.instance.fragmentId}`;
+  if (oversizedDiagnosedFragments.has(key)) return;
+  oversizedDiagnosedFragments.add(key);
+  statistics.diagnostics.push({ scope: 'fragment', reason, role, fragment: fragmentRef(operand.model, placed) });
+}
+
+async function resolveGeometryRecord(registry, placed, role, operand, needsConnectivity, statistics, oversizedDiagnosedFragments) {
+  const identity = placed.instance.geometryIdentity;
+  let record;
+  try {
+    record = await registry.getOrBuildGeometry({
+      loadEpoch: identity.loadEpoch,
+      geometryIndex: identity.geometryIndex,
+      ownerModelIdHint: modelIdOf(operand.model),
+      needsConnectivity,
+    });
+  } catch (err) {
+    if (!(err instanceof RenderProxyUnavailableError)) throw err;
+    diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, role, 'geometry-not-yet-available', operand);
+    return null;
+  }
+  if (record.oversized) {
+    diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, role, record.reason, operand);
+    return null;
+  }
+  return record;
+}
+
 function toInstance(record, placedWorldMatrix) {
   return {
     geometry: record.geometry,
@@ -1747,70 +1781,11 @@ export class CollisionWorld {
     // bare-fragmentId Set would silently suppress the second epoch's own, genuinely distinct,
     // diagnostic (unreachable in M1's single-epoch-per-call world, reachable once two epochs are in
     // play in one call, per spec §4.2).
-    const diagnoseFragmentOnce = (placed, role, reason, operand) => {
-      const key = `${operand.epoch}:${placed.instance.fragmentId}`;
-      if (oversizedDiagnosedFragments.has(key)) return;
-      oversizedDiagnosedFragments.add(key);
-      statistics.diagnostics.push({
-        scope: 'fragment',
-        reason,
-        role,
-        fragment: fragmentRef(operand.model, placed),
-      });
-    };
-    const buildOne = async (placed, role, operand) => {
-      const identity = placed.instance.geometryIdentity; // { loadEpoch, geometryIndex }
-      let record;
-      try {
-        record = await this._registry.getOrBuildGeometry({
-          loadEpoch: identity.loadEpoch,
-          geometryIndex: identity.geometryIndex,
-          ownerModelIdHint: modelIdOf(operand.model), // diagnostic-only, per GeometryRegistry's contract
-          needsConnectivity,
-        });
-      } catch (err) {
-        // EXACTLY this one class is absorbed; anything else -- a checkpoint's own
-        // WorldDisposedError/ModelEvictedError, a builder bug, an extraction invariant break --
-        // still aborts the whole findClashes call, unchanged.
-        if (!(err instanceof RenderProxyUnavailableError)) throw err;
-        // A transient Viewer-side miss: no geometry existed to inspect, so nothing was diagnosed
-        // ABOUT the geometry and nothing persistent was settled for it (GeometryRegistry already
-        // discarded the in-flight entry on this rejection). Skip this candidate pair, say so, and
-        // leave a later call free to build the same (loadEpoch, geometryIndex) for real.
-        //
-        // Attribution caveat, inherited from _recordRepresentativeFragments' first-discovery-wins
-        // rule rather than introduced here: the proxy that was missing belongs to the geometry's
-        // REPRESENTATIVE fragment, which may not be `placed` when several fragments share one
-        // geometryIndex. Render-proxy availability is per-fragment (load/cull state), so a
-        // representative can be absent while a sibling instance of the same geometry is present, and
-        // this diagnostic then names the sibling. The pre-fix code mis-attributed the identical way
-        // (and permanently); widening representatives to a retry list is a separate design change.
-        // The `role` and `fragment` fields therefore say WHICH PAIR was skipped, not necessarily
-        // which fragment id the Viewer had no proxy for -- the error's own `fragId` does that.
-        diagnoseFragmentOnce(placed, role, 'geometry-not-yet-available', operand);
-        return null;
-      }
-      if (record.oversized) {
-        // The record's OWN reason, never a hardcoded literal — there are several
-        // (geometry-too-large-for-sync-build, unsupported-geometry-layout,
-        // rejected-primitive-range, index-references-invalid-vertex). Unlike the missing-proxy case
-        // above, every one of them describes a geometry that WAS inspected and structurally rejected,
-        // so re-attempting it could only reach the same verdict — which is why this path settles a
-        // cached oversized marker for the epoch and is left exactly as Task 19 built it.
-        //
-        // KNOWN TENSION, deliberately not changed here: the spec's dedup guarantee is scoped to the
-        // ceiling outcome only, and says a normalization failure (`unsupported-geometry-layout` or
-        // `rejected-primitive-range`) "settles no persistent entry state, so those two diagnoses can
-        // still be re-emitted per candidate pair" (spec :3170-3174). createGeometryRegistry's
-        // buildWeld filter caches those two as oversized markers all the same, so they are in fact
-        // emitted once per epoch, not once per pair. That is a pre-existing behavioural deviation
-        // from the spec text, recorded here rather than silently reinterpreted; the batch-4 fix wave
-        // was scoped to the missing-proxy half of this problem only.
-        diagnoseFragmentOnce(placed, role, record.reason, operand);
-        return null;
-      }
-      return record;
-    };
+    // Delegates to the shared top-level resolveGeometryRecord/diagnoseFragmentOnce (M3 Task 9
+    // extraction) -- same geometry-resolution path, transient-proxy-miss handling, and oversized
+    // dedup behavior as before this refactor, byte-for-byte (proven by the full regression suite).
+    const buildOne = (placed, role, operand) =>
+      resolveGeometryRecord(this._registry, placed, role, operand, needsConnectivity, statistics, oversizedDiagnosedFragments);
 
     const sourceRecord = await buildOne(sourcePlaced, 'source', sourceOperand);
     if (!sourceRecord) return false;
