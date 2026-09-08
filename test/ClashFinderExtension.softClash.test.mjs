@@ -596,10 +596,17 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
 
 // === Task 15: a subsequent Find Clashes call does not clear Soft Clash markers, and vice versa
 // (independent overlays) ==============================================================================
-// [narrow fix, post-Batch-3] Strengthened (not replaced) with a real isolate()-call/_isolatedModels
-// union check -- the whole-batch review specifically noted this test never inspected isolate() calls
-// or _isolatedModels, only overlay/marker state, so "independent overlays" alone did not actually
-// prove isolation itself was never silently clobbered across actions.
+// [narrow fix, post-Batch-3; reworked per codex-review Important #1 follow-up] Strengthened (not
+// replaced) with a real isolate()-call/_isolatedModels union check. The FIRST version of this
+// strengthening (now superseded) had Hard Clash and Soft Clash target the SAME dbId (30) on the
+// shared model -- a clobbering (pre-fix) implementation and a genuinely unioning one both end up
+// calling isolate([30], modelB) in that scenario, so those assertions passed under BOTH the bug and
+// the fix and proved nothing. This version gives Hard Clash and Soft Clash DISTINCT dbIds on the
+// shared modelB (30 vs. 31, then 30 vs. 32 after Soft Clash's own second run) specifically so a
+// clobbering implementation would produce a visibly different (wrong, single-dbId) result from a
+// unioning one -- and keeps real (unstubbed) _addMarkers/_addSoftClashVisualization rendering, so the
+// discriminating isolate() assertions sit alongside genuine, real overlay-presence assertions for
+// both actions, not a stubbed-out approximation of either.
 {
   const { ext, viewer, world } = extensionWithFakeWorld();
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
@@ -607,12 +614,14 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   viewer.getAllModels = () => [modelA, modelB];
   const isolateCalls = [];
   viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
 
-  // First: a successful Find Soft Clashes populates the SOFT_CLASH_OVERLAY_NAME scene.
+  // First: a successful Find Soft Clashes isolates modelB:31 and populates the SOFT_CLASH_OVERLAY_NAME
+  // scene with real geometry (2 markers + 1 line).
   world.findClashes = async () => ({
     pairs: [{
       source: { modelId: 1, dbId: 10, model: modelA },
-      target: { modelId: 2, dbId: 30, model: modelB },
+      target: { modelId: 2, dbId: 31, model: modelB },
       witness: { sourcePoint: [0, 0, 0], targetPoint: [1, 1, 1] },
     }],
     statistics: { diagnostics: [] },
@@ -620,10 +629,14 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   const menuSoft1 = [];
   ext.onContextMenu(menuSoft1, {});
   await menuSoft1.find((m) => m.title === 'Find Soft Clashes').target();
-  check('setup: Soft Clash populated its own 3 objects', ext._activeSoftClashObjects.length, 3);
+  check('setup: Soft Clash populated its own 3 objects (real, unstubbed rendering)', ext._activeSoftClashObjects.length, 3);
+  check('setup: Soft Clash isolated modelB:31', lastCallForModel(modelB)?.dbIds.includes(31), true);
   const softObjectsAfterFirstRun = [...ext._activeSoftClashObjects];
 
-  // Then: a successful Find Clashes (Hard Clash) run must NOT touch Soft Clash's own state/scene.
+  // Then: a successful Find Clashes (Hard Clash) run isolates modelB:30 -- a DIFFERENT dbId on the
+  // SAME model Soft Clash just isolated. This is the exact defect scenario the whole fix exists for
+  // (Soft Clash then Hard Clash): a clobbering implementation calls isolate([30], modelB), losing 31;
+  // a genuinely unioning one calls isolate([30, 31], modelB).
   world.findClashes = async () => ({
     pairs: [{
       source: { modelId: 1, dbId: 10, model: modelA },
@@ -635,23 +648,31 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   const menuHard = [];
   ext.onContextMenu(menuHard, {});
   await menuHard.find((m) => m.title === 'Find Clashes').target();
-  check('Find Clashes populated its own Hard Clash marker (1 object)', ext._activeMarkers.length, 1);
+  check('Find Clashes populated its own Hard Clash marker (1 object, real unstubbed rendering)', ext._activeMarkers.length, 1);
   check('Soft Clash\'s _activeSoftClashObjects is untouched by Find Clashes',
     ext._activeSoftClashObjects.length, 3);
   check('Soft Clash\'s own SOFT_CLASH_OVERLAY_NAME scene still holds all 3 of its objects',
     softObjectsAfterFirstRun.every((obj) => viewer.overlays._scenes.get(SOFT_CLASH_OVERLAY_NAME).has(obj)), true);
   check('Find Clashes\' marker landed in MARKER_OVERLAY_NAME, not SOFT_CLASH_OVERLAY_NAME',
     viewer.overlays._scenes.get(SOFT_CLASH_OVERLAY_NAME).size, 3);
+  // The genuinely discriminating check: proves this is a real UNION, not a clobber -- would FAIL
+  // under the pre-fix single-Set behavior (which would leave only [30]).
+  const afterHardCall = lastCallForModel(modelB);
+  check('after Hard Clash runs, the isolate() call for shared modelB still includes Soft\'s own dbId 31',
+    afterHardCall.dbIds.includes(31), true);
+  check('...and now also includes Hard\'s own dbId 30', afterHardCall.dbIds.includes(30), true);
+  check('...and the call has EXACTLY those 2 dbIds (proves no stray/lost entries either direction)',
+    [...afterHardCall.dbIds].sort().join(','), '30,31');
 
-  // Finally (mirror direction): a subsequent Find Soft Clashes run must NOT touch Hard Clash's own
-  // state/scene either.
+  // Finally (mirror direction): a subsequent Find Soft Clashes run replaces Soft's OWN contribution
+  // (31 -> 32) while Hard Clash's own dbId 30 -- untouched by this action -- must survive the union.
   const hardMarkerAfterFirstRun = [...ext._activeMarkers];
   const menuSoft2 = [];
   ext.onContextMenu(menuSoft2, {});
   world.findClashes = async () => ({
     pairs: [{
       source: { modelId: 1, dbId: 10, model: modelA },
-      target: { modelId: 2, dbId: 30, model: modelB },
+      target: { modelId: 2, dbId: 32, model: modelB },
       witness: { sourcePoint: [2, 2, 2], targetPoint: [3, 3, 3] },
     }],
     statistics: { diagnostics: [] },
@@ -666,18 +687,20 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   // every earlier "Find Soft Clashes clears its own PRIOR visualization" test above establishes).
   check('Soft Clash\'s second run still (independently) replaced its own 3 objects', ext._activeSoftClashObjects.length, 3);
 
-  // [narrow fix, post-Batch-3] The real isolation-union check: modelB is shared by both actions
-  // (both this test's Hard Clash and Soft Clash pairs target dbId 30 on modelB), so the FINAL
-  // isolate() call for modelB must still reflect BOTH actions' own current contribution, not just
-  // whichever action ran most recently -- overlay/marker independence alone (already checked above)
-  // does not by itself prove isolation was never silently clobbered.
-  const lastCallForModelA = [...isolateCalls].reverse().find((c) => c.model === modelA);
-  const lastCallForModelB = [...isolateCalls].reverse().find((c) => c.model === modelB);
-  check('the FINAL isolate() call for modelA includes the shared source dbId 10 (contributed by both actions)',
-    lastCallForModelA.dbIds.includes(10), true);
-  check('the FINAL isolate() call for the shared modelB includes dbId 30 (target, contributed by both actions)',
-    lastCallForModelB.dbIds.includes(30), true);
-  check('_isolatedModels still reflects both models after the Hard-then-Soft-then-Soft sequence', ext._isolatedModels.size, 2);
+  // The genuinely discriminating check for the replace direction: Soft's OLD dbId (31) must be gone,
+  // Soft's NEW dbId (32) must be present, and Hard's own dbId (30) -- untouched by this action --
+  // must still be present. A clobbering implementation would leave only [32].
+  const afterSecondSoftCall = lastCallForModel(modelB);
+  check('after Soft Clash\'s second run, modelB\'s isolate() call no longer includes the OLD Soft dbId 31',
+    afterSecondSoftCall.dbIds.includes(31), false);
+  check('...includes Soft\'s NEW dbId 32', afterSecondSoftCall.dbIds.includes(32), true);
+  check('...and STILL includes Hard\'s own untouched dbId 30 -- proves union survives a same-model replace on the OTHER action',
+    afterSecondSoftCall.dbIds.includes(30), true);
+  check('...and the call has EXACTLY those 2 dbIds', [...afterSecondSoftCall.dbIds].sort().join(','), '30,32');
+
+  check('modelA (the shared source model) still carries the common source dbId 10',
+    lastCallForModel(modelA)?.dbIds.includes(10), true);
+  check('_isolatedModels still reflects both models after the Soft-Hard-Soft sequence', ext._isolatedModels.size, 2);
   check('_isolatedModels has modelA', ext._isolatedModels.has(modelA), true);
   check('_isolatedModels has modelB', ext._isolatedModels.has(modelB), true);
 }
