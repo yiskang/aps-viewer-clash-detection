@@ -11,6 +11,7 @@ import {
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
 import {
   maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, maxTlasCandidatePairs, weldEpsilonMeters,
+  surfaceEpsilonFactor,
 } from './constants.js';
 import { extractFragments, extractAllFragments, readWorldMatrix, readWorldBounds } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
@@ -19,8 +20,12 @@ import { TlasCache } from './tlas/TlasCache.js';
 import { surfaceIntersectionQuery } from './query/SurfaceIntersectionQuery.js';
 import { containmentModeQuery } from './query/ContainmentModeQuery.js';
 import { volumeOverlapQuery } from './query/VolumeOverlapQuery.js';
+import { aabbMinDistance } from './geometry/AabbDistance.js';
+import { validateUniformScale, computeToleranceFloor } from './query/ClearanceTransform.js';
+import { clearanceQuery } from './query/ClearanceQuery.js';
+import { classifyHardClashPrecheck } from './query/ClearanceHardClashPrecheck.js';
 
-const supportedModes = ['surface-intersection', 'containment', 'volume-overlap'];
+const supportedModes = ['surface-intersection', 'containment', 'volume-overlap', 'clearance'];
 
 function modelIdOf(model) {
   return model && model.id !== undefined ? model.id : model;
@@ -202,6 +207,21 @@ function compareWitnessCandidates(a, b) {
   const bw = b && b.witness;
   if (Boolean(aw) !== Boolean(bw)) return aw ? -1 : 1;
   if (aw && bw && aw.kind !== bw.kind) return aw.kind === 'surface-crossing' ? -1 : 1;
+  return (
+    comparePlacedCanonically(a.sourcePlaced, b.sourcePlaced) ||
+    comparePlacedCanonically(a.targetPlaced, b.targetPlaced)
+  );
+}
+
+// M3 Task 9: total order over clearance narrow-phase 'hit' outcomes for the SAME dbId-level key,
+// used to pick the single surviving (minimum-distance) candidate when several fragment-pair
+// candidates collapse onto one key. Mirrors compareWitnessCandidates's EXACT structure above, minus
+// the witness-kind rank (clearance has exactly one witness kind, so there is nothing to rank there):
+// distance first (the whole point of "minimum clearance distance wins"), then the same
+// comparePlacedCanonically tie-break, applied source-then-target -- so the winner never depends on
+// which fragment pair the broad phase happened to visit first (fixtures 10/14, order independence).
+function compareClearanceCandidates(a, b) {
+  if (a.distance !== b.distance) return a.distance < b.distance ? -1 : 1;
   return (
     comparePlacedCanonically(a.sourcePlaced, b.sourcePlaced) ||
     comparePlacedCanonically(a.targetPlaced, b.targetPlaced)
@@ -1142,6 +1162,16 @@ export class CollisionWorld {
     // (Task 19's `mode !== 'surface-intersection'` placeholder rejection lived here; Task 20's
     // dispatch in _runNarrowPhasePair now handles all three modes, so the only mode check left is
     // the supportedModes membership test above.)
+    // M3 Task 9: `clearance` is a REQUIRED, finite, positive number for mode:'clearance', and is
+    // REJECTED outright for every other mode (never silently ignored) -- catches a caller mixing
+    // clearance-only params onto a Hard-Clash-style call before any lease/epoch is ever consumed.
+    if (query.mode === 'clearance') {
+      if (typeof query.clearance !== 'number' || !Number.isFinite(query.clearance) || query.clearance <= 0) {
+        throw new Error("findClashes: mode 'clearance' requires a finite, positive 'clearance' number");
+      }
+    } else if ('clearance' in query && query.clearance !== undefined) {
+      throw new Error(`findClashes: 'clearance' is only valid when mode is 'clearance', got mode '${query.mode}'`);
+    }
 
     // --- Task 6, Step 8: new query-shape validation, in this precedence order (disposed already
     // checked above; these run after the pre-existing groupBy/mode checks and before any
@@ -1201,7 +1231,24 @@ export class CollisionWorld {
     // own O(sourceCount x targetCount) precheck is meaningless for a TLAS call, whose real cost is
     // NOT proportional to that product, and would reject queries the TLAS exists specifically to
     // make cheap).
-    const effectiveBroadPhase = query.broadPhase ?? (Array.isArray(query.target.targets) ? 'tlas' : 'linear');
+    // M3 Task 9 (codex-advisor review, this task): `mode:'clearance'` has no TLAS broad-phase variant
+    // yet (Task 10's own scope -- this task's own clearance dispatch below always calls
+    // `_runClearanceBroadPhaseScan` unconditionally). Defaulting a `targets`-shaped clearance call to
+    // 'tlas' the way the three pre-existing modes do would (a) silently run the linear scan under a
+    // 'tlas' banner, since no TLAS variant exists to actually dispatch to, and (b) skip the
+    // linear-scan capacity ceiling just below (guarded by `effectiveBroadPhase !== 'tlas'`),
+    // silently letting an unbounded clearance scan through undetected. A clearance call therefore
+    // defaults to 'linear' regardless of shape; an explicit `broadPhase:'tlas'` is rejected outright
+    // immediately below, rather than silently downgraded to linear.
+    const effectiveBroadPhase = query.broadPhase ?? (
+      query.mode === 'clearance' ? 'linear' : (Array.isArray(query.target.targets) ? 'tlas' : 'linear')
+    );
+    if (query.mode === 'clearance' && effectiveBroadPhase === 'tlas') {
+      throw new Error(
+        "findClashes: mode 'clearance' does not yet support broadPhase:'tlas' (Milestone 3 Task 10); " +
+        "use broadPhase:'linear' or omit broadPhase",
+      );
+    }
 
     const startedAt = this._now();
     const statistics = emptyStatistics();
@@ -1588,6 +1635,91 @@ export class CollisionWorld {
     // rule), never re-derived or copied.
     const sourceOperand = { model: sourceLease.model, epoch: sourceEpoch, fragmentIds: sourceExtracted };
 
+    // --- M3 Task 9: mode:'clearance' dispatch. Everything ABOVE this point (validation, lease
+    // capture, extraction + clearance-only invalid-transform filtering, capacity preflight/
+    // admission, placement recording, sourceInstances/targetGroups/sourceOperand construction) is
+    // genuinely shared with the three pre-existing modes -- clearance reuses it verbatim, never
+    // re-derives it. Everything BELOW this branch (the three modes' own broad/narrow phase and
+    // aggregation) is UNREACHABLE for a clearance call, since this branch always returns -- so it
+    // stays byte-for-byte unchanged and untouched by clearance (Protected Invariant).
+    if (query.mode === 'clearance') {
+      const broadPhaseStartedAt = this._now();
+      const candidates = await this._runClearanceBroadPhaseScan(
+        sourceOperand, sourceInstances, targetGroups, query.clearance, statistics, checkpoint,
+      );
+      statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
+
+      const narrowPhaseStartedAt = this._now();
+      // key -> {distance, witness, sourcePlaced, targetPlaced, targetOperand}
+      const clearanceCandidateByKey = new Map();
+      const hardClashExcludedKeys = new Set();
+      const oversizedDiagnosedFragments = new Set(); // reused across this call's own resolveGeometryRecord calls
+
+      for (const [sourcePlaced, targetPlaced, targetOperand] of candidates) {
+        const pending = checkpoint({ label: 'clearance-narrow-phase-pair' });
+        if (pending) await pending;
+        const outcome = await this._runClearanceNarrowPhasePair(
+          sourcePlaced, targetPlaced, sourceOperand, targetOperand, query.clearance, statistics,
+          oversizedDiagnosedFragments, checkpoint,
+        );
+        // codex-advisor review (this task): mirrors the three-mode aggregation loop's own
+        // `statistics.narrowPhasePairs++` (Task 19/20) -- every candidate that reaches narrow-phase
+        // evaluation counts, regardless of its outcome (hit, miss, exclusion, or a diagnosed
+        // failure). The brief's own Step 9 pseudocode never incremented this pre-existing,
+        // mode-agnostic statistic for clearance, silently leaving it 0 for every clearance call.
+        statistics.narrowPhasePairs++;
+        const key = `${sourceOperand.epoch}:${sourcePlaced.ownerDbId}:${targetOperand.epoch}:${targetPlaced.ownerDbId}`;
+        if (outcome.outcome === 'hard-clash-excluded') {
+          hardClashExcludedKeys.add(key);
+          continue;
+        }
+        if (outcome.outcome !== 'hit') continue; // geometry-unavailable/anisotropic-scale/inconclusive/aborted/beyond-threshold
+        const existing = clearanceCandidateByKey.get(key);
+        if (!existing || compareClearanceCandidates(outcome, existing) < 0) {
+          clearanceCandidateByKey.set(key, outcome);
+        }
+      }
+      statistics.narrowPhaseMs = this._now() - narrowPhaseStartedAt;
+
+      // Fix (I-5, post-Batch-1 reconciliation): clearanceHardClashExclusions must count every
+      // proven-excluded dbId key from the COMPLETE hardClashExcludedKeys set, including a key that
+      // never produced a surviving clearanceCandidateByKey entry -- e.g. a pure Hard-Clash pair
+      // whose every contributing fragment pair was excluded before the distance query ever ran, so
+      // clearanceCandidateByKey has no entry for that key at all. Deriving the count by iterating
+      // clearanceCandidateByKey (the original draft's bug) would silently undercount exactly that case.
+      statistics.clearanceHardClashExclusions += hardClashExcludedKeys.size;
+
+      const pairs = [];
+      for (const [key, winner] of clearanceCandidateByKey) {
+        if (hardClashExcludedKeys.has(key)) {
+          continue; // a later-processed fragment pair proved Hard Clash for this same dbId pair
+        }
+        pairs.push({
+          source: {
+            modelId: modelIdOf(sourceOperand.model), dbId: winner.sourcePlaced.ownerDbId, model: sourceOperand.model,
+          },
+          target: {
+            // Verification/reconciliation note (Step 9): the winning candidate's OWN targetOperand
+            // (threaded through `_runClearanceNarrowPhasePair`'s own `'hit'` return value), never a
+            // placeholder -- a dbId-level key can only ever be won by candidates sharing one
+            // (sourceEpoch, sourceDbId, targetEpoch, targetDbId) tuple, so every winner stored under
+            // one key already shares the identical targetOperand; reading it off the winner itself
+            // (rather than re-deriving it from the outer loop's per-candidate variable) keeps this
+            // block correct regardless of which candidate happened to win.
+            modelId: modelIdOf(winner.targetOperand.model), dbId: winner.targetPlaced.ownerDbId, model: winner.targetOperand.model,
+          },
+          type: 'clearance',
+          distance: winner.distance,
+          clearance: query.clearance,
+          witness: winner.witness,
+        });
+      }
+      statistics.clearanceHits = pairs.length;
+      statistics.totalMs = this._now() - startedAt;
+      checkpoint.assertCurrent();
+      return { pairs, statistics };
+    }
+
     // --- Broad phase. Its ceiling was already enforced above, per target epoch, against the
     // extraction counts these groups are built from one-for-one, and deliberately BEFORE the
     // admission/bookkeeping side effects -- so there is no second check here.
@@ -1752,6 +1884,42 @@ export class CollisionWorld {
         && a.min[2] <= b.max[2] && a.max[2] >= b.min[2];
   }
 
+  // M3 Task 9: linear broad phase for mode:'clearance'. Structurally identical to
+  // _runBroadPhaseScan above (self-exclusion applied first, never counted/retested; source
+  // instances always the outer-of-the-two-nested loops), minus any redundant per-candidate
+  // transform-validity check -- Task 8 already filtered invalid-transform fragments out of
+  // `sourceInstances`/`targetGroups`'s own source buckets, well before either broad phase ever
+  // runs. The only real difference is the exact predicate: an AABB-to-AABB MINIMUM DISTANCE test
+  // against `clearance` (aabbMinDistance <= clearance), rather than AABB overlap.
+  async _runClearanceBroadPhaseScan(sourceOperand, sourceInstances, targetGroups, clearance, statistics, checkpoint) {
+    const candidates = [];
+    for (const group of targetGroups) {
+      const { targetOperand, instances: targetInstances } = group;
+      for (let i = 0; i < sourceInstances.length; i++) {
+        for (let j = 0; j < targetInstances.length; j++) {
+          const pending = checkpoint({ label: 'clearance-broad-phase-scan' });
+          if (pending) await pending;
+          const targetPlaced = targetInstances[j];
+          if (isSourceOwnFragment(sourceOperand, targetOperand.epoch, targetPlaced.instance.fragmentId)) {
+            continue; // never counted, never retested -- source self-exclusion (spec §4.4)
+          }
+          const sourcePlaced = sourceInstances[i];
+          // codex-advisor review (this task): mirrors `_runBroadPhaseScan`'s own
+          // `statistics.broadPhasePairs++` placement exactly (counted immediately before the exact
+          // predicate runs, after self-exclusion) -- the brief's own Step 7 pseudocode never
+          // incremented this pre-existing, mode-agnostic statistic, silently leaving it 0 for
+          // every clearance linear scan.
+          statistics.broadPhasePairs++;
+          if (aabbMinDistance(sourcePlaced.worldBounds, targetPlaced.worldBounds) <= clearance) {
+            statistics.clearanceExactAabbSurvivors++;
+            candidates.push([sourcePlaced, targetPlaced, targetOperand]);
+          }
+        }
+      }
+    }
+    return candidates;
+  }
+
   /**
    * One candidate pair through the geometry registry and the mode's own query.
    *
@@ -1870,6 +2038,113 @@ export class CollisionWorld {
     });
     attach(result.diagnostics);
     return { hit: result.overlap, witness: result.witness ?? null };
+  }
+
+  /**
+   * One clearance candidate pair through geometry resolution, the tri-state Hard-Clash exclusion
+   * precheck, and the exact clearance distance query. M3 Task 9.
+   *
+   * Returns `{ outcome, ... }`, never a bare boolean: `outcome` is one of
+   * `'geometry-unavailable' | 'anisotropic-scale' | 'hard-clash-excluded' | 'inconclusive' |
+   * 'aborted' | 'beyond-threshold' | 'hit'`. Only `'hit'` carries `{ distance, witness, sourcePlaced,
+   * targetPlaced, targetOperand }` -- `targetOperand` is threaded through here (Step 9's own
+   * verification/reconciliation note) so the aggregation loop in `findClashes` can build the public
+   * `target.model`/`target.modelId` from the SAME operand that produced the winning candidate,
+   * without re-deriving or guessing it from a placeholder.
+   *
+   * Every non-hit outcome that represents a genuinely INCOMPLETE verdict (never a clean negative)
+   * pushes its own pair-scoped diagnostic before returning -- 'anisotropic-scale', 'inconclusive',
+   * 'aborted' -- matching this method's own "never silent" contract (codex-advisor review, this
+   * task: the brief's own pseudocode diagnosed 'inconclusive'/'aborted' but silently dropped
+   * 'anisotropic-scale', the one outcome its own aggregation-loop pseudocode had no case for).
+   * 'geometry-unavailable' needs no diagnostic of its own here -- `resolveGeometryRecord` already
+   * pushed one via `diagnoseFragmentOnce` before returning `null`. 'hard-clash-excluded' and
+   * 'beyond-threshold' are both clean, conclusive negatives and need no diagnostic either.
+   */
+  async _runClearanceNarrowPhasePair(
+    sourcePlaced, targetPlaced, sourceOperand, targetOperand, clearance, statistics, oversizedDiagnosedFragments, checkpoint,
+  ) {
+    const sourceRecord = await resolveGeometryRecord(
+      this._registry, sourcePlaced, 'source', sourceOperand, true, statistics, oversizedDiagnosedFragments,
+    );
+    if (!sourceRecord) return { outcome: 'geometry-unavailable' };
+    const targetRecord = await resolveGeometryRecord(
+      this._registry, targetPlaced, 'target', targetOperand, true, statistics, oversizedDiagnosedFragments,
+    );
+    if (!targetRecord) return { outcome: 'geometry-unavailable' };
+
+    const sourceInstance = toInstance(sourceRecord, sourcePlaced.worldMatrix);
+    const targetInstance = toInstance(targetRecord, targetPlaced.worldMatrix);
+
+    const sourceScale = validateUniformScale(sourceInstance.matrix);
+    const targetScale = validateUniformScale(targetInstance.matrix);
+    if (!sourceScale.valid || !targetScale.valid) {
+      // Task 8 already excluded non-finite/singular transforms upstream; this is
+      // validateUniformScale's OWN, finer-grained gate (anisotropic scale) -- a
+      // well-formed-but-unsupported transform, caught here right before the composed query, not at
+      // admission time.
+      statistics.diagnostics.push({
+        scope: 'pair',
+        reason: 'clearance-anisotropic-scale-unsupported',
+        sourceFragment: fragmentRef(sourceOperand.model, sourcePlaced),
+        targetFragment: fragmentRef(targetOperand.model, targetPlaced),
+      });
+      return { outcome: 'anisotropic-scale' };
+    }
+
+    const scheduler = createComposedStageScheduler(checkpoint, this._now);
+    const canonicalOrder = comparePlacedCanonically(sourcePlaced, targetPlaced);
+    const volumeOverlapOptions = {
+      scheduler,
+      compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
+    };
+
+    const precheck = await classifyHardClashPrecheck(
+      sourceInstance, targetInstance, sourcePlaced.worldBounds, targetPlaced.worldBounds, volumeOverlapOptions,
+    );
+    // clearanceOverlapPrechecksRun increments for EVERY status volumeOverlapQuery actually ran under
+    // (excluded, proceed, inconclusive) -- never for skip-precheck, which by definition never called
+    // it. The increment happens BEFORE the excluded early-return below.
+    if (precheck.status !== 'skip-precheck') statistics.clearanceOverlapPrechecksRun++;
+    if (precheck.status === 'excluded') {
+      return { outcome: 'hard-clash-excluded' };
+    }
+    if (precheck.status === 'inconclusive') {
+      statistics.diagnostics.push({
+        scope: 'pair',
+        reason: precheck.diagnostic.reason,
+        sourceFragment: fragmentRef(sourceOperand.model, sourcePlaced),
+        targetFragment: fragmentRef(targetOperand.model, targetPlaced),
+      });
+      return { outcome: 'inconclusive' };
+    }
+    // precheck.status is 'proceed' or 'skip-precheck' -- continue to the distance query.
+
+    const toleranceFloor = computeToleranceFloor(
+      { localDiagonal: sourceInstance.localDiagonal, scaleFactor: sourceScale.scaleFactor },
+      { localDiagonal: targetInstance.localDiagonal, scaleFactor: targetScale.scaleFactor },
+      surfaceEpsilonFactor,
+    );
+    const distanceQueryStart = this._now();
+    const result = clearanceQuery(sourceInstance, targetInstance, { clearance, toleranceFloor });
+    statistics.clearanceDistanceQueriesRun++;
+    const distanceQueryMs = this._now() - distanceQueryStart;
+    statistics.clearanceQueryMs += distanceQueryMs;
+    reportSpan('clearance-distance-query', distanceQueryMs); // production instrumentation, consumed by Task 18's gate
+
+    if (result.aborted) {
+      statistics.diagnostics.push({
+        scope: 'pair',
+        reason: result.diagnostics[0].reason,
+        sourceFragment: fragmentRef(sourceOperand.model, sourcePlaced),
+        targetFragment: fragmentRef(targetOperand.model, targetPlaced),
+      });
+      return { outcome: 'aborted' };
+    }
+    if (!result.withinClearance) return { outcome: 'beyond-threshold' };
+    return {
+      outcome: 'hit', distance: result.distance, witness: result.witness, sourcePlaced, targetPlaced, targetOperand,
+    };
   }
 
   // Task 12 (M2 Batch 4): the plan's own `buildTargetScopeFilter`, reworked to consume records the
