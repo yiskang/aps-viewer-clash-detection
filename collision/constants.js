@@ -72,3 +72,33 @@ export const maxClearanceNarrowPhasePairs = 20_000;
 // the existing weld-epsilon order of magnitude. Provisional, same tuning discipline as above.
 export const clearanceUniformScaleRelativeTolerance = 1e-4;
 export const clearanceDistanceCrossCheckRelativeTolerance = 1e-4;
+
+// ClearanceQuery cross-checks the SAME world distance computed independently from each operand's own
+// validated uniform scale factor. `validateUniformScale` accepts each operand at up to
+// `clearanceUniformScaleRelativeTolerance` relative scale error, and the two operands can err in
+// OPPOSITE directions, so two validator-blessed operands can legitimately disagree by
+// (1+t)/(1-t) - 1 = 2t + O(t^2) ~= 2.0002e-4 -- already WIDER than the single-operand 1e-4 figure, so
+// cross-checking against 1e-4 spuriously aborts on input the validator itself blessed. Use the
+// combined two-operand bound plus one more single-operand allowance on top for the float32 geometry
+// and triangle-distance arithmetic that produces the two numbers. Still ~3 orders of magnitude
+// tighter than any real distance-computation bug (frame/unit mixups are O(1) relative), so this
+// stays a meaningful check rather than a rubber stamp.
+export const clearanceDistanceCrossCheckCombinedRelativeTolerance =
+  2 * clearanceUniformScaleRelativeTolerance + clearanceDistanceCrossCheckRelativeTolerance; // 3e-4
+
+// ClearanceQuery inflates the pinned BVH's `maxThreshold` by this relative margin before handing it
+// to `closestPointToGeometry`. Two independent effects put a candidate whose EXACT distance equals
+// `clearance` on the wrong side of the library's own strict `score < maxThreshold` test:
+//  1. float32 node-bound padding, ~2^-24 (1.19e-7) relative -- measured: for an exact world gap of 1
+//     the bounds-level score comes out at 0.9999998807907106, i.e. exactly one float32 epsilon of
+//     padding decides it, not geometry;
+//  2. the residual anisotropy `validateUniformScale` deliberately accepts. Two accepted operands can
+//     distort a given direction in OPPOSITE senses, so the library's nested (far-local) score can
+//     over-state the anchor-local threshold by (1+t)/(1-t) - 1 ~= 2.0002e-4 even when both operands
+//     report the SAME scaleFactor.
+// 4x the per-operand tolerance covers (2) with ~2x headroom and (1) by ~3300x, while still only
+// widening the traversal threshold by 0.04% -- no meaningful change to pruning effectiveness. Safe
+// because ClearanceQuery ALWAYS applies its own exact `worldDistance > clearance` post-filter
+// afterwards, so a more permissive traversal threshold can only cost a little extra traversal, never
+// admit a result beyond `clearance`.
+export const clearanceTraversalThresholdSafetyMargin = 4 * clearanceUniformScaleRelativeTolerance; // 4e-4
