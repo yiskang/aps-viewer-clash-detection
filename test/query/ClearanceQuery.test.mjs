@@ -6,6 +6,7 @@ import {
   clearanceUniformScaleRelativeTolerance,
   surfaceEpsilonFactor,
 } from '../../collision/constants.js';
+import { validateUniformScale } from '../../collision/query/ClearanceTransform.js';
 import { box, at, testInstance, mergeGeometries } from '../fixtures/geometry.mjs';
 
 // Local helper: an axis-aligned box translated to a given centre, for the multi-box clusters the
@@ -279,14 +280,22 @@ test('fixture 15b: anisotropic TARGET scale -> aborted with clearance-anisotropi
 });
 
 // Degenerate-inverse guard (independent-review finding). `THREE.Matrix4.invert()` returns an
-// ALL-ZERO matrix when the determinant underflows, and every element of that sentinel is FINITE, so
-// the old `Number.isFinite(elements[0])` guard let it through and the relative matrix silently
-// collapsed the far operand onto a point. It is reachable through the validator: a uniform scale of
-// 1e-110 has a representable column length but an affine determinant of ~1e-330, and three.js's
-// `decompose()` returns scale (1,1,1) for a zero determinant, so `validateUniformScale` accepts it
-// (misreporting scaleFactor as 1 -- a ClearanceTransform issue flagged separately). Anchoring on the
-// SMALLER-scale operand makes this the systematically exposed side, so it must abort loudly rather
-// than return a plausible-looking answer.
+// ALL-ZERO matrix when the determinant underflows to EXACTLY 0, and every element of that sentinel is
+// FINITE, so the old `Number.isFinite(elements[0])` guard let it through and the relative matrix
+// silently collapsed the far operand onto a point. It was reachable through the validator: a uniform
+// scale of 1e-110 has a representable column length but an affine determinant that underflows to 0,
+// and three.js's `decompose()` returned scale (1,1,1) for a zero determinant, so
+// `validateUniformScale` accepted it (misreporting scaleFactor as 1).
+//
+// [final fix wave] WHICH BOUNDARY THIS TEST NOW PROVES. `validateUniformScale` was since fixed at its
+// own root (Batch 1's I-2 fix) to reject an exactly-zero determinant up front, so this 1e-110 case is
+// now caught by `clearanceQuery`'s own TOP-OF-FUNCTION `!sourceScale.valid || !targetScale.valid`
+// check and never reaches the anchor-inverse guard at all -- verified by disabling that guard, under
+// which this test and its 1e-110 sibling below both still pass. Both are kept, deliberately: they are
+// now regression coverage for the top-of-function rejection path, for BOTH operand orderings. The
+// anchor-inverse guard's own still-reachable case (a SUBNORMAL-but-nonzero determinant, whose inverse
+// overflows to Infinity rather than collapsing to the finite all-zero sentinel) is covered by the
+// separate subnormal-determinant test added after these two.
 test('degenerate anchor inverse (determinant underflow) -> aborted, not a silently wrong answer', () => {
   const tiny = new THREE.Matrix4().makeScale(1e-110, 1e-110, 1e-110);
   assert.equal(tiny.determinant(), 0, 'precondition: the determinant must underflow');
@@ -314,6 +323,39 @@ test('degenerate TARGET (far, non-anchor) matrix (determinant underflow) -> abor
   assert.equal(tiny.determinant(), 0, 'precondition: the determinant must underflow');
   const source = testInstance(box(2, 2, 2), at(3, 0, 0));
   const target = testInstance(box(2, 2, 2), tiny);
+  const result = clearanceQuery(source, target, { clearance: 1, toleranceFloor: 1e-9 });
+  assert.equal(result.aborted, true, `expected abort, got ${JSON.stringify(result)}`);
+  assert.ok(result.diagnostics.some((d) => d.reason === 'clearance-anisotropic-scale-unsupported'));
+});
+
+// [final fix wave, whole-branch review] The two 1e-110 tests above prove the TOP-OF-FUNCTION
+// rejection path only: since `validateUniformScale` gained its own exactly-zero-determinant check,
+// a 1e-110 uniform scale (determinant EXACTLY 0) is rejected by `clearanceQuery`'s very first
+// `!sourceScale.valid || !targetScale.valid` guard and never reaches the anchor-inverse guard at all.
+// Verified by disabling that anchor-inverse guard entirely: both tests above still pass, i.e. neither
+// discriminates it. THIS test covers the anchor-inverse guard's own, still-reachable case, and fails
+// if the guard is removed.
+//
+// The reachable window (measured, not assumed): a uniform scale strictly between ~1e-108 (where the
+// affine determinant finally underflows to exactly 0 and `validateUniformScale` rejects it outright)
+// and ~1.8e-103 (where the determinant is back above `1 / Number.MAX_VALUE` ~= 5.56e-309 and the
+// inverse stays finite). Inside that window the determinant is SUBNORMAL but genuinely nonzero
+// (~1e-323 to ~5.5e-309), which `validateUniformScale` accepts as valid -- its uniformity check is
+// purely RELATIVE and has no absolute-magnitude floor, and it reports the true scaleFactor, not 1 --
+// yet `Matrix4.invert()`'s own `1 / determinant` OVERFLOWS, so the inverse carries `Infinity`
+// components rather than the all-zero finite sentinel the 1e-110 case produces. 1e-104 sits comfortably
+// inside that window, away from both edges.
+test('subnormal-determinant anchor (accepted by validateUniformScale, inverse overflows to Infinity) -> aborted', () => {
+  const tiny = new THREE.Matrix4().makeScale(1e-104, 1e-104, 1e-104);
+  assert.notEqual(tiny.determinant(), 0,
+    'precondition: the determinant is SUBNORMAL but nonzero -- not the underflow-to-zero case above');
+  assert.equal(validateUniformScale(tiny).valid, true,
+    'precondition: validateUniformScale ACCEPTS this matrix, so the top-of-function guard passes it through');
+  assert.ok(new THREE.Matrix4().copy(tiny).invert().elements.some((e) => !Number.isFinite(e)),
+    'precondition: 1/determinant overflows, so the inverse carries Infinity -- not the all-zero finite sentinel');
+  // tiny is the SMALLER-scale operand, so it is the ANCHOR -- the operand whose inverse is taken.
+  const source = testInstance(box(2, 2, 2), tiny);
+  const target = testInstance(box(2, 2, 2), at(3, 0, 0));
   const result = clearanceQuery(source, target, { clearance: 1, toleranceFloor: 1e-9 });
   assert.equal(result.aborted, true, `expected abort, got ${JSON.stringify(result)}`);
   assert.ok(result.diagnostics.some((d) => d.reason === 'clearance-anisotropic-scale-unsupported'));

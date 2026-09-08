@@ -136,15 +136,34 @@ export function clearanceQuery(source, target, options) {
   const anchorScaleFactor = anchorIsSource ? sourceScale.scaleFactor : targetScale.scaleFactor;
   const farScaleFactor = anchorIsSource ? targetScale.scaleFactor : sourceScale.scaleFactor;
 
-  // `THREE.Matrix4.invert()` returns an ALL-ZERO matrix when the determinant underflows to 0, and
-  // every element of that sentinel is finite -- so checking `elements[0]` alone lets it through and
-  // the relative matrix silently collapses the far operand onto a point. This is reachable: a uniform
-  // scale of ~1e-110 has a perfectly representable column length but an affine determinant of ~1e-330,
-  // and three.js's own `decompose()` returns scale (1,1,1) for a zero determinant, so
-  // `validateUniformScale` accepts it (reporting scaleFactor 1). Anchoring on the SMALLER-scale
-  // operand makes that the systematically exposed side, so validate the whole inverse: every element
-  // finite AND the affine bottom-right entry intact (exactly 1 for any successful affine inversion,
-  // 0 in the all-zero sentinel).
+  // Validate the WHOLE inverse -- every element finite AND the affine bottom-right entry intact
+  // (exactly 1 for any successful affine inversion) -- rather than spot-checking `elements[0]`.
+  // `THREE.Matrix4.invert()` fails in two distinct, both-sneaky ways, and the anchor is the
+  // systematically exposed operand for both, since anchoring picks the SMALLER-scale side:
+  //
+  //   1. Determinant EXACTLY 0 -> invert() returns an ALL-ZERO matrix whose every element is FINITE,
+  //      so an `elements[0]` check lets it through and the relative matrix silently collapses the far
+  //      operand onto a point. The `elements[15] !== 0` half of this guard is what catches that shape.
+  //      [final fix wave] This half is now belt-and-braces rather than the sole defense: since the
+  //      Batch-1 I-2 fix, `validateUniformScale` REJECTS an exactly-zero determinant at its own
+  //      top-of-function check, so `clearanceQuery`'s first `!sourceScale.valid || !targetScale.valid`
+  //      guard above already aborts on it -- this path is no longer reachable from here. (The older
+  //      version of this comment described the pre-fix world, where `decompose()` fell back to scale
+  //      (1,1,1) for a zero determinant and `validateUniformScale` accepted it reporting scaleFactor 1.
+  //      That is no longer true.)
+  //
+  //   2. Determinant SUBNORMAL but genuinely NONZERO -> `1 / determinant` OVERFLOWS and the inverse
+  //      carries `Infinity` components. This is the case that is still genuinely reachable here, and
+  //      the reason this guard must stay. `validateUniformScale` has no absolute-magnitude floor --
+  //      its uniformity check is purely RELATIVE -- so it accepts such a matrix as valid and reports
+  //      its true (tiny) scaleFactor. Measured window: a uniform scale strictly between ~1e-108 (below
+  //      which the determinant finally underflows to exactly 0, i.e. case 1, and validateUniformScale
+  //      rejects it) and ~1.8e-103 (above which the determinant is back over `1 / Number.MAX_VALUE`
+  //      ~= 5.56e-309 and the inverse stays finite). Inside that window the determinant runs roughly
+  //      1e-323 to 5.5e-309. The `Number.isFinite` half of this guard is what catches it -- see
+  //      test/query/ClearanceQuery.test.mjs's own subnormal-determinant test, which fails if this
+  //      guard is removed (the two 1e-110 tests beside it do not: they exercise case 1's
+  //      top-of-function rejection instead).
   scratchInverseAnchor.copy(anchor.matrix).invert();
   const inverseElements = scratchInverseAnchor.elements;
   let anchorInvertible = inverseElements[15] !== 0;
