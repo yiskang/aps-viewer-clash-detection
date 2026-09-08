@@ -57,6 +57,31 @@ test('a fully-resolved genuine negative is conclusive:true', async () => {
   assert.equal(result.conclusive, true);
 });
 
+test('a negative reached via inconclusive-crossing (boundary-probe grazed, not budget-aborted) is conclusive:false', async () => {
+  // Additional coverage beyond the brief's own 7-case list (codex-advisor consult on
+  // this task's draft, medium effort: the crossing-budget-exhausted test below only
+  // exercises `crossing.aborted`, never the DISTINCT `crossing.inconclusive &&
+  // !crossing.aborted` branch of the formula's first clause). Reused from
+  // VolumeOverlapQuery.test.mjs's own "flush touching (round 3 headline)" fixture
+  // (line 22-30): two flush-touching boxes share a coplanar face, so every probe along
+  // that face grazes a triangle edge (sawBoundaryProbe:true) without ever resolving a
+  // proper crossing or aborting. A generous frameBudgetMs is required: on a cold
+  // process this fixture can spuriously read aborted:true from JIT/import warmup
+  // eating into the default 8ms wall-clock budget (verified empirically -- a warmed-up
+  // or budget-relaxed call reliably reads inconclusive:true, aborted:false instead).
+  const a = testInstance(box(2, 2, 2));
+  const b = testInstance(box(2, 2, 2), at(0, 2, 0));
+  const result = await volumeOverlapQuery(a, b, { crossing: { frameBudgetMs: 5000 } });
+  assert.equal(result.overlap, false);
+  assert.equal(result.diagnostics.some((d) => d.reason === 'inconclusive-crossing'), true,
+    'sanity: genuinely the inconclusive branch, not the aborted branch');
+  assert.equal(result.diagnostics.some((d) => d.reason === 'crossing-budget-exhausted'), false,
+    'sanity: NOT the aborted branch -- proves this exercises the distinct inconclusive clause');
+  assert.equal(result.stats.aInB.unresolvedComponentCount, 0);
+  assert.equal(result.stats.bInA.unresolvedComponentCount, 0);
+  assert.equal(result.conclusive, false);
+});
+
 test('a negative reached via crossing-budget-exhausted is conclusive:false', async () => {
   // Reused from ProperCrossingQuery.test.mjs's "candidate-count budget exhaustion"
   // fixture: interleaved combs with zero real intersections, budget tuned low enough
