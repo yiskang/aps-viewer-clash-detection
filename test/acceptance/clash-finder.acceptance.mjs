@@ -79,13 +79,20 @@
 // still pass even if the production callback itself passed the wrong arguments or mishandled its
 // result, provided the alert text and isolated-dbId union happened to still match by coincidence),
 // this file WRAPS (never replaces) the three real methods the production callback itself calls --
-// ext._world.findClashes, viewer.isolate, viewer.fitToView -- each wrapper calling straight through to
-// the original implementation and simply recording its arguments/result before returning it
-// unchanged. Every exact-pair, no-duplicate, source-exclusion, same/cross-model-provenance, and
-// isolate/fitToView assertion below is checked against THAT captured real invocation. The wrappers are
-// installed once and the capture arrays are reset immediately before each case's own right-click, so
-// this test's OWN setup calls (select/fitToView for camera framing, isolate([]) for the pre-case
-// visual reset) never pollute what gets attributed to the production callback.
+// ext._world.findClashes, viewer.setAggregateIsolation, viewer.fitToView -- each wrapper calling
+// straight through to the original implementation and simply recording its arguments/result before
+// returning it unchanged. [Task 1 fix round 1] Originally this wrapped the per-model
+// viewer.isolate(dbIds, model) API; ClashFinderExtension.js now makes exactly ONE
+// viewer.setAggregateIsolation(isolation) call per reconcile instead (source-verified against the
+// pinned 7.124.2 bundle -- see the Task 1 brief), so the wrapper moved to that method. The captured
+// isolation data is still exposed to assertions in the SAME flattened per-model shape as before (see
+// the spy installation's own comment), plus the raw per-call arguments where a test specifically needs
+// to observe the aggregate call's own empty-array clear-all shape. Every exact-pair, no-duplicate,
+// source-exclusion, same/cross-model-provenance, and isolate/fitToView assertion below is checked
+// against THAT captured real invocation. The wrappers are installed once and the capture arrays are
+// reset immediately before each case's own right-click, so this test's OWN setup calls (select/
+// fitToView for camera framing, the real viewer.isolate([]) calls for the pre-case visual reset) never
+// pollute what gets attributed to the production callback.
 //
 // --- Viewer API assumptions confirmed live, before/while writing this file -------------------------
 //   - viewer.getIsolatedNodes(model): the @types/forge-viewer typings declare this as
@@ -622,7 +629,16 @@ async function main() {
   // OWN setup calls never pollute the captured data.
   await page.evaluate((extensionId) => {
     const ext = window.viewer.getExtension(extensionId);
-    window.__test.spy = { findClashesCalls: [], isolateCalls: [], fitToViewCalls: [] };
+    // isolateCalls: flattened, one entry per {model, ids} pair from every setAggregateIsolation()
+    // call (see the wrapper below) -- kept in the SAME {modelKey, dbIds} shape the old per-model
+    // viewer.isolate() spy used to push, so isolateCallFor()/most downstream assertions keep working
+    // unchanged (they're really asking "did the union for this model include these dbIds", which is
+    // still answerable from the flattened list). setAggregateIsolationCalls: the RAW, unflattened
+    // call arguments (one entry per call, each an array of {modelKey, dbIds}) -- needed because a
+    // full clear-all is now ONE setAggregateIsolation([]) call with an EMPTY array, which flattens to
+    // NOTHING in isolateCalls; assertions that specifically need to observe that empty-array clear
+    // read this list instead (see the negative case below).
+    window.__test.spy = { findClashesCalls: [], isolateCalls: [], setAggregateIsolationCalls: [], fitToViewCalls: [] };
 
     const modelKeyOf = (model) => {
       if (model === window.__test.modelArch) return 'arch';
@@ -704,13 +720,33 @@ async function main() {
       return result;
     };
 
-    const originalIsolate = window.viewer.isolate.bind(window.viewer);
-    window.viewer.isolate = (dbIds, model) => {
-      window.__test.spy.isolateCalls.push({
-        dbIds: Array.isArray(dbIds) ? [...dbIds] : (dbIds == null ? [] : [dbIds]),
-        modelKey: modelKeyOf(model),
-      });
-      return originalIsolate(dbIds, model);
+    // [Task 1 fix round 1] Production ClashFinderExtension.js no longer calls the per-model
+    // viewer.isolate(dbIds, model) API at all -- it now makes exactly ONE
+    // viewer.setAggregateIsolation(isolation) call per reconcile, where `isolation` is an
+    // Array<{model, ids}> that fully replaces the Viewer's entire aggregate isolation state (source-
+    // verified against the pinned 7.124.2 bundle; see the Task 1 brief). Spy on THAT method instead --
+    // window.viewer.isolate itself is left completely unwrapped (still the real, valid public Viewer
+    // API this file's own resetVisualState() below calls directly, untouched by this instrumentation).
+    const originalSetAggregateIsolation = window.viewer.setAggregateIsolation.bind(window.viewer);
+    window.viewer.setAggregateIsolation = (isolation) => {
+      const entries = Array.isArray(isolation) ? isolation : [];
+      // Raw call record first (see window.__test.spy's own comment above for why this is needed
+      // alongside the flattened list below).
+      window.__test.spy.setAggregateIsolationCalls.push(
+        entries.map((e) => ({
+          modelKey: modelKeyOf(e?.model),
+          dbIds: Array.isArray(e?.ids) ? [...e.ids] : [],
+        })),
+      );
+      // Flattened, one entry per {model, ids} pair, in the same shape the old per-model isolate()
+      // spy used to push -- keeps isolateCallFor() and most of its call sites working unchanged.
+      for (const e of entries) {
+        window.__test.spy.isolateCalls.push({
+          dbIds: Array.isArray(e?.ids) ? [...e.ids] : [],
+          modelKey: modelKeyOf(e?.model),
+        });
+      }
+      return originalSetAggregateIsolation(isolation);
     };
 
     const originalFitToView = window.viewer.fitToView.bind(window.viewer);
@@ -727,6 +763,7 @@ async function main() {
     await page.evaluate(() => {
       window.__test.spy.findClashesCalls.length = 0;
       window.__test.spy.isolateCalls.length = 0;
+      window.__test.spy.setAggregateIsolationCalls.length = 0;
       window.__test.spy.fitToViewCalls.length = 0;
     });
   }
@@ -1429,18 +1466,24 @@ async function main() {
   check('[negative] captured call: zero pairs', negativeSpy.findClashesCalls[0]?.pairs.length, 0);
   await page.screenshot({ path: path.join(RESULTS_DIR, `clash-finder-${NEGATIVE_CASE.sourceDbId}-result.png`), fullPage: false });
 
-  // --- restore-visualization check, bound to the REAL isolate() calls _clearIsolation() made ---
+  // --- restore-visualization check, bound to the setAggregateIsolation([]) clear-all call
+  // _clearIsolation() made ---
   // (an end-state-only check here would be trivially true regardless of whether _clearIsolation() ran
   // at all, since resetVisualState() above already cleared the VISUAL state before this case's own
   // select+right-click. The extension's OWN _isolatedModels bookkeeping is independent of this test's
-  // raw isolate([], model) calls -- only the extension's own isolate() calls update it -- so it still
-  // holds {Structure, Architecture} left over from the mixed case above; asserting that the REAL
-  // _clearIsolation() issued isolate([], model) calls for BOTH of those models during THIS click
-  // proves the clearing code path genuinely executed, regardless of what the visual end-state already
-  // was.) ---
-  const isolateCallForNegative = (modelKey) => negativeSpy.isolateCalls.find((c) => c.modelKey === modelKey && c.dbIds.length === 0);
-  check('[negative] real isolate([], Structure) called (proves _clearIsolation() iterated the prior case\'s own isolated models)', !!isolateCallForNegative('struct'), true);
-  check('[negative] real isolate([], Architecture) called (same proof, for Architecture)', !!isolateCallForNegative('arch'), true);
+  // own raw isolate([], model) scaffolding calls in resetVisualState() -- only the extension's own
+  // setAggregateIsolation() call updates it -- so it still holds {Structure, Architecture} left over
+  // from the mixed case above. [Task 1 fix round 1] Under the old per-model viewer.isolate() API this
+  // asserted two SEPARATE isolate([], model) calls, one per model. The aggregate API's own full-replace
+  // semantics collapse that into ONE setAggregateIsolation([]) call with an EMPTY array -- there are no
+  // per-model {model, ids: []} entries to find individually, since the array itself is empty. Asserting
+  // that this ONE empty-array call fired during THIS click still proves the clearing code path
+  // genuinely executed, regardless of what the visual end-state already was.) ---
+  const lastAggCallNegative = negativeSpy.setAggregateIsolationCalls.at(-1);
+  check('[negative] the extension made a setAggregateIsolation call during this click (proves _clearIsolation() ran)',
+    lastAggCallNegative !== undefined, true);
+  check('[negative] that call\'s array is empty -- setAggregateIsolation([]), the documented clear-all case (proves _clearIsolation() iterated the prior case\'s own isolated Structure+Architecture models)',
+    lastAggCallNegative, []);
   check('[negative] no fitToView() calls on the zero-pairs early-return branch', negativeSpy.fitToViewCalls.length, 0);
 
   // Corroborating end-state check.
