@@ -100,8 +100,14 @@ function makeMockModel(id) {
 // with THREE.Line/THREE.LineBasicMaterial/THREE.BufferGeometry -- the three APIs Hard Clash's own
 // marker overlay never needed, confirmed available on the real pinned r71 bundle (see this task's
 // dispatch context: THREE.Line/LineBasicMaterial construction and BufferGeometry#setFromPoints all
-// source-verified against the real viewer3D.js, including the Viewer's own internal gizmo/
-// measurement-tool code already calling all three this exact way).
+// source-verified against the real viewer3D.js). setFromPoints specifically is NOT proven by the
+// Viewer's own gizmo/measurement-tool code -- that code actually calls a DIFFERENT, webpack-imported
+// "modern three" module (`three__WEBPACK_IMPORTED_MODULE_0___default()`), not the r71 `window.THREE`
+// global this extension uses. The real load-bearing evidence for setFromPoints on r71 `window.THREE`
+// is a separate, explicit backport shim found in the same bundle:
+// `defineFunctionIfMissing(THREE?.BufferGeometry?.prototype, 'setFromPoints', function
+// setFromPoints(points) {...})`, which installs the method directly onto the r71 THREE global when
+// missing.
 class FakeVector3 {
   constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
   set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
@@ -185,14 +191,16 @@ const MARKER_COLOR = 0xff6a00; // Hard Clash's own marker color
 
 // Bypasses fromViewer/load() to inject a controllable fake world directly (same seam the sibling
 // Hard Clash test file uses), while still mirroring exactly what load() itself would have set on
-// `_clearance`/`_latestSoftClashActionToken` -- so onContextMenu/target() tests below observe the
-// same post-load() state without paying for a real (mocked) load() round-trip each time.
+// `_clearance` -- so onContextMenu/target() tests below observe the same post-load() state without
+// paying for a real (mocked) load() round-trip each time. `_latestSoftClashActionToken` needs no
+// mirroring here: it is initialized once in the constructor (fix-wave, post-Batch-3 review) and
+// load() never touches it, so the constructor's own `new ClashFinderExtension(...)` call above
+// already leaves it at 0, exactly matching real post-load() state.
 function extensionWithFakeWorld(viewer = makeMockViewer(), options = {}) {
   const ext = new ClashFinderExtension(viewer, options);
   const world = makeFakeWorld();
   ext._world = world; // test seam: bypass fromViewer/load() to inject a controllable fake world
   ext._clearance = options.defaultClearance ?? ClashFinderExtension.DEFAULT_CLEARANCE;
-  ext._latestSoftClashActionToken = 0;
   return { ext, viewer, world };
 }
 
@@ -218,7 +226,21 @@ await withFakeFromViewer(async () => makeFakeWorld(), async () => {
   const ext = new ClashFinderExtension(makeMockViewer(), {});
   await ext.load();
   check('load() with no options resolves _clearance to DEFAULT_CLEARANCE (0.05)', ext._clearance, 0.05);
-  check('load() initializes _latestSoftClashActionToken to 0', ext._latestSoftClashActionToken, 0);
+});
+
+// === _latestSoftClashActionToken is initialized to 0 by the CONSTRUCTOR, not by load() (fix-wave,
+// post-Batch-3 review): asserts immediately after construction (before load() ever runs) AND that a
+// non-zero value set before load() survives load() untouched -- proving load() genuinely never
+// (re-)assigns this field, matching Hard Clash's own _latestActionToken discipline exactly ==========
+{
+  const ext = new ClashFinderExtension(makeMockViewer(), {});
+  check('_latestSoftClashActionToken is 0 immediately after construction, before load() ever runs', ext._latestSoftClashActionToken, 0);
+}
+await withFakeFromViewer(async () => makeFakeWorld(), async () => {
+  const ext = new ClashFinderExtension(makeMockViewer(), {});
+  ext._latestSoftClashActionToken = 7; // simulate an in-flight query's token before a (re-)load()
+  await ext.load();
+  check('load() does NOT reset a pre-existing _latestSoftClashActionToken back to 0', ext._latestSoftClashActionToken, 7);
 });
 
 // === load() with a valid defaultClearance option uses the override =================================

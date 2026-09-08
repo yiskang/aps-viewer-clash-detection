@@ -1,11 +1,12 @@
 // wwwroot/extensions/ClashFinderExtension.js
 //
 // A thin CollisionWorld consumer, sibling to RoomLocatorExtension.js: given a single selected
-// source element (spanning any one loaded model), uses CollisionWorld.findClashes({mode:
-// 'volume-overlap'}) -- the fixed, only "Hard Clash" mode this workflow ever uses -- against every
-// currently loaded model (source's own model included; CollisionWorld's own source self-exclusion
-// already keeps the source element out of its own results, so this extension must never manually
-// filter it out) and isolates/highlights whatever it finds.
+// source element (spanning any one loaded model), offers TWO independent context-menu actions --
+// "Find Clashes" (Hard Clash, CollisionWorld.findClashes({mode: 'volume-overlap'})) and "Find Soft
+// Clashes" (Soft Clash, CollisionWorld.findClashes({mode: 'clearance'}), added in M3 Batch 3) --
+// each against every currently loaded model (source's own model included; CollisionWorld's own
+// source self-exclusion already keeps the source element out of its own results, so this extension
+// must never manually filter it out) and isolates/highlights whatever it finds.
 //
 // Depends ONLY on CollisionWorld's public surface: fromViewer, findClashes, evictModel, dispose.
 // Never reaches into CollisionWorld internals. collision/index.js is the library's single public
@@ -96,6 +97,21 @@ export class ClashFinderExtension extends ExtensionBase {
     // the newer one's visualization -- the superseded result is discarded silently (no error, no
     // notify, no isolate/fitToView), since being superseded is not a failure.
     this._latestActionToken = 0;
+    // Task 14 (M3 Batch 3): Soft Clash's own monotonic action token, SEPARATE from
+    // _latestActionToken above -- see the "Find Soft Clashes" menu entry below for why these two
+    // counters must never interact. Initialized ONCE here, next to Hard Clash's own token, and never
+    // reset -- matching _latestActionToken's own discipline. [fix-wave, post-Batch-3 whole-batch
+    // review] Originally this was (re-)assigned inside load() instead, which was a real bug on two
+    // counts: (a) on an instance where load() was never called, or threw before reaching that
+    // assignment (e.g. the defaultClearance validation just above, in the real code, throwing first),
+    // any code bumping this field would compute `undefined + 1 = NaN`, silently breaking the
+    // staleness guard; (b) re-load()ing the same
+    // instance reset the counter back to 0, so a Soft Clash query issued before an old load()/
+    // unload() cycle, still in flight, could have its stale captured token match again once a fresh
+    // load() walked the counter back up from 0 -- silently re-applying isolation/markers from a query
+    // that should have been treated as superseded/stale. Constructor-only initialization, like
+    // _latestActionToken, closes both holes.
+    this._latestSoftClashActionToken = 0;
     // Every Model this extension currently has isolated, so a later call (a fresh Find Clashes, or a
     // "No clashes found" outcome) can correctly clear prior isolation state before applying (or
     // omitting) new isolation -- spec 11.2 "Clearing/restoring visualization".
@@ -113,9 +129,10 @@ export class ClashFinderExtension extends ExtensionBase {
     this._markerMaterial = null;
     // Task 14 (M3 Batch 3): "Find Soft Clashes" own visualization-tracking state, kept SEPARATE from
     // _activeMarkers above -- Hard Clash's witness-marker overlay and Soft Clash's own visualization
-    // (Task 15 fills in real geometry; this task only tracks the pairs it was last given) are
-    // independent, never sharing state, matching the same "separate, independent action" framing as
-    // the two action tokens below.
+    // are independent, never sharing state, matching the same "separate, independent action" framing
+    // as the two action tokens above. Task 15 landed the real geometry: this array holds the actual
+    // THREE.Mesh/THREE.Line instances Soft Clash has rendered (see _addSoftClashVisualization), not
+    // raw clash pairs.
     this._activeSoftClashObjects = [];
     // Task 15 (M3 Batch 3): lazily created (see _ensureSoftClashOverlay), shared across every
     // Soft Clash marker/line this extension ever creates -- same "one shared geometry/material
@@ -145,10 +162,6 @@ export class ClashFinderExtension extends ExtensionBase {
     if (typeof this._clearance !== 'number' || !Number.isFinite(this._clearance) || this._clearance <= 0) {
       throw new Error(`ClashFinderExtension: options.defaultClearance must be a finite, positive number, got ${this.options.defaultClearance}`);
     }
-    // Task 14: Soft Clash's own monotonic action token, SEPARATE from _latestActionToken (Hard
-    // Clash's own, declared in the constructor above and unchanged by this task) -- see the "Find
-    // Soft Clashes" menu entry below for why these two counters must never interact.
-    this._latestSoftClashActionToken = 0;
     this._world = await CollisionWorld.fromViewer(this._viewer, this.options);
     this._viewer.addEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
     this._viewer.registerContextMenuCallback(EXTENSION_ID, this._onContextMenuBound);
@@ -391,7 +404,8 @@ export class ClashFinderExtension extends ExtensionBase {
   // Clash's -- parameterizing here (defaulting to the ORIGINAL module-level consts) is a
   // behavior-preserving refactor: Hard Clash's own call site below (`_addMarkers`, unchanged) omits
   // both new arguments and gets IDENTICAL behavior to before via these defaults. Proven by
-  // `test/ClashFinderExtension.test.mjs` passing unmodified.
+  // `test/ClashFinderExtension.test.mjs`'s own assertions -- unmodified by this refactor -- all still
+  // passing, right now, not merely at the time this comment was written.
   //
   // InstanceTree.getNodeBox(dbId, dst) -- source-verified against the pinned Viewer 7.124.2 bundle
   // (ObjectTree.prototype.getNodeBox / InstanceTreeAccess.prototype.getNodeBox) -- writes a FLAT
@@ -847,8 +861,8 @@ export class ClashFinderExtension extends ExtensionBase {
           this._isolatedModels.add(model);
         }
 
-        // Task 15 fills in real overlay geometry here; for now this call site is wired and tracks
-        // the pairs it was given (see _addSoftClashVisualization's own comment above).
+        // Renders the real Soft Clash overlay geometry for this result set (see
+        // _addSoftClashVisualization's own comment above).
         this._addSoftClashVisualization(pairs, dbIdsByModel);
 
         const summary = `${pairs.length} clashes found (${sameModelCount} in this model, ${crossModelCount} in other models)`;

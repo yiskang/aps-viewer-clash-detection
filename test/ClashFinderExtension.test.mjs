@@ -851,8 +851,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const { ext } = extensionWithFakeWorld();
   const radius = ext._computeMarkerRadius(new Map([[model, new Set([30])]]));
   // bounding sphere of a [0,0,0]-[2,2,2] box: center (1,1,1), radius = sqrt(3*2^2)/2 = sqrt(12)/2 ≈ 1.732
-  // MARKER_RADIUS_FRACTION (0.01 per the plan default) * 1.732 ≈ 0.0173, clamped up to MIN_MARKER_RADIUS
-  check('a small-but-nonzero real box still clamps to MIN_MARKER_RADIUS (0.01 fraction of ~1.73 is below MIN)',
+  // MARKER_RADIUS_FRACTION (0.002, per M2.1 Task 10's live-tuning pass) * 1.732 ≈ 0.00346, clamped up to MIN_MARKER_RADIUS
+  check('a small-but-nonzero real box still clamps to MIN_MARKER_RADIUS (0.002 fraction of ~1.73 is below MIN)',
     radius, ClashFinderExtension.MIN_MARKER_RADIUS);
 }
 
@@ -892,7 +892,7 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   try {
     radius = ext._computeMarkerRadius(new Map([[modelNoTree, new Set([1])], [goodModel, new Set([5])]]));
   } catch (err) { threw = err; }
-  const expectedRadius = Math.sqrt(50 * 50 * 3) * 0.5 * 0.01;
+  const expectedRadius = Math.sqrt(50 * 50 * 3) * 0.5 * 0.002;
   check('a mix of a no-instance-tree model and a good model does not throw', threw, null);
   check('the good model\'s bounding data alone still drives the computed radius', radius, expectedRadius);
 }
@@ -1191,9 +1191,9 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
 // genuinely reaches _addMarkers's radius computation through the real call site. ======================
 {
   // A cube from (0,0,0) to (50,50,50): bounding-sphere radius = 0.5 * sqrt(3 * 50^2) = 25*sqrt(3), and
-  // MARKER_RADIUS_FRACTION is 0.01 (the file's own documented default -- see the earlier
+  // MARKER_RADIUS_FRACTION is 0.002 (M2.1 Task 10's own live-tuning pass -- see the earlier
   // "small-but-nonzero real box" test's comment above for the same constant), so the clamped radius
-  // is 25*sqrt(3)*0.01 ~= 0.433 -- strictly above MIN_MARKER_RADIUS (0.05) and strictly below
+  // is 25*sqrt(3)*0.002 ~= 0.0866 -- strictly above MIN_MARKER_RADIUS (0.05) and strictly below
   // MAX_MARKER_RADIUS (2.0), i.e. genuinely unclamped.
   const bigBox = { min: [0, 0, 0], max: [50, 50, 50] };
   const modelA = makeMockModel(301, { boxesByDbId: { 1: bigBox, 2: bigBox } });
@@ -1209,7 +1209,7 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   ext.onContextMenu(menu, { hasSelected: true });
   await menu[0].target();
 
-  const expectedRadius = Math.sqrt(3 * 50 * 50) * 0.5 * 0.01;
+  const expectedRadius = Math.sqrt(3 * 50 * 50) * 0.5 * 0.002;
   check('setup: expected radius is strictly ABOVE MIN_MARKER_RADIUS (genuinely unclamped, not the MIN fallback)',
     expectedRadius > ClashFinderExtension.MIN_MARKER_RADIUS, true);
   check('setup: expected radius is strictly BELOW MAX_MARKER_RADIUS (genuinely unclamped, not the MAX clamp)',
