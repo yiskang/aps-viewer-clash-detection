@@ -1713,16 +1713,20 @@ test('fixture 10: multiple fragment pairs for one dbId -> minimum-distance fragm
 });
 
 // Fixture 5/6 (integration level): Hard Clash exclusion.
-test('fixture 5/6: a dbId pair with a Hard-Clash fragment pair is excluded from clearance results', async () => {
+// I-5 fix: dbId 1/2 here is a PURE Hard Clash -- every fragment pair between them is proven-overlap,
+// so none ever reaches the distance query and clearanceCandidateByKey gets NO entry for this key.
+// clearanceHardClashExclusions must still count exactly 1, derived from the complete excluded-key
+// set (hardClashExcludedKeys), never from iterating clearanceCandidateByKey.
+test('fixture 5/6: a pure Hard-Clash pair with no surviving clearance-distance candidate proves clearanceHardClashExclusions === 1', async () => {
   const world = new CollisionWorld();
-  const model = /* source dbId 1 overlaps target dbId 2 */ null;
+  const model = /* source dbId 1 overlaps target dbId 2 on every fragment pair; no other targets */ null;
   await world.admitModel(model);
   const { pairs, statistics } = await world.findClashes({
     source: { model, dbIds: [1] }, target: { model, dbIds: [2] },
     mode: 'clearance', clearance: 5, groupBy: 'dbId', broadPhase: 'linear',
   });
   assert.equal(pairs.length, 0);
-  assert.ok(statistics.clearanceHardClashExclusions >= 1);
+  assert.equal(statistics.clearanceHardClashExclusions, 1);
 });
 
 // Fixture 8: cross-model federated clearance.
@@ -1888,10 +1892,17 @@ if (query.mode === 'clearance') {
     }
   }
 
+  // Fix (I-5, post-Batch-1 reconciliation): clearanceHardClashExclusions must count every
+  // proven-excluded dbId key from the COMPLETE hardClashExcludedKeys set, including a key that
+  // never produced a surviving clearanceCandidateByKey entry -- e.g. a pure Hard-Clash pair whose
+  // every contributing fragment pair was excluded before the distance query ever ran, so
+  // clearanceCandidateByKey has no entry for that key at all. Deriving the count by iterating
+  // clearanceCandidateByKey (the original draft's bug) silently undercounts exactly that case.
+  statistics.clearanceHardClashExclusions += hardClashExcludedKeys.size;
+
   const pairs = [];
   for (const [key, winner] of clearanceCandidateByKey) {
     if (hardClashExcludedKeys.has(key)) {
-      statistics.clearanceHardClashExclusions++;
       continue; // a later-processed fragment pair proved Hard Clash for this same dbId pair
     }
     pairs.push({
@@ -2323,7 +2334,7 @@ claim with one source of truth):**
 | `clearanceExpandedCandidatePairs` | TLAS `onCandidate`, after scope/self-exclusion/`currentByFragmentId` filters, before the exact retest. Always `0` under `broadPhase:'linear'`. | Task 10 |
 | `clearanceExactAabbSurvivors` | Once per candidate (linear or TLAS) whose exact, unpadded AABB distance is `<= clearance` | Tasks 9, 10 |
 | `clearanceOverlapPrechecksRun` | Once per candidate whose precheck status is `excluded`, `proceed`, OR `inconclusive` — i.e. whenever `volumeOverlapQuery` actually ran. **Never** for `skip-precheck` (fix: the first draft omitted `excluded`) | Task 9 |
-| `clearanceHardClashExclusions` | Once per **dbId-level** pair omitted because of a proven Hard Clash on any contributing fragment pair (never per fragment pair) | Task 9 |
+| `clearanceHardClashExclusions` | Once per **dbId-level** pair in the complete `hardClashExcludedKeys` set (never per fragment pair) — including a key with zero surviving `clearanceCandidateByKey` entries (fix I-5: must NOT be derived by iterating `clearanceCandidateByKey`, which omits a pure Hard-Clash pair with no clearance-distance candidate) | Task 9 |
 | `clearanceDistanceQueriesRun` | Once per actual `clearanceQuery` call (both the `proceed` and `skip-precheck` branches reach it) | Task 9 |
 | `clearanceHits` | `pairs.length` at the end of the call | Task 9 |
 | `clearanceQueryMs` | Wall-clock inside `clearanceQuery` calls only, same bracketing convention as `tlasQueryMs` | Task 9 |
@@ -2386,6 +2397,21 @@ test('clearanceDistanceQueriesRun excludes hard-clash-excluded and inconclusive 
     source: { model, dbIds: [1] }, target: { model, dbIds: [2, 3] }, mode: 'clearance', clearance: 5, groupBy: 'dbId',
   });
   assert.ok(statistics.clearanceDistanceQueriesRun < statistics.clearanceExactAabbSurvivors);
+});
+
+// I-5 fix: a dbId pair that is a PURE Hard Clash (every fragment pair proven-overlap) never produces
+// a clearanceCandidateByKey entry -- clearanceHardClashExclusions must still count it, from the
+// complete hardClashExcludedKeys set, not by iterating clearanceCandidateByKey.
+test('clearanceHardClashExclusions counts a dbId pair with zero surviving clearance-distance candidates', async () => {
+  const world = new CollisionWorld();
+  const model = /* source dbId 1 overlaps target dbId 2 on every fragment pair -- pure Hard Clash,
+    no fragment pair ever reaches the distance query */ null;
+  await world.admitModel(model);
+  const { pairs, statistics } = await world.findClashes({
+    source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 5, groupBy: 'dbId',
+  });
+  assert.equal(pairs.length, 0);
+  assert.equal(statistics.clearanceHardClashExclusions, 1, 'must count from the complete excluded-key set, not from clearanceCandidateByKey');
 });
 ```
 
