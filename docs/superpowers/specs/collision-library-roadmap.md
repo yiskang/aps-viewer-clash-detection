@@ -2,7 +2,7 @@
 
 Status: durable architecture guidance. This is not a milestone spec and not an implementation plan. It records what already exists, what M4 is for, the downstream path beyond M4, and the compatibility constraints that bind future milestone design work.
 
-As of 2026-09-08 (`main` at `2099ed6`, `feature/m3-clearance` fast-forward merged into `main`).
+As of 2026-09-08 (`main` at `0368a9d`).
 
 This document does not reopen or redefine M1, M2, M2.1, M3, or M4 scope. Where it lists constraints, those constraints are binding on M4+ design unless explicitly superseded by a later reviewed architecture decision (see §8).
 
