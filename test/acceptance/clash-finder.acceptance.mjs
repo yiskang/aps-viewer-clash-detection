@@ -369,13 +369,20 @@ const NEGATIVE_CASE = {
 //     struct 3965 -> struct 3976  distance 0.04166616338460325
 //     struct 3965 -> struct 4135  distance 0.04166616338460503
 //
-// A follow-up fine sweep bracketed the true minimum tightly -- 0.02, 0.03, 0.04 and 0.0416 all
-// return 0 pairs; 0.042 and 0.05 both return exactly the 2 pairs above -- so
-// **3965's true minimum surface-to-surface distance to anything in the whole federated scene is
-// 0.0416661633846**, and any clearance strictly below that is a genuinely, provably empty query
-// rather than a vacuously empty one. That measurement is what the known-negative case's own
-// clearance value below is derived from; the brief's own placeholder (0.001) was NOT used, because
-// nothing had been measured yet when it was written.
+// A follow-up fine sweep bracketed that value tightly -- 0.02, 0.03, 0.04 and 0.0416 all return 0
+// pairs; 0.042 and 0.05 both return exactly the 2 pairs above. So **the smallest source-to-anything
+// distance this query reports for dbId 3965 is 0.0416661633846**, and that measurement is what the
+// known-negative case's own clearance value below is derived from; the brief's own placeholder
+// (0.001) was NOT used, because nothing had been measured yet when it was written.
+//
+// Stated precisely, because the distinction matters (codex-advisor, this task's own fix round):
+// this measurement comes from the SAME clearance implementation the acceptance cases exercise, so
+// it is NOT an independent, exhaustive proof that no object anywhere in the scene lies within
+// 0.0416661633846 of 3965 -- proving that would need a separate oracle (e.g. an exhaustive
+// Viewer-owned world-bounds scan, which no case here performs). What it IS, and all the
+// known-negative case below claims, is that the production action's own behaviour is genuinely
+// threshold-sensitive for this source: 0 pairs at 0.02 and exactly 2 at 0.05, both through the real
+// menu-driven path.
 //
 // The discovered pair is real, ordinary building geometry, not a curiosity: 3965 is
 // "HSS-Hollow Structural Section-Column [681589]" and 3976/4135 are two
@@ -445,20 +452,31 @@ const SOFT_CLASH_POSITIVE_CASE = {
   expectedAlertMessage: '2 clashes found (2 in this model, 0 in other models)',
 };
 
-// Provably below SOFT_CLASH_POSITIVE_CASE.expectedDistance (0.04166616...), the measured true
-// minimum distance from dbId 3965 to ANY element in the whole three-model scene -- so a zero-pair
-// result here is a real geometric negative, not a threshold artifact. Deliberately NOT the brief's
-// own placeholder 0.001 and not the sweep's own 0.01 either: at 0.02 the value is still less than
-// half the true minimum (so the negative is unambiguous) while being 20x larger than 0.001, which
-// makes it a far less trivially-satisfied query. The pairing with the positive case above is what
-// makes this negative non-vacuous: the SAME source element, through the SAME production action,
-// finds exactly 2 pairs at 0.05 and exactly 0 at 0.02.
+// Comfortably below SOFT_CLASH_POSITIVE_CASE.expectedDistance (0.04166616...), the smallest
+// distance the clearance query reports for dbId 3965. Deliberately NOT the brief's own placeholder
+// 0.001 and not the sweep's own 0.01 either: 0.02 is still less than half that measured distance
+// (so the zero-pair outcome is unambiguous) while being 20x larger than 0.001, which makes it a far
+// less trivially-satisfied query.
+//
+// What this case does and does not claim (codex-advisor, this task's own fix round). It is a real
+// no-false-positive result for this source at this threshold, through the real production action,
+// and its non-vacuity comes from PAIRING rather than from any single assertion: the SAME source
+// element, through the SAME production action, yields exactly 0 pairs at 0.02 and exactly 2 at
+// 0.05. It is NOT an exhaustive proof that nothing in the scene lies within 0.02 of dbId 3965 --
+// the threshold was derived from the same implementation under test, so that stronger claim would
+// need an independent oracle this file does not build. The live statistics also show WHERE this
+// particular negative is decided: 0 expanded candidate pairs and 0 distance queries, i.e. the
+// clearance BROAD PHASE prunes everything before any exact-distance work happens. That is asserted
+// explicitly below rather than left implied, so the case is not read as exercising the exact
+// distance query's own beyond-threshold path, which it does not.
 const SOFT_CLASH_NEGATIVE_CLEARANCE = 0.02;
 
-// Deliberately huge (100x the default, and ~20x the largest distance the Hard-Clash-excluded pair
-// could plausibly be at), so the two known Hard Clash targets are absent for exactly one reason:
-// the Hard-Clash exclusion rule. Live: this query returns 33 clearance pairs spanning distances
-// 0.0417 to 4.82, and neither Hard Clash target is among them.
+// Deliberately huge (100x the default), so distance alone cannot explain the two known Hard Clash
+// targets being absent -- they are touching, i.e. at distance 0, which no threshold this large
+// excludes. Live: this query returns 33 clearance pairs spanning distances 0.0417 to 4.82, and
+// neither Hard Clash target is among them. Note the menu-driven case can only ever show that
+// absence ALONGSIDE a whole-query exclusion count; the target-scoped companion query further down
+// is what attributes an exclusion to arch 3686 specifically.
 const SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE = 5;
 
 const RESULTS_DIR = path.join(process.cwd(), 'test/acceptance/results');
@@ -626,6 +644,16 @@ async function main() {
         // so it crosses the page<->Node boundary as structured-cloneable data rather than being
         // dropped by JSON serialization. No pre-existing Hard Clash assertion reads this field.
         clearance: query.clearance ?? null,
+        // M3 Task 17 [fix round, codex-advisor Finding 1]: the query's own TARGET SCOPE, which
+        // nothing captured before. Without it, a regression that silently stopped targeting one of
+        // the loaded models would be invisible here -- and specifically, the Hard-Clash-exclusion
+        // case's "arch 3686 is absent" assertion could be satisfied by Architecture never having
+        // been queried at all. `dbIds` omitted means whole-model scope (the shape both production
+        // actions issue); a narrowed scope is captured as its own dbId list.
+        targetScope: (query.target?.targets ?? []).map((t) => ({
+          modelKey: modelKeyOf(t.model),
+          scope: t.dbIds === undefined ? 'whole-model' : [...t.dbIds],
+        })),
         pairs: result.pairs.map((p) => ({
           sourceModelKey: modelKeyOf(p.source.model),
           sourceDbId: p.source.dbId,
@@ -1556,7 +1584,10 @@ async function main() {
         { targetModelKey: 'struct', targetDbId: 3976, distance: 0.04166616338460325 },
         { targetModelKey: 'struct', targetDbId: 4135, distance: 0.04166616338460503 },
       ],
-      measuredTrueMinimumDistance: 0.04166616338460325,
+      // Named precisely: this is the smallest distance the clearance query itself reports for this
+      // source, NOT an independently-proven global minimum over the scene (see the header comment).
+      smallestReportedDistanceForSource: 0.04166616338460325,
+      independentGlobalMinimumProven: false,
       fineBracket: { emptyAt: [0.02, 0.03, 0.04, 0.0416], nonEmptyAt: [0.042, 0.05] },
     },
     cases: {},
@@ -1699,13 +1730,61 @@ async function main() {
   );
   const isPoint3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
   const softTupleKey = (p) => `${p.targetModelKey}:${p.targetDbId}`;
-  // Tolerance-based multiset comparison for the Float32-quantized line endpoints.
-  const matchesSomePointPair = (endpoints, pairs, tolerance) => pairs.some(([a, b]) =>
-    maxAbsDelta(endpoints[0], a) <= tolerance && maxAbsDelta(endpoints[1], b) <= tolerance);
+  // Tolerance-based BIJECTIVE (one-to-one) matching of the drawn lines against the result's own
+  // witness point-pairs. [fix round, codex-advisor Finding 4] The first draft asked only whether
+  // each line matched SOME pair, which one duplicated line plus one entirely missing line would
+  // both satisfy -- the exact defect an "every line is drawn, once" check exists to catch. A matched
+  // pair is now consumed, and the counts must agree, so every pair gets exactly one line and every
+  // line belongs to exactly one pair. The tolerance exists because a line's endpoints live in a
+  // Float32 BufferGeometry, i.e. quantized copies of the Float64 witness points.
+  const linesMatchPairsBijectively = (lineEndpoints, pointPairs, tolerance) => {
+    if (lineEndpoints.length !== pointPairs.length) return false;
+    const unmatched = [...pointPairs];
+    for (const endpoints of lineEndpoints) {
+      if (!Array.isArray(endpoints) || endpoints.length !== 2) return false;
+      const index = unmatched.findIndex(([a, b]) => maxAbsDelta(endpoints[0], a) <= tolerance
+        && maxAbsDelta(endpoints[1], b) <= tolerance);
+      if (index === -1) return false;
+      unmatched.splice(index, 1);
+    }
+    return unmatched.length === 0;
+  };
+
+  // [fix round, codex-advisor Finding 4] Soft Clash's own equivalents of stashMarkerMeshes /
+  // stashedMarkersStillInOverlay. Without these, an alignment re-run could leave the PREVIOUS run's
+  // meshes and lines still attached to the overlay scene -- visibly stale geometry pointing at
+  // pre-alignment positions -- and every assertion against `_activeSoftClashObjects` would still
+  // pass, because that array was replaced wholesale. Asking overlays.hasMesh about the exact prior
+  // objects is what actually proves they were removed.
+  async function stashSoftClashObjects() {
+    await page.evaluate((extensionId) => {
+      window.__test.stashedSoftClashObjects = [...window.viewer.getExtension(extensionId)._activeSoftClashObjects];
+    }, CLASH_FINDER_EXTENSION_ID);
+  }
+  async function stashedSoftClashObjectsStillInOverlay() {
+    return page.evaluate((overlayName) => (window.__test.stashedSoftClashObjects ?? [])
+      .map((o) => window.viewer.overlays.hasMesh(o, overlayName)), SOFT_CLASH_OVERLAY_NAME);
+  }
+
+  // The exact target scope the production "Find Soft Clashes" action must issue: whole-model scope
+  // for EVERY currently loaded model, the source's own included (CollisionWorld's own source
+  // self-exclusion is what keeps the source element out of its own results, so the action must never
+  // pre-filter). Sorted by model key so the comparison is order-independent.
+  const expectedWholeModelTargetScope = [
+    { modelKey: 'arch', scope: 'whole-model' },
+    { modelKey: 'mech', scope: 'whole-model' },
+    { modelKey: 'struct', scope: 'whole-model' },
+  ];
+  const sortedTargetScope = (call) => [...call.targetScope].sort((a, b) => (a.modelKey < b.modelKey ? -1 : 1));
 
   function checkClearancePairInvariants(label, call, expectedClearance) {
     check(`[soft][${label}] captured call: mode is clearance`, call.mode, 'clearance');
     check(`[soft][${label}] captured call: groupBy is dbId`, call.groupBy, 'dbId');
+    // [fix round, codex-advisor Finding 1] Asserted for EVERY Soft Clash case, not just the
+    // exclusion one: every "absent from the results" claim anywhere below is only meaningful if the
+    // model that would have owned the absent element was genuinely in scope in the first place.
+    check(`[soft][${label}] captured call: target scope is whole-model for all three loaded models (so an absence is a real absence, not an un-queried model)`,
+      sortedTargetScope(call), expectedWholeModelTargetScope);
     check(`[soft][${label}] captured call: the clearance threshold the production action actually issued`,
       call.clearance, expectedClearance);
     check(`[soft][${label}] captured call: every pair's type is 'clearance' (never 'volume-overlap')`,
@@ -1744,12 +1823,13 @@ async function main() {
   const softClearanceAtSectionStart = await page.evaluate((id) => window.viewer.getExtension(id)._clearance, CLASH_FINDER_EXTENSION_ID);
   check('[soft] the live extension resolved its clearance to the production DEFAULT_CLEARANCE',
     softClearanceAtSectionStart, EXPECTED_DEFAULT_CLEARANCE);
-  check('[soft] the discovery spike\'s measured true minimum distance from dbId 3965 exceeds the known-negative clearance (so that negative is real, not a threshold artifact)',
+  check('[soft] the known-negative clearance sits below the smallest distance this query reports for dbId 3965 (so the two cases really do bracket the same source)',
     SOFT_CLASH_NEGATIVE_CLEARANCE < SOFT_CLASH_POSITIVE_CASE.expectedDistance, true);
 
   // === Always run 1: known-negative, no false positive ===========================================
   // Same source element as this file's own Hard Clash negative case (dbId 3965), at a clearance
-  // provably below its measured true minimum distance to anything in the scene.
+  // comfortably below the smallest distance this query reports for it. See
+  // SOFT_CLASH_NEGATIVE_CLEARANCE's own comment for exactly what this case does and does not claim.
   console.log(`\n=== Soft Clash case: known-negative-no-false-positive (dbId ${NEGATIVE_CASE.sourceDbId} @ clearance ${SOFT_CLASH_NEGATIVE_CLEARANCE}) ===`);
   const negativeSoft = await runFindSoftClashesCase(NEGATIVE_CASE.sourceDbId, SOFT_CLASH_NEGATIVE_CLEARANCE);
   const negativeSoftCall = negativeSoft.spy.findClashesCalls[0];
@@ -1774,11 +1854,18 @@ async function main() {
   check('[soft][known-negative] captured call: source.dbIds is exactly the selected dbId',
     negativeSoftCall.sourceDbIds, [NEGATIVE_CASE.sourceDbId]);
   checkClearancePairInvariants('known-negative', negativeSoftCall, SOFT_CLASH_NEGATIVE_CLEARANCE);
-  check('[soft][known-negative] ZERO clearance pairs -- no false positive below the measured true minimum distance',
+  check('[soft][known-negative] ZERO clearance pairs -- no false positive at a threshold below the smallest distance this query reports for this source',
     negativeSoftCall.pairs.length, 0);
+  // Says WHERE this negative is decided, rather than leaving it to be over-read as an exact-distance
+  // rejection: the clearance broad phase prunes every candidate before any distance query runs.
+  check('[soft][known-negative] this negative is decided in the clearance BROAD PHASE (zero expanded candidate pairs, zero distance queries) -- recorded precisely, not overstated',
+    [negativeSoftCall.clearanceStatistics.clearanceExpandedCandidatePairs,
+      negativeSoftCall.clearanceStatistics.clearanceDistanceQueriesRun], [0, 0]);
   check('[soft][known-negative] alert message is exactly "No clashes found." with no caveat',
     negativeSoft.message, 'No clashes found.');
-  check('[soft][known-negative] the query really ran against real geometry (zero diagnostics, nothing skipped or aborted)',
+  // Zero diagnostics means nothing was diagnosed as skipped, aborted or unavailable -- it does NOT
+  // by itself demonstrate that a distance query ran (the check above records that none did).
+  check('[soft][known-negative] nothing was skipped, aborted or diagnosed as unavailable during this query',
     negativeSoftCall.diagnosticsCount, 0);
   check('[soft][known-negative] no Hard Clash exclusion fired here (this negative is a genuine distance verdict, not an exclusion)',
     negativeSoftCall.clearanceStatistics.clearanceHardClashExclusions, 0);
@@ -1880,6 +1967,102 @@ async function main() {
   check('[soft][hard-clash-exclusion] the alert carries the incompleteness caveat its own diagnostics require',
     exclusionSoftCall.diagnosticsCount > 0 ? exclusionSoft.message.includes('may be incomplete') : true, true);
 
+  // --- Target-specific mechanism proof for arch 3686 ---------------------------------------------
+  // [fix round, codex-advisor Finding 1] The assertions above are as strong as a MENU-DRIVEN case
+  // can be, but `clearanceHardClashExclusions` is a WHOLE-QUERY counter, not a per-target one: on
+  // the 33-pair query above it could in principle have been produced entirely by the OTHER known
+  // Hard Clash target (struct 3663) while arch 3686 was absent for some unrelated reason -- its own
+  // precheck coming back 'inconclusive', or its geometry being unavailable. The aggregate statistic
+  // cannot distinguish those.
+  //
+  // So this ONE companion query narrows the target scope to arch dbId 3686 and NOTHING else. With
+  // exactly one target dbId in scope, a nonzero `clearanceHardClashExclusions` is attributable to
+  // the (2734, 3686) dbId key and to no other: it is now a genuinely TARGET-SPECIFIC proof that the
+  // tri-state precheck ran on this exact pair and PROVED overlap, rather than an inference from an
+  // aggregate. Its absence from the results is asserted on the same query, so both halves of the
+  // claim are made about the same, unambiguous pair.
+  //
+  // This is deliberately a DIRECT CollisionWorld.findClashes call rather than a menu click -- the UI
+  // has no way to narrow the target scope, and this exists to supply the one thing the UI-driven
+  // case structurally cannot. It is a COMPANION to that case, never a replacement for it: the
+  // menu-driven case above still stands as the acceptance-level evidence. Wrapped in a try/catch
+  // inside the page so an unexpected rejection surfaces as a legible failing check rather than
+  // aborting the whole run.
+  const targetedExclusionProbe = await page.evaluate(async ({ extensionId, sourceDbId, targetDbId, clearance }) => {
+    const ext = window.viewer.getExtension(extensionId);
+    try {
+      const r = await ext._world.findClashes({
+        source: { model: window.__test.modelStruct, dbIds: [sourceDbId] },
+        target: { targets: [{ model: window.__test.modelArch, dbIds: [targetDbId] }] },
+        mode: 'clearance',
+        clearance,
+        groupBy: 'dbId',
+      });
+      return {
+        ok: true,
+        pairCount: r.pairs.length,
+        targetKeys: r.pairs.map((p) => `${p.target.dbId}`),
+        clearanceExpandedCandidatePairs: r.statistics.clearanceExpandedCandidatePairs,
+        clearanceOverlapPrechecksRun: r.statistics.clearanceOverlapPrechecksRun,
+        clearanceHardClashExclusions: r.statistics.clearanceHardClashExclusions,
+        clearanceDistanceQueriesRun: r.statistics.clearanceDistanceQueriesRun,
+        clearanceHits: r.statistics.clearanceHits,
+        diagnosticsCount: r.statistics.diagnostics.length,
+        diagnosticReasons: [...new Set(r.statistics.diagnostics.map((d) => d?.reason ?? 'unknown'))],
+      };
+    } catch (err) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }, {
+    extensionId: CLASH_FINDER_EXTENSION_ID,
+    sourceDbId: MIXED_CASE.sourceDbId,
+    targetDbId: MIXED_CASE.hardClashTargetDbId,
+    clearance: SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE,
+  });
+  // This companion call also lands in the spy's own capture arrays (it goes through the same wrapped
+  // ext._world.findClashes). Cleared immediately so it can never be attributed to the next case's
+  // own production click.
+  await resetSpyCapture();
+  results.softClash.cases['hard-clash-never-in-clearance-results'].targetedExclusionProbe = targetedExclusionProbe;
+  check('[soft][hard-clash-exclusion] the arch-3686-only companion query completed',
+    targetedExclusionProbe.ok, true);
+  check(`[soft][hard-clash-exclusion] scoped to ONLY arch ${MIXED_CASE.hardClashTargetDbId}, that target still produces ZERO clearance pairs`,
+    targetedExclusionProbe.pairCount, 0);
+  check('[soft][hard-clash-exclusion] the query was genuinely exercised against that one target (broad phase produced candidate pairs for it)',
+    targetedExclusionProbe.clearanceExpandedCandidatePairs >= 1, true);
+  check(`[soft][hard-clash-exclusion] the tri-state precheck genuinely RAN for the (${MIXED_CASE.sourceDbId}, ${MIXED_CASE.hardClashTargetDbId}) pair`,
+    targetedExclusionProbe.clearanceOverlapPrechecksRun >= 1, true);
+  // The decisive, TARGET-SPECIFIC form of Important #5: only one target dbId was in scope, so this
+  // count can only have come from that pair.
+  check(`[soft][hard-clash-exclusion] TARGET-SPECIFIC PROOF: with arch ${MIXED_CASE.hardClashTargetDbId} as the ONLY target in scope, clearanceHardClashExclusions >= 1 -- the precheck proved overlap for THAT pair, not merely for some pair`,
+    targetedExclusionProbe.clearanceHardClashExclusions >= 1, true);
+  // ...and that exclusion cannot be an inconclusive precheck in disguise, nor a rejection by the
+  // distance path.
+  //
+  // An earlier draft of this check asserted that the query emitted NO
+  // 'clearance-hard-clash-precheck-inconclusive' diagnostic at all, and the live fixture disproved
+  // it -- correctly. arch 3686 owns TWO fragments, so this query evaluates two candidate FRAGMENT
+  // pairs against 2734's single fragment: live, one of them proves overlap (excluding the dbId key)
+  // while the other comes back inconclusive, giving `clearanceHardClashExclusions: 1` and
+  // `diagnosticsCount: 1` together. That per-fragment-pair variation is normal and does not weaken
+  // the dbId-level exclusion at all, so requiring zero inconclusive diagnostics was simply the wrong
+  // premise -- it would have made this case fail for a reason that proves nothing.
+  //
+  // What actually rules out both alternative readings is structural, and needs no such requirement:
+  //   - NOT an inconclusive in disguise: the 'inconclusive' branch returns BEFORE
+  //     `hardClashExcludedKeys` is ever touched, and only the 'hard-clash-excluded' branch adds to
+  //     it, so an inconclusive outcome can never increment this counter. A nonzero value therefore
+  //     means some fragment pair of this key genuinely returned `overlap === true`.
+  //   - NOT a distance-path rejection (tolerance floor / beyond-threshold): the aggregation loop
+  //     unconditionally skips any key present in `hardClashExcludedKeys`, whatever any other
+  //     fragment pair of that key did. With this key excluded, the exclusion IS the reason the pair
+  //     is absent. (Live, the point is moot anyway -- `clearanceDistanceQueriesRun` is 0, so no
+  //     distance query ran for this pair at all. Recorded rather than asserted: whether the
+  //     inconclusive fragment pair instead resolves as 'proceed' and runs one depends on the
+  //     precheck's own wall-clock frame budget, and pinning it would add flake for no extra proof.)
+  check('[soft][hard-clash-exclusion] that exclusion is a PROVEN overlap, not an inconclusive precheck in disguise (an inconclusive outcome can never increment this counter), and no clearance pair survived for the pair',
+    [targetedExclusionProbe.clearanceHardClashExclusions >= 1, targetedExclusionProbe.clearanceHits], [true, 0]);
+
   // === Positive case: the discovered near-miss, through the untouched production action ==========
   // Runs because the bounded spike genuinely found one. Nothing here is synthetic: the clearance is
   // the extension's OWN load()-resolved default, with no override at all.
@@ -1952,9 +2135,8 @@ async function main() {
     [positiveSoftCall.pairs.length * 2, positiveSoftCall.pairs.length]);
   check('[soft][near-miss] every endpoint sphere sits exactly on one of the pairs\' own world-space closest points',
     sortedPointKeys(positiveSoftViz.meshPositions), sortedPointKeys(positiveWitnessPointsFlat));
-  check('[soft][near-miss] every connecting line spans its own pair\'s two closest points',
-    positiveSoftViz.lineEndpoints.length === positiveSoftCall.pairs.length
-      && positiveSoftViz.lineEndpoints.every((e) => e !== null && matchesSomePointPair(e, positiveWitnessPointPairs, 1e-4)), true);
+  check('[soft][near-miss] the connecting lines match the pairs\' closest-point segments ONE-TO-ONE (no line duplicated, none missing)',
+    linesMatchPairsBijectively(positiveSoftViz.lineEndpoints, positiveWitnessPointPairs, 1e-4), true);
   check('[soft][near-miss] the Soft Clash overlay scene is registered', positiveSoftViz.hasScene, true);
   check('[soft][near-miss] every Soft Clash object is really in the overlay scene (public overlays.hasMesh)',
     positiveSoftViz.hasMeshFlags, new Array(positiveSoftCall.pairs.length * 3).fill(true));
@@ -2014,6 +2196,10 @@ async function main() {
   // proves the closest-point visualization actually tracked the alignment.
   console.log(`\n=== Soft Clash case: alignment (+${ALIGNMENT_DELTA_X} X on the Structure model), near-miss re-run ===`);
   const softAlignmentOriginalPlacement = await readStructPlacementElements();
+  // Keep references to the PRE-alignment objects so the re-run can be proven to have really removed
+  // them from the overlay scene, not merely to have replaced the _activeSoftClashObjects array.
+  await stashSoftClashObjects();
+  const softObjectsBeforeAlignment = positiveSoftViz.objectCount;
   await translateStructPlacement(ALIGNMENT_DELTA_X);
   const softMovedPlacement = await readStructPlacementElements();
   check('[soft][alignment] the Structure model\'s placement transform really moved by the expected delta in X',
@@ -2048,12 +2234,20 @@ async function main() {
   const alignedWitnessPointPairs = alignedSoftCall.pairs.map((p) => [p.witnessSourcePoint, p.witnessTargetPoint]);
   check('[soft][alignment] every endpoint sphere sits on a closest point from the RE-RUN\'s own result (matched as a multiset, never by array order)',
     sortedPointKeys(alignedSoftViz.meshPositions), sortedPointKeys(alignedWitnessPointPairs.flat()));
-  check('[soft][alignment] every connecting line spans a RE-RUN closest-point pair',
-    alignedSoftViz.lineEndpoints.every((e) => e !== null && matchesSomePointPair(e, alignedWitnessPointPairs, 1e-4)), true);
+  check('[soft][alignment] the connecting lines match the RE-RUN\'s closest-point segments ONE-TO-ONE',
+    linesMatchPairsBijectively(alignedSoftViz.lineEndpoints, alignedWitnessPointPairs, 1e-4), true);
   check('[soft][alignment] the same number of Soft Clash overlay objects is drawn',
     alignedSoftViz.objectCount, positiveSoftViz.objectCount);
+  // The strong form: the PRE-alignment objects are really gone from the overlay scene, so no stale
+  // pre-alignment geometry is still being rendered alongside the new, correctly-placed objects.
+  check('[soft][alignment] the PRE-alignment overlay objects were really removed from the overlay scene',
+    await stashedSoftClashObjectsStillInOverlay(), new Array(softObjectsBeforeAlignment).fill(false));
+  check('[soft][alignment] the overlay scene holds exactly the re-run\'s own objects and nothing left over',
+    alignedSoftViz.overlaySceneMeshCount, alignedSoftCall.pairs.length * 3);
 
   // Restore the placement and re-run: everything must come back to exactly where it started.
+  await stashSoftClashObjects();
+  const softObjectsBeforeRestore = alignedSoftViz.objectCount;
   await restoreStructPlacement(softAlignmentOriginalPlacement);
   const softRestoredPlacement = await readStructPlacementElements();
   check('[soft][alignment] the Structure model\'s placement transform was restored exactly',
@@ -2073,6 +2267,13 @@ async function main() {
   check('[soft][alignment] after restoring the placement, every endpoint sphere sits on a restored closest point',
     sortedPointKeys(restoredSoftViz.meshPositions),
     sortedPointKeys(restoredSoftCall.pairs.flatMap((p) => [p.witnessSourcePoint, p.witnessTargetPoint])));
+  check('[soft][alignment] after restoring the placement, the connecting lines match the restored segments ONE-TO-ONE',
+    linesMatchPairsBijectively(restoredSoftViz.lineEndpoints,
+      restoredSoftCall.pairs.map((p) => [p.witnessSourcePoint, p.witnessTargetPoint]), 1e-4), true);
+  check('[soft][alignment] the ALIGNED run\'s overlay objects were really removed by the restore re-run',
+    await stashedSoftClashObjectsStillInOverlay(), new Array(softObjectsBeforeRestore).fill(false));
+  check('[soft][alignment] after restoring, the overlay scene holds exactly the restored run\'s own objects and nothing left over',
+    restoredSoftViz.overlaySceneMeshCount, restoredSoftCall.pairs.length * 3);
 
   // --- section-level guarantees -----------------------------------------------------------------
   const softClearanceAtSectionEnd = await page.evaluate((id) => window.viewer.getExtension(id)._clearance, CLASH_FINDER_EXTENSION_ID);
