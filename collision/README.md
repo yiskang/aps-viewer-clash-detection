@@ -2,15 +2,19 @@
 
 A clash-detection library for the Autodesk Platform Services (APS) Viewer: given a live
 `Autodesk.Viewing.Viewer3D` and one or more loaded models, it finds geometric relationships
-(surface contact, containment, volume overlap) between two sets of elements, identified by `dbId`.
+(surface contact, containment, volume overlap, near-miss clearance) between two sets of elements,
+identified by `dbId`.
 
-This document covers the full shipped surface through **Milestone 2 (M2)** — what actually shipped
-and was accepted, across both milestones. Sections and restrictions are labeled M1/M2 where the
-distinction still matters — mainly: which `target` shape (legacy `{model, dbIds}` vs. the M2
-`{targets: [...]}` shape) and which `broadPhase` value a given behavior applies to. For design
-history/rationale, see `docs/superpowers/specs/2026-08-06-collision-library-milestone1-design.md`
-(M1, 4000+ lines) and `docs/superpowers/specs/2026-09-05-collision-library-milestone2-design.md`
-(M2) — only needed if you want the "why", not the "how".
+This document covers the full shipped surface through **Milestone 3 (M3)** — what actually shipped
+and was accepted, across every milestone. Sections and restrictions are labeled M1/M2/M2.1/M3 where
+the distinction still matters — mainly: which `target` shape (legacy `{model, dbIds}` vs. the M2
+`{targets: [...]}` shape), which `broadPhase` value, and which `mode` a given behavior applies to.
+For design history/rationale, see
+`docs/superpowers/specs/2026-08-06-collision-library-milestone1-design.md` (M1, 4000+ lines),
+`docs/superpowers/specs/2026-09-05-collision-library-milestone2-design.md` (M2),
+`docs/superpowers/specs/2026-09-07-collision-library-m2.1-clash-witness-marker-design.md` (M2.1) and
+`docs/superpowers/specs/2026-09-07-collision-library-milestone3-clearance-design.md` (M3) — only
+needed if you want the "why", not the "how".
 
 ## What it does
 
@@ -30,8 +34,12 @@ Pass one of these as `query.mode`:
 | `surface-intersection` | Do the two operands' surfaces actually touch/cross? |
 | `containment` | Is any of the source surface located inside the target's solid? (directed: source-in-target only) |
 | `volume-overlap` | Do the two operands' solids overlap in volume (a "real" 3-D clash, not just touching surfaces)? |
+| `clearance` (M3) | Do the two operands come within a caller-supplied world-unit distance of each other **without** overlapping in volume — a "near miss" / Soft Clash? Reports the minimum surface-to-surface distance and the two closest points. |
 
-All three are single-mode-per-call — `findClashes` does not compose multiple modes in one query.
+All four are single-mode-per-call — `findClashes` does not compose multiple modes in one query.
+`clearance` is deliberately *disjoint* from `volume-overlap`: a dbId pair that is a Hard Clash is
+excluded from clearance results entirely, never merely distance-filtered out (see "M3: Soft Clash /
+Clearance" below).
 
 ## Quick start
 
@@ -101,12 +109,35 @@ world.findClashes({
          | { targets: Array<{ model, dbIds?: number[] }> },     // M2: cross-model shape — dbIds
                                                                  // omitted on an entry means "whole
                                                                  // model" scope for that model
-  mode: 'surface-intersection' | 'containment' | 'volume-overlap',
+  mode: 'surface-intersection' | 'containment' | 'volume-overlap' | 'clearance',
   groupBy: 'dbId',
   broadPhase?: 'linear' | 'tlas',   // M2 only; default is shape-dependent — see below
+  clearance?: number,               // M3: REQUIRED for mode:'clearance', rejected for every other
+                                    // mode — see below
 })
 // -> Promise<{ pairs: ClashPair[], statistics: Statistics }>
 ```
+
+**M3: the `clearance` parameter.** For `mode: 'clearance'`, `query.clearance` is a **required**,
+finite, **strictly positive** number in world/model units (the same Viewer scene units the library's
+witness points already use — no unit conversion happens inside `collision/`). Both directions are
+enforced loudly at entry validation, before any lease/epoch is consumed and before any side effect:
+
+- `mode: 'clearance'` with a missing, non-numeric, non-finite, or `<= 0` `clearance` throws
+  `Error("findClashes: mode 'clearance' requires a finite, positive 'clearance' number")` — never a
+  silent empty-`pairs` result.
+- a `clearance` value supplied alongside any *other* mode throws too, rather than being silently
+  accepted and discarded.
+
+**The library itself has no default `clearance`** — there is deliberately no fallback value in
+`collision/`. `DEFAULT_CLEARANCE = 0.05` lives in
+`wwwroot/extensions/ClashFinderExtension.js` and is a *Viewer-extension-layer* default for the "Find
+Soft Clashes" action only (provisional; see "M3: Soft Clash / Clearance" below). Do not describe it
+as a library default.
+
+`broadPhase`'s shape-dependent default applies to `mode: 'clearance'` exactly as it does to the three
+pre-existing modes: a `targets`-shaped clearance call defaults to `'tlas'`, the legacy
+`{model, dbIds}` shape to `'linear'`, and either may override explicitly.
 
 **Restrictions on the legacy `target: {model, dbIds}` shape** (all rejected loudly with a thrown
 `Error`, never silently degraded) — these do **not** apply to the M2 `target: {targets: [...]}`
@@ -122,7 +153,8 @@ TLAS-accelerated path" below):
 
 - `pairs`: one entry per distinct `(sourceDbId, targetDbId)` pair with a positive result —
   `{ source: { modelId, dbId, model }, target: { modelId, dbId, model }, type: <mode> }`, plus a
-  `witness` key present only when `type === 'volume-overlap'` (see below).
+  `witness` key present only when `type === 'volume-overlap'` (M2.1) or `type === 'clearance'` (M3)
+  — **two different witness shapes**, see both sub-bullets below.
   `model` is the real `Model` object reference for that operand — a borrowed identity reference, and
   the **authoritative** one for same-model/cross-model comparisons (see the Clash Finder sample's own
   classification logic below). `modelId` is diagnostic/display-only: it is documented elsewhere in
@@ -151,8 +183,35 @@ TLAS-accelerated path" below):
     (`reason: 'witness-unavailable'`), and `ClashFinderExtension` cannot render a marker for that
     pair. A clash is never suppressed or downgraded because witness capture failed. See the design
     spec's §1 ("Public result shape") for the full rationale.
+  - **M3: the `clearance` pair shape.** A `mode: 'clearance'` call returns pairs carrying three
+    additive keys the other three modes never have:
+    ```js
+    {
+      source: { modelId, dbId, model },
+      target: { modelId, dbId, model },
+      type: 'clearance',
+      distance: number,    // the measured minimum surface-to-surface distance, WORLD units,
+                           // strictly inside (toleranceFloor, clearance]
+      clearance: number,   // the threshold this call was issued with, echoed back
+      witness: {
+        sourcePoint: [x, y, z],   // the closest point ON THE SOURCE surface
+        targetPoint: [x, y, z],   // the closest point ON THE TARGET surface
+      },
+    }
+    ```
+    **This is NOT Hard Clash's witness shape.** A clearance witness has **two** points and no
+    `kind`; a `volume-overlap` witness has a single `point` plus a `kind`. Consumers that read
+    `pair.witness.point` unconditionally will get `undefined` on a clearance pair — a real hazard
+    already hit once, live, during M3 acceptance. Branch on `pair.type` (or feature-detect
+    `witness.sourcePoint`), never assume one shape. `sourcePoint` always lies on the caller's own
+    `source` operand and `targetPoint` on its `target`, regardless of which operand the query
+    internally anchored its BVH traversal on.
+    Unlike `volume-overlap`'s nullable witness, a clearance pair is only ever *emitted* with a real
+    witness: if the closest points cannot be produced in finite world coordinates, the pair is not
+    reported at all and a `clearance-distance-unavailable` diagnostic is pushed instead (see
+    Diagnostics below). `ClashFinderExtension` still guards for a missing witness defensively.
 - `statistics`: `{ broadPhasePairs, narrowPhasePairs, blasBuilt, blasCacheHits, broadPhaseMs,
-  narrowPhaseMs, totalMs, diagnostics, ...9 M2 fields below }`. `blasBuilt`/`blasCacheHits` are
+  narrowPhaseMs, totalMs, diagnostics, ...9 M2 fields and 7 M3 clearance fields below }`. `blasBuilt`/`blasCacheHits` are
   currently always reported as `0` — the geometry registry doesn't yet expose build/hit counters to
   report real ones (not a correctness issue, just an unwired diagnostic field).
 
@@ -196,6 +255,32 @@ TLAS-accelerated path" below):
   tlasNarrowPhaseInputPairs    ==  narrowPhasePairs              (same set, same meaning, either path)
   ```
 
+  **M3: 7 additional clearance fields**, always present and defaulting to `0` — never conditionally
+  omitted, including for non-`'clearance'` calls and for a clearance call that returns zero results.
+  This is the **definitive increment-point table** — where each field is incremented, not just what
+  it loosely means:
+
+  | Field | Increments when |
+  |---|---|
+  | `clearanceExpandedCandidatePairs` | TLAS `onCandidate`, after scope/self-exclusion/`currentByFragmentId` filters, before the exact retest. Always `0` under `broadPhase:'linear'`. |
+  | `clearanceExactAabbSurvivors` | Once per candidate (linear or TLAS) whose exact, unpadded AABB distance is `<= clearance` |
+  | `clearanceOverlapPrechecksRun` | Once per candidate whose precheck status is `excluded`, `proceed`, OR `inconclusive` — i.e. whenever `volumeOverlapQuery` actually ran. Never for `skip-precheck`. |
+  | `clearanceHardClashExclusions` | Once per dbId-level pair in the complete `hardClashExcludedKeys` set (never per fragment pair) — including a key with zero surviving `clearanceCandidateByKey` entries |
+  | `clearanceDistanceQueriesRun` | Once per actual `clearanceQuery` call (both the `proceed` and `skip-precheck` branches reach it) |
+  | `clearanceHits` | `pairs.length` at the end of the call |
+  | `clearanceQueryMs` | Wall-clock inside `clearanceQuery` calls only, same bracketing convention as `tlasQueryMs` |
+
+  `clearanceExpandedCandidatePairs` reading `0` on a `broadPhase:'linear'` clearance call is
+  **structural, not a bug** — only the TLAS broad phase increments it. Read
+  `clearanceExactAabbSurvivors` for the cross-path candidate count.
+
+  The generic M1/M2 fields keep their existing meanings on a clearance call and are **not** left
+  unset: `broadPhasePairs`, `narrowPhasePairs`, `broadPhaseMs`/`narrowPhaseMs`/`totalMs`, and (under
+  `broadPhase:'tlas'`) the nine `tlas*` fields are all populated at the analogous points in
+  clearance's own traversal. Note that the *code* doing so is a deliberate structural twin
+  (`_runClearanceTlasBroadPhase`), not the same function Hard Clash uses — the fields mean the same
+  thing, but the two implementations are kept in sync by hand.
+
 **Diagnostics — read this before trusting an empty result.** `statistics.diagnostics` is an array
 of `{ scope: 'fragment' | 'pair', reason, ... }` entries describing anything the query could not
 fully resolve: a fragment whose geometry wasn't loaded yet, one that was structurally rejected
@@ -213,6 +298,31 @@ entries into its "result may be incomplete" caveat computation the way it does f
 diagnostic reason above. The existing developer-facing `console.warn` log is unpartitioned and still
 logs every diagnostic, `witness-unavailable` included — only the user-facing completeness caveat is
 partitioned.
+
+**M3: four new clearance diagnostic reasons.** Emitted only by a `mode: 'clearance'` call:
+
+| Reason | Scope | Emitted when |
+|---|---|---|
+| `clearance-invalid-transform` | **fragment**, deduped per `(epoch, fragmentId)` | Clearance's own admission validation found a non-finite/singular `worldMatrix`, or non-finite/mis-ordered `worldBounds`, for an extracted instance. Fires **before any pair exists** — it is an admission-time filter, not a pair evaluation. |
+| `clearance-anisotropic-scale-unsupported` | **fragment**, deduped per `(epoch, fragmentId)`, one per offending side | An operand's `worldMatrix` failed `validateUniformScale` — anisotropic, sheared, reflected/negative, or otherwise unsupported scale. Diagnosed, never approximated. |
+| `clearance-hard-clash-precheck-inconclusive` | **pair** (`sourceFragment` + `targetFragment`) | The tri-state Hard-Clash exclusion precheck could neither prove nor disprove volume overlap for this fragment pair (e.g. its crossing term hit `frameBudgetMs`), so the pair was dropped rather than assumed non-overlapping. |
+| `clearance-distance-unavailable` | **pair** (`sourceFragment` + `targetFragment`) | `clearanceQuery` reached `closestPointToGeometry` but could not produce a trustworthy answer: a non-finite local distance, a failed world-space conversion of a closest point, or the two independently-derived world distances disagreeing beyond the documented cross-check tolerance. |
+
+**All four count toward "the result may be incomplete."** In particular
+`clearance-distance-unavailable` and `clearance-hard-clash-precheck-inconclusive` **do** count —
+this is the **opposite** partitioning from M2.1's `witness-unavailable` carve-out above, and the
+M2.1 precedent deliberately does **not** transfer. The reason is not stylistic: for
+`volume-overlap`, the boolean clash verdict is already fully determined by the time witness capture
+fails, so the pair result is complete and only the marker is missing. For `clearance`, **the
+distance itself is the verdict** — if the distance can't be evaluated (or the Hard-Clash precheck
+can't be resolved), there is no fallback source of truth for whether that pair is within threshold,
+so the answer genuinely is incomplete. A consumer must not fold clearance diagnostics into a
+`witness-unavailable`-style carve-out.
+
+Note also the scope split above: the two fragment-scoped reasons dedup per `(epoch, fragmentId)` in
+their own independent namespaces (never shared with each other or with `oversizedDiagnosedFragments`),
+and `clearance-invalid-transform` in particular fires before any pair has been formed — so counting
+diagnostics is not the same as counting affected pairs.
 
 ## Model lifecycle: admission, eviction, dispose
 
@@ -368,6 +478,113 @@ exactly `{limit, limit + 1}`, per spec §9.3.2, regardless of the real overshoot
   None of this blocks usage — it means these three specific edge cases have not yet been proven
   against a real model at the scale that would trigger them.
 
+## M3: Soft Clash / Clearance
+
+`mode: 'clearance'` answers a different question from the three M1/M2 modes: not "do these two
+things touch or overlap?" but "do they come *too close* without overlapping?" It is the only mode
+that returns a **numeric** result (`distance`) rather than a boolean verdict, and that changes what
+counts as an incomplete answer (see Diagnostics above).
+
+**The exact contract**, evaluated per source/target fragment pair and then aggregated to dbId level:
+
+```
+Soft Clash iff:
+  NOT volume-overlap(source, target)              // reuses the existing, unmodified Hard Clash predicate
+  AND distance > toleranceFloor                   // exclusive — "touching" is not a clearance violation
+  AND distance <= clearance                       // inclusive threshold
+```
+
+So the distance line is partitioned as: `{0} ∪ (0, toleranceFloor]` = touching or dead band
+(reported by no mode at all), `(toleranceFloor, clearance]` = Soft Clash, `(clearance, ∞)` = not
+reported.
+
+**Hard Clash exclusion is semantic, not numeric.** A dbId pair with *any* contributing fragment pair
+that is a real `volume-overlap` under the same query scope is excluded from clearance results
+outright — it is never merely "distance-filtered out." This matters because `containment`-style
+overlap has no surface-crossing requirement: a fully enclosed component's surfaces can sit a large
+measured distance from its container's surfaces, so distance alone would happily misreport an
+enclosed element as a near miss. The exclusion is therefore implemented by querying the existing
+`volume-overlap` predicate through a **tri-state** precheck (`excluded` / `proceed` / `inconclusive`,
+plus a `skip-precheck` fast path for provably disjoint AABBs). The tri-state never collapses to a
+boolean: an `inconclusive` precheck drops the pair **with a diagnostic**, and is never silently
+treated as "proven no overlap."
+
+**The tolerance floor.** `collision/query/ClearanceTransform.js`'s `computeToleranceFloor`:
+
+```
+toleranceFloor = surfaceEpsilonFactor × max(source.localDiagonal × source.scaleFactor,
+                                            target.localDiagonal × target.scaleFactor)
+```
+
+`surfaceEpsilonFactor` is the library's existing `1e-6` near-zero convention, reused rather than
+inventing a new epsilon. The load-bearing detail is the **per-operand conversion to world units
+before the `max()`**: `localDiagonal` is a local-frame quantity, and comparing it against a
+world-space distance without first multiplying by that operand's own validated uniform scale factor
+mixes two frames and silently produces a floor that is wrong by the scale ratio. What the floor
+protects against is reporting numerical surface noise as a clearance violation — two surfaces
+separated by ~`1e-6` of their own size are, for this library's purposes, touching, and touching is a
+Hard Clash concern, not a Soft Clash one. It is also the source of the dead band documented under
+"Known M3 limitations" below.
+
+**Uniform scale only — diagnosed, never approximated.** Every clearance operand's `worldMatrix` must
+decompose to rigid motion plus **positive uniform scale**. `validateUniformScale`
+(`collision/query/ClearanceTransform.js`) rejects, structurally rather than by magnitude alone:
+non-finite elements, a projective bottom row, a non-finite or exactly-zero determinant (checked
+*before* trusting `Matrix4.decompose()`, which silently reports scale `(1,1,1)` for a degenerate
+matrix), reflected/negative scale, per-axis scales that disagree by more than
+`clearanceUniformScaleRelativeTolerance` (`1e-4` relative, `collision/constants.js`), and
+shear/non-orthogonal basis columns. Anything rejected produces a
+`clearance-anisotropic-scale-unsupported` diagnostic — the pair is never evaluated with an
+approximated transform.
+
+**The documented error bound that buys.** When a matrix *is* accepted, the single `scaleFactor` the
+validator reports may differ from any one axis's true scale by up to `1e-4` relative, so a world
+distance derived from it carries a bounded relative error of that same order. This is a real,
+declared approximation, not silently-exact arithmetic. Two downstream constants exist purely to keep
+that admitted slack from producing false results rather than merely imprecise ones:
+`clearanceDistanceCrossCheckCombinedRelativeTolerance` (`3e-4` — the same world distance is derived
+independently from *each* operand's own scale factor and cross-checked; two validator-blessed
+operands can err in opposite directions, so the naive `1e-4` bound would spuriously abort on input
+the validator itself accepted), and `clearanceTraversalThresholdSafetyMargin` (`4e-4`, i.e. `4 ×
+1e-4`), which widens the BVH traversal threshold by 0.04% so that float32 node padding rather than
+geometry can't decide a candidate sitting exactly at `clearance`. The widened threshold is safe
+because `clearanceQuery` **always** applies an exact `worldDistance > clearance` post-filter
+afterwards — a more permissive traversal can only cost a little extra traversal, never admit a
+result beyond `clearance`.
+
+**Geometry resolution is the shared path, not a second one.** Clearance's narrow phase resolves
+each operand's BLAS/geometry record through `resolveGeometryRecord`/`diagnoseFragmentOnce` — the
+*identical* functions the three pre-existing modes use. These were genuinely extracted (M3 Task 9)
+out of `_runNarrowPhasePair`'s own private closures and `_runNarrowPhasePair` rewritten to call
+them, with the full existing regression suite proving zero observable behavior change for
+`surface-intersection`/`containment`/`volume-overlap`. Clearance did not get a parallel, divergent
+geometry path. (The TLAS *broad* phase is the one place where a deliberate structural twin exists
+instead — see the statistics note above.)
+
+**Budgets and provisional constants.** All of the following are explicitly **provisional** — chosen
+by reasoning, kept because the M3 performance gate found no evidence to change them, and revisable
+the moment real usage says otherwise:
+
+| Constant | Value | Where | Measured evidence (Task 18 gate) |
+|---|---|---|---|
+| `maxClearanceNarrowPhasePairs` | 20,000 | `collision/constants.js` | **9.89% used** (1,978 candidates) by a single-source-instance query against the whole ~7,474-fragment federated scene. Exceeding it throws `CapacityExceededError('clearance-narrow-phase-budget')`, checked as one upfront preflight on the assembled candidate list — not incrementally during traversal. |
+| `DEFAULT_CLEARANCE` | 0.05 world units | `wwwroot/extensions/ClashFinderExtension.js` — **not** the library | The value the whole M3 gate and the live positive acceptance case were measured at. A caller may override it via `options.defaultClearance`, validated at `load()` time. |
+| `clearanceUniformScaleRelativeTolerance` | `1e-4` | `collision/constants.js` | Not retuned; the spec left it qualitative ("a small relative tolerance") and it was matched to the existing weld-epsilon order of magnitude. |
+| `clearanceDistanceCrossCheckRelativeTolerance` | `1e-4` | `collision/constants.js` | Same. Derived constants `…CombinedRelativeTolerance` (`3e-4`) and `clearanceTraversalThresholdSafetyMargin` (`4e-4`) follow from it. |
+
+**No constant was changed by the M3 performance gate** — it implemented the measurement, not the
+revision.
+
+**Measured cost, briefly** (`test/performance/run-gate-m3.mjs`, real 3-discipline federated fixture;
+full write-up in `CHANGELOG.md`'s "M3 performance gate" section and `test/performance/README.md`):
+worst single `clearanceQuery` call **6.10–6.50 ms** against `frameBudgetMs = 8` over ~500–520 real
+production spans with **zero** over budget — a **GO**, but on roughly 20–24% headroom, which is thin,
+not comfortable. TLAS reduced clearance broad-phase candidates **3.78x** (1,978 vs. 7,473), bit-identical
+across every run. The surprising finding: `clearanceQuery` is **not** the dominant cost — 96.7% of
+candidates reach the Hard-Clash precheck while only 6.6% ever reach a distance query, so ~89% of warm
+narrow-phase time is geometry resolution plus that precheck. Future clearance-performance work should
+target the precheck, not `ClearanceQuery`.
+
 ## Reference sample: Room Locator
 
 `wwwroot/extensions/RoomLocatorExtension.js` is the Milestone-1 reference integration — a real
@@ -487,6 +704,97 @@ identity comparisons.
 | `findClashes({ mode: 'volume-overlap', groupBy: 'dbId', target: { targets: [...] } })` call shape | Grouping every involved dbId by its own `Model` object (`===`, never `modelId`) across every model, then isolating/fitting once per model |
 | Reading `statistics.diagnostics` to detect an incomplete result | `describeDiagnostics()`'s specific message formatting; the unconditional "N clashes found"/"No clashes found" report on every call |
 
+## Reference sample: Find Soft Clashes
+
+`wwwroot/extensions/ClashFinderExtension.js` gained a **second, fully independent** context-menu
+action in M3 — **"Find Soft Clashes"** — living alongside "Find Clashes" in the same extension
+rather than being a mode toggle grafted onto it. That was deliberate: the existing Hard Clash flow
+and its live acceptance coverage stay entirely untouched, and no modal/settings UI was needed.
+
+**What it does:** same single-element aggregate-selection gate as "Find Clashes" (exactly one model,
+exactly one dbId — via `viewer.getAggregateSelection()`, never `getSelection()`), same whole-model
+`targets` scope across every loaded model including the source's own. It issues
+`findClashes({ mode: 'clearance', clearance: this._clearance, groupBy: 'dbId', target: { targets: [...] } })`,
+then isolates, fits, draws its own visualization, and reports the result via the same
+`alert()`-based `_notifyUser` convention — `"N clashes found (X in this model, Y in other models)"`
+or `"No clashes found."`, on every call, with the same "The result may be incomplete — …" caveat
+appended when the result carries completeness-affecting diagnostics.
+
+**The clearance value:** resolved **once**, in `load()`, as
+`this._clearance = this.options.defaultClearance ?? DEFAULT_CLEARANCE` (`0.05` world units) and
+validated immediately (finite, `> 0`). An invalid caller-supplied override fails `load()` itself with
+a thrown error — a loud configuration-time failure, not a per-click failure deep inside a
+context-menu callback. There is no per-call UI for the threshold; the action is always invocable with
+zero configuration.
+
+**Independence from Hard Clash — the parts that are genuinely separate:**
+
+- **Its own action token.** `_latestSoftClashActionToken` is monotonic and completely separate from
+  Hard Clash's `_latestActionToken`. Firing one action never cancels or is cancelled by an in-flight
+  run of the other; each code path reads and writes only its own token. Being superseded by another
+  *Soft Clash* action is discarded silently (a supersession is not a failure); a genuine error clears
+  Soft Clash's own isolation contribution and overlay and surfaces the message.
+- **Its own overlay scene and color.** `SOFT_CLASH_OVERLAY_NAME = 'clash-finder-soft-markers'` is a
+  separate registered overlay scene from Hard Clash's `MARKER_OVERLAY_NAME`, and
+  `SOFT_CLASH_COLOR = 0x2b8fff` (blue) is visually distinct from Hard Clash's orange `MARKER_COLOR`.
+  Both scenes can be registered and visible at the same time, and running one action leaves the
+  other's markers untouched.
+- **Its own radius clamp.** `SOFT_CLASH_MIN_MARKER_RADIUS` (0.05) / `SOFT_CLASH_MAX_MARKER_RADIUS`
+  (2.0), reusing the *shared* `MARKER_RADIUS_FRACTION` rather than a second fraction constant.
+
+**The visualization, per clearance pair:** two small sphere `Mesh`es — one at `witness.sourcePoint`,
+one at `witness.targetPoint` — plus **one connecting `THREE.Line`** between them. That's three
+objects per pair, versus Hard Clash's single marker: a clearance result's whole point is the *gap*,
+so the pair of endpoints and the segment spanning them is the useful picture. One shared
+`SphereGeometry`, one shared sphere `MeshBasicMaterial`, and one shared `LineBasicMaterial` are
+reused across every object the extension ever creates; the **line geometry alone is per-pair** (each
+line needs its own two vertices) and is disposed individually on clear, while the shared trio
+outlives clear/re-add cycles and is disposed only in `unload()`. `depthTest: false`, same as Hard
+Clash, so a marker inside occluding geometry stays visible. All overlay objects are built from the
+Viewer's own `window.THREE` (r71), never the collision library's imported `three` (r185).
+
+**A zero-pair Soft Clash query leaves no trace at all.** The early return on `pairs.length === 0`
+happens before `_addSoftClashVisualization` — the only caller of `_ensureSoftClashOverlay` — so the
+overlay scene is never even *registered* and the shared geometry/material are never allocated. Not
+"an empty scene": no scene. This mirrors Hard Clash's own `_addMarkers` contract, and was confirmed
+live (a first-draft acceptance assertion expecting an empty scene failed and was corrected to assert
+this instead).
+
+**Isolation is a UNION; `fitToView` is not.** Each action tracks its **own** isolation contribution
+(`_setHardIsolation` / `_setSoftIsolation`), and either one changing triggers a reconciliation that
+applies the union of both contributions to the Viewer. So running "Find Soft Clashes" after "Find
+Clashes" *adds* its elements to what is isolated instead of clobbering the previous result. Camera
+framing is deliberately **not** unioned: `fitToView` frames only what *this* action just found.
+Verified live in M3 acceptance — one run isolated Structure `[2734, 3663, 3965, 3976, 4135]` (the
+union of both actions' contributions) while `fitToView` framed only `[3965, 3976, 4135]`.
+
+**Lifecycle.** Soft Clash's teardown is wired in as a new **outermost** `finally` around the existing
+Hard Clash cleanup in both `unload()` and the `BEFORE_MODEL_UNLOAD_EVENT` handler, so each rung runs
+regardless of whether an inner one threw. Both tokens are bumped at the top of `unload()`, before any
+teardown. A model unload clears Soft Clash's overlay *objects* while leaving the overlay *scene*
+registered; only `unload()` removes the scene and disposes the shared geometry/materials — exactly
+the split Hard Clash's own `_clearMarkers`/`unload` contract already documents.
+
+**Known acceptance example** (`test/acceptance/clash-finder.acceptance.mjs`, live-verified against
+the same real 3-discipline Audubon federated fixture): selecting Structure dbId `3965`
+("HSS-Hollow Structural Section-Column [681589]" — the same element that is a *diagnostic-free
+negative* for Hard Clash) and choosing "Find Soft Clashes" at the production default clearance
+(`0.05`, **no override**) finds **2 pairs**: Structure `3976` and Structure `4135`, two HSS members
+that stop just short of the column, both at a measured distance of **0.0417** world units. The same
+element at clearance `0.02` correctly finds **0 pairs** — the same source, through the same
+production action, is genuinely threshold-sensitive. The `0.0417` gap is independently corroborated
+against the `InstanceTree`'s own node boxes (`0.041667938` vs. the measured `0.041666163`, agreeing
+to Float32 quantization) — a cross-check that uses no part of the collision pipeline.
+
+**Generic library usage vs. Soft-Clash-specific glue:**
+
+| Generic (reusable for any collision-library consumer) | Soft-Clash-specific |
+|---|---|
+| `findClashes({ mode: 'clearance', clearance, groupBy: 'dbId', target: { targets: [...] } })` call shape | Resolving and validating `this._clearance` once in `load()` from `options.defaultClearance ?? DEFAULT_CLEARANCE` |
+| Branching on `pair.type` before reading `pair.witness` (two witness shapes exist) | The two-sphere-plus-connecting-line rendering of `witness.sourcePoint`/`witness.targetPoint` |
+| Reading `statistics.diagnostics` to detect an incomplete result | A second, independent action token so the two clash actions can never cancel each other |
+| `evictModel` wired to `BEFORE_MODEL_UNLOAD_EVENT` (shared with Hard Clash — one world, one wiring) | Per-action isolation contributions reconciled as a union, while `fitToView` stays per-action |
+
 ## Known M2 limitations
 
 - **No measurable end-to-end wall-clock benefit from TLAS, on the fixture measured so far.** The M2
@@ -541,6 +849,52 @@ identity comparisons.
   world-space location on realignment, only its radius does not additionally scale with a
   non-uniform placement transform.
 
+## Known M3 limitations
+
+- **Uniform scale only.** `mode: 'clearance'` supports rigid motion plus *positive uniform* scale and
+  nothing else. Anisotropic, sheared, reflected, and negative-scale transforms are **diagnosed
+  unsupported** (`clearance-anisotropic-scale-unsupported`) and the pair is dropped — the library
+  never approximates a distance through a transform it can't honestly handle. This is a real
+  restriction on federated scenes that use non-uniformly scaled links, not a theoretical one. And
+  even *within* the supported class there is admitted slack: an accepted transform's reported
+  `scaleFactor` may be up to `1e-4` relative off any single axis's true scale, so a reported
+  `distance` carries a bounded relative error of that order. Documented, not silently exact.
+- **A narrow, deliberate dead band that no mode reports.** Because `toleranceFloor` is *exclusive*
+  ("touching is not a clearance violation") while `surface-intersection` performs exact, zero-tolerance
+  intersection testing, a real, strictly-positive gap smaller than
+  `surfaceEpsilonFactor × (larger operand's world diagonal)` — on the order of `1e-6` relative to
+  instance size — is reported by **neither** mode: not a `surface-intersection` hit (the surfaces
+  genuinely don't touch) and not a `clearance` hit (excluded by the floor). This is an accepted
+  consequence of reusing the library's existing near-zero epsilon convention rather than inventing a
+  new threshold, but it is a genuine gap, not a redirection to another mode.
+- **The budget bounds candidate *count*, not a single call's *duration*.** `maxClearanceNarrowPhasePairs`
+  (20,000) is an upfront preflight on how many candidate pairs a clearance call may take into narrow
+  phase. **Nothing bounds how long one individual `clearanceQuery` call may take.** The M3
+  performance gate *reports* worst single-call span against `frameBudgetMs` (8 ms) as a
+  GO/CAUTION/NO-GO disposition — that is a measurement, not an enforced cap, and no code path aborts
+  or degrades a distance query that runs long. The measured worst case was 6.10–6.50 ms, i.e. ~20–24%
+  headroom, on a **single-source-instance** query against one fixture; denser source geometry could
+  plausibly push one call past 8 ms with nothing in the library to stop it.
+- **Roughly a quarter of near-contact candidates resolve as neither a Hard Clash nor a clearance
+  result.** On the gate's fixture, ~24% of Hard-Clash prechecks (464–465 of 1,913) returned
+  `inconclusive` rather than a definitive verdict, so those candidates were dropped with a
+  `clearance-hard-clash-precheck-inconclusive` diagnostic and never reached a distance query. This is
+  spec-sanctioned, fail-safe behavior — an inconclusive `volumeOverlapQuery` must never be treated as
+  "proven no overlap" — and it is correctly surfaced through the incompleteness caveat rather than
+  hidden. It is nonetheless a real volume, and the first thing any future clearance-performance or
+  clearance-recall work should look at.
+- **Live acceptance found a real near-miss — and the threshold it was measured with is not an
+  independent oracle.** The bounded discovery spike genuinely discovered a near-miss on its second
+  call (Structure dbId 3965 → 3976/4135 at ~0.0417 world units), so M3's positive acceptance case ran
+  against real, unforced geometry through the real production menu action at the real default
+  clearance; nothing was synthesized and no fallback was needed. What is *not* proven is that
+  0.0417 is that element's global minimum distance to anything in the scene — it was found using the
+  same implementation the acceptance cases exercise, so that part is partly circular. It is
+  corroborated independently against the `InstanceTree`'s own node boxes, and the known-negative case
+  claims only what it can show (the same source through the same action is threshold-sensitive:
+  0 pairs at 0.02, exactly 2 at 0.05). A fully independent Viewer-owned world-bounds oracle would
+  close the residual circularity and remains available as future work.
+
 ## Developer entry points
 
 Read these, in this order, before making changes — no design-spec reading required for ordinary use:
@@ -552,11 +906,17 @@ Read these, in this order, before making changes — no design-spec reading requ
 5. `wwwroot/extensions/RoomLocatorExtension.js` — the M1 reference sample, generic-usage vs.
    Room-Locator-specific glue table above.
 6. `wwwroot/extensions/ClashFinderExtension.js` — the M2 reference sample (cross-model `targets`,
-   `mode: 'volume-overlap'`), generic-usage vs. Clash-Finder-specific glue table above.
-7. This file, plus `test/acceptance/README.md` and `test/performance/README.md` for how the
+   `mode: 'volume-overlap'`) **and** the M3 one ("Find Soft Clashes", `mode: 'clearance'`) in one
+   file; both glue tables above.
+7. `collision/query/ClearanceQuery.js` and `collision/query/ClearanceTransform.js` — M3's distance
+   query and its uniform-scale/tolerance-floor contract. Both carry substantial block comments
+   explaining *why* their operand ordering and tolerances are what they are; read them before
+   changing either.
+8. This file, plus `test/acceptance/README.md` and `test/performance/README.md` for how the
    milestones' acceptance/performance claims were actually verified.
 
 Only go to `docs/superpowers/specs/2026-08-06-collision-library-milestone1-design.md` (M1, 4000+
-lines) or `docs/superpowers/specs/2026-09-05-collision-library-milestone2-design.md` (M2) if you
+lines), `docs/superpowers/specs/2026-09-05-collision-library-milestone2-design.md` (M2) or
+`docs/superpowers/specs/2026-09-07-collision-library-milestone3-clearance-design.md` (M3) if you
 need the *design rationale* behind a specific tolerance or algorithm choice — normal usage never
 requires it.
