@@ -395,3 +395,36 @@ test('fixture 12: invalidateModelPlacement changes clearance verdict correctly',
   assert.equal(backAgain.pairs[0].target.model, targetModel);
   assert.ok(Math.abs(backAgain.pairs[0].distance - 0.75) < 1e-3, `expected distance ~0.75, got ${backAgain.pairs[0].distance}`);
 });
+
+// Batch-2 review fix (Minor): every existing clearance TLAS test above uses the newer
+// `{targets:[...]}` target shape -- the legacy `{model, dbIds}` shape combined with an explicit
+// `broadPhase:'tlas'` is exercised nowhere. A small near-miss + far-fragment same-model scene is
+// enough to prove the combination works; this does not need to be exhaustive (fixture 11 above
+// already covers the general linear/TLAS-agreement case under the newer shape).
+test('legacy {model, dbIds} target shape agrees between linear and explicit broadPhase:"tlas"', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }, { dbId: 30, fragments: [300] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [2.5, 0, 0] }, // near-miss, gap 0.5 <= clearance 1
+      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [100, 0, 0] }, // far fragment, outside clearance
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const base = {
+    source: { model, dbIds: [10] },
+    target: { model, dbIds: [20, 30] }, // legacy shape: one model entry, explicit dbIds
+    mode: 'clearance', clearance: 1, groupBy: 'dbId',
+  };
+  const linearResult = await world.findClashes({ ...base, broadPhase: 'linear' });
+  const tlasResult = await world.findClashes({ ...base, broadPhase: 'tlas' });
+
+  assert.equal(linearResult.pairs.length, 1);
+  assert.equal(tlasResult.pairs.length, 1);
+  assert.equal(tlasResult.pairs[0].target.dbId, 20);
+  assert.ok(Math.abs(tlasResult.pairs[0].distance - linearResult.pairs[0].distance) < 1e-6);
+  assert.ok(Math.abs(tlasResult.pairs[0].distance - 0.5) < 1e-3);
+  // Confirms TLAS genuinely ran under the legacy shape too, not a silent linear fallback.
+  assert.ok(tlasResult.statistics.clearanceExpandedCandidatePairs > 0);
+  assert.equal(linearResult.statistics.clearanceExpandedCandidatePairs, 0);
+});

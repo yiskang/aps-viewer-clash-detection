@@ -117,6 +117,36 @@ function fragmentRef(model, placed) {
   };
 }
 
+// Batch-2 review fix (Important #1, corrected after a codex-review finding on the fix's own first
+// draft): anisotropic scale is a property of ONE operand's own worldMatrix, not of the pair, so it
+// must be deduped -- and DIAGNOSED -- per (epoch, fragmentId) of the offending operand, exactly
+// mirroring `diagnoseClearanceInvalidTransform` above (the sibling condition for the identical shape
+// of problem: one operand's own worldMatrix, `validateUniformScale`'s finer-grained gate rather than
+// `isValidClearanceTransform`'s admission-time one). `scope: 'fragment'`, `role`, and a `fragment`
+// field -- NOT `scope: 'pair'` with `sourceFragment`/`targetFragment` -- is the correct shape: a
+// pair-scoped diagnostic promises to describe one specific fragment-pair evaluation, and a dedup key
+// that only tracks ONE operand cannot honor that promise (an earlier draft of this fix tried exactly
+// that hybrid -- fragment-level dedup with pair-scoped output -- and a later pair sharing an
+// already-diagnosed offending fragment silently got no diagnostic at all, with which pair "won" the
+// one surviving diagnostic depending on candidate traversal order). Its OWN SEPARATE Set (never
+// `oversizedDiagnosedFragments` or `clearanceInvalidTransformDiagnosed` -- three independent dedup
+// namespaces for three independent diagnostic reasons; conflating any of them would let one reason's
+// entry incorrectly suppress a different reason for the same fragment). Called once per SIDE, exactly
+// like `diagnoseFragmentOnce`'s own once-per-side invocation -- both operands are checked
+// independently, so a pair where BOTH sides are simultaneously anisotropic-for-the-first-time
+// produces two diagnostics (one per fragment), never one.
+function diagnoseAnisotropicScaleOnce(statistics, diagnosedSet, placed, role, operand) {
+  const key = `${operand.epoch}:${placed.instance.fragmentId}`;
+  if (diagnosedSet.has(key)) return;
+  diagnosedSet.add(key);
+  statistics.diagnostics.push({
+    scope: 'fragment',
+    reason: 'clearance-anisotropic-scale-unsupported',
+    role,
+    fragment: fragmentRef(operand.model, placed),
+  });
+}
+
 // The matrix bvhcast wants: it maps the SECOND bvh's local space into the FIRST bvh's local space
 // (source is always the first operand here), i.e. inverse(sourceWorld) * targetWorld -- the same
 // derivation test/query/SurfaceIntersectionQuery.test.mjs's own `relativeMatrix(a, b)` helper uses.
@@ -263,29 +293,6 @@ export function normalizeNarrowPhaseHit(mode, result) {
   return { isHit: Boolean(result), witness: undefined }; // witness is not a concept for these modes
 }
 
-// Adapts one resolved GeometryRegistry record plus this call's own placement into the `Instance`
-// shape ContainmentModeQuery/VolumeOverlapQuery document in their own JSDoc typedefs:
-// `{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix,
-//    aspectRatioExceeded?: boolean }`.
-//
-// Three fields the plan's own snippet dropped, all load-bearing (batch4 reconciliation note items
-// 6/7, each re-verified against the consuming code rather than taken on trust):
-//  - `geometry`  -- ContainmentQuery.anyComponentInside samples `sourceGeometry.attributes.position`
-//                   through `sourceGeometry.index.array`; without it every containment term throws.
-//  - `closedManifold` -- a SINGLE geometry-wide boolean in both consumers' typedefs (used directly,
-//                   never indexed), reduced from GeometryConnectivity's per-component array. Left
-//                   `undefined` when connectivity was not requested, which cannot happen on the two
-//                   modes that read it (`needsConnectivity` is true for both).
-//  - `aspectRatioExceeded` -- the M1 single-geometry aspect-ratio disposition gate in
-//                   VolumeOverlapQuery (its crossing term) and ContainmentModeQuery (its witness
-//                   term). Dropping it silently disables a safety guard rather than failing loudly.
-//
-// `matrix` must be a real THREE.Matrix4: both consumers call `.clone().invert().multiply(...)` on
-// it. Extraction stores world matrices as plain 16-number arrays, so the conversion happens here.
-//
-// Note what is deliberately NOT here: any identity field. Canonical ordering is decided from the
-// PlacedInstances at the call site (comparePlacedCanonically above), so this object stays exactly
-// the shape both consumers' typedefs declare.
 // Extracted from _runNarrowPhasePair's own private buildOne/diagnoseFragmentOnce closures (M3 Task 9)
 // so clearance's narrow phase can resolve geometry through the IDENTICAL path the three existing
 // modes already use, rather than a second, divergent one. Pure refactor: _runNarrowPhasePair below is
@@ -309,17 +316,60 @@ async function resolveGeometryRecord(registry, placed, role, operand, needsConne
       needsConnectivity,
     });
   } catch (err) {
+    // EXACTLY this one class is absorbed; anything else -- a checkpoint's own
+    // WorldDisposedError/ModelEvictedError, a builder bug, an extraction invariant break --
+    // still aborts the whole findClashes call, unchanged.
     if (!(err instanceof RenderProxyUnavailableError)) throw err;
+    // Attribution caveat, inherited from _recordRepresentativeFragments' first-discovery-wins
+    // rule rather than introduced here: the proxy that was missing belongs to the geometry's
+    // REPRESENTATIVE fragment, which may not be `placed` when several fragments share one
+    // geometryIndex. Render-proxy availability is per-fragment (load/cull state), so a
+    // representative can be absent while a sibling instance of the same geometry is present, and
+    // this diagnostic then names the sibling. The pre-fix code mis-attributed the identical way
+    // (and permanently); widening representatives to a retry list is a separate design change.
+    // The `role` and `fragment` fields therefore say WHICH PAIR was skipped, not necessarily
+    // which fragment id the Viewer had no proxy for -- the error's own `fragId` does that.
     diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, role, 'geometry-not-yet-available', operand);
     return null;
   }
   if (record.oversized) {
+    // KNOWN TENSION, deliberately not changed here: the spec's dedup guarantee is scoped to the
+    // ceiling outcome only, and says a normalization failure (`unsupported-geometry-layout` or
+    // `rejected-primitive-range`) "settles no persistent entry state, so those two diagnoses can
+    // still be re-emitted per candidate pair" (spec :3170-3174). createGeometryRegistry's
+    // buildWeld filter caches those two as oversized markers all the same, so they are in fact
+    // emitted once per epoch, not once per pair. That is a pre-existing behavioural deviation
+    // from the spec text, recorded here rather than silently reinterpreted; the batch-4 fix wave
+    // was scoped to the missing-proxy half of this problem only.
     diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, role, record.reason, operand);
     return null;
   }
   return record;
 }
 
+// Adapts one resolved GeometryRegistry record plus this call's own placement into the `Instance`
+// shape ContainmentModeQuery/VolumeOverlapQuery document in their own JSDoc typedefs:
+// `{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix,
+//    aspectRatioExceeded?: boolean }`.
+//
+// Three fields the plan's own snippet dropped, all load-bearing (batch4 reconciliation note items
+// 6/7, each re-verified against the consuming code rather than taken on trust):
+//  - `geometry`  -- ContainmentQuery.anyComponentInside samples `sourceGeometry.attributes.position`
+//                   through `sourceGeometry.index.array`; without it every containment term throws.
+//  - `closedManifold` -- a SINGLE geometry-wide boolean in both consumers' typedefs (used directly,
+//                   never indexed), reduced from GeometryConnectivity's per-component array. Left
+//                   `undefined` when connectivity was not requested, which cannot happen on the two
+//                   modes that read it (`needsConnectivity` is true for both).
+//  - `aspectRatioExceeded` -- the M1 single-geometry aspect-ratio disposition gate in
+//                   VolumeOverlapQuery (its crossing term) and ContainmentModeQuery (its witness
+//                   term). Dropping it silently disables a safety guard rather than failing loudly.
+//
+// `matrix` must be a real THREE.Matrix4: both consumers call `.clone().invert().multiply(...)` on
+// it. Extraction stores world matrices as plain 16-number arrays, so the conversion happens here.
+//
+// Note what is deliberately NOT here: any identity field. Canonical ordering is decided from the
+// PlacedInstances at the call site (comparePlacedCanonically above), so this object stays exactly
+// the shape both consumers' typedefs declare.
 function toInstance(record, placedWorldMatrix) {
   return {
     geometry: record.geometry,
@@ -1654,13 +1704,17 @@ export class CollisionWorld {
       const clearanceCandidateByKey = new Map();
       const hardClashExcludedKeys = new Set();
       const oversizedDiagnosedFragments = new Set(); // reused across this call's own resolveGeometryRecord calls
+      // Batch-2 review fix (Important #1): its OWN dedup namespace, scoped per findClashes call like
+      // oversizedDiagnosedFragments above -- never reused for it, since anisotropic-scale is a
+      // different diagnostic reason (see diagnoseAnisotropicScaleOnce's own comment).
+      const anisotropicScaleDiagnosedFragments = new Set();
 
       for (const [sourcePlaced, targetPlaced, targetOperand] of candidates) {
         const pending = checkpoint({ label: 'clearance-narrow-phase-pair' });
         if (pending) await pending;
         const outcome = await this._runClearanceNarrowPhasePair(
           sourcePlaced, targetPlaced, sourceOperand, targetOperand, query.clearance, statistics,
-          oversizedDiagnosedFragments, checkpoint,
+          oversizedDiagnosedFragments, anisotropicScaleDiagnosedFragments, checkpoint,
         );
         // codex-advisor review (this task): mirrors the three-mode aggregation loop's own
         // `statistics.narrowPhasePairs++` (Task 19/20) -- every candidate that reaches narrow-phase
@@ -2178,7 +2232,8 @@ export class CollisionWorld {
    * 'beyond-threshold' are both clean, conclusive negatives and need no diagnostic either.
    */
   async _runClearanceNarrowPhasePair(
-    sourcePlaced, targetPlaced, sourceOperand, targetOperand, clearance, statistics, oversizedDiagnosedFragments, checkpoint,
+    sourcePlaced, targetPlaced, sourceOperand, targetOperand, clearance, statistics, oversizedDiagnosedFragments,
+    anisotropicScaleDiagnosedFragments, checkpoint,
   ) {
     const sourceRecord = await resolveGeometryRecord(
       this._registry, sourcePlaced, 'source', sourceOperand, true, statistics, oversizedDiagnosedFragments,
@@ -2199,12 +2254,17 @@ export class CollisionWorld {
       // validateUniformScale's OWN, finer-grained gate (anisotropic scale) -- a
       // well-formed-but-unsupported transform, caught here right before the composed query, not at
       // admission time.
-      statistics.diagnostics.push({
-        scope: 'pair',
-        reason: 'clearance-anisotropic-scale-unsupported',
-        sourceFragment: fragmentRef(sourceOperand.model, sourcePlaced),
-        targetFragment: fragmentRef(targetOperand.model, targetPlaced),
-      });
+      //
+      // Batch-2 review fix (Important #1, corrected shape -- see diagnoseAnisotropicScaleOnce's own
+      // comment): a single anisotropically-scaled fragment paired against N targets must emit ONE
+      // fragment-scoped diagnostic per offending fragment, not one pair-scoped diagnostic per pair --
+      // diagnose each OFFENDING side independently (never a side that is already uniformly-scaled).
+      if (!sourceScale.valid) {
+        diagnoseAnisotropicScaleOnce(statistics, anisotropicScaleDiagnosedFragments, sourcePlaced, 'source', sourceOperand);
+      }
+      if (!targetScale.valid) {
+        diagnoseAnisotropicScaleOnce(statistics, anisotropicScaleDiagnosedFragments, targetPlaced, 'target', targetOperand);
+      }
       return { outcome: 'anisotropic-scale' };
     }
 
@@ -2567,6 +2627,13 @@ export class CollisionWorld {
     }
   }
 
+  // Structural twin, Batch-2 review fix (Important #2): `mode:'clearance'` has its own deliberate
+  // structural copy of this broad phase, `_runClearanceTlasBroadPhase` (above, ~line 1950), for its
+  // inflated-query-box variant. Any change to THIS method's budget/guard/traversal discipline must be
+  // mirrored there by hand -- e.g. the `targetInstances.length === 0` empty-group guard below had to
+  // be manually re-derived and hand-mirrored into the clearance copy during Task 10, because the plan
+  // text for that copy predated this guard. No test currently catches such a divergence.
+  //
   // Task 13: runs once per distinct TARGET epoch in `targetGroups`, querying each admitted SOURCE
   // instance against that epoch's own (lazily built/cached) TLAS. Mirrors _runBroadPhaseScan's own
   // ordering discipline (target-scope filter and source self-exclusion applied BEFORE a candidate
