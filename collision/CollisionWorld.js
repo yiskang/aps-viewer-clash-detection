@@ -10,8 +10,8 @@ import {
 } from './errors.js';
 import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
 import {
-  maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, maxTlasCandidatePairs, weldEpsilonMeters,
-  surfaceEpsilonFactor,
+  maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, maxTlasCandidatePairs,
+  maxClearanceNarrowPhasePairs, weldEpsilonMeters, surfaceEpsilonFactor,
 } from './constants.js';
 import { extractFragments, extractAllFragments, readWorldMatrix, readWorldBounds } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
@@ -1647,6 +1647,8 @@ export class CollisionWorld {
         );
       statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
 
+      this._checkClearanceNarrowPhaseBudget(candidates);
+
       const narrowPhaseStartedAt = this._now();
       // key -> {distance, witness, sourcePlaced, targetPlaced, targetOperand}
       const clearanceCandidateByKey = new Map();
@@ -2141,6 +2143,17 @@ export class CollisionWorld {
     });
     attach(result.diagnostics);
     return { hit: result.overlap, witness: result.witness ?? null };
+  }
+
+  // Preflight, not incremental (Important #3): the full candidates array is already materialized by
+  // broad phase before narrow-phase work starts, so a single upfront length check is exactly equivalent
+  // in outcome to a per-iteration counter and is both simpler and more directly testable. M3 Task 11.
+  _checkClearanceNarrowPhaseBudget(candidates) {
+    if (candidates.length > maxClearanceNarrowPhasePairs) {
+      throw new CapacityExceededError('clearance-narrow-phase-budget', {
+        limit: maxClearanceNarrowPhasePairs, attempted: candidates.length,
+      });
+    }
   }
 
   /**
