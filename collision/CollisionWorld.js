@@ -1231,24 +1231,14 @@ export class CollisionWorld {
     // own O(sourceCount x targetCount) precheck is meaningless for a TLAS call, whose real cost is
     // NOT proportional to that product, and would reject queries the TLAS exists specifically to
     // make cheap).
-    // M3 Task 9 (codex-advisor review, this task): `mode:'clearance'` has no TLAS broad-phase variant
-    // yet (Task 10's own scope -- this task's own clearance dispatch below always calls
-    // `_runClearanceBroadPhaseScan` unconditionally). Defaulting a `targets`-shaped clearance call to
-    // 'tlas' the way the three pre-existing modes do would (a) silently run the linear scan under a
-    // 'tlas' banner, since no TLAS variant exists to actually dispatch to, and (b) skip the
-    // linear-scan capacity ceiling just below (guarded by `effectiveBroadPhase !== 'tlas'`),
-    // silently letting an unbounded clearance scan through undetected. A clearance call therefore
-    // defaults to 'linear' regardless of shape; an explicit `broadPhase:'tlas'` is rejected outright
-    // immediately below, rather than silently downgraded to linear.
-    const effectiveBroadPhase = query.broadPhase ?? (
-      query.mode === 'clearance' ? 'linear' : (Array.isArray(query.target.targets) ? 'tlas' : 'linear')
-    );
-    if (query.mode === 'clearance' && effectiveBroadPhase === 'tlas') {
-      throw new Error(
-        "findClashes: mode 'clearance' does not yet support broadPhase:'tlas' (Milestone 3 Task 10); " +
-        "use broadPhase:'linear' or omit broadPhase",
-      );
-    }
+    // M3 Task 9 (codex-advisor review, that task): `mode:'clearance'` had no TLAS broad-phase variant
+    // yet at that point, so a `targets`-shaped clearance call was forced to default to 'linear'
+    // regardless of shape, and an explicit `broadPhase:'tlas'` was rejected outright. M3 Task 10 now
+    // supplies that variant (`_runClearanceTlasBroadPhase`, consulted in the clearance dispatch
+    // below), so this collapses back to the ORIGINAL, uniform, shape-dependent expression the three
+    // pre-existing modes already use -- a `targets`-shaped clearance call defaults to 'tlas' exactly
+    // like they do, and an explicit `broadPhase:'tlas'` is accepted rather than rejected.
+    const effectiveBroadPhase = query.broadPhase ?? (Array.isArray(query.target.targets) ? 'tlas' : 'linear');
 
     const startedAt = this._now();
     const statistics = emptyStatistics();
@@ -1644,9 +1634,17 @@ export class CollisionWorld {
     // stays byte-for-byte unchanged and untouched by clearance (Protected Invariant).
     if (query.mode === 'clearance') {
       const broadPhaseStartedAt = this._now();
-      const candidates = await this._runClearanceBroadPhaseScan(
-        sourceOperand, sourceInstances, targetGroups, query.clearance, statistics, checkpoint,
-      );
+      // M3 Task 10: mirrors the three-mode dispatch's own
+      // `effectiveBroadPhase === 'tlas' ? await this._runTlasBroadPhase(...) : await this._runBroadPhaseScan(...)`
+      // pattern just below, verbatim -- `targetScopeFilter` (built earlier in this method, alongside
+      // the three-mode path's own) is already in scope here.
+      const candidates = effectiveBroadPhase === 'tlas'
+        ? await this._runClearanceTlasBroadPhase(
+          sourceOperand, sourceInstances, targetGroups, targetScopeFilter, query.clearance, statistics, checkpoint,
+        )
+        : await this._runClearanceBroadPhaseScan(
+          sourceOperand, sourceInstances, targetGroups, query.clearance, statistics, checkpoint,
+        );
       statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
 
       const narrowPhaseStartedAt = this._now();
@@ -1917,6 +1915,111 @@ export class CollisionWorld {
         }
       }
     }
+    return candidates;
+  }
+
+  // M3 Task 10: TLAS-accelerated broad phase for mode:'clearance'. Structurally the SAME traversal
+  // shape as Hard Clash's own `_runTlasBroadPhase` (read directly, reused verbatim, never modified)
+  // -- one `bvh.queryBox` per (source instance, target epoch) pair, a SEPARATE local
+  // `candidateBudgetUsed` accumulator (never a `statistics.*` field) enforcing `maxTlasCandidatePairs`
+  // via the identical onLeafRange/pendingCapacityError/'stop'/deferred-throw-after-traversal
+  // discipline, and the identical `targetInstances.length === 0` empty-group guard (a Batch-1
+  // whole-batch-review fix to the real `_runTlasBroadPhase`, landed after this task's own brief text
+  // was written -- mirrored here for the identical reason: an empty target group must cost zero real
+  // TLAS traversal/budget, never silently charge budget for fragments this call's own extraction
+  // already knows contribute nothing).
+  //
+  // Differs from Hard Clash's own method in exactly two ways: (1) the query box is the SOURCE
+  // instance's own AABB inflated by `clearance` on every axis (clearance's "any point within
+  // clearance" semantics, vs. Hard Clash's un-inflated overlap query), and (2) the exact per-candidate
+  // predicate is `aabbMinDistance(...) <= clearance`, not AABB-overlap. Per spec §11 ("Relationship to
+  // existing M2 TLAS fields"), the generic M2 TLAS fields (`broadPhasePairs`,
+  // `tlasExactRetestSurvivors`, `tlasNarrowPhaseInputPairs`, and the leaf/query-timing fields) are
+  // populated IDENTICALLY, by the same code, for a clearance call as for the three pre-existing modes
+  // -- clearance's own 7 `clearance*` fields (`clearanceExpandedCandidatePairs`/
+  // `clearanceExactAabbSurvivors` here) are ADDITIONAL, layered on top, never a replacement for the
+  // generic ones. (An earlier draft of this method's own comment, and this task's own brief text,
+  // both claimed the opposite -- that the generic fields should stay unset for clearance -- but that
+  // claim was checked directly against the current spec text during this task's own review and found
+  // to contradict it.) No redundant per-candidate transform-validity check: Task 8 already filtered
+  // invalid-transform instances out of `sourceInstances`/`targetGroups` before broad phase ever runs,
+  // and `currentByFragmentId`'s own membership check already scopes every resolved candidate to this
+  // call's own validated current target bucket -- matching Hard Clash's own equal simplicity.
+  async _runClearanceTlasBroadPhase(sourceOperand, sourceInstances, targetGroups, targetScopeFilter, clearance, statistics, checkpoint) {
+    const candidates = [];
+    let candidateBudgetUsed = 0;
+    let pendingCapacityError = null;
+
+    outer: for (const group of targetGroups) {
+      const { targetOperand, instances: targetInstances } = group;
+      if (targetInstances.length === 0) continue;
+      const modelFilter = targetScopeFilter.get(targetOperand.model);
+      const scopeFragmentSet = modelFilter instanceof Set ? modelFilter : null;
+      const currentByFragmentId = new Map();
+      for (const placed of targetInstances) currentByFragmentId.set(placed.instance.fragmentId, placed);
+
+      const { bvh } = await this._getTlasEntryForEpoch(targetOperand.epoch, checkpoint, statistics);
+
+      for (const sourcePlaced of sourceInstances) {
+        const pending = checkpoint({ label: 'clearance-tlas-broad-phase-query', loadEpoch: sourceOperand.epoch });
+        if (pending) await pending;
+
+        const queryStartedAt = this._now();
+        const b = sourcePlaced.worldBounds;
+        const inflatedMin = [b.min[0] - clearance, b.min[1] - clearance, b.min[2] - clearance];
+        const inflatedMax = [b.max[0] + clearance, b.max[1] + clearance, b.max[2] + clearance];
+        const { truncated } = bvh.queryBox(inflatedMin, inflatedMax, {
+          onLeafRange: (offset, count) => {
+            statistics.tlasLeafRangeEmissions++;
+            if (pendingCapacityError) return 'stop';
+            candidateBudgetUsed += count;
+            statistics.tlasPrimitiveCandidatePairs += count;
+            if (candidateBudgetUsed > maxTlasCandidatePairs) {
+              pendingCapacityError = new CapacityExceededError('tlas-candidate-budget', {
+                limit: maxTlasCandidatePairs, completed: maxTlasCandidatePairs, attempted: maxTlasCandidatePairs + 1,
+                sourceEpoch: sourceOperand.epoch, targetEpoch: targetOperand.epoch,
+              });
+              return 'stop';
+            }
+            return undefined;
+          },
+          onCandidate: (builderPositionIndex) => {
+            const record = bvh.recordAt(builderPositionIndex);
+            if (scopeFragmentSet && !scopeFragmentSet.has(record.fragmentId)) return undefined;
+            if (isSourceOwnFragment(sourceOperand, targetOperand.epoch, record.fragmentId)) return undefined;
+            const targetPlaced = currentByFragmentId.get(record.fragmentId);
+            if (!targetPlaced) return undefined;
+            // Design spec §11 ("Relationship to existing M2 TLAS fields"): the generic M2 TLAS
+            // fields are populated IDENTICALLY, by the same code, for a clearance call as for the
+            // three pre-existing modes -- `broadPhasePairs` (mode-agnostic since M1) is incremented
+            // at exactly this same point (immediately before the exact predicate), right alongside
+            // clearance's own analogous `clearanceExpandedCandidatePairs`, matching Hard Clash's own
+            // `_runTlasBroadPhase` verbatim. (This task's own brief text carried a note claiming the
+            // opposite -- that the generic fields should stay unset for clearance -- but that note
+            // was checked directly against the current spec text during this task's own review and
+            // found to contradict it; the spec's explicit "populated identically" language governs.)
+            statistics.broadPhasePairs++;
+            statistics.clearanceExpandedCandidatePairs++;
+            if (aabbMinDistance(sourcePlaced.worldBounds, targetPlaced.worldBounds) <= clearance) {
+              statistics.clearanceExactAabbSurvivors++;
+              candidates.push([sourcePlaced, targetPlaced, targetOperand]);
+            }
+            return undefined;
+          },
+        });
+        statistics.tlasQueryMs += this._now() - queryStartedAt;
+        if (truncated && pendingCapacityError) break outer;
+      }
+    }
+    if (pendingCapacityError) throw pendingCapacityError;
+    // Same reasoning as above: `tlasExactRetestSurvivors`/`tlasNarrowPhaseInputPairs` are the
+    // generic M2 TLAS fields Hard Clash's own `_runTlasBroadPhase` sets to `candidates.length` right
+    // here, after traversal -- required so `tlasNarrowPhaseInputPairs === statistics.narrowPhasePairs`
+    // holds for a clearance TLAS call exactly like it does for the three pre-existing modes (every
+    // candidate this method returns reaches the shared narrow-phase loop in findClashes's own
+    // clearance dispatch, one-for-one, with no separate dedup stage).
+    statistics.tlasExactRetestSurvivors = candidates.length;
+    statistics.tlasNarrowPhaseInputPairs = candidates.length;
     return candidates;
   }
 

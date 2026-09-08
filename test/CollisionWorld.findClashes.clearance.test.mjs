@@ -70,7 +70,7 @@ function makeModelPart(id, rootNodes, fragSpecs = {}, modelOptions = {}) {
   }
   const { model: baseModel, stats } = buildMockModel(rootNodes, fragmentGeometry, modelOptions);
   const model = { ...baseModel, id, getUnitScale: () => 1 };
-  return { model, rawGeometryByFragId, stats };
+  return { model, rawGeometryByFragId, fragmentGeometry, stats };
 }
 
 function makeTwoModelFixture(opts = {}) {
@@ -92,7 +92,14 @@ function makeTwoModelFixture(opts = {}) {
       },
     },
   };
-  return { modelA: a.model, modelB: b.model, viewer };
+  // `fragmentGeometryA`/`fragmentGeometryB` are the SAME live Maps the fixtures' fake FragmentLists
+  // read from on every call (mirrors test/CollisionWorld.placementInvalidation.test.mjs's own
+  // makeTwoModelFixture) -- mutating one between two findClashes calls simulates a fragment that
+  // moved in the Viewer, for use with world.invalidateModelPlacement (fixture 12).
+  return {
+    modelA: a.model, modelB: b.model, viewer,
+    fragmentGeometryA: a.fragmentGeometry, fragmentGeometryB: b.fragmentGeometry,
+  };
 }
 
 const OPTIONS = { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' };
@@ -139,15 +146,6 @@ test('existing three modes are unaffected by the new mode/clearance validation',
   const world = await freshWorld(viewer, { now: frozenClock() });
   await world.admitModel(model);
   await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [1] }, mode: 'volume-overlap', groupBy: 'dbId' });
-});
-
-test("mode:'clearance' with explicit broadPhase:'tlas' is rejected (no TLAS clearance variant until Task 10)", async () => {
-  const { model, viewer } = makeFixture([{ dbId: 1, fragments: [] }]);
-  const world = await freshWorld(viewer, { now: frozenClock() });
-  await world.admitModel(model);
-  await assert.rejects(() => world.findClashes({
-    source: { model, dbIds: [1] }, target: { model, dbIds: [1] }, mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'tlas',
-  }), /tlas/i);
 });
 
 // === Step 6: end-to-end linear-path tests =========================================================
@@ -259,4 +257,82 @@ test('fixture 8: cross-model near-miss pair reported with correct provenance', a
   assert.equal(pairs.length, 1);
   assert.equal(pairs[0].source.model, sourceModel);
   assert.equal(pairs[0].target.model, targetModel);
+});
+
+// === Task 10: TLAS clearance broad phase ==========================================================
+
+// Fixture 11: linear-vs-TLAS parity. Source dbId 1 (a 2x2x2 box at the origin, face at x=+-1) faces
+// several target dbIds: one near-miss on each side (within clearance), one genuine overlap (proven
+// Hard Clash, excluded from clearance results), and one far away (outside clearance, never a
+// candidate at all). broadPhase:'linear' and broadPhase:'tlas' must agree exactly.
+test('fixture 11: linear and TLAS produce identical clearance pairs on the same federated scene', async () => {
+  const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [100] }],
+    fragSpecsA: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [
+      { dbId: 1, fragments: [200] }, // face at x=1.5, gap 0.5 -> within clearance 3
+      { dbId: 2, fragments: [201] }, // face at x=-1.5, gap 0.5 -> within clearance 3
+      { dbId: 3, fragments: [202] }, // overlaps source (-1..1 vs -0.5..1.5) -> Hard Clash, excluded
+      { dbId: 4, fragments: [203] }, // far away -> outside clearance, never a candidate
+    ],
+    fragSpecsB: {
+      200: { geometryIndex: 0, geometry: box(2, 2, 2), at: [2.5, 0, 0] },
+      201: { geometryIndex: 1, geometry: box(2, 2, 2), at: [-2.5, 0, 0] },
+      202: { geometryIndex: 2, geometry: box(2, 2, 2), at: [0.5, 0, 0] },
+      203: { geometryIndex: 3, geometry: box(2, 2, 2), at: [100, 0, 0] },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const base = {
+    source: { model: sourceModel, dbIds: [1] },
+    target: { targets: [{ model: targetModel }] },
+    mode: 'clearance', clearance: 3, groupBy: 'dbId',
+  };
+  const linearResult = await world.findClashes({ ...base, broadPhase: 'linear' });
+  const tlasResult = await world.findClashes({ ...base, broadPhase: 'tlas' });
+
+  const normalize = (pairs) => pairs.map((p) => `${p.source.dbId}:${p.target.dbId}:${p.distance.toFixed(6)}`).sort();
+  assert.deepEqual(normalize(tlasResult.pairs), normalize(linearResult.pairs));
+  assert.equal(tlasResult.pairs.length, 2, 'exactly the two genuine near-misses, not the overlap or the far fragment');
+  // TLAS-only counters: populated for the TLAS path, and never for the linear path (asserted
+  // elsewhere in this file -- Task 9's own "linear path never populates this" assertion).
+  assert.ok(tlasResult.statistics.clearanceExpandedCandidatePairs > 0);
+  assert.equal(linearResult.statistics.clearanceExpandedCandidatePairs, 0);
+  // Design spec §11: the generic M2 TLAS fields are populated identically, by the same code, for a
+  // clearance call as for the three pre-existing modes -- every candidate this broad phase returns
+  // reaches the shared narrow-phase loop one-for-one, so tlasNarrowPhaseInputPairs must equal
+  // narrowPhasePairs under broadPhase:'tlas' (the same invariant M2's own TLAS calls already hold).
+  assert.equal(tlasResult.statistics.tlasNarrowPhaseInputPairs, tlasResult.statistics.narrowPhasePairs);
+  assert.equal(tlasResult.statistics.tlasExactRetestSurvivors, tlasResult.statistics.narrowPhasePairs);
+  assert.ok(tlasResult.statistics.broadPhasePairs > 0);
+});
+
+// Fixture 12: placement invalidation changes the clearance verdict on the next TLAS call.
+test('fixture 12: invalidateModelPlacement changes clearance verdict correctly', async () => {
+  const { modelA: sourceModel, modelB: targetModel, viewer, fragmentGeometryB } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [10] }],
+    fragSpecsA: { 10: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [100] }],
+    fragSpecsB: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [2.5, 0, 0] } }, // gap 0.5
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const query = {
+    source: { model: sourceModel, dbIds: [1] }, target: { targets: [{ model: targetModel }] },
+    mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'tlas',
+  };
+
+  const before = await world.findClashes(query);
+  assert.equal(before.pairs.length, 1);
+
+  // Move targetModel's fragment far away (same live-Map mutation mechanism
+  // test/CollisionWorld.placementInvalidation.test.mjs's own fixtures use), then invalidate.
+  fragmentGeometryB.set(100, {
+    geometryIndex: 0,
+    matrix: translationMatrix([1000, 0, 0]),
+    bounds: boundsOf(box(2, 2, 2), [1000, 0, 0]),
+  });
+  world.invalidateModelPlacement(targetModel);
+
+  const after = await world.findClashes(query);
+  assert.equal(after.pairs.length, 0);
 });
