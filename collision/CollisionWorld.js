@@ -66,7 +66,12 @@ function makePlaced(admitted, extractedRecord) {
 // `.length` instead (present identically on both `Array` and any TypedArray) is correct for both
 // shapes without weakening the check -- `.length !== 16` and `.some(...)` both work identically on
 // a Float64Array.
-function isValidClearanceTransform(extractedRecord) {
+//
+// Exported (test-only; NOT re-exported from collision/index.js, so the public library surface is
+// unaffected -- same convention as VolumeOverlapQuery.js's `toFiniteWorldArray` and
+// ClearanceQuery.js's `clearanceCrossCheckAllowedDisagreement`) so the Float64Array-acceptance
+// contract (and the other admission rules) can be asserted directly.
+export function isValidClearanceTransform(extractedRecord) {
   const m = extractedRecord.worldMatrix;
   if (!m || m.length !== 16 || m.some((v) => !Number.isFinite(v))) return false;
   const det = new THREE.Matrix4().fromArray(m).determinant();
