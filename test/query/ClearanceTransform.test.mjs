@@ -32,11 +32,13 @@ test('scale drift beyond relative tolerance: invalid', () => {
 });
 
 test('sheared matrix (equal-length, non-orthogonal basis columns): invalid', () => {
-  // A shear along X proportional to Y: basis columns [1,0,0], [1,1,0] have equal magnitudes on some
-  // constructions but are not orthogonal — a magnitude-only check would wrongly accept this.
+  // Three basis columns with equal magnitude (all ~1.0) but not mutually orthogonal:
+  // A = (1, 0, 0), B = (0.5, sqrt(3)/2, 0), C = (0, 0, 1).
+  // Magnitude check alone would accept this (scale ≈ 1,1,1). Orthogonality check must reject it.
+  const sqrt3_2 = Math.sqrt(3) / 2;
   const m = new THREE.Matrix4().set(
-    1, 1, 0, 0,
-    0, 1, 0, 0,
+    1, 0.5, 0, 0,
+    0, sqrt3_2, 0, 0,
     0, 0, 1, 0,
     0, 0, 0, 1,
   );
