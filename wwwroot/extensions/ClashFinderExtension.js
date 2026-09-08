@@ -392,15 +392,40 @@ export class ClashFinderExtension extends ExtensionBase {
         union.set(model, new Set(dbIdSet));
       }
     }
+    // [final fix wave, whole-branch review Important #1] `_isolatedModels` is mutated INCREMENTALLY --
+    // one `add()`/`delete()` immediately after each INDIVIDUAL `isolate()` call succeeds -- restoring
+    // the merge-base's own fail-safe bookkeeping discipline, which the first draft of this union
+    // reconciliation regressed into a single wholesale `_isolatedModels = new Set(union.keys())` at
+    // the very end. That wholesale commit was only correct on the happy path: if any `isolate()` call
+    // throws partway through either loop (a failure mode this file already treats as real -- see
+    // `_onBeforeModelUnload`'s own nested try/finally and its comment about a throwing
+    // `viewer.isolate([], model)`), the throw propagates past the final assignment and
+    // `_isolatedModels` is left describing the OLD state, silently contradicting its own documented
+    // contract ("every Model the VIEWER currently has isolated due to this extension", see its
+    // declaration in the constructor). That is unrecoverable, not merely stale: `_clearIsolation()` --
+    // including the one `unload()` runs at teardown -- reconciles against this very set, so a model
+    // the Viewer really did isolate but that never made it into `_isolatedModels` would NEVER be told
+    // to un-isolate, even on full teardown. Committing per successful call means the set always
+    // reflects exactly what the Viewer was actually told, throw or no throw.
+    //
+    // Deliberately NOT hardened further: no try/catch here, and a throwing `isolate()` still
+    // propagates uncaught exactly as before. Making this loop resilient to one failing call (skip it
+    // and keep reconciling the remaining models) is a separate, already-identified, deferred item --
+    // see `_onBeforeModelUnload`'s own comment noting the same out-of-scope hardening. This fix is
+    // only about the bookkeeping being TRUE whatever the Viewer's real end state turns out to be.
     for (const [model, dbIdSet] of union) {
       this._viewer.isolate([...dbIdSet], model);
+      this._isolatedModels.add(model);
     }
-    for (const model of this._isolatedModels) {
+    // Snapshot the key set before mutating `_isolatedModels` inside the loop -- `Set.prototype.delete`
+    // during a `for...of` over that same Set is legal in JS but relies on subtle iterator semantics;
+    // iterating a copy makes the "drop every model that fell out of the union" intent unambiguous.
+    for (const model of [...this._isolatedModels]) {
       if (!union.has(model)) {
         this._viewer.isolate([], model);
+        this._isolatedModels.delete(model);
       }
     }
-    this._isolatedModels = new Set(union.keys());
   }
 
   // [narrow fix, post-Batch-3] Replaces Hard Clash's own isolation contribution wholesale (an empty

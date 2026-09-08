@@ -1150,6 +1150,109 @@ async function extensionWithBothVisualizationsPopulated() {
   check('_isolatedModels no longer includes modelB once both actions have dropped it', ext._isolatedModels.has(modelB), false);
 }
 
+// === [final fix wave, whole-branch review Important #1] _reconcileIsolation() commits its
+// `_isolatedModels` bookkeeping INCREMENTALLY -- one add()/delete() per INDIVIDUAL successful
+// viewer.isolate() call -- never in a single wholesale assignment at the end ==========================
+// The first draft of the union reconciliation ended with `this._isolatedModels = new Set(union.keys())`,
+// which is only correct when every isolate() call succeeds. If one throws partway through, that final
+// assignment never runs and `_isolatedModels` is left describing the OLD state -- silently false
+// against its own documented contract ("every Model the VIEWER currently has isolated due to this
+// extension"), and unrecoverable, since _clearIsolation() (including unload()'s own) reconciles
+// against this very set: a model the Viewer really did isolate but that never made it into
+// _isolatedModels would never be told to un-isolate, even at full teardown.
+//
+// These two blocks drive `_reconcileIsolation()` directly (setting the two contribution Maps and
+// calling it), rather than through the context-menu actions the surrounding tests use -- the defect
+// is entirely inside that one method, and a direct call is the only way to control WHICH isolate()
+// call throws and WHERE in the two loops. Both Map and Set iteration follow insertion order in JS, so
+// "which call is the Nth" is fully deterministic here. Note these tests deliberately let the throw
+// PROPAGATE (caught by the test itself): making the loop skip a failing model and keep going is a
+// separate, deferred hardening item, explicitly out of scope -- what is asserted here is only that the
+// bookkeeping tells the truth about whatever the Viewer was actually told, throw or no throw.
+
+// (a) FIRST loop (applying the union) throws on the 2nd of 3 models: the model isolated BEFORE the
+// throw must still be recorded. Under the pre-fix wholesale assignment, _isolatedModels stays empty.
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => {
+    isolateCalls.push({ dbIds: [...dbIds], model });
+    if (model === modelB) throw new Error('viewer.isolate blew up for modelB');
+  };
+
+  ext._hardIsolationByModel = new Map([[modelA, new Set([10])], [modelB, new Set([20])], [modelC, new Set([30])]]);
+  let threw = false;
+  try { ext._reconcileIsolation(); } catch { threw = true; }
+
+  check('first-loop throw: the isolate() failure still propagates uncaught (no swallow/retry added)', threw, true);
+  check('first-loop throw: isolate() was attempted for modelA then modelB, and aborted there', isolateCalls.length, 2);
+  check('first-loop throw: modelA -- isolated SUCCESSFULLY before the throw -- IS recorded in _isolatedModels',
+    ext._isolatedModels.has(modelA), true);
+  check('first-loop throw: modelB -- whose own isolate() threw -- is NOT recorded',
+    ext._isolatedModels.has(modelB), false);
+  check('first-loop throw: modelC -- never reached -- is NOT recorded', ext._isolatedModels.has(modelC), false);
+  check('first-loop throw: _isolatedModels holds exactly the one genuinely-applied model', ext._isolatedModels.size, 1);
+}
+
+// (b) SECOND loop (dropping models that fell out of the union) throws on the 2nd drop-out, in a call
+// that ALSO applied a brand-new model in the first loop. Three independent facts must all hold at
+// once; the pre-fix wholesale assignment gets two of the three wrong.
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelD = makeMockModel(4);
+  let failingDropOutModel = null;
+  const isolateCalls = [];
+  viewer.isolate = (dbIds, model) => {
+    isolateCalls.push({ dbIds: [...dbIds], model });
+    if (dbIds.length === 0 && model === failingDropOutModel) throw new Error('viewer.isolate([], model) blew up');
+  };
+
+  // Setup: a clean, fully-successful reconcile isolating modelA and modelB.
+  ext._hardIsolationByModel = new Map([[modelA, new Set([10])], [modelB, new Set([20])]]);
+  ext._reconcileIsolation();
+  check('setup: a clean reconcile records both models', ext._isolatedModels.size, 2);
+
+  // Now: replace Hard Clash's whole contribution with a brand-new modelD. modelA and modelB both fall
+  // out of the union; the drop-out isolate([], modelB) throws, AFTER modelD was newly isolated by the
+  // first loop and AFTER modelA was successfully dropped.
+  failingDropOutModel = modelB;
+  isolateCalls.length = 0;
+  ext._hardIsolationByModel = new Map([[modelD, new Set([40])]]);
+  let threw = false;
+  try { ext._reconcileIsolation(); } catch { threw = true; }
+
+  check('second-loop throw: the isolate() failure still propagates uncaught', threw, true);
+  check('second-loop throw: calls were isolate([40],D), isolate([],A), then the throwing isolate([],B)',
+    isolateCalls.map((c) => `${c.model.id}:${c.dbIds.length}`).join(' '), '4:1 1:0 2:0');
+  check('second-loop throw: modelD -- newly isolated by the FIRST loop of this same call -- IS recorded',
+    ext._isolatedModels.has(modelD), true);
+  check('second-loop throw: modelA -- successfully dropped out BEFORE the throw -- is no longer recorded',
+    ext._isolatedModels.has(modelA), false);
+  check('second-loop throw: modelB -- whose own drop-out threw, so the Viewer may well still have it isolated -- IS still recorded',
+    ext._isolatedModels.has(modelB), true);
+  check('second-loop throw: _isolatedModels is exactly {modelD, modelB}', ext._isolatedModels.size, 2);
+}
+
+// (c) Happy path unchanged: with no throw at all, incremental commits produce exactly the union's own
+// key set -- the same end state the pre-fix wholesale assignment produced.
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
+  viewer.isolate = () => {};
+  ext._hardIsolationByModel = new Map([[modelA, new Set([10])], [modelB, new Set([20])]]);
+  ext._softIsolationByModel = new Map([[modelB, new Set([21])], [modelC, new Set([30])]]);
+  ext._reconcileIsolation();
+  check('happy path: _isolatedModels is exactly the union key set', ext._isolatedModels.size, 3);
+  check('happy path: every union model is recorded',
+    [modelA, modelB, modelC].every((m) => ext._isolatedModels.has(m)), true);
+
+  ext._hardIsolationByModel = new Map();
+  ext._softIsolationByModel = new Map();
+  ext._reconcileIsolation();
+  check('happy path: clearing both contributions empties _isolatedModels', ext._isolatedModels.size, 0);
+}
+
 // === r71/r185 isolation: Soft Clash's own visualization code never imports the npm "three" package --
 // permanent regression guard, mirroring test/ClashFinderExtension.test.mjs's own identical check ====
 {
