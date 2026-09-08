@@ -314,8 +314,10 @@ from — but it **can** be emitted **pair**-scoped (`sourceFragment` + `targetFr
 `role`/`fragment`, undeduped) in one extremely rare case: `clearanceQuery`'s own anchor-inverse guard
 aborts with this same reason when the anchor operand's scale is uniform and *accepted* by
 `validateUniformScale` yet small enough that `Matrix4.invert()`'s `1 / determinant` overflows to
-`Infinity` — a uniform scale strictly between roughly `1e-108` and `1.8e-103`, i.e. a subnormal but
-nonzero determinant. Consumers that switch on `scope` for this reason must tolerate both shapes.
+`Infinity` — i.e. an affine determinant strictly between `0` and `1 / Number.MAX_VALUE`
+(`≈ 5.5627e-309`), which for a uniform scale `s` (determinant `s³`) means `s` strictly between
+`≈ 1.36e-108` and `≈ 1.772e-103`. Consumers that switch on `scope` for this reason must tolerate both
+shapes.
 
 **All four count toward "the result may be incomplete."** In particular
 `clearance-distance-unavailable` and `clearance-hard-clash-precheck-inconclusive` **do** count —

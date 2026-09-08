@@ -336,15 +336,16 @@ test('degenerate TARGET (far, non-anchor) matrix (determinant underflow) -> abor
 // discriminates it. THIS test covers the anchor-inverse guard's own, still-reachable case, and fails
 // if the guard is removed.
 //
-// The reachable window (measured, not assumed): a uniform scale strictly between ~1e-108 (where the
-// affine determinant finally underflows to exactly 0 and `validateUniformScale` rejects it outright)
-// and ~1.8e-103 (where the determinant is back above `1 / Number.MAX_VALUE` ~= 5.56e-309 and the
-// inverse stays finite). Inside that window the determinant is SUBNORMAL but genuinely nonzero
-// (~1e-323 to ~5.5e-309), which `validateUniformScale` accepts as valid -- its uniformity check is
-// purely RELATIVE and has no absolute-magnitude floor, and it reports the true scaleFactor, not 1 --
-// yet `Matrix4.invert()`'s own `1 / determinant` OVERFLOWS, so the inverse carries `Infinity`
-// components rather than the all-zero finite sentinel the 1e-110 case produces. 1e-104 sits comfortably
-// inside that window, away from both edges.
+// The reachable window, by its actual mechanism: the affine determinant is strictly between 0 and
+// `1 / Number.MAX_VALUE` (~= 5.5627e-309) -- SUBNORMAL but genuinely nonzero, so
+// `validateUniformScale` accepts the matrix (its uniformity check is purely RELATIVE, with no
+// absolute-magnitude floor, and it reports the true tiny scaleFactor, not 1), yet small enough that
+// `Matrix4.invert()`'s own `1 / determinant` OVERFLOWS and the inverse carries `Infinity` components
+// rather than the all-zero finite sentinel the 1e-110 case produces. For a UNIFORM scale s the
+// determinant is s^3, so the window is s strictly between ~1.36e-108 (below which s^3 rounds to
+// literal 0, and validateUniformScale rejects it outright -- the case the two tests above cover) and
+// ~1.772e-103, i.e. `Math.cbrt(1 / Number.MAX_VALUE)`. Both edges measured against this repo's pinned
+// three and independently reproduced in review. 1e-104 sits comfortably inside, away from both edges.
 test('subnormal-determinant anchor (accepted by validateUniformScale, inverse overflows to Infinity) -> aborted', () => {
   const tiny = new THREE.Matrix4().makeScale(1e-104, 1e-104, 1e-104);
   assert.notEqual(tiny.determinant(), 0,

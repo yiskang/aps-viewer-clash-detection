@@ -61,9 +61,9 @@ design.
   `clearance-anisotropic-scale-unsupported` is fragment-scoped on the ordinary
   `validateUniformScale`-rejection path, but is emitted **pair**-scoped (undeduped) in the extremely
   rare case where `clearanceQuery`'s own anchor-inverse guard aborts — an operand whose uniform scale
-  `validateUniformScale` *accepts* yet is small enough (strictly between roughly `1e-108` and
-  `1.8e-103`, i.e. a subnormal but nonzero determinant) that `Matrix4.invert()` overflows to
-  `Infinity`. Plus a new
+  `validateUniformScale` *accepts* yet is small enough that `Matrix4.invert()` overflows to `Infinity`
+  (a subnormal but nonzero determinant, i.e. a uniform scale strictly between `≈1.36e-108` and
+  `≈1.772e-103`). Plus a new
   `CapacityExceededError('clearance-narrow-phase-budget')` bounded by `maxClearanceNarrowPhasePairs`
   (20,000, provisional), checked as one upfront preflight on the assembled candidate list.
 - **"Find Soft Clashes"** — a second, independent context-menu action in `ClashFinderExtension`, not a

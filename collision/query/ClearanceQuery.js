@@ -156,11 +156,15 @@ export function clearanceQuery(source, target, options) {
   //      carries `Infinity` components. This is the case that is still genuinely reachable here, and
   //      the reason this guard must stay. `validateUniformScale` has no absolute-magnitude floor --
   //      its uniformity check is purely RELATIVE -- so it accepts such a matrix as valid and reports
-  //      its true (tiny) scaleFactor. Measured window: a uniform scale strictly between ~1e-108 (below
-  //      which the determinant finally underflows to exactly 0, i.e. case 1, and validateUniformScale
-  //      rejects it) and ~1.8e-103 (above which the determinant is back over `1 / Number.MAX_VALUE`
-  //      ~= 5.56e-309 and the inverse stays finite). Inside that window the determinant runs roughly
-  //      1e-323 to 5.5e-309. The `Number.isFinite` half of this guard is what catches it -- see
+  //      its true (tiny) scaleFactor. The window, stated by its actual mechanism: the affine
+  //      determinant is strictly between 0 and `1 / Number.MAX_VALUE` (~= 5.5627e-309) -- nonzero, so
+  //      validateUniformScale's own determinant check (case 1) passes it, yet small enough that
+  //      `1 / determinant` exceeds Number.MAX_VALUE. For a UNIFORM scale s the determinant is s^3, so
+  //      that window is s strictly between ~1.36e-108 (below which s^3 rounds to literal 0 and case 1
+  //      catches it) and ~1.772e-103, i.e. `Math.cbrt(1 / Number.MAX_VALUE)` (above which the
+  //      determinant clears the threshold and the inverse stays finite). Both edges measured against
+  //      this repo's pinned three, and independently reproduced in review.
+  //      The `Number.isFinite` half of this guard is what catches it -- see
   //      test/query/ClearanceQuery.test.mjs's own subnormal-determinant test, which fails if this
   //      guard is removed (the two 1e-110 tests beside it do not: they exercise case 1's
   //      top-of-function rejection instead).

@@ -2249,7 +2249,7 @@ export class CollisionWorld {
    * and where every realistic occurrence comes from), or 'pair' via this branch, in the extremely
    * rare case where an operand's scale is uniform and ACCEPTED by `validateUniformScale` yet small
    * enough that `Matrix4.invert()`'s `1 / determinant` overflows to Infinity -- a uniform scale
-   * strictly between roughly 1e-108 and 1.8e-103 (subnormal but nonzero determinant); see
+   * strictly between ~1.36e-108 and ~1.772e-103 (subnormal but nonzero determinant); see
    * ClearanceQuery.js's own guard comment for that measured window. Left as-is deliberately rather
    * than routed through `diagnoseAnisotropicScaleOnce`: at this point the abort carries no indication
    * of WHICH operand was the anchor, and re-deriving `clearanceQuery`'s own private anchor-selection
