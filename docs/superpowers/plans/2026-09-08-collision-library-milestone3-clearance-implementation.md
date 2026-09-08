@@ -146,7 +146,7 @@ However, M3's public contracts and internal orchestration must not block a futur
 
 Federated Clash Test & Results → Viewer Clash Panel
 
-Compatibility constraints (binding on every remaining task in this plan, Batches 2-4):
+Compatibility constraints (binding on M3's public contracts and any remaining implementation work):
 
 - preserve stable source / target identity across returned pairs
 - do not hard-code the current single-source Viewer UX assumption into collision-core contracts
