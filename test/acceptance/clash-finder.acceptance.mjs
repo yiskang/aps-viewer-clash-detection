@@ -104,6 +104,15 @@
 //     always passes an explicit model, never relying on that default.
 //   - viewer.select(dbIds, model) and viewer.isolate(dbIds, model): both typed with an optional model
 //     parameter and both confirmed working per-model live in this three-model federated scene.
+//   - viewer.setAggregateIsolation(isolation): takes exactly ONE argument, an Array<{model, ids}>
+//     (`ids` a plain array of numbers, not a Set) -- the SAME shape/evidence already captured in the
+//     Task 1 brief and source-verified against the pinned Viewer 7.124.2 bundle: it fully REPLACES the
+//     Viewer's entire aggregate isolation state in one call (every model/dbId not present in the array
+//     becomes visible again), and `[]` is the documented/verified clear-all case. This file's own
+//     wrapper (see the Instrumentation section above) deliberately forwards only that single argument
+//     to the real implementation -- the real Viewer method itself takes only one argument; its internal
+//     delegate `aggregateIsolate` accepts an optional second `options` argument, which this code never
+//     passes and never needs.
 //   - A freshly-loaded additional model's isolate/select/instanceTree-dependent APIs are NOT safe to
 //     use the instant model.isLoadDone() is true: model.getData().instanceTree can still be
 //     momentarily absent right after the "Load as additional model" flow resolves (confirmed
@@ -1229,18 +1238,19 @@ async function main() {
   check('[mixed] captured call: source dbId excluded from its OWN model\'s results (same-model self-clash)',
     sameModelTargetDbIds.includes(MIXED_CASE.sourceDbId), false);
 
-  // --- isolate/fitToView visualization check, bound to the REAL isolate()/fitToView() calls the
-  // production callback made (not just the observable end-state) ---
-  check('[mixed] real isolate() called for Structure with {selected dbId}+{same-model target}',
+  // --- isolate/fitToView visualization check, bound to the REAL setAggregateIsolation()/fitToView()
+  // calls the production callback made (not just the observable end-state) ---
+  check('[mixed] setAggregateIsolation() entry for Structure carries {selected dbId}+{same-model target}',
     sortNums(isolateCallFor(mixedSpy, 'struct')?.dbIds ?? []), sortNums(MIXED_CASE.expectedIsolatedStruct));
-  check('[mixed] real isolate() called for Architecture with exactly the cross-model target',
+  check('[mixed] setAggregateIsolation() entry for Architecture carries exactly the cross-model target',
     sortNums(isolateCallFor(mixedSpy, 'arch')?.dbIds ?? []), sortNums(MIXED_CASE.expectedIsolatedArch));
-  check('[mixed] real fitToView() called for Structure with the SAME dbId set as isolate()',
+  check('[mixed] real fitToView() called for Structure with the SAME dbId set as its own setAggregateIsolation() entry',
     sortNums(fitToViewCallFor(mixedSpy, 'struct')?.dbIds ?? []), sortNums(MIXED_CASE.expectedIsolatedStruct));
-  check('[mixed] real fitToView() called for Architecture with the SAME dbId set as isolate()',
+  check('[mixed] real fitToView() called for Architecture with the SAME dbId set as its own setAggregateIsolation() entry',
     sortNums(fitToViewCallFor(mixedSpy, 'arch')?.dbIds ?? []), sortNums(MIXED_CASE.expectedIsolatedArch));
-  // Mechanical has zero involvement in this query -- no isolate/fitToView call for it at all.
-  check('[mixed] Mechanical model never isolated (no pairs involve it)', isolateCallFor(mixedSpy, 'mech'), undefined);
+  // Mechanical has zero involvement in this query -- no setAggregateIsolation() entry/fitToView call for it at all.
+  check('[mixed] Mechanical has no entry in the aggregate isolation call (and is therefore hidden by the full-replace semantics)',
+    isolateCallFor(mixedSpy, 'mech'), undefined);
   check('[mixed] Mechanical model never fitToView\'d (no pairs involve it)', fitToViewCallFor(mixedSpy, 'mech'), undefined);
 
   // Corroborating end-state check (secondary to the call-level assertions above, which are the ones
@@ -2211,11 +2221,11 @@ async function main() {
   const expectedUnionStruct = sortNums([...new Set([
     ...MIXED_CASE.expectedIsolatedStruct, ...SOFT_CLASH_POSITIVE_CASE.expectedSoftIsolatedStruct,
   ])]);
-  check('[soft][near-miss] real isolate() for Structure is the UNION of Hard Clash\'s and Soft Clash\'s own contributions',
+  check('[soft][near-miss] setAggregateIsolation() entry for Structure is the UNION of Hard Clash\'s and Soft Clash\'s own contributions',
     sortNums(isolateCallFor(positiveSoft.spy, 'struct')?.dbIds ?? []), expectedUnionStruct);
-  check('[soft][near-miss] real isolate() for Architecture re-applies Hard Clash\'s own contribution unchanged (Soft Clash never touched that model)',
+  check('[soft][near-miss] setAggregateIsolation() entry for Architecture re-applies Hard Clash\'s own contribution unchanged (Soft Clash never touched that model)',
     sortNums(isolateCallFor(positiveSoft.spy, 'arch')?.dbIds ?? []), sortNums(MIXED_CASE.expectedIsolatedArch));
-  check('[soft][near-miss] Mechanical is never isolated (no pair involves it)',
+  check('[soft][near-miss] Mechanical has no entry in the aggregate isolation call (and is therefore hidden by the full-replace semantics)',
     isolateCallFor(positiveSoft.spy, 'mech'), undefined);
   // fitToView, by contrast, is per-action camera framing scoped to exactly what THIS action found --
   // deliberately NOT the union.

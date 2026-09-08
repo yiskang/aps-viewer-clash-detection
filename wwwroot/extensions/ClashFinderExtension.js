@@ -318,9 +318,12 @@ export class ClashFinderExtension extends ExtensionBase {
         // the unloaded model's own isolation/markers. A partial-preservation policy (leave OTHER
         // models' isolation and markers alone) was shown unsound: those surviving models could be left
         // isolated with a marker referencing a witness point that, after this unload, no longer has any
-        // meaningful relationship to what's still on screen. _clearIsolation() already iterates ALL of
-        // this._isolatedModels unconditionally, so calling it here already achieves "clear for every
-        // model", matching _clearMarkers()'s own unconditional full-scene clear.
+        // meaningful relationship to what's still on screen. [Task 1 update] _clearIsolation() empties
+        // BOTH contribution Maps and reconciles, which now means exactly ONE
+        // `viewer.setAggregateIsolation([])` clear-all call (not a per-model iteration of
+        // `_isolatedModels` -- that per-model loop no longer exists) -- that single call already
+        // achieves "clear for every model" in one shot, matching _clearMarkers()'s own unconditional
+        // full-scene clear.
         //
         // [Batch 2 fix-round follow-up, codex-review + coordinator tightening] _clearIsolation() is
         // nested in its OWN try/finally here -- the SAME "one throw skips the rest of cleanup" defect
@@ -401,6 +404,36 @@ export class ClashFinderExtension extends ExtensionBase {
   // changes either action's own contribution Map calls this afterward; no caller ever calls the
   // Viewer's per-model `isolate(...)` API or `this._viewer.setAggregateIsolation(...)` directly
   // anymore -- only through this one method.
+  //
+  // [Final review fix wave] Two accepted, deliberate consequences of this switch, worth stating
+  // explicitly:
+  //
+  // (a) Cross-extension full-replace side effect. `wwwroot/viewer.js` registers this extension
+  // alongside `RoomLocatorExtension`, which calls the Viewer's own per-model `isolate(roomDbIds)` API
+  // on its own (RoomLocatorExtension.js's own isolate call). Because this method now calls
+  // `setAggregateIsolation(...)` UNCONDITIONALLY on every reconcile -- including when the union is
+  // EMPTY (a zero-result "no clashes found" outcome, a genuine-failure path, or teardown) -- every one
+  // of those calls resets the Viewer's ENTIRE aggregate isolation state, including whatever Room
+  // Locator had isolated on its own. This is correct and intended, not a bug: describing the WHOLE
+  // scene's isolation state in one call, rather than only this extension's own corner of it, is the
+  // entire point of switching to an aggregate isolation API in the first place (see the evidence
+  // above). Reintroducing a "skip the call when this reconcile's own union didn't change" guard would
+  // silently reintroduce the exact ambiguous-untouched-model problem this task exists to fix (the
+  // Viewer's real isolation state would once again diverge from what this method believes it last
+  // told the Viewer). Not a guard to add.
+  //
+  // (b) The implicit non-empty-`ids` invariant. An `{model, ids: []}` entry inside the `isolation`
+  // array would mean "make this model fully visible" (per the pinned-source evidence: an empty/falsy
+  // `ids` argument triggers `setAllVisibility(true)` for that model) -- the OPPOSITE of what putting a
+  // model in this array means everywhere else in this method (isolate it down to exactly `ids`). This
+  // cannot happen today: every entry in `_hardIsolationByModel`/`_softIsolationByModel` is populated
+  // via the local `addDbId(model, dbId)` helper in `onContextMenu` below, which only ever creates a
+  // Map entry together with adding a dbId to its Set in the same step -- never an empty Set on its
+  // own -- and the model-unload/teardown cleanup paths delete whole Map keys (`.delete(model)`) rather
+  // than emptying a Set in place. So every model that ends up in `union` here always carries at least
+  // one dbId. A future change to the dbId-population code must preserve that invariant, or this
+  // method's own `isolation.push({ model, ids: [...dbIdSet] })` could silently push a
+  // fully-visible-not-isolated entry instead of an isolated one.
   _reconcileIsolation() {
     const union = new Map();
     for (const [model, dbIdSet] of this._hardIsolationByModel) {
