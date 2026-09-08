@@ -122,13 +122,16 @@ export class ClashFinderExtension extends ExtensionBase {
     this._hardIsolationByModel = new Map();
     this._softIsolationByModel = new Map();
     // Every Model the VIEWER currently has isolated due to this extension -- the per-model UNION of
-    // _hardIsolationByModel and _softIsolationByModel above, computed by _reconcileIsolation() below.
-    // Kept as its own field (not merely derived on demand) because _reconcileIsolation() needs to know
-    // which models were PREVIOUSLY applied, to explicitly un-isolate (`isolate([], model)`) any model
-    // that has dropped out of the union entirely -- the Viewer's own isolate() call has no "remove
-    // just these dbIds" mode, only "replace this model's isolation with exactly this list". Never
-    // mutated directly outside _reconcileIsolation(); callers only ever read it (e.g. existing tests
-    // asserting `.size`/`.has(model)`).
+    // _hardIsolationByModel and _softIsolationByModel above, computed and applied by
+    // _reconcileIsolation() below via ONE `viewer.setAggregateIsolation(isolation)` call (source-
+    // verified against the pinned Viewer 7.124.2 bundle: that call FULLY REPLACES the Viewer's entire
+    // aggregate isolation state in one shot, hiding every other loaded model/dbId not named in the
+    // `Array<{model, ids}>` argument, and `[]` clears isolation entirely, restoring normal visibility
+    // for every loaded model -- see _reconcileIsolation()'s own comment for the full evidence). Kept
+    // as its own field (not merely derived on demand) so the rest of this file can read "what the
+    // Viewer currently has isolated" without re-deriving it from the two contribution Maps each time.
+    // Never mutated directly outside _reconcileIsolation(); callers only ever read it (e.g. existing
+    // tests asserting `.size`/`.has(model)`).
     this._isolatedModels = new Set();
     // Task 8 (M2.1): witness marker overlay state. _activeMarkers is deliberately an ARRAY, not a
     // Set like _isolatedModels above -- an ordered list of individual THREE.Mesh instances to
@@ -272,10 +275,10 @@ export class ClashFinderExtension extends ExtensionBase {
   }
 
   // world.evictModel(event.model) -- the exact object -- AND drop it from the isolated-models
-  // bookkeeping (an unloaded model can no longer be meaningfully cleared via viewer.isolate([],
-  // model), and holding a stale reference forever would only leak). Typings declare `event: any`;
-  // defensively verify `event.model` exists rather than let a missing field surface as a cryptic
-  // downstream TypeError.
+  // bookkeeping (an unloaded model can no longer be meaningfully named in a future
+  // `viewer.setAggregateIsolation(...)` call, and holding a stale reference forever would only leak).
+  // Typings declare `event: any`; defensively verify `event.model` exists rather than let a missing
+  // field surface as a cryptic downstream TypeError.
   _onBeforeModelUnload(event) {
     if (!event || !event.model) {
       throw new Error('ClashFinderExtension: BEFORE_MODEL_UNLOAD_EVENT fired with no event.model — typings declare `event: any`; this handler cannot proceed without the model object.');
@@ -300,7 +303,7 @@ export class ClashFinderExtension extends ExtensionBase {
     // Without this, evictModel throwing would skip _clearIsolation()/_clearMarkers()/
     // _isolatedModels.delete() entirely and let the throw escape into a Viewer event dispatch --
     // leaving this extension holding isolation/markers referencing a model that's now unloaded, and
-    // later trying viewer.isolate([], <unloaded model>).
+    // later including that unloaded model in a future `viewer.setAggregateIsolation(...)` call.
     //
     // Task 16: this whole existing (unchanged) block is now wrapped in a NEW outer try, with Soft
     // Clash's own cleanup (_clearSoftClashVisualization()) in the new finally below -- the SAME
@@ -322,13 +325,14 @@ export class ClashFinderExtension extends ExtensionBase {
         // [Batch 2 fix-round follow-up, codex-review + coordinator tightening] _clearIsolation() is
         // nested in its OWN try/finally here -- the SAME "one throw skips the rest of cleanup" defect
         // class this Finding-6 fix already guards against at the evictModel call site above, one layer
-        // deeper: if _clearIsolation() itself throws (e.g. one of its internal viewer.isolate([], model)
-        // calls throws), _clearMarkers() and _isolatedModels.delete() below must still run, exactly
-        // mirroring unload()'s own existing structure (see unload()'s own comment above the equivalent
-        // nesting there). Making _clearIsolation()'s OWN internal per-model loop resilient to a SINGLE
-        // failing isolate() call (continue clearing the remaining models rather than aborting the whole
-        // loop) is a separate, broader change intentionally left out of this fix -- see this task's own
-        // report for that out-of-scope finding.
+        // deeper: if _clearIsolation() itself throws (its own internal
+        // `viewer.setAggregateIsolation(...)` call throws), _clearMarkers() and
+        // _isolatedModels.delete() below must still run, exactly mirroring unload()'s own existing
+        // structure (see unload()'s own comment above the equivalent nesting there). Since
+        // _reconcileIsolation() now makes exactly ONE setAggregateIsolation() call (see its own
+        // comment below), a throw here means NOTHING was committed to the Viewer and _isolatedModels
+        // is left at its prior value -- there is no partial-loop state to reconcile, unlike the old
+        // per-model isolate() design this replaced.
         try {
           this._clearIsolation();
         } finally {
@@ -372,13 +376,31 @@ export class ClashFinderExtension extends ExtensionBase {
     return `${diagnostics.length} diagnostic(s): ${reasons.join(', ')}`;
   }
 
-  // [narrow fix, post-Batch-3] Computes the per-model UNION of _hardIsolationByModel and
-  // _softIsolationByModel, applies it to the Viewer (one isolate() call per model in the union), and
-  // explicitly un-isolates (`isolate([], model)`) any model that was previously applied
-  // (this._isolatedModels) but has now dropped out of the union entirely -- e.g. Hard Clash cleared
-  // its own contribution for a model Soft Clash never touched. Every caller that changes either
-  // action's own contribution Map calls this afterward; no caller ever calls `this._viewer.isolate(...)`
-  // directly anymore.
+  // [Task 1, M3-adjacent aggregate-isolation fix] Computes the per-model UNION of
+  // _hardIsolationByModel and _softIsolationByModel, then applies it to the Viewer with exactly ONE
+  // `viewer.setAggregateIsolation(isolation)` call -- the Viewer's public AGGREGATE isolation API,
+  // not the per-model `viewer.isolate(dbIds, model)` this method used before this fix. Switched
+  // because `viewer.isolate()` is a PER-MODEL call: calling it once per model in a federated
+  // (multi-model) scene does not compose the way a single aggregate view needs to, and required a
+  // second loop here explicitly un-isolating (`isolate([], model)`) every model that fell out of the
+  // union. `setAggregateIsolation` replaces both loops with one call, verified against the pinned
+  // Viewer 7.124.2 source bundle: it takes exactly one argument, an `Array<{model, ids}>` (`ids` a
+  // plain array of numbers, not a Set), and its delegate implementation FULLY REPLACES the Viewer's
+  // entire aggregate isolation state in that one call -- every model/dbId combination not present in
+  // the array becomes visible again, with no separate per-model "un-isolate" step required; passing
+  // `[]` is the documented/verified clear-all case, restoring every loaded model to normal visibility
+  // in one call. This evidence was independently verified (Reference Guide + pinned 7.124.2 source,
+  // source-verified) before this method was rewritten -- see this task's own commit message.
+  //
+  // `_isolatedModels` bookkeeping is now a single atomic step, not the old per-call incremental
+  // add()/delete() this method previously needed to survive a throw partway through a per-model loop:
+  // since there is only ONE Viewer call now, it either throws (nothing was committed to the Viewer, so
+  // `_isolatedModels` is deliberately left at its PRIOR value -- no try/catch here, the throw
+  // propagates uncaught exactly as before) or it succeeds (everything in `isolation` was committed in
+  // that one call, so `_isolatedModels` becomes exactly the union's own key set). Every caller that
+  // changes either action's own contribution Map calls this afterward; no caller ever calls the
+  // Viewer's per-model `isolate(...)` API or `this._viewer.setAggregateIsolation(...)` directly
+  // anymore -- only through this one method.
   _reconcileIsolation() {
     const union = new Map();
     for (const [model, dbIdSet] of this._hardIsolationByModel) {
@@ -392,46 +414,18 @@ export class ClashFinderExtension extends ExtensionBase {
         union.set(model, new Set(dbIdSet));
       }
     }
-    // [final fix wave, whole-branch review Important #1] `_isolatedModels` is mutated INCREMENTALLY --
-    // one `add()`/`delete()` immediately after each INDIVIDUAL `isolate()` call succeeds -- restoring
-    // the merge-base's own fail-safe bookkeeping discipline, which the first draft of this union
-    // reconciliation regressed into a single wholesale `_isolatedModels = new Set(union.keys())` at
-    // the very end. That wholesale commit was only correct on the happy path: if any `isolate()` call
-    // throws partway through either loop (a failure mode this file already treats as real -- see
-    // `_onBeforeModelUnload`'s own nested try/finally and its comment about a throwing
-    // `viewer.isolate([], model)`), the throw propagates past the final assignment and
-    // `_isolatedModels` is left describing the OLD state, silently contradicting its own documented
-    // contract ("every Model the VIEWER currently has isolated due to this extension", see its
-    // declaration in the constructor). That is unrecoverable, not merely stale: `_clearIsolation()` --
-    // including the one `unload()` runs at teardown -- reconciles against this very set, so a model
-    // the Viewer really did isolate but that never made it into `_isolatedModels` would NEVER be told
-    // to un-isolate, even on full teardown. Committing per successful call means the set always
-    // reflects exactly what the Viewer was actually told, throw or no throw.
-    //
-    // Deliberately NOT hardened further: no try/catch here, and a throwing `isolate()` still
-    // propagates uncaught exactly as before. Making this loop resilient to one failing call (skip it
-    // and keep reconciling the remaining models) is a separate, already-identified, deferred item --
-    // see `_onBeforeModelUnload`'s own comment noting the same out-of-scope hardening. This fix is
-    // only about the bookkeeping being TRUE whatever the Viewer's real end state turns out to be.
+    const isolation = [];
     for (const [model, dbIdSet] of union) {
-      this._viewer.isolate([...dbIdSet], model);
-      this._isolatedModels.add(model);
+      isolation.push({ model, ids: [...dbIdSet] });
     }
-    // Snapshot the key set before mutating `_isolatedModels` inside the loop -- `Set.prototype.delete`
-    // during a `for...of` over that same Set is legal in JS but relies on subtle iterator semantics;
-    // iterating a copy makes the "drop every model that fell out of the union" intent unambiguous.
-    for (const model of [...this._isolatedModels]) {
-      if (!union.has(model)) {
-        this._viewer.isolate([], model);
-        this._isolatedModels.delete(model);
-      }
-    }
+    this._viewer.setAggregateIsolation(isolation);
+    this._isolatedModels = new Set(union.keys());
   }
 
   // [narrow fix, post-Batch-3] Replaces Hard Clash's own isolation contribution wholesale (an empty
   // Map clears it entirely) and reconciles the Viewer's actual isolation to the new union with Soft
-  // Clash's own current contribution, unaffected. Never call `this._viewer.isolate(...)` directly for
-  // Hard Clash's own success/failure/zero-result paths -- always go through this method.
+  // Clash's own current contribution, unaffected. Never call `this._viewer.setAggregateIsolation(...)`
+  // directly for Hard Clash's own success/failure/zero-result paths -- always go through this method.
   _setHardIsolation(dbIdsByModel) {
     this._hardIsolationByModel = dbIdsByModel;
     this._reconcileIsolation();

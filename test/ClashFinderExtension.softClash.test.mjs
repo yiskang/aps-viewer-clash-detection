@@ -75,7 +75,7 @@ function makeMockViewer() {
     registerContextMenuCallback() {}, unregisterContextMenuCallback() {},
     getAggregateSelection() { return []; },
     getAllModels() { return []; },
-    isolate() {}, fitToView() {},
+    isolate() {}, setAggregateIsolation() {}, fitToView() {},
     overlays: makeMockOverlays(),
   };
 }
@@ -325,8 +325,8 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
     }],
     statistics: { diagnostics: [] },
   });
-  const isolateCalls = [], fitToViewCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [], fitToViewCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = (dbIds, model) => fitToViewCalls.push({ dbIds: [...dbIds], model });
   let notified = '';
   ext._notifyUser = (message) => { notified = message; };
@@ -334,7 +334,8 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   ext.onContextMenu(menu, {});
   const softClashEntry = menu.find((m) => m.title === 'Find Soft Clashes');
   await softClashEntry.target();
-  check('isolate called once per involved model (source + target)', isolateCalls.length, 2);
+  check('setAggregateIsolation called exactly once for this reconcile', aggCalls.length, 1);
+  check('that call\'s array has one entry per involved model (source + target)', aggCalls[0]?.length, 2);
   check('fitToView called once per involved model', fitToViewCalls.length, 2);
   check('notify reports the clash count', notified, '1 clashes found (0 in this model, 1 in other models)');
   // Task 15: real visualization -- one pair renders two markers + one line (3 objects), all in
@@ -374,8 +375,8 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   world.findClashes = async () => ({
     pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
@@ -384,7 +385,7 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   const menu1 = [];
   ext.onContextMenu(menu1, {});
   await menu1.find((m) => m.title === 'Find Soft Clashes').target(); // isolates modelA + modelB
-  isolateCalls.length = 0;
+  aggCalls.length = 0;
 
   const boom = new Error('soft clash engine exploded');
   world.findClashes = async () => { throw boom; };
@@ -394,8 +395,8 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   ext.onContextMenu(menu2, {});
   await menu2.find((m) => m.title === 'Find Soft Clashes').target();
 
-  const clears = isolateCalls.filter((c) => c.dbIds.length === 0).map((c) => c.model);
-  check('a genuine Soft Clash failure clears the PRIOR query\'s isolation', clears.length, 2);
+  check('a genuine Soft Clash failure clears the PRIOR query\'s isolation -- exactly one setAggregateIsolation call with an empty array',
+    aggCalls.length === 1 && aggCalls[0]?.length === 0, true);
   check('the failure surfaces a VISIBLE notification', /Find Soft Clashes failed/.test(notified), true);
   check('the failure notification names the underlying error', /soft clash engine exploded/.test(notified), true);
   check('_activeSoftClashObjects is reset on failure too', ext._activeSoftClashObjects.length, 0);
@@ -412,8 +413,8 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   const pending = [];
   world.findClashes = (query) => new Promise((resolve) => { pending.push({ query, resolve }); });
 
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   const alerts = [];
   ext._notifyUser = (message) => { alerts.push(message); };
@@ -443,7 +444,9 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   // The Soft Clash call resolves FIRST, while Hard Clash is still in flight.
   softCall.resolve({ pairs: [], statistics: { diagnostics: [] } });
   await softPromise;
-  check('Soft Clash resolving does not itself touch isolate (no soft clashes found)', isolateCalls.length, 0);
+  check('Soft Clash resolving with no soft clashes found still triggers exactly one setAggregateIsolation call',
+    aggCalls.length, 1);
+  check('...with an empty array (nothing isolated yet -- Hard Clash is still in flight)', aggCalls[0]?.length, 0);
 
   // Hard Clash's own (slower) call finally resolves. It must NOT observe itself as stale merely
   // because a Soft Clash action ran and completed in between -- the two tokens are independent.
@@ -452,8 +455,8 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
     statistics: { diagnostics: [] },
   });
   await hardPromise;
-  check('Hard Clash isolate effects ARE observable despite an interleaved Soft Clash action',
-    isolateCalls.some((c) => c.dbIds.includes(10)) && isolateCalls.some((c) => c.dbIds.includes(99)), true);
+  check('Hard Clash setAggregateIsolation effects ARE observable despite an interleaved Soft Clash action',
+    aggCalls.some((call) => call.some((e) => e.ids.includes(10))) && aggCalls.some((call) => call.some((e) => e.ids.includes(99))), true);
   check('Hard Clash notify fired (not silently discarded as stale)',
     alerts.some((m) => /^1 clashes found/.test(m)), true);
 }
@@ -468,8 +471,8 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   const pending = [];
   world.findClashes = (query) => new Promise((resolve) => { pending.push({ query, resolve }); });
 
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   const alerts = [];
   ext._notifyUser = (message) => { alerts.push(message); };
@@ -497,8 +500,8 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
     statistics: { diagnostics: [] },
   });
   await softPromise;
-  check('Soft Clash isolate effects ARE observable despite an interleaved Hard Clash action (mirror direction)',
-    isolateCalls.some((c) => c.dbIds.includes(10)) && isolateCalls.some((c) => c.dbIds.includes(77)), true);
+  check('Soft Clash setAggregateIsolation effects ARE observable despite an interleaved Hard Clash action (mirror direction)',
+    aggCalls.some((call) => call.some((e) => e.ids.includes(10))) && aggCalls.some((call) => call.some((e) => e.ids.includes(77))), true);
   check('Soft Clash notify fired (not silently discarded as stale, mirror direction)',
     alerts.some((m) => /^1 clashes found/.test(m)), true);
 }
@@ -612,9 +615,12 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
-  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
+  // Each setAggregateIsolation call carries the FULL current union as one snapshot (unlike the old
+  // per-model isolate() calls, which only ever described the delta for one model at a time) -- so
+  // "the call for model X" now means "model X's own entry inside the MOST RECENT snapshot".
+  const lastCallForModel = (model) => aggCalls.at(-1)?.find((e) => e.model === model);
 
   // First: a successful Find Soft Clashes isolates modelB:31 and populates the SOFT_CLASH_OVERLAY_NAME
   // scene with real geometry (2 markers + 1 line).
@@ -630,7 +636,7 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   ext.onContextMenu(menuSoft1, {});
   await menuSoft1.find((m) => m.title === 'Find Soft Clashes').target();
   check('setup: Soft Clash populated its own 3 objects (real, unstubbed rendering)', ext._activeSoftClashObjects.length, 3);
-  check('setup: Soft Clash isolated modelB:31', lastCallForModel(modelB)?.dbIds.includes(31), true);
+  check('setup: Soft Clash isolated modelB:31', lastCallForModel(modelB)?.ids.includes(31), true);
   const softObjectsAfterFirstRun = [...ext._activeSoftClashObjects];
 
   // Then: a successful Find Clashes (Hard Clash) run isolates modelB:30 -- a DIFFERENT dbId on the
@@ -658,11 +664,11 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   // The genuinely discriminating check: proves this is a real UNION, not a clobber -- would FAIL
   // under the pre-fix single-Set behavior (which would leave only [30]).
   const afterHardCall = lastCallForModel(modelB);
-  check('after Hard Clash runs, the isolate() call for shared modelB still includes Soft\'s own dbId 31',
-    afterHardCall.dbIds.includes(31), true);
-  check('...and now also includes Hard\'s own dbId 30', afterHardCall.dbIds.includes(30), true);
-  check('...and the call has EXACTLY those 2 dbIds (proves no stray/lost entries either direction)',
-    [...afterHardCall.dbIds].sort().join(','), '30,31');
+  check('after Hard Clash runs, the setAggregateIsolation entry for shared modelB still includes Soft\'s own dbId 31',
+    afterHardCall.ids.includes(31), true);
+  check('...and now also includes Hard\'s own dbId 30', afterHardCall.ids.includes(30), true);
+  check('...and the entry has EXACTLY those 2 dbIds (proves no stray/lost entries either direction)',
+    [...afterHardCall.ids].sort().join(','), '30,31');
 
   // Finally (mirror direction): a subsequent Find Soft Clashes run replaces Soft's OWN contribution
   // (31 -> 32) while Hard Clash's own dbId 30 -- untouched by this action -- must survive the union.
@@ -691,15 +697,15 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   // Soft's NEW dbId (32) must be present, and Hard's own dbId (30) -- untouched by this action --
   // must still be present. A clobbering implementation would leave only [32].
   const afterSecondSoftCall = lastCallForModel(modelB);
-  check('after Soft Clash\'s second run, modelB\'s isolate() call no longer includes the OLD Soft dbId 31',
-    afterSecondSoftCall.dbIds.includes(31), false);
-  check('...includes Soft\'s NEW dbId 32', afterSecondSoftCall.dbIds.includes(32), true);
+  check('after Soft Clash\'s second run, modelB\'s setAggregateIsolation entry no longer includes the OLD Soft dbId 31',
+    afterSecondSoftCall.ids.includes(31), false);
+  check('...includes Soft\'s NEW dbId 32', afterSecondSoftCall.ids.includes(32), true);
   check('...and STILL includes Hard\'s own untouched dbId 30 -- proves union survives a same-model replace on the OTHER action',
-    afterSecondSoftCall.dbIds.includes(30), true);
-  check('...and the call has EXACTLY those 2 dbIds', [...afterSecondSoftCall.dbIds].sort().join(','), '30,32');
+    afterSecondSoftCall.ids.includes(30), true);
+  check('...and the entry has EXACTLY those 2 dbIds', [...afterSecondSoftCall.ids].sort().join(','), '30,32');
 
   check('modelA (the shared source model) still carries the common source dbId 10',
-    lastCallForModel(modelA)?.dbIds.includes(10), true);
+    lastCallForModel(modelA)?.ids.includes(10), true);
   check('_isolatedModels still reflects both models after the Soft-Hard-Soft sequence', ext._isolatedModels.size, 2);
   check('_isolatedModels has modelA', ext._isolatedModels.has(modelA), true);
   check('_isolatedModels has modelB', ext._isolatedModels.has(modelB), true);
@@ -876,8 +882,8 @@ async function extensionWithBothVisualizationsPopulated() {
   const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB, modelC];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   ext._addMarkers = () => {};
 
@@ -910,13 +916,15 @@ async function extensionWithBothVisualizationsPopulated() {
   ext.onContextMenu(menu2, {});
   await menu2.find((m) => m.title === 'Find Soft Clashes').target();
 
-  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  // Each setAggregateIsolation call carries the full current union as one snapshot -- "the call for
+  // model X" means model X's own entry inside the MOST RECENT snapshot.
+  const lastCallForModel = (model) => aggCalls.at(-1)?.find((e) => e.model === model);
   const modelBFinal = lastCallForModel(modelB);
-  check('after Hard then Soft, the FINAL isolate() call for the shared modelB includes Hard\'s own dbId (30)',
-    modelBFinal.dbIds.includes(30), true);
+  check('after Hard then Soft, the FINAL setAggregateIsolation entry for the shared modelB includes Hard\'s own dbId (30)',
+    modelBFinal.ids.includes(30), true);
   check('...and ALSO includes Soft\'s own dbId (31) -- a true union, not a replacement',
-    modelBFinal.dbIds.includes(31), true);
-  check('modelC (Soft Clash only) is isolated too', lastCallForModel(modelC).dbIds.includes(50), true);
+    modelBFinal.ids.includes(31), true);
+  check('modelC (Soft Clash only) is isolated too', lastCallForModel(modelC).ids.includes(50), true);
   check('_isolatedModels reflects the full union of models touched by either action (A, B, C)', ext._isolatedModels.size, 3);
   check('_isolatedModels has modelC', ext._isolatedModels.has(modelC), true);
 }
@@ -928,8 +936,8 @@ async function extensionWithBothVisualizationsPopulated() {
   const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB, modelC];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   ext._addMarkers = () => {};
 
@@ -962,13 +970,13 @@ async function extensionWithBothVisualizationsPopulated() {
   ext.onContextMenu(menu2, {});
   await menu2.find((m) => m.title === 'Find Clashes').target();
 
-  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  const lastCallForModel = (model) => aggCalls.at(-1)?.find((e) => e.model === model);
   const modelBFinal = lastCallForModel(modelB);
-  check('after Soft then Hard, the FINAL isolate() call for the shared modelB includes Soft\'s own dbId (31)',
-    modelBFinal.dbIds.includes(31), true);
+  check('after Soft then Hard, the FINAL setAggregateIsolation entry for the shared modelB includes Soft\'s own dbId (31)',
+    modelBFinal.ids.includes(31), true);
   check('...and ALSO includes Hard\'s own dbId (30) -- a true union, not a replacement (mirror direction)',
-    modelBFinal.dbIds.includes(30), true);
-  check('modelC (Soft Clash only) is still isolated after Hard Clash runs', lastCallForModel(modelC).dbIds.includes(50), true);
+    modelBFinal.ids.includes(30), true);
+  check('modelC (Soft Clash only) is still isolated after Hard Clash runs', lastCallForModel(modelC).ids.includes(50), true);
   check('_isolatedModels reflects the full union of models touched by either action (A, B, C), mirror direction',
     ext._isolatedModels.size, 3);
 }
@@ -981,8 +989,8 @@ async function extensionWithBothVisualizationsPopulated() {
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   ext._addMarkers = () => {};
 
@@ -1005,9 +1013,9 @@ async function extensionWithBothVisualizationsPopulated() {
   ext.onContextMenu(menu2, {});
   await menu2.find((m) => m.title === 'Find Soft Clashes').target();
 
-  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  const lastCallForModel = (model) => aggCalls.at(-1)?.find((e) => e.model === model);
   check('after a genuine Soft Clash failure, Hard Clash\'s own modelB isolation is STILL applied (not cleared)',
-    lastCallForModel(modelB)?.dbIds.includes(30), true);
+    lastCallForModel(modelB)?.ids.includes(30), true);
   check('_isolatedModels still has both models Hard Clash isolated', ext._isolatedModels.size, 2);
   check('_isolatedModels still has modelA', ext._isolatedModels.has(modelA), true);
   check('_isolatedModels still has modelB', ext._isolatedModels.has(modelB), true);
@@ -1020,8 +1028,8 @@ async function extensionWithBothVisualizationsPopulated() {
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   ext._addMarkers = () => {};
 
@@ -1044,15 +1052,15 @@ async function extensionWithBothVisualizationsPopulated() {
   ext.onContextMenu(menu2, {});
   await menu2.find((m) => m.title === 'Find Clashes').target();
 
-  const lastCallForModel = (model) => [...isolateCalls].reverse().find((c) => c.model === model);
+  const lastCallForModel = (model) => aggCalls.at(-1)?.find((e) => e.model === model);
   check('after Hard Clash resolves with zero pairs, Soft Clash\'s own modelB isolation is STILL applied (mirror direction)',
-    lastCallForModel(modelB)?.dbIds.includes(31), true);
+    lastCallForModel(modelB)?.ids.includes(31), true);
   check('_isolatedModels still has both models Soft Clash isolated (mirror direction)', ext._isolatedModels.size, 2);
 }
 
 // === [narrow fix, post-Batch-3] Clearing both restores normal Viewer visibility: after both actions
-// have contributed isolation, driving both to empty (via unload()) explicitly un-isolates every
-// previously-isolated model (isolate([], model)) and leaves _isolatedModels empty ====================
+// have contributed isolation, driving both to empty (via unload()) triggers exactly one
+// setAggregateIsolation([]) call -- the documented clear-all case -- and leaves _isolatedModels empty =
 {
   const { ext, viewer, world } = extensionWithFakeWorld();
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
@@ -1079,14 +1087,13 @@ async function extensionWithBothVisualizationsPopulated() {
   await menu.find((m) => m.title === 'Find Soft Clashes').target();
   check('setup: both models are isolated before clearing', ext._isolatedModels.size, 2);
 
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   ext.unload();
 
-  check('unload() explicitly un-isolates modelA (isolate([], modelA))',
-    isolateCalls.some((c) => c.model === modelA && c.dbIds.length === 0), true);
-  check('unload() explicitly un-isolates modelB (isolate([], modelB))',
-    isolateCalls.some((c) => c.model === modelB && c.dbIds.length === 0), true);
+  check('unload() triggers exactly one setAggregateIsolation call', aggCalls.length, 1);
+  check('that call\'s array is empty -- both modelA and modelB are un-isolated in one clear-all call',
+    aggCalls[0]?.length, 0);
   check('_isolatedModels is empty after both actions\' contributions are cleared together', ext._isolatedModels.size, 0);
 }
 
@@ -1099,8 +1106,8 @@ async function extensionWithBothVisualizationsPopulated() {
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
   viewer.getAllModels = () => [modelA, modelB];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   ext._addMarkers = () => {};
 
@@ -1128,14 +1135,15 @@ async function extensionWithBothVisualizationsPopulated() {
   ext.onContextMenu(menu2, {});
   await menu2.find((m) => m.title === 'Find Clashes').target();
 
-  const lastCallForModelB = [...isolateCalls].reverse().find((c) => c.model === modelB);
-  check('after Hard replaces its own contribution, the final isolate() call for modelB no longer includes the OLD dbId 30',
-    lastCallForModelB.dbIds.includes(30), false);
-  check('...still includes Soft\'s own untouched dbId 31', lastCallForModelB.dbIds.includes(31), true);
-  check('...and includes Hard\'s NEW dbId 32', lastCallForModelB.dbIds.includes(32), true);
+  const lastCallForModelB = aggCalls.at(-1)?.find((e) => e.model === modelB);
+  check('after Hard replaces its own contribution, the final setAggregateIsolation entry for modelB no longer includes the OLD dbId 30',
+    lastCallForModelB.ids.includes(30), false);
+  check('...still includes Soft\'s own untouched dbId 31', lastCallForModelB.ids.includes(31), true);
+  check('...and includes Hard\'s NEW dbId 32', lastCallForModelB.ids.includes(32), true);
 
   // Now clear BOTH actions' own contributions for modelB entirely (Hard: zero pairs; Soft: genuine
-  // failure) -- modelB must drop out of the union and receive an explicit isolate([], modelB).
+  // failure) -- modelB (and everything else) must drop out of the union entirely, folded into the
+  // aggregate call's own full-replace semantics (no separate per-model "un-isolate" entry needed).
   world.findClashes = async (query) => {
     if (query.mode === 'volume-overlap') return { pairs: [], statistics: { diagnostics: [] } };
     throw new Error('soft clash blew up (removal test)');
@@ -1145,101 +1153,27 @@ async function extensionWithBothVisualizationsPopulated() {
   await menu3.find((m) => m.title === 'Find Clashes').target();
   await menu3.find((m) => m.title === 'Find Soft Clashes').target();
 
-  check('once both actions\' own contributions for modelB are gone, an explicit isolate([], modelB) fires',
-    isolateCalls.some((c) => c.model === modelB && c.dbIds.length === 0), true);
+  check('once both actions\' own contributions for modelB are gone, the final setAggregateIsolation call\'s array no longer has a modelB entry at all',
+    aggCalls.at(-1)?.some((e) => e.model === modelB), false);
+  check('...and that final call\'s array is empty entirely (both actions fully cleared)', aggCalls.at(-1)?.length, 0);
   check('_isolatedModels no longer includes modelB once both actions have dropped it', ext._isolatedModels.has(modelB), false);
 }
 
-// === [final fix wave, whole-branch review Important #1] _reconcileIsolation() commits its
-// `_isolatedModels` bookkeeping INCREMENTALLY -- one add()/delete() per INDIVIDUAL successful
-// viewer.isolate() call -- never in a single wholesale assignment at the end ==========================
-// The first draft of the union reconciliation ended with `this._isolatedModels = new Set(union.keys())`,
-// which is only correct when every isolate() call succeeds. If one throws partway through, that final
-// assignment never runs and `_isolatedModels` is left describing the OLD state -- silently false
-// against its own documented contract ("every Model the VIEWER currently has isolated due to this
-// extension"), and unrecoverable, since _clearIsolation() (including unload()'s own) reconciles
-// against this very set: a model the Viewer really did isolate but that never made it into
-// _isolatedModels would never be told to un-isolate, even at full teardown.
-//
-// These two blocks drive `_reconcileIsolation()` directly (setting the two contribution Maps and
-// calling it), rather than through the context-menu actions the surrounding tests use -- the defect
-// is entirely inside that one method, and a direct call is the only way to control WHICH isolate()
-// call throws and WHERE in the two loops. Both Map and Set iteration follow insertion order in JS, so
-// "which call is the Nth" is fully deterministic here. Note these tests deliberately let the throw
-// PROPAGATE (caught by the test itself): making the loop skip a failing model and keep going is a
-// separate, deferred hardening item, explicitly out of scope -- what is asserted here is only that the
-// bookkeeping tells the truth about whatever the Viewer was actually told, throw or no throw.
+// === [Task 1, M3-adjacent aggregate-isolation fix] `_reconcileIsolation()` now makes exactly ONE
+// `viewer.setAggregateIsolation(isolation)` call per reconcile, replacing the old per-model
+// `viewer.isolate()` loop (and its own separate drop-out loop) this file's own now-removed
+// "commits its bookkeeping INCREMENTALLY" tests exercised. With only one Viewer call, there is no
+// more partial-loop failure mode to prove `_isolatedModels` survives correctly -- the call either
+// throws (nothing was committed to the Viewer, so `_isolatedModels` is left at its PRIOR value) or
+// succeeds (everything in `isolation` was committed atomically, so `_isolatedModels` becomes exactly
+// the union's own key set). These two tests drive `_reconcileIsolation()` directly (setting the two
+// contribution Maps and calling it), mirroring the removed tests' own direct-call pattern.
 
-// (a) FIRST loop (applying the union) throws on the 2nd of 3 models: the model isolated BEFORE the
-// throw must still be recorded. Under the pre-fix wholesale assignment, _isolatedModels stays empty.
+// (a) Happy path: after a non-empty union, `_isolatedModels` equals the union's own key set.
 {
   const { ext, viewer } = extensionWithFakeWorld();
   const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => {
-    isolateCalls.push({ dbIds: [...dbIds], model });
-    if (model === modelB) throw new Error('viewer.isolate blew up for modelB');
-  };
-
-  ext._hardIsolationByModel = new Map([[modelA, new Set([10])], [modelB, new Set([20])], [modelC, new Set([30])]]);
-  let threw = false;
-  try { ext._reconcileIsolation(); } catch { threw = true; }
-
-  check('first-loop throw: the isolate() failure still propagates uncaught (no swallow/retry added)', threw, true);
-  check('first-loop throw: isolate() was attempted for modelA then modelB, and aborted there', isolateCalls.length, 2);
-  check('first-loop throw: modelA -- isolated SUCCESSFULLY before the throw -- IS recorded in _isolatedModels',
-    ext._isolatedModels.has(modelA), true);
-  check('first-loop throw: modelB -- whose own isolate() threw -- is NOT recorded',
-    ext._isolatedModels.has(modelB), false);
-  check('first-loop throw: modelC -- never reached -- is NOT recorded', ext._isolatedModels.has(modelC), false);
-  check('first-loop throw: _isolatedModels holds exactly the one genuinely-applied model', ext._isolatedModels.size, 1);
-}
-
-// (b) SECOND loop (dropping models that fell out of the union) throws on the 2nd drop-out, in a call
-// that ALSO applied a brand-new model in the first loop. Three independent facts must all hold at
-// once; the pre-fix wholesale assignment gets two of the three wrong.
-{
-  const { ext, viewer } = extensionWithFakeWorld();
-  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelD = makeMockModel(4);
-  let failingDropOutModel = null;
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => {
-    isolateCalls.push({ dbIds: [...dbIds], model });
-    if (dbIds.length === 0 && model === failingDropOutModel) throw new Error('viewer.isolate([], model) blew up');
-  };
-
-  // Setup: a clean, fully-successful reconcile isolating modelA and modelB.
-  ext._hardIsolationByModel = new Map([[modelA, new Set([10])], [modelB, new Set([20])]]);
-  ext._reconcileIsolation();
-  check('setup: a clean reconcile records both models', ext._isolatedModels.size, 2);
-
-  // Now: replace Hard Clash's whole contribution with a brand-new modelD. modelA and modelB both fall
-  // out of the union; the drop-out isolate([], modelB) throws, AFTER modelD was newly isolated by the
-  // first loop and AFTER modelA was successfully dropped.
-  failingDropOutModel = modelB;
-  isolateCalls.length = 0;
-  ext._hardIsolationByModel = new Map([[modelD, new Set([40])]]);
-  let threw = false;
-  try { ext._reconcileIsolation(); } catch { threw = true; }
-
-  check('second-loop throw: the isolate() failure still propagates uncaught', threw, true);
-  check('second-loop throw: calls were isolate([40],D), isolate([],A), then the throwing isolate([],B)',
-    isolateCalls.map((c) => `${c.model.id}:${c.dbIds.length}`).join(' '), '4:1 1:0 2:0');
-  check('second-loop throw: modelD -- newly isolated by the FIRST loop of this same call -- IS recorded',
-    ext._isolatedModels.has(modelD), true);
-  check('second-loop throw: modelA -- successfully dropped out BEFORE the throw -- is no longer recorded',
-    ext._isolatedModels.has(modelA), false);
-  check('second-loop throw: modelB -- whose own drop-out threw, so the Viewer may well still have it isolated -- IS still recorded',
-    ext._isolatedModels.has(modelB), true);
-  check('second-loop throw: _isolatedModels is exactly {modelD, modelB}', ext._isolatedModels.size, 2);
-}
-
-// (c) Happy path unchanged: with no throw at all, incremental commits produce exactly the union's own
-// key set -- the same end state the pre-fix wholesale assignment produced.
-{
-  const { ext, viewer } = extensionWithFakeWorld();
-  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
-  viewer.isolate = () => {};
+  viewer.setAggregateIsolation = () => {};
   ext._hardIsolationByModel = new Map([[modelA, new Set([10])], [modelB, new Set([20])]]);
   ext._softIsolationByModel = new Map([[modelB, new Set([21])], [modelC, new Set([30])]]);
   ext._reconcileIsolation();
@@ -1251,6 +1185,164 @@ async function extensionWithBothVisualizationsPopulated() {
   ext._softIsolationByModel = new Map();
   ext._reconcileIsolation();
   check('happy path: clearing both contributions empties _isolatedModels', ext._isolatedModels.size, 0);
+}
+
+// (b) Throw path: a throwing setAggregateIsolation() propagates uncaught AND `_isolatedModels` is left
+// completely unchanged from whatever it was before the failing call -- seeded here with a prior
+// successful reconcile so the test can prove the failing call didn't touch it.
+{
+  const { ext, viewer } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2), modelC = makeMockModel(3);
+
+  // Seed a prior successful reconcile: modelA and modelB isolated.
+  viewer.setAggregateIsolation = () => {};
+  ext._hardIsolationByModel = new Map([[modelA, new Set([10])], [modelB, new Set([20])]]);
+  ext._reconcileIsolation();
+  check('setup: a clean reconcile records both models', ext._isolatedModels.size, 2);
+  const isolatedModelsBefore = new Set(ext._isolatedModels);
+
+  // Now a fresh reconcile (replacing Hard's contribution with modelC only) fails entirely.
+  viewer.setAggregateIsolation = () => { throw new Error('setAggregateIsolation blew up'); };
+  ext._hardIsolationByModel = new Map([[modelC, new Set([30])]]);
+  let threw = false;
+  try { ext._reconcileIsolation(); } catch { threw = true; }
+
+  check('throw path: the setAggregateIsolation() failure still propagates uncaught (no swallow/retry added)', threw, true);
+  check('throw path: _isolatedModels is completely unchanged from before the failing call (same size)',
+    ext._isolatedModels.size, isolatedModelsBefore.size);
+  check('throw path: _isolatedModels still has modelA (nothing committed to the Viewer, so nothing changed)',
+    ext._isolatedModels.has(modelA), true);
+  check('throw path: _isolatedModels still has modelB', ext._isolatedModels.has(modelB), true);
+  check('throw path: _isolatedModels does NOT have modelC -- the failing call never got committed',
+    ext._isolatedModels.has(modelC), false);
+}
+
+// === [Task 1, M3-adjacent aggregate-isolation fix] regression coverage for the switch to
+// `viewer.setAggregateIsolation` -- multi-model Hard+Soft union applied as ONE aggregate call, one
+// mode's clear preserving the other's contribution, and clearing both restoring the full aggregate
+// view (`setAggregateIsolation([])`, the documented clear-all case). ===================================
+
+// (1) Multi-model Hard + Soft union applied as one aggregate operation.
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  // Hard Clash's own pair is entirely within modelA (source dbId 10, target dbId 11) -> Hard
+  // contributes modelA:{10,11}. Soft Clash's own pair spans modelA (source dbId 10) and modelB
+  // (target dbId 20) -> Soft contributes modelA:{10}, modelB:{20}. The union genuinely spans two
+  // models, per the brief's own "Hard on modelA, Soft on modelB" scenario.
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return { pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 1, dbId: 11, model: modelA } }], statistics: { diagnostics: [] } };
+    }
+    return { pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 20, model: modelB } }], statistics: { diagnostics: [] } };
+  };
+  const menu = [];
+  ext.onContextMenu(menu, {});
+  await menu.find((m) => m.title === 'Find Clashes').target(); // Hard: isolates modelA:{10,11}
+  await menu.find((m) => m.title === 'Find Soft Clashes').target(); // Soft: isolates modelA:{10} + modelB:{20}
+
+  // Each action's own reconcile fires its own setAggregateIsolation call (2 total across the two
+  // actions) -- the relevant one for this assertion is the LAST call, which reflects the full union
+  // of both actions' own contributions applied as ONE aggregate operation.
+  check('two reconciles fired (one per action), each its own single setAggregateIsolation call', aggCalls.length, 2);
+  const lastCall = aggCalls.at(-1);
+  check('that call\'s array has exactly one entry per model in the union (modelA, modelB)', lastCall.length, 2);
+  const forA = lastCall.find((e) => e.model === modelA);
+  const forB = lastCall.find((e) => e.model === modelB);
+  check('modelA\'s entry carries the correctly-unioned dbIds from BOTH actions (Hard\'s 10,11 and Soft\'s own 10)',
+    forA?.ids.slice().sort().join(','), '10,11');
+  check('modelB\'s entry carries Soft\'s own dbId', forB?.ids.slice().sort().join(','), '20');
+}
+
+// (2) Clearing one mode preserves the other mode's model/dbId isolation.
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  // Hard contributes modelA:{10} + modelB:{30}; Soft contributes modelA:{10} + modelB:{31} -- a
+  // DISTINCT dbId on the shared modelB (both actions also touch the common source model modelA),
+  // so clearing Hard only must leave Soft's own untouched model/dbIds -- both modelA's and modelB's --
+  // fully intact, with only Hard's own dbId 30 gone.
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return { pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }], statistics: { diagnostics: [] } };
+    }
+    return { pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 31, model: modelB } }], statistics: { diagnostics: [] } };
+  };
+  const menu = [];
+  ext.onContextMenu(menu, {});
+  await menu.find((m) => m.title === 'Find Clashes').target();
+  await menu.find((m) => m.title === 'Find Soft Clashes').target();
+  check('setup: both modelA and modelB are isolated before clearing Hard', ext._isolatedModels.size, 2);
+  aggCalls.length = 0;
+
+  // Clear Hard Clash's own contribution only -- Soft's own model/dbId isolation must survive untouched.
+  ext._setHardIsolation(new Map());
+
+  check('clearing Hard triggers exactly one setAggregateIsolation call', aggCalls.length, 1);
+  const afterClear = aggCalls[0];
+  const forA = afterClear.find((e) => e.model === modelA);
+  const forB = afterClear.find((e) => e.model === modelB);
+  check('Soft\'s own modelA entry is still present, untouched', forA?.ids.includes(10), true);
+  check('Soft\'s own modelB entry is still present, untouched', forB?.ids.includes(31), true);
+  check('Hard\'s own dbId 30 for modelB is gone', forB?.ids.includes(30), false);
+  check('the array has exactly Soft\'s own two remaining entries (modelA, modelB)', afterClear.length, 2);
+}
+
+// (3) Clearing both restores the full aggregate view -- setAggregateIsolation([]), the documented
+// clear-all case.
+{
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
+  viewer.fitToView = () => {};
+  ext._addMarkers = () => {};
+
+  world.findClashes = async (query) => {
+    if (query.mode === 'volume-overlap') {
+      return { pairs: [], statistics: { diagnostics: [] } };
+    }
+    return { pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 20, model: modelB } }], statistics: { diagnostics: [] } };
+  };
+  const menu = [];
+  ext.onContextMenu(menu, {});
+  await menu.find((m) => m.title === 'Find Clashes').target();
+  await menu.find((m) => m.title === 'Find Soft Clashes').target();
+  check('setup: both models are isolated before clearing both', ext._isolatedModels.size, 2);
+  aggCalls.length = 0;
+
+  ext._clearIsolation();
+
+  check('clearing both triggers exactly one setAggregateIsolation call', aggCalls.length, 1);
+  check('that call\'s array is empty -- setAggregateIsolation([]), the documented clear-all case',
+    aggCalls[0]?.length, 0);
+  check('_isolatedModels is empty after clearing both', ext._isolatedModels.size, 0);
+}
+
+// (4) No per-model `viewer.isolate(...)` call sites remain in the reconciliation path -- a source-text
+// regression guard mirroring this file's own existing "never imports the npm three package" pattern.
+{
+  const source = await readFile(new URL('../wwwroot/extensions/ClashFinderExtension.js', import.meta.url), 'utf8');
+  check('ClashFinderExtension.js contains no this._viewer.isolate( call site',
+    /this\._viewer\.isolate\(/.test(source), false);
+  check('ClashFinderExtension.js DOES call this._viewer.setAggregateIsolation(',
+    /this\._viewer\.setAggregateIsolation\(/.test(source), true);
 }
 
 // === r71/r185 isolation: Soft Clash's own visualization code never imports the npm "three" package --

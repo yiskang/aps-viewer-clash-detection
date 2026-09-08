@@ -76,7 +76,7 @@ function makeMockViewer() {
     registerContextMenuCallback() {}, unregisterContextMenuCallback() {},
     getAggregateSelection() { return []; },
     getAllModels() { return []; },
-    isolate() {}, fitToView() {},
+    isolate() {}, setAggregateIsolation() {}, fitToView() {},
     overlays: makeMockOverlays(),
   };
 }
@@ -357,7 +357,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     notified, '2 clashes found (1 in this model, 1 in other models)');
 }
 
-// === isolate/fitToView are called per involved Model object, always with an explicit model arg ====
+// === setAggregateIsolation carries one entry per involved Model object, always with an explicit
+// model arg -- one aggregate call replaces what used to be N per-model isolate() calls ==============
 {
   const { ext, viewer, world } = extensionWithFakeWorld();
   const modelA = makeMockModel(1);
@@ -367,22 +368,24 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 1, dbId: 20, model: modelA } }],
     statistics: { diagnostics: [] },
   });
-  const isolateCalls = [], fitToViewCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [], fitToViewCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = (dbIds, model) => fitToViewCalls.push({ dbIds: [...dbIds], model });
   const menu = [];
   ext.onContextMenu(menu, { hasSelected: true });
   await menu[0].target();
-  check('isolate called exactly once (single involved model)', isolateCalls.length, 1);
-  check('isolate call carries an explicit model arg, even for the single-model case (Critical #4)',
-    isolateCalls[0]?.model === modelA, true);
-  check('isolate dbIds include both the source element and the clashing element',
-    isolateCalls[0]?.dbIds.slice().sort().join(','), '10,20');
-  check('fitToView called exactly once, mirroring isolate', fitToViewCalls.length, 1);
+  check('setAggregateIsolation called exactly once for this reconcile', aggCalls.length, 1);
+  check('that call\'s array has exactly one entry (single involved model)', aggCalls[0]?.length, 1);
+  check('the entry carries an explicit model arg, even for the single-model case (Critical #4)',
+    aggCalls[0]?.[0]?.model === modelA, true);
+  check('the entry\'s ids include both the source element and the clashing element',
+    aggCalls[0]?.[0]?.ids.slice().sort().join(','), '10,20');
+  check('fitToView called exactly once, mirroring the isolated model', fitToViewCalls.length, 1);
   check('fitToView call carries an explicit model arg', fitToViewCalls[0]?.model === modelA, true);
 }
 {
-  // Two distinct models involved -- one isolate/fitToView pair PER Model object.
+  // Two distinct models involved -- one aggregate entry PER Model object, all inside a single
+  // setAggregateIsolation call (one aggregate call replaces what used to be N isolate() calls).
   const { ext, viewer, world } = extensionWithFakeWorld();
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
@@ -391,20 +394,22 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
     statistics: { diagnostics: [] },
   });
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   const menu = [];
   ext.onContextMenu(menu, { hasSelected: true });
   await menu[0].target();
-  check('isolate called once per involved Model object (source model + target model)', isolateCalls.length, 2);
-  const forA = isolateCalls.find((c) => c.model === modelA);
-  const forB = isolateCalls.find((c) => c.model === modelB);
-  check('modelA isolate carries only the source dbId', forA?.dbIds.join(','), '10');
-  check('modelB isolate carries only the clashing dbId', forB?.dbIds.join(','), '30');
+  check('setAggregateIsolation called exactly once for this reconcile', aggCalls.length, 1);
+  check('that call\'s array has one entry per involved Model object (source model + target model)', aggCalls[0]?.length, 2);
+  const forA = aggCalls[0]?.find((c) => c.model === modelA);
+  const forB = aggCalls[0]?.find((c) => c.model === modelB);
+  check('modelA entry carries only the source dbId', forA?.ids.join(','), '10');
+  check('modelB entry carries only the clashing dbId', forB?.ids.join(','), '30');
 }
 
-// === clearing/restoring visualization calls viewer.isolate([], model) per involved model ==========
+// === clearing/restoring visualization applies an aggregate isolation matching exactly the current
+// union -- a "No clashes found" outcome (union now empty) means setAggregateIsolation([]) =========
 {
   const { ext, viewer, world } = extensionWithFakeWorld();
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
@@ -414,13 +419,13 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
     statistics: { diagnostics: [] },
   });
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   const menu = [];
   ext.onContextMenu(menu, { hasSelected: true });
   await menu[0].target(); // first call: isolates modelA + modelB
-  isolateCalls.length = 0; // reset observation window
+  aggCalls.length = 0; // reset observation window
 
   // Second call: a clean negative result. Must clear the PREVIOUSLY isolated models (A and B),
   // even though this call itself produces no new isolation.
@@ -428,10 +433,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const menu2 = [];
   ext.onContextMenu(menu2, { hasSelected: true });
   await menu2[0].target();
-  const clears = isolateCalls.filter((c) => c.dbIds.length === 0).map((c) => c.model);
-  check('a "No clashes found" outcome clears every previously-isolated model', clears.length, 2);
-  check('previously-isolated modelA is cleared via isolate([], modelA)', clears.includes(modelA), true);
-  check('previously-isolated modelB is cleared via isolate([], modelB)', clears.includes(modelB), true);
+  check('a "No clashes found" outcome triggers exactly one setAggregateIsolation call', aggCalls.length, 1);
+  check('that call\'s array is empty -- every previously-isolated model is cleared', aggCalls[0]?.length, 0);
 }
 
 // === non-empty diagnostics surface a visible caveat, on BOTH empty and non-empty outcomes =========
@@ -481,8 +484,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const pending = [];
   world.findClashes = (query) => new Promise((resolve) => { pending.push({ query, resolve }); });
 
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   const alerts = [];
   ext._notifyUser = (message) => { alerts.push(message); };
@@ -507,8 +510,9 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     statistics: { diagnostics: [] },
   });
   await promise2;
-  check('newer call\'s isolate effects ARE observable', isolateCalls.some((c) => c.dbIds.includes(20)), true);
-  const isolateCountAfterNewer = isolateCalls.length;
+  check('newer call\'s setAggregateIsolation effects ARE observable',
+    aggCalls.some((call) => call.some((e) => e.ids.includes(20))), true);
+  const aggCallCountAfterNewer = aggCalls.length;
   const alertCountAfterNewer = alerts.length;
 
   // The OLDER call (#1) finally resolves LATE, after being superseded -- its isolate/fitToView/notify
@@ -518,9 +522,10 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     statistics: { diagnostics: [] },
   });
   await promise1;
-  check('a superseded (stale) resolution adds NO further isolate/fitToView calls', isolateCalls.length, isolateCountAfterNewer);
+  check('a superseded (stale) resolution adds NO further setAggregateIsolation/fitToView calls', aggCalls.length, aggCallCountAfterNewer);
   check('a superseded (stale) resolution triggers NO notify call', alerts.length, alertCountAfterNewer);
-  check('a superseded (stale) resolution never isolates the OLD dbId 10', isolateCalls.some((c) => c.dbIds.includes(10)), false);
+  check('a superseded (stale) resolution never isolates the OLD dbId 10',
+    aggCalls.some((call) => call.some((e) => e.ids.includes(10))), false);
 }
 
 // === [review fix, codex-review Important #2] a genuine (non-superseded) rejection clears prior
@@ -531,8 +536,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAllModels = () => [modelA, modelB];
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   world.findClashes = async () => ({
     pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
@@ -541,8 +546,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const menu1 = [];
   ext.onContextMenu(menu1, { hasSelected: true });
   await menu1[0].target(); // succeeds: isolates modelA + modelB
-  check('setup: first query isolated 2 models', isolateCalls.filter((c) => c.dbIds.length > 0).length, 2);
-  isolateCalls.length = 0;
+  check('setup: first query isolated 2 models in one setAggregateIsolation call', aggCalls.at(-1)?.length, 2);
+  aggCalls.length = 0;
 
   // Second query (same or different element) genuinely FAILS -- not superseded by anything.
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [11] }];
@@ -554,8 +559,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   ext.onContextMenu(menu2, { hasSelected: true });
   await menu2[0].target();
 
-  const clears = isolateCalls.filter((c) => c.dbIds.length === 0).map((c) => c.model);
-  check('a genuine failure clears the PRIOR query\'s isolation (not left looking like this query\'s result)', clears.length, 2);
+  check('a genuine failure clears the PRIOR query\'s isolation (not left looking like this query\'s result) -- exactly one setAggregateIsolation call with an empty array',
+    aggCalls.length === 1 && aggCalls[0]?.length === 0, true);
   check('the failure surfaces a VISIBLE notification, not just console.error', /Find Clashes failed/.test(notified), true);
   check('the failure notification names the underlying error', /collision engine exploded/.test(notified), true);
 }
@@ -593,8 +598,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const modelA = makeMockModel(1), modelB = makeMockModel(2);
   viewer.getAllModels = () => [modelA, modelB];
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   world.findClashes = async () => ({
     pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB } }],
@@ -603,12 +608,10 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const menu = [];
   ext.onContextMenu(menu, { hasSelected: true });
   await menu[0].target(); // isolates modelA + modelB
-  isolateCalls.length = 0;
+  aggCalls.length = 0;
   ext.unload();
-  const clears = isolateCalls.filter((c) => c.dbIds.length === 0).map((c) => c.model);
-  check('unload() clears every model this extension had isolated', clears.length, 2);
-  check('unload() clears modelA', clears.includes(modelA), true);
-  check('unload() clears modelB', clears.includes(modelB), true);
+  check('unload() triggers exactly one setAggregateIsolation call', aggCalls.length, 1);
+  check('that call\'s array is empty -- unload() clears every model this extension had isolated', aggCalls[0]?.length, 0);
 }
 
 // === [review fix, codex-review Important #3] unload()-vs-resolved-promise race: a findClashes call
@@ -620,8 +623,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const modelA = makeMockModel(1);
   viewer.getAllModels = () => [modelA];
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   const alerts = [];
   ext._notifyUser = (message) => { alerts.push(message); };
@@ -635,6 +638,10 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   // unload() runs BEFORE this in-flight call's continuation ever gets a chance to run.
   ext.unload();
   check('unload() bumped the action token before the pending call could resolve', ext._latestActionToken > 0, true);
+  // unload() itself triggers its own setAggregateIsolation([]) call (via _clearIsolation()) -- reset
+  // the observation window here so the assertion below is about the STALE continuation's own effects,
+  // not unload()'s own teardown call.
+  aggCalls.length = 0;
 
   // The pending findClashes call finally resolves (successfully) AFTER unload() already tore down.
   capturedResolve({
@@ -642,7 +649,7 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     statistics: { diagnostics: [] },
   });
   await promise;
-  check('a post-unload resolution applies NO isolate/fitToView calls', isolateCalls.length, 0);
+  check('a post-unload resolution applies NO setAggregateIsolation/fitToView calls', aggCalls.length, 0);
   check('a post-unload resolution triggers NO notify call', alerts.length, 0);
 }
 
@@ -675,8 +682,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const modelA = makeMockModel(1);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
   viewer.getAllModels = () => [modelA];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   world.findClashes = async () => ({
     pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'containment', point: [1, 1, 1] } }],
@@ -687,16 +694,15 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   await menu[0].target();
   check('setup: isolation is active before the model-unload event', ext._isolatedModels.size, 1);
   check('setup: one marker is active before the model-unload event', ext._activeMarkers.length, 1);
-  isolateCalls.length = 0; // reset observation window before the model-unload event itself
+  aggCalls.length = 0; // reset observation window before the model-unload event itself
 
   ext._world.evictModel = () => { throw new Error('WorldDisposedError: model already evicted'); };
   let thrown = null;
   try { ext._onBeforeModelUnload({ model: modelA }); } catch (err) { thrown = err; }
   check('_onBeforeModelUnload still propagates evictModel\'s own thrown error', thrown?.message, 'WorldDisposedError: model already evicted');
   check('markers are torn down even though evictModel() threw', ext._activeMarkers.length, 0);
-  const clears = isolateCalls.filter((c) => c.dbIds.length === 0).map((c) => c.model);
-  check('isolation is ALSO cleared even though evictModel() threw -- markers and isolation never visually disagree',
-    clears.includes(modelA), true);
+  check('isolation is ALSO cleared even though evictModel() threw -- markers and isolation never visually disagree (one setAggregateIsolation([]) call)',
+    aggCalls.length === 1 && aggCalls[0]?.length === 0, true);
   check('_isolatedModels is empty after _onBeforeModelUnload, even though evictModel() threw', ext._isolatedModels.size, 0);
   check('the evicted model is dropped from _isolatedModels bookkeeping even though evictModel() threw',
     ext._isolatedModels.has(modelA), false);
@@ -1095,8 +1101,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const modelA = makeMockModel(1);
   viewer.getAllModels = () => [modelA];
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   const alerts = [];
   ext._notifyUser = (message) => { alerts.push(message); };
@@ -1110,6 +1116,10 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const tokenBeforeUnload = ext._latestActionToken;
   ext._onBeforeModelUnload({ model: modelA }); // runs BEFORE this in-flight call's continuation ever gets a chance to run
   check('model-unload bumped the action token before the pending call could resolve', ext._latestActionToken > tokenBeforeUnload, true);
+  // _onBeforeModelUnload itself unconditionally triggers its own setAggregateIsolation([]) call (via
+  // _clearIsolation()) -- reset the observation window here so the assertion below is about the STALE
+  // continuation's own effects, not the model-unload handler's own teardown call.
+  aggCalls.length = 0;
 
   // The pending findClashes call finally resolves (successfully) AFTER model-unload already cleared.
   capturedResolve({
@@ -1117,7 +1127,7 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     statistics: { diagnostics: [] },
   });
   await promise;
-  check('a post-model-unload resolution applies NO isolate/fitToView calls', isolateCalls.length, 0);
+  check('a post-model-unload resolution applies NO setAggregateIsolation/fitToView calls', aggCalls.length, 0);
   check('a post-model-unload resolution adds NO markers', ext._activeMarkers.length, 0);
   check('a post-model-unload resolution triggers NO notify call', alerts.length, 0);
 }
@@ -1134,8 +1144,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   const modelA = makeMockModel(1);
   viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
   viewer.getAllModels = () => [modelA];
-  const isolateCalls = [];
-  viewer.isolate = (dbIds, model) => isolateCalls.push({ dbIds: [...dbIds], model });
+  const aggCalls = [];
+  viewer.setAggregateIsolation = (isolation) => aggCalls.push(isolation.map((e) => ({ model: e.model, ids: [...e.ids] })));
   viewer.fitToView = () => {};
   world.findClashes = async () => ({
     pairs: [{ source: { modelId: 1, dbId: 1, model: modelA }, target: { modelId: 1, dbId: 2, model: modelA }, witness: { kind: 'containment', point: [1, 1, 1] } }],
@@ -1147,7 +1157,7 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   check('setup: isolation is active before unload()', ext._isolatedModels.size, 1);
   check('setup: overlay scene exists before unload()', viewer.overlays.hasScene('clash-finder-markers'), true);
   check('setup: one marker is active before unload()', ext._activeMarkers.length, 1);
-  isolateCalls.length = 0; // reset observation window before unload() itself
+  aggCalls.length = 0; // reset observation window before unload() itself
 
   ext._world.dispose = () => { throw new Error('boom'); };
   let thrown = null;
@@ -1155,9 +1165,8 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
   check('unload() still propagates dispose()\'s own thrown error', thrown?.message, 'boom');
   check('markers are torn down even though dispose() threw', ext._activeMarkers.length, 0);
   check('the overlay scene itself is removed too, not merely emptied', viewer.overlays.hasScene('clash-finder-markers'), false);
-  const clears = isolateCalls.filter((c) => c.dbIds.length === 0).map((c) => c.model);
-  check('isolation is ALSO cleared even though dispose() threw -- markers and isolation never visually disagree',
-    clears.includes(modelA), true);
+  check('isolation is ALSO cleared even though dispose() threw -- markers and isolation never visually disagree (one setAggregateIsolation([]) call)',
+    aggCalls.length === 1 && aggCalls[0]?.length === 0, true);
   check('_isolatedModels is empty after unload(), even though dispose() threw', ext._isolatedModels.size, 0);
 }
 
