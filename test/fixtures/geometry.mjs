@@ -95,19 +95,11 @@ function weldedFromRaw(geometry) {
 export function testInstance(geometry, matrix = new THREE.Matrix4()) {
   const welded = weld(geometry);
   const raw = weldedFromRaw(welded);
-  const { bvh, localDiagonal, aspectRatio, aspectRatioExceeded } = buildBvh(raw);
+  const { bvh, geometry: builtGeometry, localDiagonal, aspectRatio, aspectRatioExceeded } = buildBvh(raw);
   const connectivity = computeGeometryConnectivity(raw);
   return {
-    geometry: welded,
-    bvh,
-    localDiagonal,
-    connectivity,
+    geometry: builtGeometry, bvh, localDiagonal, connectivity,
     closedManifold: connectivity.closedManifold.every(Boolean) && connectivity.componentCount > 0,
-    matrix,
-    // Additive fields (docs/superpowers/specs/2026-08-06-collision-library-milestone1-
-    // design.md's Tolerances section, "Single-geometry aspect ratio"): copied straight
-    // through from ThreeMeshBvhBackend.build()'s own return value, for Tasks 9/11/12's use.
-    aspectRatio,
-    aspectRatioExceeded,
+    matrix, aspectRatio, aspectRatioExceeded,
   };
 }

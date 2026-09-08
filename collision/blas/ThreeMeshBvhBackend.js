@@ -53,6 +53,8 @@ export function build(weldedGeometry) {
   // array. This module builds the BVH but performs no traversal itself -- no
   // bvhcast-consuming logic is implemented here.
   const bvh = new MeshBVH(geometry, { indirect: true });
+  geometry.boundsTree = bvh; // M3: required for closestPointToGeometry's target-side acceleration —
+                            // the one canonical BLAS construction point; never attach a second tree.
 
   // L_X := diagonal(localBounds(X)), computed once in X's own local space, over the
   // SAME buffer the BLAS is built from (spec:1609-1614) -- ported from
