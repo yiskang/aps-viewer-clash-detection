@@ -32,6 +32,17 @@ export function validateUniformScale(matrix) {
     return { valid: false };
   }
 
+  // Reject a determinant that is non-finite or exactly zero BEFORE trusting `decompose()`'s reported
+  // scale. `Matrix4.decompose()` derives scale from basis-column LENGTH, not from the determinant, so
+  // an extreme-but-uniform scale (e.g. 1e-110 per axis) can underflow the determinant to literal `0`
+  // in float64 while each column length is still representable -- three.js then falls back to
+  // `scale.set(1,1,1)` internally, silently misreporting scaleFactor 1 for a near-zero/degenerate
+  // transform. This is a determinant-underflow check, not a magnitude-based cutoff: a legitimate tiny
+  // uniform scale like 1e-6 has determinant (1e-6)^3 = 1e-18, comfortably nonzero in float64, and is
+  // NOT rejected here (see the "tiny but legitimate uniform scale" test).
+  const determinant = matrix.determinant();
+  if (!Number.isFinite(determinant) || determinant === 0) return { valid: false };
+
   matrix.decompose(scratchPosition, scratchQuaternion, scratchScale);
   const { x: sx, y: sy, z: sz } = scratchScale;
   if (!Number.isFinite(sx) || !Number.isFinite(sy) || !Number.isFinite(sz)) return { valid: false };

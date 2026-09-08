@@ -296,6 +296,26 @@ test('degenerate anchor inverse (determinant underflow) -> aborted, not a silent
   assert.ok(result.diagnostics.some((d) => d.reason === 'clearance-anisotropic-scale-unsupported'));
 });
 
+// Companion to the above (whole-batch review finding, fixed at the root in
+// `validateUniformScale` rather than here). The degenerate-inverse guard above only runs on the
+// ANCHOR operand (the smaller-or-equal reported scale factor). Before the root fix, the tiny
+// matrix's determinant-underflow misreported scaleFactor 1 -- an ordinary-looking value -- so
+// when tiny is the TARGET and the other operand has a normal scale, the normal operand won.
+// The tiny anchor guard, and the tiny operand ended up as "far", where NO guard caught it: the
+// query returned a plausible-looking `{withinClearance: false, distance: null}` instead of
+// aborting. `validateUniformScale` now rejects the determinant-underflow matrix directly, so
+// `clearanceQuery`'s top-of-function `!sourceScale.valid || !targetScale.valid` check catches
+// this for BOTH operand orderings without any change to this file.
+test('degenerate TARGET (far, non-anchor) matrix (determinant underflow) -> aborted, not a silent wrong answer', () => {
+  const tiny = new THREE.Matrix4().makeScale(1e-110, 1e-110, 1e-110);
+  assert.equal(tiny.determinant(), 0, 'precondition: the determinant must underflow');
+  const source = testInstance(box(2, 2, 2), at(3, 0, 0));
+  const target = testInstance(box(2, 2, 2), tiny);
+  const result = clearanceQuery(source, target, { clearance: 1, toleranceFloor: 1e-9 });
+  assert.equal(result.aborted, true, `expected abort, got ${JSON.stringify(result)}`);
+  assert.ok(result.diagnostics.some((d) => d.reason === 'clearance-anisotropic-scale-unsupported'));
+});
+
 // Residual-anisotropy regression (independent-review finding). Both matrices are ACCEPTED by
 // `validateUniformScale` and both report scaleFactor 1, yet they distort X in OPPOSITE senses at the
 // validator's full 1e-4 bound -- so the pinned library's nested far-local `score` can over-state the

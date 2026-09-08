@@ -56,6 +56,18 @@ test('tiny but legitimate uniform scale is not rejected by an absolute determina
   assert.ok(Math.abs(result.scaleFactor - 1e-6) < 1e-12);
 });
 
+test('determinant-underflowing uniform scale (1e-110): invalid, not misreported as scaleFactor 1', () => {
+  // Each axis scale of 1e-110 has a representable column length, but the affine determinant
+  // (1e-110)^3 underflows to literal 0 in float64. THREE.Matrix4.decompose() substitutes
+  // scale.set(1,1,1) when determinant is 0, so without a direct determinant check this matrix would
+  // be misreported as valid with scaleFactor 1 -- a near-zero/degenerate transform disguised as an
+  // ordinary rigid transform.
+  const m = new THREE.Matrix4().makeScale(1e-110, 1e-110, 1e-110);
+  assert.equal(m.determinant(), 0); // sanity: confirms the underflow this test targets
+  const result = validateUniformScale(m);
+  assert.equal(result.valid, false);
+});
+
 test('non-finite matrix: invalid, not a thrown exception', () => {
   const m = new THREE.Matrix4();
   m.elements[0] = NaN;
