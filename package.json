@@ -12,7 +12,8 @@
     "test:acceptance": "node test/acceptance/room-locator.acceptance.mjs",
     "test:acceptance:clash-finder": "node test/acceptance/clash-finder.acceptance.mjs",
     "test:performance:gate": "node test/performance/run-gate.mjs",
-    "test:performance:gate:m2": "node test/performance/run-gate-m2.mjs"
+    "test:performance:gate:m2": "node test/performance/run-gate-m2.mjs",
+    "test:performance:gate:m3": "node test/performance/run-gate-m3.mjs"
   },
   "engines": {
     "node": ">=20"
