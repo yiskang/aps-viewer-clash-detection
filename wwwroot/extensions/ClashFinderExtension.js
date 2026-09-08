@@ -188,25 +188,57 @@ export class ClashFinderExtension extends ExtensionBase {
   // removeScene (not clearScene) fully unregisters the overlay namespace itself, matching Task 7
   // finding 5: neither removeScene nor clearScene ever disposes geometry/material on their own, which
   // is exactly why those two disposals are spelled out explicitly here rather than assumed.
+  // Task 16 (M3 Batch 3): Soft Clash's own independent cleanup is wired in as a NEW OUTERMOST
+  // try/finally layer, wrapping the ENTIRE Hard Clash body above (unchanged, not touched by this
+  // task) as its `try`, with Soft Clash's own teardown in the new `finally`. This is the ONLY shape
+  // that satisfies BOTH directions of the required independence guarantee (proven via a codex-advisor
+  // consult during this task's own implementation, before writing this code): plain SEQUENTIAL sibling
+  // try/finally statements do NOT work here -- if the Hard Clash body throws (propagating past its own
+  // existing finally), a sibling statement written AFTER it in the same block would never run at all
+  // (an uncaught throw exits the enclosing block immediately). Wrapping instead guarantees: if the Hard
+  // Clash body throws, this new finally (Soft Clash cleanup) still runs; and if Soft Clash's own
+  // cleanup throws, Hard Clash's body has ALREADY fully run (it sits entirely inside the try, which
+  // completes -- successfully or via throw -- before this finally ever starts). This exactly mirrors
+  // the SAME "wrap the existing block in an outer finally to add one more independent cleanup concern"
+  // idiom the Hard Clash body itself already uses once above (dispose+listener-removal wrapped by
+  // isolation+marker-cleanup) -- this is simply one more rung on that same ladder, not a new pattern.
+  // _latestSoftClashActionToken is bumped alongside _latestActionToken at the very top, both BEFORE
+  // anything else runs, for the exact same reason _latestActionToken itself is bumped first (see the
+  // comment on the Hard Clash body above): a Soft Clash findClashes promise that already resolved but
+  // whose target() continuation has not yet run must see a stale token once this handler runs.
   unload() {
     this._latestActionToken += 1;
+    this._latestSoftClashActionToken += 1;
     try {
       try {
-        this._world.dispose();
+        try {
+          this._world.dispose();
+        } finally {
+          this._viewer.removeEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
+          this._viewer.unregisterContextMenuCallback(EXTENSION_ID);
+        }
       } finally {
-        this._viewer.removeEventListener(BEFORE_MODEL_UNLOAD_EVENT, this._onBeforeModelUnloadBound);
-        this._viewer.unregisterContextMenuCallback(EXTENSION_ID);
+        try {
+          this._clearIsolation();
+        } finally {
+          this._clearMarkers();
+          if (this._viewer.overlays.hasScene(MARKER_OVERLAY_NAME)) {
+            this._viewer.overlays.removeScene(MARKER_OVERLAY_NAME);
+          }
+          if (this._markerGeometry) { this._markerGeometry.dispose(); this._markerGeometry = null; }
+          if (this._markerMaterial) { this._markerMaterial.dispose(); this._markerMaterial = null; }
+        }
       }
     } finally {
       try {
-        this._clearIsolation();
+        this._clearSoftClashVisualization();
       } finally {
-        this._clearMarkers();
-        if (this._viewer.overlays.hasScene(MARKER_OVERLAY_NAME)) {
-          this._viewer.overlays.removeScene(MARKER_OVERLAY_NAME);
+        if (this._viewer.overlays.hasScene(SOFT_CLASH_OVERLAY_NAME)) {
+          this._viewer.overlays.removeScene(SOFT_CLASH_OVERLAY_NAME);
         }
-        if (this._markerGeometry) { this._markerGeometry.dispose(); this._markerGeometry = null; }
-        if (this._markerMaterial) { this._markerMaterial.dispose(); this._markerMaterial = null; }
+        if (this._softClashGeometry) { this._softClashGeometry.dispose(); this._softClashGeometry = null; }
+        if (this._softClashMaterial) { this._softClashMaterial.dispose(); this._softClashMaterial = null; }
+        if (this._softClashLineMaterial) { this._softClashLineMaterial.dispose(); this._softClashLineMaterial = null; }
       }
     }
     return true;
@@ -231,6 +263,10 @@ export class ClashFinderExtension extends ExtensionBase {
     // isolation/markers moments after this handler cleared them, exactly the "isolation and markers
     // must never visually disagree" invariant this task exists to protect.
     this._latestActionToken += 1;
+    // Task 16 (M3 Batch 3): Soft Clash's own action token is bumped here too, alongside Hard Clash's,
+    // for the exact same reason -- see this method's own comment above and unload()'s equivalent
+    // comment for the full race this guards against.
+    this._latestSoftClashActionToken += 1;
     // [Batch 2 whole-batch review Finding 6 fix] wrap evictModel so cleanup still runs even if it
     // throws (e.g. a WorldDisposedError) -- the SAME defect class unload() itself was already fixed
     // for in the prior fix round (see unload()'s own structure above for the pattern this mirrors).
@@ -238,33 +274,49 @@ export class ClashFinderExtension extends ExtensionBase {
     // _isolatedModels.delete() entirely and let the throw escape into a Viewer event dispatch --
     // leaving this extension holding isolation/markers referencing a model that's now unloaded, and
     // later trying viewer.isolate([], <unloaded model>).
+    //
+    // Task 16: this whole existing (unchanged) block is now wrapped in a NEW outer try, with Soft
+    // Clash's own cleanup (_clearSoftClashVisualization()) in the new finally below -- the SAME
+    // "wrap the existing block to add one more independent cleanup concern" shape unload() itself now
+    // uses (see unload()'s own Task 16 comment for why plain sequential sibling statements do not
+    // achieve mutual independence here, and why wrapping is the only shape that does).
     try {
-      this._world.evictModel(event.model);
-    } finally {
-      // Task 9 (M2.1): the ENTIRE visualization clears on ANY participating-model unload -- not just
-      // the unloaded model's own isolation/markers. A partial-preservation policy (leave OTHER
-      // models' isolation and markers alone) was shown unsound: those surviving models could be left
-      // isolated with a marker referencing a witness point that, after this unload, no longer has any
-      // meaningful relationship to what's still on screen. _clearIsolation() already iterates ALL of
-      // this._isolatedModels unconditionally, so calling it here already achieves "clear for every
-      // model", matching _clearMarkers()'s own unconditional full-scene clear.
-      //
-      // [Batch 2 fix-round follow-up, codex-review + coordinator tightening] _clearIsolation() is
-      // nested in its OWN try/finally here -- the SAME "one throw skips the rest of cleanup" defect
-      // class this Finding-6 fix already guards against at the evictModel call site above, one layer
-      // deeper: if _clearIsolation() itself throws (e.g. one of its internal viewer.isolate([], model)
-      // calls throws), _clearMarkers() and _isolatedModels.delete() below must still run, exactly
-      // mirroring unload()'s own existing structure (see unload()'s own comment above the equivalent
-      // nesting there). Making _clearIsolation()'s OWN internal per-model loop resilient to a SINGLE
-      // failing isolate() call (continue clearing the remaining models rather than aborting the whole
-      // loop) is a separate, broader change intentionally left out of this fix -- see this task's own
-      // report for that out-of-scope finding.
       try {
-        this._clearIsolation();
+        this._world.evictModel(event.model);
       } finally {
-        this._clearMarkers();
-        this._isolatedModels.delete(event.model);
+        // Task 9 (M2.1): the ENTIRE visualization clears on ANY participating-model unload -- not just
+        // the unloaded model's own isolation/markers. A partial-preservation policy (leave OTHER
+        // models' isolation and markers alone) was shown unsound: those surviving models could be left
+        // isolated with a marker referencing a witness point that, after this unload, no longer has any
+        // meaningful relationship to what's still on screen. _clearIsolation() already iterates ALL of
+        // this._isolatedModels unconditionally, so calling it here already achieves "clear for every
+        // model", matching _clearMarkers()'s own unconditional full-scene clear.
+        //
+        // [Batch 2 fix-round follow-up, codex-review + coordinator tightening] _clearIsolation() is
+        // nested in its OWN try/finally here -- the SAME "one throw skips the rest of cleanup" defect
+        // class this Finding-6 fix already guards against at the evictModel call site above, one layer
+        // deeper: if _clearIsolation() itself throws (e.g. one of its internal viewer.isolate([], model)
+        // calls throws), _clearMarkers() and _isolatedModels.delete() below must still run, exactly
+        // mirroring unload()'s own existing structure (see unload()'s own comment above the equivalent
+        // nesting there). Making _clearIsolation()'s OWN internal per-model loop resilient to a SINGLE
+        // failing isolate() call (continue clearing the remaining models rather than aborting the whole
+        // loop) is a separate, broader change intentionally left out of this fix -- see this task's own
+        // report for that out-of-scope finding.
+        try {
+          this._clearIsolation();
+        } finally {
+          this._clearMarkers();
+          this._isolatedModels.delete(event.model);
+        }
       }
+    } finally {
+      // Task 16: NOT filtered to the unloaded model -- same unconditional, whole-visualization-clears
+      // policy Hard Clash's own cleanup above already uses (see the Task 9 comment just above), applied
+      // identically here for Soft Clash. No overlay-scene/shared-geometry-material teardown here (unlike
+      // unload()'s own Soft Clash rung) -- exactly mirroring _clearMarkers()'s own scope in THIS method
+      // (mesh removal only; the overlay scene and shared geometry/material outlive individual model
+      // unloads and are only torn down by unload() itself).
+      this._clearSoftClashVisualization();
     }
   }
 

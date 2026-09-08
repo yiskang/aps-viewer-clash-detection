@@ -23,6 +23,7 @@
 // BufferGeometry), matching test/ClashFinderExtension.test.mjs's own fixture in spirit but kept as
 // this file's own separate copy (each `*.test.mjs` file runs in its own `node --test` process, so
 // nothing is shared or leaked between them).
+import { readFile } from 'node:fs/promises';
 import { ClashFinderExtension, EXTENSION_ID } from '../wwwroot/extensions/ClashFinderExtension.js';
 import { CollisionWorld } from '../collision/index.js';
 
@@ -636,6 +637,177 @@ for (const bad of [0, -1, NaN, Infinity, 'nope']) {
   // Soft Clash's own second run replaced its own 3 objects with a new 3 (clear-then-add, same as
   // every earlier "Find Soft Clashes clears its own PRIOR visualization" test above establishes).
   check('Soft Clash\'s second run still (independently) replaced its own 3 objects', ext._activeSoftClashObjects.length, 3);
+}
+
+// === Task 16 (M3 Batch 3): lifecycle wiring -- Soft Clash's own independent cleanup, wired into
+// unload() and _onBeforeModelUnload(), as ADDITIONAL, INDEPENDENT try/finally rungs alongside Hard
+// Clash's own existing cleanup chain -- never nested inside it. A codex-advisor consult (this task's
+// own dispatch) confirmed the mathematically necessary shape: plain SEQUENTIAL sibling try/finally
+// statements do NOT achieve mutual independence (an uncaught throw from the first statement skips the
+// second one entirely) -- the only way to guarantee "a throw on either side never prevents the other
+// side's cleanup from running" is to wrap the existing (unchanged) Hard Clash body in a NEW outermost
+// try, with Soft Clash's own cleanup in that new try's finally. This mirrors the SAME "wrap the
+// existing block in an outer finally to add one more independent cleanup concern" idiom this file's
+// own unload() already uses once (dispose+listener-removal, wrapped by isolation+marker-cleanup). ===
+
+// Populates BOTH Hard Clash (_activeMarkers/_isolatedModels) and Soft Clash
+// (_activeSoftClashObjects/_softClashGeometry/_softClashMaterial/_softClashLineMaterial) visualization
+// state via two real, successful context-menu actions -- so the lifecycle tests below can distinguish
+// "both sides cleared together" from "only one side cleared".
+async function extensionWithBothVisualizationsPopulated() {
+  const { ext, viewer, world } = extensionWithFakeWorld();
+  const modelA = makeMockModel(1), modelB = makeMockModel(2);
+  viewer.getAggregateSelection = () => [{ model: modelA, selection: [10] }];
+  viewer.getAllModels = () => [modelA, modelB];
+  viewer.isolate = () => {}; viewer.fitToView = () => {};
+  world.findClashes = async (query) => {
+    if (query.mode === 'clearance') {
+      return {
+        pairs: [{
+          source: { modelId: 1, dbId: 10, model: modelA },
+          target: { modelId: 2, dbId: 30, model: modelB },
+          witness: { sourcePoint: [1, 2, 3], targetPoint: [4, 5, 6] },
+        }],
+        statistics: { diagnostics: [] },
+      };
+    }
+    return {
+      pairs: [{ source: { modelId: 1, dbId: 10, model: modelA }, target: { modelId: 2, dbId: 30, model: modelB }, witness: { kind: 'surface-crossing', point: [0, 0, 0] } }],
+      statistics: { diagnostics: [] },
+    };
+  };
+  const menu = [];
+  ext.onContextMenu(menu, {});
+  await menu.find((m) => m.title === 'Find Clashes').target();
+  await menu.find((m) => m.title === 'Find Soft Clashes').target();
+  return { ext, viewer, world, modelA, modelB };
+}
+
+// === model unload (_onBeforeModelUnload) clears BOTH Hard Clash and Soft Clash visualization -- no
+// partial preservation of either side ==================================================================
+{
+  const { ext, viewer, modelA } = await extensionWithBothVisualizationsPopulated();
+  check('setup: Hard Clash markers are active before the model-unload event', ext._activeMarkers.length, 1);
+  check('setup: Soft Clash objects are active before the model-unload event', ext._activeSoftClashObjects.length, 3);
+  check('setup: isolation is active before the model-unload event', ext._isolatedModels.size, 2);
+
+  ext._onBeforeModelUnload({ model: modelA });
+  check('model unload clears Hard Clash markers', ext._activeMarkers.length, 0);
+  check('model unload ALSO clears Soft Clash visualization objects', ext._activeSoftClashObjects.length, 0);
+  check('model unload clears isolation for both', ext._isolatedModels.size, 0);
+  check('Soft Clash overlay scene still holds nothing after model unload (objects were removed one by one)',
+    viewer.overlays._scenes.get('clash-finder-soft-markers')?.size ?? 0, 0);
+}
+
+// === extension unload() disposes the soft-clash shared geometry/material/line-material and removes
+// its own overlay scene, mirroring Hard Clash's own existing teardown discipline exactly ============
+{
+  const { ext, viewer } = await extensionWithBothVisualizationsPopulated();
+  const geometry = ext._softClashGeometry;
+  const material = ext._softClashMaterial;
+  const lineMaterial = ext._softClashLineMaterial;
+  check('setup: soft-clash shared geometry/material/line-material exist before unload()', [geometry, material, lineMaterial].every(Boolean), true);
+  check('setup: soft-clash overlay scene exists before unload()', viewer.overlays.hasScene('clash-finder-soft-markers'), true);
+  let geometryDisposed = 0, materialDisposed = 0, lineMaterialDisposed = 0;
+  geometry.dispose = () => { geometryDisposed += 1; };
+  material.dispose = () => { materialDisposed += 1; };
+  lineMaterial.dispose = () => { lineMaterialDisposed += 1; };
+
+  ext.unload();
+  check('soft-clash shared geometry is disposed exactly once', geometryDisposed, 1);
+  check('soft-clash shared material is disposed exactly once', materialDisposed, 1);
+  check('soft-clash shared line material is disposed exactly once', lineMaterialDisposed, 1);
+  check('_softClashGeometry reference is cleared after unload()', ext._softClashGeometry, null);
+  check('_softClashMaterial reference is cleared after unload()', ext._softClashMaterial, null);
+  check('_softClashLineMaterial reference is cleared after unload()', ext._softClashLineMaterial, null);
+  check('the soft-clash overlay scene itself is removed, not merely emptied', viewer.overlays.hasScene('clash-finder-soft-markers'), false);
+  // Hard Clash's own teardown must still have run too -- unload() clears BOTH, never just one.
+  check('Hard Clash markers are also torn down by the same unload() call', ext._activeMarkers.length, 0);
+  check('Hard Clash overlay scene is also removed by the same unload() call', viewer.overlays.hasScene('clash-finder-markers'), false);
+}
+
+// === a throwing _clearSoftClashVisualization does NOT prevent Hard Clash's own cleanup from running
+// (unload()) — independence in this direction ==========================================================
+{
+  const { ext, viewer } = await extensionWithBothVisualizationsPopulated();
+  ext._clearSoftClashVisualization = () => { throw new Error('boom-soft'); };
+  let thrown = null;
+  try { ext.unload(); } catch (err) { thrown = err; }
+  check('unload() propagates the Soft Clash side\'s own thrown error', thrown?.message, 'boom-soft');
+  check('Hard Clash markers are STILL torn down despite the Soft Clash throw', ext._activeMarkers.length, 0);
+  check('Hard Clash overlay scene is STILL removed despite the Soft Clash throw', viewer.overlays.hasScene('clash-finder-markers'), false);
+  check('Hard Clash shared marker geometry is STILL cleared despite the Soft Clash throw', ext._markerGeometry, null);
+  check('Hard Clash shared marker material is STILL cleared despite the Soft Clash throw', ext._markerMaterial, null);
+  check('isolation is STILL cleared despite the Soft Clash throw', ext._isolatedModels.size, 0);
+}
+
+// === the reverse: a throwing Hard Clash cleanup step (_clearMarkers) does NOT prevent Soft Clash's
+// own cleanup from running (unload()) — independence in the OTHER direction =========================
+{
+  const { ext, viewer } = await extensionWithBothVisualizationsPopulated();
+  ext._clearMarkers = () => { throw new Error('boom-hard'); };
+  let thrown = null;
+  try { ext.unload(); } catch (err) { thrown = err; }
+  check('unload() propagates the Hard Clash side\'s own thrown error', thrown?.message, 'boom-hard');
+  check('Soft Clash visualization objects are STILL torn down despite the Hard Clash throw', ext._activeSoftClashObjects.length, 0);
+  check('Soft Clash overlay scene is STILL removed despite the Hard Clash throw', viewer.overlays.hasScene('clash-finder-soft-markers'), false);
+  check('Soft Clash shared geometry is STILL cleared despite the Hard Clash throw', ext._softClashGeometry, null);
+  check('Soft Clash shared material is STILL cleared despite the Hard Clash throw', ext._softClashMaterial, null);
+  check('Soft Clash shared line material is STILL cleared despite the Hard Clash throw', ext._softClashLineMaterial, null);
+}
+
+// === _onBeforeModelUnload: a throwing _clearSoftClashVisualization does NOT prevent Hard Clash's own
+// model-unload cleanup (evictModel/_clearIsolation/_clearMarkers/_isolatedModels.delete) from running =
+{
+  const { ext, viewer, modelA } = await extensionWithBothVisualizationsPopulated();
+  ext._clearSoftClashVisualization = () => { throw new Error('boom-soft-model-unload'); };
+  let thrown = null;
+  try { ext._onBeforeModelUnload({ model: modelA }); } catch (err) { thrown = err; }
+  check('_onBeforeModelUnload propagates the Soft Clash side\'s own thrown error', thrown?.message, 'boom-soft-model-unload');
+  check('Hard Clash markers are STILL torn down despite the Soft Clash throw', ext._activeMarkers.length, 0);
+  check('isolation is STILL cleared despite the Soft Clash throw', ext._isolatedModels.size, 0);
+  check('the evicted model is STILL dropped from _isolatedModels bookkeeping despite the Soft Clash throw',
+    ext._isolatedModels.has(modelA), false);
+}
+
+// === _onBeforeModelUnload: the reverse -- a throwing Hard Clash cleanup step (_clearMarkers) does NOT
+// prevent Soft Clash's own cleanup (_clearSoftClashVisualization) from running ========================
+{
+  const { ext, modelA } = await extensionWithBothVisualizationsPopulated();
+  ext._clearMarkers = () => { throw new Error('boom-hard-model-unload'); };
+  let thrown = null;
+  try { ext._onBeforeModelUnload({ model: modelA }); } catch (err) { thrown = err; }
+  check('_onBeforeModelUnload propagates the Hard Clash side\'s own thrown error', thrown?.message, 'boom-hard-model-unload');
+  check('Soft Clash visualization objects are STILL torn down despite the Hard Clash throw', ext._activeSoftClashObjects.length, 0);
+}
+
+// === model unload also bumps _latestSoftClashActionToken, exactly mirroring why Hard Clash's own
+// _latestActionToken is bumped -- a Soft Clash findClashes promise that already resolved but whose
+// target() continuation had not yet run must see a now-stale token, not silently re-apply itself ===
+{
+  const { ext, modelA } = await extensionWithBothVisualizationsPopulated();
+  const tokenBefore = ext._latestSoftClashActionToken;
+  ext._onBeforeModelUnload({ model: modelA });
+  check('_onBeforeModelUnload bumps _latestSoftClashActionToken', ext._latestSoftClashActionToken > tokenBefore, true);
+}
+
+// === unload() also bumps _latestSoftClashActionToken, alongside _latestActionToken, at the very top
+// (both tokens invalidated before anything else runs) =================================================
+{
+  const { ext } = await extensionWithBothVisualizationsPopulated();
+  const tokenBefore = ext._latestSoftClashActionToken;
+  ext.unload();
+  check('unload() bumps _latestSoftClashActionToken', ext._latestSoftClashActionToken > tokenBefore, true);
+}
+
+// === r71/r185 isolation: Soft Clash's own visualization code never imports the npm "three" package --
+// permanent regression guard, mirroring test/ClashFinderExtension.test.mjs's own identical check ====
+{
+  const source = await readFile(new URL('../wwwroot/extensions/ClashFinderExtension.js', import.meta.url), 'utf8');
+  check('ClashFinderExtension.js never imports the collision library\'s r185 three package (ESM from-clause)',
+    /from\s+['"]three['"]/.test(source), false);
+  check('ClashFinderExtension.js never requires the three package (CJS require)',
+    /require\(['"]three['"]\)/.test(source), false);
 }
 
 console.log(`\n  ${passes} passed, ${failures} failed`);
