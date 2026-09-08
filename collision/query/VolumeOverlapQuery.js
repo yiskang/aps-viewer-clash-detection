@@ -134,6 +134,7 @@ export async function volumeOverlapQuery(source, target, options = {}) {
     const point = toFiniteWorldArray(crossing.witnessPoint, worldMatrix);
     return {
       overlap: true,
+      conclusive: true,
       via: 'crossing',
       diagnostics,
       stats: { crossing: crossing.stats },
@@ -179,6 +180,7 @@ export async function volumeOverlapQuery(source, target, options = {}) {
     const point = toFiniteWorldArray(aInB.witnessPoint, target.matrix);
     return {
       overlap: true,
+      conclusive: true,
       via: 'containment(A in B)',
       diagnostics,
       stats: { crossing: crossing.stats, aInB },
@@ -217,6 +219,7 @@ export async function volumeOverlapQuery(source, target, options = {}) {
     const point = toFiniteWorldArray(bInA.witnessPoint, source.matrix);
     return {
       overlap: true,
+      conclusive: true,
       via: 'containment(B in A)',
       diagnostics,
       stats: { crossing: crossing.stats, aInB, bInA },
@@ -241,8 +244,24 @@ export async function volumeOverlapQuery(source, target, options = {}) {
     addDiagnostic('inconclusive-containment');
   }
 
+  // M3 Task 6: authoritative conclusive flag (docs/superpowers/sdd/2026-09-08-
+  // collision-library-milestone3-clearance-implementation/task-6-brief.md). A negative
+  // is conclusive only when the crossing term fully resolved (never aborted/
+  // inconclusive), both containment terms sampled every component
+  // (unresolvedComponentCount === 0), and neither containment term's own diagnostics
+  // carry a non-manifold-component or unverified-parity-operand taint -- both of which
+  // can occur even when sampling itself fully resolved (a component classified cleanly
+  // but flagged non-manifold, or a container never certified closed).
+  const crossingConclusive = !(crossing.aborted || crossing.inconclusive);
+  const containmentConclusive = aInB.unresolvedComponentCount === 0 && bInA.unresolvedComponentCount === 0;
+  const taintedByNonManifoldOrUnverified = diagnostics.some(
+    (d) => d.reason === 'non-manifold-component' || d.reason === 'unverified-parity-operand',
+  );
+  const conclusive = crossingConclusive && containmentConclusive && !taintedByNonManifoldOrUnverified;
+
   return {
     overlap: false,
+    conclusive,
     diagnostics,
     stats: { crossing: crossing.stats, aInB, bInA },
   };
