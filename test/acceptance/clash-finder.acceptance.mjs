@@ -325,6 +325,15 @@ const MIXED_CASE = {
   // in front of the witness, so the whole marker sphere along the centre ray is behind it.
   enclosedWitnessViewDirection: [0.433, -0.75, -0.5],
   enclosedWitnessViewDistance: 40,
+  // M3 Task 17: the SURFACE-CROSSING target of the two expectedPairs above, named explicitly so the
+  // Soft Clash Hard-Clash-exclusion case below can reference it by intent rather than by array index.
+  // The crossing target is the correct one to use there, NOT the containment target (struct 3663): a
+  // crossing pair's true surface distance is exactly 0, i.e. the two elements are genuinely TOUCHING,
+  // so its absence from a clearance result is a claim about the Hard-Clash exclusion rule itself --
+  // whereas a merely far-apart target would be absent from a `clearance: 5` result for the wholly
+  // unrelated reason that it is more than 5 units away.
+  hardClashTargetDbId: 3686,
+  hardClashTargetModelKey: 'arch',
 };
 
 // M2.1 Task 10. The one alignment operation this file performs (see the header comment's own
@@ -338,6 +347,119 @@ const NEGATIVE_CASE = {
   expectedNameIncludes: 'HSS-Hollow Structural Section-Column',
   hasGeometry: true,
 };
+
+// =================================================================================================
+// M3 Task 17: Soft Clash (clearance mode) live acceptance, added on top of everything above
+// =================================================================================================
+//
+// --- Bounded near-miss discovery spike (Task 17 Step 1), run live against THIS fixture -----------
+//
+// Per the M2.1 Task-10 bounded-spike precedent, a throwaway Playwright spike issued the exact
+// production `CollisionWorld.findClashes({mode:'clearance', ...})` call against this same
+// three-model scene, with an explicitly CAPPED iteration count, before a single assertion below was
+// written. Starting source: NEGATIVE_CASE's own dbId 3965 (this fixture's known Hard-Clash negative
+// -- exactly the element whose "no clashes" verdict a clearance query is most likely to refine).
+// Sweep: clearance in {0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0}, stopping at the first value that finds
+// anything -- at most 7 calls, with a further hard cap of 4 geometric neighbours x 3 clearances
+// prepared as the fallback if 3965 alone found nothing. That fallback never fired: the sweep's
+// SECOND value already found a real near-miss, so the whole spike cost 2 calls.
+//
+//   clearance 0.01 -> 0 pairs (0 broad-phase candidates, 0 distance queries)
+//   clearance 0.05 -> 2 pairs:
+//     struct 3965 -> struct 3976  distance 0.04166616338460325
+//     struct 3965 -> struct 4135  distance 0.04166616338460503
+//
+// A follow-up fine sweep bracketed the true minimum tightly -- 0.02, 0.03, 0.04 and 0.0416 all
+// return 0 pairs; 0.042 and 0.05 both return exactly the 2 pairs above -- so
+// **3965's true minimum surface-to-surface distance to anything in the whole federated scene is
+// 0.0416661633846**, and any clearance strictly below that is a genuinely, provably empty query
+// rather than a vacuously empty one. That measurement is what the known-negative case's own
+// clearance value below is derived from; the brief's own placeholder (0.001) was NOT used, because
+// nothing had been measured yet when it was written.
+//
+// The discovered pair is real, ordinary building geometry, not a curiosity: 3965 is
+// "HSS-Hollow Structural Section-Column [681589]" and 3976/4135 are two
+// "SMBH-HSS-Hollow Structural Section" members that stop just short of it. The near-miss is a clean
+// Y-axis gap, independently derivable from the InstanceTree's own node boxes with no help from the
+// collision pipeline at all: 3965's box min-Y is 20.81414794921875 and both targets' box max-Y is
+// 20.772480010986328, a gap of 0.041667938 -- agreeing with the measured surface distance to within
+// 1.8e-6 (the residual is Float32 node-box quantization). The positive case below asserts exactly
+// that cross-check, so the measured distance is corroborated by a completely independent data
+// source, not merely by the pipeline that produced it.
+//
+// Because 0.0416661633846 < DEFAULT_CLEARANCE (0.05, ClashFinderExtension.js:60), the REAL "Find
+// Soft Clashes" context-menu action finds this pair at its own production default clearance, with
+// no override of any kind -- so the positive case below goes through the genuine production path
+// end to end.
+//
+// --- Why the two always-run cases each need their own clearance, and how it is supplied ----------
+//
+// There is no UI to set a per-call clearance: the "Find Soft Clashes" action always issues
+// `clearance: this._clearance`, resolved once in load() from `options.defaultClearance ??
+// DEFAULT_CLEARANCE`. Both always-run cases below deliberately need a clearance that is NOT the
+// default (one far below it, one far above it), so runFindSoftClashesCase() assigns `ext._clearance`
+// directly for exactly those two cases and restores the original value immediately afterwards --
+// keeping every case on the REAL menu-driven production path (an acceptance test's whole point)
+// rather than dropping to a direct API call for two of the three. The restoration is asserted, and
+// the positive case deliberately passes NO override at all, so the one case that matters most runs
+// against wholly untouched production state.
+//
+// --- Witness shape: genuinely different from Hard Clash's, not a variant of it -------------------
+//
+// A volume-overlap pair's witness is `{kind, point}`; a clearance pair's is
+// `{sourcePoint, targetPoint}` -- the two ends of the closest approach, with no `kind` and no
+// `point` at all. The findClashes spy below therefore reads both shapes defensively (see its own
+// comment): the pre-existing `[...p.witness.point]` would have thrown a TypeError on the very first
+// clearance pair it ever saw.
+const EXPECTED_DEFAULT_CLEARANCE = 0.05; // ClashFinderExtension.js:60 (DEFAULT_CLEARANCE)
+// ClashFinderExtension.js:67-68 and :75-76 -- copied, never imported, for the same reason as
+// MARKER_OVERLAY_NAME above.
+const SOFT_CLASH_OVERLAY_NAME = 'clash-finder-soft-markers';
+const EXPECTED_SOFT_CLASH_COLOR = 0x2b8fff;
+const EXPECTED_HARD_CLASH_COLOR = 0xff6a00;
+const EXPECTED_SOFT_MIN_MARKER_RADIUS = 0.05;
+const EXPECTED_SOFT_MAX_MARKER_RADIUS = 2.0;
+
+const SOFT_CLASH_POSITIVE_CASE = {
+  name: 'soft clash positive: discovered near-miss (Structure dbId 3965, production default clearance)',
+  sourceDbId: NEGATIVE_CASE.sourceDbId, // 3965 -- this fixture's Hard-Clash negative, and a real Soft Clash positive
+  // No override: this is DEFAULT_CLEARANCE itself, asserted to still be what the live extension
+  // resolved, so this case exercises the untouched production action.
+  clearance: EXPECTED_DEFAULT_CLEARANCE,
+  expectedPairs: [
+    { targetModelKey: 'struct', targetDbId: 3976 },
+    { targetModelKey: 'struct', targetDbId: 4135 },
+  ],
+  // Both pairs measure the same gap to within ~2e-15; which of the two carries the ...325 and which
+  // the ...503 last bits is NOT stable across runs (observed swapping between a baseline and an
+  // alignment re-run), so the distance is asserted per-pair against this ONE value with a tolerance,
+  // never as an exact per-target mapping.
+  expectedDistance: 0.04166616338460325,
+  distanceTolerance: 1e-6,
+  // The same gap, re-derived from the InstanceTree's own Float32 node boxes -- see the header
+  // comment above. The tolerance covers Float32 node-box quantization, nothing else.
+  expectedNodeBoxGap: 0.041667938232421875,
+  nodeBoxGapTolerance: 1e-4,
+  // Soft Clash's own isolation contribution: the source plus both targets, all in the Structure model.
+  expectedSoftIsolatedStruct: [3965, 3976, 4135],
+  expectedAlertMessage: '2 clashes found (2 in this model, 0 in other models)',
+};
+
+// Provably below SOFT_CLASH_POSITIVE_CASE.expectedDistance (0.04166616...), the measured true
+// minimum distance from dbId 3965 to ANY element in the whole three-model scene -- so a zero-pair
+// result here is a real geometric negative, not a threshold artifact. Deliberately NOT the brief's
+// own placeholder 0.001 and not the sweep's own 0.01 either: at 0.02 the value is still less than
+// half the true minimum (so the negative is unambiguous) while being 20x larger than 0.001, which
+// makes it a far less trivially-satisfied query. The pairing with the positive case above is what
+// makes this negative non-vacuous: the SAME source element, through the SAME production action,
+// finds exactly 2 pairs at 0.05 and exactly 0 at 0.02.
+const SOFT_CLASH_NEGATIVE_CLEARANCE = 0.02;
+
+// Deliberately huge (100x the default, and ~20x the largest distance the Hard-Clash-excluded pair
+// could plausibly be at), so the two known Hard Clash targets are absent for exactly one reason:
+// the Hard-Clash exclusion rule. Live: this query returns 33 clearance pairs spanning distances
+// 0.0417 to 4.82, and neither Hard Clash target is among them.
+const SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE = 5;
 
 const RESULTS_DIR = path.join(process.cwd(), 'test/acceptance/results');
 // Deliberately a DIFFERENT filename from room-locator.acceptance.mjs's own run-report.json -- both
@@ -499,6 +621,11 @@ async function main() {
         sourceDbIds: [...query.source.dbIds],
         mode: query.mode,
         groupBy: query.groupBy,
+        // M3 Task 17: the clearance threshold this call was actually issued with. `undefined` for
+        // every volume-overlap call (which carries no `clearance` key at all) -- normalized to null
+        // so it crosses the page<->Node boundary as structured-cloneable data rather than being
+        // dropped by JSON serialization. No pre-existing Hard Clash assertion reads this field.
+        clearance: query.clearance ?? null,
         pairs: result.pairs.map((p) => ({
           sourceModelKey: modelKeyOf(p.source.model),
           sourceDbId: p.source.dbId,
@@ -510,10 +637,41 @@ async function main() {
           // -- never a THREE.Vector3 of either revision -- so it crosses the page<->Node boundary as
           // structured-cloneable plain data with no conversion. `witnessKind` is null exactly when
           // the pair carried no witness at all, which is what Step 3 asserts never happens here.
-          witnessKind: p.witness ? p.witness.kind : null,
-          witnessPoint: p.witness ? [...p.witness.point] : null,
+          //
+          // M3 Task 17: BOTH witness shapes are now read, each guarded, because a clearance pair's
+          // witness is genuinely a different shape and not a variant of the volume-overlap one --
+          // `{sourcePoint, targetPoint}`, with NO `kind` and NO `point`. The pre-existing
+          // `[...p.witness.point]` was therefore not merely inapplicable to clearance pairs but
+          // actively fatal: spreading `undefined` throws a TypeError, so this one wrapper would have
+          // thrown inside the production callback on the very first Soft Clash pair it ever saw.
+          // For a volume-overlap pair every field below evaluates to EXACTLY what it evaluated to
+          // before this task (`kind` is a real string, `point` a real array, and the three new
+          // fields are all null), so every pre-existing Hard Clash assertion is untouched.
+          witnessKind: p.witness ? (p.witness.kind ?? null) : null,
+          witnessPoint: p.witness && Array.isArray(p.witness.point) ? [...p.witness.point] : null,
+          witnessSourcePoint: p.witness && Array.isArray(p.witness.sourcePoint) ? [...p.witness.sourcePoint] : null,
+          witnessTargetPoint: p.witness && Array.isArray(p.witness.targetPoint) ? [...p.witness.targetPoint] : null,
+          distance: typeof p.distance === 'number' ? p.distance : null,
+          clearance: typeof p.clearance === 'number' ? p.clearance : null,
         })),
         diagnosticsCount: result.statistics?.diagnostics?.length ?? 0,
+        // M3 Task 17: a small, explicitly-picked set of the clearance statistics -- picked field by
+        // field rather than cloning `result.statistics` wholesale, so nothing non-cloneable can ever
+        // leak across the page<->Node boundary through this wrapper. Every one of these is
+        // already-shipped M3 Batch 1-2 surface, present (as 0) on EVERY findClashes result including
+        // volume-overlap ones, so this adds no mode-specific branching. `clearanceHardClashExclusions`
+        // in particular is the mechanism-specific proof the Hard-Clash-exclusion case below needs:
+        // it can only be nonzero if the tri-state precheck actually ran and PROVED overlap.
+        clearanceStatistics: {
+          clearanceExpandedCandidatePairs: result.statistics?.clearanceExpandedCandidatePairs ?? null,
+          clearanceExactAabbSurvivors: result.statistics?.clearanceExactAabbSurvivors ?? null,
+          clearanceOverlapPrechecksRun: result.statistics?.clearanceOverlapPrechecksRun ?? null,
+          clearanceHardClashExclusions: result.statistics?.clearanceHardClashExclusions ?? null,
+          clearanceDistanceQueriesRun: result.statistics?.clearanceDistanceQueriesRun ?? null,
+          clearanceHits: result.statistics?.clearanceHits ?? null,
+          narrowPhasePairs: result.statistics?.narrowPhasePairs ?? null,
+        },
+        diagnosticReasons: [...new Set((result.statistics?.diagnostics ?? []).map((d) => d?.reason ?? 'unknown'))],
       });
       return result;
     };
@@ -1350,6 +1508,583 @@ async function main() {
   check('[alignment] after restoring the placement, every marker sits on a restored witness point',
     sortedPointKeys(restoredMarkers.positions), sortedPointKeys(restoredCall.pairs.map((p) => p.witnessPoint)));
 
+  // =================================================================================================
+  // === M3 Task 17: Soft Clash (clearance mode) live acceptance =====================================
+  // =================================================================================================
+  //
+  // Deliberately positioned HERE -- after the alignment step has restored the Structure model's own
+  // placement, and BEFORE the model-unload step below. Two independent reasons, both load-bearing:
+  //
+  //   1. The Hard-Clash-exclusion case needs the Architecture model LOADED. Its whole claim is that
+  //      arch dbId 3686 -- a target the Hard Clash query above genuinely DID return -- is absent
+  //      from a clearance result. After the unload step, that absence would be trivially true for
+  //      the unrelated reason that the model is gone, and the case would pass vacuously.
+  //   2. A Soft Clash query leaves its own isolation contribution applied (unioned with Hard
+  //      Clash's, per ClashFinderExtension._reconcileIsolation). Running this section BEFORE any of
+  //      the Hard Clash cases above would therefore change what THEIR own end-state isolation
+  //      assertions observe. Nothing after this point re-runs a Hard Clash case, and the unload step
+  //      reads isolation only AFTER _clearIsolation() has emptied both contributions, so this
+  //      position is the one place in main() where neither hazard applies.
+  //
+  // Nothing above this line is modified by this task: the entire Hard Clash flow, its cases, and its
+  // helpers run exactly as before, and the two Hard Clash marker/isolation states left behind by the
+  // alignment step are used here as a live fixture -- Soft Clash must coexist with them, never
+  // clobber them.
+  console.log('\n=== M3 Task 17: Soft Clash (clearance mode) ===');
+
+  // Baselines captured immediately before the first Soft Clash action, so the "zero console errors"
+  // claim for THIS section is about errors this section introduced, not about the two pre-existing
+  // ones this sandboxed environment produces during viewer bootstrap (a blocked
+  // https://cdn.autodesk.io/logo/black/stacked.png fetch -- see this run's own report). The
+  // whole-run assertion at the very end of main() is unchanged and still asserts emptiness outright.
+  const softClashConsoleErrorsBefore = results.consoleErrors.length;
+  const softClashPageErrorsBefore = results.pageErrors.length;
+  // The Hard Clash visualization state this section must leave completely alone.
+  const hardMarkersBeforeSoftClash = await readMarkerState();
+
+  results.softClash = {
+    discoverySpike: {
+      // Recorded verbatim from the live bounded spike described in this file's own M3 Task 17 header
+      // comment -- the honest record of what Step 1 actually did and found (Task 17 Step 4).
+      sourceDbIdsProbed: [NEGATIVE_CASE.sourceDbId],
+      clearanceSweep: [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0],
+      cappedIterations: { clearanceValues: 7, fallbackNeighbourDbIds: 4, fallbackClearancesPerNeighbour: 3 },
+      callsActuallyIssued: 2,
+      neighbourFallbackFired: false,
+      nearMissFound: true,
+      nearMissPairs: [
+        { targetModelKey: 'struct', targetDbId: 3976, distance: 0.04166616338460325 },
+        { targetModelKey: 'struct', targetDbId: 4135, distance: 0.04166616338460503 },
+      ],
+      measuredTrueMinimumDistance: 0.04166616338460325,
+      fineBracket: { emptyAt: [0.02, 0.03, 0.04, 0.0416], nonEmptyAt: [0.042, 0.05] },
+    },
+    cases: {},
+  };
+
+  // Reads the live Soft Clash visualization state straight off the real extension instance, plus
+  // enough of the Hard Clash overlay state alongside it to prove the two coexist independently.
+  // Everything returned is plain, structured-cloneable data.
+  //
+  // `_activeSoftClashObjects` is a SINGLE array MIXING both object families in creation order --
+  // per witness-bearing pair: [sourceMesh, targetMesh, line] -- not two separate arrays (verified
+  // against _addSoftClashVisualization directly, not assumed). Meshes are identified by their own
+  // THREE `.type` string ('Mesh' / 'Line'); `constructor.name` is NOT usable here (the Viewer's own
+  // bundle is minified, and it comes back as the empty string live).
+  //
+  // The line endpoints are read out of each line's own per-pair BufferGeometry position attribute,
+  // which is a Float32Array -- so those two points are QUANTIZED copies of the Float64 witness
+  // points, and are compared below with a Float32-sized tolerance, never exactly. The sphere
+  // positions, by contrast, are exact Float64 copies and ARE compared exactly.
+  //
+  // `hasMeshFlags` (public viewer.overlays.hasMesh) is the load-bearing per-object check, for the
+  // same reason readMarkerState's own version of it is: addMesh/removeMesh with swapped arguments
+  // returns false with no throw, so an `_activeSoftClashObjects.length` assertion alone would pass
+  // while the overlay scene was actually empty.
+  async function readSoftClashState() {
+    return page.evaluate(({ extensionId, softOverlayName, hardOverlayName }) => {
+      const ext = window.viewer.getExtension(extensionId);
+      const objects = ext._activeSoftClashObjects;
+      const readLineEndpoints = (obj) => {
+        const attr = obj.geometry?.attributes?.position;
+        if (!attr || !attr.array) return null;
+        const a = Array.from(attr.array);
+        return a.length === 6 ? [a.slice(0, 3), a.slice(3, 6)] : null;
+      };
+      return {
+        objectCount: objects.length,
+        types: objects.map((o) => o.type),
+        meshPositions: objects.filter((o) => o.type === 'Mesh').map((m) => [m.position.x, m.position.y, m.position.z]),
+        meshRadii: objects.filter((o) => o.type === 'Mesh').map((m) => m.scale.x),
+        meshUniformScale: objects.filter((o) => o.type === 'Mesh')
+          .every((m) => m.scale.x === m.scale.y && m.scale.y === m.scale.z),
+        lineEndpoints: objects.filter((o) => o.type === 'Line').map(readLineEndpoints),
+        // Global Constraint: ONE shared sphere geometry/material and ONE shared line material across
+        // every Soft Clash object this extension ever creates; only the per-pair line geometry is
+        // per-object (and must therefore be distinct from the shared sphere geometry).
+        meshesShareGeometry: objects.filter((o) => o.type === 'Mesh').every((m) => m.geometry === ext._softClashGeometry),
+        meshesShareMaterial: objects.filter((o) => o.type === 'Mesh').every((m) => m.material === ext._softClashMaterial),
+        linesShareMaterial: objects.filter((o) => o.type === 'Line').every((l) => l.material === ext._softClashLineMaterial),
+        lineGeometriesAreDistinct: (() => {
+          const lines = objects.filter((o) => o.type === 'Line');
+          const geometries = lines.map((l) => l.geometry);
+          return geometries.every((g) => g && g !== ext._softClashGeometry)
+            && new Set(geometries).size === geometries.length;
+        })(),
+        softColor: ext._softClashMaterial?.color?.getHex?.() ?? null,
+        softLineColor: ext._softClashLineMaterial?.color?.getHex?.() ?? null,
+        softDepthTest: ext._softClashMaterial?.depthTest ?? null,
+        hasScene: window.viewer.overlays.hasScene(softOverlayName),
+        hasMeshFlags: objects.map((o) => window.viewer.overlays.hasMesh(o, softOverlayName)),
+        overlaySceneMeshCount: window.viewer.impl.overlayScenes?.[softOverlayName]?.scene?.children?.length ?? null,
+        // --- Hard Clash's own, entirely separate overlay, read at the same instant ---
+        hardMarkerCount: ext._activeMarkers.length,
+        hardOverlaySceneMeshCount: window.viewer.impl.overlayScenes?.[hardOverlayName]?.scene?.children?.length ?? null,
+        hardColor: ext._markerMaterial?.color?.getHex?.() ?? null,
+        overlayScenesAreDistinct: softOverlayName !== hardOverlayName
+          && window.viewer.overlays.hasScene(softOverlayName) && window.viewer.overlays.hasScene(hardOverlayName),
+      };
+    }, {
+      extensionId: CLASH_FINDER_EXTENSION_ID,
+      softOverlayName: SOFT_CLASH_OVERLAY_NAME,
+      hardOverlayName: MARKER_OVERLAY_NAME,
+    });
+  }
+
+  // A deliberate SIBLING of clickFindClashesAndCaptureAlert (which is left byte-for-byte unchanged),
+  // not a parameterization of it: "Find Soft Clashes" is a second, independent production action,
+  // and keeping its driver separate means nothing this task adds can alter how the 106 pre-existing
+  // Hard Clash checks are driven. The dialog-handler-before-click discipline, the timeout, and the
+  // locator shape are identical, and for the same reasons -- see that function's own comment.
+  //
+  // The two menu titles do not overlap as substrings ("Find Soft Clashes" does not contain "Find
+  // Clashes"), so hasText matching stays unambiguous now that both entries exist in the same menu.
+  async function clickFindSoftClashesAndCaptureAlert() {
+    const menuItem = page.locator('.menu-item', { hasText: 'Find Soft Clashes' });
+    await menuItem.waitFor({ timeout: 10_000 });
+    const messagePromise = new Promise((resolve) => {
+      page.once('dialog', async (dialog) => {
+        const message = dialog.message();
+        console.log(`  [alert] ${message}`);
+        await dialog.dismiss();
+        resolve(message);
+      });
+    });
+    await menuItem.click();
+    const message = await Promise.race([
+      messagePromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for the Find Soft Clashes alert')), 120_000)),
+    ]);
+    return message;
+  }
+
+  // The full real production path for one Soft Clash case, mirroring runFindClashesCase exactly but
+  // clicking the OTHER menu item. `clearanceOverride` is null for the positive case (which runs
+  // against the extension's own untouched, load()-resolved default) and a number for the two
+  // always-run cases, which need a clearance the UI has no way to supply; it is assigned directly on
+  // the live extension instance and restored immediately after the click, before anything is
+  // asserted, and the restoration itself is asserted at the end of this section.
+  async function runFindSoftClashesCase(sourceDbId, clearanceOverride = null) {
+    const clearanceBefore = await page.evaluate((id) => window.viewer.getExtension(id)._clearance, CLASH_FINDER_EXTENSION_ID);
+    if (clearanceOverride !== null) {
+      await page.evaluate(({ id, value }) => { window.viewer.getExtension(id)._clearance = value; },
+        { id: CLASH_FINDER_EXTENSION_ID, value: clearanceOverride });
+    }
+    try {
+      await resetVisualState();
+      await selectAndRightClick(sourceDbId);
+      // Captured while the real context menu is open: both production entries must be present and
+      // distinct, which is what makes "we clicked the Soft Clash one" a meaningful statement.
+      const menuTitles = await page.locator('.menu-item').allTextContents();
+      await resetSpyCapture();
+      const message = await clickFindSoftClashesAndCaptureAlert();
+      return { message, spy: await readSpyCapture(), menuTitles, clearanceUsed: clearanceOverride ?? clearanceBefore };
+    } finally {
+      if (clearanceOverride !== null) {
+        await page.evaluate(({ id, value }) => { window.viewer.getExtension(id)._clearance = value; },
+          { id: CLASH_FINDER_EXTENSION_ID, value: clearanceBefore });
+      }
+    }
+  }
+
+  // Shared per-pair structural checks every clearance result must satisfy, whatever the case.
+  // `witnessSeparation` recomputes each pair's own reported distance straight from its own two
+  // witness points -- a genuine independent cross-check of the distance against the witness, since
+  // the two are produced by different parts of the query and a regression that desynchronized them
+  // would otherwise be invisible.
+  const witnessSeparationOf = (p) => Math.hypot(
+    p.witnessSourcePoint[0] - p.witnessTargetPoint[0],
+    p.witnessSourcePoint[1] - p.witnessTargetPoint[1],
+    p.witnessSourcePoint[2] - p.witnessTargetPoint[2],
+  );
+  const isPoint3 = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
+  const softTupleKey = (p) => `${p.targetModelKey}:${p.targetDbId}`;
+  // Tolerance-based multiset comparison for the Float32-quantized line endpoints.
+  const matchesSomePointPair = (endpoints, pairs, tolerance) => pairs.some(([a, b]) =>
+    maxAbsDelta(endpoints[0], a) <= tolerance && maxAbsDelta(endpoints[1], b) <= tolerance);
+
+  function checkClearancePairInvariants(label, call, expectedClearance) {
+    check(`[soft][${label}] captured call: mode is clearance`, call.mode, 'clearance');
+    check(`[soft][${label}] captured call: groupBy is dbId`, call.groupBy, 'dbId');
+    check(`[soft][${label}] captured call: the clearance threshold the production action actually issued`,
+      call.clearance, expectedClearance);
+    check(`[soft][${label}] captured call: every pair's type is 'clearance' (never 'volume-overlap')`,
+      call.pairs.every((p) => p.type === 'clearance'), true);
+    check(`[soft][${label}] captured call: every pair echoes the query's own clearance threshold`,
+      call.pairs.every((p) => p.clearance === expectedClearance), true);
+    // The documented public contract is the half-open band (toleranceFloor, clearance]: a distance of
+    // exactly 0 means the two elements are TOUCHING, which is a Hard Clash, not a clearance result.
+    check(`[soft][${label}] captured call: every distance is a finite number strictly greater than 0`,
+      call.pairs.every((p) => typeof p.distance === 'number' && Number.isFinite(p.distance) && p.distance > 0), true);
+    check(`[soft][${label}] captured call: no distance exceeds the queried clearance threshold`,
+      call.pairs.every((p) => p.distance <= expectedClearance), true);
+    check(`[soft][${label}] captured call: every pair carries the CLEARANCE witness shape {sourcePoint, targetPoint}`,
+      call.pairs.every((p) => isPoint3(p.witnessSourcePoint) && isPoint3(p.witnessTargetPoint)), true);
+    check(`[soft][${label}] captured call: no pair carries Hard Clash's own {kind, point} witness shape`,
+      call.pairs.every((p) => p.witnessKind === null && p.witnessPoint === null), true);
+    // Guarded to the pairs that actually carry both witness points -- the check just above is what
+    // asserts that is ALL of them; check() records a failure without aborting, so this must not go
+    // on to throw a TypeError on a null point and take the rest of the run down with it.
+    const measurable = call.pairs.filter((p) => isPoint3(p.witnessSourcePoint) && isPoint3(p.witnessTargetPoint));
+    // Scaled by the distance itself: this compares an exact triangle-triangle distance against a
+    // Euclidean recomputation from the two witness points, so the meaningful bound is relative, not
+    // absolute (this fixture's clearance-5 case reaches distances of ~4.8). The observed maximum is
+    // recorded in the run report either way.
+    const maxSeparationError = measurable.length === 0 ? 0
+      : Math.max(...measurable.map((p) => Math.abs(witnessSeparationOf(p) - p.distance) / Math.max(1, p.distance)));
+    check(`[soft][${label}] captured call: every pair's reported distance equals the separation of its OWN two witness points`,
+      measurable.length === call.pairs.length && maxSeparationError <= 1e-5, true);
+    check(`[soft][${label}] captured call: no duplicate {targetModel, targetDbId} pairs`,
+      new Set(call.pairs.map(softTupleKey)).size, call.pairs.length);
+    check(`[soft][${label}] captured call: statistics.clearanceHits agrees with the emitted pair count`,
+      call.clearanceStatistics.clearanceHits, call.pairs.length);
+    return { maxSeparationError };
+  }
+
+  const softClearanceAtSectionStart = await page.evaluate((id) => window.viewer.getExtension(id)._clearance, CLASH_FINDER_EXTENSION_ID);
+  check('[soft] the live extension resolved its clearance to the production DEFAULT_CLEARANCE',
+    softClearanceAtSectionStart, EXPECTED_DEFAULT_CLEARANCE);
+  check('[soft] the discovery spike\'s measured true minimum distance from dbId 3965 exceeds the known-negative clearance (so that negative is real, not a threshold artifact)',
+    SOFT_CLASH_NEGATIVE_CLEARANCE < SOFT_CLASH_POSITIVE_CASE.expectedDistance, true);
+
+  // === Always run 1: known-negative, no false positive ===========================================
+  // Same source element as this file's own Hard Clash negative case (dbId 3965), at a clearance
+  // provably below its measured true minimum distance to anything in the scene.
+  console.log(`\n=== Soft Clash case: known-negative-no-false-positive (dbId ${NEGATIVE_CASE.sourceDbId} @ clearance ${SOFT_CLASH_NEGATIVE_CLEARANCE}) ===`);
+  const negativeSoft = await runFindSoftClashesCase(NEGATIVE_CASE.sourceDbId, SOFT_CLASH_NEGATIVE_CLEARANCE);
+  const negativeSoftCall = negativeSoft.spy.findClashesCalls[0];
+  const negativeSoftViz = await readSoftClashState();
+  results.softClash.cases['known-negative-no-false-positive'] = {
+    clearance: SOFT_CLASH_NEGATIVE_CLEARANCE,
+    sourceDbId: NEGATIVE_CASE.sourceDbId,
+    alertMessage: negativeSoft.message,
+    menuTitles: negativeSoft.menuTitles,
+    spy: negativeSoft.spy,
+    visualization: negativeSoftViz,
+  };
+  // The real Viewer context menu also carries its own built-in .menu-item entries (Isolate, Hide,
+  // Show All Objects, ...), so this asserts PRESENCE of both production entries among them, matched
+  // on trimmed exact text -- never that the menu contains only these two.
+  check('[soft] the real context menu offers BOTH production actions as distinct entries',
+    ['Find Clashes', 'Find Soft Clashes'].every((t) => negativeSoft.menuTitles.some((x) => x.trim() === t)), true);
+  check('[soft][known-negative] exactly one findClashes call made by the real "Find Soft Clashes" click',
+    negativeSoft.spy.findClashesCalls.length, 1);
+  check('[soft][known-negative] captured call: source is the Structure model',
+    negativeSoftCall.sourceModelKey, 'struct');
+  check('[soft][known-negative] captured call: source.dbIds is exactly the selected dbId',
+    negativeSoftCall.sourceDbIds, [NEGATIVE_CASE.sourceDbId]);
+  checkClearancePairInvariants('known-negative', negativeSoftCall, SOFT_CLASH_NEGATIVE_CLEARANCE);
+  check('[soft][known-negative] ZERO clearance pairs -- no false positive below the measured true minimum distance',
+    negativeSoftCall.pairs.length, 0);
+  check('[soft][known-negative] alert message is exactly "No clashes found." with no caveat',
+    negativeSoft.message, 'No clashes found.');
+  check('[soft][known-negative] the query really ran against real geometry (zero diagnostics, nothing skipped or aborted)',
+    negativeSoftCall.diagnosticsCount, 0);
+  check('[soft][known-negative] no Hard Clash exclusion fired here (this negative is a genuine distance verdict, not an exclusion)',
+    negativeSoftCall.clearanceStatistics.clearanceHardClashExclusions, 0);
+  // Soft Clash's own visualization is empty on a zero-result run. This is also the FIRST Soft Clash
+  // invocation of the whole session, which makes the check stronger than a bare "zero objects":
+  // _addSoftClashVisualization (the only caller of _ensureSoftClashOverlay) is never reached on the
+  // zero-pairs early-return path, so a Soft Clash query that finds nothing must leave NO overlay
+  // trace whatsoever -- the overlay scene unregistered rather than merely empty, and the lazily
+  // created shared geometry/material never allocated at all. That mirrors Hard Clash's own
+  // documented _addMarkers contract exactly, and is asserted here rather than assumed. (Live, the
+  // first draft of this check expected an empty-but-registered scene and correctly failed:
+  // overlaySceneMeshCount came back null, i.e. no such scene, which is the better behavior.)
+  check('[soft][known-negative] no Soft Clash overlay objects remain', negativeSoftViz.objectCount, 0);
+  check('[soft][known-negative] a zero-result Soft Clash leaves NO overlay trace at all -- the scene is never even registered, and the shared geometry/material are never allocated',
+    [negativeSoftViz.hasScene, negativeSoftViz.overlaySceneMeshCount, negativeSoftViz.softColor], [false, null, null]);
+  // ...and, critically, Hard Clash's own overlay and isolation are completely untouched by it. This
+  // is the live regression check for the Batch-3 defect where one action clobbered the other's state.
+  check('[soft][known-negative] Hard Clash\'s own markers survive a zero-result Soft Clash run',
+    negativeSoftViz.hardMarkerCount, hardMarkersBeforeSoftClash.activeMarkerCount);
+  check('[soft][known-negative] Hard Clash\'s own overlay scene still holds its own meshes',
+    negativeSoftViz.hardOverlaySceneMeshCount, hardMarkersBeforeSoftClash.overlaySceneMeshCount);
+  const negativeIsolatedStruct = await getIsolatedNodesFor('struct');
+  const negativeIsolatedArch = await getIsolatedNodesFor('arch');
+  const negativeIsolatedMech = await getIsolatedNodesFor('mech');
+  check('[soft][known-negative] Hard Clash\'s Structure isolation survives a zero-result Soft Clash run',
+    sortNums(negativeIsolatedStruct), sortNums(MIXED_CASE.expectedIsolatedStruct));
+  check('[soft][known-negative] Hard Clash\'s Architecture isolation survives a zero-result Soft Clash run',
+    sortNums(negativeIsolatedArch), sortNums(MIXED_CASE.expectedIsolatedArch));
+  check('[soft][known-negative] Mechanical is still not isolated', negativeIsolatedMech, []);
+  check('[soft][known-negative] no fitToView() calls on the zero-pairs early-return branch',
+    negativeSoft.spy.fitToViewCalls.length, 0);
+
+  // === Always run 2: a proven Hard Clash is NEVER reported as a clearance result =================
+  // Absence alone would not prove the tri-state precheck is what excluded arch 3686: that pair's
+  // true surface distance is exactly 0 (the elements are genuinely touching -- this file's own
+  // MIXED_CASE asserts it as a 'surface-crossing' volume-overlap pair above), and the clearance
+  // query's own tolerance floor rejects a zero distance anyway, for the unrelated reason that
+  // touching is not clearance. A completely DISABLED precheck would therefore produce the identical
+  // absence. So absence is asserted alongside the mechanism-specific statistic
+  // `clearanceHardClashExclusions`, which can only be nonzero if the precheck actually ran AND
+  // proved overlap -- a positive proof of the mechanism, not an inference from an absence.
+  console.log(`\n=== Soft Clash case: hard-clash-never-in-clearance-results (dbId ${MIXED_CASE.sourceDbId} @ clearance ${SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE}) ===`);
+  const exclusionSoft = await runFindSoftClashesCase(MIXED_CASE.sourceDbId, SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE);
+  const exclusionSoftCall = exclusionSoft.spy.findClashesCalls[0];
+  const exclusionTargetKeys = exclusionSoftCall.pairs.map(softTupleKey);
+  results.softClash.cases['hard-clash-never-in-clearance-results'] = {
+    clearance: SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE,
+    sourceDbId: MIXED_CASE.sourceDbId,
+    alertMessage: exclusionSoft.message,
+    pairCount: exclusionSoftCall.pairs.length,
+    targetKeys: [...exclusionTargetKeys].sort(),
+    clearanceStatistics: exclusionSoftCall.clearanceStatistics,
+    diagnosticReasons: exclusionSoftCall.diagnosticReasons,
+    distanceRange: exclusionSoftCall.pairs.length
+      ? [Math.min(...exclusionSoftCall.pairs.map((p) => p.distance)), Math.max(...exclusionSoftCall.pairs.map((p) => p.distance))]
+      : null,
+  };
+  check('[soft][hard-clash-exclusion] exactly one findClashes call made by the real "Find Soft Clashes" click',
+    exclusionSoft.spy.findClashesCalls.length, 1);
+  check('[soft][hard-clash-exclusion] captured call: source.dbIds is exactly the selected dbId',
+    exclusionSoftCall.sourceDbIds, [MIXED_CASE.sourceDbId]);
+  checkClearancePairInvariants('hard-clash-exclusion', exclusionSoftCall, SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE);
+  // Non-vacuity: this query really did produce clearance results, so the absences below are absences
+  // from a genuinely populated result set. The exact count (33 live, stable across 10 observed runs)
+  // is RECORDED rather than asserted: the Hard-Clash precheck's own crossing term carries a
+  // wall-clock frame budget, so how many candidate pairs come back 'inconclusive' -- and therefore
+  // how many pairs survive -- is in principle load-dependent, and pinning it would buy nothing this
+  // case actually needs.
+  check('[soft][hard-clash-exclusion] the query produced a genuinely populated clearance result set (so the absences below are meaningful)',
+    exclusionSoftCall.pairs.length > 0, true);
+  // The tie-in that makes this a real claim rather than a bare absence: the Hard Clash query run
+  // EARLIER IN THIS SAME SESSION, from the SAME source element, against the SAME loaded models, did
+  // return this exact target.
+  check('[soft][hard-clash-exclusion] precondition: the Hard Clash query above genuinely DID return the crossing target arch 3686',
+    mixedCall.pairs.some((p) => p.targetModelKey === MIXED_CASE.hardClashTargetModelKey
+      && p.targetDbId === MIXED_CASE.hardClashTargetDbId && p.witnessKind === 'surface-crossing'), true);
+  check(`[soft][hard-clash-exclusion] that proven Hard Clash target (${MIXED_CASE.hardClashTargetModelKey} ${MIXED_CASE.hardClashTargetDbId}, surface-crossing) is ABSENT from the clearance result`,
+    exclusionTargetKeys.includes(`${MIXED_CASE.hardClashTargetModelKey}:${MIXED_CASE.hardClashTargetDbId}`), false);
+  check(`[soft][hard-clash-exclusion] the other proven Hard Clash target (struct ${MIXED_CASE.containmentTargetDbId}, containment) is ABSENT too`,
+    exclusionTargetKeys.includes(`struct:${MIXED_CASE.containmentTargetDbId}`), false);
+  // THE mechanism-specific proof (Important #5). Nonzero is only reachable through
+  // classifyHardClashPrecheck returning 'excluded', i.e. volumeOverlapQuery PROVING overlap for a
+  // contributing fragment pair. A disabled/short-circuited precheck cannot produce it.
+  check('[soft][hard-clash-exclusion] statistics.clearanceHardClashExclusions >= 1 -- the tri-state precheck genuinely RAN and PROVED overlap',
+    exclusionSoftCall.clearanceStatistics.clearanceHardClashExclusions >= 1, true);
+  check('[soft][hard-clash-exclusion] the precheck was actually exercised (clearanceOverlapPrechecksRun >= clearanceHardClashExclusions >= 1)',
+    exclusionSoftCall.clearanceStatistics.clearanceOverlapPrechecksRun
+      >= exclusionSoftCall.clearanceStatistics.clearanceHardClashExclusions, true);
+  check('[soft][hard-clash-exclusion] the source dbId is excluded from its OWN model\'s clearance results (same-model self-clash)',
+    exclusionTargetKeys.includes(`struct:${MIXED_CASE.sourceDbId}`), false);
+  // The user-visible report stays self-consistent with the real result even at this large clearance.
+  const exclusionSameModel = exclusionSoftCall.pairs.filter((p) => p.targetModelKey === 'struct').length;
+  const exclusionCrossModel = exclusionSoftCall.pairs.length - exclusionSameModel;
+  check('[soft][hard-clash-exclusion] the alert\'s own summary matches the captured result exactly',
+    exclusionSoft.message.startsWith(`${exclusionSoftCall.pairs.length} clashes found (${exclusionSameModel} in this model, ${exclusionCrossModel} in other models)`), true);
+  // This query DOES carry completeness-affecting diagnostics (live: 3 x
+  // 'clearance-hard-clash-precheck-inconclusive'), so its alert must carry the caveat -- the exact
+  // count/reasons are recorded, not asserted, for the same wall-clock-budget reason as above.
+  check('[soft][hard-clash-exclusion] the alert carries the incompleteness caveat its own diagnostics require',
+    exclusionSoftCall.diagnosticsCount > 0 ? exclusionSoft.message.includes('may be incomplete') : true, true);
+
+  // === Positive case: the discovered near-miss, through the untouched production action ==========
+  // Runs because the bounded spike genuinely found one. Nothing here is synthetic: the clearance is
+  // the extension's OWN load()-resolved default, with no override at all.
+  console.log(`\n=== Soft Clash case: ${SOFT_CLASH_POSITIVE_CASE.name} ===`);
+  const positiveSoft = await runFindSoftClashesCase(SOFT_CLASH_POSITIVE_CASE.sourceDbId, null);
+  const positiveSoftCall = positiveSoft.spy.findClashesCalls[0];
+  const positiveSoftViz = await readSoftClashState();
+  results.softClash.cases['discovered-near-miss-positive'] = {
+    clearance: SOFT_CLASH_POSITIVE_CASE.clearance,
+    clearanceWasOverridden: false,
+    sourceDbId: SOFT_CLASH_POSITIVE_CASE.sourceDbId,
+    alertMessage: positiveSoft.message,
+    spy: positiveSoft.spy,
+    visualization: positiveSoftViz,
+  };
+  check('[soft][near-miss] exactly one findClashes call made by the real "Find Soft Clashes" click',
+    positiveSoft.spy.findClashesCalls.length, 1);
+  check('[soft][near-miss] captured call: source is the Structure model', positiveSoftCall.sourceModelKey, 'struct');
+  check('[soft][near-miss] captured call: source.dbIds is exactly the selected dbId',
+    positiveSoftCall.sourceDbIds, [SOFT_CLASH_POSITIVE_CASE.sourceDbId]);
+  checkClearancePairInvariants('near-miss', positiveSoftCall, SOFT_CLASH_POSITIVE_CASE.clearance);
+  check('[soft][near-miss] captured call: the clearance used is the production DEFAULT, never an override from this test',
+    positiveSoftCall.clearance, EXPECTED_DEFAULT_CLEARANCE);
+  check('[soft][near-miss] captured call: exact {targetModel, targetDbId} pair set matches the discovery spike\'s own finding',
+    positiveSoftCall.pairs.map(softTupleKey).sort(),
+    SOFT_CLASH_POSITIVE_CASE.expectedPairs.map(softTupleKey).sort());
+  check('[soft][near-miss] captured call: every pair\'s source really is Structure dbId 3965',
+    positiveSoftCall.pairs.every((p) => p.sourceModelKey === 'struct' && p.sourceDbId === SOFT_CLASH_POSITIVE_CASE.sourceDbId), true);
+  // Model provenance: this near-miss is entirely same-model, and the query really did span all three
+  // models (whole-model scope for every loaded model), so "no cross-model pair" is a real finding.
+  check('[soft][near-miss] captured call: same-model pair count (correct provenance labeling)',
+    positiveSoftCall.pairs.filter((p) => p.targetModelKey === 'struct').length, 2);
+  check('[soft][near-miss] captured call: cross-model pair count (correct provenance labeling)',
+    positiveSoftCall.pairs.filter((p) => p.targetModelKey !== 'struct').length, 0);
+  check('[soft][near-miss] captured call: source dbId excluded from its OWN model\'s results (same-model self-clash)',
+    positiveSoftCall.pairs.some((p) => p.targetModelKey === 'struct' && p.targetDbId === SOFT_CLASH_POSITIVE_CASE.sourceDbId), false);
+  // --- the measured distance itself ---
+  check(`[soft][near-miss] every measured distance is within ${SOFT_CLASH_POSITIVE_CASE.distanceTolerance} of this fixture's recorded ground truth (${SOFT_CLASH_POSITIVE_CASE.expectedDistance})`,
+    positiveSoftCall.pairs.every((p) => Math.abs(p.distance - SOFT_CLASH_POSITIVE_CASE.expectedDistance) <= SOFT_CLASH_POSITIVE_CASE.distanceTolerance), true);
+  check('[soft][near-miss] every measured distance sits strictly inside the queried clearance band (a genuine near-miss, not a touch)',
+    positiveSoftCall.pairs.every((p) => p.distance > 0 && p.distance < SOFT_CLASH_POSITIVE_CASE.clearance), true);
+  // Independent corroboration from a wholly different data source: the InstanceTree's own node
+  // boxes, which the collision pipeline plays no part in producing. 3965's box min-Y minus each
+  // target's box max-Y is the same gap the clearance query measured (to within Float32 node-box
+  // quantization) -- so this distance is not merely self-consistent, it is externally confirmed.
+  const nodeBoxGaps = await page.evaluate(({ sourceDbId, targetDbIds }) => {
+    const it = window.__test.modelStruct.getInstanceTree();
+    const boxOf = (dbId) => { const b = new Float32Array(6); it.getNodeBox(dbId, b); return Array.from(b); };
+    const source = boxOf(sourceDbId);
+    return targetDbIds.map((dbId) => {
+      const t = boxOf(dbId);
+      return { dbId, gapY: source[1] - t[4], sourceBox: source, targetBox: t };
+    });
+  }, { sourceDbId: SOFT_CLASH_POSITIVE_CASE.sourceDbId, targetDbIds: SOFT_CLASH_POSITIVE_CASE.expectedPairs.map((p) => p.targetDbId) });
+  results.softClash.cases['discovered-near-miss-positive'].nodeBoxGaps = nodeBoxGaps;
+  console.log(`  [near-miss] independent node-box Y gaps: ${JSON.stringify(nodeBoxGaps.map((g) => g.gapY))}`);
+  check(`[soft][near-miss] the measured surface distance is independently corroborated by the InstanceTree's own node boxes (within ${SOFT_CLASH_POSITIVE_CASE.nodeBoxGapTolerance})`,
+    nodeBoxGaps.every((g) => Math.abs(g.gapY - SOFT_CLASH_POSITIVE_CASE.expectedDistance) <= SOFT_CLASH_POSITIVE_CASE.nodeBoxGapTolerance), true);
+  check('[soft][near-miss] alert message reports the near-miss exactly, with no incompleteness caveat',
+    positiveSoft.message, SOFT_CLASH_POSITIVE_CASE.expectedAlertMessage);
+  await page.screenshot({ path: path.join(RESULTS_DIR, `clash-finder-soft-${SOFT_CLASH_POSITIVE_CASE.sourceDbId}-result.png`), fullPage: false });
+
+  // --- world-space closest-point visualization, bound to the REAL overlay objects ----------------
+  const positiveWitnessPointPairs = positiveSoftCall.pairs.map((p) => [p.witnessSourcePoint, p.witnessTargetPoint]);
+  const positiveWitnessPointsFlat = positiveWitnessPointPairs.flat();
+  check('[soft][near-miss] the Soft Clash overlay holds exactly two endpoint spheres + one connecting line per pair',
+    positiveSoftViz.objectCount, positiveSoftCall.pairs.length * 3);
+  check('[soft][near-miss] the object families are exactly {2 x Mesh, 1 x Line} per pair',
+    [positiveSoftViz.types.filter((t) => t === 'Mesh').length, positiveSoftViz.types.filter((t) => t === 'Line').length],
+    [positiveSoftCall.pairs.length * 2, positiveSoftCall.pairs.length]);
+  check('[soft][near-miss] every endpoint sphere sits exactly on one of the pairs\' own world-space closest points',
+    sortedPointKeys(positiveSoftViz.meshPositions), sortedPointKeys(positiveWitnessPointsFlat));
+  check('[soft][near-miss] every connecting line spans its own pair\'s two closest points',
+    positiveSoftViz.lineEndpoints.length === positiveSoftCall.pairs.length
+      && positiveSoftViz.lineEndpoints.every((e) => e !== null && matchesSomePointPair(e, positiveWitnessPointPairs, 1e-4)), true);
+  check('[soft][near-miss] the Soft Clash overlay scene is registered', positiveSoftViz.hasScene, true);
+  check('[soft][near-miss] every Soft Clash object is really in the overlay scene (public overlays.hasMesh)',
+    positiveSoftViz.hasMeshFlags, new Array(positiveSoftCall.pairs.length * 3).fill(true));
+  check('[soft][near-miss] the Soft Clash overlay scene holds exactly that many objects (internal corroboration)',
+    positiveSoftViz.overlaySceneMeshCount, positiveSoftCall.pairs.length * 3);
+  check('[soft][near-miss] every endpoint sphere is uniformly scaled', positiveSoftViz.meshUniformScale, true);
+  check('[soft][near-miss] every endpoint sphere radius is inside Soft Clash\'s own clamped [MIN, MAX] band',
+    positiveSoftViz.meshRadii.every((r) => r >= EXPECTED_SOFT_MIN_MARKER_RADIUS && r <= EXPECTED_SOFT_MAX_MARKER_RADIUS), true);
+  // Global Constraint: one shared sphere geometry/material and one shared line material, with only
+  // the per-pair line geometry created per object.
+  check('[soft][near-miss] every sphere reuses the ONE shared Soft Clash geometry', positiveSoftViz.meshesShareGeometry, true);
+  check('[soft][near-miss] every sphere reuses the ONE shared Soft Clash material', positiveSoftViz.meshesShareMaterial, true);
+  check('[soft][near-miss] every line reuses the ONE shared Soft Clash line material', positiveSoftViz.linesShareMaterial, true);
+  check('[soft][near-miss] each line owns its OWN distinct geometry (never the shared sphere geometry, never a shared one)',
+    positiveSoftViz.lineGeometriesAreDistinct, true);
+  check('[soft][near-miss] the Soft Clash colour is its own SOFT_CLASH_COLOR, visually distinct from Hard Clash\'s',
+    [positiveSoftViz.softColor, positiveSoftViz.softLineColor, positiveSoftViz.hardColor],
+    [EXPECTED_SOFT_CLASH_COLOR, EXPECTED_SOFT_CLASH_COLOR, EXPECTED_HARD_CLASH_COLOR]);
+  check('[soft][near-miss] Soft Clash markers render through opaque geometry too (depthTest:false, same as Hard Clash\'s)',
+    positiveSoftViz.softDepthTest, false);
+  // --- the two visualizations genuinely coexist -------------------------------------------------
+  check('[soft][near-miss] the two overlay scenes are separate and both registered at once',
+    positiveSoftViz.overlayScenesAreDistinct, true);
+  check('[soft][near-miss] Hard Clash\'s own markers are still on screen, untouched by the Soft Clash run',
+    [positiveSoftViz.hardMarkerCount, positiveSoftViz.hardOverlaySceneMeshCount],
+    [hardMarkersBeforeSoftClash.activeMarkerCount, hardMarkersBeforeSoftClash.overlaySceneMeshCount]);
+
+  // --- isolation: Soft Clash's own contribution is UNIONED with Hard Clash's, never a replacement -
+  const expectedUnionStruct = sortNums([...new Set([
+    ...MIXED_CASE.expectedIsolatedStruct, ...SOFT_CLASH_POSITIVE_CASE.expectedSoftIsolatedStruct,
+  ])]);
+  check('[soft][near-miss] real isolate() for Structure is the UNION of Hard Clash\'s and Soft Clash\'s own contributions',
+    sortNums(isolateCallFor(positiveSoft.spy, 'struct')?.dbIds ?? []), expectedUnionStruct);
+  check('[soft][near-miss] real isolate() for Architecture re-applies Hard Clash\'s own contribution unchanged (Soft Clash never touched that model)',
+    sortNums(isolateCallFor(positiveSoft.spy, 'arch')?.dbIds ?? []), sortNums(MIXED_CASE.expectedIsolatedArch));
+  check('[soft][near-miss] Mechanical is never isolated (no pair involves it)',
+    isolateCallFor(positiveSoft.spy, 'mech'), undefined);
+  // fitToView, by contrast, is per-action camera framing scoped to exactly what THIS action found --
+  // deliberately NOT the union.
+  check('[soft][near-miss] exactly one real fitToView() call, for the Structure model only',
+    positiveSoft.spy.fitToViewCalls.map((c) => c.modelKey), ['struct']);
+  check('[soft][near-miss] real fitToView() frames only what THIS action found, never the isolation union',
+    sortNums(fitToViewCallFor(positiveSoft.spy, 'struct')?.dbIds ?? []),
+    sortNums(SOFT_CLASH_POSITIVE_CASE.expectedSoftIsolatedStruct));
+  const positiveIsolatedStruct = await getIsolatedNodesFor('struct');
+  const positiveIsolatedArch = await getIsolatedNodesFor('arch');
+  const positiveIsolatedMech = await getIsolatedNodesFor('mech');
+  check('[soft][near-miss] end-state: Structure isolation really is the union', sortNums(positiveIsolatedStruct), expectedUnionStruct);
+  check('[soft][near-miss] end-state: Architecture isolation is unchanged', sortNums(positiveIsolatedArch), sortNums(MIXED_CASE.expectedIsolatedArch));
+  check('[soft][near-miss] end-state: Mechanical isolation is still empty', positiveIsolatedMech, []);
+
+  // --- the same near-miss, re-run after ONE real model-alignment operation -----------------------
+  // Both operands of both pairs live in the Structure model, so a pure +3 X translation of that
+  // model's placement is a RIGID MOTION for this pair set: the measured distances must be unchanged
+  // and both witness points of every pair must translate by exactly (+3, 0, 0). That exactness is
+  // the point -- it is a genuine invariant, not a tolerance-padded approximation, and it is what
+  // proves the closest-point visualization actually tracked the alignment.
+  console.log(`\n=== Soft Clash case: alignment (+${ALIGNMENT_DELTA_X} X on the Structure model), near-miss re-run ===`);
+  const softAlignmentOriginalPlacement = await readStructPlacementElements();
+  await translateStructPlacement(ALIGNMENT_DELTA_X);
+  const softMovedPlacement = await readStructPlacementElements();
+  check('[soft][alignment] the Structure model\'s placement transform really moved by the expected delta in X',
+    Math.abs((softMovedPlacement[12] - softAlignmentOriginalPlacement[12]) - ALIGNMENT_DELTA_X) <= 1e-6, true);
+
+  const alignedSoft = await runFindSoftClashesCase(SOFT_CLASH_POSITIVE_CASE.sourceDbId, null);
+  const alignedSoftCall = alignedSoft.spy.findClashesCalls[0];
+  const alignedSoftViz = await readSoftClashState();
+  const witnessPairByKey = (call) => Object.fromEntries(
+    call.pairs.map((p) => [softTupleKey(p), [p.witnessSourcePoint, p.witnessTargetPoint]]),
+  );
+  const softWitnessBefore = witnessPairByKey(positiveSoftCall);
+  const softWitnessAfter = witnessPairByKey(alignedSoftCall);
+  const softWitnessDeltas = Object.fromEntries(Object.keys(softWitnessBefore).map((key) => [key,
+    (softWitnessAfter[key] ?? [[NaN, NaN, NaN], [NaN, NaN, NaN]]).map((pt, i) => pt.map((v, j) => v - softWitnessBefore[key][i][j])),
+  ]));
+  results.softClash.cases['discovered-near-miss-positive'].alignment = {
+    deltaX: ALIGNMENT_DELTA_X,
+    alertMessage: alignedSoft.message,
+    witnessDeltas: softWitnessDeltas,
+    visualization: alignedSoftViz,
+  };
+  console.log(`  [soft][alignment] witness deltas = ${JSON.stringify(softWitnessDeltas)}`);
+  check('[soft][alignment] exactly one findClashes call made by the re-run\'s real click',
+    alignedSoft.spy.findClashesCalls.length, 1);
+  check('[soft][alignment] the same {targetModel, targetDbId} pair set still resolves after the alignment',
+    [...alignedSoftCall.pairs.map(softTupleKey)].sort(), SOFT_CLASH_POSITIVE_CASE.expectedPairs.map(softTupleKey).sort());
+  check('[soft][alignment] every measured distance is unchanged (a rigid motion cannot change a distance between two operands that both moved with it)',
+    alignedSoftCall.pairs.every((p) => Math.abs(p.distance - SOFT_CLASH_POSITIVE_CASE.expectedDistance) <= SOFT_CLASH_POSITIVE_CASE.distanceTolerance), true);
+  check(`[soft][alignment] BOTH witness points of every pair moved by exactly (+${ALIGNMENT_DELTA_X}, 0, 0) -- a rigid-motion invariant, matched by pair identity`,
+    Object.values(softWitnessDeltas).every((pts) => pts.every((d) => pointsWithin(d, [ALIGNMENT_DELTA_X, 0, 0], 1e-6))), true);
+  const alignedWitnessPointPairs = alignedSoftCall.pairs.map((p) => [p.witnessSourcePoint, p.witnessTargetPoint]);
+  check('[soft][alignment] every endpoint sphere sits on a closest point from the RE-RUN\'s own result (matched as a multiset, never by array order)',
+    sortedPointKeys(alignedSoftViz.meshPositions), sortedPointKeys(alignedWitnessPointPairs.flat()));
+  check('[soft][alignment] every connecting line spans a RE-RUN closest-point pair',
+    alignedSoftViz.lineEndpoints.every((e) => e !== null && matchesSomePointPair(e, alignedWitnessPointPairs, 1e-4)), true);
+  check('[soft][alignment] the same number of Soft Clash overlay objects is drawn',
+    alignedSoftViz.objectCount, positiveSoftViz.objectCount);
+
+  // Restore the placement and re-run: everything must come back to exactly where it started.
+  await restoreStructPlacement(softAlignmentOriginalPlacement);
+  const softRestoredPlacement = await readStructPlacementElements();
+  check('[soft][alignment] the Structure model\'s placement transform was restored exactly',
+    softRestoredPlacement, softAlignmentOriginalPlacement);
+  const restoredSoft = await runFindSoftClashesCase(SOFT_CLASH_POSITIVE_CASE.sourceDbId, null);
+  const restoredSoftCall = restoredSoft.spy.findClashesCalls[0];
+  const restoredSoftViz = await readSoftClashState();
+  const softWitnessRestored = witnessPairByKey(restoredSoftCall);
+  results.softClash.cases['discovered-near-miss-positive'].restored = {
+    alertMessage: restoredSoft.message, visualization: restoredSoftViz,
+  };
+  check('[soft][alignment] after restoring the placement, the same pair set resolves again',
+    [...restoredSoftCall.pairs.map(softTupleKey)].sort(), SOFT_CLASH_POSITIVE_CASE.expectedPairs.map(softTupleKey).sort());
+  check('[soft][alignment] after restoring the placement, BOTH witness points of every pair return to their original world positions (matched by pair identity)',
+    Object.keys(softWitnessBefore).every((key) => softWitnessRestored[key]
+      && softWitnessRestored[key].every((pt, i) => pointsWithin(pt, softWitnessBefore[key][i], 1e-6))), true);
+  check('[soft][alignment] after restoring the placement, every endpoint sphere sits on a restored closest point',
+    sortedPointKeys(restoredSoftViz.meshPositions),
+    sortedPointKeys(restoredSoftCall.pairs.flatMap((p) => [p.witnessSourcePoint, p.witnessTargetPoint])));
+
+  // --- section-level guarantees -----------------------------------------------------------------
+  const softClearanceAtSectionEnd = await page.evaluate((id) => window.viewer.getExtension(id)._clearance, CLASH_FINDER_EXTENSION_ID);
+  check('[soft] the extension\'s own clearance was restored to the production default after every override',
+    softClearanceAtSectionEnd, EXPECTED_DEFAULT_CLEARANCE);
+  // Scoped to THIS section, unlike the whole-run assertion at the end of main(): what matters here
+  // is that nothing Soft Clash did produced a new console error or an uncaught page exception.
+  check('[soft] the whole Soft Clash section introduced ZERO new console errors',
+    results.consoleErrors.slice(softClashConsoleErrorsBefore), []);
+  check('[soft] the whole Soft Clash section introduced ZERO new uncaught page exceptions',
+    results.pageErrors.slice(softClashPageErrorsBefore), []);
+
   // === M2.1 Task 10 Step 8: unloading a participating model clears the whole visualization ========
   // The Architecture model is a genuine participant here (it owns the cross-model target, dbId 3686,
   // and is currently isolated). Its unload must clear EVERY marker and ALL isolation -- not just its
@@ -1383,8 +2118,23 @@ async function main() {
   check('[unload] Structure isolation cleared', unloadState.isolatedStruct, []);
   check('[unload] Mechanical isolation still empty', unloadState.isolatedMech, []);
 
+  // M3 Task 17, added as a sibling check rather than folded into the block above: the Soft Clash
+  // section left its OWN overlay populated (the restored near-miss re-run's 6 objects), so this
+  // unload must clear that visualization too -- _onBeforeModelUnload's Soft Clash cleanup rung is
+  // unconditional and whole-visualization, exactly like Hard Clash's own. Its overlay SCENE, like
+  // Hard Clash's, deliberately survives (only unload() removes it).
+  const softStateAfterUnload = await readSoftClashState();
+  results.unload.softClash = softStateAfterUnload;
+  check('[unload] no Soft Clash overlay objects remain either', softStateAfterUnload.objectCount, 0);
+  check('[unload] the Soft Clash overlay scene holds zero objects', softStateAfterUnload.overlaySceneMeshCount, 0);
+  check('[unload] the Soft Clash overlay scene itself still exists (only unload() removes it)',
+    softStateAfterUnload.hasScene, true);
+
   // === M2.1 Task 10 Step 9: zero console errors across the ENTIRE run =============================
-  check('zero console errors across the whole run (viewer bootstrap, 3 model loads, 4 Find Clashes runs, alignment, unload)',
+  // M3 Task 17 touched ONLY this check's description, to keep it accurate now that the run also
+  // performs 4 "Find Soft Clashes" invocations and a second alignment cycle -- the assertion itself
+  // (results.consoleErrors must be empty) is unchanged.
+  check('zero console errors across the whole run (viewer bootstrap, 3 model loads, 4 Find Clashes runs, 4 Find Soft Clashes runs, 2 alignment cycles, unload)',
     results.consoleErrors, []);
   check('zero uncaught page exceptions across the whole run', results.pageErrors, []);
 
