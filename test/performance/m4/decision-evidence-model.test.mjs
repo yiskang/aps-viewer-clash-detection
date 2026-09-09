@@ -217,3 +217,92 @@ test('full integration: two tuples, mixed dispositions, global preconditions all
   assert.equal(ev.tuples[1].boundaries[0].disposition, 'SUFFICIENT');
   assert.equal(ev.tuples[1].boundaries[1].disposition, 'SUFFICIENT');
 });
+
+// --- codex-advisor hardening round: malformed-but-not-null contract values must throw, never silently
+// fall through to a passing disposition. ---
+
+test('throws when a §7.3 prerequisite field is present but not a boolean or null', () => {
+  assert.throws(
+    () => buildEvidenceVector(
+      [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null, memoryBudgetMet: 'false', lifecycleDemonstrated: true, moduleResolutionEstablished: true }])],
+      passingGlobalPreconditions(),
+    ),
+    /memoryBudgetMet must be a boolean or null/,
+  );
+});
+
+test('throws when deliveryTaskIdentified is not null and not exactly 5 booleans', () => {
+  assert.throws(
+    () => buildEvidenceVector(
+      [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: [true], derivedEvidenceBounded: null }])],
+      passingGlobalPreconditions(),
+    ),
+    /deliveryTaskIdentified must be null or an array of exactly 5 booleans/,
+  );
+  assert.throws(
+    () => buildEvidenceVector(
+      [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: [true, true, 'false', true, true], derivedEvidenceBounded: null }])],
+      passingGlobalPreconditions(),
+    ),
+    /deliveryTaskIdentified must be null or an array of exactly 5 booleans/,
+  );
+});
+
+test('throws when boundary.applicable is not strictly a boolean', () => {
+  assert.throws(
+    () => buildEvidenceVector(
+      [tAFailingTuple([{ id: 'WB-2p', applicable: 'false', residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }])],
+      passingGlobalPreconditions(),
+    ),
+    /applicable must be a boolean/,
+  );
+  assert.throws(
+    () => buildEvidenceVector(
+      [tAFailingTuple([{ id: 'WB-2p', residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }])],
+      passingGlobalPreconditions(),
+    ),
+    /applicable must be a boolean/,
+  );
+});
+
+test('throws when derivedEvidenceBounded is present but not a boolean or null', () => {
+  assert.throws(
+    () => buildEvidenceVector(
+      [tAFailingTuple([{ id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: 'true' }])],
+      passingGlobalPreconditions(),
+    ),
+    /derivedEvidenceBounded must be a boolean or null/,
+  );
+});
+
+test('throws when a residual/occupancy/screen-residual array contains NaN or an infinite value', () => {
+  assert.throws(
+    () => buildEvidenceVector(
+      [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: [10, 10, 10, 10, NaN], occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }])],
+      passingGlobalPreconditions(),
+    ),
+    /residualMs must be an array of exactly 5 finite numbers/,
+  );
+  assert.throws(
+    () => buildEvidenceVector(
+      [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: [10, 10, 10, 10, Infinity], deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }])],
+      passingGlobalPreconditions(),
+    ),
+    /occupancyMs must be an array of exactly 5 finite numbers/,
+  );
+  const base = { tuple: { runtime: 'multi-process', caseId: 'R3', broadPhase: 'linear', state: 'cold' }, narrowPhaseFamilyWins: true, targets: { tA: false, tB1: true, tB2: true, tC: true }, boundaries: [] };
+  assert.throws(
+    () => buildEvidenceVector([{ ...base, screenResidualMs: [10, 10, 10, 10, -Infinity] }], passingGlobalPreconditions()),
+    /screenResidualMs must be an array of exactly 5 finite numbers/,
+  );
+});
+
+test('throws when tuple.state is not one of cold, warm, refresh', () => {
+  assert.throws(
+    () => buildEvidenceVector(
+      [{ tuple: { runtime: 'multi-process', caseId: 'R1', broadPhase: 'linear', state: 'Warm' }, targets: { tA: true, tB1: true, tB2: true, tC: true }, screenResidualMs: null, boundaries: [] }],
+      passingGlobalPreconditions(),
+    ),
+    /tuple.state must be one of/,
+  );
+});

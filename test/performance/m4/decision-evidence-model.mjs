@@ -42,14 +42,32 @@ function validateGlobalPreconditions(globalPreconditions) {
 }
 
 function requireFiveNumbers(value, label) {
-  if (!Array.isArray(value) || value.length !== 5 || value.some((v) => typeof v !== 'number')) {
-    throw new Error(`buildEvidenceVector: ${label} must be an array of exactly 5 numbers`);
+  if (!Array.isArray(value) || value.length !== 5 || value.some((v) => typeof v !== 'number' || !Number.isFinite(v))) {
+    throw new Error(`buildEvidenceVector: ${label} must be an array of exactly 5 finite numbers`);
   }
 }
+
+function requireBooleanOrNull(value, label) {
+  if (value !== null && typeof value !== 'boolean') {
+    throw new Error(`buildEvidenceVector: ${label} must be a boolean or null`);
+  }
+}
+
+function requireFiveBooleansOrNull(value, label) {
+  if (value === null) return;
+  if (!Array.isArray(value) || value.length !== 5 || value.some((v) => typeof v !== 'boolean')) {
+    throw new Error(`buildEvidenceVector: ${label} must be null or an array of exactly 5 booleans`);
+  }
+}
+
+const VALID_TUPLE_STATES = ['cold', 'warm', 'refresh'];
 
 function buildTupleEvidence(raw) {
   if (!raw.tuple?.runtime || !raw.tuple?.caseId) {
     throw new Error('buildEvidenceVector: tuple.runtime and tuple.caseId are required');
+  }
+  if (!VALID_TUPLE_STATES.includes(raw.tuple.state)) {
+    throw new Error(`buildEvidenceVector: tuple ${raw.tuple.caseId}: tuple.state must be one of ${VALID_TUPLE_STATES.join(', ')}`);
   }
   requireBoolean(raw.targets?.tA, `tuple ${raw.tuple.caseId}: targets.tA`);
   requireBoolean(raw.targets?.tB1, `tuple ${raw.tuple.caseId}: targets.tB1`);
@@ -78,6 +96,9 @@ function buildTupleEvidence(raw) {
 
 function checkPrerequisites(raw) {
   const fields = { memoryBudgetMet: raw.memoryBudgetMet, lifecycleDemonstrated: raw.lifecycleDemonstrated, moduleResolutionEstablished: raw.moduleResolutionEstablished };
+  for (const [key, value] of Object.entries(fields)) {
+    requireBooleanOrNull(value, `boundaries[${raw.id}].${key}`);
+  }
   if (Object.values(fields).some((v) => v === null || v === undefined)) return 'missing-prerequisite-evidence';
   if (Object.values(fields).some((v) => v === false)) return 'prerequisite-not-met';
   return null; // all three true -- gate passes
@@ -87,9 +108,14 @@ function computeBoundaryDisposition(raw) {
   const meta = BOUNDARY_TABLE[raw.id];
   if (!meta) throw new Error(`buildEvidenceVector: unknown boundary id "${raw.id}"`);
 
+  requireBoolean(raw.applicable, `boundaries[${raw.id}].applicable`);
+
   if (!raw.applicable) {
     return { id: raw.id, class: meta.class, applicable: false, ownedStages: meta.ownedStages, disposition: 'NOT_APPLICABLE', unevaluableReason: null };
   }
+
+  requireBooleanOrNull(raw.derivedEvidenceBounded, `boundaries[${raw.id}].derivedEvidenceBounded`);
+  requireFiveBooleansOrNull(raw.deliveryTaskIdentified, `boundaries[${raw.id}].deliveryTaskIdentified`);
 
   if (meta.class === 'B') {
     if (raw.residualMs === null || raw.occupancyMs === null) {
