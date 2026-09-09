@@ -80,7 +80,7 @@ function tAFailingTuple(boundaries) {
     targets: { tA: false, tB1: true, tB2: true, tC: true },
     screenResidualMs: [10, 10, 10, 10, 10],
     narrowPhaseFamilyWins: true, // default for B-class-focused fixtures; C-eligibility tests override state/this explicitly
-    boundaries,
+    boundaries: boundaries.map((b) => ({ memoryBudgetMet: true, lifecycleDemonstrated: true, moduleResolutionEstablished: true, ...b })),
   };
 }
 const fiveReps = (v) => Array(5).fill(v);
@@ -173,4 +173,29 @@ test('C-class boundary: SUFFICIENT/INSUFFICIENT follow the same Rᵢ+Hᵢ<=50ms 
   );
   assert.equal(unbounded.tuples[0].boundaries[0].disposition, 'UNEVALUABLE');
   assert.equal(unbounded.tuples[0].boundaries[0].unevaluableReason, 'unboundable-derived-evidence');
+});
+
+test('a boundary whose numeric bound passes but §7.3 condition 6/7/8 evidence is missing is UNEVALUABLE, never SUFFICIENT', () => {
+  const missingMemory = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null, memoryBudgetMet: null, lifecycleDemonstrated: true, moduleResolutionEstablished: true }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(missingMemory.tuples[0].boundaries[0].disposition, 'UNEVALUABLE');
+  assert.equal(missingMemory.tuples[0].boundaries[0].unevaluableReason, 'missing-prerequisite-evidence');
+});
+
+test('a boundary whose numeric bound passes but the memory budget was measured and exceeded is INSUFFICIENT, not SUFFICIENT', () => {
+  const overBudget = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null, memoryBudgetMet: false, lifecycleDemonstrated: true, moduleResolutionEstablished: true }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(overBudget.tuples[0].boundaries[0].disposition, 'INSUFFICIENT');
+});
+
+test('only true/true/true for memoryBudgetMet/lifecycleDemonstrated/moduleResolutionEstablished, plus the numeric bound, yields SUFFICIENT', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null, memoryBudgetMet: true, lifecycleDemonstrated: true, moduleResolutionEstablished: true }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(ev.tuples[0].boundaries[0].disposition, 'SUFFICIENT');
 });

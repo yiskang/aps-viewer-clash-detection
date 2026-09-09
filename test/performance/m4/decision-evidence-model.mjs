@@ -76,6 +76,13 @@ function buildTupleEvidence(raw) {
   return { tuple: raw.tuple, targetsAllPass, onlyQueryEvidenceFailing, noBoundaryScreenFailed, warmNarrowPhaseFailure, boundaries };
 }
 
+function checkPrerequisites(raw) {
+  const fields = { memoryBudgetMet: raw.memoryBudgetMet, lifecycleDemonstrated: raw.lifecycleDemonstrated, moduleResolutionEstablished: raw.moduleResolutionEstablished };
+  if (Object.values(fields).some((v) => v === null || v === undefined)) return 'missing-prerequisite-evidence';
+  if (Object.values(fields).some((v) => v === false)) return 'prerequisite-not-met';
+  return null; // all three true -- gate passes
+}
+
 function computeBoundaryDisposition(raw) {
   const meta = BOUNDARY_TABLE[raw.id];
   if (!meta) throw new Error(`buildEvidenceVector: unknown boundary id "${raw.id}"`);
@@ -94,7 +101,12 @@ function computeBoundaryDisposition(raw) {
     requireFiveNumbers(raw.residualMs, `boundaries[${raw.id}].residualMs`);
     requireFiveNumbers(raw.occupancyMs, `boundaries[${raw.id}].occupancyMs`);
     const sums = raw.residualMs.map((r, i) => r + raw.occupancyMs[i]);
-    const disposition = Math.max(...sums) <= CLAUSE_THRESHOLD_MS ? 'SUFFICIENT' : 'INSUFFICIENT';
+    const numericPasses = Math.max(...sums) <= CLAUSE_THRESHOLD_MS;
+    const prereqFailure = checkPrerequisites(raw);
+    if (prereqFailure === 'missing-prerequisite-evidence') {
+      return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'missing-prerequisite-evidence' };
+    }
+    const disposition = numericPasses && prereqFailure === null ? 'SUFFICIENT' : 'INSUFFICIENT';
     return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition, unevaluableReason: null };
   }
 
@@ -105,7 +117,12 @@ function computeBoundaryDisposition(raw) {
   requireFiveNumbers(raw.residualMs, `boundaries[${raw.id}].residualMs`);
   requireFiveNumbers(raw.occupancyMs, `boundaries[${raw.id}].occupancyMs`);
   const cSums = raw.residualMs.map((r, i) => r + raw.occupancyMs[i]);
-  const cDisposition = Math.max(...cSums) <= CLAUSE_THRESHOLD_MS ? 'SUFFICIENT' : 'INSUFFICIENT';
+  const cNumericPasses = Math.max(...cSums) <= CLAUSE_THRESHOLD_MS;
+  const cPrereqFailure = checkPrerequisites(raw);
+  if (cPrereqFailure === 'missing-prerequisite-evidence') {
+    return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'missing-prerequisite-evidence' };
+  }
+  const cDisposition = cNumericPasses && cPrereqFailure === null ? 'SUFFICIENT' : 'INSUFFICIENT';
   return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: cDisposition, unevaluableReason: null };
 }
 
