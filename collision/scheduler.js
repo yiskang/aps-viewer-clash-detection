@@ -246,3 +246,18 @@ export function reportDiagnosticEvent(kind, payload) {
 export function isDiagnosticEventRecorderActive() {
   return _diagnosticEventRecorder !== null;
 }
+
+// ---- Optional S7' stage-input capture hook (Task 1.3) -------------------------------------------
+// Benchmark-only, disabled by default. `buildPayload` is a THUNK -- a capture payload can require
+// copying a potentially large typed array, so the payload is only ever constructed when a capture
+// fn is installed. isSpikeInputCaptureActive() additionally lets a CALL SITE avoid allocating the
+// thunk closure itself when inactive (not merely avoid invoking it) -- an independent review's
+// finding on an earlier draft, which called reportSpikeInput(kind, () => {...}) unconditionally.
+let _spikeInputCapture = null;
+export function setSpikeInputCapture(fn) { _spikeInputCapture = fn; }
+export function clearSpikeInputCapture() { _spikeInputCapture = null; }
+export function isSpikeInputCaptureActive() { return _spikeInputCapture !== null; }
+export function reportSpikeInput(kind, buildPayload) {
+  if (!_spikeInputCapture) return;
+  _spikeInputCapture(kind, buildPayload());
+}
