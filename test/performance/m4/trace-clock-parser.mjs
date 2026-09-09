@@ -83,7 +83,9 @@ export function parseTraceAndClock({
   const closingSample = clockSamples.find((s) => s.markName === closingMarkName);
   const toMs = buildLinearClockMap(openingTraceUs, openingSample.performanceNowMs, closingTraceUs, closingSample.performanceNowMs);
 
-  const taskIntervals = selectTopLevelTaskEvents(traceEvents).map((e) => ({
+  const measuredEvents = traceEvents.filter((e) => e.pid === pid && e.tid === tid);
+
+  const taskIntervals = selectTopLevelTaskEvents(measuredEvents).map((e) => ({
     startMs: toMs(e.ts),
     endMs: toMs(e.ts + e.dur),
     source: 'cdp-task',

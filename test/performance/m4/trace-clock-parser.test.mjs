@@ -76,3 +76,19 @@ test('merges harness-stage records as [receiptMs - durationMs, receiptMs] interv
   assert.equal(result.valid, true);
   assert.deepEqual(result.intervals, [{ startMs: 90, endMs: 120, source: 'harness-stage', stage: 'compactAndWeld', validity: 'valid' }]);
 });
+
+// -- Step 6 tests -----------------------------------------------------------------------------
+
+test('excludes RunTask events from a different process, or a different thread on the measured process', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    runTask(10_000, 5_000),                          // measured renderer's main thread -- included
+    runTask(10_000, 70_000, OTHER_PID, OTHER_TID),    // a different process entirely (e.g. GPU/compositor)
+    runTask(10_000, 70_000, MEASURED_PID, 3003),      // same process, a different thread (e.g. compositor)
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 1);
+  assert.deepEqual(result.intervals[0], { startMs: 10, endMs: 15, source: 'cdp-task', stage: null, validity: 'valid' });
+});
