@@ -8110,7 +8110,9 @@ only S7''s. This task closes both gaps.
 - Test: `test/performance/m4/memory-snapshot-adapter.test.mjs`, `test/performance/m4/heap-sampler.test.mjs`
 
 **Interfaces:**
-- Consumes: Task 1.6's `CollisionWorld.getEpochGeometryDiagnostics(epoch)` / `getEpochTlasDiagnostics(epoch)` / `getEpochPlacementDiagnostics(epoch)` (per-epoch diagnostic shapes) and `GeometryRegistry.getEpochGeometryEntries(loadEpoch)`; Task 2.3's `computeMetricM(snapshot): number` and the `MemorySnapshot` shape it expects.
+- Consumes: Task 1.6's `CollisionWorld.getEpochGeometryDiagnostics(epoch)` / `getEpochTlasDiagnostics(epoch)` / `getEpochPlacementDiagnostics(epoch)` (per-epoch diagnostic shapes, the ONLY three of these reachable from a `CollisionWorld` instance — `GeometryRegistry` stays internal and is never passed to this adapter directly; `getEpochGeometryDiagnostics` already delegates to `GeometryRegistry.getEpochGeometryEntries` internally and returns the identical array shape, per Task 1.6's own text above); Task 2.3's `computeMetricM(snapshot): number` and the `MemorySnapshot` shape it expects.
+
+  **Plan-text reconciliation (post-Phase-1, controller-applied):** an earlier draft of this task called `accessors.getEpochGeometryEntries(loadEpoch)` here and in its own test fixtures below — a method that exists only on the internal `GeometryRegistry`, never on `CollisionWorld`. The real, landed Task 1.6 public contract is `CollisionWorld.getEpochGeometryDiagnostics(epoch)` (confirmed against `collision/CollisionWorld.js:796`, matching this task's own Task 1.6 citation above). Since the harness wiring below (Step 10) passes the real `world` object as this adapter's `accessors` argument, the stale name would throw `TypeError: accessors.getEpochGeometryEntries is not a function` the first time it actually ran against a live `CollisionWorld`. Fixed here to `getEpochGeometryDiagnostics` throughout — `getEpochTlasDiagnostics`/`getEpochPlacementDiagnostics` were already correct.
 - Produces: `toMemorySnapshot(epochs: number[], accessors): MemorySnapshot` (the adapter — reconciles task 1.6's per-entry scalar `bvhRootBytes`/`weldedPositionBytes`/etc. fields, already pre-summed across a geometry's own BVH roots, into task 2.3's `geometryEntries[].bvhRootByteLengths: number[]` by passing a single-element array `[entry.bvhRootBytes]`, since `computeMetricM` sums that array anyway and a pre-summed scalar folded into a one-element array is arithmetically identical to summing the real per-root array — a genuine, documented reconciliation between two independently-drafted phases' contracts, not an approximation); `sampleHeap(target: 'main'|'worker', page_or_worker): Promise<{bytes: number, available: true} | {available: false, reason: string}>` (Metric H); `sampleMemoryAtScope(scope: 'cold'|'warm'|'peak'|'retained', world, page): Promise<{metricM: number, metricH: {bytes:number,available:true}|{available:false,reason:string}}>`.
 
 - [ ] **Step 1: Write the failing test — the snapshot adapter**
@@ -8123,7 +8125,7 @@ import { computeMetricM } from './metric-m-calculator.mjs';
 
 test('toMemorySnapshot maps a single-epoch, single-geometry world into computeMetricM\'s expected shape', () => {
   const fakeAccessors = {
-    getEpochGeometryEntries: (epoch) => [
+    getEpochGeometryDiagnostics: (epoch) => [
       { geometryIndex: 0, buildState: 'ready', weldedPositionBytes: 1000, weldedIndexBytes: 400,
         bvhRootBytes: 200, bvhIndirectBytes: 50, connectivityComponentOfBytes: 30,
         connectivityClosedManifoldLength: 4, oversizedReason: null, activeTriangleCount: 10 },
@@ -8137,7 +8139,7 @@ test('toMemorySnapshot maps a single-epoch, single-geometry world into computeMe
 
 test('toMemorySnapshot skips a geometry entry that is not ready (building/oversized contribute zero bytes)', () => {
   const fakeAccessors = {
-    getEpochGeometryEntries: () => [
+    getEpochGeometryDiagnostics: () => [
       { geometryIndex: 0, buildState: 'oversized', weldedPositionBytes: null, weldedIndexBytes: null,
         bvhRootBytes: null, bvhIndirectBytes: null, connectivityComponentOfBytes: null,
         connectivityClosedManifoldLength: null, oversizedReason: 'geometry-too-large-for-sync-build', activeTriangleCount: 50000 },
@@ -8159,7 +8161,7 @@ export function toMemorySnapshot(loadEpochs, accessors) {
   const geometryEntries = [];
   const epochs = [];
   for (const loadEpoch of loadEpochs) {
-    for (const entry of accessors.getEpochGeometryEntries(loadEpoch)) {
+    for (const entry of accessors.getEpochGeometryDiagnostics(loadEpoch)) {
       if (entry.buildState !== 'ready') continue; // oversized/building geometries retain no welded/BVH/connectivity bytes yet
       geometryEntries.push({
         loadEpoch, geometryIndex: entry.geometryIndex,
