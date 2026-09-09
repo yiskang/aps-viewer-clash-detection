@@ -155,6 +155,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       conclusive: true,
       via: 'crossing',
       diagnostics,
+      // Task 1.5 fix round: neither containment term has run yet on this path -- 0 is the real count,
+      // not a placeholder default.
+      containmentSamplesUsed: 0,
       stats: { crossing: crossing.stats },
       witness: point ? { kind: 'surface-crossing', point } : null,
     };
@@ -208,6 +211,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       conclusive: true,
       via: 'containment(A in B)',
       diagnostics,
+      // Task 1.5 fix round: bInA never runs on this path (this return precedes its call below) --
+      // aInB's own real samplesUsed is the whole story, not a placeholder default.
+      containmentSamplesUsed: aInB.samplesUsed,
       stats: { crossing: crossing.stats, aInB },
       witness: point ? { kind: 'containment', point } : null,
     };
@@ -254,6 +260,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       conclusive: true,
       via: 'containment(B in A)',
       diagnostics,
+      // Task 1.5 fix round: both containment terms have run by this point (aInB returned false above,
+      // bInA just resolved true) -- their combined real samplesUsed, not a placeholder default.
+      containmentSamplesUsed: aInB.samplesUsed + bInA.samplesUsed,
       stats: { crossing: crossing.stats, aInB, bInA },
       witness: point ? { kind: 'containment', point } : null,
     };

@@ -87,3 +87,35 @@ test('a fully-resolved genuine negative has an EMPTY, sorted inconclusiveCauses 
   assert.equal(result.conclusive, true);
   assert.deepEqual(result.inconclusiveCauses, []);
 });
+
+// Task 1.5 fix round: containmentSamplesUsed must also be a REAL count on every positive-overlap
+// return, not left undefined -- each site's correct value depends on which containment term(s), if
+// any, actually ran before that return.
+test('containmentSamplesUsed is 0 on a crossing-positive result (neither containment term ever runs)', async () => {
+  const a = testInstance(box(2, 2, 2));
+  const b = testInstance(box(2, 2, 2), at(1, 0, 0));
+  const result = await volumeOverlapQuery(a, b);
+  assert.equal(result.overlap, true);
+  assert.equal(result.via, 'crossing');
+  assert.equal(result.containmentSamplesUsed, 0);
+});
+
+test('containmentSamplesUsed is aInB\'s real samplesUsed on a containment(A in B)-positive result (bInA never runs)', async () => {
+  const a = testInstance(box(1, 1, 1));
+  const b = testInstance(box(10, 10, 10));
+  const result = await volumeOverlapQuery(a, b);
+  assert.equal(result.overlap, true);
+  assert.equal(result.via, 'containment(A in B)');
+  assert.equal(result.containmentSamplesUsed, result.stats.aInB.samplesUsed);
+  assert.ok(result.containmentSamplesUsed > 0);
+});
+
+test('containmentSamplesUsed is aInB + bInA\'s combined real samplesUsed on a containment(B in A)-positive result (both terms ran)', async () => {
+  const a = testInstance(box(10, 10, 10));
+  const b = testInstance(box(1, 1, 1));
+  const result = await volumeOverlapQuery(a, b);
+  assert.equal(result.overlap, true);
+  assert.equal(result.via, 'containment(B in A)');
+  assert.equal(result.containmentSamplesUsed, result.stats.aInB.samplesUsed + result.stats.bInA.samplesUsed);
+  assert.ok(result.containmentSamplesUsed > 0);
+});
