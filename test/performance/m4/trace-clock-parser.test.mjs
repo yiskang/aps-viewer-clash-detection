@@ -215,3 +215,66 @@ test('acceptedTopLevelTaskNames lets a pinned Chromium build\'s equivalent top-l
   assert.equal(pinnedResult.valid, true);
   assert.equal(pinnedResult.intervals.length, 1);
 });
+
+// -- Step 31 tests ----------------------------------------------------------------------------
+
+function tracingStartedInBrowserEvent(frames) {
+  return {
+    ph: 'I', cat: 'disabled-by-default-devtools.timeline', name: 'TracingStartedInBrowser',
+    ts: 0, pid: 0, tid: 0, args: { data: { frames } },
+  };
+}
+function threadNameEvent(pid, tid, name) {
+  return { ph: 'M', cat: '__metadata', name: 'thread_name', ts: 0, pid, tid, args: { name } };
+}
+
+test('findMeasuredRendererProcessAndThread resolves pid/tid from TracingStartedInBrowser + thread_name metadata for the page under test', () => {
+  const traceEvents = [
+    tracingStartedInBrowserEvent([{ frame: 'FRAME-A', url: 'about:blank', name: '', processId: 4242 }]),
+    threadNameEvent(4242, 7777, 'CrRendererMain'),
+    threadNameEvent(4242, 7778, 'Compositor'), // a same-process, non-main thread -- must not be picked
+  ];
+  assert.deepEqual(findMeasuredRendererProcessAndThread(traceEvents, 'FRAME-A'), { pid: 4242, tid: 7777 });
+});
+
+test('findMeasuredRendererProcessAndThread returns null, never guesses, when the target frame or its main thread cannot be identified', () => {
+  const traceEvents = [tracingStartedInBrowserEvent([{ frame: 'FRAME-A', url: 'about:blank', name: '', processId: 4242 }])];
+  assert.equal(findMeasuredRendererProcessAndThread(traceEvents, 'FRAME-A'), null); // no thread_name event at all
+  assert.equal(findMeasuredRendererProcessAndThread(traceEvents, 'FRAME-UNKNOWN'), null); // frame not present
+});
+
+test('parseTraceAndClock derives pid/tid via pageTargetId when measuredPid/measuredTid are not supplied directly', () => {
+  const traceEvents = [
+    tracingStartedInBrowserEvent([{ frame: 'FRAME-A', url: 'about:blank', name: '', processId: MEASURED_PID }]),
+    threadNameEvent(MEASURED_PID, MEASURED_TID, 'CrRendererMain'),
+    markEvent(OPENING_MARK, 0),
+    markEvent(CLOSING_MARK, 1_000_000),
+    runTask(10_000, 5_000),
+  ];
+  const result = parseTraceAndClock({ traceEvents, clockSamples: baseClockSamples(), stageRecords: [], pageTargetId: 'FRAME-A' });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 1);
+});
+
+test('parseTraceAndClock reports invalid, never throws, when the measured renderer cannot be resolved from pageTargetId', () => {
+  const traceEvents = [tracingStartedInBrowserEvent([]), markEvent(OPENING_MARK, 0), markEvent(CLOSING_MARK, 1_000_000)];
+  const result = parseTraceAndClock({ traceEvents, clockSamples: baseClockSamples(), stageRecords: [], pageTargetId: 'FRAME-A' });
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'measured-renderer-not-found');
+});
+
+test('parseTraceAndClock throws when neither {measuredPid, measuredTid} nor {pageTargetId} is supplied -- a caller-contract violation, not a data-quality issue', () => {
+  assert.throws(
+    () => parseTraceAndClock({ traceEvents: [], clockSamples: [], stageRecords: [] }),
+    /measuredPid, measuredTid.*pageTargetId/,
+  );
+});
+
+test('the caller-contract violation still throws even when dataLossOccurred is also true -- a missing-identity bug in the harness must never be masked as a data-loss tuple', () => {
+  assert.throws(
+    () => parseTraceAndClock({ traceEvents: [], clockSamples: [], stageRecords: [], dataLossOccurred: true }),
+    /measuredPid, measuredTid.*pageTargetId/,
+  );
+});

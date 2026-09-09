@@ -64,13 +64,19 @@ function buildLinearClockMap(openingTraceUs, openingMs, closingTraceUs, closingM
   };
 }
 
-// Placeholder pending Step 33's real implementation (metadata-based pid/tid resolution). Not
-// exercised by any test before Step 31 -- exported now only so this module's named-export
-// surface matches the test file's import statement from Step 1 onward (native ESM named imports
-// are statically checked; importing a not-yet-exported name throws a SyntaxError at load time,
-// not a lazy "is not a function" at call time as an earlier plan draft assumed).
-export function findMeasuredRendererProcessAndThread() {
-  return null;
+export function findMeasuredRendererProcessAndThread(traceEvents, pageTargetId) {
+  const startedEvent = traceEvents.find((e) => e.name === 'TracingStartedInBrowser');
+  const frames = startedEvent?.args?.data?.frames ?? [];
+  const frame = frames.find((f) => f.frame === pageTargetId);
+  if (!frame || typeof frame.processId !== 'number') return null;
+
+  const pid = frame.processId;
+  const threadNameEv = traceEvents.find(
+    (e) => e.ph === 'M' && e.name === 'thread_name' && e.pid === pid && e.args?.name === 'CrRendererMain'
+  );
+  if (!threadNameEv || typeof threadNameEv.tid !== 'number') return null;
+
+  return { pid, tid: threadNameEv.tid };
 }
 
 export function parseTraceAndClock({
@@ -79,12 +85,24 @@ export function parseTraceAndClock({
   stageRecords,
   measuredPid,
   measuredTid,
+  pageTargetId,
   openingMarkName = DEFAULT_OPENING_MARK_NAME,
   closingMarkName = DEFAULT_CLOSING_MARK_NAME,
   acceptedTopLevelTaskNames = DEFAULT_ACCEPTED_TASK_NAMES,
   acceptedTaskCategories = DEFAULT_ACCEPTED_TASK_CATEGORIES,
   dataLossOccurred = false,
 }) {
+  // Codex review finding #3: a missing-identity caller bug must never be masked as an ordinary
+  // data-loss report. The identity-presence check is therefore a hard caller-contract check,
+  // evaluated BEFORE dataLossOccurred (or anything else) is even looked at -- it throws
+  // regardless of what the trace data itself says.
+  const hasExplicitIdentity = typeof measuredPid === 'number' && typeof measuredTid === 'number';
+  if (!hasExplicitIdentity && !pageTargetId) {
+    throw new Error(
+      'parseTraceAndClock: either { measuredPid, measuredTid } or { pageTargetId } is required to identify the measured renderer'
+    );
+  }
+
   // §6.2: "If the trace reports dataLossOccurred ... the tuple is invalid" -- this is a property
   // of the whole CDP tracing session, never a synthetic event overlapping one task, so it gates
   // the entire tuple before anything else (pid/tid, anchors) is even resolved.
@@ -92,8 +110,16 @@ export function parseTraceAndClock({
     return { valid: false, reason: 'data-loss', intervals: [] };
   }
 
-  const pid = measuredPid;
-  const tid = measuredTid;
+  let pid = measuredPid;
+  let tid = measuredTid;
+  if (!hasExplicitIdentity) {
+    const resolved = findMeasuredRendererProcessAndThread(traceEvents, pageTargetId);
+    if (!resolved) {
+      return { valid: false, reason: 'measured-renderer-not-found', intervals: [] };
+    }
+    pid = resolved.pid;
+    tid = resolved.tid;
+  }
 
   const opening = findAnchorMarkEvent(traceEvents, openingMarkName, pid, tid);
   if (opening.status !== 'ok') {
