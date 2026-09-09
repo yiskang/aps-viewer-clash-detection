@@ -199,3 +199,38 @@ test('splitIntervalAroundYields: a malformed yield interval (endMs <= startMs) i
   const interval = { startMs: 0, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
   assert.deepEqual(splitIntervalAroundYields(interval, [{ startMs: 50, endMs: 50 }, { startMs: 80, endMs: 40 }]), [interval]);
 });
+
+// codex-advisor follow-up (this task): the suite covered non-overlapping yields but not yields
+// that must be MERGED before subtraction (overlapping or exactly adjacent), nor a yield entirely
+// outside the interval's range. codex-advisor confirmed the merge-then-subtract algorithm handles
+// these correctly by inspection; these tests lock that in rather than leaving it unverified.
+test('splitIntervalAroundYields: two overlapping yields merge into one excluded range before subtraction', () => {
+  const interval = { startMs: 0, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  // [20,50) and [40,70) overlap -> merge into one excluded range [20,70)
+  const result = splitIntervalAroundYields(interval, [
+    { startMs: 20, endMs: 50 },
+    { startMs: 40, endMs: 70 },
+  ]);
+  assert.deepEqual(result, [
+    { startMs: 0, endMs: 20, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+    { startMs: 70, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+  ]);
+});
+
+test('splitIntervalAroundYields: two exactly-adjacent yields merge, producing no zero-length gap segment between them', () => {
+  const interval = { startMs: 0, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  // [20,50) and [50,70) touch exactly at 50 -> merge into [20,70), no phantom segment at 50
+  const result = splitIntervalAroundYields(interval, [
+    { startMs: 20, endMs: 50 },
+    { startMs: 50, endMs: 70 },
+  ]);
+  assert.deepEqual(result, [
+    { startMs: 0, endMs: 20, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+    { startMs: 70, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+  ]);
+});
+
+test('splitIntervalAroundYields: a yield entirely outside the interval has no effect', () => {
+  const interval = { startMs: 50, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  assert.deepEqual(splitIntervalAroundYields(interval, [{ startMs: 0, endMs: 20 }, { startMs: 200, endMs: 300 }]), [interval]);
+});
