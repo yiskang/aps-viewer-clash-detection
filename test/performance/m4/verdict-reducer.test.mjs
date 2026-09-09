@@ -138,3 +138,29 @@ test('C-class vacuous B-applicability (exact-query-substage case: no B-class bou
   assert.equal(verdict.verdict, 'C');
   assert.equal(verdict.mechanicalDifferences[0].mechanicalDifference.vacuous, true);
 });
+
+test('§19.3: each of §7.5\'s ten mandatory-D causes fires individually, plus §1.1\'s no-boundary cause separately (11 total)', () => {
+  // 1-8: global preconditions, already covered by the table-driven test in Step 6 -- re-asserted here
+  // as part of the complete named-cause inventory this fixture suite requires.
+  for (const key of GLOBAL_D_KEYS) {
+    const ev = buildEvidenceVector([passingTuple('R1')], { ...passingGlobalPreconditions(), [key]: true });
+    assert.equal(reduceVerdict(ev).verdict, 'D');
+  }
+  // 9: no-full-query-evidence
+  assert.equal(reduceVerdict(buildEvidenceVector([onlyQueryEvidenceFailingTuple('R2')], passingGlobalPreconditions())).causes[0].cause, 'no-full-query-evidence');
+  // 10: no-settled-boundary (no applicable boundary of either class at all)
+  assert.equal(reduceVerdict(buildEvidenceVector([tAFailingTuple('R3', [])], passingGlobalPreconditions())).causes[0].cause, 'no-settled-boundary');
+  // §1.1: no-boundary
+  assert.equal(reduceVerdict(buildEvidenceVector([tAFailingTuple('R3', [], fiveReps(60))], passingGlobalPreconditions())).causes[0].cause, 'no-boundary');
+});
+
+test('§19.3 every UNEVALUABLE path: UNEVALUABLE is never scored as INSUFFICIENT and never silently promoted to SUFFICIENT', () => {
+  const missingVertical = tAFailingTuple('R3', [{ id: 'WB-2p', applicable: true, residualMs: null, occupancyMs: null, deliveryTaskIdentified: null, derivedEvidenceBounded: null }]);
+  assert.equal(reduceVerdict(buildEvidenceVector([missingVertical], passingGlobalPreconditions())).causes[0].cause, 'no-settled-boundary');
+
+  const unboundedDerived = tAFailingTuple('R3', [{ id: 'WB-2', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: null, derivedEvidenceBounded: false }]);
+  assert.equal(reduceVerdict(buildEvidenceVector([unboundedDerived], passingGlobalPreconditions())).causes[0].cause, 'no-settled-boundary');
+
+  const undeterminedDelivery = tAFailingTuple('R3', [{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: [true, false, true, true, true], derivedEvidenceBounded: null }]);
+  assert.equal(reduceVerdict(buildEvidenceVector([undeterminedDelivery], passingGlobalPreconditions())).causes[0].cause, 'no-settled-boundary');
+});
