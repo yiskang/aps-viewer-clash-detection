@@ -49,16 +49,35 @@ async function loadFixtureAndReconfirm(page) {
   await page.waitForFunction(() => window.viewer.getAllModels().length === 3 && window.viewer.getAllModels().every((m) => m.isLoadDone()), null, { timeout: 180_000 });
   await page.waitForFunction(() => window.viewer.getAllModels().every((m) => m.getData() && m.getData().instanceTree), null, { timeout: 180_000 });
 
-  const identity = await page.evaluate(({ sourceDbId }) => {
+  // Resolve all three models by their own URN, never by load-order/array-index alone -- the same
+  // discipline test/acceptance/clash-finder.acceptance.mjs:597-612 already applies to this EXACT
+  // fixture (identical URN constants), because array position is not a stable model identity
+  // (codex-review finding #1 on this task: a reordered getAllModels() could otherwise silently
+  // pair the wrong discipline model with SOURCE_DB_ID). Order is still asserted below as a
+  // secondary sanity check, matching that same file's own convention.
+  const identity = await page.evaluate(({ sourceDbId, archUrn, structureUrn, mechanicalUrn }) => {
     const models = window.viewer.getAllModels();
-    window.__gate = { modelArch: models[0], modelStructure: models[1], modelMechanical: models[2] };
-    const it = models[1].getInstanceTree(); // Structure
+    const modelArch = models.find((m) => m.getData()?.urn === archUrn);
+    const modelStructure = models.find((m) => m.getData()?.urn === structureUrn);
+    const modelMechanical = models.find((m) => m.getData()?.urn === mechanicalUrn);
+    window.__gate = { modelArch, modelStructure, modelMechanical };
     const fragments = [];
-    it.enumNodeFragments(sourceDbId, (fragId) => { fragments.push(fragId); }, false);
-    return { modelCount: models.length, sourceFragmentCount: fragments.length };
-  }, { sourceDbId: SOURCE_DB_ID });
+    if (modelStructure) {
+      modelStructure.getInstanceTree().enumNodeFragments(sourceDbId, (fragId) => { fragments.push(fragId); }, false);
+    }
+    return {
+      modelCount: models.length,
+      hasArch: !!modelArch,
+      hasStructure: !!modelStructure,
+      hasMechanical: !!modelMechanical,
+      sourceFragmentCount: fragments.length,
+    };
+  }, { sourceDbId: SOURCE_DB_ID, archUrn: ARCH_URN, structureUrn: STRUCTURE_URN, mechanicalUrn: MECHANICAL_URN });
   if (identity.modelCount !== 3) {
     throw new Error(`Expected exactly 3 loaded models, got ${identity.modelCount}`);
+  }
+  if (!identity.hasArch || !identity.hasStructure || !identity.hasMechanical) {
+    throw new Error(`Fixture identity mismatch: could not resolve all three discipline models by URN (hasArch=${identity.hasArch}, hasStructure=${identity.hasStructure}, hasMechanical=${identity.hasMechanical})`);
   }
   if (!identity.sourceFragmentCount) {
     throw new Error(`Fixture identity mismatch: source dbId ${SOURCE_DB_ID} in the Structure model owns zero fragments -- cannot exercise the query`);
@@ -102,8 +121,11 @@ async function main() {
   for (const runtime of Object.values(RUNTIME_CONFIGS)) {
     console.log(`\n=== Runtime: ${runtime.label} ===`);
     const browser = await chromium.launch({ args: runtime.args, proxy: resolveProxyFromEnv() });
-    const page = await browser.newPage();
     try {
+      // page creation lives INSIDE the try (codex-review finding #4 on this task): if newPage()
+      // itself rejects, browser.close() below must still run rather than leaking the Chromium
+      // child process.
+      const page = await browser.newPage();
       const identity = await loadFixtureAndReconfirm(page);
       console.log('Fixture identity (re-confirmed live):', JSON.stringify(identity));
 
