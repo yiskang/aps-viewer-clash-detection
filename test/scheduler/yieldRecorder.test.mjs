@@ -160,3 +160,22 @@ test('recorder lifecycle: recorder A replaced directly by recorder B mid-yield (
     restore();
   }
 });
+
+test('a due checkpoint with no recorder installed resolves correctly (yieldAndRecordResume disabled path is a true no-op)', async () => {
+  const { port, advanceClock, forceDue, resolveNextYield, restore } = makeHarness();
+  try {
+    // Ensure no recorder is set (either never set or cleared)
+    clearYieldRecorder();
+    forceDue();
+    const pending = port.checkpoint({ loadEpoch: 1 });
+    assert.ok(pending, 'a due checkpoint must return a real Promise, even with no recorder');
+    advanceClock(5);
+    resolveNextYield();
+    await pending;
+    // If we get here without error, the disabled path worked correctly
+    assert.ok(true, 'checkpoint resolved successfully with no recorder');
+  } finally {
+    clearYieldRecorder();
+    restore();
+  }
+});

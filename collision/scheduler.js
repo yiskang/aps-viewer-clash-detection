@@ -71,17 +71,15 @@ export function reportYield(resumeLatencyMs) {
   _yieldRecorder?.(resumeLatencyMs, _yieldCount);
 }
 
-async function yieldAndRecordResume(yieldToScheduler) {
-  if (_yieldRecorder) {
-    const generationAtYieldStart = _yieldRecorderGeneration;
-    const yieldStartedAt = performance.now();
-    await yieldToScheduler();
+function yieldAndRecordResume(yieldToScheduler) {
+  if (!_yieldRecorder) return yieldToScheduler();
+  const generationAtYieldStart = _yieldRecorderGeneration;
+  const yieldStartedAt = performance.now();
+  return Promise.resolve(yieldToScheduler()).then(() => {
     if (_yieldRecorder && _yieldRecorderGeneration === generationAtYieldStart) {
       reportYield(performance.now() - yieldStartedAt);
     }
-  } else {
-    await yieldToScheduler();
-  }
+  });
 }
 
 /**
