@@ -157,3 +157,22 @@ test('reports invalid when a mark is present in the trace but its paired clock s
   assert.equal(result.valid, false);
   assert.equal(result.reason, 'missing-closing-mark');
 });
+
+// -- Step 21 tests ----------------------------------------------------------------------------
+
+test('reports the entire tuple invalid when the CDP session reports dataLossOccurred, regardless of otherwise-valid tasks/anchors', () => {
+  const traceEvents = [...baseAnchors(), runTask(10_000, 5_000)];
+  const result = parseTraceAndClock(baseArgs({ traceEvents, dataLossOccurred: true }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'data-loss');
+  assert.deepEqual(result.intervals, []);
+});
+
+test('a well-formed tuple with dataLossOccurred left at its default (false) is unaffected', () => {
+  const traceEvents = [...baseAnchors(), runTask(10_000, 5_000)];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 1);
+});

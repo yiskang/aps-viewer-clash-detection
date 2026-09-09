@@ -73,7 +73,15 @@ export function parseTraceAndClock({
   measuredTid,
   openingMarkName = DEFAULT_OPENING_MARK_NAME,
   closingMarkName = DEFAULT_CLOSING_MARK_NAME,
+  dataLossOccurred = false,
 }) {
+  // §6.2: "If the trace reports dataLossOccurred ... the tuple is invalid" -- this is a property
+  // of the whole CDP tracing session, never a synthetic event overlapping one task, so it gates
+  // the entire tuple before anything else (pid/tid, anchors) is even resolved.
+  if (dataLossOccurred) {
+    return { valid: false, reason: 'data-loss', intervals: [] };
+  }
+
   const pid = measuredPid;
   const tid = measuredTid;
 
