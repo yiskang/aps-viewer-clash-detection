@@ -199,3 +199,21 @@ test('only true/true/true for memoryBudgetMet/lifecycleDemonstrated/moduleResolu
   );
   assert.equal(ev.tuples[0].boundaries[0].disposition, 'SUFFICIENT');
 });
+
+test('full integration: two tuples, mixed dispositions, global preconditions all clear', () => {
+  const ev = buildEvidenceVector(
+    [
+      { tuple: { runtime: 'multi-process', caseId: 'R1', broadPhase: 'linear', state: 'warm' }, targets: { tA: true, tB1: true, tB2: true, tC: true }, screenResidualMs: null, boundaries: [] },
+      tAFailingTuple([
+        { id: 'WB-2p', applicable: true, residualMs: fiveReps(20), occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null },
+        { id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: true },
+      ]),
+    ],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(ev.tuples.length, 2);
+  assert.equal(ev.tuples[0].targetsAllPass, true);
+  assert.equal(ev.tuples[1].boundaries.length, 2);
+  assert.equal(ev.tuples[1].boundaries[0].disposition, 'SUFFICIENT');
+  assert.equal(ev.tuples[1].boundaries[1].disposition, 'SUFFICIENT');
+});
