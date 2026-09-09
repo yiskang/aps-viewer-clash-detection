@@ -165,6 +165,23 @@ test('§19.3 every UNEVALUABLE path: UNEVALUABLE is never scored as INSUFFICIENT
   assert.equal(reduceVerdict(buildEvidenceVector([undeterminedDelivery], passingGlobalPreconditions())).causes[0].cause, 'no-settled-boundary');
 });
 
+// Human fixture-coverage checklist (task-2.5-brief companion instructions), item "unboundable
+// derived-evidence package for a C-class boundary": the brief's own `unboundedDerived` fixture
+// above uses tAFailingTuple's default state:'cold', under which the C-class candidate list is
+// empty regardless of the boundary's own disposition (§7.3 gates C-class applicability on the
+// tuple-level derived warmNarrowPhaseFailure fact, not on any per-boundary flag) -- so that
+// fixture's assertion holds vacuously, without ever inspecting an UNEVALUABLE C-class disposition.
+// This WARM variant puts a genuinely-applicable C-class boundary (WB-2) with an
+// 'unboundable-derived-evidence' disposition in front of the reducer with no B-class boundary
+// present, so cClassApplicable actually contains it and the assertion exercises the real
+// UNEVALUABLE-never-promoted-to-SUFFICIENT branch for C, not applicability gating.
+test('§19.3 UNEVALUABLE path (C-class, genuinely applicable on a WARM tuple): unboundable derived-evidence is never promoted to SUFFICIENT', () => {
+  const warmUnboundedDerived = tAFailingTuple('R3', [{ id: 'WB-2', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: null, derivedEvidenceBounded: false }], fiveReps(10), 'warm');
+  const verdict = reduceVerdict(buildEvidenceVector([warmUnboundedDerived], passingGlobalPreconditions()));
+  assert.equal(verdict.verdict, 'D');
+  assert.equal(verdict.causes[0].cause, 'no-settled-boundary');
+});
+
 test('§19.3 mixed cold/warm multi-tuple aggregation: aggregate reports B, naming both distinct boundaries', () => {
   const coldTuple = tAFailingTuple('R3-cold', [{ id: 'WB-1b', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }]);
   const warmTuple = { ...tAFailingTuple('R3-warm', [{ id: 'WB-2p', applicable: true, residualMs: fiveReps(20), occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }]), tuple: { runtime: 'multi-process', caseId: 'R3-warm', broadPhase: 'linear', state: 'warm' } };
