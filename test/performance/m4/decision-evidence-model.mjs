@@ -98,8 +98,15 @@ function computeBoundaryDisposition(raw) {
     return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition, unevaluableReason: null };
   }
 
-  // C-class -- disposition rule and thresholds are otherwise identical (§7.3's Verdict C clause); see Step 21.
-  return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'unboundable-derived-evidence' };
+  // C-class
+  if (raw.residualMs === null || raw.occupancyMs === null || raw.derivedEvidenceBounded !== true) {
+    return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'unboundable-derived-evidence' };
+  }
+  requireFiveNumbers(raw.residualMs, `boundaries[${raw.id}].residualMs`);
+  requireFiveNumbers(raw.occupancyMs, `boundaries[${raw.id}].occupancyMs`);
+  const cSums = raw.residualMs.map((r, i) => r + raw.occupancyMs[i]);
+  const cDisposition = Math.max(...cSums) <= CLAUSE_THRESHOLD_MS ? 'SUFFICIENT' : 'INSUFFICIENT';
+  return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: cDisposition, unevaluableReason: null };
 }
 
 export function buildEvidenceVector(rawRecords, globalPreconditions) {

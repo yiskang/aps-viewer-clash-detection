@@ -149,3 +149,28 @@ test('throws when tA fails but narrowPhaseFamilyWins is missing or not boolean',
   delete base.narrowPhaseFamilyWins;
   assert.throws(() => buildEvidenceVector([base], passingGlobalPreconditions()), /narrowPhaseFamilyWins/);
 });
+
+test('B-class boundary: UNEVALUABLE with reason "undetermined-delivery-task" when any repetition can\'t identify a delivery task', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: [true, true, false, true, true], derivedEvidenceBounded: null }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(ev.tuples[0].boundaries[0].disposition, 'UNEVALUABLE');
+  assert.equal(ev.tuples[0].boundaries[0].unevaluableReason, 'undetermined-delivery-task');
+});
+
+test('C-class boundary: SUFFICIENT/INSUFFICIENT follow the same Rᵢ+Hᵢ<=50ms rule; UNEVALUABLE reason "unboundable-derived-evidence" when the wire-contract bound can\'t be assembled', () => {
+  const sufficient = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: true }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(sufficient.tuples[0].boundaries[0].disposition, 'SUFFICIENT');
+  assert.equal(sufficient.tuples[0].boundaries[0].class, 'C');
+
+  const unbounded = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: false }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(unbounded.tuples[0].boundaries[0].disposition, 'UNEVALUABLE');
+  assert.equal(unbounded.tuples[0].boundaries[0].unevaluableReason, 'unboundable-derived-evidence');
+});
