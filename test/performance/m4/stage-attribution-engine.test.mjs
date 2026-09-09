@@ -1,7 +1,7 @@
 // M4 Task 2.2: stage-attribution / residual engine tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyStageForScreen, SCREEN_TRANSFERABLE_STAGES, MAIN_ONLY_STAGES, computeResidualAll, hardMaximum } from './stage-attribution-engine.mjs';
+import { classifyStageForScreen, SCREEN_TRANSFERABLE_STAGES, MAIN_ONLY_STAGES, computeResidualAll, hardMaximum, computeResidualForBoundary } from './stage-attribution-engine.mjs';
 
 test('§6.3 classification: compactAndWeld and geometryResolutionPerPair count as transferable for the screen', () => {
   assert.equal(classifyStageForScreen('compactAndWeld'), 'transferable');
@@ -74,4 +74,17 @@ test('computeResidualAll: hard maximum across multiple tasks in the window', () 
 test('hardMaximum: reduces 5 repetition values, and refuses an empty array rather than returning -Infinity', () => {
   assert.equal(hardMaximum([10, 45, 12, 8, 30]), 45);
   assert.throws(() => hardMaximum([]), /empty repetition set/);
+});
+
+test('computeResidualForBoundary: only w\'s own owned stage(s) are subtracted, unlike the permissive screen', () => {
+  // task [0,100); connectivity [0,50) and bvhConstruction [50,100). WB-2p only owns hardClashPrecheck,
+  // so at this task NEITHER stage is w's own -> full 100ms is main-only-attributed to WB-2p.
+  const task = { startMs: 0, endMs: 100, source: 'cdp-task', stage: null, validity: 'valid' };
+  const stages = [
+    { startMs: 0, endMs: 50, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+    { startMs: 50, endMs: 100, source: 'harness-stage', stage: 'bvhConstruction', validity: 'valid' },
+  ];
+  assert.equal(computeResidualForBoundary([task], stages, ['hardClashPrecheck']), 100);
+  // WB-1b owns compactAndWeld/connectivity/bvhConstruction -- both stages above ARE w's own -> residual 0.
+  assert.equal(computeResidualForBoundary([task], stages, ['compactAndWeld', 'connectivity', 'bvhConstruction']), 0);
 });
