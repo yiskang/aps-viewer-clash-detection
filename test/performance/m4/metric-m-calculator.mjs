@@ -42,3 +42,22 @@ export const PLACEMENT_FIELD_SPEC = [
 ];
 const PLACEMENT_SCALAR_BYTES = 16;
 export const PLACEMENT_BYTES = bytesForFieldSpec(PLACEMENT_FIELD_SPEC) + PLACEMENT_SCALAR_BYTES;
+
+export function computeMetricM(snapshot) {
+  let total = 0;
+
+  for (const g of snapshot.geometryEntries ?? []) {
+    total += g.positionByteLength + g.indexByteLength;
+    total += g.bvhRootByteLengths.reduce((a, b) => a + b, 0);
+    total += g.bvhIndirectBufferByteLength ?? 0;
+    total += g.connectivityComponentOfByteLength + g.connectivityClosedManifoldLength;
+  }
+
+  for (const e of snapshot.epochs ?? []) {
+    total += e.tlasPrimitiveBufferByteLength + e.tlasRecordCount * RECORD_BYTES;
+    total += e.placementCount * PLACEMENT_BYTES;
+    total += e.instanceCount * INSTANCE_BYTES;
+  }
+
+  return total;
+}
