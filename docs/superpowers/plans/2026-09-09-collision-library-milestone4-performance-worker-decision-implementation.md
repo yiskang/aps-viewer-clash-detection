@@ -6397,7 +6397,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: tasks 3.1 (fixture lifecycle), 3.2 (observation envelope), 3.3 (cohort profiler), 3.4 (S2T facade), 3.5 (R6 sequence), 3.6 (correctness comparator) — this task is where they are all wired together into one script.
-- Produces: `armOrderForRepetition`, `caseOrderForRepetition`, `buildCounterbalancedSchedule`, `toCapacityRejectedRecord` (pure, §6.1.6 + §4's capacity-rejection reporting rule) plus `run-gate-m4.mjs`'s complete baseline dispatch: every R-case (R1-R6), every S-case (S1-S4), and S2T, over both runtime configurations, both broad-phase arms where executable, 5 counterbalanced repetitions per state, one fresh world per tuple (§6.1.4), producing raw per-tuple measured records that task 3.8 normalizes. **This task explicitly does NOT dispatch S5'/S6'/S7'/S8'** — only the baseline R/S/S2T matrix; tasks 3.9/3.10 add the two unconditional spikes separately.
+- Produces: `armOrderForRepetition`, `caseOrderForRepetition`, `buildCounterbalancedSchedule`, `toCapacityRejectedRecord` (pure, §6.1.6 + §4's capacity-rejection reporting rule) plus `run-gate-m4.mjs`'s complete baseline dispatch: every R-case (R1-R6), every S-case (S1-S4), and S2T, over both runtime configurations, both broad-phase arms where executable, 5 counterbalanced repetitions per state, one fresh world per tuple (§6.1.4), producing raw per-tuple measured records that task 3.8 normalizes. **This task explicitly does NOT dispatch S5'/S6'/S7'/S8'** — only the baseline R/S/S2T matrix; tasks 3.9/3.10 add the two unconditional spikes separately. **This task also owns the live CDP-trace-capture → `parseTraceAndClock` (task 2.1) → stage-attribution engine (task 2.2, including its yield-splitting addendum) → `targets.Ta` pipeline** (Rᵢ via `computeResidualForBoundary`/`computeResidualAll`, Hᵢ via `computeBoundaryOccupancy`), per spec §6.2 — no earlier Phase 3 task captures a live trace, and task 3.8's `buildEvidenceRecord` takes `targets` as a given input.
 
 - [ ] **Step 1: Write the failing test**
 ```js
@@ -6488,16 +6488,43 @@ also varies mode/level), constructing exactly one fresh `CollisionWorld` per
 back-to-back in the same world with the observation envelope (task 3.2) bracketing each one,
 catching `CapacityExceededError` into `toCapacityRejectedRecord(...)` rather than letting it abort
 the whole run, and disposing the world before the next tuple. R6 dispatches through task 3.5's
-`runR6Tuple`; S2T dispatches through task 3.4's facade, looped over `S2T_LEVELS`, checking
+`runR6Sequence`; S2T dispatches through task 3.4's facade, looped over `S2T_LEVELS`, checking
 `checkS2TLevelToLevelControlRule` after each level. Every TLAS/linear pair of runs for the same
 `(case, state, repetition)` is compared via task 3.6's `compareRuns(...)`; a `false` disposition
 throws immediately (aborts with `FAILED_VALIDATION`, per §16.2 — enforced fully in task 3.8's
 reporting layer, but the throw-on-mismatch behavior is wired here).
 
+**Live CDP trace capture + Rᵢ/Hᵢ integration for T-a (closes spec §6.2's yield-attribution rules).**
+For every measured query bracketed by the observation envelope, wrap it in its own CDP
+`Tracing.start`/`Tracing.end` session (categories `toplevel`, `devtools.timeline`,
+`blink.user_timing`, `disabled-by-default-devtools.timeline`; JSON format) opened immediately
+before and closed immediately after the envelope's own opening/closing marks, and capture that
+session's `dataLossOccurred` flag. Capture the same paired clock-calibration samples task 3.2's
+calibration exchange already produces, and feed them plus the trace's `traceEvents` into
+`parseTraceAndClock(...)`; if `valid` is false, the tuple's `targets.Ta` is UNEVALUABLE with the
+reported reason and no residual/occupancy computation runs for that tuple. Pull `stageRecords`
+from task 1.2/1.4's diagnostic-event recorder and yield records from task 1.1's
+yield-instrumentation hook for the identical window, and convert yield records to intervals via
+`yieldRecordsToIntervals`. **Before calling `computeResidualForBoundary`/`computeResidualAll`,
+apply spec §6.2's second yield rule**: for each `stageRecords`-derived interval, determine whether
+the yield recorder was continuously installed (no install/uninstall or generation change) for that
+interval's entire span; if it was not — i.e. the interval may contain a yield whose boundaries were
+never recorded — exclude that interval from the Rᵢ input entirely and mark it `un-attributable` in
+the tuple's record. Never estimate or interpolate the missing yield boundary, and never let an
+un-attributable interval silently contribute unsplit time. Run
+`computeResidualForBoundary`/`computeResidualAll` (Rᵢ) and `computeBoundaryOccupancy` (Hᵢ) over the
+surviving, correctly-attributed intervals only, and assemble the tuple's `targets.Ta` per §7.3's
+condition 3/4(b) rule, carrying the un-attributable flag through so a tuple that lost stage time to
+un-attributable intervals is distinguishable in the report from one that never had any. Feed the
+resulting `targets` object forward into task 3.8's `buildEvidenceRecord`. This step consumes only
+already-landed Phase 1/2 instrumentation — no new production `collision/` code.
+
 **Manual verification**: Run: `npm run test:performance:gate:m4` (no smoke flags — the real thing,
 end to end). Expected: no thrown error; console output shows, per runtime, the cohort-profiling
 summary, the R6 calibration result, then one block per case in the schedule's rotated order,
-ending with an S2T block reporting the control-rule pass at every level; process exits 0. This is
+ending with an S2T block reporting the control-rule pass at every level; process exits 0. Each
+tuple's record additionally carries `targets.Ta` with a numeric Rᵢ/Hᵢ-derived value, or an explicit
+UNEVALUABLE/un-attributable reason, never a silently-estimated one. This is
 the first point at which the FULL baseline matrix (minus S1'/S3'/S4') runs end to end — expect a
 multi-minute wall time given 5 repetitions × ~11 cases × up to 2 arms × 2 runtimes.
 
@@ -6899,7 +6926,10 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: task 3.9's `spike-server.mjs` (reused, not duplicated — both are M4-internal spike
   infrastructure, distinct from the M1-M3 no-shared-module restriction, which applies only to the
-  protected gate files). `spike-server.mjs` already mounts `spike/m4/` on its own port, so
+  protected gate files); and task 3.11's `sampleHeap` (`heap-sampler.mjs`) for the one live
+  worker-side Metric H sample this task is responsible for (spec §15.1's worker-sampling
+  requirement — task 3.11 has no live worker in its own scope to sample, this task does).
+  `spike-server.mjs` already mounts `spike/m4/` on its own port, so
   `spike/m4/s3-s4-worker-lifecycle/request-tracker.mjs` is reachable at
   `/spike/m4/s3-s4-worker-lifecycle/request-tracker.mjs` for the live driver's `<script type="module">`
   import; `test/performance/m4/request-tracker.test.mjs` imports the same file via a relative
@@ -8083,6 +8113,16 @@ the tracker produces for those inputs, plus proving the real-`Worker`-specific m
 `terminate()` calls, actual `onerror` events, actual out-of-order `postMessage` delivery) that a
 fake worker object cannot exercise.
 
+**Worker-side Metric H sample (closes spec §15.1's worker-sampling requirement, assigned here per
+task 3.11's forward-pointer note since Phase 3's baseline gate has no other live worker).** Reuse
+one of S4′'s already-attached real dedicated Workers (no ninth worker spawned solely for this) and
+call `sampleHeap('worker', workerHandle)` (task 3.11's `heap-sampler.mjs`) exactly once, asserting
+the result is either `{available: true, bytes: <positive integer>}` or an explicit
+`{available: false, reason}` — never a thrown error, never a silently-swallowed rejection. Record
+the outcome in the S4′ console summary. This is the only place in Phase 3 a worker's own heap is
+sampled; task 3.11 intentionally never calls the worker half of `sampleHeap` because its own scope
+has no live worker to sample.
+
 **Manual verification**: Run: `npm run test:performance:gate:m4`. Expected: S3′ prints
 `{ medianMs, maxMs }` under both runtimes, both well under a second; every `s4.*` assertion above
 passes (the gate script exits non-zero if any `assert.equal`/`assert.deepEqual` throws) — meaning
@@ -8090,7 +8130,8 @@ all eight §10.4 scenarios, the unknown-fragment-id and protocol-fatal variants,
 recovery all settled with the exact named error class or the exact expected value, exactly once,
 with an empty pending set and (where applicable) a real terminated/non-reattachable worker after
 every terminal event, driven through real dedicated Workers and the one canonical
-`request-tracker.mjs` implementation.
+`request-tracker.mjs` implementation; the console additionally reports the worker-side Metric H
+sample outcome (a numeric byte count or its `UNAVAILABLE` reason) exactly once.
 
 - [ ] **Step 7: Commit**
 ```bash
@@ -8336,6 +8377,13 @@ test('peak sampling: the maximum observed Metric M across cold/warm/refresh, nev
 Run: `node --test test/performance/m4/memory-snapshot-adapter.test.mjs` — Expected: PASS.
 
 Manual verification (live wiring): `npm run test:performance:gate:m4 -- --case=R1 --repetitions=1` and confirm the written `m4-gate-<timestamp>.json`'s per-tuple record carries `memory: {cold: {metricM, metricH}, warm: {...}, peak: {metricM, metricH, sourceState}, retained: {...}}` with every `metricM` a positive integer and every `metricH` either `{available:true, bytes}` or `{available:false, reason}`; and for the R6 tuple specifically, confirm `memory.refresh` is present and `memory.peak.sourceState` reflects whichever state actually measured largest, not a hardcoded `'cold'`.
+
+**Worker-side sampling is explicitly out of scope for this task and assigned to task 3.10.**
+Phase 3's baseline gate has no live worker, so `sampleHeap('worker', ...)` is never called here —
+task 3.10 (S3′/S4′ worker-lifecycle spikes) is the first Phase 3 task with a real worker, and MUST
+call `sampleHeap('worker', workerHandle)` at least once as part of its own manual verification,
+asserting either a real numeric reading or an explicit `{available:false, reason}`. This closes
+spec §15.1's worker-sampling requirement; it is not deferred to Phase 4.
 
 - [ ] **Step 11: Commit**
 ```bash
