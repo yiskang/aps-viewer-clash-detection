@@ -11,7 +11,9 @@ const NO_BOUNDARY_CAUSE = 'no-boundary';
 
 function reduceTuple(tupleEvidence) {
   if (tupleEvidence.targetsAllPass) return { tuple: tupleEvidence.tuple, status: 'A' };
-  return { tuple: tupleEvidence.tuple, status: 'A' }; // placeholder, extended in later steps
+  if (tupleEvidence.onlyQueryEvidenceFailing) return { tuple: tupleEvidence.tuple, status: 'D', cause: D_CONDITION_LABELS[9] };
+  if (tupleEvidence.noBoundaryScreenFailed) return { tuple: tupleEvidence.tuple, status: 'D', cause: NO_BOUNDARY_CAUSE };
+  return { tuple: tupleEvidence.tuple, status: 'D', cause: D_CONDITION_LABELS[10] }; // placeholder, extended in later steps
 }
 
 export function reduceVerdict(evidenceVector) {
@@ -23,5 +25,9 @@ export function reduceVerdict(evidenceVector) {
     };
   }
   const tupleFindings = evidenceVector.tuples.map(reduceTuple);
+  const dFindings = tupleFindings.filter((f) => f.status === 'D');
+  if (dFindings.length > 0) {
+    return { verdict: 'D', causes: dFindings.map((f) => ({ scope: 'tuple', tuple: f.tuple, cause: f.cause })), tupleFindings };
+  }
   return { verdict: 'A', tupleFindings };
 }

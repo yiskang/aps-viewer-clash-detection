@@ -36,3 +36,32 @@ test('§7.5 conditions 1-8: any true global precondition forces D even when ever
     assert.equal(verdict.causes.some((c) => c.scope === 'global'), true);
   }
 });
+
+function tAFailingTuple(caseId, boundaries, screenResidualMs = fiveReps(10), state = 'cold', narrowPhaseFamilyWins = true) {
+  return {
+    tuple: { runtime: 'multi-process', caseId, broadPhase: 'linear', state },
+    targets: { tA: false, tB1: true, tB2: true, tC: true },
+    screenResidualMs,
+    narrowPhaseFamilyWins, // Task 2.4's derived warmNarrowPhaseFailure = (state==='warm' && this) --
+                            // default true is harmless for B-only fixtures (no C-class boundary
+                            // present); C-related fixtures below pass state:'warm' explicitly.
+    boundaries: boundaries.map((b) => ({ memoryBudgetMet: true, lifecycleDemonstrated: true, moduleResolutionEstablished: true, ...b })), // Task 2.4's §7.3 conditions 6/7/8 gate -- defaulted true for fixtures not testing it
+  };
+}
+function onlyQueryEvidenceFailingTuple(caseId) {
+  return { tuple: { runtime: 'multi-process', caseId, broadPhase: 'linear', state: 'warm' }, targets: { tA: true, tB1: false, tB2: true, tC: true }, screenResidualMs: null, boundaries: [] };
+}
+
+test('§7.5.9 no-full-query-evidence: a tuple whose only failing metrics are T-b1/T-b2/T-c forces D, unconditionally', () => {
+  const ev = buildEvidenceVector([onlyQueryEvidenceFailingTuple('R2')], passingGlobalPreconditions());
+  const verdict = reduceVerdict(ev);
+  assert.equal(verdict.verdict, 'D');
+  assert.equal(verdict.causes[0].cause, 'no-full-query-evidence');
+});
+
+test('§1.1 no-boundary: condition 3\'s screen failing at a T-a-failing tuple forces D and is never conflated with no-full-query-evidence', () => {
+  const ev = buildEvidenceVector([tAFailingTuple('R3', [], fiveReps(60))], passingGlobalPreconditions());
+  const verdict = reduceVerdict(ev);
+  assert.equal(verdict.verdict, 'D');
+  assert.equal(verdict.causes[0].cause, 'no-boundary');
+});
