@@ -8,7 +8,10 @@ import {
   WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
   CapacityExceededError, ModelPlacementChangedError,
 } from './errors.js';
-import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
+import {
+  createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan,
+  reportSpikeInput, isSpikeInputCaptureActive,
+} from './scheduler.js';
 import {
   maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, maxTlasCandidatePairs,
   maxClearanceNarrowPhasePairs, weldEpsilonMeters, surfaceEpsilonFactor,
@@ -1699,6 +1702,24 @@ export class CollisionWorld {
       statistics.broadPhaseMs = this._now() - broadPhaseStartedAt;
 
       this._checkClearanceNarrowPhaseBudget(candidates);
+
+      // S7' precheck vertical, candidate-list capture point (Task 1.3): fires ONCE per query,
+      // after the budget check passes -- a capacity-rejected call throws before this line and
+      // produces no capture, deliberately (there is no valid completed candidate list to replay).
+      if (isSpikeInputCaptureActive()) {
+        reportSpikeInput('precheck-candidate-list', () => ({
+          sourceEpoch: sourceOperand.epoch,
+          candidates: candidates.map(([sourcePlaced, targetPlaced, targetOperand]) => ({
+            sourceLoadEpoch: sourcePlaced.instance.geometryIdentity.loadEpoch,
+            sourceGeometryIndex: sourcePlaced.instance.geometryIdentity.geometryIndex,
+            sourceFragmentId: sourcePlaced.instance.fragmentId,
+            targetLoadEpoch: targetPlaced.instance.geometryIdentity.loadEpoch,
+            targetGeometryIndex: targetPlaced.instance.geometryIdentity.geometryIndex,
+            targetFragmentId: targetPlaced.instance.fragmentId,
+            targetEpoch: targetOperand.epoch,
+          })),
+        }));
+      }
 
       const narrowPhaseStartedAt = this._now();
       // key -> {distance, witness, sourcePlaced, targetPlaced, targetOperand}
