@@ -13,7 +13,8 @@
     "test:acceptance:clash-finder": "node test/acceptance/clash-finder.acceptance.mjs",
     "test:performance:gate": "node test/performance/run-gate.mjs",
     "test:performance:gate:m2": "node test/performance/run-gate-m2.mjs",
-    "test:performance:gate:m3": "node test/performance/run-gate-m3.mjs"
+    "test:performance:gate:m3": "node test/performance/run-gate-m3.mjs",
+    "test:performance:gate:m4": "node test/performance/run-gate-m4.mjs"
   },
   "engines": {
     "node": ">=20"
