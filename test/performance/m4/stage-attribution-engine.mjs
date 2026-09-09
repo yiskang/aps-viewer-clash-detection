@@ -87,3 +87,25 @@ export function hardMaximum(values) {
   }
   return Math.max(...values);
 }
+
+function intersectionMs(a, b) {
+  return Math.max(0, Math.min(a.endMs, b.endMs) - Math.max(a.startMs, b.startMs));
+}
+
+export function computeBoundaryOccupancy(taskIntervals, subMarkIntervals, correlationMarkMs, closingMarkMs) {
+  let deliveryTask = null;
+  if (correlationMarkMs !== null) {
+    deliveryTask = taskIntervals.find((t) => t.startMs <= correlationMarkMs && correlationMarkMs < t.endMs) ?? null;
+  }
+
+  let max = 0;
+  for (const task of taskIntervals) {
+    let sum = 0;
+    for (const mark of subMarkIntervals) sum += intersectionMs(task, mark);
+    if (deliveryTask !== null && task === deliveryTask) {
+      sum += Math.max(0, Math.min(task.endMs, closingMarkMs) - task.startMs);
+    }
+    max = Math.max(max, sum);
+  }
+  return { value: max, deliveryTaskIdentified: deliveryTask !== null };
+}

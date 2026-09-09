@@ -1,7 +1,7 @@
 // M4 Task 2.2: stage-attribution / residual engine tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyStageForScreen, SCREEN_TRANSFERABLE_STAGES, MAIN_ONLY_STAGES, computeResidualAll, hardMaximum, computeResidualForBoundary } from './stage-attribution-engine.mjs';
+import { classifyStageForScreen, SCREEN_TRANSFERABLE_STAGES, MAIN_ONLY_STAGES, computeResidualAll, hardMaximum, computeResidualForBoundary, computeBoundaryOccupancy } from './stage-attribution-engine.mjs';
 
 test('§6.3 classification: compactAndWeld and geometryResolutionPerPair count as transferable for the screen', () => {
   assert.equal(classifyStageForScreen('compactAndWeld'), 'transferable');
@@ -87,4 +87,22 @@ test('computeResidualForBoundary: only w\'s own owned stage(s) are subtracted, u
   assert.equal(computeResidualForBoundary([task], stages, ['hardClashPrecheck']), 100);
   // WB-1b owns compactAndWeld/connectivity/bvhConstruction -- both stages above ARE w's own -> residual 0.
   assert.equal(computeResidualForBoundary([task], stages, ['compactAndWeld', 'connectivity', 'bvhConstruction']), 0);
+});
+
+test('computeBoundaryOccupancy: sums intersections of a task with w\'s own sub-marks; no correlation mark supplied', () => {
+  // task [0,100); sub-marks at [10,20) and [70,90) -- both fully inside the task.
+  const task = { startMs: 0, endMs: 100, source: 'cdp-task', stage: null, validity: 'valid' };
+  const subMarks = [
+    { startMs: 10, endMs: 20, source: 'harness-stage', stage: 'boundary:WB-2p:inputSnapshot', validity: 'valid' },
+    { startMs: 70, endMs: 90, source: 'harness-stage', stage: 'boundary:WB-2p:serializePostMessage', validity: 'valid' },
+  ];
+  const { value, deliveryTaskIdentified } = computeBoundaryOccupancy([task], subMarks, null, 100);
+  assert.equal(value, 30); // 10 + 20
+  assert.equal(deliveryTaskIdentified, false);
+});
+
+test('computeBoundaryOccupancy: a task with no intersecting sub-mark and not the delivery task contributes zero', () => {
+  const task = { startMs: 0, endMs: 100, source: 'cdp-task', stage: null, validity: 'valid' };
+  const { value } = computeBoundaryOccupancy([task], [], null, 100);
+  assert.equal(value, 0);
 });
