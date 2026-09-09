@@ -94,13 +94,18 @@ function buildTupleEvidence(raw) {
   return { tuple: raw.tuple, targetsAllPass, onlyQueryEvidenceFailing, noBoundaryScreenFailed, warmNarrowPhaseFailure, boundaries };
 }
 
+function validatePrerequisiteTypes(raw) {
+  requireBooleanOrNull(raw.memoryBudgetMet, `boundaries[${raw.id}].memoryBudgetMet`);
+  requireBooleanOrNull(raw.lifecycleDemonstrated, `boundaries[${raw.id}].lifecycleDemonstrated`);
+  requireBooleanOrNull(raw.moduleResolutionEstablished, `boundaries[${raw.id}].moduleResolutionEstablished`);
+}
+
 function checkPrerequisites(raw) {
   const fields = { memoryBudgetMet: raw.memoryBudgetMet, lifecycleDemonstrated: raw.lifecycleDemonstrated, moduleResolutionEstablished: raw.moduleResolutionEstablished };
-  for (const [key, value] of Object.entries(fields)) {
-    requireBooleanOrNull(value, `boundaries[${raw.id}].${key}`);
-  }
-  if (Object.values(fields).some((v) => v === null || v === undefined)) return 'missing-prerequisite-evidence';
+  // A known failed prerequisite is decisive over an unmeasured one: check false before null, so a
+  // mixed {false, null} pair reports as the known failure (INSUFFICIENT), not as unevaluable.
   if (Object.values(fields).some((v) => v === false)) return 'prerequisite-not-met';
+  if (Object.values(fields).some((v) => v === null || v === undefined)) return 'missing-prerequisite-evidence';
   return null; // all three true -- gate passes
 }
 
@@ -116,6 +121,7 @@ function computeBoundaryDisposition(raw) {
 
   requireBooleanOrNull(raw.derivedEvidenceBounded, `boundaries[${raw.id}].derivedEvidenceBounded`);
   requireFiveBooleansOrNull(raw.deliveryTaskIdentified, `boundaries[${raw.id}].deliveryTaskIdentified`);
+  validatePrerequisiteTypes(raw);
 
   if (meta.class === 'B') {
     if (raw.residualMs === null || raw.occupancyMs === null) {
@@ -128,11 +134,17 @@ function computeBoundaryDisposition(raw) {
     requireFiveNumbers(raw.occupancyMs, `boundaries[${raw.id}].occupancyMs`);
     const sums = raw.residualMs.map((r, i) => r + raw.occupancyMs[i]);
     const numericPasses = Math.max(...sums) <= CLAUSE_THRESHOLD_MS;
+    // §7.3: a boundary's OWN threshold check failing is decisive once evidence for it exists --
+    // it is never overridden by a null (not-yet-gathered) condition 6-8 prerequisite. UNEVALUABLE
+    // via a null prerequisite is legitimate ONLY when the numeric threshold already passed.
+    if (!numericPasses) {
+      return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'INSUFFICIENT', unevaluableReason: null };
+    }
     const prereqFailure = checkPrerequisites(raw);
     if (prereqFailure === 'missing-prerequisite-evidence') {
       return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'missing-prerequisite-evidence' };
     }
-    const disposition = numericPasses && prereqFailure === null ? 'SUFFICIENT' : 'INSUFFICIENT';
+    const disposition = prereqFailure === null ? 'SUFFICIENT' : 'INSUFFICIENT';
     return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition, unevaluableReason: null };
   }
 
@@ -144,11 +156,16 @@ function computeBoundaryDisposition(raw) {
   requireFiveNumbers(raw.occupancyMs, `boundaries[${raw.id}].occupancyMs`);
   const cSums = raw.residualMs.map((r, i) => r + raw.occupancyMs[i]);
   const cNumericPasses = Math.max(...cSums) <= CLAUSE_THRESHOLD_MS;
+  // Identical rule as the B-class branch above: a known threshold failure is decisive over an
+  // unmeasured prerequisite.
+  if (!cNumericPasses) {
+    return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'INSUFFICIENT', unevaluableReason: null };
+  }
   const cPrereqFailure = checkPrerequisites(raw);
   if (cPrereqFailure === 'missing-prerequisite-evidence') {
     return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'missing-prerequisite-evidence' };
   }
-  const cDisposition = cNumericPasses && cPrereqFailure === null ? 'SUFFICIENT' : 'INSUFFICIENT';
+  const cDisposition = cPrereqFailure === null ? 'SUFFICIENT' : 'INSUFFICIENT';
   return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: cDisposition, unevaluableReason: null };
 }
 

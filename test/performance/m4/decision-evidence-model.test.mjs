@@ -200,6 +200,49 @@ test('only true/true/true for memoryBudgetMet/lifecycleDemonstrated/moduleResolu
   assert.equal(ev.tuples[0].boundaries[0].disposition, 'SUFFICIENT');
 });
 
+// --- whole-phase (cross-task) review fix round: a known numeric threshold failure is decisive and
+// must never be overridden by a null (not-yet-gathered) prerequisite. §7.3's disposition order only
+// lets missing PRIMARY threshold evidence (residualMs/occupancyMs null, or an unbounded C-class
+// derived-evidence package) outrank conditions 6-8 -- it never says a null condition-6-8 input erases
+// an already-proven threshold failure. UNEVALUABLE-via-null-prerequisite is legitimate ONLY when the
+// numeric threshold itself already passed. ---
+
+test('B-class: numeric threshold FAILS + a null prerequisite is INSUFFICIENT, never UNEVALUABLE', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: [20, 20, 20, 20, 40], occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null, memoryBudgetMet: null, lifecycleDemonstrated: true, moduleResolutionEstablished: true }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(ev.tuples[0].boundaries[0].disposition, 'INSUFFICIENT');
+  assert.equal(ev.tuples[0].boundaries[0].unevaluableReason, null);
+});
+
+test('B-class: numeric threshold PASSES + a null prerequisite is still UNEVALUABLE (regression -- confirms the existing correct case was not broken by the fix)', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null, memoryBudgetMet: null, lifecycleDemonstrated: true, moduleResolutionEstablished: true }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(ev.tuples[0].boundaries[0].disposition, 'UNEVALUABLE');
+  assert.equal(ev.tuples[0].boundaries[0].unevaluableReason, 'missing-prerequisite-evidence');
+});
+
+test('B-class: numeric threshold PASSES + mixed false/null prerequisites (one false, one null) is INSUFFICIENT -- a known failure is decisive over an unmeasured one', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null, memoryBudgetMet: false, lifecycleDemonstrated: null, moduleResolutionEstablished: true }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(ev.tuples[0].boundaries[0].disposition, 'INSUFFICIENT');
+  assert.equal(ev.tuples[0].boundaries[0].unevaluableReason, null);
+});
+
+test('C-class: numeric threshold FAILS + a null prerequisite is INSUFFICIENT, never UNEVALUABLE (identical bug pattern, mirrored fix)', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2', applicable: true, residualMs: [15, 15, 15, 15, 40], occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: true, memoryBudgetMet: null, lifecycleDemonstrated: true, moduleResolutionEstablished: true }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(ev.tuples[0].boundaries[0].disposition, 'INSUFFICIENT');
+  assert.equal(ev.tuples[0].boundaries[0].unevaluableReason, null);
+});
+
 test('full integration: two tuples, mixed dispositions, global preconditions all clear', () => {
   const ev = buildEvidenceVector(
     [
