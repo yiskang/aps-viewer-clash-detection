@@ -1,7 +1,7 @@
 // M4 Task 2.2: stage-attribution / residual engine tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyStageForScreen, SCREEN_TRANSFERABLE_STAGES, MAIN_ONLY_STAGES, computeResidualAll, hardMaximum, computeResidualForBoundary, computeBoundaryOccupancy } from './stage-attribution-engine.mjs';
+import { classifyStageForScreen, SCREEN_TRANSFERABLE_STAGES, MAIN_ONLY_STAGES, computeResidualAll, hardMaximum, computeResidualForBoundary, computeBoundaryOccupancy, yieldRecordsToIntervals } from './stage-attribution-engine.mjs';
 
 test('§6.3 classification: compactAndWeld and geometryResolutionPerPair count as transferable for the screen', () => {
   assert.equal(classifyStageForScreen('compactAndWeld'), 'transferable');
@@ -122,4 +122,35 @@ test('computeBoundaryOccupancy: sub-mark contribution and delivery-task contribu
   const subMarks = [{ startMs: 5, endMs: 15, source: 'harness-stage', stage: 'boundary:WB-2p:inputSnapshot', validity: 'valid' }];
   const { value } = computeBoundaryOccupancy([inputTask, deliveryTask], subMarks, 205, 240);
   assert.equal(value, 40); // max(10, 40) -- Hᵢ is the MAX over tasks, not a sum across tasks
+});
+
+// ---- Addendum (controller ruling, spec-mandated, not in the original brief) --------------------
+// §16.4's yield instrumentation records every real scheduler yield with its resume latency, on
+// the same window and clock as stageRecords. A reconstructed stage interval is never assumed
+// contiguous (§6.2): it must be split at any recorded yield's boundaries before being treated as
+// stage-attributed time, or renderer/timer/input/unrelated work inside the yielded gap could be
+// silently subtracted from a main-thread task as though it were transferable stage time.
+
+test('yieldRecordsToIntervals: reconstructs {startMs, endMs} the same way as stageRecords (startMs = receiptMs - resumeLatencyMs)', () => {
+  const records = [
+    { receiptMs: 120, resumeLatencyMs: 20 },
+    { receiptMs: 500, resumeLatencyMs: 5 },
+  ];
+  assert.deepEqual(yieldRecordsToIntervals(records), [
+    { startMs: 100, endMs: 120 },
+    { startMs: 495, endMs: 500 },
+  ]);
+});
+
+test('yieldRecordsToIntervals: an empty input is a defined empty output', () => {
+  assert.deepEqual(yieldRecordsToIntervals([]), []);
+});
+
+test('yieldRecordsToIntervals: throws on a non-finite receiptMs (harness-computation bug, not a data anomaly)', () => {
+  assert.throws(() => yieldRecordsToIntervals([{ receiptMs: NaN, resumeLatencyMs: 5 }]), /receiptMs/);
+  assert.throws(() => yieldRecordsToIntervals([{ receiptMs: Infinity, resumeLatencyMs: 5 }]), /receiptMs/);
+});
+
+test('yieldRecordsToIntervals: throws on a negative resumeLatencyMs', () => {
+  assert.throws(() => yieldRecordsToIntervals([{ receiptMs: 100, resumeLatencyMs: -1 }]), /resumeLatencyMs/);
 });

@@ -109,3 +109,27 @@ export function computeBoundaryOccupancy(taskIntervals, subMarkIntervals, correl
   }
   return { value: max, deliveryTaskIdentified: deliveryTask !== null };
 }
+
+// ---- Addendum (controller ruling, spec-mandated, not in the original Task 2.2 brief) -----------
+// See this file's test suite header comment for the full §6.2/§16.4 rationale: a reconstructed
+// interval is never assumed contiguous, so any interval overlapping a recorded yield must be
+// split at that yield's boundaries before its sub-segments count as stage-attributed time.
+
+function isFiniteNumber(x) {
+  return typeof x === 'number' && Number.isFinite(x);
+}
+
+// YieldRecord = { receiptMs: number, resumeLatencyMs: number } -- captured the same way a harness
+// already captures stageRecords: receiptMs is a performance.now() timestamp taken when
+// setYieldRecorder's callback fires; resumeLatencyMs is that callback's own first argument.
+export function yieldRecordsToIntervals(yieldRecords) {
+  return yieldRecords.map((r) => {
+    if (!isFiniteNumber(r.receiptMs)) {
+      throw new Error(`yieldRecordsToIntervals: malformed yield record has a non-finite receiptMs (${r.receiptMs}) -- this is a harness-computation bug, not a data anomaly`);
+    }
+    if (!isFiniteNumber(r.resumeLatencyMs) || r.resumeLatencyMs < 0) {
+      throw new Error(`yieldRecordsToIntervals: malformed yield record has a negative or non-finite resumeLatencyMs (${r.resumeLatencyMs}) -- this is a harness-computation bug, not a data anomaly`);
+    }
+    return { startMs: r.receiptMs - r.resumeLatencyMs, endMs: r.receiptMs };
+  });
+}
