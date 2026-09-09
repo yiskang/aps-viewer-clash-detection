@@ -15,6 +15,13 @@ function reduceTuple(tupleEvidence) {
 }
 
 export function reduceVerdict(evidenceVector) {
+  if (evidenceVector.globalMandatoryD.any) {
+    return {
+      verdict: 'D',
+      causes: evidenceVector.globalMandatoryD.causes.map((c) => ({ scope: 'global', cause: D_CONDITION_LABELS[c] })),
+      tupleFindings: [],
+    };
+  }
   const tupleFindings = evidenceVector.tuples.map(reduceTuple);
   return { verdict: 'A', tupleFindings };
 }
