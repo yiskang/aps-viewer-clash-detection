@@ -64,8 +64,16 @@ function buildTupleEvidence(raw) {
     requireFiveNumbers(raw.screenResidualMs, `tuple ${raw.tuple.caseId}: screenResidualMs`);
     noBoundaryScreenFailed = Math.max(...raw.screenResidualMs) > CLAUSE_THRESHOLD_MS;
   }
+
+  if (tA === false) {
+    if (typeof raw.narrowPhaseFamilyWins !== 'boolean') {
+      throw new Error(`buildEvidenceVector: tuple ${raw.tuple.caseId}: narrowPhaseFamilyWins must be a boolean when tA is false`);
+    }
+  }
+  const warmNarrowPhaseFailure = tA === false && raw.tuple.state === 'warm' && raw.narrowPhaseFamilyWins === true;
+
   const boundaries = (raw.boundaries ?? []).map(computeBoundaryDisposition);
-  return { tuple: raw.tuple, targetsAllPass, onlyQueryEvidenceFailing, noBoundaryScreenFailed, boundaries };
+  return { tuple: raw.tuple, targetsAllPass, onlyQueryEvidenceFailing, noBoundaryScreenFailed, warmNarrowPhaseFailure, boundaries };
 }
 
 function computeBoundaryDisposition(raw) {

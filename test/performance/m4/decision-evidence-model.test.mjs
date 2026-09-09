@@ -48,7 +48,7 @@ test('throws when a target field is not boolean', () => {
 });
 
 test('noBoundaryScreenFailed is true only when tA fails and the screen residual exceeds 50ms on any repetition', () => {
-  const base = { tuple: { runtime: 'multi-process', caseId: 'R3', broadPhase: 'linear', state: 'cold' }, boundaries: [] };
+  const base = { tuple: { runtime: 'multi-process', caseId: 'R3', broadPhase: 'linear', state: 'cold' }, narrowPhaseFamilyWins: true, boundaries: [] };
   const failingScreen = buildEvidenceVector(
     [{ ...base, targets: { tA: false, tB1: true, tB2: true, tC: true }, screenResidualMs: [10, 10, 10, 10, 55] }],
     passingGlobalPreconditions(),
@@ -79,6 +79,7 @@ function tAFailingTuple(boundaries) {
     tuple: { runtime: 'multi-process', caseId: 'R3', broadPhase: 'linear', state: 'cold' },
     targets: { tA: false, tB1: true, tB2: true, tC: true },
     screenResidualMs: [10, 10, 10, 10, 10],
+    narrowPhaseFamilyWins: true, // default for B-class-focused fixtures; C-eligibility tests override state/this explicitly
     boundaries,
   };
 }
@@ -121,4 +122,30 @@ test('throws on an unknown boundary id', () => {
     () => buildEvidenceVector([tAFailingTuple([{ id: 'WB-99', applicable: true, residualMs: null, occupancyMs: null, deliveryTaskIdentified: null, derivedEvidenceBounded: null }])], passingGlobalPreconditions()),
     /unknown boundary id/,
   );
+});
+
+test('warmNarrowPhaseFailure is true only when state is warm AND narrowPhaseFamilyWins is true; false on a cold tuple regardless of narrowPhaseFamilyWins', () => {
+  const warmAndWins = buildEvidenceVector(
+    [{ ...tAFailingTuple([]), tuple: { runtime: 'multi-process', caseId: 'R3', broadPhase: 'linear', state: 'warm' }, narrowPhaseFamilyWins: true }],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(warmAndWins.tuples[0].warmNarrowPhaseFailure, true);
+
+  const coldButWins = buildEvidenceVector(
+    [{ ...tAFailingTuple([]), narrowPhaseFamilyWins: true }], // tAFailingTuple defaults to state:'cold'
+    passingGlobalPreconditions(),
+  );
+  assert.equal(coldButWins.tuples[0].warmNarrowPhaseFailure, false);
+
+  const warmButGeometryWins = buildEvidenceVector(
+    [{ ...tAFailingTuple([]), tuple: { runtime: 'multi-process', caseId: 'R3', broadPhase: 'linear', state: 'warm' }, narrowPhaseFamilyWins: false }],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(warmButGeometryWins.tuples[0].warmNarrowPhaseFailure, false);
+});
+
+test('throws when tA fails but narrowPhaseFamilyWins is missing or not boolean', () => {
+  const base = { ...tAFailingTuple([]) };
+  delete base.narrowPhaseFamilyWins;
+  assert.throws(() => buildEvidenceVector([base], passingGlobalPreconditions()), /narrowPhaseFamilyWins/);
 });
