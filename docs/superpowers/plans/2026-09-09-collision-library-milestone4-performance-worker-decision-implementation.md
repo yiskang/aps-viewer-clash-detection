@@ -3607,11 +3607,18 @@ git commit -m "test(m4): Metric M calculator — full §15.1 integration and emp
       boundaries: Array<{
         id: string, class: 'B'|'C', applicable: boolean, ownedStages: string[],
         disposition: 'NOT_APPLICABLE'|'UNEVALUABLE'|'INSUFFICIENT'|'SUFFICIENT',
-        unevaluableReason: 'missing-vertical'|'undetermined-delivery-task'|'unboundable-derived-evidence'|null,
+        unevaluableReason: 'missing-vertical'|'undetermined-delivery-task'|'unboundable-derived-evidence'|'missing-prerequisite-evidence'|null,
       }>,
     }>,
   }
   ```
+
+  **Plan-text reconciliation (post-Phase-2, controller-applied):** this union omitted
+  `'missing-prerequisite-evidence'`, the value the implementation actually emits (added by Step
+  25c below, an "Independent review finding" fix spliced in after this summary was first written,
+  which never went back to update it). A boundary whose numeric threshold check passes but whose
+  §7.3 condition 6/7/8 evidence (memoryBudgetMet/lifecycleDemonstrated/moduleResolutionEstablished)
+  is not yet gathered reports exactly this `unevaluableReason`; the union above now matches.
   `CLAUSE_THRESHOLD_MS = 50` (§7.3 condition 3 and condition 4(b) both use this figure verbatim) and `BOUNDARY_TABLE` (the fixed §8.2 class/owned-stages table) are also exported, since Task 2.5 reads `class`/`ownedStages` off each evidence-vector boundary entry rather than re-deriving them.
 
 - [ ] **Step 1: Write the failing test — pass-through with no boundaries, minimal target evaluation**
