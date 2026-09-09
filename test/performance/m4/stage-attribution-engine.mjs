@@ -75,3 +75,10 @@ function maxOverTasks(taskIntervals, stageIntervals, isTransferable) {
 export function computeResidualAll(taskIntervals, stageIntervals) {
   return maxOverTasks(taskIntervals, stageIntervals, (stage) => classifyStageForScreen(stage) === 'transferable');
 }
+
+export function hardMaximum(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error('hardMaximum: refusing to reduce an empty repetition set (Math.max(...[]) === -Infinity would silently pass every threshold)');
+  }
+  return Math.max(...values);
+}
