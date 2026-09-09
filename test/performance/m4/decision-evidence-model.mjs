@@ -41,6 +41,12 @@ function validateGlobalPreconditions(globalPreconditions) {
   for (const { key } of GLOBAL_PRECONDITIONS) requireBoolean(globalPreconditions?.[key], key);
 }
 
+function requireFiveNumbers(value, label) {
+  if (!Array.isArray(value) || value.length !== 5 || value.some((v) => typeof v !== 'number')) {
+    throw new Error(`buildEvidenceVector: ${label} must be an array of exactly 5 numbers`);
+  }
+}
+
 function buildTupleEvidence(raw) {
   if (!raw.tuple?.runtime || !raw.tuple?.caseId) {
     throw new Error('buildEvidenceVector: tuple.runtime and tuple.caseId are required');
@@ -52,7 +58,13 @@ function buildTupleEvidence(raw) {
   const { tA, tB1, tB2, tC } = raw.targets;
   const targetsAllPass = tA && tB1 && tB2 && tC;
   const onlyQueryEvidenceFailing = tA === true && !targetsAllPass;
-  return { tuple: raw.tuple, targetsAllPass, onlyQueryEvidenceFailing, noBoundaryScreenFailed: false, boundaries: [] };
+
+  let noBoundaryScreenFailed = false;
+  if (tA === false) {
+    requireFiveNumbers(raw.screenResidualMs, `tuple ${raw.tuple.caseId}: screenResidualMs`);
+    noBoundaryScreenFailed = Math.max(...raw.screenResidualMs) > CLAUSE_THRESHOLD_MS;
+  }
+  return { tuple: raw.tuple, targetsAllPass, onlyQueryEvidenceFailing, noBoundaryScreenFailed, boundaries: [] };
 }
 
 export function buildEvidenceVector(rawRecords, globalPreconditions) {
