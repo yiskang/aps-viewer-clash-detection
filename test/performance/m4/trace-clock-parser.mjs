@@ -9,10 +9,14 @@
 // sample's trace-clock timestamp by finding its named mark event on the measured renderer's main
 // thread, rather than trusting an independently-supplied trace-µs value.
 
-const TASK_EVENT_CAT = 'toplevel';
-const TASK_EVENT_NAME = 'RunTask';
 const DEFAULT_OPENING_MARK_NAME = 'm4-query-window-start';
 const DEFAULT_CLOSING_MARK_NAME = 'm4-query-window-end';
+const DEFAULT_ACCEPTED_TASK_CATEGORIES = ['toplevel'];
+const DEFAULT_ACCEPTED_TASK_NAMES = ['RunTask'];
+
+function eventCategories(catField) {
+  return String(catField ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+}
 
 function dedupeExact(events) {
   const seen = new Set();
@@ -26,9 +30,13 @@ function dedupeExact(events) {
   return out;
 }
 
-function selectTopLevelTaskEvents(traceEvents) {
+function selectTopLevelTaskEvents(traceEvents, acceptedCategories, acceptedNames) {
   const candidates = dedupeExact(
-    traceEvents.filter((e) => e.ph === 'X' && e.cat === TASK_EVENT_CAT && e.name === TASK_EVENT_NAME)
+    traceEvents.filter(
+      (e) => e.ph === 'X'
+        && acceptedNames.includes(e.name)
+        && eventCategories(e.cat).some((c) => acceptedCategories.includes(c))
+    )
   ).sort((a, b) => a.ts - b.ts || b.dur - a.dur);
 
   const topLevel = [];
@@ -73,6 +81,8 @@ export function parseTraceAndClock({
   measuredTid,
   openingMarkName = DEFAULT_OPENING_MARK_NAME,
   closingMarkName = DEFAULT_CLOSING_MARK_NAME,
+  acceptedTopLevelTaskNames = DEFAULT_ACCEPTED_TASK_NAMES,
+  acceptedTaskCategories = DEFAULT_ACCEPTED_TASK_CATEGORIES,
   dataLossOccurred = false,
 }) {
   // §6.2: "If the trace reports dataLossOccurred ... the tuple is invalid" -- this is a property
@@ -106,7 +116,7 @@ export function parseTraceAndClock({
   const measuredEvents = traceEvents.filter((e) => e.pid === pid && e.tid === tid);
 
   const taskIntervals = [];
-  for (const e of selectTopLevelTaskEvents(measuredEvents)) {
+  for (const e of selectTopLevelTaskEvents(measuredEvents, acceptedTaskCategories, acceptedTopLevelTaskNames)) {
     const clippedStartUs = Math.max(e.ts, openingTraceUs);
     const clippedEndUs = Math.min(e.ts + e.dur, closingTraceUs);
     if (clippedEndUs <= clippedStartUs) continue; // no overlap with the query window at all

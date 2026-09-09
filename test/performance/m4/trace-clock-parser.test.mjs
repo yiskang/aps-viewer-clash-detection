@@ -176,3 +176,42 @@ test('a well-formed tuple with dataLossOccurred left at its default (false) is u
   assert.equal(result.valid, true);
   assert.equal(result.intervals.length, 1);
 });
+
+// -- Step 26 tests ----------------------------------------------------------------------------
+
+test('matches a task event whose cat field is a comma-separated list containing the accepted category', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    runTask(10_000, 5_000, MEASURED_PID, MEASURED_TID, 'disabled-by-default-devtools.timeline,toplevel'),
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 1);
+});
+
+test('excludes a task event whose cat field contains no accepted category, even with a matching name', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    runTask(10_000, 5_000, MEASURED_PID, MEASURED_TID, 'disabled-by-default-devtools.timeline'),
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.intervals.length, 0);
+});
+
+test('acceptedTopLevelTaskNames lets a pinned Chromium build\'s equivalent top-level task name match', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    runTask(10_000, 5_000, MEASURED_PID, MEASURED_TID, 'toplevel', 'ThreadControllerImpl::RunTask'),
+  ];
+  const defaultResult = parseTraceAndClock(baseArgs({ traceEvents }));
+  assert.equal(defaultResult.intervals.length, 0); // not matched under the default name list
+
+  const pinnedResult = parseTraceAndClock(baseArgs({
+    traceEvents,
+    acceptedTopLevelTaskNames: ['RunTask', 'ThreadControllerImpl::RunTask'],
+  }));
+  assert.equal(pinnedResult.valid, true);
+  assert.equal(pinnedResult.intervals.length, 1);
+});
