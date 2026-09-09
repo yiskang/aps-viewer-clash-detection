@@ -46,17 +46,21 @@ function reduceTuple(tupleEvidence) {
 }
 
 export function reduceVerdict(evidenceVector) {
-  if (evidenceVector.globalMandatoryD.any) {
-    return {
-      verdict: 'D',
-      causes: evidenceVector.globalMandatoryD.causes.map((c) => ({ scope: 'global', cause: D_CONDITION_LABELS[c] })),
-      tupleFindings: [],
-    };
-  }
+  // Global mandatory D is checked before anything else (§7.3), but a global condition and a
+  // tuple-level D cause can co-occur, and §7.5's closing sentence requires both be named: "where
+  // more than one applies, each is named separately, and no two of these causes are ever reported
+  // as if they were the same finding." An earlier draft early-returned on global D with an empty
+  // tupleFindings array, silently dropping any co-occurring tuple-level cause (codex-advisor
+  // finding, task 2.5 fixture-completeness consult) -- always evaluating every tuple and unioning
+  // both cause sets, rather than short-circuiting, is what makes this correct by construction.
+  const globalCauses = evidenceVector.globalMandatoryD.any
+    ? evidenceVector.globalMandatoryD.causes.map((c) => ({ scope: 'global', cause: D_CONDITION_LABELS[c] }))
+    : [];
   const tupleFindings = evidenceVector.tuples.map(reduceTuple);
   const dFindings = tupleFindings.filter((f) => f.status === 'D');
-  if (dFindings.length > 0) {
-    return { verdict: 'D', causes: dFindings.map((f) => ({ scope: 'tuple', tuple: f.tuple, cause: f.cause })), tupleFindings };
+  if (globalCauses.length > 0 || dFindings.length > 0) {
+    const tupleCauses = dFindings.map((f) => ({ scope: 'tuple', tuple: f.tuple, cause: f.cause }));
+    return { verdict: 'D', causes: [...globalCauses, ...tupleCauses], tupleFindings };
   }
   const cFindings = tupleFindings.filter((f) => f.status === 'C');
   if (cFindings.length > 0) {
