@@ -54,6 +54,36 @@ export function reportSpan(label, ms) {
   _spanRecorder?.(label, ms);
 }
 
+// ---- Optional yield-instrumentation hook (Task 1.1) --------------------------------------------
+// Same class of addition as setSpanRecorder above: module-level singleton, zero cost when unset.
+// Generation-isolated exactly like _spanRecorderGeneration (scheduler.js's own existing mechanism)
+// -- a yield whose recorder installation changed (cleared, reinstalled, or replaced) WHILE the
+// yield was in flight reports to nobody, never to whichever recorder happens to be active at
+// resume time. Without this, a yield started under recorder A but resolving after B replaces A
+// would silently report as B's own first yield.
+let _yieldRecorder = null;
+let _yieldCount = 0;
+let _yieldRecorderGeneration = 0;
+export function setYieldRecorder(fn) { _yieldRecorder = fn; _yieldCount = 0; _yieldRecorderGeneration++; }
+export function clearYieldRecorder() { _yieldRecorder = null; _yieldCount = 0; _yieldRecorderGeneration++; }
+export function reportYield(resumeLatencyMs) {
+  _yieldCount++;
+  _yieldRecorder?.(resumeLatencyMs, _yieldCount);
+}
+
+async function yieldAndRecordResume(yieldToScheduler) {
+  if (_yieldRecorder) {
+    const generationAtYieldStart = _yieldRecorderGeneration;
+    const yieldStartedAt = performance.now();
+    await yieldToScheduler();
+    if (_yieldRecorder && _yieldRecorderGeneration === generationAtYieldStart) {
+      reportYield(performance.now() - yieldStartedAt);
+    }
+  } else {
+    await yieldToScheduler();
+  }
+}
+
 /**
  * A per-SCOPE elapsed-time accumulator, where "scope" is decided by whoever
  * constructs the port (spec:3106: each findClashes call owns its own accumulator;
@@ -173,7 +203,7 @@ export function createCheckpointPort({ isDisposed, isEpochLive, accumulator, yie
           return undefined; // synchronous fast path -- no Promise, no microtask forced
         }
         return (async () => {
-          await yieldToScheduler();
+          await yieldAndRecordResume(yieldToScheduler);
           accumulator.markCheckpointed();
           validate(loadEpoch, modelIdHint);
           // Reset AFTER the real yield completes, not before -- otherwise the next span would
@@ -196,7 +226,7 @@ export function createCheckpointPort({ isDisposed, isEpochLive, accumulator, yie
         return undefined; // synchronous fast path -- no Promise, no microtask forced
       }
       return (async () => {
-        await yieldToScheduler();
+        await yieldAndRecordResume(yieldToScheduler);
         accumulator.markCheckpointed();
         validate(loadEpoch, modelIdHint);
       })();
