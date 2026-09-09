@@ -55,7 +55,7 @@ export class GeometryRegistry {
     this._epochs = new Map();
   }
 
-  async getOrBuildGeometry({ loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivity }) {
+  async getOrBuildGeometry({ loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivity, role }) {
     let bucket = this._epochs.get(loadEpoch);
     if (!bucket) {
       bucket = new Map();
@@ -66,8 +66,11 @@ export class GeometryRegistry {
       // "Insert first, then build" (spec :1423-1429): the entry is inserted here,
       // synchronously, before the weld phase's checkpoint ever runs. A concurrent
       // lookup landing after this line -- however soon -- shares this exact entry
-      // rather than starting a duplicate build.
-      entry = this._insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivity);
+      // rather than starting a duplicate build. `role` reaches `buildWeld` only on THIS
+      // triggering call (Task 1.3) -- capture identity stays (loadEpoch, geometryIndex),
+      // never (loadEpoch, geometryIndex, role); a later cache hit under a different role
+      // does not re-trigger a build or carry its own role into buildWeld.
+      entry = this._insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivity, role);
       bucket.set(geometryIndex, entry);
     }
     return this._awaitEntry(loadEpoch, geometryIndex, entry, needsConnectivity);
@@ -99,7 +102,7 @@ export class GeometryRegistry {
 
   // -- internals --------------------------------------------------------
 
-  _insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivityAtStart) {
+  _insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivityAtStart, role) {
     const { signal, rejectSignal } = makeCancellationSignal();
     const entry = {
       buildState: 'building',
@@ -111,10 +114,12 @@ export class GeometryRegistry {
       ownerModelIdHint,
       weldedGeometry: null,
       weldWasOversized: false,
+      connectivityResult: null, // Task 1.6 accessor field
+      accelerationResult: null, // Task 1.6 accessor field
     };
 
     entry.weldPromise = this._runPhase(loadEpoch, geometryIndex, entry, () =>
-      this._buildWeld(loadEpoch, geometryIndex, ownerModelIdHint)
+      this._buildWeld(loadEpoch, geometryIndex, ownerModelIdHint, role)
     , 'weld');
 
     // `tail` is reassigned synchronously every time a phase is scheduled below, so

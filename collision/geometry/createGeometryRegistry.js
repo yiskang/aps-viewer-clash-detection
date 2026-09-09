@@ -25,7 +25,7 @@ export function createGeometryRegistry({
   }
 
   return new GeometryRegistry({
-    buildWeld: async (loadEpoch, geometryIndex /*, ownerModelIdHint */) => {
+    buildWeld: async (loadEpoch, geometryIndex, ownerModelIdHint, role) => {
       // ViewerGeometryAdapter's output holds LIVE references into Viewer's own
       // buffers, not copies, until compactAndWeld copies them -- resolveGeometryView
       // and compactAndWeld MUST run inside the same synchronous span, with no

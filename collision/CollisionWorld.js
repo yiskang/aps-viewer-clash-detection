@@ -314,6 +314,7 @@ async function resolveGeometryRecord(registry, placed, role, operand, needsConne
       geometryIndex: identity.geometryIndex,
       ownerModelIdHint: modelIdOf(operand.model),
       needsConnectivity,
+      role,
     });
   } catch (err) {
     // EXACTLY this one class is absorbed; anything else -- a checkpoint's own
