@@ -10,11 +10,11 @@ import {
 } from './errors.js';
 import {
   createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan,
-  reportSpikeInput, isSpikeInputCaptureActive,
+  reportSpikeInput, isSpikeInputCaptureActive, reportDiagnosticEvent, isDiagnosticEventRecorderActive,
 } from './scheduler.js';
 import {
   maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, maxTlasCandidatePairs,
-  maxClearanceNarrowPhasePairs, weldEpsilonMeters, surfaceEpsilonFactor,
+  maxClearanceNarrowPhasePairs, weldEpsilonMeters, surfaceEpsilonFactor, clearanceTraversalThresholdSafetyMargin,
 } from './constants.js';
 import { extractFragments, extractAllFragments, readWorldMatrix, readWorldBounds } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
@@ -311,6 +311,7 @@ function diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, r
 async function resolveGeometryRecord(registry, placed, role, operand, needsConnectivity, statistics, oversizedDiagnosedFragments) {
   const identity = placed.instance.geometryIdentity;
   let record;
+  const resolveStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
   try {
     record = await registry.getOrBuildGeometry({
       loadEpoch: identity.loadEpoch,
@@ -335,6 +336,16 @@ async function resolveGeometryRecord(registry, placed, role, operand, needsConne
     // which fragment id the Viewer had no proxy for -- the error's own `fragId` does that.
     diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, role, 'geometry-not-yet-available', operand);
     return null;
+  }
+  if (isDiagnosticEventRecorderActive()) {
+    const ms = performance.now() - resolveStartedAt;
+    reportDiagnosticEvent('geometry-resolve', {
+      stage: 'geometry-resolve', ms,
+      ...(role === 'source' ? { sourceEpoch: identity.loadEpoch, sourceFragmentId: placed.instance.fragmentId } : {}),
+      ...(role === 'target' ? { targetEpoch: identity.loadEpoch, targetFragmentId: placed.instance.fragmentId } : {}),
+      ...(role === 'source' && !record.oversized ? { sourceTriangles: record.geometry.index.count / 3 } : {}),
+      ...(role === 'target' && !record.oversized ? { targetTriangles: record.geometry.index.count / 3 } : {}),
+    });
   }
   if (record.oversized) {
     // KNOWN TENSION, deliberately not changed here: the spec's dedup guarantee is scoped to the
@@ -2184,7 +2195,16 @@ export class CollisionWorld {
       // left alone -- what changes is that the incompleteness is now OBSERVABLE.
       // `result.diagnostics` is [] whenever `aborted` is false, so this is a no-op on every
       // conclusive pair.
+      const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
       const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix);
+      if (isDiagnosticEventRecorderActive()) {
+        reportDiagnosticEvent('narrow-phase-pair', {
+          sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+          targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+          stage: 'surface-intersection', ms: performance.now() - stageStartedAt,
+          sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+        });
+      }
       attach(result.diagnostics);
       return result.intersects;
     }
@@ -2198,7 +2218,17 @@ export class CollisionWorld {
 
     if (mode === 'containment') {
       // Directed, one direction only: "is any of this source surface inside that target solid".
+      const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
       const result = await containmentModeQuery(sourceInstance, targetInstance, { scheduler });
+      if (isDiagnosticEventRecorderActive()) {
+        reportDiagnosticEvent('narrow-phase-pair', {
+          sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+          targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+          stage: 'containment', ms: performance.now() - stageStartedAt,
+          sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+          sourceComponents: sourceRecord.connectivity.componentCount, targetComponents: targetRecord.connectivity.componentCount,
+        });
+      }
       attach(result.diagnostics);
       return result.contained;
     }
@@ -2213,10 +2243,20 @@ export class CollisionWorld {
     // for whichever argument order it is handed -- so nothing identity-shaped has to be smuggled
     // into the `Instance` objects, and the comparison itself allocates nothing per pair.
     const canonicalOrder = comparePlacedCanonically(sourcePlaced, targetPlaced);
+    const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
     const result = await volumeOverlapQuery(sourceInstance, targetInstance, {
       scheduler,
       compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
     });
+    if (isDiagnosticEventRecorderActive()) {
+      reportDiagnosticEvent('narrow-phase-pair', {
+        sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+        targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+        stage: 'volume-overlap', ms: performance.now() - stageStartedAt,
+        sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+        sourceComponents: sourceRecord.connectivity.componentCount, targetComponents: targetRecord.connectivity.componentCount,
+      });
+    }
     attach(result.diagnostics);
     return { hit: result.overlap, witness: result.witness ?? null };
   }
@@ -2320,9 +2360,18 @@ export class CollisionWorld {
 
     const scheduler = createComposedStageScheduler(checkpoint, this._now);
     const canonicalOrder = comparePlacedCanonically(sourcePlaced, targetPlaced);
+    // Task 1.4: per-pair diagnostic context for THIS function's own volumeOverlapQuery call
+    // (via classifyHardClashPrecheck) -- distinct from Task 1.3's candidate-list capture point in
+    // the top-level clearance findClashes dispatch, one level up. Gated on
+    // isDiagnosticEventRecorderActive() so no object is constructed when no recorder is installed.
+    const diagnosticPairContext = isDiagnosticEventRecorderActive() ? {
+      sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+      targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+    } : undefined;
     const volumeOverlapOptions = {
       scheduler,
       compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
+      diagnosticPairContext,
       // Task reviewer fix (Important #1, fix round): without this, ProperCrossingQuery.js's own
       // `options.now ?? (() => performance.now())` default (ProperCrossingQuery.js:40) reads the
       // REAL wall clock inside this precheck's own volumeOverlapQuery call, independent of this
@@ -2369,6 +2418,25 @@ export class CollisionWorld {
     const distanceQueryMs = this._now() - distanceQueryStart;
     statistics.clearanceQueryMs += distanceQueryMs;
     reportSpan('clearance-distance-query', distanceQueryMs); // production instrumentation, consumed by Task 18's gate
+
+    if (isDiagnosticEventRecorderActive()) {
+      const anchoredOnSource = sourceScale.scaleFactor <= targetScale.scaleFactor;
+      const anchorScaleFactor = anchoredOnSource ? sourceScale.scaleFactor : targetScale.scaleFactor;
+      const anchorLocalMaxThreshold = (clearance / anchorScaleFactor) * (1 + clearanceTraversalThresholdSafetyMargin);
+      const commonCovariates = {
+        sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+        targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+        stage: 'clearance-distance-query', ms: distanceQueryMs,
+        sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+        sourceComponents: sourceRecord.connectivity.componentCount, targetComponents: targetRecord.connectivity.componentCount,
+        sourceScaleFactor: sourceScale.scaleFactor, targetScaleFactor: targetScale.scaleFactor, anchoredOnSource,
+        requestedClearance: clearance, anchorLocalMaxThreshold,
+      };
+      const outcome = result.aborted ? 'aborted' : !result.withinClearance ? 'beyond-threshold' : 'hit';
+      reportDiagnosticEvent('clearance-distance-query', {
+        ...commonCovariates, outcome, ...(result.aborted ? {} : { distance: result.distance }),
+      });
+    }
 
     if (result.aborted) {
       statistics.diagnostics.push({
