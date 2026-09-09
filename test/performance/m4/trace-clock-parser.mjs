@@ -18,6 +18,14 @@ function isFiniteNumber(x) {
   return typeof x === 'number' && Number.isFinite(x);
 }
 
+// Codex review finding #3: `typeof x === 'number'` is true for NaN/Infinity/fractional/negative
+// values, so a garbage explicit pid/tid (or a corrupt metadata id) would otherwise pass as if it
+// were a real identifier. Both the caller-supplied identity and the trace-metadata-resolved
+// identity must be valid non-negative integers to count as "supplied"/"resolved" at all.
+function isValidId(x) {
+  return Number.isInteger(x) && x >= 0;
+}
+
 function eventCategories(catField) {
   return String(catField ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }
@@ -34,13 +42,29 @@ function dedupeExact(events) {
   return out;
 }
 
+function matchesAcceptedTask(e, acceptedCategories, acceptedNames) {
+  return e.ph === 'X'
+    && acceptedNames.includes(e.name)
+    && eventCategories(e.cat).some((c) => acceptedCategories.includes(c));
+}
+
+// Codex review finding #1: a candidate task event with a non-finite ts/dur (or a negative dur)
+// must never reach the sort/containment/clipping logic below -- NaN comparisons are always false,
+// so it would silently corrupt containment tracking (an NaN openEnd makes every subsequent event
+// look top-level) and/or surface as a `valid: true` interval with startMs/endMs of NaN. Detected
+// separately from selection so the caller can invalidate the whole tuple rather than just drop it
+// (dropping would silently undercount main-thread occupancy from what is actually corrupt trace
+// data, not an ordinary out-of-window task).
+function findMalformedTaskEvent(traceEvents, acceptedCategories, acceptedNames) {
+  return traceEvents.find(
+    (e) => matchesAcceptedTask(e, acceptedCategories, acceptedNames)
+      && (!isFiniteNumber(e.ts) || !isFiniteNumber(e.dur) || e.dur < 0)
+  );
+}
+
 function selectTopLevelTaskEvents(traceEvents, acceptedCategories, acceptedNames) {
   const candidates = dedupeExact(
-    traceEvents.filter(
-      (e) => e.ph === 'X'
-        && acceptedNames.includes(e.name)
-        && eventCategories(e.cat).some((c) => acceptedCategories.includes(c))
-    )
+    traceEvents.filter((e) => matchesAcceptedTask(e, acceptedCategories, acceptedNames))
   ).sort((a, b) => a.ts - b.ts || b.dur - a.dur);
 
   const topLevel = [];
@@ -60,6 +84,18 @@ function findAnchorMarkEvent(traceEvents, markName, pid, tid) {
   return { status: 'ok', ts: matches[0].ts };
 }
 
+// Codex review finding #2: a duplicate clock sample for the same mark name was previously
+// resolved arbitrarily via `.find()`'s first-match semantics, silently picking one of several
+// possible pairings. Per §6.2, the paired clock sample IS the anchor mark (one mechanism, not
+// two) -- so an ambiguous clock sample is exactly as invalid as an ambiguous trace-side anchor
+// mark, and is reported via the same duplicate-opening-mark/duplicate-closing-mark reasons.
+function findClockSample(clockSamples, markName) {
+  const matches = (clockSamples ?? []).filter((s) => s.markName === markName);
+  if (matches.length === 0) return { status: 'missing' };
+  if (matches.length > 1) return { status: 'duplicate' };
+  return { status: 'ok', sample: matches[0] };
+}
+
 function buildLinearClockMap(openingTraceUs, openingMs, closingTraceUs, closingMs) {
   const spanUs = closingTraceUs - openingTraceUs;
   return (traceUs) => {
@@ -72,13 +108,13 @@ export function findMeasuredRendererProcessAndThread(traceEvents, pageTargetId) 
   const startedEvent = traceEvents.find((e) => e.name === 'TracingStartedInBrowser');
   const frames = startedEvent?.args?.data?.frames ?? [];
   const frame = frames.find((f) => f.frame === pageTargetId);
-  if (!frame || typeof frame.processId !== 'number') return null;
+  if (!frame || !isValidId(frame.processId)) return null;
 
   const pid = frame.processId;
   const threadNameEv = traceEvents.find(
     (e) => e.ph === 'M' && e.name === 'thread_name' && e.pid === pid && e.args?.name === 'CrRendererMain'
   );
-  if (!threadNameEv || typeof threadNameEv.tid !== 'number') return null;
+  if (!threadNameEv || !isValidId(threadNameEv.tid)) return null;
 
   return { pid, tid: threadNameEv.tid };
 }
@@ -99,8 +135,11 @@ export function parseTraceAndClock({
   // Codex review finding #3: a missing-identity caller bug must never be masked as an ordinary
   // data-loss report. The identity-presence check is therefore a hard caller-contract check,
   // evaluated BEFORE dataLossOccurred (or anything else) is even looked at -- it throws
-  // regardless of what the trace data itself says.
-  const hasExplicitIdentity = typeof measuredPid === 'number' && typeof measuredTid === 'number';
+  // regardless of what the trace data itself says. A non-finite/fractional/negative explicit
+  // pid or tid (`typeof NaN === 'number'` is true) is garbage, not a real identity -- treated as
+  // "not supplied" so it falls back to pageTargetId if given, or throws if not, rather than
+  // silently propagating into pid/tid filtering and getting misreported as ordinary data loss.
+  const hasExplicitIdentity = isValidId(measuredPid) && isValidId(measuredTid);
   if (!hasExplicitIdentity && !pageTargetId) {
     throw new Error(
       'parseTraceAndClock: either { measuredPid, measuredTid } or { pageTargetId } is required to identify the measured renderer'
@@ -134,10 +173,16 @@ export function parseTraceAndClock({
     return { valid: false, reason: closing.status === 'duplicate' ? 'duplicate-closing-mark' : 'missing-closing-mark', intervals: [] };
   }
 
-  const openingSample = (clockSamples ?? []).find((s) => s.markName === openingMarkName);
-  const closingSample = (clockSamples ?? []).find((s) => s.markName === closingMarkName);
-  if (!openingSample) return { valid: false, reason: 'missing-opening-mark', intervals: [] };
-  if (!closingSample) return { valid: false, reason: 'missing-closing-mark', intervals: [] };
+  const openingClock = findClockSample(clockSamples, openingMarkName);
+  if (openingClock.status !== 'ok') {
+    return { valid: false, reason: openingClock.status === 'duplicate' ? 'duplicate-opening-mark' : 'missing-opening-mark', intervals: [] };
+  }
+  const closingClock = findClockSample(clockSamples, closingMarkName);
+  if (closingClock.status !== 'ok') {
+    return { valid: false, reason: closingClock.status === 'duplicate' ? 'duplicate-closing-mark' : 'missing-closing-mark', intervals: [] };
+  }
+  const openingSample = openingClock.sample;
+  const closingSample = closingClock.sample;
 
   const openingTraceUs = opening.ts;
   const closingTraceUs = closing.ts;
@@ -164,6 +209,14 @@ export function parseTraceAndClock({
   const toMs = buildLinearClockMap(openingTraceUs, openingSample.performanceNowMs, closingTraceUs, closingSample.performanceNowMs);
 
   const measuredEvents = traceEvents.filter((e) => e.pid === pid && e.tid === tid);
+
+  // Codex review finding #1: a candidate task event with a non-finite/negative ts or dur must
+  // never silently vanish (that would undercount main-thread occupancy from what is actually
+  // corrupt trace data) nor leak a NaN interval into `intervals` -- the whole tuple is invalidated
+  // instead, the same way a corrupt/missing anchor is.
+  if (findMalformedTaskEvent(measuredEvents, acceptedTaskCategories, acceptedTopLevelTaskNames)) {
+    return { valid: false, reason: 'invalid-task-event', intervals: [] };
+  }
 
   const taskIntervals = [];
   for (const e of selectTopLevelTaskEvents(measuredEvents, acceptedTaskCategories, acceptedTopLevelTaskNames)) {

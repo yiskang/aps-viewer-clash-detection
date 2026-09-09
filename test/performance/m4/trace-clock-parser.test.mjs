@@ -330,3 +330,131 @@ test('throws on a malformed harness stageRecord (non-finite receiptMs, or a nega
     /malformed stageRecord/,
   );
 });
+
+// -- Codex review follow-up tests (independent second-opinion code review, 2026-09-10) --------
+// Three gaps found by a codex-review pass on the finished module -- not part of the original
+// task-2.1 brief's TDD step sequence. See task-2.1-report.md for full triage of each finding.
+
+test('reports the entire tuple invalid -- never a NaN interval, never silently dropped -- when a candidate top-level RunTask event has a non-finite ts', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    { ph: 'X', cat: 'toplevel', name: 'RunTask', ts: NaN, dur: 5_000, pid: MEASURED_PID, tid: MEASURED_TID },
+    runTask(50_000, 2_000), // otherwise well-formed -- must not rescue the tuple
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'invalid-task-event');
+  assert.deepEqual(result.intervals, []);
+});
+
+test('reports the entire tuple invalid when a candidate top-level RunTask event has a non-finite dur', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    { ph: 'X', cat: 'toplevel', name: 'RunTask', ts: 10_000, dur: Infinity, pid: MEASURED_PID, tid: MEASURED_TID },
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'invalid-task-event');
+});
+
+test('reports the entire tuple invalid when a candidate top-level RunTask event has a negative dur', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    { ph: 'X', cat: 'toplevel', name: 'RunTask', ts: 20_000, dur: -1, pid: MEASURED_PID, tid: MEASURED_TID },
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'invalid-task-event');
+});
+
+test('a malformed event that does not match the accepted task name/category is irrelevant and never invalidates the tuple', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    { ph: 'X', cat: 'some-other-category', name: 'SomeOtherTask', ts: NaN, dur: NaN, pid: MEASURED_PID, tid: MEASURED_TID },
+    runTask(10_000, 5_000),
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 1);
+});
+
+test("reports invalid, never picking one arbitrarily, when the opening mark's clock sample is duplicated", () => {
+  const result = parseTraceAndClock(baseArgs({
+    traceEvents: baseAnchors(),
+    clockSamples: [
+      { markName: OPENING_MARK, performanceNowMs: 0 },
+      { markName: OPENING_MARK, performanceNowMs: 500 },
+      { markName: CLOSING_MARK, performanceNowMs: 1000 },
+    ],
+  }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'duplicate-opening-mark');
+});
+
+test("reports invalid when the closing mark's clock sample is duplicated", () => {
+  const result = parseTraceAndClock(baseArgs({
+    traceEvents: baseAnchors(),
+    clockSamples: [
+      { markName: OPENING_MARK, performanceNowMs: 0 },
+      { markName: CLOSING_MARK, performanceNowMs: 900 },
+      { markName: CLOSING_MARK, performanceNowMs: 1000 },
+    ],
+  }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'duplicate-closing-mark');
+});
+
+test('treats a non-finite, fractional, or negative explicit measuredPid/measuredTid as absent identity, throwing when no pageTargetId fallback exists', () => {
+  assert.throws(
+    () => parseTraceAndClock({ traceEvents: [], clockSamples: [], stageRecords: [], measuredPid: NaN, measuredTid: MEASURED_TID }),
+    /measuredPid, measuredTid.*pageTargetId/,
+  );
+  assert.throws(
+    () => parseTraceAndClock({ traceEvents: [], clockSamples: [], stageRecords: [], measuredPid: 1.5, measuredTid: MEASURED_TID }),
+    /measuredPid, measuredTid.*pageTargetId/,
+  );
+  assert.throws(
+    () => parseTraceAndClock({ traceEvents: [], clockSamples: [], stageRecords: [], measuredPid: -1, measuredTid: MEASURED_TID }),
+    /measuredPid, measuredTid.*pageTargetId/,
+  );
+});
+
+test('falls back to pageTargetId resolution when explicit measuredPid/measuredTid are non-finite garbage', () => {
+  const traceEvents = [
+    tracingStartedInBrowserEvent([{ frame: 'FRAME-A', url: 'about:blank', name: '', processId: MEASURED_PID }]),
+    threadNameEvent(MEASURED_PID, MEASURED_TID, 'CrRendererMain'),
+    markEvent(OPENING_MARK, 0),
+    markEvent(CLOSING_MARK, 1_000_000),
+    runTask(10_000, 5_000),
+  ];
+  const result = parseTraceAndClock({
+    traceEvents,
+    clockSamples: baseClockSamples(),
+    stageRecords: [],
+    measuredPid: NaN,
+    measuredTid: NaN,
+    pageTargetId: 'FRAME-A',
+  });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 1);
+});
+
+test('findMeasuredRendererProcessAndThread returns null, never a non-finite/non-integer id, when frame or thread metadata carries a malformed id', () => {
+  const traceEvents1 = [
+    tracingStartedInBrowserEvent([{ frame: 'FRAME-A', url: 'about:blank', name: '', processId: NaN }]),
+  ];
+  assert.equal(findMeasuredRendererProcessAndThread(traceEvents1, 'FRAME-A'), null);
+
+  const traceEvents2 = [
+    tracingStartedInBrowserEvent([{ frame: 'FRAME-A', url: 'about:blank', name: '', processId: 4242 }]),
+    threadNameEvent(4242, NaN, 'CrRendererMain'),
+  ];
+  assert.equal(findMeasuredRendererProcessAndThread(traceEvents2, 'FRAME-A'), null);
+});
