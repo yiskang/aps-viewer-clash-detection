@@ -85,13 +85,19 @@ export function parseTraceAndClock({
 
   const measuredEvents = traceEvents.filter((e) => e.pid === pid && e.tid === tid);
 
-  const taskIntervals = selectTopLevelTaskEvents(measuredEvents).map((e) => ({
-    startMs: toMs(e.ts),
-    endMs: toMs(e.ts + e.dur),
-    source: 'cdp-task',
-    stage: null,
-    validity: 'valid',
-  }));
+  const taskIntervals = [];
+  for (const e of selectTopLevelTaskEvents(measuredEvents)) {
+    const clippedStartUs = Math.max(e.ts, openingTraceUs);
+    const clippedEndUs = Math.min(e.ts + e.dur, closingTraceUs);
+    if (clippedEndUs <= clippedStartUs) continue; // no overlap with the query window at all
+    taskIntervals.push({
+      startMs: toMs(clippedStartUs),
+      endMs: toMs(clippedEndUs),
+      source: 'cdp-task',
+      stage: null,
+      validity: 'valid',
+    });
+  }
 
   const stageIntervals = (stageRecords ?? []).map((r) => ({
     startMs: r.receiptMs - r.durationMs,

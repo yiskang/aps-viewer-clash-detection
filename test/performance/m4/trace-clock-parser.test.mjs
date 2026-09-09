@@ -92,3 +92,31 @@ test('excludes RunTask events from a different process, or a different thread on
   assert.equal(result.intervals.length, 1);
   assert.deepEqual(result.intervals[0], { startMs: 10, endMs: 15, source: 'cdp-task', stage: null, validity: 'valid' });
 });
+
+// -- Step 11 tests ----------------------------------------------------------------------------
+
+test('clips a task that starts before the opening mark or ends after the closing mark to its window intersection', () => {
+  const traceEvents = [
+    ...baseAnchors(), // window is [0, 1_000_000) trace-µs == [0, 1000) ms
+    runTask(-50_000, 100_000), // starts 50ms before the window, ends 50ms inside it
+    runTask(950_000, 100_000), // starts 50ms before the window closes, ends 50ms after it
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 2);
+  assert.deepEqual(result.intervals[0], { startMs: 0, endMs: 50, source: 'cdp-task', stage: null, validity: 'valid' });
+  assert.deepEqual(result.intervals[1], { startMs: 950, endMs: 1000, source: 'cdp-task', stage: null, validity: 'valid' });
+});
+
+test('excludes a task entirely outside the query window', () => {
+  const traceEvents = [
+    ...baseAnchors(),
+    runTask(-200_000, 50_000), // ends at ts=-150_000 -- entirely before the opening mark
+    runTask(1_100_000, 50_000), // starts entirely after the closing mark
+  ];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 0);
+});
