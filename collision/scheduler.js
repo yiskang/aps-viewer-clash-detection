@@ -231,3 +231,18 @@ export function createCheckpointPort({ isDisposed, isEpochLive, accumulator, yie
     },
   };
 }
+
+// ---- Optional structured diagnostic-event recorder (Task 1.2) ----------------------------------
+// MECHANISM ONLY: no production call site reports through this yet (Task 1.4 wires the real call
+// sites). isDiagnosticEventRecorderActive() lets a call site in a DIFFERENT module (none of which
+// can see this module's private state) gate its own payload construction behind one cheap boolean
+// check, so "zero cost when unused" holds at every call site, not only in here.
+let _diagnosticEventRecorder = null;
+export function setDiagnosticEventRecorder(fn) { _diagnosticEventRecorder = fn; }
+export function clearDiagnosticEventRecorder() { _diagnosticEventRecorder = null; }
+export function reportDiagnosticEvent(kind, payload) {
+  _diagnosticEventRecorder?.(kind, payload);
+}
+export function isDiagnosticEventRecorderActive() {
+  return _diagnosticEventRecorder !== null;
+}
