@@ -73,3 +73,52 @@ test('throws when tA fails but screenResidualMs is missing or not exactly 5 numb
   assert.throws(() => buildEvidenceVector([{ ...base, screenResidualMs: null }], passingGlobalPreconditions()), /screenResidualMs/);
   assert.throws(() => buildEvidenceVector([{ ...base, screenResidualMs: [1, 2, 3] }], passingGlobalPreconditions()), /screenResidualMs/);
 });
+
+function tAFailingTuple(boundaries) {
+  return {
+    tuple: { runtime: 'multi-process', caseId: 'R3', broadPhase: 'linear', state: 'cold' },
+    targets: { tA: false, tB1: true, tB2: true, tC: true },
+    screenResidualMs: [10, 10, 10, 10, 10],
+    boundaries,
+  };
+}
+const fiveReps = (v) => Array(5).fill(v);
+
+test('B-class boundary: SUFFICIENT when Rᵢ+Hᵢ stays <=50ms every repetition; INSUFFICIENT on one violating rep', () => {
+  const sufficient = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: fiveReps(20), occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(sufficient.tuples[0].boundaries[0].disposition, 'SUFFICIENT');
+  assert.equal(sufficient.tuples[0].boundaries[0].class, 'B');
+  assert.deepEqual(sufficient.tuples[0].boundaries[0].ownedStages, ['hardClashPrecheck']);
+
+  const insufficient = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-2p', applicable: true, residualMs: [20, 20, 20, 20, 40], occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(insufficient.tuples[0].boundaries[0].disposition, 'INSUFFICIENT');
+});
+
+test('B-class boundary: UNEVALUABLE with reason "missing-vertical" when residual/occupancy is null; NOT_APPLICABLE when inapplicable', () => {
+  const unevaluable = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-1a', applicable: true, residualMs: null, occupancyMs: null, deliveryTaskIdentified: null, derivedEvidenceBounded: null }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(unevaluable.tuples[0].boundaries[0].disposition, 'UNEVALUABLE');
+  assert.equal(unevaluable.tuples[0].boundaries[0].unevaluableReason, 'missing-vertical');
+
+  const notApplicable = buildEvidenceVector(
+    [tAFailingTuple([{ id: 'WB-3', applicable: false, residualMs: null, occupancyMs: null, deliveryTaskIdentified: null, derivedEvidenceBounded: null }])],
+    passingGlobalPreconditions(),
+  );
+  assert.equal(notApplicable.tuples[0].boundaries[0].disposition, 'NOT_APPLICABLE');
+  assert.equal(notApplicable.tuples[0].boundaries[0].unevaluableReason, null);
+});
+
+test('throws on an unknown boundary id', () => {
+  assert.throws(
+    () => buildEvidenceVector([tAFailingTuple([{ id: 'WB-99', applicable: true, residualMs: null, occupancyMs: null, deliveryTaskIdentified: null, derivedEvidenceBounded: null }])], passingGlobalPreconditions()),
+    /unknown boundary id/,
+  );
+});

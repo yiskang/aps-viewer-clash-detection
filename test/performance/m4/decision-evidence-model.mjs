@@ -64,7 +64,34 @@ function buildTupleEvidence(raw) {
     requireFiveNumbers(raw.screenResidualMs, `tuple ${raw.tuple.caseId}: screenResidualMs`);
     noBoundaryScreenFailed = Math.max(...raw.screenResidualMs) > CLAUSE_THRESHOLD_MS;
   }
-  return { tuple: raw.tuple, targetsAllPass, onlyQueryEvidenceFailing, noBoundaryScreenFailed, boundaries: [] };
+  const boundaries = (raw.boundaries ?? []).map(computeBoundaryDisposition);
+  return { tuple: raw.tuple, targetsAllPass, onlyQueryEvidenceFailing, noBoundaryScreenFailed, boundaries };
+}
+
+function computeBoundaryDisposition(raw) {
+  const meta = BOUNDARY_TABLE[raw.id];
+  if (!meta) throw new Error(`buildEvidenceVector: unknown boundary id "${raw.id}"`);
+
+  if (!raw.applicable) {
+    return { id: raw.id, class: meta.class, applicable: false, ownedStages: meta.ownedStages, disposition: 'NOT_APPLICABLE', unevaluableReason: null };
+  }
+
+  if (meta.class === 'B') {
+    if (raw.residualMs === null || raw.occupancyMs === null) {
+      return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'missing-vertical' };
+    }
+    if (raw.deliveryTaskIdentified === null || raw.deliveryTaskIdentified.some((v) => v === false)) {
+      return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'undetermined-delivery-task' };
+    }
+    requireFiveNumbers(raw.residualMs, `boundaries[${raw.id}].residualMs`);
+    requireFiveNumbers(raw.occupancyMs, `boundaries[${raw.id}].occupancyMs`);
+    const sums = raw.residualMs.map((r, i) => r + raw.occupancyMs[i]);
+    const disposition = Math.max(...sums) <= CLAUSE_THRESHOLD_MS ? 'SUFFICIENT' : 'INSUFFICIENT';
+    return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition, unevaluableReason: null };
+  }
+
+  // C-class -- disposition rule and thresholds are otherwise identical (§7.3's Verdict C clause); see Step 21.
+  return { id: raw.id, class: meta.class, applicable: true, ownedStages: meta.ownedStages, disposition: 'UNEVALUABLE', unevaluableReason: 'unboundable-derived-evidence' };
 }
 
 export function buildEvidenceVector(rawRecords, globalPreconditions) {
