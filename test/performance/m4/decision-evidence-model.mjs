@@ -33,7 +33,22 @@ function buildGlobalMandatoryD(globalPreconditions) {
   };
 }
 
+function requireBoolean(value, label) {
+  if (typeof value !== 'boolean') throw new Error(`buildEvidenceVector: ${label} must be a boolean`);
+}
+
+function validateGlobalPreconditions(globalPreconditions) {
+  for (const { key } of GLOBAL_PRECONDITIONS) requireBoolean(globalPreconditions?.[key], key);
+}
+
 function buildTupleEvidence(raw) {
+  if (!raw.tuple?.runtime || !raw.tuple?.caseId) {
+    throw new Error('buildEvidenceVector: tuple.runtime and tuple.caseId are required');
+  }
+  requireBoolean(raw.targets?.tA, `tuple ${raw.tuple.caseId}: targets.tA`);
+  requireBoolean(raw.targets?.tB1, `tuple ${raw.tuple.caseId}: targets.tB1`);
+  requireBoolean(raw.targets?.tB2, `tuple ${raw.tuple.caseId}: targets.tB2`);
+  requireBoolean(raw.targets?.tC, `tuple ${raw.tuple.caseId}: targets.tC`);
   const { tA, tB1, tB2, tC } = raw.targets;
   const targetsAllPass = tA && tB1 && tB2 && tC;
   const onlyQueryEvidenceFailing = tA === true && !targetsAllPass;
@@ -41,6 +56,7 @@ function buildTupleEvidence(raw) {
 }
 
 export function buildEvidenceVector(rawRecords, globalPreconditions) {
+  validateGlobalPreconditions(globalPreconditions);
   return {
     globalMandatoryD: buildGlobalMandatoryD(globalPreconditions),
     tuples: rawRecords.map(buildTupleEvidence),
