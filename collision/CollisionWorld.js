@@ -2325,14 +2325,29 @@ export class CollisionWorld {
     sourcePlaced, targetPlaced, sourceOperand, targetOperand, clearance, statistics, oversizedDiagnosedFragments,
     anisotropicScaleDiagnosedFragments, checkpoint,
   ) {
+    // Task 1.5: both pre-precheck skip points below report their own `'hard-clash-precheck'`
+    // `stage:'not-run'` event BEFORE `classifyHardClashPrecheck` is ever called for this pair --
+    // distinct from (and never duplicating) that function's own internal `'aabb-disjoint'` event,
+    // which fires only once the pair actually reaches it. Gated on isDiagnosticEventRecorderActive()
+    // so no event object is constructed when no recorder is installed (this task's own no-op
+    // constraint, matching every other diagnostic-event call site in this file).
+    const reportPrecheckNotRun = (precheckNotRunReason) => {
+      if (!isDiagnosticEventRecorderActive()) return;
+      reportDiagnosticEvent('hard-clash-precheck', {
+        sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+        targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+        stage: 'not-run', precheckNotRunReason,
+      });
+    };
+
     const sourceRecord = await resolveGeometryRecord(
       this._registry, sourcePlaced, 'source', sourceOperand, true, statistics, oversizedDiagnosedFragments,
     );
-    if (!sourceRecord) return { outcome: 'geometry-unavailable' };
+    if (!sourceRecord) { reportPrecheckNotRun('geometry-unsupported-before-precheck'); return { outcome: 'geometry-unavailable' }; }
     const targetRecord = await resolveGeometryRecord(
       this._registry, targetPlaced, 'target', targetOperand, true, statistics, oversizedDiagnosedFragments,
     );
-    if (!targetRecord) return { outcome: 'geometry-unavailable' };
+    if (!targetRecord) { reportPrecheckNotRun('geometry-unsupported-before-precheck'); return { outcome: 'geometry-unavailable' }; }
 
     const sourceInstance = toInstance(sourceRecord, sourcePlaced.worldMatrix);
     const targetInstance = toInstance(targetRecord, targetPlaced.worldMatrix);
@@ -2355,6 +2370,7 @@ export class CollisionWorld {
       if (!targetScale.valid) {
         diagnoseAnisotropicScaleOnce(statistics, anisotropicScaleDiagnosedFragments, targetPlaced, 'target', targetOperand);
       }
+      reportPrecheckNotRun('anisotropic-scale-before-precheck');
       return { outcome: 'anisotropic-scale' };
     }
 

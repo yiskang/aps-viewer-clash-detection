@@ -58,13 +58,21 @@ test('crossing pair -> hard-clash-excluded: crossing event fires, no clearance-d
   }
 });
 
-test('AABB-disjoint near-miss (skip-precheck) -> distance query runs, NO hard-clash-precheck subterm/total events fire', async () => {
+test('AABB-disjoint near-miss (skip-precheck) -> distance query runs, exactly ONE hard-clash-precheck not-run event fires (Task 1.5)', async () => {
   // Reused fixture -- test/CollisionWorld.findClashes.clearance.test.mjs's own "near-miss, gap 0.5 <= clearance 1".
+  // Task 1.5 update: classifyHardClashPrecheck's own skip-precheck branch now reports its OWN
+  // stage:'not-run' event before returning -- so this scenario now fires exactly ONE hard-clash-precheck
+  // event (never classifyHardClashPrecheck's volumeOverlapQuery subterm/total bracket, which this path
+  // still never calls at all). This intentionally supersedes this test's pre-Task-1.5 "zero events"
+  // assertion -- see the M4 Task 1.5 outcome-matrix table (AABB disjoint / skip-precheck row).
   const { events } = await runClearance(
     { 101: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] }, 102: { geometryIndex: 1, geometry: box(2, 2, 2), at: [2.5, 0, 0] } },
     1,
   );
-  assert.equal(events.filter((e) => e.kind === 'hard-clash-precheck').length, 0, 'aabb-disjoint never calls classifyHardClashPrecheck\'s own volumeOverlapQuery bracket');
+  const precheckEvents = events.filter((e) => e.kind === 'hard-clash-precheck');
+  assert.equal(precheckEvents.length, 1, 'aabb-disjoint never calls classifyHardClashPrecheck\'s own volumeOverlapQuery bracket, but DOES report its own not-run event');
+  assert.equal(precheckEvents[0].payload.stage, 'not-run');
+  assert.equal(precheckEvents[0].payload.precheckNotRunReason, 'aabb-disjoint');
   const distanceQuery = events.filter((e) => e.kind === 'clearance-distance-query');
   assert.equal(distanceQuery.length, 1);
   assert.equal(distanceQuery[0].payload.stage, 'clearance-distance-query');

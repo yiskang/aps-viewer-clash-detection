@@ -291,10 +291,48 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   );
   const conclusive = crossingConclusive && containmentConclusive && !taintedByNonManifoldOrUnverified;
 
+  // Task 1.5: bounded, additive cause set. `crossing.inconclusive` alone conflates two situations
+  // ProperCrossingQuery.js:166-171 already distinguishes: an ABORTED traversal
+  // ('crossing-budget-exhausted') vs. one that ran to completion but saw an ambiguous boundary
+  // probe ('crossing-tolerance-ambiguous', not a budget problem -- and not the aspect-ratio-exceeded
+  // synthetic skip branch above, which also sets `crossing.inconclusive` but is its own distinct
+  // cause, keyed off `crossing.skipped`). 'unverified-parity-operand' and 'non-manifold-component'
+  // are grouped under 'non-manifold-component' -- the same taint category
+  // `taintedByNonManifoldOrUnverified` above already treats as one condition for `conclusive`.
+  //
+  // `unresolved-containment` deliberately does NOT use a bare `unresolvedComponentCount > 0` check
+  // (codex-advisor-verified fix during this task, over an earlier draft that did): when a term's OWN
+  // `aspectRatioExceeded` gates its containerRole (options.targetAspectRatioExceeded in
+  // ContainmentQuery.js), `anyComponentInside` short-circuits BEFORE its sampling loop and reports
+  // the FULL remaining component count as "unresolved" -- with `budgetExhausted: false` -- even
+  // though nothing was ever sampled. That count is already fully explained by the
+  // 'aspect-ratio-exceeded' cause above; counting it again here would double-report the same root
+  // cause under two names (verified: this early-return and the sampling-budget-exhaustion path are
+  // mutually exclusive within one anyComponentInside call, so a term can be gated XOR genuinely
+  // budget/witness-unresolved, never both). Detected via each term's own reported diagnostics
+  // (`geometry-aspect-ratio-exceeds-tolerance-model`) rather than re-deriving from
+  // source/target.aspectRatioExceeded directly, since aInB and bInA read the OPPOSITE operand's flag
+  // for their own containerRole (aInB's containerRole is target, bInA's is source) -- checking each
+  // term's own diagnostics keeps this local and immune to that reversed mapping.
+  const isAspectGated = (term) => term.diagnostics.some((d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model');
+  const inconclusiveCauses = new Set();
+  if (!conclusive) {
+    if (crossing.aborted) inconclusiveCauses.add('crossing-budget-exhausted');
+    if (crossing.inconclusive && !crossing.aborted && !crossing.skipped) inconclusiveCauses.add('crossing-tolerance-ambiguous');
+    if (source.aspectRatioExceeded || target.aspectRatioExceeded) inconclusiveCauses.add('aspect-ratio-exceeded');
+    if (aInB.budgetExhausted || bInA.budgetExhausted) inconclusiveCauses.add('containment-sample-budget-exhausted');
+    if (taintedByNonManifoldOrUnverified) inconclusiveCauses.add('non-manifold-component');
+    if ((aInB.unresolvedComponentCount > 0 && !isAspectGated(aInB)) || (bInA.unresolvedComponentCount > 0 && !isAspectGated(bInA))) {
+      inconclusiveCauses.add('unresolved-containment');
+    }
+  }
+
   return {
     overlap: false,
     conclusive,
     diagnostics,
+    inconclusiveCauses: [...inconclusiveCauses].sort(),
+    containmentSamplesUsed: aInB.samplesUsed + bInA.samplesUsed,
     stats: { crossing: crossing.stats, aInB, bInA },
   };
 }
