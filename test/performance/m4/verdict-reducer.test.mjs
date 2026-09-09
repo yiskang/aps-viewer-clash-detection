@@ -164,3 +164,30 @@ test('§19.3 every UNEVALUABLE path: UNEVALUABLE is never scored as INSUFFICIENT
   const undeterminedDelivery = tAFailingTuple('R3', [{ id: 'WB-2p', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: [true, false, true, true, true], derivedEvidenceBounded: null }]);
   assert.equal(reduceVerdict(buildEvidenceVector([undeterminedDelivery], passingGlobalPreconditions())).causes[0].cause, 'no-settled-boundary');
 });
+
+test('§19.3 mixed cold/warm multi-tuple aggregation: aggregate reports B, naming both distinct boundaries', () => {
+  const coldTuple = tAFailingTuple('R3-cold', [{ id: 'WB-1b', applicable: true, residualMs: fiveReps(10), occupancyMs: fiveReps(10), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }]);
+  const warmTuple = { ...tAFailingTuple('R3-warm', [{ id: 'WB-2p', applicable: true, residualMs: fiveReps(20), occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }]), tuple: { runtime: 'multi-process', caseId: 'R3-warm', broadPhase: 'linear', state: 'warm' } };
+  const verdict = reduceVerdict(buildEvidenceVector([coldTuple, warmTuple], passingGlobalPreconditions()));
+  assert.equal(verdict.verdict, 'B');
+  assert.deepEqual(new Set(verdict.settledBoundaries), new Set(['WB-1b', 'WB-2p']));
+});
+
+test('§19.3 aggregate reports D even though every other tuple is settled, per the "any unsettled tuple forces D" rule', () => {
+  const settled = tAFailingTuple('R3', [{ id: 'WB-2p', applicable: true, residualMs: fiveReps(20), occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }]);
+  const unsettled = { ...tAFailingTuple('R4', []), tuple: { runtime: 'multi-process', caseId: 'R4', broadPhase: 'linear', state: 'cold' } };
+  const verdict = reduceVerdict(buildEvidenceVector([settled, unsettled], passingGlobalPreconditions()));
+  assert.equal(verdict.verdict, 'D');
+  assert.equal(verdict.causes.some((c) => c.cause === 'no-settled-boundary'), true);
+});
+
+test('§7.3 multi-tuple: C is named whenever settling at least one tuple required a C-class boundary, even where others were settled by B alone', () => {
+  const bSettled = tAFailingTuple('R3', [{ id: 'WB-2p', applicable: true, residualMs: fiveReps(20), occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }]);
+  const cSettled = { ...tAFailingTuple('R4', [
+    { id: 'WB-2p', applicable: true, residualMs: [20, 20, 20, 20, 40], occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null },
+    { id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: true },
+  ]), tuple: { runtime: 'multi-process', caseId: 'R4', broadPhase: 'linear', state: 'warm' } };
+  const verdict = reduceVerdict(buildEvidenceVector([bSettled, cSettled], passingGlobalPreconditions()));
+  assert.equal(verdict.verdict, 'C');
+  assert.deepEqual(new Set(verdict.settledBoundaries), new Set(['WB-2p', 'WB-2']));
+});
