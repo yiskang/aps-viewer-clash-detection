@@ -85,3 +85,56 @@ test('§19.3 no applicable boundary of either class SUFFICIENT: falls to D under
   assert.equal(verdict.verdict, 'D');
   assert.equal(verdict.causes[0].cause, 'no-settled-boundary');
 });
+
+test('§19.3 Verdict C: every applicable B-class boundary INSUFFICIENT and a named C-class boundary SUFFICIENT, mechanical difference named (WARM tuple -- C is only reachable there)', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple('R3', [
+      { id: 'WB-2p', applicable: true, residualMs: [20, 20, 20, 20, 40], occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null },
+      { id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: true },
+    ], fiveReps(10), 'warm')],
+    passingGlobalPreconditions(),
+  );
+  const verdict = reduceVerdict(ev);
+  assert.equal(verdict.verdict, 'C');
+  assert.deepEqual(verdict.settledBoundaries, ['WB-2']);
+  const diff = verdict.mechanicalDifferences[0].mechanicalDifference[0];
+  assert.equal(diff.cBoundaryId, 'WB-2');
+  assert.deepEqual(diff.rejectedBBoundaries[0].extraStagesOwnedByC, ['exactNarrowPhase', 'clearanceDistanceQuery']); // WB-2p owns only hardClashPrecheck
+});
+
+test('§7.3 negative: an otherwise-identical COLD tuple can never reach Verdict C, even though the C-class boundary\'s own numeric bound (and every other condition) would pass', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple('R3', [
+      { id: 'WB-2p', applicable: true, residualMs: [20, 20, 20, 20, 40], occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null },
+      { id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: true },
+    ])], // default state:'cold' -- everything else identical to the passing Verdict-C fixture above
+    passingGlobalPreconditions(),
+  );
+  const verdict = reduceVerdict(ev);
+  assert.notEqual(verdict.verdict, 'C');
+  assert.equal(verdict.verdict, 'D'); // WB-2p is INSUFFICIENT and WB-2, though numerically sufficient, is not applicable on a cold tuple -- no-settled-boundary
+  assert.equal(verdict.causes[0].cause, 'no-settled-boundary');
+});
+
+test('§19.3 B-over-C precedence: a WARM tuple where a B-class boundary is SUFFICIENT and a C-class boundary would also satisfy reports B, never C and never both', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple('R3', [
+      { id: 'WB-2p', applicable: true, residualMs: fiveReps(20), occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null },
+      { id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: true },
+    ], fiveReps(10), 'warm')], // warm + C genuinely applicable-and-sufficient, so this proves real precedence, not accidental inapplicability
+    passingGlobalPreconditions(),
+  );
+  const verdict = reduceVerdict(ev);
+  assert.equal(verdict.verdict, 'B');
+  assert.equal('mechanicalDifferences' in verdict, false);
+});
+
+test('C-class vacuous B-applicability (exact-query-substage case: no B-class boundary applicable at all), WARM tuple', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple('R3', [{ id: 'WB-2', applicable: true, residualMs: fiveReps(15), occupancyMs: fiveReps(15), deliveryTaskIdentified: null, derivedEvidenceBounded: true }], fiveReps(10), 'warm')],
+    passingGlobalPreconditions(),
+  );
+  const verdict = reduceVerdict(ev);
+  assert.equal(verdict.verdict, 'C');
+  assert.equal(verdict.mechanicalDifferences[0].mechanicalDifference.vacuous, true);
+});
