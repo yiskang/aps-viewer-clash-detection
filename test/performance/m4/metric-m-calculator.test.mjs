@@ -54,3 +54,24 @@ test('computeMetricM: de-duplicates a backing buffer shared across two in-flight
   // buf-1 counted once (1000), buf-2 counted once (200); metadata is per-payload, not deduped (40+40)
   assert.equal(computeMetricM(snapshot), 1000 + 200 + 40 + 40);
 });
+
+test('computeMetricM: full formula integration across geometry, epochs, and inflight together', () => {
+  const snapshot = {
+    geometryEntries: [{
+      loadEpoch: 1, geometryIndex: 0, positionByteLength: 1000, indexByteLength: 400,
+      bvhRootByteLengths: [200], bvhIndirectBufferByteLength: 0,
+      connectivityComponentOfByteLength: 80, connectivityClosedManifoldLength: 4,
+    }],
+    epochs: [{ loadEpoch: 1, tlasPrimitiveBufferByteLength: 500, tlasRecordCount: 1, placementCount: 1, instanceCount: 1 }],
+    inflight: [{ payloadId: 'a', backingBuffers: [{ bufferId: 'buf-1', byteLength: 100 }], payloadMetadataBytes: 10 }],
+  };
+  const expected =
+    (1000 + 400 + 200 + 0 + 80 + 4) +
+    (500 + 1 * RECORD_BYTES + 1 * PLACEMENT_BYTES + 1 * INSTANCE_BYTES) +
+    (100 + 10);
+  assert.equal(computeMetricM(snapshot), expected);
+});
+
+test('computeMetricM: an empty snapshot is a defined M = 0, never a silently-trimmed artifact', () => {
+  assert.equal(computeMetricM({ geometryEntries: [], epochs: [], inflight: [] }), 0);
+});
