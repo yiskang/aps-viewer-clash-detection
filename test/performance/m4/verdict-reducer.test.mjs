@@ -65,3 +65,23 @@ test('§1.1 no-boundary: condition 3\'s screen failing at a T-a-failing tuple fo
   assert.equal(verdict.verdict, 'D');
   assert.equal(verdict.causes[0].cause, 'no-boundary');
 });
+
+test('§19.3 Verdict B: exactly one applicable B-class boundary SUFFICIENT and every other condition satisfied', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple('R3', [{ id: 'WB-2p', applicable: true, residualMs: fiveReps(20), occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }])],
+    passingGlobalPreconditions(),
+  );
+  const verdict = reduceVerdict(ev);
+  assert.equal(verdict.verdict, 'B');
+  assert.deepEqual(verdict.settledBoundaries, ['WB-2p']);
+});
+
+test('§19.3 no applicable boundary of either class SUFFICIENT: falls to D under §7.5.10, never silently to B or C', () => {
+  const ev = buildEvidenceVector(
+    [tAFailingTuple('R3', [{ id: 'WB-2p', applicable: true, residualMs: [20, 20, 20, 20, 40], occupancyMs: fiveReps(20), deliveryTaskIdentified: fiveReps(true), derivedEvidenceBounded: null }])],
+    passingGlobalPreconditions(),
+  );
+  const verdict = reduceVerdict(ev);
+  assert.equal(verdict.verdict, 'D');
+  assert.equal(verdict.causes[0].cause, 'no-settled-boundary');
+});

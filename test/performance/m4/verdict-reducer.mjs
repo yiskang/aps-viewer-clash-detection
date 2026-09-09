@@ -13,7 +13,12 @@ function reduceTuple(tupleEvidence) {
   if (tupleEvidence.targetsAllPass) return { tuple: tupleEvidence.tuple, status: 'A' };
   if (tupleEvidence.onlyQueryEvidenceFailing) return { tuple: tupleEvidence.tuple, status: 'D', cause: D_CONDITION_LABELS[9] };
   if (tupleEvidence.noBoundaryScreenFailed) return { tuple: tupleEvidence.tuple, status: 'D', cause: NO_BOUNDARY_CAUSE };
-  return { tuple: tupleEvidence.tuple, status: 'D', cause: D_CONDITION_LABELS[10] }; // placeholder, extended in later steps
+
+  const bClassApplicable = tupleEvidence.boundaries.filter((b) => b.class === 'B' && b.applicable);
+  const bSufficient = bClassApplicable.filter((b) => b.disposition === 'SUFFICIENT');
+  if (bSufficient.length > 0) return { tuple: tupleEvidence.tuple, status: 'B', settledBy: bSufficient.map((b) => b.id) };
+
+  return { tuple: tupleEvidence.tuple, status: 'D', cause: D_CONDITION_LABELS[10] }; // C-class path added in Step 21
 }
 
 export function reduceVerdict(evidenceVector) {
@@ -28,6 +33,11 @@ export function reduceVerdict(evidenceVector) {
   const dFindings = tupleFindings.filter((f) => f.status === 'D');
   if (dFindings.length > 0) {
     return { verdict: 'D', causes: dFindings.map((f) => ({ scope: 'tuple', tuple: f.tuple, cause: f.cause })), tupleFindings };
+  }
+  const bFindings = tupleFindings.filter((f) => f.status === 'B');
+  if (bFindings.length > 0) {
+    const settledBoundaries = [...new Set(tupleFindings.flatMap((f) => f.settledBy ?? []))];
+    return { verdict: 'B', settledBoundaries, tupleFindings };
   }
   return { verdict: 'A', tupleFindings };
 }
