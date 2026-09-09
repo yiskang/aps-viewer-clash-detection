@@ -41,11 +41,11 @@ function selectTopLevelTaskEvents(traceEvents) {
   return topLevel;
 }
 
-// Deliberately naive for now -- Step 26/28 (Group D) hardens this against missing/duplicate marks
-// instead of crashing on `undefined.ts`.
-function findAnchorMarkTs(traceEvents, markName, pid, tid) {
-  const match = traceEvents.find((e) => e.ph === 'R' && e.name === markName && e.pid === pid && e.tid === tid);
-  return match.ts;
+function findAnchorMarkEvent(traceEvents, markName, pid, tid) {
+  const matches = traceEvents.filter((e) => e.ph === 'R' && e.name === markName && e.pid === pid && e.tid === tid);
+  if (matches.length === 0) return { status: 'missing' };
+  if (matches.length > 1) return { status: 'duplicate' };
+  return { status: 'ok', ts: matches[0].ts };
 }
 
 function buildLinearClockMap(openingTraceUs, openingMs, closingTraceUs, closingMs) {
@@ -77,10 +77,22 @@ export function parseTraceAndClock({
   const pid = measuredPid;
   const tid = measuredTid;
 
-  const openingTraceUs = findAnchorMarkTs(traceEvents, openingMarkName, pid, tid);
-  const closingTraceUs = findAnchorMarkTs(traceEvents, closingMarkName, pid, tid);
-  const openingSample = clockSamples.find((s) => s.markName === openingMarkName);
-  const closingSample = clockSamples.find((s) => s.markName === closingMarkName);
+  const opening = findAnchorMarkEvent(traceEvents, openingMarkName, pid, tid);
+  if (opening.status !== 'ok') {
+    return { valid: false, reason: opening.status === 'duplicate' ? 'duplicate-opening-mark' : 'missing-opening-mark', intervals: [] };
+  }
+  const closing = findAnchorMarkEvent(traceEvents, closingMarkName, pid, tid);
+  if (closing.status !== 'ok') {
+    return { valid: false, reason: closing.status === 'duplicate' ? 'duplicate-closing-mark' : 'missing-closing-mark', intervals: [] };
+  }
+
+  const openingSample = (clockSamples ?? []).find((s) => s.markName === openingMarkName);
+  const closingSample = (clockSamples ?? []).find((s) => s.markName === closingMarkName);
+  if (!openingSample) return { valid: false, reason: 'missing-opening-mark', intervals: [] };
+  if (!closingSample) return { valid: false, reason: 'missing-closing-mark', intervals: [] };
+
+  const openingTraceUs = opening.ts;
+  const closingTraceUs = closing.ts;
   const toMs = buildLinearClockMap(openingTraceUs, openingSample.performanceNowMs, closingTraceUs, closingSample.performanceNowMs);
 
   const measuredEvents = traceEvents.filter((e) => e.pid === pid && e.tid === tid);

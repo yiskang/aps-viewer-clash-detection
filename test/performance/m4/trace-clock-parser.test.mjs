@@ -120,3 +120,40 @@ test('excludes a task entirely outside the query window', () => {
   assert.equal(result.valid, true);
   assert.equal(result.intervals.length, 0);
 });
+
+// -- Step 16 tests ----------------------------------------------------------------------------
+
+test('reports invalid, never throws, when the opening anchor mark is missing from the trace', () => {
+  const traceEvents = [markEvent(CLOSING_MARK, 1_000_000), runTask(10_000, 5_000)];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'missing-opening-mark');
+  assert.deepEqual(result.intervals, []);
+});
+
+test('reports invalid when the closing anchor mark is missing from the trace', () => {
+  const traceEvents = [markEvent(OPENING_MARK, 0), runTask(10_000, 5_000)];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'missing-closing-mark');
+});
+
+test('reports invalid, never picking one arbitrarily, when the opening anchor mark name is duplicated', () => {
+  const traceEvents = [markEvent(OPENING_MARK, 0), markEvent(OPENING_MARK, 5_000), markEvent(CLOSING_MARK, 1_000_000)];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'duplicate-opening-mark');
+});
+
+test('reports invalid when a mark is present in the trace but its paired clock sample is missing', () => {
+  const result = parseTraceAndClock(baseArgs({
+    traceEvents: baseAnchors(),
+    clockSamples: [{ markName: OPENING_MARK, performanceNowMs: 0 }], // closing sample missing
+  }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'missing-closing-mark');
+});
