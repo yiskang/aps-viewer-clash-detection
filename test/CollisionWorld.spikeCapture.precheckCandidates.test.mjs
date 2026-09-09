@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { CollisionWorld } from '../collision/CollisionWorld.js';
+import { CollisionWorld, CapacityExceededError } from '../collision/CollisionWorld.js';
 import { setSpikeInputCapture, clearSpikeInputCapture } from '../collision/scheduler.js';
 import { buildMockModel } from './fixtures/mockInstanceTree.mjs';
 
@@ -53,6 +53,36 @@ test('precheck-candidate-list capture fires exactly once per clearance findClash
     assert.equal(typeof c.targetGeometryIndex, 'number');
     assert.equal(typeof c.targetLoadEpoch, 'number');
     assert.ok(Array.isArray(result.pairs));
+  } finally {
+    clearSpikeInputCapture();
+  }
+});
+
+test('a capacity-rejected clearance call (budget check throws) produces zero candidate captures -- no valid completed list to replay', async () => {
+  // codex-advisor review finding: the original test suite proved the capture fires on the
+  // success path, but never actually exercised the budget-rejection path it claims to guard.
+  // Forces `_checkClearanceNarrowPhaseBudget` itself to throw (the same instance-method-stub
+  // technique test/CollisionWorld.tlasTraversal.test.mjs and others already use in this repo),
+  // driven through a REAL findClashes({mode:'clearance'}) call on the cheap 2-fragment fixture
+  // -- proving the capture point (which sits AFTER this check in CollisionWorld.js) is never
+  // reached when the check rejects, regardless of how many real candidates existed.
+  const { model, viewer } = makeFixture(
+    [{ dbId: 0, children: [{ dbId: 1, fragments: [101] }, { dbId: 2, fragments: [102] }] }],
+    { 101: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] }, 102: { geometryIndex: 1, geometry: box(2, 2, 2), at: [2.5, 0, 0] } },
+  );
+  const captured = [];
+  setSpikeInputCapture((kind, payload) => { if (kind === 'precheck-candidate-list') captured.push(payload); });
+  try {
+    const world = await CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
+    await world.admitModel(model);
+    world._checkClearanceNarrowPhaseBudget = () => {
+      throw new CapacityExceededError('clearance-narrow-phase-budget', { limit: 0, attempted: 1 });
+    };
+    await assert.rejects(
+      world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 1, groupBy: 'dbId' }),
+      CapacityExceededError,
+    );
+    assert.equal(captured.length, 0, 'a capacity-rejected call must produce no capture -- there is no valid completed candidate list to replay');
   } finally {
     clearSpikeInputCapture();
   }

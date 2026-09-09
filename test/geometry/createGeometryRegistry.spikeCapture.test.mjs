@@ -44,11 +44,15 @@ test('brackets: geometry-extraction and geometry-weld are contiguous on a normal
   }
 });
 
-test('contiguity is preserved even when capture IS active and its copy takes real time: extraction absorbs the capture cost, no gap before weld opens', async () => {
+test('contiguity is preserved even when capture IS active and its copy takes real time: BOTH captures absorb their own cost, no gap anywhere in the build', async () => {
   // Fake-clock proof: performance.now() is patched so the capture callback itself can advance
-  // the clock (simulating a real, non-negligible .slice() cost), and the test asserts the
-  // extraction span's reported duration includes that advance -- i.e. the capture point is
-  // INSIDE the extraction bracket, not in an unaccounted-for gap between the two brackets.
+  // the clock (simulating a real, non-negligible .slice() cost). The capture fn fires twice --
+  // once for 'geometry-raw-input' (inside the extraction bracket) and once for
+  // 'geometry-welded-result' (inside the weld bracket, moved there after a codex-advisor review
+  // found the original placement left its copy cost in an unaccounted-for gap after
+  // geometry-weld's own span had already closed). Asserting extraction.ms + weld.ms equals the
+  // full 40ms the clock was advanced -- not merely that each span is individually >= 20ms --
+  // proves there is no THIRD, unattributed gap hiding between or around the two brackets.
   const realNow = performance.now.bind(performance);
   let fakeNow = 0;
   performance.now = () => fakeNow;
@@ -59,7 +63,10 @@ test('contiguity is preserved even when capture IS active and its copy takes rea
     const { registry } = makeRegistry({ triangleGeometryView: rangesView(1) });
     await registry.getOrBuildGeometry({ loadEpoch: 1, geometryIndex: 0, ownerModelIdHint: 'm', needsConnectivity: false, role: 'source' });
     const extraction = spans.find((s) => s.label === 'geometry-extraction');
-    assert.ok(extraction.ms >= 20, `extraction span (${extraction.ms}ms) must absorb the capture's own cost, not leave it in a gap`);
+    const weld = spans.find((s) => s.label === 'geometry-weld');
+    assert.ok(extraction.ms >= 20, `extraction span (${extraction.ms}ms) must absorb the raw-input capture's own cost, not leave it in a gap`);
+    assert.ok(weld.ms >= 20, `weld span (${weld.ms}ms) must absorb the welded-result capture's own cost, not leave it in a gap`);
+    assert.equal(extraction.ms + weld.ms, 40, 'the two spans together must account for the ENTIRE 40ms the clock advanced -- no third, unattributed gap');
   } finally {
     clearSpanRecorder();
     clearSpikeInputCapture();
