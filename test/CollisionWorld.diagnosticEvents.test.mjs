@@ -85,21 +85,50 @@ test('no recorder installed: findClashes behaves exactly as before', async () =>
   assert.ok(Array.isArray(result.pairs));
 });
 
-test('narrow-phase-pair events fire for containment/volume-overlap/surface-intersection modes (non-clearance dispatch)', async () => {
+// Task-review fix (Important, plan-mandated): the brief's own Step 6 test 4 template only actually
+// dispatched `mode: 'containment'`, despite its title claiming coverage of all three
+// `_runNarrowPhasePair` mode branches. Split into one focused test per mode, each independently
+// dispatching `findClashes` and asserting its own `narrow-phase-pair`/`stage` event fires --
+// covering `surface-intersection` and `volume-overlap`, previously entirely unproven.
+async function runNonClearance(mode, fragSpecs) {
   const { model, viewer } = makeFixture(
     [{ dbId: 0, children: [{ dbId: 1, fragments: [101] }, { dbId: 2, fragments: [102] }] }],
-    { 101: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] }, 102: { geometryIndex: 1, geometry: box(6, 6, 6), at: [0, 0, 0] } },
+    fragSpecs,
   );
   const events = [];
   setDiagnosticEventRecorder((kind, payload) => events.push({ kind, payload }));
   try {
     const world = await CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
     await world.admitModel(model);
-    await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'containment', groupBy: 'dbId' });
-    const narrowPhase = events.filter((e) => e.kind === 'narrow-phase-pair');
-    assert.ok(narrowPhase.some((e) => e.payload.stage === 'containment'));
-    assert.equal(typeof narrowPhase[0].payload.sourceTriangles, 'number');
+    await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode, groupBy: 'dbId' });
+    return events;
   } finally {
     clearDiagnosticEventRecorder();
   }
+}
+const nestedBoxes = { 101: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] }, 102: { geometryIndex: 1, geometry: box(6, 6, 6), at: [0, 0, 0] } };
+
+test('narrow-phase-pair event fires for containment mode (non-clearance dispatch)', async () => {
+  const events = await runNonClearance('containment', nestedBoxes);
+  const narrowPhase = events.filter((e) => e.kind === 'narrow-phase-pair');
+  assert.ok(narrowPhase.some((e) => e.payload.stage === 'containment'));
+  assert.equal(typeof narrowPhase[0].payload.sourceTriangles, 'number');
+});
+
+test('narrow-phase-pair event fires for volume-overlap mode (non-clearance dispatch)', async () => {
+  const events = await runNonClearance('volume-overlap', nestedBoxes);
+  const narrowPhase = events.filter((e) => e.kind === 'narrow-phase-pair');
+  assert.ok(narrowPhase.some((e) => e.payload.stage === 'volume-overlap'));
+  assert.equal(typeof narrowPhase[0].payload.sourceTriangles, 'number');
+  // This dispatch path never threads diagnosticPairContext into volumeOverlapQuery -- it is a
+  // DIFFERENT instrumented call site from the clearance precheck's own hard-clash-precheck event
+  // (VolumeOverlapQuery.js's subterm brackets), so no hard-clash-precheck events should appear here.
+  assert.equal(events.filter((e) => e.kind === 'hard-clash-precheck').length, 0);
+});
+
+test('narrow-phase-pair event fires for surface-intersection mode (non-clearance dispatch)', async () => {
+  const events = await runNonClearance('surface-intersection', nestedBoxes);
+  const narrowPhase = events.filter((e) => e.kind === 'narrow-phase-pair');
+  assert.ok(narrowPhase.some((e) => e.payload.stage === 'surface-intersection'));
+  assert.equal(typeof narrowPhase[0].payload.sourceTriangles, 'number');
 });
