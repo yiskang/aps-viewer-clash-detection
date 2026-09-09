@@ -24,3 +24,54 @@ export function classifyStageForScreen(stageName) {
   if (MAIN_ONLY_STAGES.has(stageName)) return 'main-only';
   throw new Error(`stage-attribution-engine: unknown stage "${stageName}" is not in §6.3's fixed classification table`);
 }
+
+function innermostCoveringStage(t, stageIntervals) {
+  let winner = null;
+  for (const s of stageIntervals) {
+    if (s.startMs <= t && t < s.endMs) {
+      if (winner === null || s.endMs - s.startMs < winner.endMs - winner.startMs) winner = s;
+    }
+  }
+  return winner;
+}
+
+// Longest contiguous main-only (uncovered) sub-interval of `task`. Overlapping stages are counted
+// once: only the innermost stage covering an instant decides whether that instant is "covered".
+function longestContiguousUncovered(task, stageIntervals, isTransferable) {
+  const overlapping = stageIntervals.filter((s) => s.startMs < task.endMs && s.endMs > task.startMs);
+  const boundarySet = new Set([task.startMs, task.endMs]);
+  for (const s of overlapping) {
+    if (s.startMs > task.startMs && s.startMs < task.endMs) boundarySet.add(s.startMs);
+    if (s.endMs > task.startMs && s.endMs < task.endMs) boundarySet.add(s.endMs);
+  }
+  const points = [...boundarySet].sort((a, b) => a - b);
+
+  let longest = 0;
+  let runLength = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const segStart = points[i];
+    const segEnd = points[i + 1];
+    if (segEnd <= segStart) continue;
+    const covering = innermostCoveringStage(segStart, overlapping);
+    const isCovered = covering !== null && isTransferable(covering.stage);
+    if (isCovered) {
+      runLength = 0;
+    } else {
+      runLength += segEnd - segStart;
+      longest = Math.max(longest, runLength);
+    }
+  }
+  return longest;
+}
+
+function maxOverTasks(taskIntervals, stageIntervals, isTransferable) {
+  let max = 0;
+  for (const task of taskIntervals) {
+    max = Math.max(max, longestContiguousUncovered(task, stageIntervals, isTransferable));
+  }
+  return max;
+}
+
+export function computeResidualAll(taskIntervals, stageIntervals) {
+  return maxOverTasks(taskIntervals, stageIntervals, (stage) => classifyStageForScreen(stage) === 'transferable');
+}
