@@ -274,6 +274,25 @@ export class TlasCache {
     return entry?.state === 'ready' ? entry.builtAtRevision : undefined;
   }
 
+  // Task 1.6: read-only memory diagnostic accessor -- STABLE, exact, exhaustive return shape
+  // (M4 design spec §15.1's Metric M calculator consumes this directly). Never mutates cache
+  // state. Three states: 'absent' (no entry for this epoch, or never built), 'building'
+  // (in flight -- no primitive counts to report yet), 'ready' (built; reports the real
+  // primitiveBuffer's length/byteLength and the revision it was built at).
+  getEpochPrimitiveDiagnostics(loadEpoch) {
+    const entry = this._entries.get(loadEpoch);
+    if (!entry) return { state: 'absent', primitiveCount: null, primitiveBufferBytes: null, builtAtRevision: null };
+    if (entry.state === 'building') {
+      return { state: 'building', primitiveCount: null, primitiveBufferBytes: null, builtAtRevision: null };
+    }
+    return {
+      state: 'ready',
+      primitiveCount: entry.bvh.primitiveBuffer.length,
+      primitiveBufferBytes: entry.bvh.primitiveBuffer.byteLength,
+      builtAtRevision: entry.builtAtRevision,
+    };
+  }
+
   releaseEntryForEpoch(loadEpoch) {
     const entry = this._entries.get(loadEpoch);
     if (entry && entry.state === 'building') {

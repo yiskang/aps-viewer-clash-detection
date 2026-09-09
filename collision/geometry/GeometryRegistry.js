@@ -100,6 +100,62 @@ export class GeometryRegistry {
     this._epochs.clear();
   }
 
+  // Task 1.6: read-only memory diagnostic accessors. STABLE, exact, exhaustive return shape --
+  // a later phase's Metric M calculator consumes this directly (M4 design spec §15.1). Never
+  // mutates registry/entry state. `getEpochGeometryEntries` returns entries in `Map` insertion
+  // (build) order, not sorted by geometryIndex -- insertion order is itself informative (plan's
+  // Phase 1 preamble, design decision 4). There is no 'released' buildState: a released epoch's
+  // entries are simply absent from the bucket, so an epoch with no bucket returns [].
+  getEpochGeometryEntryCount(loadEpoch) {
+    return this._epochs.get(loadEpoch)?.size ?? 0;
+  }
+
+  getEpochGeometryEntries(loadEpoch) {
+    const bucket = this._epochs.get(loadEpoch);
+    if (!bucket) return [];
+    const summaries = [];
+    for (const [geometryIndex, entry] of bucket) {
+      if (entry.oversized === true) {
+        summaries.push({
+          geometryIndex, buildState: 'oversized',
+          weldedPositionBytes: null, weldedIndexBytes: null, triangleCount: null,
+          bvhRootBytes: null, bvhIndirectBytes: null,
+          connectivityComponentCount: null, connectivityComponentOfBytes: null, connectivityClosedManifoldLength: null,
+          oversizedReason: entry.reason, activeTriangleCount: entry.activeTriangleCount,
+        });
+        continue;
+      }
+      if (entry.buildState === 'ready') {
+        const bvh = entry.accelerationResult ? entry.accelerationResult.bvh : null;
+        const bvhRootBytes = bvh && Array.isArray(bvh._roots)
+          ? bvh._roots.reduce((sum, root) => sum + (root && root.byteLength ? root.byteLength : 0), 0)
+          : null;
+        const bvhIndirectBytes = bvh ? (bvh._indirectBuffer ? bvh._indirectBuffer.byteLength : 0) : null;
+        const connectivity = entry.connectivityResult;
+        summaries.push({
+          geometryIndex, buildState: 'ready',
+          weldedPositionBytes: entry.weldedGeometry.position.byteLength,
+          weldedIndexBytes: entry.weldedGeometry.index.byteLength,
+          triangleCount: entry.weldedGeometry.triangleCount,
+          bvhRootBytes, bvhIndirectBytes,
+          connectivityComponentCount: connectivity ? connectivity.componentCount : null,
+          connectivityComponentOfBytes: connectivity ? connectivity.componentOf.byteLength : null,
+          connectivityClosedManifoldLength: connectivity ? connectivity.closedManifold.length : null,
+          oversizedReason: null, activeTriangleCount: null,
+        });
+        continue;
+      }
+      summaries.push({
+        geometryIndex, buildState: 'building',
+        weldedPositionBytes: null, weldedIndexBytes: null, triangleCount: null,
+        bvhRootBytes: null, bvhIndirectBytes: null,
+        connectivityComponentCount: null, connectivityComponentOfBytes: null, connectivityClosedManifoldLength: null,
+        oversizedReason: null, activeTriangleCount: null,
+      });
+    }
+    return summaries;
+  }
+
   // -- internals --------------------------------------------------------
 
   _insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivityAtStart, role) {
@@ -145,12 +201,21 @@ export class GeometryRegistry {
   }
 
   _chainConnectivity(loadEpoch, geometryIndex, entry, waitFor) {
-    entry.connectivityPromise = waitFor.then(() => {
-      if (entry.weldWasOversized) return null; // never read by any real caller.
-      return this._runPhase(loadEpoch, geometryIndex, entry, () =>
-        this._buildConnectivity(entry.weldedGeometry)
-      , 'connectivity');
-    });
+    entry.connectivityPromise = waitFor
+      .then(() => {
+        if (entry.weldWasOversized) return null; // never read by any real caller.
+        return this._runPhase(loadEpoch, geometryIndex, entry, () =>
+          this._buildConnectivity(entry.weldedGeometry)
+        , 'connectivity');
+      })
+      .then((connectivity) => {
+        // Task 1.6 accessor field: cache the resolved connectivity result on the entry so
+        // getEpochGeometryEntries can report it synchronously. This is a genuine gap in
+        // Task 1.3's own placeholder-only field (entry.connectivityResult was declared but
+        // never assigned) -- fixed here since Task 1.6 is the first caller to read it back.
+        if (!entry.weldWasOversized) entry.connectivityResult = connectivity;
+        return connectivity;
+      });
     // May legitimately go unread (e.g. a surface-intersection caller sharing an
     // entry a containment caller built) -- prevent a spurious unhandledRejection.
     entry.connectivityPromise.catch(() => {});
@@ -168,7 +233,7 @@ export class GeometryRegistry {
       .then((accel) => {
         // 'ready' is record-level and mode-independent: weld+BVH both resolved,
         // regardless of whether connectivity was ever touched (spec :1439-1448).
-        if (!entry.weldWasOversized) entry.buildState = 'ready';
+        if (!entry.weldWasOversized) { entry.buildState = 'ready'; entry.accelerationResult = accel; }
         return accel;
       });
     entry.accelerationPromise.catch(() => {});

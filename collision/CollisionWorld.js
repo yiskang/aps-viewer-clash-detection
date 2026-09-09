@@ -787,6 +787,34 @@ export class CollisionWorld {
     return this._instanceCache.get(epoch)?.size ?? 0;
   }
 
+  // Task 1.6: three read-only diagnostic wrapper accessors -- STABLE, exact, exhaustive return
+  // shapes (M4 design spec §15.1's Metric M calculator consumes these directly). Never mutate
+  // any world/registry/cache state. Each throws WorldDisposedError once disposed, matching every
+  // other public method's contract; each returns a safe empty/absent default (never throws) when
+  // the world has no registry/tlas wired yet (e.g. a lifecycle-only world built directly via the
+  // constructor rather than fromViewer).
+  getEpochGeometryDiagnostics(epoch) {
+    if (this._disposed) throw new WorldDisposedError();
+    return this._registry ? this._registry.getEpochGeometryEntries(epoch) : [];
+  }
+
+  getEpochTlasDiagnostics(epoch) {
+    if (this._disposed) throw new WorldDisposedError();
+    return this._tlasCache
+      ? this._tlasCache.getEpochPrimitiveDiagnostics(epoch)
+      : { state: 'absent', primitiveCount: null, primitiveBufferBytes: null, builtAtRevision: null };
+  }
+
+  getEpochPlacementDiagnostics(epoch) {
+    if (this._disposed) throw new WorldDisposedError();
+    return {
+      instanceCount: this._instanceCache.get(epoch)?.size ?? 0,
+      placementCount: this._placementByEpoch.get(epoch)?.size ?? 0,
+      placementRevision: this._placementRevisionByEpoch.get(epoch) ?? 0,
+      invalidatedAtRevision: this._placementInvalidatedAtRevision.get(epoch) ?? null,
+    };
+  }
+
   dispose() {
     // dispose() is NOT one of the two deliberate no-op-on-disposed exceptions (isLeaseValid,
     // evictModel are the only two — docs/...:3380-3391, 3462-3464, 3478-3481) — a second dispose()
