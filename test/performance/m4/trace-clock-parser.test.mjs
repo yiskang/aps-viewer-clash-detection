@@ -278,3 +278,55 @@ test('the caller-contract violation still throws even when dataLossOccurred is a
     /measuredPid, measuredTid.*pageTargetId/,
   );
 });
+
+// -- Step 36 tests ----------------------------------------------------------------------------
+
+test('reports invalid, never valid, when the closing anchor is not strictly after the opening anchor in trace time', () => {
+  const traceEvents = [markEvent(OPENING_MARK, 500_000), markEvent(CLOSING_MARK, 500_000), runTask(500_000, 1_000)];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'invalid-window');
+  assert.deepEqual(result.intervals, []);
+});
+
+test('reports invalid when the closing anchor precedes the opening anchor (corrupt/reordered trace)', () => {
+  const traceEvents = [markEvent(OPENING_MARK, 1_000_000), markEvent(CLOSING_MARK, 0), runTask(500_000, 1_000)];
+  const result = parseTraceAndClock(baseArgs({ traceEvents }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'invalid-window');
+});
+
+test('reports invalid when a paired clock sample carries a non-finite performanceNowMs, or the closing sample is not >= the opening sample (non-monotonic clock)', () => {
+  const nonFinite = parseTraceAndClock(baseArgs({
+    traceEvents: baseAnchors(),
+    clockSamples: [{ markName: OPENING_MARK, performanceNowMs: 0 }, { markName: CLOSING_MARK, performanceNowMs: NaN }],
+  }));
+  assert.equal(nonFinite.valid, false);
+  assert.equal(nonFinite.reason, 'invalid-clock-sample');
+
+  const nonMonotonic = parseTraceAndClock(baseArgs({
+    traceEvents: baseAnchors(),
+    clockSamples: [{ markName: OPENING_MARK, performanceNowMs: 1000 }, { markName: CLOSING_MARK, performanceNowMs: 500 }],
+  }));
+  assert.equal(nonMonotonic.valid, false);
+  assert.equal(nonMonotonic.reason, 'invalid-clock-sample');
+});
+
+test('throws on a malformed harness stageRecord (non-finite receiptMs, or a negative durationMs) -- a harness/caller bug, not a trace-data anomaly', () => {
+  assert.throws(
+    () => parseTraceAndClock(baseArgs({
+      traceEvents: baseAnchors(),
+      stageRecords: [{ stage: 'compactAndWeld', receiptMs: 120, durationMs: -5 }],
+    })),
+    /malformed stageRecord/,
+  );
+  assert.throws(
+    () => parseTraceAndClock(baseArgs({
+      traceEvents: baseAnchors(),
+      stageRecords: [{ stage: 'compactAndWeld', receiptMs: NaN, durationMs: 30 }],
+    })),
+    /malformed stageRecord/,
+  );
+});

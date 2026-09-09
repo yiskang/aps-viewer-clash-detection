@@ -14,6 +14,10 @@ const DEFAULT_CLOSING_MARK_NAME = 'm4-query-window-end';
 const DEFAULT_ACCEPTED_TASK_CATEGORIES = ['toplevel'];
 const DEFAULT_ACCEPTED_TASK_NAMES = ['RunTask'];
 
+function isFiniteNumber(x) {
+  return typeof x === 'number' && Number.isFinite(x);
+}
+
 function eventCategories(catField) {
   return String(catField ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }
@@ -137,6 +141,26 @@ export function parseTraceAndClock({
 
   const openingTraceUs = opening.ts;
   const closingTraceUs = closing.ts;
+
+  if (!isFiniteNumber(openingTraceUs) || !isFiniteNumber(closingTraceUs) || closingTraceUs <= openingTraceUs) {
+    return { valid: false, reason: 'invalid-window', intervals: [] };
+  }
+  if (
+    !isFiniteNumber(openingSample.performanceNowMs)
+    || !isFiniteNumber(closingSample.performanceNowMs)
+    || closingSample.performanceNowMs < openingSample.performanceNowMs
+  ) {
+    return { valid: false, reason: 'invalid-clock-sample', intervals: [] };
+  }
+
+  for (const r of stageRecords ?? []) {
+    if (!isFiniteNumber(r.receiptMs) || !isFiniteNumber(r.durationMs) || r.durationMs < 0) {
+      throw new Error(
+        `parseTraceAndClock: malformed stageRecord for stage "${r.stage}" -- receiptMs and durationMs must be finite numbers, and durationMs must be >= 0`
+      );
+    }
+  }
+
   const toMs = buildLinearClockMap(openingTraceUs, openingSample.performanceNowMs, closingTraceUs, closingSample.performanceNowMs);
 
   const measuredEvents = traceEvents.filter((e) => e.pid === pid && e.tid === tid);
