@@ -47,6 +47,30 @@ export function clearanceCrossCheckAllowedDisagreement(largerWorldDistance, larg
 }
 
 /**
+ * Anchor selection and the derived local-frame clearance threshold -- the smaller-or-equal-scale
+ * operand (the "anchor", see the block comment above `clearanceQuery` for why) plus the
+ * `clearance / anchorScaleFactor` threshold, widened by `clearanceTraversalThresholdSafetyMargin` to
+ * keep an exact-`clearance` candidate off the pinned API's strict `<` boundary.
+ *
+ * Exported so CollisionWorld.js's own Task 1.5 diagnostic-event covariate derivation (a
+ * `hard-clash-precheck`-adjacent measurement, not a hard-clash decision) can share this EXACT
+ * derivation rather than re-deriving it -- if this anchoring or safety-margin rule is ever retuned,
+ * both call sites move together instead of silently drifting apart.
+ *
+ * @param {number} sourceScaleFactor
+ * @param {number} targetScaleFactor
+ * @param {number} clearance
+ * @returns {{anchorIsSource: boolean, anchorScaleFactor: number, anchorLocalMaxThreshold: number}}
+ */
+export function computeClearanceAnchor(sourceScaleFactor, targetScaleFactor, clearance) {
+  const anchorIsSource = sourceScaleFactor <= targetScaleFactor;
+  const anchorScaleFactor = anchorIsSource ? sourceScaleFactor : targetScaleFactor;
+  const anchorLocalMaxThreshold =
+    (clearance / anchorScaleFactor) * (1 + clearanceTraversalThresholdSafetyMargin);
+  return { anchorIsSource, anchorScaleFactor, anchorLocalMaxThreshold };
+}
+
+/**
  * Exact minimum surface-to-surface distance between two Instances, for rigid + uniform-scale
  * transforms only. Same Instance shape as volumeOverlapQuery: {geometry, bvh, matrix, localDiagonal}.
  *
@@ -130,10 +154,11 @@ export function clearanceQuery(source, target, options) {
 
   // Anchor = the smaller-or-equal-scale operand; it is the one the pinned API's outer BVH traversal
   // runs on. See the block comment above for why this specific ordering is the safe one.
-  const anchorIsSource = sourceScale.scaleFactor <= targetScale.scaleFactor;
+  const { anchorIsSource, anchorScaleFactor, anchorLocalMaxThreshold } = computeClearanceAnchor(
+    sourceScale.scaleFactor, targetScale.scaleFactor, clearance,
+  );
   const anchor = anchorIsSource ? source : target;
   const far = anchorIsSource ? target : source;
-  const anchorScaleFactor = anchorIsSource ? sourceScale.scaleFactor : targetScale.scaleFactor;
   const farScaleFactor = anchorIsSource ? targetScale.scaleFactor : sourceScale.scaleFactor;
 
   // Validate the WHOLE inverse -- every element finite AND the affine bottom-right entry intact
@@ -187,13 +212,12 @@ export function clearanceQuery(source, target, options) {
   // The `1 + clearanceTraversalThresholdSafetyMargin` factor keeps a candidate whose exact distance
   // equals `clearance` off the library's strict `score < maxThreshold` boundary, where float32 node
   // padding rather than geometry would otherwise decide it. Safe because the exact
-  // `worldDistance > clearance` post-filter below always runs regardless.
-  const maxThresholdLocal =
-    (clearance / anchorScaleFactor) * (1 + clearanceTraversalThresholdSafetyMargin);
+  // `worldDistance > clearance` post-filter below always runs regardless. (Computed above by
+  // `computeClearanceAnchor` as `anchorLocalMaxThreshold`.)
   const target1 = {};
   const target2 = {};
   const raw = anchor.bvh.closestPointToGeometry(
-    far.geometry, farToAnchorMatrix, target1, target2, 0, maxThresholdLocal,
+    far.geometry, farToAnchorMatrix, target1, target2, 0, anchorLocalMaxThreshold,
   );
 
   if (raw === null || raw === undefined) {

@@ -14,7 +14,7 @@ import {
 } from './scheduler.js';
 import {
   maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, maxTlasCandidatePairs,
-  maxClearanceNarrowPhasePairs, weldEpsilonMeters, surfaceEpsilonFactor, clearanceTraversalThresholdSafetyMargin,
+  maxClearanceNarrowPhasePairs, weldEpsilonMeters, surfaceEpsilonFactor,
 } from './constants.js';
 import { extractFragments, extractAllFragments, readWorldMatrix, readWorldBounds } from './viewer/ViewerModelAdapter.js';
 import { adaptViewerGeometry } from './viewer/ViewerGeometryAdapter.js';
@@ -25,7 +25,7 @@ import { containmentModeQuery } from './query/ContainmentModeQuery.js';
 import { volumeOverlapQuery } from './query/VolumeOverlapQuery.js';
 import { aabbMinDistance } from './geometry/AabbDistance.js';
 import { validateUniformScale, computeToleranceFloor } from './query/ClearanceTransform.js';
-import { clearanceQuery } from './query/ClearanceQuery.js';
+import { clearanceQuery, computeClearanceAnchor } from './query/ClearanceQuery.js';
 import { classifyHardClashPrecheck } from './query/ClearanceHardClashPrecheck.js';
 
 const supportedModes = ['surface-intersection', 'containment', 'volume-overlap', 'clearance'];
@@ -2357,25 +2357,28 @@ export class CollisionWorld {
     // `stage:'not-run'` event BEFORE `classifyHardClashPrecheck` is ever called for this pair --
     // distinct from (and never duplicating) that function's own internal `'aabb-disjoint'` event,
     // which fires only once the pair actually reaches it. Gated on isDiagnosticEventRecorderActive()
-    // so no event object is constructed when no recorder is installed (this task's own no-op
-    // constraint, matching every other diagnostic-event call site in this file).
-    const reportPrecheckNotRun = (precheckNotRunReason) => {
-      if (!isDiagnosticEventRecorderActive()) return;
+    // so neither the event payload object NOR the closure that would build it is constructed when no
+    // recorder is installed (this task's own no-op constraint, matching every other diagnostic-event
+    // call site in this file) -- the check is hoisted OUTSIDE the closure itself (Phase 1 review fix,
+    // Important #1) rather than tested inside its body, so `reportPrecheckNotRun` is `null` and never
+    // allocated at all on the by-far-more-common no-recorder path, once per candidate pair.
+    const recorderActive = isDiagnosticEventRecorderActive();
+    const reportPrecheckNotRun = recorderActive ? (precheckNotRunReason) => {
       reportDiagnosticEvent('hard-clash-precheck', {
         sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
         targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
         stage: 'not-run', precheckNotRunReason,
       });
-    };
+    } : null;
 
     const sourceRecord = await resolveGeometryRecord(
       this._registry, sourcePlaced, 'source', sourceOperand, true, statistics, oversizedDiagnosedFragments,
     );
-    if (!sourceRecord) { reportPrecheckNotRun('geometry-unsupported-before-precheck'); return { outcome: 'geometry-unavailable' }; }
+    if (!sourceRecord) { reportPrecheckNotRun?.('geometry-unsupported-before-precheck'); return { outcome: 'geometry-unavailable' }; }
     const targetRecord = await resolveGeometryRecord(
       this._registry, targetPlaced, 'target', targetOperand, true, statistics, oversizedDiagnosedFragments,
     );
-    if (!targetRecord) { reportPrecheckNotRun('geometry-unsupported-before-precheck'); return { outcome: 'geometry-unavailable' }; }
+    if (!targetRecord) { reportPrecheckNotRun?.('geometry-unsupported-before-precheck'); return { outcome: 'geometry-unavailable' }; }
 
     const sourceInstance = toInstance(sourceRecord, sourcePlaced.worldMatrix);
     const targetInstance = toInstance(targetRecord, targetPlaced.worldMatrix);
@@ -2398,7 +2401,7 @@ export class CollisionWorld {
       if (!targetScale.valid) {
         diagnoseAnisotropicScaleOnce(statistics, anisotropicScaleDiagnosedFragments, targetPlaced, 'target', targetOperand);
       }
-      reportPrecheckNotRun('anisotropic-scale-before-precheck');
+      reportPrecheckNotRun?.('anisotropic-scale-before-precheck');
       return { outcome: 'anisotropic-scale' };
     }
 
@@ -2464,9 +2467,14 @@ export class CollisionWorld {
     reportSpan('clearance-distance-query', distanceQueryMs); // production instrumentation, consumed by Task 18's gate
 
     if (isDiagnosticEventRecorderActive()) {
-      const anchoredOnSource = sourceScale.scaleFactor <= targetScale.scaleFactor;
-      const anchorScaleFactor = anchoredOnSource ? sourceScale.scaleFactor : targetScale.scaleFactor;
-      const anchorLocalMaxThreshold = (clearance / anchorScaleFactor) * (1 + clearanceTraversalThresholdSafetyMargin);
+      // Phase 1 review fix (Important #2): shares its anchor-choice/threshold derivation with
+      // ClearanceQuery.js's own internal anchoring logic via `computeClearanceAnchor`, rather than
+      // re-deriving the formula here -- a duplicated, unpinned copy would silently go stale if
+      // ClearanceQuery.js's anchoring or safety-margin rule is ever retuned, and nothing would catch
+      // the drift since this is only a diagnostic covariate, never a hard-clash decision.
+      const { anchorIsSource: anchoredOnSource, anchorLocalMaxThreshold } = computeClearanceAnchor(
+        sourceScale.scaleFactor, targetScale.scaleFactor, clearance,
+      );
       const commonCovariates = {
         sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
         targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,

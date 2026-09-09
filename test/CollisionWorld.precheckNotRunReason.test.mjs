@@ -116,3 +116,36 @@ test('a non-uniformly-scaled target reports precheckNotRunReason: anisotropic-sc
     clearDiagnosticEventRecorder();
   }
 });
+
+// Phase 1 whole-phase review fix (Important #1): `reportPrecheckNotRun` is now `null` (not a
+// no-op closure) on the no-recorder path -- `_runClearanceNarrowPhasePair`'s own pre-precheck skip
+// points call it via `reportPrecheckNotRun?.(...)`. These two tests exercise EXACTLY those skip
+// points with NO recorder installed at all, so a regression that dropped the `?.` (calling `null`
+// as a function) would throw a TypeError and fail these tests, rather than only being caught by
+// code review or a performance profile.
+test('no recorder installed: geometry-unsupported-before-precheck skip point does not throw', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 0, children: [{ dbId: 1, fragments: [101] }, { dbId: 2, fragments: [102] }] }],
+    { 101: { geometryIndex: 0, geometry: box(1, 1, 1), at: [0, 0, 0] }, 102: { geometryIndex: 1, geometry: box(1, 1, 1), at: [0.5, 0, 0] } },
+  );
+  const realGetRenderProxy = viewer.impl.getRenderProxy;
+  viewer.impl.getRenderProxy = (queriedModel, fragId) => (fragId === 102 ? null : realGetRenderProxy(queriedModel, fragId));
+  const world = await CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
+  await world.admitModel(model);
+  const result = await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 5, groupBy: 'dbId' });
+  assert.ok(Array.isArray(result.pairs));
+});
+
+test('no recorder installed: anisotropic-scale-before-precheck skip point does not throw', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 0, children: [{ dbId: 1, fragments: [101] }, { dbId: 2, fragments: [102] }] }],
+    {
+      101: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      102: { geometryIndex: 1, geometry: box(2, 2, 2), matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS },
+    },
+  );
+  const world = await CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
+  await world.admitModel(model);
+  const result = await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'linear' });
+  assert.ok(Array.isArray(result.pairs));
+});
