@@ -1,5 +1,6 @@
 import { aabbMinDistance } from '../geometry/AabbDistance.js';
 import { volumeOverlapQuery } from './VolumeOverlapQuery.js';
+import { reportDiagnosticEvent } from '../scheduler.js';
 
 /**
  * Tri-state Hard-Clash exclusion precheck for a clearance candidate pair. Never collapses to boolean:
@@ -20,7 +21,14 @@ export async function classifyHardClashPrecheck(
     return { status: 'skip-precheck' };
   }
 
+  const diagnosticPairContext = volumeOverlapOptions.diagnosticPairContext;
+  const overlapStartedAt = diagnosticPairContext ? performance.now() : 0;
   const overlapResult = await volumeOverlapQuery(sourceInstance, targetInstance, volumeOverlapOptions);
+  if (diagnosticPairContext) {
+    reportDiagnosticEvent('hard-clash-precheck', {
+      ...diagnosticPairContext, stage: 'volume-overlap-query', ms: performance.now() - overlapStartedAt,
+    });
+  }
 
   if (overlapResult.overlap === true) {
     return { status: 'excluded' };

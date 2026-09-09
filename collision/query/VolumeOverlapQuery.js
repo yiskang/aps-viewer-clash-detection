@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { properCrossingQuery } from './ProperCrossingQuery.js';
 import { anyComponentInside } from './ContainmentQuery.js';
+import { reportDiagnosticEvent } from '../scheduler.js';
 
 const defaultCompareCanonical = () => -1; // always treats `source` as canonical-first
 
@@ -85,7 +86,19 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   // per this file's own convention -- see the compareCanonical comment above).
   // When gated, properCrossingQuery is never called at all; a synthetic result is
   // substituted so the rest of this function's control flow is unaffected.
+  // Task 1.4: optional per-pair diagnostic-event context (Task 1.2's reportDiagnosticEvent
+  // mechanism). Additive and gated on options.diagnosticPairContext -- when the caller omits it
+  // (every pre-existing caller/test), no event fires and no covariate object is constructed.
+  const diagnosticPairContext = options.diagnosticPairContext;
+  const triangleCovariates = diagnosticPairContext ? {
+    sourceTriangles: source.geometry.index.count / 3,
+    targetTriangles: target.geometry.index.count / 3,
+    sourceComponents: source.connectivity ? source.connectivity.componentCount : undefined,
+    targetComponents: target.connectivity ? target.connectivity.componentCount : undefined,
+  } : null;
+
   let crossing;
+  const crossingStartedAt = diagnosticPairContext ? performance.now() : 0;
   if (source.aspectRatioExceeded || target.aspectRatioExceeded) {
     const skippedDiagnostics = [];
     if (source.aspectRatioExceeded) {
@@ -108,6 +121,11 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       canonicalFirst.bvh, canonicalSecond.bvh, canonicalSecondToFirst,
       canonicalFirst.localDiagonal, canonicalSecond.localDiagonal, options.crossing
     );
+  }
+  if (diagnosticPairContext) {
+    reportDiagnosticEvent('hard-clash-precheck', {
+      ...diagnosticPairContext, ...triangleCovariates, stage: 'crossing', ms: performance.now() - crossingStartedAt,
+    });
   }
 
   // NOTE: crossing.diagnostics is deliberately NOT merged here. Per the design spec
@@ -150,6 +168,7 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   await scheduler.checkpointIfDue();
 
   const sourceToTargetForAinB = target.matrix.clone().invert().multiply(source.matrix);
+  const aInBStartedAt = diagnosticPairContext ? performance.now() : 0;
   const aInB = await anyComponentInside(
     source.geometry, source.bvh, source.localDiagonal, source.connectivity,
     target.bvh, target.localDiagonal, target.closedManifold,
@@ -167,6 +186,12 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       targetAspectRatioExceeded: target.aspectRatioExceeded,
     }
   );
+  if (diagnosticPairContext) {
+    reportDiagnosticEvent('hard-clash-precheck', {
+      ...diagnosticPairContext, ...triangleCovariates, stage: 'containment-a-in-b', ms: performance.now() - aInBStartedAt,
+      containmentSamplesUsed: aInB.samplesUsed,
+    });
+  }
   // aInB.diagnostics is deliberately NOT merged here either, for the identical reason
   // as crossing.diagnostics above (codex-review finding on this reconciliation pass):
   // if aInB is a NEGATIVE (e.g. gated by target.aspectRatioExceeded, or a truncated
@@ -191,6 +216,7 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   await scheduler.checkpointIfDue();
 
   const targetToSource = source.matrix.clone().invert().multiply(target.matrix);
+  const bInAStartedAt = diagnosticPairContext ? performance.now() : 0;
   const bInA = await anyComponentInside(
     target.geometry, target.bvh, target.localDiagonal, target.connectivity,
     source.bvh, source.localDiagonal, source.closedManifold,
@@ -206,6 +232,12 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       targetAspectRatioExceeded: source.aspectRatioExceeded,
     }
   );
+  if (diagnosticPairContext) {
+    reportDiagnosticEvent('hard-clash-precheck', {
+      ...diagnosticPairContext, ...triangleCovariates, stage: 'containment-b-in-a', ms: performance.now() - bInAStartedAt,
+      containmentSamplesUsed: bInA.samplesUsed,
+    });
+  }
   // bInA.diagnostics is likewise deliberately NOT merged here (same reasoning as
   // aInB above, codex-review finding on this reconciliation pass): a bInA NEGATIVE
   // must not taint anything, and there is no later positive term for it to leak into
