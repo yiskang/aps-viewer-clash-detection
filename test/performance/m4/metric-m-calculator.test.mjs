@@ -42,3 +42,15 @@ test('computeMetricM: sums per-epoch TLAS, placement, and instance contributions
   };
   assert.equal(computeMetricM(snapshot), 500 + 3 * RECORD_BYTES + 2 * PLACEMENT_BYTES + 10 * INSTANCE_BYTES);
 });
+
+test('computeMetricM: de-duplicates a backing buffer shared across two in-flight payload entries, sums metadata separately', () => {
+  const snapshot = {
+    geometryEntries: [], epochs: [],
+    inflight: [
+      { payloadId: 'a', backingBuffers: [{ bufferId: 'buf-1', byteLength: 1000 }], payloadMetadataBytes: 40 },
+      { payloadId: 'b', backingBuffers: [{ bufferId: 'buf-1', byteLength: 1000 }, { bufferId: 'buf-2', byteLength: 200 }], payloadMetadataBytes: 40 },
+    ],
+  };
+  // buf-1 counted once (1000), buf-2 counted once (200); metadata is per-payload, not deduped (40+40)
+  assert.equal(computeMetricM(snapshot), 1000 + 200 + 40 + 40);
+});

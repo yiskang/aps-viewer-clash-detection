@@ -59,5 +59,16 @@ export function computeMetricM(snapshot) {
     total += e.instanceCount * INSTANCE_BYTES;
   }
 
+  const dedupedBuffers = new Map();
+  let metadataTotal = 0;
+  for (const p of snapshot.inflight ?? []) {
+    for (const buf of p.backingBuffers ?? []) {
+      if (!dedupedBuffers.has(buf.bufferId)) dedupedBuffers.set(buf.bufferId, buf.byteLength);
+    }
+    metadataTotal += p.payloadMetadataBytes ?? 0;
+  }
+  for (const byteLength of dedupedBuffers.values()) total += byteLength;
+  total += metadataTotal;
+
   return total;
 }
