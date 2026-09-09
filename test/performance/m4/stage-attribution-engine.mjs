@@ -133,3 +133,45 @@ export function yieldRecordsToIntervals(yieldRecords) {
     return { startMs: r.receiptMs - r.resumeLatencyMs, endMs: r.receiptMs };
   });
 }
+
+// Returns the sub-segments of `interval` that do NOT overlap any interval in `yieldIntervals`.
+// Yield intervals are NOT validated here (that is yieldRecordsToIntervals's job): a malformed one
+// (endMs <= startMs) is defensively ignored rather than thrown on, since this function's only
+// contract is about splitting `interval`, not about validating its second argument's shape.
+export function splitIntervalAroundYields(interval, yieldIntervals) {
+  const clipped = [];
+  for (const y of yieldIntervals) {
+    if (y.endMs <= y.startMs) continue; // malformed -- defensively ignored, contributes no split
+    const start = Math.max(y.startMs, interval.startMs);
+    const end = Math.min(y.endMs, interval.endMs);
+    if (end <= start) continue; // no actual overlap (includes boundary-touching cases)
+    clipped.push({ start, end });
+  }
+
+  if (clipped.length === 0) return [interval];
+
+  clipped.sort((a, b) => a.start - b.start);
+  const merged = [clipped[0]];
+  for (let i = 1; i < clipped.length; i++) {
+    const last = merged[merged.length - 1];
+    const cur = clipped[i];
+    if (cur.start <= last.end) {
+      last.end = Math.max(last.end, cur.end);
+    } else {
+      merged.push({ ...cur });
+    }
+  }
+
+  const segments = [];
+  let cursor = interval.startMs;
+  for (const range of merged) {
+    if (range.start > cursor) {
+      segments.push({ startMs: cursor, endMs: range.start, source: interval.source, stage: interval.stage, validity: interval.validity });
+    }
+    cursor = range.end;
+  }
+  if (cursor < interval.endMs) {
+    segments.push({ startMs: cursor, endMs: interval.endMs, source: interval.source, stage: interval.stage, validity: interval.validity });
+  }
+  return segments;
+}

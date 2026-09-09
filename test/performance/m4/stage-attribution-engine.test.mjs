@@ -1,7 +1,7 @@
 // M4 Task 2.2: stage-attribution / residual engine tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyStageForScreen, SCREEN_TRANSFERABLE_STAGES, MAIN_ONLY_STAGES, computeResidualAll, hardMaximum, computeResidualForBoundary, computeBoundaryOccupancy, yieldRecordsToIntervals } from './stage-attribution-engine.mjs';
+import { classifyStageForScreen, SCREEN_TRANSFERABLE_STAGES, MAIN_ONLY_STAGES, computeResidualAll, hardMaximum, computeResidualForBoundary, computeBoundaryOccupancy, yieldRecordsToIntervals, splitIntervalAroundYields } from './stage-attribution-engine.mjs';
 
 test('§6.3 classification: compactAndWeld and geometryResolutionPerPair count as transferable for the screen', () => {
   assert.equal(classifyStageForScreen('compactAndWeld'), 'transferable');
@@ -153,4 +153,49 @@ test('yieldRecordsToIntervals: throws on a non-finite receiptMs (harness-computa
 
 test('yieldRecordsToIntervals: throws on a negative resumeLatencyMs', () => {
   assert.throws(() => yieldRecordsToIntervals([{ receiptMs: 100, resumeLatencyMs: -1 }]), /resumeLatencyMs/);
+});
+
+test('splitIntervalAroundYields: no yields -> returns [interval] unchanged', () => {
+  const interval = { startMs: 0, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  assert.deepEqual(splitIntervalAroundYields(interval, []), [interval]);
+});
+
+test('splitIntervalAroundYields: one yield fully inside -> 2 sub-segments carrying the same source/stage/validity', () => {
+  const interval = { startMs: 0, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  const result = splitIntervalAroundYields(interval, [{ startMs: 40, endMs: 60 }]);
+  assert.deepEqual(result, [
+    { startMs: 0, endMs: 40, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+    { startMs: 60, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+  ]);
+});
+
+test('splitIntervalAroundYields: one yield fully covering the interval -> [] (no attributed sub-segment)', () => {
+  const interval = { startMs: 20, endMs: 80, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  assert.deepEqual(splitIntervalAroundYields(interval, [{ startMs: 0, endMs: 100 }]), []);
+});
+
+test('splitIntervalAroundYields: a yield only touching the start boundary does not split anything', () => {
+  const interval = { startMs: 50, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  // yield ends exactly where interval starts -- no actual overlap
+  assert.deepEqual(splitIntervalAroundYields(interval, [{ startMs: 0, endMs: 50 }]), [interval]);
+  // yield starts exactly where interval ends -- no actual overlap
+  assert.deepEqual(splitIntervalAroundYields(interval, [{ startMs: 100, endMs: 150 }]), [interval]);
+});
+
+test('splitIntervalAroundYields: two non-overlapping yields inside -> 3 sub-segments, sorted by startMs ascending', () => {
+  const interval = { startMs: 0, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  const result = splitIntervalAroundYields(interval, [
+    { startMs: 60, endMs: 70 },
+    { startMs: 20, endMs: 30 },
+  ]);
+  assert.deepEqual(result, [
+    { startMs: 0, endMs: 20, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+    { startMs: 30, endMs: 60, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+    { startMs: 70, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' },
+  ]);
+});
+
+test('splitIntervalAroundYields: a malformed yield interval (endMs <= startMs) is defensively ignored, not thrown', () => {
+  const interval = { startMs: 0, endMs: 100, source: 'harness-stage', stage: 'connectivity', validity: 'valid' };
+  assert.deepEqual(splitIntervalAroundYields(interval, [{ startMs: 50, endMs: 50 }, { startMs: 80, endMs: 40 }]), [interval]);
 });
