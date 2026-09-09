@@ -59,6 +59,30 @@ test('tCDispositionForRepetition: FAILURE takes precedence over INDETERMINATE wh
   assert.equal(result.status, 'FAILURE');
 });
 
+// Per design spec §6.2 ("A repetition with fewer than 5 in-window observations ... is reported
+// INDETERMINATE for T-c" -- stated unconditionally): the minimum-observation-count floor is
+// checked BEFORE the >=5-only FAILURE/INDETERMINATE precedence logic, so a FAILURE observation
+// among fewer than 5 total does not escalate the repetition to FAILURE. This is a distinct rule
+// from "FAILURE takes precedence over INDETERMINATE when both are present" above, which only
+// governs repetitions that already clear the 5-observation floor.
+test('tCDispositionForRepetition: a FAILURE observation does NOT override the <5 minimum-count floor', () => {
+  const obs = [{ status: 'OK', delayMs: 10 }, { status: 'OK', delayMs: 20 }, { status: 'FAILURE', delayMs: 150 }];
+  const result = tCDispositionForRepetition(obs, 100);
+  assert.equal(result.status, 'INDETERMINATE');
+});
+
+test('tCDispositionForRepetition: an INDETERMINATE observation among fewer than 5 also stays INDETERMINATE (not a distinct code path)', () => {
+  const obs = [{ status: 'OK', delayMs: 10 }, { status: 'INDETERMINATE', delayMs: 40 }];
+  const result = tCDispositionForRepetition(obs, 100);
+  assert.equal(result.status, 'INDETERMINATE');
+});
+
+test('tCDispositionForRepetition: both a FAILURE and an INDETERMINATE observation among fewer than 5 still stays INDETERMINATE', () => {
+  const obs = [{ status: 'INDETERMINATE', delayMs: 40 }, { status: 'FAILURE', delayMs: 150 }];
+  const result = tCDispositionForRepetition(obs, 100);
+  assert.equal(result.status, 'INDETERMINATE');
+});
+
 test('calibrateNodeToRendererClock: affine two-point mapping from pre/post samples', () => {
   const pre = { nodeMs: 1000, rendererMs: 200, roundTripMs: 0 };
   const post = { nodeMs: 3000, rendererMs: 2200, roundTripMs: 0 };
@@ -94,6 +118,50 @@ test('calibrateNodeToRendererClock: a sample round-trip beyond MAX_CALIBRATION_R
   assert.match(calibration.reason, /round-trip/);
 });
 
+// Fail-closed validation: a malformed calibration sample must never produce `valid: true`, since
+// downstream code trusts `.valid` alone before using the mapping/uncertainty. Table-driven per
+// codex-review's recommendation.
+const malformedCalibrationCases = [
+  {
+    name: 'NaN roundTripMs',
+    pre: { nodeMs: 0, rendererMs: 0, roundTripMs: NaN },
+    post: { nodeMs: 1000, rendererMs: 1000, roundTripMs: 2 },
+    reasonMatch: /roundTripMs/,
+  },
+  {
+    name: 'Infinity nodeMs',
+    pre: { nodeMs: 0, rendererMs: 0, roundTripMs: 2 },
+    post: { nodeMs: Infinity, rendererMs: 1000, roundTripMs: 2 },
+    reasonMatch: /nodeMs/,
+  },
+  {
+    name: 'negative roundTripMs',
+    pre: { nodeMs: 0, rendererMs: 0, roundTripMs: -1 },
+    post: { nodeMs: 1000, rendererMs: 1000, roundTripMs: 2 },
+    reasonMatch: /negative/,
+  },
+  {
+    name: 'equal Node timestamps (zero-width interval)',
+    pre: { nodeMs: 1000, rendererMs: 200, roundTripMs: 2 },
+    post: { nodeMs: 1000, rendererMs: 1200, roundTripMs: 2 },
+    reasonMatch: /chronologically ordered/,
+  },
+  {
+    name: 'reversed Node timestamps',
+    pre: { nodeMs: 2000, rendererMs: 200, roundTripMs: 2 },
+    post: { nodeMs: 1000, rendererMs: 1200, roundTripMs: 2 },
+    reasonMatch: /chronologically ordered/,
+  },
+];
+
+for (const { name, pre, post, reasonMatch } of malformedCalibrationCases) {
+  test(`calibrateNodeToRendererClock: rejects malformed input -- ${name}`, () => {
+    const calibration = calibrateNodeToRendererClock(pre, post);
+    assert.equal(calibration.valid, false);
+    assert.match(calibration.reason, reasonMatch);
+  });
+}
+
 test('nodeMsToRendererMs: converts using the fitted affine scale, not a flat offset', () => {
   // A hand-built calibration (not run through the drift/round-trip gate, which is
   // calibrateNodeToRendererClock's own concern -- see the tests above) isolates the pure
@@ -120,4 +188,18 @@ test('applyClockUncertainty: leaves a disposition clearly outside the uncertaint
 test('applyClockUncertainty: an already-INDETERMINATE disposition passes through unchanged', () => {
   const original = { status: 'INDETERMINATE', delayMs: 40 };
   assert.deepEqual(applyClockUncertainty(original, 50, 100), original);
+});
+
+// Fail-closed: a malformed uncertaintyMs (e.g. NaN propagated from a caller that forgot to gate
+// on calibration.valid) must never let a confident OK/FAILURE slip through untouched, since every
+// comparison against NaN is false in JS and would otherwise silently bypass the threshold-band
+// check above.
+test('applyClockUncertainty: NaN uncertaintyMs fails closed to INDETERMINATE rather than passing an OK through', () => {
+  const result = applyClockUncertainty({ status: 'OK', delayMs: 10 }, NaN, 100);
+  assert.equal(result.status, 'INDETERMINATE');
+});
+
+test('applyClockUncertainty: negative uncertaintyMs fails closed to INDETERMINATE rather than passing a FAILURE through', () => {
+  const result = applyClockUncertainty({ status: 'FAILURE', delayMs: 500 }, -1, 100);
+  assert.equal(result.status, 'INDETERMINATE');
 });

@@ -43,6 +43,15 @@ export function dispositionForObservation({ handled, delayMs, thresholdMs }) {
 // over-reports DETERMINED -- even though a fuller interval-censored percentile analysis could in
 // principle resolve determinacy in some such cases; that finer analysis is out of this fix's
 // scope.
+//
+// The FAILURE-before-INDETERMINATE precedence above applies WITHIN a repetition that already has
+// >=5 in-window observations -- it resolves how FAILURE and INDETERMINATE observations interact
+// with each other and with the p95 calculation. It does NOT override the antecedent minimum-count
+// floor below: per spec (design doc §6.2, "A repetition with fewer than 5 in-window observations
+// ... is reported INDETERMINATE for T-c" -- stated unconditionally, with no exception carved out
+// for a FAILURE observation being among those few), a repetition with fewer than 5 in-window
+// observations is ALWAYS INDETERMINATE, even if one of those few observations is itself a
+// FAILURE. This is checked first, before the >=5-only FAILURE/INDETERMINATE logic ever runs.
 export function tCDispositionForRepetition(inWindowObservations, thresholdMs) {
   if (inWindowObservations.length < 5) {
     return { status: 'INDETERMINATE', reason: `only ${inWindowObservations.length} in-window observations (< 5)` };
@@ -89,7 +98,37 @@ export const MAX_CALIBRATION_ROUND_TRIP_MS = 20;
 // samples' own round-trip uncertainty (roundTripMs/2, i.e. the NTP-style midpoint error under a
 // fully asymmetric round trip) plus the observed drift magnitude. Callers combine this with
 // applyClockUncertainty() to avoid reporting a false-confidence verdict near the 100ms threshold.
+// A malformed calibration sample (a non-finite field, a negative round trip, or samples that
+// aren't chronologically ordered) must never silently produce `valid: true` -- a NaN round trip,
+// for instance, makes both the round-trip and drift-tolerance comparisons below false (any
+// comparison against NaN is false in JS), which would otherwise let corrupted timing data pass as
+// a trustworthy calibration and defeat applyClockUncertainty's own protection downstream. These
+// checks run BEFORE any arithmetic on the samples, so a malformed input is rejected fail-closed
+// rather than laundered into a numeric result that merely happens to look plausible.
+function malformedSampleReason(sample, label) {
+  for (const field of ['nodeMs', 'rendererMs', 'roundTripMs']) {
+    if (typeof sample[field] !== 'number' || !Number.isFinite(sample[field])) {
+      return `${label} calibration sample's ${field} is not a finite number (got ${sample[field]})`;
+    }
+  }
+  if (sample.roundTripMs < 0) {
+    return `${label} calibration sample's roundTripMs is negative (${sample.roundTripMs}ms) -- a round trip cannot take negative time`;
+  }
+  return null;
+}
+
 export function calibrateNodeToRendererClock(preSample, postSample) {
+  const malformedReason = malformedSampleReason(preSample, 'pre') ?? malformedSampleReason(postSample, 'post');
+  if (malformedReason) {
+    return { valid: false, driftMs: NaN, uncertaintyMs: NaN, reason: malformedReason };
+  }
+  if (postSample.nodeMs <= preSample.nodeMs) {
+    return {
+      valid: false, driftMs: NaN, uncertaintyMs: NaN,
+      reason: `postSample.nodeMs (${postSample.nodeMs}) is not strictly after preSample.nodeMs (${preSample.nodeMs}) -- calibration samples are not chronologically ordered`,
+    };
+  }
+
   const preUncertaintyMs = preSample.roundTripMs / 2;
   const postUncertaintyMs = postSample.roundTripMs / 2;
   const offsetPreMs = preSample.rendererMs - preSample.nodeMs;
@@ -110,6 +149,12 @@ export function calibrateNodeToRendererClock(preSample, postSample) {
     };
   }
   const scale = (postSample.rendererMs - preSample.rendererMs) / (postSample.nodeMs - preSample.nodeMs);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return {
+      valid: false, driftMs, uncertaintyMs,
+      reason: `computed clock scale is not a usable positive finite number (${scale}) -- calibration samples do not describe a valid monotonic mapping`,
+    };
+  }
   return {
     valid: true, driftMs, uncertaintyMs, reason: null,
     preNodeMs: preSample.nodeMs, preRendererMs: preSample.rendererMs, scale,
@@ -132,8 +177,20 @@ export function nodeMsToRendererMs(nodeMs, calibration) {
 // rather than reported with false confidence. An already-INDETERMINATE disposition is untouched
 // (it can't get MORE ambiguous). This is what actually closes the reviewed bug's failure
 // scenario: a real stall can no longer be silently reported as a confident, threshold-passing OK.
+//
+// A malformed uncertaintyMs (non-finite or negative -- e.g. propagated from an invalid
+// calibration a caller forgot to gate on `.valid`) can never be trusted to bound anything: every
+// comparison against NaN is false in JS, so an un-checked NaN would silently skip the downgrade
+// above and let a false-confidence OK/FAILURE through untouched -- the exact failure mode this
+// function exists to close. Such an uncertainty fails closed to INDETERMINATE instead.
 export function applyClockUncertainty(disposition, uncertaintyMs, thresholdMs) {
   if (disposition.status === 'INDETERMINATE') return disposition;
+  if (typeof uncertaintyMs !== 'number' || !Number.isFinite(uncertaintyMs) || uncertaintyMs < 0) {
+    return {
+      status: 'INDETERMINATE', delayMs: disposition.delayMs,
+      reason: `calibration uncertainty is not a finite, non-negative number (got ${uncertaintyMs}) -- cannot be trusted to bound this disposition`,
+    };
+  }
   if (Math.abs(disposition.delayMs - thresholdMs) <= uncertaintyMs) {
     return {
       status: 'INDETERMINATE', delayMs: disposition.delayMs,
