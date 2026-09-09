@@ -106,3 +106,20 @@ test('computeBoundaryOccupancy: a task with no intersecting sub-mark and not the
   const { value } = computeBoundaryOccupancy([task], [], null, 100);
   assert.equal(value, 0);
 });
+
+test('computeBoundaryOccupancy: the identified delivery task contributes start-to-min(end,closingMark), clamped to the closing mark', () => {
+  const deliveryTask = { startMs: 200, endMs: 260, source: 'cdp-task', stage: null, validity: 'valid' }; // keeps running to 260
+  const correlationMarkMs = 205; // locates the delivery task, but is never used to TIME it
+  const closingMarkMs = 240; // arm's closing performance.mark, before the task's own end
+  const { value, deliveryTaskIdentified } = computeBoundaryOccupancy([deliveryTask], [], correlationMarkMs, closingMarkMs);
+  assert.equal(deliveryTaskIdentified, true);
+  assert.equal(value, 40); // min(260,240) - 200 = 40, never past the closing mark
+});
+
+test('computeBoundaryOccupancy: sub-mark contribution and delivery-task contribution add, when both land on the same window', () => {
+  const inputTask = { startMs: 0, endMs: 30, source: 'cdp-task', stage: null, validity: 'valid' };
+  const deliveryTask = { startMs: 200, endMs: 260, source: 'cdp-task', stage: null, validity: 'valid' };
+  const subMarks = [{ startMs: 5, endMs: 15, source: 'harness-stage', stage: 'boundary:WB-2p:inputSnapshot', validity: 'valid' }];
+  const { value } = computeBoundaryOccupancy([inputTask, deliveryTask], subMarks, 205, 240);
+  assert.equal(value, 40); // max(10, 40) -- Hᵢ is the MAX over tasks, not a sum across tasks
+});
