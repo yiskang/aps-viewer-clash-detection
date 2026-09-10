@@ -76,14 +76,27 @@ test('fixture sanity: frozen transform\'s brute-force triangle-pair minimum matc
   assert.equal(trueMin, FROZEN_TRUE_MIN_DISTANCE);
 });
 
-test('fixture sanity: unpatched closestPointToGeometry over-estimates the true minimum with maxThreshold=Infinity (the false-prune signature)', () => {
-  const target1 = {};
-  const result = anchorBvh.closestPointToGeometry(farGeometry, FROZEN_TRANSFORM, target1, undefined, 0, Infinity);
-  const shipped = result ? result.distance : null;
-  console.log('[Defect 2 maxThreshold] unpatched result (maxThreshold=Infinity):', shipped, 'true min:', FROZEN_TRUE_MIN_DISTANCE);
-  assert.ok(shipped !== null && shipped > FROZEN_TRUE_MIN_DISTANCE + 10 * 1e-9,
-    'expected an over-estimate (false-prune signature) of at least 10x this test\'s tolerance');
-});
+// Formerly a live test here: 'fixture sanity: unpatched closestPointToGeometry over-estimates the
+// true minimum with maxThreshold=Infinity (the false-prune signature)'. Per task-1-brief.md's own
+// wording (point 4: "the unpatched `closestPointToGeometry` result with `maxThreshold = Infinity`"
+// is used only to SELECT this frozen fixture, i.e. as fixture-selection documentation), this
+// assertion's job was to record the pre-patch RED baseline, not to hold as a post-patch invariant --
+// it structurally requires the defect it targets to remain present, so it can never pass once Task 3
+// lands a correct patch. Converted from a live assertion to this comment per an explicit controller
+// ruling during Task 3 (applying Task 4's own already-written principle for updating an assertion
+// that encodes a now-corrected defective value, one task early -- see
+// docs/superpowers/plans/2026-09-10-three-mesh-bvh-correctness-patch-implementation.md:424-431),
+// following codex-advisor confirmation (request 20260910-221306-53494-24805) that the assertion is a
+// test-design artifact, not evidence of a wrong patch. Full derivation: task-1-report.md,
+// task-3-report.md.
+//
+// Recorded pre-patch RED baseline (confirmed live against the unpatched three-mesh-bvh@0.9.14 tree
+// before Task 3's patch landed):
+//   anchorBvh.closestPointToGeometry(farGeometry, FROZEN_TRANSFORM, target1, undefined, 0, Infinity)
+//   unpatched result: 0.2446275839242859   true min (FROZEN_TRUE_MIN_DISTANCE): 0.14192432541559227
+// Post-patch (GREEN), the same call now returns exactly 0.14192432541559227 -- see test 4 below,
+// which is the actual mandatory regression assertion (finite maxThreshold, adjudication test 9) and
+// remains a live, passing test.
 
 test('closestPointToGeometry: finite maxThreshold that brackets the true distance but not the unpatched over-estimate', () => {
   const target1 = {};
