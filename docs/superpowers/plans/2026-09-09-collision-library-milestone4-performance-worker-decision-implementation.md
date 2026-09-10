@@ -6226,7 +6226,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: nothing from earlier Phase 3 tasks — a pure, standalone module.
-- Produces: `sigEqual`, `distancesEqual`, `witnessesEqual`, `statisticsEqual`, `diagnosticsMultisetEqual`, `compareRuns` (the full §6.4 comparator, used by task 3.7 for the gate's TLAS-vs-linear parity check and any full-result comparison) plus `weldedBuffersEqual` (§6.4's stage-scoped-validity rule's welded-buffer clause, specified here for completeness per this task's scope even though its only caller is a later phase's S7' task — Phase 4 will duplicate rather than import it, per this plan's no-shared-module convention applied within M4 too).
+- Produces: `sigEqual`, `distancesEqual`, `witnessesEqual`, `statisticsEqual`, `diagnosticsMultisetEqual`, `compareRuns` (the full §6.4 comparator, used by task 3.7 for the gate's TLAS-vs-linear parity check and any full-result comparison — this module stays exactly as strict as §6.4 states; task 3.7's caller applies §6.4's one named `TIME_BUDGET_DIAGNOSTIC_DIVERGENCE` exception on top of a `diagnostics: false` result, never inside `compareRuns` itself) plus `weldedBuffersEqual` (§6.4's stage-scoped-validity rule's welded-buffer clause, specified here for completeness per this task's scope even though its only caller is a later phase's S7' task — Phase 4 will duplicate rather than import it, per this plan's no-shared-module convention applied within M4 too).
 
 - [ ] **Step 1: Write the failing test**
 ```js
@@ -6492,7 +6492,15 @@ the whole run, and disposing the world before the next tuple. R6 dispatches thro
 `checkS2TLevelToLevelControlRule` after each level. Every TLAS/linear pair of runs for the same
 `(case, state, repetition)` is compared via task 3.6's `compareRuns(...)`; a `false` disposition
 throws immediately (aborts with `FAILED_VALIDATION`, per §16.2 — enforced fully in task 3.8's
-reporting layer, but the throw-on-mismatch behavior is wired here).
+reporting layer, but the throw-on-mismatch behavior is wired here) — **except spec §6.4's one named
+`TIME_BUDGET_DIAGNOSTIC_DIVERGENCE` exception**: when `compareRuns`'s `diagnostics` field is the
+*only* field that differs, and every differing diagnostic entry's `reason` is exactly
+`crossing-budget-exhausted` or `inconclusive-crossing`, classify the divergence as
+`TIME_BUDGET_DIAGNOSTIC_DIVERGENCE`, log it with both diagnostic counts and the affected tuple, and
+continue the run rather than aborting. Any other diagnostics divergence, or any divergence in pair
+set/statistics/distances/witnesses, still throws exactly as stated. `compareRuns` itself (task 3.6)
+is never modified to know about this exception — it is applied entirely by this task's caller, on
+top of an already-computed `diagnostics: false` result.
 
 **Live CDP trace capture + Rᵢ/Hᵢ integration for T-a (closes spec §6.2's yield-attribution rules).**
 For every measured query bracketed by the observation envelope, wrap it in its own CDP
