@@ -23,9 +23,11 @@
 // `bruteForceMinDistance`/`randomRigidTransform` for the generator this fixture was searched with
 // (not re-run here -- the fixture is frozen, not regenerated on every test run).
 //
-// Task 1 of .superpowers/sdd/2026-09-10-three-mesh-bvh-correctness-patch-implementation/. Expected
-// to FAIL against the current unpatched tree (RED, returning `null`); Task 3 applies the patch and
-// confirms GREEN (a non-null result equal to the true minimum).
+// Written pre-patch (Task 1 of the three-mesh-bvh@0.9.14 correctness patch remediation -- see
+// docs/research/m4-three-mesh-bvh-patch-provenance.md for the full task-by-task record). Was
+// expected to FAIL against the then-unpatched tree (RED, returning `null`); the patch has since
+// landed (Task 3) and this test is now GREEN by design (a non-null result equal to the true
+// minimum).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -77,18 +79,16 @@ test('fixture sanity: frozen transform\'s brute-force triangle-pair minimum matc
 });
 
 // Formerly a live test here: 'fixture sanity: unpatched closestPointToGeometry over-estimates the
-// true minimum with maxThreshold=Infinity (the false-prune signature)'. Per task-1-brief.md's own
+// true minimum with maxThreshold=Infinity (the false-prune signature)'. Per Task 1's original brief
 // wording (point 4: "the unpatched `closestPointToGeometry` result with `maxThreshold = Infinity`"
 // is used only to SELECT this frozen fixture, i.e. as fixture-selection documentation), this
 // assertion's job was to record the pre-patch RED baseline, not to hold as a post-patch invariant --
-// it structurally requires the defect it targets to remain present, so it can never pass once Task 3
-// lands a correct patch. Converted from a live assertion to this comment per an explicit controller
-// ruling during Task 3 (applying Task 4's own already-written principle for updating an assertion
-// that encodes a now-corrected defective value, one task early -- see
-// docs/superpowers/plans/2026-09-10-three-mesh-bvh-correctness-patch-implementation.md:424-431),
-// following codex-advisor confirmation (request 20260910-221306-53494-24805) that the assertion is a
-// test-design artifact, not evidence of a wrong patch. Full derivation: task-1-report.md,
-// task-3-report.md.
+// it structurally requires the defect it targets to remain present, so it can never pass once a
+// correct patch is in place. Converted from a live assertion to this comment per an explicit
+// controller ruling during Task 3 (applying Task 4's own already-written principle for updating an
+// assertion that encodes a now-corrected defective value, one task early), following codex-advisor
+// confirmation that the assertion is a test-design artifact, not evidence of a wrong patch. Full
+// derivation and ruling record: docs/research/m4-three-mesh-bvh-patch-provenance.md.
 //
 // Recorded pre-patch RED baseline (confirmed live against the unpatched three-mesh-bvh@0.9.14 tree
 // before Task 3's patch landed):
@@ -103,12 +103,13 @@ test('closestPointToGeometry: finite maxThreshold that brackets the true distanc
   const result = anchorBvh.closestPointToGeometry(farGeometry, FROZEN_TRANSFORM, target1, undefined, 0, MAX_THRESHOLD);
   const shipped = result ? result.distance : null;
 
-  console.log('[Defect 2 maxThreshold] maxThreshold =', MAX_THRESHOLD, 'unpatched result =', shipped,
-    '(expected null: false prune -- the true minimizer node\'s over-estimated distanceToBox score exceeds maxThreshold)');
+  console.log('[Defect 2 maxThreshold] maxThreshold =', MAX_THRESHOLD, 'result =', shipped,
+    '(expected the true minimum, not null -- an unpatched library false-prunes here: the true ' +
+    'minimizer node\'s over-estimated distanceToBox score exceeds maxThreshold)');
 
   assert.notEqual(shipped, null,
-    'unpatched three-mesh-bvh@0.9.14 returns null here (false prune: the buggy distanceToBox ' +
+    'unpatched three-mesh-bvh@0.9.14 returned null here (false prune: the buggy distanceToBox ' +
     'over-estimate for the true-minimizer node exceeds this finite maxThreshold even though the ' +
-    'true distance is within it); expected the true minimum after Task 3\'s patch');
+    'true distance is within it); the patched library must return the true minimum');
   assert.equal(shipped, FROZEN_TRUE_MIN_DISTANCE);
 });

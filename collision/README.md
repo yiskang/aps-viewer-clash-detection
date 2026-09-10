@@ -402,6 +402,14 @@ lives even for multi-instance/nested elements.
 
 ## Known Milestone-1 limitations
 
+- **Requires a locally-patched `three-mesh-bvh@0.9.14`.** The stock, unpatched npm package has two
+  confirmed correctness defects that produce wrong `mode: 'clearance'` distances (and, more rarely,
+  false `null`/`beyond-threshold` results) — see
+  `docs/research/m4-three-mesh-bvh-patch-provenance.md` for the full defect analysis, the delivery
+  mechanism (`patch-package`, reapplied automatically on every `npm install`/`npm ci`), and the
+  residual failure modes (e.g. `--ignore-scripts`) that leave it unpatched. This repo ships the patch
+  in-tree (`patches/three-mesh-bvh+0.9.14.patch`); a checked-in regression test
+  (`test/vendor/three-mesh-bvh-patch-integrity.test.mjs`) fails loudly if it is ever silently reverted.
 - **Undocumented/internal Viewer surfaces.** Fragment geometry extraction goes through
   `viewer.impl.getRenderProxy(model, fragId)` and reads internal, undocumented buffer-layout shapes
   (`vb`/`vbstride`, legacy interleaved attribute layouts) reverse-engineered from the real

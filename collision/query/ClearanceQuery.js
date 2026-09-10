@@ -86,12 +86,12 @@ export function computeClearanceAnchor(sourceScaleFactor, targetScaleFactor, cle
  *  - In the outer `bvh.shapecast`'s `intersectsBounds` (lines 72-92), on a leaf `obb2.min/max` are
  *    copied from the current BVH-local leaf box: `obb2` is now "that leaf, re-expressed in
  *    otherGeometry's local frame".
- *  - The NESTED `otherBvh.shapecast`'s own `intersectsBounds` (lines 108-112) computes
+ *  - The NESTED `otherBvh.shapecast`'s own `intersectsBounds` (lines 112-116) computes
  *    `score = obb2.distanceToBox(box)` against nodes of `otherGeometry`'s OWN bvh, i.e. `score` is in
  *    OTHERGEOMETRY-LOCAL units -- and then tests `score < closestDistance && score < maxThreshold`.
- *  - But `closestDistance` comes from `triangle.distanceToTriangle(triangle2, ...)` (line 133) where
+ *  - But `closestDistance` comes from `triangle.distanceToTriangle(triangle2, ...)` (line 137) where
  *    `triangle2` was already pulled into BVH-local space by `applyMatrix4(geometryToBvh)` (lines
- *    121-123), so `closestDistance` is in BVH-LOCAL units. `maxThreshold` is ours, also BVH-local.
+ *    125-127), so `closestDistance` is in BVH-LOCAL units. `maxThreshold` is ours, also BVH-local.
  *
  * So that nested prune compares an otherGeometry-local `score` against BVH-local quantities. Since
  * local = world / scaleFactor, a given world distance is a numerically SMALLER local number on the

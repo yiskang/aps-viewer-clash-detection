@@ -1,10 +1,12 @@
 // test/vendor/three-mesh-bvh-defects.fixtures.mjs
 //
 // Plain fixture-builders and assertion helpers for the M4 three-mesh-bvh@0.9.14 correctness
-// regression tests (docs/research/m4-three-mesh-bvh-correctness-blocker-adjudication.md, Task 1
-// of .superpowers/sdd/2026-09-10-three-mesh-bvh-correctness-patch-implementation/). No `test(...)`
-// blocks here -- Task 3's clean-install integrity guard imports these same helpers directly, and a
-// `node:test` file must never import another `*.test.mjs` file's contents.
+// regression tests (docs/research/m4-three-mesh-bvh-correctness-blocker-adjudication.md; full
+// task-by-task record of the remediation that built these fixtures:
+// docs/research/m4-three-mesh-bvh-patch-provenance.md). No `test(...)`
+// blocks here -- the clean-install integrity guard (test/vendor/three-mesh-bvh-patch-integrity.test.mjs)
+// imports these same helpers directly, and a `node:test` file must never import another
+// `*.test.mjs` file's contents.
 //
 // These tests exercise the VENDORED `three-mesh-bvh` library directly (via `new MeshBVH(...)`),
 // not `collision/blas/ThreeMeshBvhBackend.js`'s wrapper around it, so this module builds BVHs
@@ -135,8 +137,9 @@ export function closestDistance(anchorBvh, otherGeometry, { geometryToBvh = new 
 }
 
 /**
- * The explicit 8-call predecessor sequence from task-1-brief.md (a `codex-advisor` review flagged
- * "interleave before calls 2 and 4" as ambiguous, so the brief spells out every call).
+ * The explicit 8-call predecessor sequence (see docs/research/m4-three-mesh-bvh-patch-provenance.md's
+ * Task 1 summary -- a `codex-advisor` review flagged "interleave before calls 2 and 4" as ambiguous,
+ * so every call in the sequence is spelled out explicitly instead).
  *
  * IMPORTANT: step 1 ("warm-up... this is the 'near' predecessor for call 2") must be
  * `nearPredecessor()`, NOT `measured()`, despite the brief's literal wording appearing to reuse

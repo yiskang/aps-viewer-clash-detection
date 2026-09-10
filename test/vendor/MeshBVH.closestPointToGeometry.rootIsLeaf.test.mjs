@@ -11,11 +11,12 @@
 // identical (anchor, far) operands can then return a correct distance or a false `null`
 // ("beyond threshold") purely depending on what ran immediately before.
 //
-// Task 1 of .superpowers/sdd/2026-09-10-three-mesh-bvh-correctness-patch-implementation/ -- these
-// tests assert order-independent, brute-force-correct behavior and are expected to FAIL against
-// the current unpatched tree (RED, reproducing the adjudication's documented
-// `[0.05000000074505806, null, 0.05000000074505806, null]`). Task 3 applies the patch and
-// confirms GREEN.
+// Written pre-patch (Task 1 of the three-mesh-bvh@0.9.14 correctness patch remediation -- see
+// docs/research/m4-three-mesh-bvh-patch-provenance.md for the full task-by-task record) -- these
+// tests assert order-independent, brute-force-correct behavior and were expected to FAIL against
+// the then-unpatched tree (RED, reproducing the adjudication's documented
+// `[0.05000000074505806, null, 0.05000000074505806, null]`). The patch has since landed (Task 3);
+// this test is now GREEN by design.
 //
 // Adjudication mandatory test 1. `indirect: true` throughout, matching
 // `ThreeMeshBvhBackend.js:55-56`'s production BLAS construction (the only mode this repo uses).

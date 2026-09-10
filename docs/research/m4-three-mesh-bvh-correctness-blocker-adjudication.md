@@ -3,6 +3,9 @@
 Date: 2026-09-10
 Branch: `feature/m4-performance-worker-decision-design`
 Status: **adjudication only — no source was changed, nothing was upgraded, nothing was patched.**
+**Remediation landed** — see `docs/research/m4-three-mesh-bvh-patch-provenance.md` for what was
+actually patched, delivered, and validated. The rest of this document is left as-written, as the
+historical adjudication record.
 
 ## What this document is
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## Dependency correctness fix — `three-mesh-bvh@0.9.14` local patch (not yet tagged)
+
+The pinned `three-mesh-bvh@0.9.14` dependency had two confirmed correctness defects that could
+produce wrong `mode: 'clearance'` results (v0.3.0, below) — an incorrect distance value, or a false
+`null`/`beyond-threshold` result, depending on traversal order. This is a **correctness fix to
+already-shipped v0.3.0 behavior**, not a new capability or a behavior change users opted into: some
+previously-returned `clearance` distances for affected geometry were simply wrong. The library now
+ships a local `patch-package` patch (`patches/three-mesh-bvh+0.9.14.patch`), reapplied automatically
+on every `npm install`/`npm ci`. `surface-intersection`/`containment`/`volume-overlap` are
+unaffected (they never call the patched functions). Full analysis, delivery mechanism, and
+verification: `docs/research/m4-three-mesh-bvh-patch-provenance.md`.
+
 ## v0.3.0 — Collision Library Milestone 3: Soft Clash / Clearance (recommended tag, not yet created)
 
 Adds near-miss ("Soft Clash") detection to the Viewer-side collision-detection library

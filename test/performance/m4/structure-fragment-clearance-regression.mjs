@@ -14,10 +14,14 @@
 // with the dev server already running on PORT (default 8080; `npm start`, per Global Constraint 11).
 //
 // The exact numbers below are re-derived from, and must match:
-//   - docs/research/m4-three-mesh-bvh-correctness-blocker-adjudication.md §2.1
-//   - .superpowers/sdd/2026-09-09-collision-library-milestone4-performance-worker-decision-implementation/
-//     s2-clearance-divergence-investigation.md Part 2 ("The one divergent pair" / "Fragment-level
-//     ground truth" tables) -- the original live reproduction this script re-derives.
+//   - docs/research/m4-three-mesh-bvh-correctness-blocker-adjudication.md §2.1 and Step 4 mandatory
+//     test 3 (both already carry the same `structure:2761 -> structure:3980`,
+//     0.026129089841138233/0.03193299065509384, and fragment-pair-358<->461 numbers this script
+//     asserts -- that is this repo's one committed, always-available source of truth for them).
+//   - The original live reproduction that first surfaced these numbers was a now-superseded,
+//     gitignored working investigation (Milestone 4's own S2 clearance-divergence session); its
+//     substantive findings were independently re-established from scratch by the adjudication doc
+//     above (its own §1 explains why), so this script does not depend on that working file existing.
 //
 // One dbId pair, `structure:2761 -> structure:3980` (`mode: 'clearance', clearance: 0.05`), is served
 // by four fragment pairs. Fragment 461 (target) is a 2-triangle sheet -- its MeshBVH is a single node
@@ -31,12 +35,12 @@
 // wrongly pruned to `beyond-threshold`/`null`, which promotes fragment pair `358 <-> 383`'s worse
 // distance (0.03193299065509384) to the dbId pair's reported minimum.
 //
-// On the unpatched dependency this reproduces on the `tlas` broadPhase arm: `358 <-> 461` comes back
-// `beyond-threshold` and the dbId pair reports 0.03193299065509384 instead of the correct
-// 0.026129089841138233. This script asserts the CORRECT numbers on BOTH arms, so today it is
-// expected to FAIL on the `tlas` arm (RED) -- a later task applies the actual dependency patch and
-// this script should then pass on both arms (GREEN). This script must not, and does not, patch
-// anything: it only observes.
+// On the unpatched dependency this reproduced on the `tlas` broadPhase arm: `358 <-> 461` came back
+// `beyond-threshold` and the dbId pair reported 0.03193299065509384 instead of the correct
+// 0.026129089841138233. This script asserts the CORRECT numbers on BOTH arms; the dependency patch
+// has since landed (docs/research/m4-three-mesh-bvh-patch-provenance.md) and this script is now a
+// GREEN regression test -- a failure here means a real regression, not an expected pre-patch state.
+// This script must not, and does not, patch anything: it only observes.
 
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
@@ -228,7 +232,7 @@ async function main() {
   }
 
   if (failures.length) {
-    console.error(`\n${failures.length} assertion(s) failed. On the unpatched three-mesh-bvh@0.9.14 dependency, the 'tlas' arm is EXPECTED to fail here (RED) -- known unpatched wrong distance: ${KNOWN_UNPATCHED_TLAS_WRONG_DISTANCE}. A later task applies the dependency patch and this script must then pass on both arms.`);
+    console.error(`\n${failures.length} assertion(s) failed. This is a GREEN regression test against the patched three-mesh-bvh@0.9.14 dependency (docs/research/m4-three-mesh-bvh-patch-provenance.md) -- a failure here is a real regression, not an expected state. The pre-patch 'tlas' arm used to fail with known unpatched wrong distance: ${KNOWN_UNPATCHED_TLAS_WRONG_DISTANCE}.`);
     process.exitCode = 1;
     return;
   }

@@ -17,16 +17,18 @@
 // `_indirect` and `.template.js` variants (Step 4, recommendation 1) -- confirmed identical
 // module-global-`obb2` structure between the two `.generated.js` files by direct diff.
 //
-// Task 1 of .superpowers/sdd/2026-09-10-three-mesh-bvh-correctness-patch-implementation/. Expected
-// to FAIL against the current unpatched tree (RED); Task 3 applies the patch and confirms GREEN.
+// Written pre-patch (Task 1 of the three-mesh-bvh@0.9.14 correctness patch remediation -- see
+// docs/research/m4-three-mesh-bvh-patch-provenance.md for the full task-by-task record). Was
+// expected to FAIL against the then-unpatched tree (RED); the patch has since landed (Task 3) and
+// this test is now GREEN by design.
 //
-// Per task-1-brief.md's note (correcting the adjudication's own framing): this test's RETURN
-// VALUE cannot by itself distinguish the adopted `intersectsRange`-box patch from the rejected
-// `getBoundingBox` union-seed variant -- both are correctness-safe and can produce the same
-// minimum on this fixture. Its job here is to prove the defect reproduces on a multi-root BVH
-// (RED) and, after Task 3, that the adopted patch doesn't regress multi-root traversal (GREEN).
-// Confirming WHICH variant was applied is Task 3's job (inspecting the patch diff directly), not
-// this test's.
+// Per the provenance doc's ruling record (correcting the adjudication's own framing): this test's
+// RETURN VALUE cannot by itself distinguish the adopted `intersectsRange`-box patch from the
+// rejected `getBoundingBox` union-seed variant -- both are correctness-safe and can produce the
+// same minimum on this fixture. Its job here is to prove the defect reproduces on a multi-root BVH
+// and that the adopted patch doesn't regress multi-root traversal. Confirming WHICH variant was
+// applied was verified separately by inspecting the patch diff directly (see the provenance doc),
+// not by this test.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';

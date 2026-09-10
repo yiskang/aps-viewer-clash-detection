@@ -5,9 +5,10 @@
 // (`start[f3] = i2 ? min[f3] : max[f2];` / `end[f3] = i2 ? min[f3] : max[f2];` -- both should read
 // `max[f3]`). Exercises the vendored `OrientedBox` directly, not through `MeshBVH`.
 //
-// Task 1 of .superpowers/sdd/2026-09-10-three-mesh-bvh-correctness-patch-implementation/ -- these
-// tests assert the CORRECT (post-Task-3-patch) behavior and are expected to FAIL against the
-// current unpatched tree (RED). Task 3 applies the patch and confirms GREEN.
+// Written pre-patch (Task 1 of the three-mesh-bvh@0.9.14 correctness patch remediation -- see
+// docs/research/m4-three-mesh-bvh-patch-provenance.md for the full task-by-task record) -- these
+// tests assert the CORRECT (post-patch) behavior and were expected to FAIL against the
+// then-unpatched tree (RED). The patch has since landed (Task 3); this test is now GREEN by design.
 //
 // Adjudication mandatory test 2, parts (a) named worst-case tuple, (b) 5000+-sample independent-
 // reference sweep, (c) axis-permutation + cube control.

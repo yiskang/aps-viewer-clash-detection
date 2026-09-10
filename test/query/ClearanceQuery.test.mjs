@@ -106,8 +106,8 @@ test('fixture 16b: unequal source/target scale, distance still correct and withi
 // `closestPointToGeometry` is not symmetric in its two operands and its own NESTED target-side
 // shapecast prunes with `score < closestDistance && score < maxThreshold` where `score` is in
 // otherGeometry-local units while both right-hand sides are in bvh-local units (verified directly in
-// node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry_indirect.generated.js:104-112 vs
-// :121-123/:133). When the bvh operand has the LARGER scale that prune over-states distances and
+// node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry_indirect.generated.js:112-116 vs
+// :125-127/:137). When the bvh operand has the LARGER scale that prune over-states distances and
 // wrongly discards the genuinely-closest nodes -- a false negative. ClearanceQuery therefore always
 // hands the SMALLER-scale operand to the API as the bvh side ("anchor") and maps the roles back.
 //
