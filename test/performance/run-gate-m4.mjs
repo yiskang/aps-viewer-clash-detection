@@ -35,6 +35,7 @@ import {
   calibrateNodeToRendererClock, nodeMsToRendererMs, applyClockUncertainty,
 } from './m4/observation-envelope.mjs';
 import { rankByDensity, selectCohort } from './m4/cohort-selection.mjs';
+import { S2T_LEVELS, bystanderLayout, syntheticIdRangeAbove } from './m4/s2t-bystander-layout.mjs';
 
 // §6.1 steps 1-2: identical 3-step load + identity re-confirmation to run-gate-m3.mjs:194-242,
 // unchanged in shape (Architecture normal load, Structure/Mechanical as-additional via
@@ -342,9 +343,131 @@ async function runSmokeCohortProfiler(page) {
   }, null, 2));
 }
 
+// M4 Task 3.4's manual-verification entry point (`--smoke-s2t`, a temporary flag task 3.7 removes
+// once S2T is wired into the real matrix). Builds the S2T facade (browser-probes-m4.mjs's
+// buildS2TFacade) at S2T_LEVELS[0] (baseline, 0 bystanders -- the real Architecture model
+// unchanged) and S2T_LEVELS[1] (10,000 admitted instances), runs an IDENTICAL clearance query
+// through each -- same source (Structure dbId 3076), same clearance, same broadPhase, the facade
+// as the sole target -- in its own fresh CollisionWorld (disposed before the next level, same
+// fresh-world discipline as every other measured tuple in this file), then prints
+// checkS2TLevelToLevelControlRule's result plus facade.getCount() at level 1.
+//
+// Measures the real Architecture model's own fragment AND geometry-id maxima live (never assumes
+// the ~5,435 figure documented in run-gate-m3.mjs's header is exactly right for whatever fixture
+// state is live right now) and feeds both through syntheticIdRangeAbove, so the synthetic
+// fragment/geometry ranges this run hands to bystanderLayout are always genuinely disjoint from
+// the real model's own ids -- not just fragment ids (§5.3.1 point 3's own explicit rationale) but
+// geometry ids too: two fragments sharing a geometry id are treated as sharing one real mesh
+// (createGeometryIdentity is scoped per loadEpoch, and the facade's real and synthetic fragments
+// share the same epoch), so a synthetic geometry id that accidentally collided with a real one
+// would silently alias a bystander onto a real mesh's cached geometry entry.
+async function runSmokeS2T(page) {
+  await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
+
+  const { realFragmentCount, realGeometryIdMax } = await page.evaluate(() => {
+    const fragList = window.__gate.modelArch.getFragmentList();
+    const count = fragList.getCount();
+    let geometryIdMax = -1;
+    for (let f = 0; f < count; f++) {
+      const gid = fragList.getGeometryId(f);
+      if (typeof gid === 'number' && gid > geometryIdMax) geometryIdMax = gid;
+    }
+    return { realFragmentCount: count, realGeometryIdMax: geometryIdMax };
+  });
+  const syntheticFragmentIdStart = syntheticIdRangeAbove(realFragmentCount - 1);
+  const syntheticGeometryIdStart = syntheticIdRangeAbove(realGeometryIdMax);
+
+  const smokeLevels = S2T_LEVELS.slice(0, 2); // baseline (0 bystanders) + level 1 (10,000) is sufficient for this smoke proof
+  const levelResults = [];
+  let facadeCountAtLevel1 = null;
+  for (const level of smokeLevels) {
+    const bystanderCount = level - realFragmentCount;
+    if (bystanderCount < 0) {
+      throw new Error(`S2T smoke: level ${level} is below the live fixture's own real fragment count ${realFragmentCount}`);
+    }
+    const bystanders = bystanderLayout(bystanderCount, { syntheticFragmentIdStart, syntheticGeometryIdStart });
+
+    const result = await page.evaluate(async ({ sourceDbId, clearance, bystanders }) => {
+      const { CollisionWorld } = await import('/collision/index.js');
+      const facade = window.__m4Probes.buildS2TFacade(window.__gate.modelArch, bystanders);
+      const w = await CollisionWorld.fromViewer(window.viewer);
+      w.admitModel(window.__gate.modelStructure);
+      w.admitModel(facade);
+      try {
+        const { pairs, statistics } = await w.findClashes({
+          mode: 'clearance',
+          clearance,
+          source: { model: window.__gate.modelStructure, dbIds: [sourceDbId] },
+          target: { targets: [{ model: facade }] },
+          groupBy: 'dbId',
+          broadPhase: 'tlas',
+        });
+        // Same keyed-signature convention run-gate-m3.mjs's own TLAS-vs-linear comparator already
+        // established (`modelTag` + sorted "source:dbId:target:dbId:type" strings), reused here
+        // ACROSS LEVELS instead of across broad-phase arms, per §5.3.1 line 237 ("by §6.4's field
+        // rules"). A target dbId < 0 is one of this facade's own synthetic bystander dbIds (see
+        // buildS2TFacade's `getDbIds`) -- tagged 'synthetic' in the key itself, never a raw negative
+        // number, so checkS2TLevelToLevelControlRule's leak check can name it without re-deriving
+        // the synthetic-dbId convention on its own side.
+        const targetTag = (dbId) => (dbId < 0 ? 'synthetic' : String(dbId));
+        const keyOf = (p) => `source:${p.source.dbId}:target:${targetTag(p.target.dbId)}`;
+        const sortedPairs = [...pairs].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
+        return {
+          facadeCount: facade.getCount(),
+          facadeId: facade.id,
+          clearanceExactAabbSurvivors: statistics.clearanceExactAabbSurvivors,
+          narrowPhasePairs: statistics.narrowPhasePairs,
+          diagnostics: statistics.diagnostics,
+          pairSignatures: sortedPairs.map((p) => `${keyOf(p)}:${p.type}`),
+          pairDistances: sortedPairs.map((p) => [keyOf(p), p.distance]),
+          pairWitnesses: sortedPairs.map((p) => [keyOf(p), p.witness]),
+          // §5.3.1 line 239's own verification counter -- see buildS2TFacade's comment.
+          syntheticVizmeshAccessCount: facade.getSyntheticVizmeshAccessCount(),
+        };
+      } finally {
+        w.dispose(); // fresh-world disposed before the next level, per §6.1.4
+      }
+    }, { sourceDbId: SOURCE_DB_ID, clearance: CLEARANCE, bystanders });
+
+    levelResults.push({
+      level,
+      realCount: realFragmentCount,
+      targetModelId: result.facadeId,
+      statistics: {
+        clearanceExactAabbSurvivors: result.clearanceExactAabbSurvivors,
+        narrowPhasePairs: result.narrowPhasePairs,
+      },
+      diagnostics: result.diagnostics,
+      pairSignatures: result.pairSignatures,
+      pairDistances: result.pairDistances,
+      pairWitnesses: result.pairWitnesses,
+      syntheticVizmeshAccessCount: result.syntheticVizmeshAccessCount,
+    });
+    if (level === S2T_LEVELS[1]) facadeCountAtLevel1 = result.facadeCount;
+  }
+
+  const controlRuleResult = await page.evaluate(
+    (results) => window.__m4Probes.checkS2TLevelToLevelControlRule(results),
+    levelResults,
+  );
+  console.log('S2T smoke result:', JSON.stringify({
+    realFragmentCount,
+    levelSummaries: levelResults.map((r) => ({
+      level: r.level,
+      statistics: r.statistics,
+      diagnosticCount: r.diagnostics.length,
+      finalPairCount: r.pairSignatures.length,
+      syntheticVizmeshAccessCount: r.syntheticVizmeshAccessCount,
+    })),
+    facadeCountAtLevel1,
+    controlRuleResult,
+  }, null, 2));
+}
+
 async function main() {
   await mkdir(RESULTS_DIR, { recursive: true });
   const smokeCohortProfiler = process.argv.includes('--smoke-cohort-profiler');
+  const smokeS2T = process.argv.includes('--smoke-s2t');
   for (const runtime of Object.values(RUNTIME_CONFIGS)) {
     console.log(`\n=== Runtime: ${runtime.label} ===`);
     const browser = await chromium.launch({ args: runtime.args, proxy: resolveProxyFromEnv() });
@@ -361,6 +484,14 @@ async function main() {
         // prove the profiling walk + cohort selection work end to end; skip warm-up and the
         // fresh-world tuple proof entirely for this temporary smoke pass.
         await runSmokeCohortProfiler(page);
+        return;
+      }
+
+      if (smokeS2T) {
+        // Task 3.4's manual-verification proof only -- one runtime's live fixture is sufficient to
+        // prove the facade + level-to-level control rule work end to end; skip warm-up and the
+        // fresh-world tuple proof entirely for this temporary smoke pass.
+        await runSmokeS2T(page);
         return;
       }
 
