@@ -34,6 +34,7 @@ import {
   dispositionForObservation, tCDispositionForRepetition, envelopeLimitMs,
   calibrateNodeToRendererClock, nodeMsToRendererMs, applyClockUncertainty,
 } from './m4/observation-envelope.mjs';
+import { rankByDensity, selectCohort } from './m4/cohort-selection.mjs';
 
 // §6.1 steps 1-2: identical 3-step load + identity re-confirmation to run-gate-m3.mjs:194-242,
 // unchanged in shape (Architecture normal load, Structure/Mechanical as-additional via
@@ -293,8 +294,57 @@ export {
   dispatchInputProbeSequence, resolveInputProbeDispositions, runInputProbeWindow,
 };
 
+// M4 Task 3.3's manual-verification entry point (`--smoke-cohort-profiler`, a temporary flag task
+// 3.7 removes once the profiler is wired into the real matrix scheduler). Runs
+// browser-probes-m4.mjs's profileStructureCohortDensity ONCE against the live fixture (§5.4's own
+// "profiling pass ... unmeasured" -- no recorder installed here), then feeds the result through
+// this task's own pure rankByDensity/selectCohort to build the low/typical/high cohorts, and
+// prints exactly the shape the brief's manual-verification step asks for.
+//
+// Passes an explicit [modelArch, modelStructure, modelMechanical] array (built from the already
+// URN-verified window.__gate identities set up by loadFixtureAndReconfirm) rather than
+// window.viewer.getAllModels() directly -- profileStructureCohortDensity's own contract indexes
+// `models[1]` for the Structure model, and this codebase already has one confirmed real defect
+// (Task 3.1's own codex-review finding) from trusting getAllModels()'s array position as model
+// identity. Building the array from the URN-resolved identities instead guarantees index 1 really
+// is Structure regardless of getAllModels()'s own internal ordering.
+async function runSmokeCohortProfiler(page) {
+  await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
+  const rawProfiles = await page.evaluate(() => {
+    const { modelArch, modelStructure, modelMechanical } = window.__gate;
+    return window.__m4Probes.profileStructureCohortDensity([modelArch, modelStructure, modelMechanical]);
+  });
+  // Real bug found running this: Playwright's page.evaluate return-value serialization does NOT
+  // preserve Set objects (confirmed empirically -- a returned Set comes back as `{}`, every member
+  // silently dropped), so profileStructureCohortDensity crosses the boundary with fragmentIds as a
+  // plain array. Reconstruct the real Set here, immediately after the evaluate call, to satisfy
+  // this task's own documented Produces contract (Array<{dbId, proximity, fragmentIds: Set<number>}>)
+  // before anything (rankByDensity/selectCohort) reads .size or iterates it.
+  const profiles = rawProfiles.map((p) => ({ ...p, fragmentIds: new Set(p.fragmentIds) }));
+
+  const ranked = rankByDensity(profiles);
+  const top5ByDensity = ranked.slice(0, 5).map((r) => ({ dbId: r.dbId, density: r.density, proximity: r.proximity, instances: r.instances }));
+
+  // Representative cohort size for this temporary smoke proof only -- task 3.7 owns wiring the
+  // REAL per-case k values (§5.2's table) for R3/R4/R6/S2. 0.25/0.5/0.9 are §5.4's own
+  // low/typical/high quantiles; SOURCE_DB_ID is forced into the high cohort per §5.4 step 5.
+  const SMOKE_K = 10;
+  const low = selectCohort(ranked, 0.25, SMOKE_K);
+  const typical = selectCohort(ranked, 0.5, SMOKE_K);
+  const high = selectCohort(ranked, 0.9, SMOKE_K, { forceDbId: SOURCE_DB_ID });
+
+  console.log('Cohort profiler smoke result:', JSON.stringify({
+    dbIdCount: profiles.length,
+    top5ByDensity,
+    low: { status: low.status, size: low.requestedDbIds.length, requestedDbIds: low.requestedDbIds },
+    typical: { status: typical.status, size: typical.requestedDbIds.length, requestedDbIds: typical.requestedDbIds },
+    high: { status: high.status, size: high.requestedDbIds.length, requestedDbIds: high.requestedDbIds },
+  }, null, 2));
+}
+
 async function main() {
   await mkdir(RESULTS_DIR, { recursive: true });
+  const smokeCohortProfiler = process.argv.includes('--smoke-cohort-profiler');
   for (const runtime of Object.values(RUNTIME_CONFIGS)) {
     console.log(`\n=== Runtime: ${runtime.label} ===`);
     const browser = await chromium.launch({ args: runtime.args, proxy: resolveProxyFromEnv() });
@@ -305,6 +355,14 @@ async function main() {
       const page = await browser.newPage();
       const identity = await loadFixtureAndReconfirm(page);
       console.log('Fixture identity (re-confirmed live):', JSON.stringify(identity));
+
+      if (smokeCohortProfiler) {
+        // Task 3.3's manual-verification proof only -- one runtime's live fixture is sufficient to
+        // prove the profiling walk + cohort selection work end to end; skip warm-up and the
+        // fresh-world tuple proof entirely for this temporary smoke pass.
+        await runSmokeCohortProfiler(page);
+        return;
+      }
 
       await sacrificialWarmup(page);
       console.log('Sacrificial warm-up complete (unmeasured, no recorder installed).');

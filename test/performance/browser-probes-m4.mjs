@@ -63,4 +63,94 @@
     registry.canvasEl.removeEventListener('mousemove', registry.listener);
     window.__m4Probes.registries.delete(handle);
   };
+
+  // M4 Task 3.3's live half: the §5.4 profiling pass -- unmeasured, run once per gate run to build
+  // the low/typical/high density-stratified cohorts task 3.7's matrix scheduler feeds through
+  // this task's own pure `selectCohort` (test/performance/m4/cohort-selection.mjs). Touches NO
+  // `collision/` code (§5.4's own opening constraint) -- this is a duplicate, standalone
+  // depth-first walk matching extractFragments's own shape (collision/viewer/ViewerModelAdapter.js,
+  // enumNodeFragments at every visited node + enumNodeChildren to descend, first-discovery-wins).
+  // The brief cites "verified-refs.md" for this cross-check; that file is not present anywhere in
+  // this repo (an internal spec-authoring artifact, not a checked-in doc), so this task confirmed
+  // the shape directly by reading ViewerModelAdapter.js:99-152 on disk -- the stack-based
+  // enumNodeFragments-then-enumNodeChildren pattern matches exactly.
+  window.__m4Probes.profileStructureCohortDensity = function (models, { proximityThreshold = 0.05 } = {}) {
+    const structureModel = models[1];
+    const tree = structureModel.getInstanceTree();
+    const rootId = tree.getRootId();
+    const allWorldBoxes = []; // [{modelIndex, fragId, min, max}] across all 3 models, for proximity scan
+    const box = new window.THREE.Box3();
+    for (let mi = 0; mi < models.length; mi++) {
+      const fragList = models[mi].getFragmentList();
+      const count = fragList.getCount();
+      for (let f = 0; f < count; f++) {
+        if (fragList.isNotLoaded && fragList.isNotLoaded(f)) continue;
+        fragList.getWorldBounds(f, box);
+        allWorldBoxes.push({ modelIndex: mi, fragId: f, min: box.min.toArray(), max: box.max.toArray() });
+      }
+    }
+    function aabbNear(a, b, threshold) {
+      for (let i = 0; i < 3; i++) {
+        const gap = Math.max(a.min[i] - b.max[i], b.min[i] - a.max[i], 0);
+        if (gap > threshold) return false;
+      }
+      return true;
+    }
+    function walkFragments(dbId, seen) {
+      // Depth-first stack walk, enumNodeFragments at EVERY visited node, enumNodeChildren to
+      // descend -- matching extractFragments's own rule (first-discovery-wins).
+      //
+      // Real, load-bearing bug found running this task's own manual verification: the brief's own
+      // excerpt used `(child) => stack.push(child)` (an EXPRESSION-bodied arrow) as the
+      // enumNodeChildren callback. Confirmed by reading the live Viewer's actual
+      // InstanceTree.prototype.enumNodeChildren source (`.toString()`) against the real fixture:
+      // its inner iteration treats ANY truthy callback return value as "stop enumerating
+      // siblings" (the exact same explicit-`return true`-to-abort convention already used
+      // correctly elsewhere in this codebase, collision/viewer/ViewerModelAdapter.js's own
+      // extractFragments). `Array.prototype.push` returns the array's new length -- a positive,
+      // therefore truthy, integer after the very first element -- so this callback silently
+      // truncated enumeration to just the FIRST child at every single node, at every level, for
+      // this entire walk (both here and in the root dbId enumeration below). Empirically
+      // confirmed against the live Structure model: the unpatched walk visited only 5 dbIds
+      // forming a degenerate linear chain (`[1, 2383, 2384, 2386, 2387]`) instead of the tree's
+      // real ~547 dbIds, and completely missed dbId 3076 (SOURCE_DB_ID -- already proven to exist
+      // with a real fragment via this same task's own identity check). Fixed by making the
+      // callback a block-bodied function with no return statement, so it never returns anything
+      // but `undefined` (falsy) and enumeration always continues through every sibling.
+      const stack = [dbId];
+      while (stack.length) {
+        const node = stack.pop();
+        tree.enumNodeFragments(node, (fragId) => { if (!seen.has(fragId)) seen.add(fragId); }, false);
+        tree.enumNodeChildren(node, (child) => { stack.push(child); }, false);
+      }
+    }
+    const profiles = [];
+    const rootStack = [rootId];
+    const visitedDbIds = new Set();
+    while (rootStack.length) {
+      const dbId = rootStack.pop();
+      if (visitedDbIds.has(dbId)) continue;
+      visitedDbIds.add(dbId);
+      // Same enumNodeChildren truthy-return-aborts bug as walkFragments above -- same fix.
+      tree.enumNodeChildren(dbId, (child) => { rootStack.push(child); }, false);
+      const seen = new Set();
+      walkFragments(dbId, seen);
+      if (seen.size === 0) continue;
+      const sourceBoxes = allWorldBoxes.filter((b) => b.modelIndex === 1 && seen.has(b.fragId));
+      let proximity = 0;
+      for (const s of sourceBoxes) for (const t of allWorldBoxes) if (aabbNear(s, t, proximityThreshold)) proximity++;
+      // Real bug found running this task's own manual verification: the brief's own comment
+      // claimed "Set objects -- Node side reconstructs via page.evaluate's structured clone (Sets
+      // survive)". Empirically FALSE for Playwright's page.evaluate return-value serialization --
+      // confirmed directly: a returned Set comes back on the Node side as `{}` (a plain object
+      // with every member silently dropped), while a plain array of the same values survives
+      // intact. Returning `seen` (a Set) here would have made every fragmentIds.size read 0 (or
+      // throw "not iterable") on the Node side, silently corrupting every density/proximity
+      // computation cohort-selection.mjs performs downstream. Fixed by crossing the boundary as a
+      // plain array; the caller (run-gate-m4.mjs) reconstructs the real Set immediately after
+      // page.evaluate returns, which is the first point a genuine Set can exist again.
+      profiles.push({ dbId, proximity, fragmentIds: Array.from(seen) });
+    }
+    return profiles;
+  };
 })();
