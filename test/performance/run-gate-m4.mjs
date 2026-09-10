@@ -36,6 +36,7 @@ import {
 } from './m4/observation-envelope.mjs';
 import { rankByDensity, selectCohort } from './m4/cohort-selection.mjs';
 import { S2T_LEVELS, bystanderLayout, syntheticIdRangeAbove } from './m4/s2t-bystander-layout.mjs';
+import { R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer } from './m4/r6-calibration.mjs';
 
 // §6.1 steps 1-2: identical 3-step load + identity re-confirmation to run-gate-m3.mjs:194-242,
 // unchanged in shape (Architecture normal load, Structure/Mechanical as-additional via
@@ -481,10 +482,225 @@ async function runSmokeS2T(page) {
   }, null, 2));
 }
 
+// M4 Task 3.5's live half: §5.2.1's R6 one-time calibration pass. Unmeasured, runs ONCE per
+// runtime -- finds the smallest d in R6_CALIBRATION_SEQUENCE whose translation of the Architecture
+// model along world +X changes R3's pair set (R3's source set == the typical cohort, per §5.2's
+// table), then restores T0 before returning. Every calibration query is run in its own disposable,
+// freshly-constructed CollisionWorld (never a shared/reused world) -- §5.2.1 requires no
+// invalidateModelPlacement call here: a brand-new world has no prior cached placement for this
+// model to go stale, so it always extracts whatever transform is live on the Viewer at admission
+// time (confirmed empirically against the real fixture: a fresh world picks up a placement change
+// applied moments earlier with zero invalidation calls in between).
+//
+// Real bug found running this task's own manual verification: the brief's own excerpt captured T0
+// as `archModel.getPlacementTransform ? archModel.getPlacementTransform() : new
+// window.THREE.Matrix4().toArray()` -- the truthy branch returns the LIVE THREE.Matrix4 OBJECT
+// (getPlacementTransform()'s real return type, per @types/forge-viewer/index.d.ts:757), never an
+// array, while the falsy branch returns a plain array from Matrix4#toArray(). Confirmed empirically
+// against the real fixture: the Architecture model's own getPlacementTransform() returns a Matrix4
+// whose `rawIsArray` is `false`. Every downstream use of T0 needs a plain 16-element array (T0[i]
+// indexing, Matrix4#fromArray(T0)), so the untyped ternary would silently hand later code a Matrix4
+// object under the (normal, common) truthy branch -- `Matrix4#fromArray` reads `array[0..15]`
+// positionally, and a Matrix4 object has no such numeric indices, so `fromArray(T0)` would silently
+// build a matrix of `undefined`s (coerced to NaN) rather than throwing. Fixed here to the same
+// `Array.from(model.getPlacementTransform()?.elements ?? identity.elements)` idiom
+// test/acceptance/clash-finder.acceptance.mjs:1124-1128's own already-proven
+// readStructPlacementElements() uses, which always yields a plain array regardless of which branch
+// is live.
+//
+// Second real bug found the same way: the brief's own excerpt additionally called
+// `window.__gate.extension?._world?.invalidateModelPlacement?.(archModel)` after each translation.
+// `window.__gate` (set by loadFixtureAndReconfirm) never carries an `extension` property -- only
+// `modelArch`/`modelStructure`/`modelMechanical` -- so `window.__gate.extension` is always
+// `undefined` and the whole optional-chained call was unreachable dead code, confirmed empirically.
+// Since every calibration query already uses a brand-new world (see above), no invalidation call
+// was ever needed here in the first place; removed rather than wired to a real accessor that would
+// make it fire but still change nothing observable.
+async function calibrateR6Translation(page, { cohortDbIds }) {
+  return page.evaluate(async ({ cohortDbIds, sequence }) => {
+    const { CollisionWorld } = await import('/collision/index.js');
+    const archModel = window.__gate.modelArch;
+    const T0 = Array.from(archModel.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
+    async function runR3(world) {
+      const r = await world.findClashes({
+        mode: 'clearance', clearance: 0.05,
+        source: { model: window.__gate.modelStructure, dbIds: cohortDbIds },
+        target: { targets: window.viewer.getAllModels().map((m) => ({ model: m })) },
+        groupBy: 'dbId', broadPhase: 'tlas',
+      });
+      return r.pairs.map((p) => `${p.source.dbId}:${p.target.dbId}:${p.type}`).sort();
+    }
+    const w0 = await CollisionWorld.fromViewer(window.viewer);
+    w0.admitModel(window.__gate.modelArch); w0.admitModel(window.__gate.modelStructure); w0.admitModel(window.__gate.modelMechanical);
+    const p0 = await runR3(w0);
+    w0.dispose();
+    const changedFlags = [];
+    for (const d of sequence) {
+      // Composition order: T_moved = Translation(d) x T0, pre-multiplied (§5.2.1) -- Matrix4#multiply
+      // sets `this = this * arg`, so `Translation.multiply(T0)` is exactly `Translation x T0`.
+      const composed = new window.THREE.Matrix4().makeTranslation(d, 0, 0).multiply(new window.THREE.Matrix4().fromArray(T0));
+      window.viewer.impl.setPlacementTransform(archModel, composed);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // render stabilisation
+      const w = await CollisionWorld.fromViewer(window.viewer);
+      w.admitModel(window.__gate.modelArch); w.admitModel(window.__gate.modelStructure); w.admitModel(window.__gate.modelMechanical);
+      const p1 = await runR3(w);
+      w.dispose();
+      changedFlags.push(JSON.stringify(p0) !== JSON.stringify(p1));
+      window.viewer.impl.setPlacementTransform(archModel, new window.THREE.Matrix4().fromArray(T0));
+    }
+    return { T0, changedFlags };
+  }, { cohortDbIds, sequence: R6_CALIBRATION_SEQUENCE });
+}
+
+// M4 Task 3.5's live half: §5.2.1 steps 1-5, the per-repetition move->invalidate->refresh->
+// restore-in-`finally` protocol. `world` is a single, already-admitted CollisionWorld shared across
+// this whole sequence's four queries (cold, warm, refresh, reconfirm) -- constructed and disposed by
+// the caller (task 3.7's scheduler owns the one-fresh-world-per-tuple lifecycle, §6.1.4), passed in
+// here as a Playwright JSHandle to the real in-page CollisionWorld object (confirmed empirically:
+// Playwright resolves a JSHandle nested as a field inside page.evaluate's args object to the live
+// in-page object reference, not just a bare top-level handle arg).
+//
+// Real bug found running this task's own manual verification: the brief's own excerpt referenced a
+// bare `world` identifier inside the page.evaluate callback body without ever including it in the
+// destructured parameter or in the object passed as page.evaluate's second argument. Playwright
+// evaluate callbacks are serialized and re-evaluated inside the browser's own execution context --
+// they do NOT close over the calling Node scope -- so `world` was an undeclared free variable.
+// Confirmed empirically against the real fixture: running the excerpt exactly as written throws
+// `ReferenceError: world is not defined` on the very first `world.findClashes(...)` call. Fixed by
+// passing `world` explicitly through the same args object as every other value and destructuring it
+// alongside them (verified empirically: a JSHandle nested as an object field resolves correctly to
+// the live in-page object once actually included).
+async function runR6Sequence(page, world, { cohortDbIds, broadPhase, T0, d }) {
+  return page.evaluate(async ({ cohortDbIds, broadPhase, T0, d, world }) => {
+    const archModel = window.__gate.modelArch;
+    async function runR3() {
+      const r = await world.findClashes({ mode: 'clearance', clearance: 0.05, source: { model: window.__gate.modelStructure, dbIds: cohortDbIds }, target: { targets: window.viewer.getAllModels().map((m) => ({ model: m })) }, groupBy: 'dbId', broadPhase });
+      return { pairs: r.pairs.map((p) => `${p.source.dbId}:${p.target.dbId}:${p.type}`).sort(), tlasBuilds: r.statistics.tlasBuilds };
+    }
+    const step1Cold = await runR3(); // R6 cold sample
+    const step1Warm = await runR3(); // R6 warm sample, records P0
+    let refresh;
+    let reconfirm;
+    try {
+      const composed = new window.THREE.Matrix4().makeTranslation(d, 0, 0).multiply(new window.THREE.Matrix4().fromArray(T0));
+      window.viewer.impl.setPlacementTransform(archModel, composed);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      world.invalidateModelPlacement(archModel);
+      refresh = await runR3(); // R6's THIRD measured query, the `refresh` state -- records P1
+    } finally {
+      window.viewer.impl.setPlacementTransform(archModel, new window.THREE.Matrix4().fromArray(T0));
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      world.invalidateModelPlacement(archModel);
+      const restored = Array.from(archModel.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
+      const restoredOk = restored.every((v, i) => Math.abs(v - T0[i]) <= 1e-9);
+      if (!restoredOk) throw new Error('R6 restoration could not be verified — aborting the entire run');
+      // Correctness-only, unmeasured (§5.2.1 step 5) -- but its own tlasBuilds is still returned
+      // below (not just its pairs) so a caller can assert the arm-specific rebuild-delta rule
+      // ("again across restoration") over BOTH invalidations, not just the first (refresh) one.
+      reconfirm = await runR3();
+      if (JSON.stringify(reconfirm.pairs) !== JSON.stringify(step1Warm.pairs)) {
+        throw new Error('R6 restoration verified by matrix but P0 was not recovered — aborting the entire run');
+      }
+    }
+    return { cold: step1Cold, warm: step1Warm, refresh, reconfirm };
+  }, { cohortDbIds, broadPhase, T0, d, world });
+}
+
+// M4 Task 3.5's manual-verification entry point (`--smoke-r6`, a temporary flag task 3.7 removes
+// once R6 is wired into the real matrix). Builds R3's source set (the typical cohort, k=10 per
+// §5.2's "target ~10 extracted instances" -- identical k to runSmokeCohortProfiler's own SMOKE_K),
+// runs task 3.5's one-time calibration pass, then exercises the full move->invalidate->refresh->
+// restore-in-`finally` sequence under both broad-phase arms, each in its own fresh, disposable
+// CollisionWorld (§6.1.4), asserting the arm-specific `tlasBuilds` rule and the pair-set-diff rule
+// from §5.2.1's own "Asserted" paragraph.
+//
+// `statistics.tlasBuilds` is a PER-QUERY count of builds performed DURING that one call, never a
+// cumulative running total across the world's lifetime (confirmed empirically: the world's first,
+// `cold` query reports 3 -- one per target epoch needing its first TLAS -- while the very next,
+// `warm` query on the identical unchanged world reports 0). So the "tlasBuilds delta of 1" §5.2.1
+// describes is each of `refresh`/`reconfirm`'s own count taken against the steady-state `warm`
+// baseline (0, once nothing has changed) -- NOT `reconfirm.tlasBuilds - refresh.tlasBuilds` (which
+// would incorrectly demand a SECOND independent rebuild on top of the first).
+async function runSmokeR6Sequence(page) {
+  await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
+  const rawProfiles = await page.evaluate(() => {
+    const { modelArch, modelStructure, modelMechanical } = window.__gate;
+    return window.__m4Probes.profileStructureCohortDensity([modelArch, modelStructure, modelMechanical]);
+  });
+  const profiles = rawProfiles.map((p) => ({ ...p, fragmentIds: new Set(p.fragmentIds) }));
+  const ranked = rankByDensity(profiles);
+  const SMOKE_K = 10; // R3's own "target ~10 extracted instances" (§5.2's table)
+  const typical = selectCohort(ranked, 0.5, SMOKE_K);
+  if (typical.status !== 'OK') {
+    throw new Error(`R6 smoke: typical cohort selection did not reach k=${SMOKE_K} (status=${typical.status})`);
+  }
+  const cohortDbIds = typical.requestedDbIds;
+
+  const { T0, changedFlags } = await calibrateR6Translation(page, { cohortDbIds });
+  const d = selectCalibrationMagnitude(changedFlags);
+  console.log('R6 calibration result:', JSON.stringify({ cohortDbIds, changedFlags, selectedD: d }));
+  if (d === null) {
+    console.log('R6 NOT EXERCISED: no d in the frozen sequence changed the pair set.');
+    return;
+  }
+
+  const armResults = {};
+  for (const broadPhase of ['tlas', 'linear']) {
+    const worldHandle = await page.evaluateHandle(async () => {
+      const { CollisionWorld } = await import('/collision/index.js');
+      const w = await CollisionWorld.fromViewer(window.viewer);
+      w.admitModel(window.__gate.modelArch);
+      w.admitModel(window.__gate.modelStructure);
+      w.admitModel(window.__gate.modelMechanical);
+      return w;
+    });
+    let sequenceResult;
+    try {
+      sequenceResult = await runR6Sequence(page, worldHandle, { cohortDbIds, broadPhase, T0, d });
+    } finally {
+      await page.evaluate((w) => w.dispose(), worldHandle); // fresh-world disposed before the next arm, per §6.1.4
+    }
+
+    const refreshDelta = sequenceResult.refresh.tlasBuilds - sequenceResult.warm.tlasBuilds;
+    const reconfirmDelta = sequenceResult.reconfirm.tlasBuilds - sequenceResult.warm.tlasBuilds;
+    const expectedDelta = broadPhase === 'tlas' ? 1 : 0;
+    if (refreshDelta !== expectedDelta) {
+      throw new Error(`R6 smoke (${broadPhase}): expected tlasBuilds delta ${expectedDelta} across the refresh query, got ${refreshDelta}`);
+    }
+    if (reconfirmDelta !== expectedDelta) {
+      throw new Error(`R6 smoke (${broadPhase}): expected tlasBuilds delta ${expectedDelta} across restoration, got ${reconfirmDelta}`);
+    }
+    if (broadPhase === 'linear' && [sequenceResult.cold, sequenceResult.warm, sequenceResult.refresh, sequenceResult.reconfirm].some((s) => s.tlasBuilds !== 0)) {
+      throw new Error('R6 smoke (linear): tlasBuilds must be 0 throughout the linear arm');
+    }
+    if (!pairSetsDiffer(sequenceResult.refresh.pairs, sequenceResult.warm.pairs)) {
+      throw new Error(`R6 smoke (${broadPhase}): refresh.pairs must differ from warm.pairs (P1 != P0)`);
+    }
+    if (pairSetsDiffer(sequenceResult.reconfirm.pairs, sequenceResult.warm.pairs)) {
+      throw new Error(`R6 smoke (${broadPhase}): post-restoration reconfirm.pairs must equal warm.pairs (P0 recovered)`);
+    }
+
+    armResults[broadPhase] = {
+      coldTlasBuilds: sequenceResult.cold.tlasBuilds,
+      warmTlasBuilds: sequenceResult.warm.tlasBuilds,
+      refreshTlasBuilds: sequenceResult.refresh.tlasBuilds,
+      reconfirmTlasBuilds: sequenceResult.reconfirm.tlasBuilds,
+      refreshDelta,
+      reconfirmDelta,
+      warmPairCount: sequenceResult.warm.pairs.length,
+      refreshPairCount: sequenceResult.refresh.pairs.length,
+      reconfirmPairCount: sequenceResult.reconfirm.pairs.length,
+    };
+  }
+
+  console.log('R6 smoke result:', JSON.stringify({ cohortDbIds, selectedD: d, arms: armResults }, null, 2));
+}
+
 async function main() {
   await mkdir(RESULTS_DIR, { recursive: true });
   const smokeCohortProfiler = process.argv.includes('--smoke-cohort-profiler');
   const smokeS2T = process.argv.includes('--smoke-s2t');
+  const smokeR6 = process.argv.includes('--smoke-r6');
   for (const runtime of Object.values(RUNTIME_CONFIGS)) {
     console.log(`\n=== Runtime: ${runtime.label} ===`);
     const browser = await chromium.launch({ args: runtime.args, proxy: resolveProxyFromEnv() });
@@ -509,6 +725,15 @@ async function main() {
         // prove the facade + level-to-level control rule work end to end; skip warm-up and the
         // fresh-world tuple proof entirely for this temporary smoke pass.
         await runSmokeS2T(page);
+        return;
+      }
+
+      if (smokeR6) {
+        // Task 3.5's manual-verification proof only -- one runtime's live fixture is sufficient to
+        // prove the calibration pass + full move->invalidate->refresh->restore sequence work end to
+        // end under both broad-phase arms; skip warm-up and the fresh-world tuple proof entirely for
+        // this temporary smoke pass.
+        await runSmokeR6Sequence(page);
         return;
       }
 
