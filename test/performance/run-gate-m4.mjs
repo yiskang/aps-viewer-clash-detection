@@ -28,6 +28,7 @@ const RESULTS_DIR = 'test/performance/results';
 import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
+import { fileURLToPath } from 'node:url';
 import { RUNTIME_CONFIGS, resolveProxyFromEnv, freshWorldTupleKey, measuredStatesFor } from './m4/fixture-lifecycle.mjs';
 import {
   dispositionForObservation, tCDispositionForRepetition, envelopeLimitMs,
@@ -341,8 +342,21 @@ async function main() {
 // '../run-gate-m4.mjs'` in manual-verify-input-probe-block.mjs (exactly as the brief's own
 // excerpt directs) launched a second, unrelated Chromium instance and started loading the full
 // 3-model fixture against the live dev server purely as an import side effect, racing the manual
-// script's own browser/page and polluting its console output. `node
-// test/performance/run-gate-m4.mjs` (this file's own direct-run / npm script path) is unaffected.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// script's own browser/page and polluting its console output.
+//
+// Matches the established sibling pattern (run-gate.mjs:475-494, run-gate-m2.mjs:596-597,
+// run-gate-m3.mjs:900-901, test/acceptance/room-locator.acceptance.mjs:381,
+// clash-finder.acceptance.mjs:2404) rather than a bare `import.meta.url === file://${argv[1]}`
+// check: a bare argv[1] comparison is NOT sufficient on its own -- Node's `node --test` sweep sets
+// `process.argv[1]` to THIS file's own path when it imports it as a candidate, identical to a
+// direct `node test/performance/run-gate-m4.mjs` invocation (run-gate.mjs's own comment documents
+// this, confirmed during that file's Batch-5 review). `scripts/run-tests.mjs` currently scopes
+// `node --test` to an explicit list of this repo's own `*.test.mjs` files (this file does not
+// match that suffix), which already prevents a sweep from reaching this file today -- the
+// `NODE_TEST_CONTEXT` check below is the same defense-in-depth every sibling file carries, in case
+// a future change reintroduces a bare, unscoped `node --test`.
+const isMainModule = !process.env.NODE_TEST_CONTEXT
+  && process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (isMainModule) {
   main().catch((err) => { console.error(err); process.exitCode = 1; });
 }
