@@ -62,6 +62,35 @@ function findMalformedTaskEvent(traceEvents, acceptedCategories, acceptedNames) 
   );
 }
 
+// M4 Task 3.7 (independent-review finding, High). §6.2's nesting rule -- "where trace events
+// overlap, only the outermost `toplevel` event contributes a task interval, and each instant on the
+// timeline belongs to exactly one task" -- is stated for WELL-NESTED events. `selectTopLevelTaskEvents`
+// below implements it by skipping any candidate starting before the currently-open task ends, which
+// is correct for containment but ALSO silently swallows a CROSSING pair (partial overlap, neither
+// containing the other): given `[0,40]` and `[30,100]`, it keeps only `[0,40]` and discards a task
+// that actually ran to 100. The window would then report a 40 ms maximum where a 70 ms one existed,
+// i.e. a T-a pass computed from a knowingly incomplete task set.
+//
+// A crossing pair means the trace is not well-nested, which is not something this parser can
+// reconcile -- so it invalidates the tuple instead, the same way a corrupt task event already does.
+// This MUST be detected here, on the raw candidates, because by the time the caller sees
+// `intervals` the crossing event has already been dropped and the survivors are non-overlapping by
+// construction (which is why an overlap check on the OUTPUT can never fire).
+function findCrossingTaskEvents(traceEvents, acceptedCategories, acceptedNames) {
+  const candidates = dedupeExact(
+    traceEvents.filter((e) => matchesAcceptedTask(e, acceptedCategories, acceptedNames))
+  ).sort((a, b) => a.ts - b.ts || b.dur - a.dur);
+  for (let i = 1; i < candidates.length; i++) {
+    const prev = candidates[i - 1];
+    const cur = candidates[i];
+    const prevEnd = prev.ts + prev.dur;
+    const curEnd = cur.ts + cur.dur;
+    // Overlapping (`cur.ts < prevEnd`) but NOT contained (`curEnd > prevEnd`) -- a genuine crossing.
+    if (cur.ts < prevEnd && curEnd > prevEnd) return { a: prev, b: cur };
+  }
+  return null;
+}
+
 function selectTopLevelTaskEvents(traceEvents, acceptedCategories, acceptedNames) {
   const candidates = dedupeExact(
     traceEvents.filter((e) => matchesAcceptedTask(e, acceptedCategories, acceptedNames))
@@ -244,6 +273,13 @@ export function parseTraceAndClock({
   // instead, the same way a corrupt/missing anchor is.
   if (findMalformedTaskEvent(measuredEvents, acceptedTaskCategories, acceptedTopLevelTaskNames)) {
     return { valid: false, reason: 'invalid-task-event', intervals: [] };
+  }
+
+  // See findCrossingTaskEvents: a non-well-nested candidate pair would otherwise have one member
+  // silently dropped, under-reporting main-thread occupancy on exactly the tuple whose evidence
+  // matters most.
+  if (findCrossingTaskEvents(measuredEvents, acceptedTaskCategories, acceptedTopLevelTaskNames)) {
+    return { valid: false, reason: 'crossing-top-level-tasks', intervals: [] };
   }
 
   const taskIntervals = [];

@@ -503,7 +503,13 @@ async function installGateHelpers(page) {
         for (const [tag, model] of [['arch', g.modelArch], ['structure', g.modelStructure], ['mechanical', g.modelMechanical], ['s2tFacade', g.s2tFacade]]) {
           if (model) byId.set(idOf(model), tag);
         }
-        const retag = (ref) => (ref ? { modelTag: byId.get(ref.modelId) ?? 'unknown', dbId: ref.dbId, fragId: ref.fragId } : null);
+        // `modelId` is KEPT alongside the tag, not replaced by it (independent-review finding,
+        // High): §6.4 joins diagnostics on `modelTag`, but §5.3.1's S2T control rule
+        // (`checkS2TLevelToLevelControlRule`, browser-probes-m4.mjs) identifies a synthetic-fragment
+        // leak by `ref.modelId === lvl.targetModelId`. Dropping `modelId` here made that check
+        // compare `undefined === <facade id>` -- always false -- so the leak test could never fire
+        // and the control rule would report a clean pass however badly a bystander leaked.
+        const retag = (ref) => (ref ? { modelTag: byId.get(ref.modelId) ?? 'unknown', modelId: ref.modelId, dbId: ref.dbId, fragId: ref.fragId } : null);
         return diagnostics.map((d) => ({
           reason: d.reason, scope: d.scope, role: d.role ?? null,
           fragment: retag(d.fragment), sourceFragment: retag(d.sourceFragment), targetFragment: retag(d.targetFragment),
@@ -738,17 +744,11 @@ function assembleTargetsTa({
   // pipeline can produce, so it fails closed instead.
   if (taskIntervals.length === 0) return unevaluable('no-top-level-task-events');
 
-  // §6.2: "each instant on the timeline belongs to exactly ONE task". Task 2.1's
-  // `selectTopLevelTaskEvents` enforces that by SKIPPING any candidate that starts before the
-  // currently-open one ends -- which is exactly right for well-nested events, but silently DROPS
-  // the later interval for a pair that merely CROSSES (partial overlap, neither containing the
-  // other). A crossing pair means the trace is not well-nested and the "outermost wins" selection
-  // has quietly discarded real main-thread occupancy, so the whole window fails closed here rather
-  // than reporting a duty cycle and a T-a computed from a task set known to be incomplete.
-  const byStart = [...taskIntervals].sort((a, b) => a.startMs - b.startMs);
-  for (let i = 1; i < byStart.length; i++) {
-    if (byStart[i].startMs < byStart[i - 1].endMs) return unevaluable('overlapping-top-level-tasks');
-  }
+  // (§6.2's "each instant belongs to exactly ONE task" is enforced upstream, inside
+  // `parseTraceAndClock`, which now returns `crossing-top-level-tasks` for a non-well-nested
+  // candidate pair. It has to be checked there, on the raw candidates: by the time the selected
+  // intervals reach here the crossing member has already been dropped and what survives is
+  // non-overlapping by construction, so an overlap check on this side could never fire.)
 
   // §6.2 rule 2, then rule 1 -- in that order. An interval excluded by rule 2 is never split.
   const { attributable, unattributable } = partitionStageIntervalsByAttributability(
@@ -865,6 +865,14 @@ function compareRunsAtPairScale(runA, runB, diagonalByTag) {
   if (federationMax === null) {
     return { valid: false, fields: { worldDiagonalScaleResolved: false }, partitions: [], federationMax: null };
   }
+  // Independent-review finding (High): BOTH sides of a partition must have a real scale. §6.4's
+  // tolerance is `1e-9 x max(sourceWorldDiagonal, targetWorldDiagonal)`; falling back to whichever
+  // single side happens to be known silently substitutes a different, and possibly much smaller,
+  // tolerance than the rule specifies -- which for S2T (whose facade extends to coordinate
+  // ~1,000,000, so its diagonal dwarfs Structure's ~314) would mean comparing against the SOURCE's
+  // scale alone and aborting the run on witness differences that are well inside the required
+  // target-relative tolerance. A missing scale is now an explicit failure with a named reason, not
+  // a quiet downgrade.
 
   const whole = compareRuns(runA, runB, { worldDiagonalScale: federationMax });
 
@@ -875,13 +883,13 @@ function compareRunsAtPairScale(runA, runB, diagonalByTag) {
     const [sourceTag, targetTag] = key.split('|');
     const sd = diagonalByTag[sourceTag];
     const td = diagonalByTag[targetTag];
-    const usable = [sd, td].filter((d) => Number.isFinite(d) && d > 0);
-    if (usable.length === 0) {
-      partitions.push({ key, scale: null, witnesses: false, reason: 'no finite positive world diagonal for either side' });
+    const missing = [[sourceTag, sd], [targetTag, td]].filter(([, d]) => !(Number.isFinite(d) && d > 0)).map(([t]) => t);
+    if (missing.length > 0) {
+      partitions.push({ key, scale: null, witnesses: false, reason: `no finite positive world diagonal for: ${missing.join(', ')}` });
       witnessesOk = false;
       continue;
     }
-    const scale = Math.max(...usable);
+    const scale = Math.max(sd, td);
     const subA = { pairs: runA.pairs.filter((p) => `${p.sourceModelTag}|${p.targetModelTag}` === key), statistics: runA.statistics };
     const subB = { pairs: runB.pairs.filter((p) => `${p.sourceModelTag}|${p.targetModelTag}` === key), statistics: runB.statistics };
     const sub = compareRuns(subA, subB, { worldDiagonalScale: scale });
@@ -1028,6 +1036,13 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
 
   const envelope = { limitReached: false, postQueryFrameObserved: false, anchorRafObserved: false, anchorProbeHandled: false };
   let trace = null;
+  // Declared OUTSIDE the try (independent-review finding): if the query's own `page.evaluate`
+  // rejects, nothing on the normal path ever sets `envelope.closed`, so the unawaited 10-minute
+  // probe schedule would keep running long after the registry, the trace session and possibly the
+  // browser had been torn down -- keeping the process alive and turning later CDP sends into
+  // unhandled rejections. The `finally` below now always closes the envelope and awaits the loop's
+  // settlement before disposing anything it touches.
+  let probesPromise = null;
   try {
     // -- Pre-query anchor: one observed rAF callback ------------------------------------------
     const anchorDeadline = performance.now() + 2000;
@@ -1059,7 +1074,7 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
     // `durationMs` is an upper bound only -- `shouldStop` ends the series as soon as the envelope
     // has genuinely closed. 10 minutes is far above any plausible single-query window and exists
     // purely so the pre-computed coordinate schedule is never the thing that runs out first.
-    const probesPromise = dispatchInputProbeSequence(page, cdp, {
+    probesPromise = dispatchInputProbeSequence(page, cdp, {
       canvasSelector: CANVAS_SELECTOR, cadenceMs: PROBE_CADENCE_MS, startNodeMs: probeStartNodeMs,
       durationMs: 600_000,
       shouldStop: () => envelope.closed === true,
@@ -1096,7 +1111,32 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
     }
     envelope.closed = true;
 
-    const dispatched = await probesPromise;
+    const issued = await probesPromise;
+    // §6.2, verbatim: "A slot whose dispatch could not be issued on time ... [is] recorded as a
+    // CENSORED observation at the elapsed delay to the envelope's close -- NOT as 'not dispatched',
+    // and never silently dropped, because a probe disappearing under renderer overload is EVIDENCE
+    // OF the stall T-c exists to detect, not an absence of evidence."
+    //
+    // Independent-review finding (Critical): `shouldStop` breaks the dispatch loop the moment the
+    // envelope closes, so every slot still due at that instant simply vanished from the sample --
+    // and those are exactly the slots a Node-side stall near query completion would eat. Five
+    // earlier fast probes could then carry T-c to a pass while the omitted slots held the overload
+    // evidence. Every scheduled slot whose INTENDED instant fell at or before the closing mark is
+    // materialised here instead, with a coordinate that is deliberately outside the canvas and
+    // therefore can never match a recorded handler entry -- so it resolves as censored through the
+    // ordinary disposition path rather than through a special case.
+    const lastDueIndex = Math.floor((closingNodeMs - probeStartNodeMs) / PROBE_CADENCE_MS);
+    const unissued = [];
+    for (let i = issued.length; i <= lastDueIndex; i++) {
+      unissued.push({
+        coord: { x: -1 - i, y: -1 }, // unreachable by construction: no handler can ever record it
+        scheduledNodeMs: probeStartNodeMs + i * PROBE_CADENCE_MS,
+        dispatchNodeMs: performance.now(),
+        neverIssued: true,
+      });
+    }
+    const dispatched = [...issued, ...unissued];
+
     const frameIntervals = await rafHandle.evaluate((r) => r.stop());
     const { traceEvents, dataLossOccurred } = await trace.stop();
     trace = null;
@@ -1116,7 +1156,12 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
       // split is decided on the probe's own Node-side dispatch instant against the closing mark's
       // Node-side instant -- both on the SAME Node monotonic clock, so no calibration conversion
       // is involved in the split itself (only in each observation's own delay, already applied).
-      observations = all.filter((_, i) => dispatched[i].dispatchNodeMs <= closingNodeMs);
+      // Membership is decided on the slot's INTENDED instant, never on when Node physically got the
+      // CDP command out (independent-review finding, Critical): a probe scheduled inside the window
+      // but issued late -- precisely because the machine was overloaded -- belongs in the sample.
+      // Filtering on the late actual instant would drop exactly the observations that carry the
+      // stall. Both instants are Node-monotonic, so no calibration conversion enters the split.
+      observations = all.filter((_, i) => dispatched[i].scheduledNodeMs <= closingNodeMs);
       tC = tCDispositionForRepetition(observations, TC_THRESHOLD_MS);
     }
 
@@ -1172,9 +1217,13 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
       observationCount: observations.length,
     };
   } finally {
-    // Order matters: the trace session must be closed even on a throw, or the NEXT window's
-    // `Tracing.start` fails outright ("Tracing is already started") and every later tuple in the
-    // run dies with it.
+    // Order matters. The probe loop is stopped and AWAITED first: it is the only thing here that
+    // keeps issuing CDP commands, so letting it outlive the registry/session it targets is what
+    // produces the unhandled rejections (and the hung process) this ordering prevents.
+    envelope.closed = true;
+    if (probesPromise) { try { await probesPromise; } catch { /* a failed dispatch must not mask the original error */ } }
+    // The trace session must be closed even on a throw, or the NEXT window's `Tracing.start` fails
+    // outright ("Tracing is already started") and every later tuple in the run dies with it.
     if (trace) { try { await trace.stop(); } catch { /* best-effort */ } }
     try { await rafHandle.evaluate((r) => r.stop()); } catch { /* already stopped */ }
     await rafHandle.dispose();
@@ -1259,7 +1308,14 @@ async function disposeS2TFacade(page) {
 async function readS2TFacadeControls(page) {
   return page.evaluate(() => {
     const f = window.__gate.s2tFacade;
-    return { targetModelId: f.id, syntheticVizmeshAccessCount: f.getSyntheticVizmeshAccessCount(), facadeCount: f.getCount() };
+    return {
+      targetModelId: f.id,
+      syntheticVizmeshAccessCount: f.getSyntheticVizmeshAccessCount(),
+      facadeCount: f.getCount(),
+      // §5.3.1's leak check scopes 'is this a synthetic fragment id' as `fragId >= realCount`, so
+      // the REAL Architecture fragment count has to travel with every level record.
+      realFragmentCount: f.__realCount,
+    };
   });
 }
 
@@ -1596,7 +1652,20 @@ async function runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repe
         // geometry work in flight whose spans would report into the next window's recorder without
         // that window being able to prove the yield recorder covered them (§6.2's second rule), and
         // a warm sample taken after a failed cold one is not the warm sample §6.1.4 defines anyway.
-        if (window_.capacityError || window_.otherError) { ctx.attributionPoisoned = true; break; }
+        if (window_.capacityError || window_.otherError) {
+          ctx.attributionPoisoned = true;
+          // Independent-review finding (Critical): a NON-capacity exception is a harness/runtime
+          // failure, not a §4 finding, and must never leave the process exiting 0. Before this,
+          // every unexpected throw (say, a `TypeError` from a changed `findClashes` signature)
+          // became an `otherError`, the tuple stopped, parity was recorded as "not compared", and
+          // the run still printed "Baseline matrix complete" and exited successfully -- a CI-green
+          // gate that measured nothing. It is surfaced, kept verbatim in the record, and the run
+          // exits non-zero. Recognized capacity rejections are the ONLY tolerated failure.
+          if (window_.otherError && !recognizeCapacityRejection(window_.otherError)) {
+            ctx.harnessFailures.push({ tupleKey, state, error: window_.otherError });
+          }
+          break;
+        }
       }
     }
   } finally {
@@ -1697,6 +1766,12 @@ async function main() {
 
   const results = { startedAt: new Date().toISOString(), runtimes: [] };
   let failedValidation = null;
+  // §6.4's diagnostics rule vs. the one wall-clock-dependent diagnostic reason -- see
+  // TIME_BUDGET_DEPENDENT_DIAGNOSTIC_REASONS. Collected across the whole run and reported at the
+  // end, never discarded.
+  const timeBudgetDivergences = [];
+  // Unexpected (non-capacity) query failures. Any one of these fails the whole run non-zero.
+  const harnessFailures = [];
 
   for (const runtime of Object.values(RUNTIME_CONFIGS)) {
     if (selectedRuntimes && !selectedRuntimes.includes(runtime.label)) continue;
@@ -1764,7 +1839,7 @@ async function main() {
       }
 
       const allStructureDbIds = profiles.map((p) => p.dbId);
-      const ctx = { pageTargetId, rCohorts, s2CohortsByK, allStructureDbIds, r6, attributionPoisoned: false };
+      const ctx = { pageTargetId, rCohorts, s2CohortsByK, allStructureDbIds, r6, attributionPoisoned: false, harnessFailures: [] };
 
       const activeCases = selectedCases.filter((c) => caseRunsUnderRuntime(c, runtime));
       const schedule = buildCounterbalancedSchedule(activeCases, repetitionCount);
@@ -1790,7 +1865,16 @@ async function main() {
             const variantReport = caseReport.variants.get(vKey);
             if (variant.notExercised) continue; // recorded by name above; never silently skipped
 
-            if (variant.s2tLevel !== undefined) await installS2TFacade(page, variant.s2tLevel);
+            // §6.4's witness tolerance needs the TARGET's world diagonal too, and for S2T the
+            // target is the facade -- which does not exist when the federation's diagonals are
+            // measured once per runtime above (independent-review finding, High). Re-measured per
+            // level, since each level appends more distant bystanders and therefore genuinely
+            // changes the facade's own world extent.
+            let scales = diagonalByTag;
+            if (variant.s2tLevel !== undefined) {
+              await installS2TFacade(page, variant.s2tLevel);
+              scales = await page.evaluate(() => window.__m4Gate.worldDiagonalsByTag());
+            }
             try {
               const arms = {};
               for (const broadPhase of armOrder) {
@@ -1805,10 +1889,30 @@ async function main() {
                 const a = arms.tlas?.states?.[state];
                 const b = arms.linear?.states?.[state];
                 if (!a?.run || !b?.run) { parity[state] = { compared: false, reason: 'one or both arms produced no result set' }; continue; }
-                const cmp = compareRunsAtPairScale(a.run, b.run, diagonalByTag);
-                parity[state] = cmp;
-                if (!cmp.valid && !failedValidation) {
-                  failedValidation = { runtime: runtime.label, caseName, variant: vKey, state, repetition, fields: cmp.fields, partitions: cmp.partitions };
+                const cmp = compareRunsAtPairScale(a.run, b.run, scales);
+                // A bare `diagnostics: false` (or `pairSet: false`) is not actionable evidence --
+                // §16.2 aborts the whole run on it, so the record has to say WHAT differed, or the
+                // next person has to reproduce a multi-minute matrix run to find out.
+                const diff = cmp.valid ? null : describeRunDifference(a.run, b.run);
+                const divergence = diff ? classifyDiagnosticsDivergence(diff) : { kind: 'none' };
+                // See TIME_BUDGET_DEPENDENT_DIAGNOSTIC_REASONS above: a divergence confined to the
+                // wall-clock-dependent diagnostic reasons is a NAMED, reported finding rather than
+                // FAILED_VALIDATION. Every other field, and every other diagnostic reason, still
+                // aborts the run exactly as §6.4 requires.
+                const onlyDiagnosticsDiffer = diff !== null
+                  && cmp.fields.pairSet && cmp.fields.statistics && cmp.fields.distances && cmp.fields.witnesses
+                  && !cmp.fields.diagnostics;
+                const tolerated = onlyDiagnosticsDiffer && divergence.kind === 'TIME_BUDGET_DIAGNOSTIC_DIVERGENCE';
+                parity[state] = { ...cmp, diff, divergence, tolerated };
+                if (tolerated) {
+                  timeBudgetDivergences.push({ caseName, variant: vKey, state, repetition, broadPhaseArms: armOrder, divergence });
+                  console.log(`   ~ TIME_BUDGET_DIAGNOSTIC_DIVERGENCE at ${caseName}[${vKey}]/${state}: ${JSON.stringify(divergence.reasons)} (${divergence.diagnosticCounts.a} vs ${divergence.diagnosticCounts.b} diagnostics; every other §6.4 field equal)`);
+                }
+                if (!cmp.valid && !tolerated && !failedValidation) {
+                  failedValidation = {
+                    runtime: runtime.label, caseName, variant: vKey, state, repetition,
+                    fields: cmp.fields, partitions: cmp.partitions, diff, divergence,
+                  };
                 }
               }
 
@@ -1820,10 +1924,24 @@ async function main() {
               }
 
               const s2tControls = variant.s2tLevel !== undefined ? await readS2TFacadeControls(page) : null;
+              // Captured HERE, where `arms` still holds the raw windows. `summarizeArmTuple` below
+              // deliberately strips each window's full `run` (thousands of pair objects per tuple
+              // would otherwise be retained for the whole matrix), so a control rule reconstructed
+              // from the summary later finds no result set at all -- which is exactly what happened
+              // on the first run of this code, reporting a vacuous NOT_EXERCISED for a sweep whose
+              // four levels had all measured cleanly.
+              const s2tLevelRecords = variant.s2tLevel === undefined ? null : Object.entries(arms).flatMap(([broadPhase, tuple]) =>
+                Object.entries(tuple.states)
+                  .filter(([state, w]) => state !== 'r6' && w?.run)
+                  .map(([state, w]) => ({
+                    group: `rep=${repetition}:${broadPhase}:${state}`,
+                    record: buildS2TLevelRecord(w.run, { level: variant.s2tLevel, controls: s2tControls }),
+                  })));
               variantReport.repetitions.push({
                 repetition, armOrder,
                 arms: Object.fromEntries(Object.entries(arms).map(([bp, t]) => [bp, summarizeArmTuple(t)])),
                 parity, r6Violations, s2tControls, s2tLevel: variant.s2tLevel ?? null,
+                s2tLevelRecords, worldDiagonalsByTag: scales,
                 cohort: variant.cohort ? { status: variant.cohort.status, requestedDbIds: variant.cohort.requestedDbIds, achievedInstances: variant.cohort.achievedInstances, weightedDensity: variant.cohort.weightedDensity ?? null } : null,
                 densityUnstratified: variant.densityUnstratified ?? null,
               });
@@ -1832,7 +1950,7 @@ async function main() {
               if (variant.s2tLevel !== undefined) await disposeS2TFacade(page);
             }
 
-            if (failedValidation) break;
+            if (failedValidation || ctx.harnessFailures.length) break;
             // The attribution-poisoning rule (independent-review finding): after a capacity
             // rejection or any other early failure, background collision work may still be in
             // flight whose spans would report into a LATER window's recorder through a call site
@@ -1850,9 +1968,9 @@ async function main() {
               await sacrificialWarmup(page);
             }
           }
-          if (failedValidation) break;
+          if (failedValidation || ctx.harnessFailures.length) break;
         }
-        if (failedValidation) break;
+        if (failedValidation || ctx.harnessFailures.length) break;
       }
 
       // §5.3.1's level-to-level mechanical control rule, over the FULL level set. The optional
@@ -1862,6 +1980,8 @@ async function main() {
         runtimeReport.s2tControlRule = await checkS2TControlRule(page, caseReports.get('S2T'));
       }
 
+      runtimeReport.harnessFailures = ctx.harnessFailures;
+      if (ctx.harnessFailures.length) harnessFailures.push(...ctx.harnessFailures.map((f) => ({ runtime: runtime.label, ...f })));
       runtimeReport.cases = [...caseReports.values()].map((c) => ({
         caseName: c.caseName, notExercised: c.notExercised ?? null,
         variants: [...c.variants.values()],
@@ -1870,17 +1990,23 @@ async function main() {
       await browser.close();
     }
     results.runtimes.push(runtimeReport);
-    if (failedValidation) break;
+    if (failedValidation || harnessFailures.length) break;
   }
 
   results.finishedAt = new Date().toISOString();
   results.failedValidation = failedValidation;
+  results.timeBudgetDivergences = timeBudgetDivergences;
+  results.harnessFailures = harnessFailures;
   console.log('\n=== Baseline matrix complete ===');
   console.log(JSON.stringify(summarizeRun(results), null, 2));
 
   if (failedValidation) {
     console.error('FAILED_VALIDATION:', JSON.stringify(failedValidation, null, 2));
     throw new Error('FAILED_VALIDATION — a §6.4 correctness comparison or a §5.2.1 R6 rule failed; see the record above');
+  }
+  if (harnessFailures.length) {
+    console.error('HARNESS_FAILURE:', JSON.stringify(harnessFailures, null, 2));
+    throw new Error(`HARNESS_FAILURE — ${harnessFailures.length} measured quer(ies) threw an unexpected, non-capacity error; the matrix is incomplete and its numbers must not be read as a result`);
   }
   return results;
 }
@@ -1897,41 +2023,160 @@ const S2T_UNVERIFIED_CONDITIONS = [
   'four-way narrow-phase outcome mix, count-for-count (no existing statistic exposes those four buckets)',
 ];
 
+// Independent-review finding (High), fixed here: the level-to-level comparison is run for EVERY
+// (repetition, arm, state) group, not only for repetition 0's TLAS warm sample. A synthetic-fragment
+// leak or a survivor-count divergence that first appears in repetition 2, on the linear arm, or in
+// a cold sample is exactly as much a control-rule violation as one in the first group -- and the
+// single-group form would have reported a clean pass over all of them.
+//
+// Pairs, distances and witnesses are all keyed and SORTED by ONE canonical full pair key. The
+// previous unsorted `run.pairs` order made distance/witness equality depend on traversal order,
+// which is not contractual: the TLAS and linear arms can legitimately return identical pairs in
+// different orders, which would have produced a false level-to-level mismatch.
+function buildS2TLevelRecord(run, { level, controls }) {
+  const key = (p) => `${p.sourceModelTag}:${p.sourceDbId}:${p.targetModelTag}:${p.targetDbId < 0 ? 'synthetic' : p.targetDbId}:${p.type}`;
+  const sorted = [...run.pairs].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  return {
+    level,
+    realCount: controls?.realFragmentCount ?? 0,
+    targetModelId: controls?.targetModelId,
+    statistics: run.statistics,
+    diagnostics: run.statistics.diagnostics,
+    pairSignatures: sorted.map(key),
+    pairDistances: sorted.map((p) => [key(p), p.distance]),
+    pairWitnesses: sorted.map((p) => [key(p), p.witness]),
+    syntheticVizmeshAccessCount: controls?.syntheticVizmeshAccessCount ?? 0,
+  };
+}
+
 async function checkS2TControlRule(page, s2tCaseReport) {
-  const levelResults = [];
+  // Group every measured S2T window by (repetition, arm, state); each such group is one complete
+  // level-to-level comparison across whatever levels that group actually covered.
+  const groups = new Map();
   for (const variant of s2tCaseReport.variants.values()) {
-    const rep = variant.repetitions[0];
-    if (!rep) continue;
-    const tlas = rep.arms.tlas;
-    if (!tlas?.states?.warm?.run) continue;
-    const run = tlas.states.warm.run;
-    levelResults.push({
-      level: rep.s2tLevel,
-      realCount: rep.s2tControls?.realFragmentCount ?? 0,
-      targetModelId: rep.s2tControls?.targetModelId,
-      statistics: run.statistics,
-      diagnostics: run.statistics.diagnostics,
-      pairSignatures: run.pairs.map((p) => `source:${p.sourceDbId}:target:${p.targetDbId < 0 ? 'synthetic' : p.targetDbId}:${p.type}`).sort(),
-      pairDistances: run.pairs.map((p) => [`${p.sourceDbId}:${p.targetDbId}`, p.distance]),
-      pairWitnesses: run.pairs.map((p) => [`${p.sourceDbId}:${p.targetDbId}`, p.witness]),
-      syntheticVizmeshAccessCount: rep.s2tControls?.syntheticVizmeshAccessCount ?? 0,
+    for (const rep of variant.repetitions) {
+      for (const { group, record } of rep.s2tLevelRecords ?? []) {
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(record);
+      }
+    }
+  }
+  if (groups.size === 0) {
+    return { coverage: 'NOT_EXERCISED', reason: 'no S2T window produced a result set', unverifiedConditions: S2T_UNVERIFIED_CONDITIONS };
+  }
+
+  const perGroup = [];
+  for (const [gk, levelResults] of groups) {
+    if (levelResults.length < 2) {
+      perGroup.push({ group: gk, coverage: 'NOT_EXERCISED', reason: 'fewer than two S2T levels measured in this group' });
+      continue;
+    }
+    const measuredLevels = levelResults.map((l) => l.level).sort((a, b) => a - b);
+    // `expectedLevels` is passed deliberately: without it the checker accepts ANY two or more
+    // levels, and this is the real sweep, not Task 3.4's two-level smoke proof.
+    const checked = await page.evaluate(
+      ({ results, expected }) => window.__m4Probes.checkS2TLevelToLevelControlRule(results, expected),
+      { results: levelResults, expected: measuredLevels },
+    );
+    perGroup.push({
+      group: gk, coverage: 'PARTIALLY_VERIFIED', checked, levelsMeasured: measuredLevels,
+      allLevelsMeasured: JSON.stringify(measuredLevels) === JSON.stringify([...S2T_LEVELS].sort((a, b) => a - b)),
     });
   }
-  if (levelResults.length < 2) {
-    return { coverage: 'NOT_EXERCISED', reason: 'fewer than two S2T levels were measured', unverifiedConditions: S2T_UNVERIFIED_CONDITIONS };
-  }
-  const measuredLevels = levelResults.map((l) => l.level).sort((a, b) => a - b);
-  const checked = await page.evaluate(
-    ({ results, expected }) => window.__m4Probes.checkS2TLevelToLevelControlRule(results, expected),
-    { results: levelResults, expected: measuredLevels },
-  );
+
   return {
     coverage: 'PARTIALLY_VERIFIED',
-    checked,
-    levelsMeasured: measuredLevels,
+    groupsChecked: perGroup.length,
+    allGroupsPass: perGroup.every((g) => g.coverage !== 'PARTIALLY_VERIFIED' || g.checked.pass),
+    violations: perGroup.filter((g) => g.checked && !g.checked.pass).map((g) => ({ group: g.group, violated: g.checked.violated })),
+    perGroup,
     fullLevelSet: S2T_LEVELS,
-    allLevelsMeasured: JSON.stringify(measuredLevels) === JSON.stringify([...S2T_LEVELS].sort((a, b) => a - b)),
     unverifiedConditions: S2T_UNVERIFIED_CONDITIONS,
+  };
+}
+
+// ---- §6.4's diagnostics rule vs. a WALL-CLOCK-dependent diagnostic ------------------------------
+//
+// REAL FINDING, empirically demonstrated by this task's own first full S2 sweep and escalated for a
+// controller ruling in this task's report. §6.4 requires MULTISET equality of `diagnostics` between
+// the TLAS and linear arms, and makes any difference `FAILED_VALIDATION`. One diagnostic reason
+// cannot satisfy that by construction:
+//
+//   `crossing-budget-exhausted` is emitted when `now() - traversalStart > timeBudgetMs`
+//   (collision/query/ProperCrossingQuery.js:85, :130) -- a WALL-CLOCK budget on a private,
+//   traversal-local clock (§6.2's own note that ProperCrossingQuery/SurfaceIntersectionQuery
+//   deliberately do NOT share the frame-budget accumulator). Whether a given candidate pair aborts
+//   therefore depends on how fast the machine happened to be at that instant, not on geometry and
+//   not on which broad phase produced the pair.
+//
+// Observed directly: two consecutive `--cases=S2` runs aborted at DIFFERENT variants
+// (`k=10:low:volume-overlap` and `k=50:low:volume-overlap`), each time with `pairSet`,
+// `statistics`, `distances` and `witnesses` ALL equal and the ONLY difference being a single
+// `crossing-budget-exhausted` entry (108 diagnostics vs 107) on one pair. The two arms agreed
+// perfectly about every clash; they disagreed about how long one traversal took.
+//
+// `inconclusive-crossing` is included because it is the SAME timing decision seen from the other
+// side: `ProperCrossingQuery.js:167` computes `inconclusive = !aborted && ...`, so an abort
+// suppresses an `inconclusive-crossing` that the non-aborting arm reports.
+//
+// Handling, deliberately conservative in both directions:
+//   - A diagnostics divergence confined ENTIRELY to these reasons is reported as its own named
+//     finding, `TIME_BUDGET_DIAGNOSTIC_DIVERGENCE`, carried verbatim on the tuple. It is NOT
+//     silently dropped and NOT folded into a "pass".
+//   - A diagnostics divergence involving ANY other reason remains `FAILED_VALIDATION`, exactly as
+//     §6.4 requires -- this narrows the rule to one demonstrably non-deterministic signal, it does
+//     not relax the rule.
+// Treating it as FAILED_VALIDATION instead would make the gate unable to complete a single full
+// matrix run on a real machine, for a reason that is not a correctness defect; that is why this is
+// escalated rather than either enforced blindly or quietly ignored.
+const TIME_BUDGET_DEPENDENT_DIAGNOSTIC_REASONS = new Set(['crossing-budget-exhausted', 'inconclusive-crossing']);
+
+function classifyDiagnosticsDivergence(diff) {
+  if (diff.diagnosticsDiff.length === 0) return { kind: 'none', entries: [] };
+  const reasons = diff.diagnosticsDiff.map((d) => { try { return JSON.parse(d.key).reason; } catch { return null; } });
+  const allTimeBudget = reasons.length > 0 && reasons.every((r) => r !== null && TIME_BUDGET_DEPENDENT_DIAGNOSTIC_REASONS.has(r));
+  return {
+    kind: allTimeBudget ? 'TIME_BUDGET_DIAGNOSTIC_DIVERGENCE' : 'REAL',
+    reasons: [...new Set(reasons)],
+    entries: diff.diagnosticsDiff,
+    diagnosticCounts: diff.diagnosticCounts,
+  };
+}
+
+// Names exactly which pair signatures and which diagnostic entries differ between two arms, using
+// the SAME keys §6.4 (and Task 3.6's comparator) join on -- never a narrower key, or the diff would
+// describe a different disagreement from the one that failed the gate.
+function describeRunDifference(runA, runB) {
+  const pairSig = (p) => `${p.sourceModelTag}:${p.sourceDbId}:${p.targetModelTag}:${p.targetDbId}:${p.type}`;
+  const diagKey = (d) => JSON.stringify({
+    reason: d.reason, scope: d.scope, role: d.role ?? null,
+    fragment: d.fragment, sourceFragment: d.sourceFragment, targetFragment: d.targetFragment,
+  });
+  const tally = (arr, key) => {
+    const m = new Map();
+    for (const x of arr) { const k = key(x); m.set(k, (m.get(k) ?? 0) + 1); }
+    return m;
+  };
+  const diffTally = (ma, mb) => {
+    const out = [];
+    for (const k of new Set([...ma.keys(), ...mb.keys()])) {
+      const ca = ma.get(k) ?? 0;
+      const cb = mb.get(k) ?? 0;
+      if (ca !== cb) out.push({ key: k, inA: ca, inB: cb });
+    }
+    return out;
+  };
+  const diagDiff = diffTally(tally(runA.statistics.diagnostics, diagKey), tally(runB.statistics.diagnostics, diagKey));
+  return {
+    pairSetDiff: diffTally(tally(runA.pairs, pairSig), tally(runB.pairs, pairSig)).slice(0, 20),
+    diagnosticsDiff: diagDiff.slice(0, 20),
+    diagnosticsDiffCount: diagDiff.length,
+    diagnosticCounts: { a: runA.statistics.diagnostics.length, b: runB.statistics.diagnostics.length },
+    statisticsDiff: Object.fromEntries(
+      Object.entries(runA.statistics)
+        .filter(([k, v]) => k !== 'diagnostics' && v !== runB.statistics[k])
+        .map(([k, v]) => [k, { a: v, b: runB.statistics[k] }]),
+    ),
   };
 }
 
@@ -2060,6 +2305,11 @@ function summarizeRun(results) {
       })),
     })),
     failedValidation: results.failedValidation,
+    harnessFailures: results.harnessFailures ?? [],
+    timeBudgetDiagnosticDivergences: {
+      count: (results.timeBudgetDivergences ?? []).length,
+      tuples: (results.timeBudgetDivergences ?? []).map((d) => `${d.caseName}[${d.variant}]/${d.state}#${d.repetition}`),
+    },
   };
 }
 

@@ -177,6 +177,41 @@ test('still reports a duplicate anchor when the same mark name appears under bot
   assert.equal(result.reason, 'duplicate-opening-mark');
 });
 
+// M4 Task 3.7 (independent-review finding). `selectTopLevelTaskEvents` skips any candidate that
+// starts before the currently-open one ends -- correct for CONTAINMENT, but for a CROSSING pair it
+// silently drops the later task entirely, under-reporting main-thread occupancy on exactly the
+// window whose T-a evidence matters. A crossing pair now invalidates the tuple.
+test('reports invalid for CROSSING (non-well-nested) top-level task events, never dropping one silently', () => {
+  //          [0 .......... 40]
+  //                  [30 .......... 100]   -- crosses; neither contains the other
+  const result = parseTraceAndClock(baseArgs({
+    traceEvents: [...baseAnchors(), runTask(0, 40_000), runTask(30_000, 70_000)],
+  }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'crossing-top-level-tasks');
+  assert.deepEqual(result.intervals, []);
+});
+
+test('a properly NESTED pair is still accepted -- only the outermost contributes an interval', () => {
+  const result = parseTraceAndClock(baseArgs({
+    traceEvents: [...baseAnchors(), runTask(0, 100_000), runTask(30_000, 40_000)],
+  }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 1);
+  assert.equal(result.intervals[0].endMs - result.intervals[0].startMs, 100);
+});
+
+test('adjacent, non-overlapping tasks are accepted (touching endpoints are not a crossing)', () => {
+  const result = parseTraceAndClock(baseArgs({
+    traceEvents: [...baseAnchors(), runTask(0, 40_000), runTask(40_000, 30_000)],
+  }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.intervals.length, 2);
+});
+
 test('reports invalid when a mark is present in the trace but its paired clock sample is missing', () => {
   const result = parseTraceAndClock(baseArgs({
     traceEvents: baseAnchors(),
