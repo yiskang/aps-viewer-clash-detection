@@ -26,6 +26,38 @@ test('summarizeDurations: empty-set guard reports zero-count, no NaN/-Infinity l
   assert.equal(s.maxMs, null);
 });
 
+// codex-review finding (Critical, task 3.8 live-wiring round): a partial repetition population
+// must never produce a confident PASS -- a hard maximum's FAILURE remains decisive from a partial
+// population (§7.2's "fails on ANY repetition"), but a PASS is only trustworthy once every expected
+// repetition was determined.
+test('evaluateHardMaximum: a partial population that would PASS is downgraded to INSUFFICIENT_POPULATION, not a confident pass', () => {
+  const result = evaluateHardMaximum([40], 50, 5); // only 1 of 5 expected repetitions determined
+  assert.equal(result.pass, null);
+  assert.match(result.reason, /INSUFFICIENT_POPULATION/);
+  assert.equal(result.worst, 40); // the computed value is still visible, just not trusted as a PASS
+});
+
+test('evaluateHardMaximum: a partial population that already FAILS stays a decisive fail, never upgraded to unevaluable', () => {
+  const result = evaluateHardMaximum([61], 50, 5); // only 1 of 5, but one failure is already decisive
+  assert.equal(result.pass, false);
+  assert.equal(result.worst, 61);
+});
+
+test('evaluateHardMaximum: omitting expectedCount preserves prior 2-arg behavior exactly (no completeness check)', () => {
+  assert.equal(evaluateHardMaximum([10, 20, 30, 40, 15], 50).pass, true);
+});
+
+test('evaluatePercentileMedian: ANY population shortfall is unevaluable, never a pass or a fail (percentile, not a hard maximum)', () => {
+  const result = evaluatePercentileMedian([20, 22, 24], 32, 5); // only 3 of 5 expected
+  assert.equal(result.pass, null);
+  assert.match(result.reason, /INSUFFICIENT_POPULATION/);
+  assert.equal(result.median, 22); // still computed and visible, just not trusted
+});
+
+test('evaluatePercentileMedian: omitting expectedCount preserves prior 2-arg behavior exactly (no completeness check)', () => {
+  assert.equal(evaluatePercentileMedian([20, 22, 24, 26, 28], 32).pass, true);
+});
+
 test('buildEvidenceRecord: assembles targets + partition + correctness into one record, marked provisional', () => {
   const record = buildEvidenceRecord({
     runtime: 'multiProcess', caseName: 'R1', broadPhase: 'tlas', state: 'cold',

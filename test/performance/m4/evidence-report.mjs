@@ -13,19 +13,50 @@
 
 // §7.2: T-a and T-b2 are HARD MAXIMA -- a single repetition over threshold fails the whole case.
 // Never medianed, never subject to the 1.5x clause below.
-export function evaluateHardMaximum(values, thresholdMs) {
+//
+// `expectedCount` (codex-review finding, Critical, task 3.8 live-wiring round) is the number of
+// repetitions the §6.1.6 protocol actually calls for (typically REPETITIONS=5) -- it defaults to
+// `values.length` so an omitted third argument reproduces the ORIGINAL two-argument behavior
+// exactly (every one of this module's own prescribed tests calls this with 2 args and must keep
+// passing unchanged). When a real expected count is supplied and fewer repetitions were determined
+// than that, a PASS is downgraded to INSUFFICIENT_POPULATION -- a partial population can never
+// prove every untested repetition would also have passed. A FAILURE from a partial population
+// stays decisive and is never upgraded: §7.2's hard-maximum rule ("fails on ANY repetition") does
+// not need the full population to already be proven wrong.
+export function evaluateHardMaximum(values, thresholdMs, expectedCount = values.length) {
   if (values.length === 0) return { pass: null, worst: null, reason: 'NOT_EXERCISED — empty population' };
   const worst = Math.max(...values); // safe: length-guarded above, never Math.max(...[])
-  return { pass: worst <= thresholdMs, worst };
+  const passes = worst <= thresholdMs;
+  if (passes && values.length < expectedCount) {
+    return {
+      pass: null, worst,
+      reason: `INSUFFICIENT_POPULATION — only ${values.length} of ${expectedCount} expected repetitions determined; cannot confirm PASS from a partial population (a determined failure would still stand)`,
+    };
+  }
+  return { pass: passes, worst };
 }
 
 // §7.2: T-b1 and T-c are PERCENTILE statistics -- pass only if (i) the median across the 5
 // repetition values is within threshold AND (ii) no single repetition exceeds 1.5x threshold.
-export function evaluatePercentileMedian(perRepetitionValues, thresholdMs) {
+//
+// `expectedCount` (see evaluateHardMaximum's own header above for the full rationale) defaults to
+// `perRepetitionValues.length`, so an omitted third argument reproduces the original two-argument
+// behavior exactly. Unlike a hard maximum, ANY population shortfall here is UNEVALUABLE in either
+// direction, never a pass or a fail: a percentile statistic is only meaningful over its full
+// declared population (a median "of 3 out of 5" is not a defined quantity the way "the worst of 3
+// out of 5, so far" still is for a hard maximum), so a partial population cannot be treated as
+// decisive evidence of failure the way an over-threshold hard maximum can.
+export function evaluatePercentileMedian(perRepetitionValues, thresholdMs, expectedCount = perRepetitionValues.length) {
   if (perRepetitionValues.length === 0) return { pass: null, median: null, anyOver1_5x: null, reason: 'NOT_EXERCISED — empty population' };
   const sorted = [...perRepetitionValues].sort((a, b) => a - b);
   const median = sorted[Math.floor((sorted.length - 1) / 2)];
   const anyOver1_5x = perRepetitionValues.some((v) => v > thresholdMs * 1.5);
+  if (perRepetitionValues.length < expectedCount) {
+    return {
+      pass: null, median, anyOver1_5x,
+      reason: `INSUFFICIENT_POPULATION — only ${perRepetitionValues.length} of ${expectedCount} expected repetitions determined; a percentile statistic requires the full population`,
+    };
+  }
   return { pass: median <= thresholdMs && !anyOver1_5x, median, anyOver1_5x };
 }
 

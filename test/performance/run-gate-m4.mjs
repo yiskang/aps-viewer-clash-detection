@@ -40,9 +40,10 @@ const PORT = process.env.PORT || 8080;
 const RESULTS_DIR = 'test/performance/results';
 
 import { chromium } from 'playwright';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 import { RUNTIME_CONFIGS, resolveProxyFromEnv, freshWorldTupleKey, measuredStatesFor } from './m4/fixture-lifecycle.mjs';
 import {
   dispositionForObservation, tCDispositionForRepetition, envelopeLimitMs, nearestRankPercentile,
@@ -63,10 +64,16 @@ import {
 } from './m4/stage-attribution-engine.mjs';
 import { BOUNDARY_TABLE } from './m4/decision-evidence-model.mjs';
 import { buildTriangleGrid, translatedGrid } from './m4/s4-synthetic-mesh.mjs';
-import { maxSyncTriangleCount } from '../../collision/constants.js';
+import {
+  maxSyncTriangleCount, maxBroadPhaseInstancePairs, maxTlasCandidatePairs,
+  maxCollisionInstancesPerEpoch, maxClearanceNarrowPhasePairs, frameBudgetMs,
+} from '../../collision/constants.js';
 import { toMemorySnapshot } from './m4/memory-snapshot-adapter.mjs';
 import { sampleHeap } from './m4/heap-sampler.mjs';
-import { computeMetricM } from './m4/metric-m-calculator.mjs';
+import { computeMetricM, INSTANCE_BYTES, RECORD_BYTES, PLACEMENT_BYTES } from './m4/metric-m-calculator.mjs';
+// Task 3.8: pure §7.2 aggregation rules + §16.2 summarizers/report shape. See that module's own
+// header for why it does NOT call decision-evidence-model.mjs/verdict-reducer.mjs.
+import { evaluateHardMaximum, evaluatePercentileMedian, summarizeDurations, buildEvidenceRecord } from './m4/evidence-report.mjs';
 
 // ---- §6.1.6 / §7.2 protocol constants ---------------------------------------------------------
 const REPETITIONS = 5;                 // §6.1.6
@@ -1235,6 +1242,11 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
       capacityError: queryResult.capacityError,
       otherError: queryResult.otherError,
       metricMAtClose, // Task 3.11 -- Metric M sampled immediately after the closing mark, above
+      // Task 3.8: was computed here already (T-c's own disposition needs it) but never returned,
+      // so §16.2's "input-probe calibration/drift" provenance requirement had nothing to read.
+      // Returned verbatim -- `{valid, driftMs, uncertaintyMs, reason}` -- so the report can name the
+      // observed clock drift per window rather than only per-window PASS/FAIL disposition outcomes.
+      calibration,
       diagnosticEventCount: queryResult.diagnosticEventCount,
       yieldCount: queryResult.yieldRecords.length,
       cumulativeYieldMs: queryResult.yieldRecords.reduce((a, y) => a + y.resumeLatencyMs, 0),
@@ -2084,6 +2096,171 @@ function checkR6ArmRules({ states, broadPhase, expectedPairDelta }) {
   return violations;
 }
 
+// ---- Task 3.8: evidence normalization ------------------------------------------------------------
+//
+// Groups every (case, variant, broadPhase, state) tuple's raw per-repetition windows -- already
+// collected, per-window, in `variant.repetitions[].arms[bp].states[state]` by the dispatch loop
+// above (summarizeArmTuple's own shape) -- and aggregates them into ONE evidence record per tuple,
+// per §7.2's hard-maximum (T-a/T-b2) vs percentile-median (T-b1/T-c) rules, via
+// evaluateHardMaximum/evaluatePercentileMedian. Also folds this runtime's contribution into the
+// report-wide §6.3 partition section and the CAPACITY_REJECTED/NOT_EXERCISED name-by-reason lists
+// via `acc`. Deliberately does NOT call decision-evidence-model.mjs/verdict-reducer.mjs -- see
+// evidence-report.mjs's own header for why that reconciliation is explicitly out of this task's
+// scope.
+//
+// A DETERMINED numeric value is required before a repetition contributes to the aggregation --
+// an UNEVALUABLE/INDETERMINATE repetition (targetMeasurements.*.status !== 'DETERMINED') is
+// filtered out rather than coerced to a number, so a mix of determined and undetermined
+// repetitions aggregates only over the determined subset (never silently treated as 0 or dropped
+// from the report entirely -- `determinedRepetitionCount`/`totalRepetitionCount` name the gap).
+function buildRuntimeEvidence(runtimeLabel, caseReports, acc, expectedRepetitionCount) {
+  const records = [];
+  for (const c of caseReports.values()) {
+    if (c.notExercised) {
+      acc.notExercised.push({ runtime: runtimeLabel, case: c.caseName, variant: null, reason: c.notExercised });
+      continue;
+    }
+    const isR6 = c.caseName === 'R6';
+    for (const variant of c.variants.values()) {
+      if (variant.notExercised) {
+        acc.notExercised.push({ runtime: runtimeLabel, case: c.caseName, variant: variant.key, reason: variant.notExercised });
+        continue;
+      }
+      for (const bp of ['tlas', 'linear']) {
+        for (const state of measuredStatesFor(c.caseName)) {
+          const perRep = variant.repetitions
+            .map((rep) => ({ rep, w: rep.arms?.[bp]?.states?.[state] }))
+            .filter(({ w }) => w);
+          if (perRep.length === 0) {
+            // codex-review finding (Critical): this (bp,state) never ran for this variant AT ALL
+            // (e.g. every repetition's cold state was capacity-rejected before warm could run) --
+            // before this fix the tuple simply vanished from the report with no trace, violating
+            // this task's own "every NOT_EXERCISED case names its reason" manual-verification
+            // requirement. Named explicitly instead of silently skipped.
+            acc.notExercised.push({
+              runtime: runtimeLabel, case: c.caseName, variant: variant.key, broadPhase: bp, state,
+              reason: {
+                reason: 'no-repetition-produced-a-result-for-this-state',
+                note: 'every repetition that reached this tuple stopped before this (broadPhase,state) ran -- see capacityRejected/harnessFailures for the same tuple at an earlier state',
+              },
+            });
+            continue;
+          }
+
+          const determined = (sel) => perRep.map(({ w }) => sel(w)).filter((v) => v !== null && v !== undefined);
+          const taValues = perRep.map(({ w }) => w.targetMeasurements?.tA).filter((t) => t?.status === 'DETERMINED').map((t) => t.maxTaskMs);
+          const framesDetermined = perRep.map(({ w }) => w.targetMeasurements?.frames).filter((f) => f?.status === 'DETERMINED');
+          const tb1Values = framesDetermined.map((f) => f.p95Ms);
+          const tb2Values = framesDetermined.map((f) => f.maxMs);
+          const tcValues = perRep.map(({ w }) => w.targetMeasurements?.tC).filter((t) => t?.status === 'DETERMINED').map((t) => t.p95Ms);
+          const screenResidualValues = determined(({ screenResidualMs }) => screenResidualMs);
+          screenResidualValues.forEach((v) => acc.screenResidualMs.push(v));
+
+          const boundaries = Object.keys(BOUNDARY_TABLE).map((id) => {
+            const meta = BOUNDARY_TABLE[id];
+            const residualValues = perRep
+              .flatMap(({ w }) => (w.boundaries ?? []).filter((b) => b.id === id))
+              .map((b) => b.residualMs)
+              .filter((v) => typeof v === 'number');
+            residualValues.forEach((v) => acc.boundaryResiduals[id].push(v));
+            return {
+              id, class: meta.class, ownedStages: meta.ownedStages,
+              residualMs: summarizeDurations(residualValues),
+              // §7.3 condition 4(b)'s Hi has no worker to correlate against in the Phase 3 baseline
+              // gate (assembleTargetsTa's own header comment: "no worker in the baseline") -- always
+              // null here, by design, never a fabricated 0 (a 0 would make a boundary look SUFFICIENT
+              // for evidence a worker never produced).
+              occupancyMs: null,
+              occupancyNote: 'no worker in the Phase 3 baseline gate -- Hi is undefined until Phase 4 introduces a delivery task',
+            };
+          });
+
+          const capacityRejections = perRep.map(({ w }) => w.capacityRejection).filter(Boolean);
+          capacityRejections.forEach((r) => acc.capacityRejections.push({ runtime: runtimeLabel, case: c.caseName, variant: variant.key, broadPhase: bp, state, ...r }));
+
+          perRep.forEach(({ w }) => { if (w.calibration?.valid) acc.calibrationDriftMs.push(w.calibration.driftMs); });
+
+          // Correctness gate: §6.4's joint (both-arm) parity result for this state, evaluated across
+          // every repetition this tuple actually ran, plus R6's own §5.2.1 arm rules where they
+          // apply. A repetition whose parity was never compared (e.g. one arm produced no result
+          // because an earlier state in the same tuple was capacity-rejected) is reported as its own
+          // outcome, 'NOT_COMPARED' -- deliberately distinct from a real §6.4 FAILED_VALIDATION. This
+          // is a documented extension of the brief's own 'PASSED'|'FAILED_VALIDATION' pair; harmless
+          // here since this module never calls decision-evidence-model.mjs (whose RawMeasuredRecord
+          // contract is the only place that exact two-value enum is load-bearing).
+          let correctness = 'PASSED';
+          for (const { rep } of perRep) {
+            if (isR6 && (rep.r6Violations?.[bp]?.length ?? 0) > 0) { correctness = 'FAILED_VALIDATION'; break; }
+            const p = rep.parity?.[state];
+            if (!p || p.compared === false) { if (correctness !== 'FAILED_VALIDATION') correctness = 'NOT_COMPARED'; continue; }
+            if (!(p.valid || p.tolerated)) { correctness = 'FAILED_VALIDATION'; break; }
+          }
+
+          // codex-review finding (Critical): `expectedCount` is threaded through so a partial
+          // population (fewer determined repetitions than this run actually configured) can never
+          // silently produce a confident PASS -- see evaluateHardMaximum/evaluatePercentileMedian's
+          // own headers in evidence-report.mjs for the exact rule (a hard-maximum FAILURE stays
+          // decisive from a partial population; a percentile statistic never does).
+          const targets = {
+            Ta: evaluateHardMaximum(taValues, TA_MAX_TASK_MS, expectedRepetitionCount),
+            Tb1: evaluatePercentileMedian(tb1Values, TB1_P95_INTERVAL_MS, expectedRepetitionCount),
+            Tb2: evaluateHardMaximum(tb2Values, TB2_MAX_GAP_MS, expectedRepetitionCount),
+            Tc: evaluatePercentileMedian(tcValues, TC_THRESHOLD_MS, expectedRepetitionCount),
+            partition: { screenResidualMs: summarizeDurations(screenResidualValues), boundaries },
+            capacityRejected: capacityRejections.length ? capacityRejections : null,
+          };
+
+          // A later Phase 4 spike task ("S6'", plan doc line ~9253) reads this run's newest
+          // `m4-gate-*.json` and expects `report.evidenceRecords[].statistics.narrowPhasePairs` to
+          // find the largest verdict-bearing query dimensions -- not part of this brief's own
+          // literal buildEvidenceRecord signature, but real, already-computed, and cheap to carry
+          // through. codex-review finding: selecting by `pairCount` (the RESULT count) is the wrong
+          // proxy for "largest verdict-bearing dimensions" -- a query examining 1000 candidate pairs
+          // and confirming 5 clashes IS the larger workload even though a different repetition
+          // confirming 20 clashes from only 20 candidates has the larger `pairCount`. Selects by
+          // `statistics.narrowPhasePairs` (the actual workload size), falling back to `pairCount`
+          // only when a case's statistics shape has no `narrowPhasePairs` field.
+          const workloadSize = (w) => w.statistics?.narrowPhasePairs ?? w.pairCount ?? -1;
+          const representative = perRep.reduce((best, cur) => (
+            workloadSize(cur.w) > workloadSize(best?.w ?? {}) ? cur : best
+          ), null);
+
+          // codex-review finding (Important): per-repetition raw numeric target values and memory
+          // samples were computed but never persisted -- a reviewer could not reproduce the
+          // hard-maximum/percentile-median calculation above, or evaluate a memory budget, from the
+          // written report alone. Both are small (bounded by `repetitionCount`, typically <=5
+          // entries) and already computed above/by Task 3.11's own per-tuple sampling -- never a
+          // raw span/diagnostic/event array, so this does not reopen §16.2's "no raw array" rule.
+          const memorySamples = perRep
+            .map(({ rep }) => {
+              const m = rep.arms?.[bp]?.memory?.[state];
+              return m ? { repetition: rep.repetition, metricM: m.metricM, metricH: m.metricH } : null;
+            })
+            .filter(Boolean);
+
+          // codex-review finding (Important): a single-variant case's `variant.key` is the display
+          // sentinel `'(single)'` (truthy), not `null` -- naively checking truthiness here produced
+          // `R1[(single)]` instead of plain `R1`, silently breaking any consumer matching on the
+          // plain case name.
+          const caseName = (variant.key && variant.key !== '(single)') ? `${c.caseName}[${variant.key}]` : c.caseName;
+
+          const record = buildEvidenceRecord({
+            runtime: runtimeLabel, caseName, broadPhase: bp, state, targets, correctness,
+          });
+          record.statistics = representative?.w.statistics ?? null;
+          record.rawValues = { tA: taValues, tB1: tb1Values, tB2: tb2Values, tC: tcValues, screenResidualMs: screenResidualValues };
+          record.memory = memorySamples.length ? memorySamples : null;
+          record.determinedRepetitionCount = { tA: taValues.length, tB1: tb1Values.length, tB2: tb2Values.length, tC: tcValues.length };
+          record.totalRepetitionCount = perRep.length;
+          record.expectedRepetitionCount = expectedRepetitionCount;
+          records.push(record);
+        }
+      }
+    }
+  }
+  return records;
+}
+
 // ---- main() -------------------------------------------------------------------------------------
 function parseListFlag(name, fallback) {
   const raw = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -2101,9 +2278,30 @@ async function main() {
   // dispatches, which remains the complete baseline matrix.
   const selectedCases = parseListFlag('cases', M4_CASE_LIST).filter((c) => M4_CASE_LIST.includes(c));
   const selectedRuntimes = parseListFlag('runtimes', null);
+  // Task 3.8 fix (codex-review Critical): an unrecognized `--runtimes=` value (e.g. a config KEY
+  // like `multiProcess` instead of its actual label `multi-process`) previously matched nothing,
+  // silently skipped every runtime, and still wrote a `disposition: 'MEASURED'` report with zero
+  // runtimes measured -- indistinguishable from a genuine, complete baseline pass to a later
+  // consumer that just reads `disposition`. Fails fast instead, matching the existing
+  // `--cases selected no known case` guard immediately below.
+  if (selectedRuntimes) {
+    const knownLabels = Object.values(RUNTIME_CONFIGS).map((r) => r.label);
+    const unknown = selectedRuntimes.filter((r) => !knownLabels.includes(r));
+    if (unknown.length) throw new Error(`--runtimes contains unknown runtime label(s): ${unknown.join(', ')} (known: ${knownLabels.join(', ')})`);
+  }
   const repArg = process.argv.find((a) => a.startsWith('--repetitions='));
   const repetitionCount = repArg ? Number(repArg.split('=')[1]) : REPETITIONS;
   if (!Number.isInteger(repetitionCount) || repetitionCount <= 0) throw new Error(`--repetitions must be a positive integer (got ${repArg})`);
+  // Task 3.8 fix (codex-review Critical): a scoped verification run (e.g. `--cases=R1
+  // --repetitions=1`, this task's own manual-verification pattern) writes to the SAME
+  // `m4-gate-<timestamp>.json` filename and can report the SAME `disposition: 'MEASURED'` as a
+  // full canonical baseline -- a later tool that just picks the newest `m4-gate-*` file cannot
+  // tell the two apart from `disposition` alone. Named explicitly in `report.scope` below (not by
+  // a different filename/disposition value, which would change this file's existing, already-
+  // consumed contract surface -- see this task's own report for why that was judged out of scope).
+  const isFullCanonicalMatrix = !selectedRuntimes
+    && selectedCases.length === M4_CASE_LIST.length
+    && repetitionCount === REPETITIONS;
   if (selectedCases.length === 0) throw new Error('--cases selected no known case');
 
   const results = { startedAt: new Date().toISOString(), runtimes: [] };
@@ -2114,6 +2312,21 @@ async function main() {
   const timeBudgetDivergences = [];
   // Unexpected (non-capacity) query failures. Any one of these fails the whole run non-zero.
   const harnessFailures = [];
+  // Task 3.8 fix (codex-review Critical): setup/protocol exceptions (fixture load, cohort
+  // profiling, R6 calibration, S2T control rule, chromium.launch itself) that are NOT per-tuple
+  // query errors and so never reach ctx.harnessFailures -- see the runtime loop's outer catch below.
+  const setupFailures = [];
+
+  // Task 3.8: accumulated across every runtime for the report's evidence records and its report-wide
+  // §6.3 partition/CAPACITY_REJECTED/NOT_EXERCISED sections. See buildRuntimeEvidence's own header.
+  const evidenceAccumulator = {
+    screenResidualMs: [],
+    boundaryResiduals: Object.fromEntries(Object.keys(BOUNDARY_TABLE).map((id) => [id, []])),
+    capacityRejections: [],
+    notExercised: [],
+    calibrationDriftMs: [],
+  };
+  const evidenceRecords = [];
 
   for (const runtime of Object.values(RUNTIME_CONFIGS)) {
     if (selectedRuntimes && !selectedRuntimes.includes(runtime.label)) continue;
@@ -2128,10 +2341,19 @@ async function main() {
     // 10 excerpt already has this shape (`[...runtime.args, '--js-flags=--expose-gc']`) -- spreading
     // the existing array rather than assigning into it -- which is exactly a launch-call-site
     // application, not a RUNTIME_CONFIGS mutation.
-    const browser = await chromium.launch({ args: [...runtime.args, '--js-flags=--expose-gc'], proxy: resolveProxyFromEnv() });
     const runtimeReport = { runtime: runtime.label, authoritative: runtime.authoritative, cases: [] };
     try {
+    const browser = await chromium.launch({ args: [...runtime.args, '--js-flags=--expose-gc'], proxy: resolveProxyFromEnv() });
+    try {
       const page = await browser.newPage();
+      // Task 3.8: §16.2 provenance requires console warnings be named in the report -- matching
+      // run-gate-m3.mjs's own capture (run-gate-m3.mjs:187-190) verbatim, not previously wired here.
+      const consoleWarnings = [];
+      page.on('console', (msg) => {
+        if (/error|warn/i.test(msg.text())) consoleWarnings.push(msg.text().slice(0, 300));
+      });
+      runtimeReport.consoleWarnings = consoleWarnings; // same array reference; grows as the run proceeds
+      runtimeReport.launchFlags = [...runtime.args, '--js-flags=--expose-gc'];
       const identity = await loadFixtureAndReconfirm(page);
       console.log('Fixture identity (re-confirmed live):', JSON.stringify(identity));
       await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
@@ -2196,6 +2418,10 @@ async function main() {
 
       const activeCases = selectedCases.filter((c) => caseRunsUnderRuntime(c, runtime));
       const schedule = buildCounterbalancedSchedule(activeCases, repetitionCount);
+      // Task 3.8: §16.2 provenance requires the counterbalancing schedule itself be named, not just
+      // its effect -- so a later reader can confirm rotation actually happened rather than trusting
+      // the console log.
+      runtimeReport.counterbalancingSchedule = schedule.map((s) => ({ repetition: s.repetition, caseOrder: s.caseOrder, armOrder: s.armOrder }));
       const caseReports = new Map(activeCases.map((c) => [c, { caseName: c, variants: new Map() }]));
 
       for (const { repetition, caseOrder, armOrder } of schedule) {
@@ -2355,11 +2581,29 @@ async function main() {
         caseName: c.caseName, notExercised: c.notExercised ?? null,
         variants: [...c.variants.values()],
       }));
+      // Task 3.8: normalize this runtime's raw per-tuple windows into §7.2-aggregated evidence
+      // records, folding NOT_EXERCISED/CAPACITY_REJECTED/partition contributions into the
+      // run-wide accumulator declared above the runtime loop.
+      evidenceRecords.push(...buildRuntimeEvidence(runtime.label, caseReports, evidenceAccumulator, repetitionCount));
     } finally {
       await browser.close();
     }
+    } catch (err) {
+      // Task 3.8 fix (codex-review Critical): a setup/protocol exception here -- a fixture-load
+      // timeout, a cohort-profiling failure, an R6 calibration/restoration abort, an S2T
+      // control-rule crash, or `chromium.launch` itself failing -- is NOT funneled through
+      // `ctx.harnessFailures` (that path only ever covers a per-tuple QUERY error). Before this fix
+      // such an exception propagated straight out of `main()`, skipping the whole report-assembly-
+      // and-write tail below entirely and losing every earlier runtime's already-measured evidence
+      // along with it -- exactly the "results JSON never written" failure mode this task exists to
+      // close, just triggered from a different call site. Recorded by name; the run stops trying
+      // further runtimes (an unhandled setup exception means nothing later can be trusted either),
+      // but falls through to the SAME report-assembly tail so already-completed evidence survives.
+      setupFailures.push({ runtime: runtime.label, message: err?.message ?? String(err), stack: err?.stack ?? null });
+      runtimeReport.setupFailed = true;
+    }
     results.runtimes.push(runtimeReport);
-    if (failedValidation || harnessFailures.length) break;
+    if (failedValidation || harnessFailures.length || setupFailures.length) break;
   }
 
   results.finishedAt = new Date().toISOString();
@@ -2369,9 +2613,103 @@ async function main() {
   console.log('\n=== Baseline matrix complete ===');
   console.log(JSON.stringify(summarizeRun(results), null, 2));
 
+  // ---- Task 3.8: assemble + write the §16.2-required report -------------------------------------
+  //
+  // Disposition mirrors run-gate-m3.mjs's own 3-way rule (run-gate-m3.mjs:764): a correctness
+  // violation and a harness failure are always their own distinct failure mode, and NEITHER is ever
+  // set by a performance verdict -- a T-a/T-b/T-c pass/fail (or a NOT_EXERCISED/CAPACITY_REJECTED
+  // finding) never appears here; only a §6.4/§5.2.1 correctness violation, a setup/protocol
+  // exception, or an unexpected per-tuple harness error does (§16.2: "a performance verdict never
+  // fails the process").
+  const disposition = (harnessFailures.length || setupFailures.length) ? 'FAILED' : failedValidation ? 'FAILED_VALIDATION' : 'MEASURED';
+
+  // §6.3's partition as its own first-class, report-wide section -- every boundary row named
+  // explicitly (never omitted for having zero applicable evidence), aggregated across every
+  // (runtime, case, variant, broadPhase, state) tuple this run actually measured.
+  const partition = Object.fromEntries(Object.entries(evidenceAccumulator.boundaryResiduals).map(([id, values]) => [
+    id,
+    {
+      class: BOUNDARY_TABLE[id].class,
+      ownedStages: BOUNDARY_TABLE[id].ownedStages,
+      residualMs: summarizeDurations(values),
+      occupancyMs: null,
+      occupancyNote: 'no worker in the Phase 3 baseline gate -- Hi is undefined until Phase 4 introduces a delivery task',
+    },
+  ]));
+
+  const report = {
+    disposition,
+    // Task 3.8 fix (codex-review Critical): explicit, machine-readable scope metadata -- a scoped
+    // verification run (this task's own manual-verification pattern, `--cases=`/`--runtimes=`/
+    // `--repetitions=`) writes to the same filename and can carry the same `disposition` as a full
+    // canonical baseline; `isFullCanonicalMatrix` lets a later consumer (Task 5.1's own "confirmed
+    // result-set paths" step) tell the two apart without guessing from the filename alone.
+    scope: {
+      requestedCases: selectedCases,
+      requestedRuntimes: selectedRuntimes ?? Object.values(RUNTIME_CONFIGS).map((r) => r.label),
+      repetitionCount,
+      isFullCanonicalMatrix,
+    },
+    startedAt: results.startedAt,
+    finishedAt: results.finishedAt,
+    provenance: {
+      os: `${os.platform()} ${os.release()} (${os.arch()})`,
+      urns: { arch: ARCH_URN, structure: STRUCTURE_URN, mechanical: MECHANICAL_URN },
+      sourceDbId: SOURCE_DB_ID, clearance: CLEARANCE,
+      constants: {
+        REPETITIONS, TA_MAX_TASK_MS, TB1_P95_INTERVAL_MS, TB2_MAX_GAP_MS, TC_THRESHOLD_MS, PROBE_CADENCE_MS,
+        S1_CLEARANCES, S2_INSTANCE_LEVELS, R_COHORT_K, S4_CLEARANCE_GENEROUS,
+        maxSyncTriangleCount, maxBroadPhaseInstancePairs, maxTlasCandidatePairs, maxCollisionInstancesPerEpoch,
+        maxClearanceNarrowPhasePairs, frameBudgetMs,
+        // §15.1 Metric M's per-record/per-instance/per-placement byte model (Task 2.3's own
+        // exported constants) -- named here so a reader of Metric M's numbers in evidenceRecords[]
+        // can reconstruct the byte accounting without re-deriving it from metric-m-calculator.mjs.
+        INSTANCE_BYTES, RECORD_BYTES, PLACEMENT_BYTES,
+      },
+      runtimes: results.runtimes.map((r) => ({
+        runtime: r.runtime, authoritative: r.authoritative, chromiumVersion: r.chromiumVersion,
+        launchFlags: r.launchFlags, traceCategories: r.traceCategories,
+        acceptedTopLevelTaskNames: r.acceptedTopLevelTaskNames,
+        cohorts: r.cohorts, worldDiagonalsByTag: r.worldDiagonalsByTag,
+        counterbalancingSchedule: r.counterbalancingSchedule,
+        consoleWarnings: r.consoleWarnings ?? [],
+        s2tControlRule: r.s2tControlRule ?? null,
+      })),
+      // §6.2's Node<->renderer clock calibration, run per measured window (calibrateNodeToRendererClock)
+      // -- a per-window value near or above the 100ms T-c threshold degrades that window's T-c to
+      // INDETERMINATE rather than being silently absorbed into a numeric pass. Reported as a
+      // distribution of the observed drift MAGNITUDE (driftMs can be signed; abs() here so a positive
+      // and a negative drift of equal size don't cancel toward a falsely reassuring mean/percentile).
+      inputProbeCalibration: {
+        driftMagnitudeMs: summarizeDurations(evidenceAccumulator.calibrationDriftMs.map(Math.abs)),
+      },
+    },
+    // This task's own provisional per-(case,broadPhase,state) evidence records -- see
+    // evidence-report.mjs's header for why these are not yet Task 2.4's RawMeasuredRecord shape.
+    evidenceRecords,
+    partition,
+    // §4: every capacity rejection named with its exact limit and observed value, never trimmed.
+    capacityRejected: evidenceAccumulator.capacityRejections,
+    // Every NOT_EXERCISED case/variant named with its exact reason, never silently omitted.
+    notExercised: evidenceAccumulator.notExercised,
+    timeBudgetDiagnosticDivergences: timeBudgetDivergences,
+    failedValidation,
+    harnessFailures,
+    setupFailures,
+    health: results.runtimes.map((r) => ({ runtime: r.runtime, ...healthCounters(r) })),
+  };
+
+  const resultsPath = `${RESULTS_DIR}/m4-gate-${Date.now()}.json`;
+  await writeFile(resultsPath, JSON.stringify(report, null, 2));
+  console.log(`\n=== §16.2 evidence report written: ${resultsPath} ===`);
+
   if (failedValidation) {
     console.error('FAILED_VALIDATION:', JSON.stringify(failedValidation, null, 2));
     throw new Error('FAILED_VALIDATION — a §6.4 correctness comparison or a §5.2.1 R6 rule failed; see the record above');
+  }
+  if (setupFailures.length) {
+    console.error('SETUP_FAILURE:', JSON.stringify(setupFailures, null, 2));
+    throw new Error(`SETUP_FAILURE — ${setupFailures.length} runtime(s) hit a setup/protocol exception outside the per-tuple query path; the matrix is incomplete and its numbers must not be read as a result`);
   }
   if (harnessFailures.length) {
     console.error('HARNESS_FAILURE:', JSON.stringify(harnessFailures, null, 2));
@@ -2580,6 +2918,7 @@ function summarizeArmTuple(tuple) {
       spanTotalsMs: w.spanTotalsMs,
       diagnosticEventCount: w.diagnosticEventCount,
       observationCount: w.observationCount,
+      calibration: w.calibration ?? null, // Task 3.8: for the report's input-probe calibration/drift provenance
       pairCount: w.run ? w.run.pairs.length : null,
       statistics: w.run ? { ...w.run.statistics, diagnostics: undefined, diagnosticCount: w.run.statistics.diagnostics.length } : null,
       // §4: a capacity rejection is reported with its exact limit and observed value, never trimmed.
