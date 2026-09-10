@@ -11,6 +11,12 @@
   if (typeof window === 'undefined') return;
   window.__m4Probes = window.__m4Probes ?? {};
 
+  // M4 Task 3.7 addition (`snapshot`): §6.1.7's envelope cannot close until "at least one
+  // post-query rAF callback has fired", and the harness has no way to observe that through `stop()`
+  // alone -- stopping is exactly what it must NOT do while it is still waiting. `snapshot()` is a
+  // read-only accessor (frame COUNT and the last observed rAF timestamp) the Node side polls
+  // between the closing mark and the envelope's own limit; `stop()`'s behaviour and return value
+  // are unchanged, so Task 3.2's own manual-verification script still works verbatim.
   window.__m4Probes.startRafRecorder = function () {
     const state = { frames: [], lastTs: null, running: true };
     function tick(ts) {
@@ -21,6 +27,7 @@
     }
     requestAnimationFrame(tick);
     return {
+      snapshot() { return { frameCount: state.frames.length, lastTs: state.lastTs }; },
       stop() { state.running = false; return state.frames.slice(); },
     };
   };

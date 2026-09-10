@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   armOrderForRepetition, caseOrderForRepetition, buildCounterbalancedSchedule, toCapacityRejectedRecord,
-  M4_CASE_LIST,
+  M4_CASE_LIST, recognizeCapacityRejection,
 } from './counterbalancing-schedule.mjs';
 
 test('armOrderForRepetition: alternates by repetition parity', () => {
@@ -102,6 +102,64 @@ test('toCapacityRejectedRecord: a zero observed value is preserved, not coerced 
 test('toCapacityRejectedRecord: a non-CapacityExceededError-shaped input still yields a well-formed record', () => {
   const record = toCapacityRejectedRecord(new Error('boom'), { limitName: 'unknown', limitValue: null });
   assert.deepEqual(record, { disposition: 'CAPACITY_REJECTED', limitName: 'unknown', limitValue: null, observedValue: null, errorKind: null });
+});
+
+// ---- Real production error shapes (empirically derived from the throw sites on disk) ----------
+// The brief's own excerpt read `error.details.observed`; NO real rejection in `collision/` has
+// that shape, so every real capacity finding would have reported `observedValue: null` -- exactly
+// the number §4 requires to be named by value.
+
+test('toCapacityRejectedRecord: a real CapacityExceededError carries its payload FLAT (Object.assign), not under .details', () => {
+  // collision/CollisionWorld.js:2297 -- `new CapacityExceededError('clearance-narrow-phase-budget',
+  // { limit: 20000, attempted: 25000 })`, and collision/errors.js:121 Object.assign's it flat.
+  const err = { name: 'CapacityExceededError', kind: 'clearance-narrow-phase-budget', limit: 20000, attempted: 25000 };
+  const record = toCapacityRejectedRecord(err);
+  assert.deepEqual(record, {
+    disposition: 'CAPACITY_REJECTED', limitName: 'maxClearanceNarrowPhasePairs',
+    limitValue: 20000, observedValue: 25000, errorKind: 'clearance-narrow-phase-budget',
+  });
+});
+
+test('toCapacityRejectedRecord: the call-wide precheck kind reports `requested` as the observed value', () => {
+  const err = { name: 'CapacityExceededError', kind: 'call-wide-unique-fragment-precheck', loadEpoch: 3, requested: 90_000, limit: 80_000 };
+  const record = toCapacityRejectedRecord(err);
+  assert.equal(record.observedValue, 90_000);
+  assert.equal(record.limitValue, 80_000);
+  assert.equal(record.limitName, 'maxCollisionInstancesPerEpoch');
+});
+
+test('toCapacityRejectedRecord: the bucket-capacity kind sums currentSize + missing', () => {
+  const err = { name: 'CapacityExceededError', kind: 'bucket-capacity', currentSize: 70_000, missing: 15_000, limit: 80_000 };
+  assert.equal(toCapacityRejectedRecord(err).observedValue, 85_000);
+});
+
+test('recognizeCapacityRejection: the §9.3.1 LINEAR ceiling is a plain Error whose numbers live only in its message', () => {
+  // collision/CollisionWorld.js:1598 -- a bare `new Error(...)`, no `kind`, no fields at all.
+  const err = new Error('findClashes: broad-phase candidate count exceeds maxBroadPhaseInstancePairs (183 x 5435 > 500000)');
+  const record = toCapacityRejectedRecord(err);
+  assert.equal(record.limitName, 'maxBroadPhaseInstancePairs');
+  assert.equal(record.limitValue, 500000);
+  assert.equal(record.observedValue, 183 * 5435);
+  assert.equal(record.errorKind, 'broad-phase-instance-pair-ceiling');
+});
+
+test('recognizeCapacityRejection: an ExtractionLimitExceededError reports its own limit name and observed count', () => {
+  const err = { name: 'ExtractionLimitExceededError', limit: 'maxFragmentsPerDbId', observedCount: 6000, requestedDbId: 3076 };
+  const record = toCapacityRejectedRecord(err);
+  assert.equal(record.limitName, 'maxFragmentsPerDbId');
+  assert.equal(record.observedValue, 6000);
+});
+
+test('recognizeCapacityRejection: an ordinary error is NOT recognized as a capacity rejection', () => {
+  assert.equal(recognizeCapacityRejection(new Error('something else went wrong')), null);
+  assert.equal(recognizeCapacityRejection(null), null);
+});
+
+test('toCapacityRejectedRecord: an explicit caller-supplied limit still wins over the recognizer', () => {
+  const err = { name: 'CapacityExceededError', kind: 'clearance-narrow-phase-budget', limit: 20000, attempted: 25000 };
+  const record = toCapacityRejectedRecord(err, { limitName: 'overridden', limitValue: 1 });
+  assert.equal(record.limitName, 'overridden');
+  assert.equal(record.limitValue, 1);
 });
 
 test('M4_CASE_LIST: exactly §5.2/§5.3\'s baseline matrix -- R1-R6, S1-S4, S2T, no spikes', () => {

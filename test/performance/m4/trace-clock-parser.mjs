@@ -77,8 +77,36 @@ function selectTopLevelTaskEvents(traceEvents, acceptedCategories, acceptedNames
   return topLevel;
 }
 
+// M4 Task 3.7 (the first LIVE consumer of this parser) -- real, empirically-demonstrated bug fix.
+//
+// This filter used to require `e.ph === 'R'` exclusively. `'R'` is the legacy trace "mark" phase;
+// a real modern Chromium emits a `performance.mark()` into `blink.user_timing` as an INSTANT event,
+// `ph: 'I'`. Confirmed directly against the Chromium this repo's Playwright actually launches, via
+// a targeted probe that placed `performance.mark('m4-query-window-start'/'-end')` inside one
+// page.evaluate under a live CDP `Tracing.start`/`Tracing.end` session and dumped the resulting
+// events:
+//
+//   { name: 'm4-query-window-start', ph: 'I', cat: 'blink.user_timing', pid: 39984, tid: 79178151 }
+//   { name: 'm4-query-window-end',   ph: 'I', cat: 'blink.user_timing', pid: 39984, tid: 79178151 }
+//
+// -- both on exactly the pid/tid `findMeasuredRendererProcessAndThread` resolves for the page. With
+// the `'R'`-only filter, `parseTraceAndClock` returned `{valid: false, reason: 'missing-opening-mark'}`
+// for that trace, i.e. EVERY real tuple's T-a would have been permanently UNEVALUABLE while the
+// anchor marks were in fact present and correct -- the one thing this module exists to prevent. The
+// unit suite never caught it because its fixtures are hand-written with `ph: 'R'`.
+//
+// Widened to accept both phases rather than switched to `'I'` alone: `'R'` remains a legitimate
+// mark phase in other/older builds, the existing fixtures use it, and accepting both cannot
+// introduce a false duplicate here -- the same probe confirms Chromium emits exactly ONE event per
+// mark name, not one of each phase (a genuine duplicate is still reported, unchanged).
 function findAnchorMarkEvent(traceEvents, markName, pid, tid) {
-  const matches = traceEvents.filter((e) => e.ph === 'R' && e.name === markName && e.pid === pid && e.tid === tid);
+// The category is checked too (`blink.user_timing`, the category §6.2 pins for exactly this
+// purpose): name+pid+tid alone would accept any same-named instant event the build happens to emit
+// on the measured thread from an unrelated category, and `ph: 'I'` is a far commoner phase than the
+// legacy `'R'` this filter used to require.
+  const matches = traceEvents.filter((e) => (e.ph === 'R' || e.ph === 'I')
+    && e.name === markName && e.pid === pid && e.tid === tid
+    && eventCategories(e.cat).includes('blink.user_timing'));
   if (matches.length === 0) return { status: 'missing' };
   if (matches.length > 1) return { status: 'duplicate' };
   return { status: 'ok', ts: matches[0].ts };

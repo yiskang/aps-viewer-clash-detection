@@ -148,6 +148,35 @@ test('reports invalid, never picking one arbitrarily, when the opening anchor ma
   assert.equal(result.reason, 'duplicate-opening-mark');
 });
 
+// M4 Task 3.7 regression (real bug, found by the first LIVE consumer of this parser). Every
+// fixture above hand-writes anchor marks as `ph: 'R'`, the legacy trace "mark" phase. A real
+// modern Chromium emits `performance.mark()` into `blink.user_timing` as an INSTANT event,
+// `ph: 'I'` -- confirmed directly against the Chromium this repo's Playwright launches. Under the
+// pre-fix `ph === 'R'`-only anchor filter, a genuine, complete, correctly-marked live trace parsed
+// as `missing-opening-mark`, permanently making every real tuple's T-a UNEVALUABLE. Both phases
+// are accepted now; this test pins the one the real browser actually produces so the suite can
+// never again be green while the live path is structurally broken.
+test('accepts a real Chromium instant-phase (ph:"I") performance.mark as an anchor', () => {
+  const instantMark = (name, ts) => ({ ph: 'I', cat: 'blink.user_timing', name, ts, pid: MEASURED_PID, tid: MEASURED_TID, args: {} });
+  const result = parseTraceAndClock(baseArgs({
+    traceEvents: [instantMark(OPENING_MARK, 0), instantMark(CLOSING_MARK, 1_000_000), runTask(10_000, 5_000)],
+  }));
+
+  assert.equal(result.valid, true);
+  assert.equal(result.reason, null);
+  assert.equal(result.intervals.length, 1);
+});
+
+test('still reports a duplicate anchor when the same mark name appears under both phases', () => {
+  const instantMark = (name, ts) => ({ ph: 'I', cat: 'blink.user_timing', name, ts, pid: MEASURED_PID, tid: MEASURED_TID, args: {} });
+  const result = parseTraceAndClock(baseArgs({
+    traceEvents: [markEvent(OPENING_MARK, 0), instantMark(OPENING_MARK, 5_000), markEvent(CLOSING_MARK, 1_000_000)],
+  }));
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'duplicate-opening-mark');
+});
+
 test('reports invalid when a mark is present in the trace but its paired clock sample is missing', () => {
   const result = parseTraceAndClock(baseArgs({
     traceEvents: baseAnchors(),

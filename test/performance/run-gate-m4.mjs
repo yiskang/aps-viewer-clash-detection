@@ -1,17 +1,28 @@
 // test/performance/run-gate-m4.mjs
 //
-// M4 Task 3.1: the runtime/fixture lifecycle skeleton for the M4 (Worker-vs-main-thread decision)
-// performance gate. Sibling to test/performance/run-gate.mjs (M1), run-gate-m2.mjs (M2), and
-// run-gate-m3.mjs (M3) -- ALL THREE of which are UNTOUCHED by this file (protected invariant).
+// The M4 (Worker-vs-main-thread decision) performance gate. Sibling to test/performance/
+// run-gate.mjs (M1), run-gate-m2.mjs (M2), and run-gate-m3.mjs (M3) -- ALL THREE of which are
+// UNTOUCHED by this file (protected invariant).
 //
-// This file proves §6.1 steps 1-4 (launch -> load -> live re-confirm -> sacrificial warm-up ->
-// fresh-world construct/dispose) end to end, over BOTH RUNTIME_CONFIGS entries (`historical` and
-// `multiProcess` -- see test/performance/m4/fixture-lifecycle.mjs), with exactly ONE throwaway
-// query per runtime. It deliberately does NOT wire the real R1-R6/S1-S4/S2T case matrix (task 3.7)
-// or the observation envelope (task 3.2) -- those are later tasks. No span recorder is installed
-// anywhere in this file; nothing here is "measured" in the M4 sense yet.
+// Built up across tasks 3.1-3.7:
+//   3.1  §6.1 steps 1-4: launch -> load -> live identity re-confirm -> sacrificial warm-up ->
+//        one fresh CollisionWorld per (runtime, case[, level], broadPhase, repetition) tuple.
+//   3.2  §6.1.7/§6.2's observation envelope: the rAF cadence recorder, the CDP
+//        `Input.dispatchMouseEvent` probe series, and the Node<->renderer clock calibration.
+//   3.3  §5.4's unmeasured cohort-profiling pass and the low/typical/high cohorts it feeds.
+//   3.4  §5.3.1's S2T bystander facade and its level-to-level mechanical control rule.
+//   3.5  §5.2.1's R6 calibration pass and move -> invalidate -> refresh -> restore sequence.
+//   3.6  §6.4's canonical TLAS-vs-linear correctness comparator.
+//   3.7  THIS TASK: the real R1-R6/S1-S4/S2T dispatch loop wiring all of the above together, plus
+//        the live CDP trace capture -> §6.2 stage attribution (BOTH yield rules) -> Rᵢ/Hᵢ -> T-a
+//        pipeline that task 3.8's `buildEvidenceRecord` consumes.
+//
+// Deliberately NOT here: the S1'/S3'/S4' spikes (tasks 3.9/3.10) and Metric M/Metric H memory
+// sampling (task 3.11, which interleaves into this file's own per-tuple loop afterwards).
 //
 // Run: node test/performance/run-gate-m4.mjs   (npm run test:performance:gate:m4)
+//      ... --cases=R1,R2 --runtimes=multi-process --repetitions=1   (scoped subset; the flagless
+//      invocation always dispatches the complete baseline matrix)
 
 // The fixture: the SAME real 3-discipline federated Revit host+links Audubon package M1-M3's gates
 // use (URNs copied verbatim from run-gate-m3.mjs:66-68). See run-gate-m3.mjs's own header for the
@@ -31,12 +42,79 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { RUNTIME_CONFIGS, resolveProxyFromEnv, freshWorldTupleKey, measuredStatesFor } from './m4/fixture-lifecycle.mjs';
 import {
-  dispositionForObservation, tCDispositionForRepetition, envelopeLimitMs,
+  dispositionForObservation, tCDispositionForRepetition, envelopeLimitMs, nearestRankPercentile,
   calibrateNodeToRendererClock, nodeMsToRendererMs, applyClockUncertainty,
 } from './m4/observation-envelope.mjs';
-import { rankByDensity, selectCohort } from './m4/cohort-selection.mjs';
+import { rankByDensity, selectCohort, labelDensityUnstratified } from './m4/cohort-selection.mjs';
 import { S2T_LEVELS, bystanderLayout, syntheticIdRangeAbove } from './m4/s2t-bystander-layout.mjs';
 import { R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer, pairSetDelta, matricesEqual } from './m4/r6-calibration.mjs';
+import { compareRuns } from './m4/correctness-comparator.mjs';
+import {
+  M4_CASE_LIST, buildCounterbalancedSchedule, caseOrderForRepetition, toCapacityRejectedRecord,
+} from './m4/counterbalancing-schedule.mjs';
+import { parseTraceAndClock } from './m4/trace-clock-parser.mjs';
+import {
+  computeResidualAll, computeResidualForBoundary, computeBoundaryOccupancy,
+  yieldRecordsToIntervals, splitIntervalAroundYields, classifyStageForScreen,
+} from './m4/stage-attribution-engine.mjs';
+import { BOUNDARY_TABLE } from './m4/decision-evidence-model.mjs';
+
+// ---- §6.1.6 / §7.2 protocol constants ---------------------------------------------------------
+const REPETITIONS = 5;                 // §6.1.6
+const TA_MAX_TASK_MS = 50;             // §7.2 T-a  (the Long Tasks definition)
+const TB1_P95_INTERVAL_MS = 32;        // §7.2 T-b1 (two frames at 60 Hz)
+const TB2_MAX_GAP_MS = 100;            // §7.2 T-b2 (RAIL Response budget)
+const TC_THRESHOLD_MS = 100;           // §7.2 T-c  (the same RAIL Response budget)
+const PROBE_CADENCE_MS = 100;          // §6.2's fixed input-probe cadence -- never derived from a query's own duration
+// §6.2 fixes the probe target element: `mousemove` over THE VIEWER CANVAS. A bare `canvas`
+// selector is not that -- found empirically on the first live run: the loaded app has TWO canvases
+// (the Viewer's own `canvas[data-viewer-canvas="true"]` at 1280x672, and a 170x170 one the Viewer
+// creates for its view cube), so Playwright's strict mode rejects the ambiguous locator outright.
+// Resolving it by position (`.first()`) would be the same "trust array order as identity" mistake
+// this codebase has already been bitten by; the Viewer's own explicit marker attribute is used.
+const CANVAS_SELECTOR = 'canvas[data-viewer-canvas="true"]';
+
+// §6.2's pinned trace configuration. The categories are verbatim from the spec; the transfer mode
+// is CDP's JSON `ReportEvents` (events arrive as `Tracing.dataCollected` batches).
+const TRACE_CATEGORIES = ['toplevel', 'devtools.timeline', 'blink.user_timing', 'disabled-by-default-devtools.timeline'];
+
+// §6.2: "A *task* is a top-level `toplevel`-category task event on the measured renderer's main
+// thread (`RunTask`, AND THE BUILD'S EQUIVALENT TOP-LEVEL TASK NAME RECORDED VERBATIM FROM THE
+// PINNED VERSION)". Task 2.1's own default is `['RunTask']` alone, which is what the spec names
+// generically -- but the Chromium this repo's Playwright actually launches emits its top-level
+// tasks as `ThreadControllerImpl::RunTask`. Confirmed empirically with a targeted probe against
+// the live browser: a window containing two deliberate ~120 ms synchronous blocks produced
+// `toplevel`/`ph:'X'` events named `ThreadControllerImpl::RunTask` (120.34 ms, 119.91 ms) plus
+// nested `Receive mojo message` / `BlinkScheduler_PerformMicrotaskCheckpoint` events, and NOTHING
+// named bare `RunTask`. With the bare default, `parseTraceAndClock` returned `valid: true` with
+// ZERO task intervals -- i.e. a silently empty duty cycle and a T-a that would trivially "pass"
+// while measuring nothing. Both names are accepted (never only the build-specific one), and
+// `assembleTargetsTa` below additionally refuses to report a numeric T-a for any window that
+// produced zero task intervals, so a future Chromium renaming this event again fails loudly as
+// UNEVALUABLE instead of silently passing.
+const TOP_LEVEL_TASK_NAMES = ['RunTask', 'ThreadControllerImpl::RunTask'];
+
+// §6.3's fixed stage-classification table is keyed by the SPEC's stage names; `collision/`'s own
+// span hook reports the LABELS its call sites pass to `reportSpan(label, ms)`. This is the one
+// mapping between the two, derived by reading every live `reportSpan` call site on disk:
+//   collision/geometry/GeometryRegistry.js:179/209/231  -> 'weld' / 'connectivity' / 'bvh-construction'
+//   collision/geometry/createGeometryRegistry.js:67/83/114 -> 'geometry-extraction' / 'geometry-weld'
+//   collision/tlas/TlasCache.js:212                     -> 'tlas-build'
+//   collision/CollisionWorld.js:1694/2467               -> 'capacity-admission-commit' / 'clearance-distance-query'
+// An UNMAPPED label is never guessed at and never silently dropped: `classifyStageForScreen`
+// THROWS on an unknown stage name, so an unmapped span is excluded from the Rᵢ inputs and recorded
+// by name on the tuple as `unmappedSpanLabels`, which is a reportable gap rather than a crash or a
+// silent under-subtraction.
+const SPAN_LABEL_TO_STAGE = {
+  'geometry-extraction': 'viewerExtraction',
+  'weld': 'compactAndWeld',
+  'geometry-weld': 'compactAndWeld',
+  'connectivity': 'connectivity',
+  'bvh-construction': 'bvhConstruction',
+  'tlas-build': 'tlasBuildCacheQuery',
+  'clearance-distance-query': 'clearanceDistanceQuery',
+  'capacity-admission-commit': 'lifecycleValidationAndPublication',
+};
 
 // Task-review fix (Important #2b): `runR6Sequence`'s live "restored transform verified equal to T0"
 // gate must actually CALL the real, NaN-safe `matricesEqual` from r6-calibration.mjs rather than
@@ -171,12 +249,19 @@ async function disposeInputProbeRegistry(page, handle) {
 // §6.2). Because the round trip has non-zero duration, `nodeMs` is the Node-side pre/post-call
 // MIDPOINT (an NTP-style estimate of "what Node's clock read when the renderer sample was
 // taken"), and `roundTripMs` is carried forward as this sample's own uncertainty.
-async function captureClockCalibrationSample(page) {
+async function captureClockCalibrationSample(page, markName = 'm4-input-probe-calibration') {
   const beforeNodeMs = performance.now();
-  const rendererMs = await page.evaluate(() => {
-    performance.mark('m4-input-probe-calibration');
+  const rendererMs = await page.evaluate((name) => {
+    performance.mark(name);
+    // Task 3.7: cleared immediately. This function is called twice per measured query and the
+    // real matrix runs many hundreds of them, so leaving every calibration mark in the page's own
+    // performance timeline buffer would grow it without bound across one gate run (and, once the
+    // buffer's default size is reached, silently start dropping entries -- including, potentially,
+    // a later window's ANCHOR marks). Clearing the entry does not retract the trace event already
+    // emitted for it; the trace side is unaffected.
+    performance.clearMarks(name);
     return performance.now();
-  });
+  }, markName);
   const afterNodeMs = performance.now();
   return {
     nodeMs: beforeNodeMs + (afterNodeMs - beforeNodeMs) / 2,
@@ -185,7 +270,17 @@ async function captureClockCalibrationSample(page) {
   };
 }
 
-async function dispatchInputProbeSequence(page, cdpSession, { canvasSelector, cadenceMs, startNodeMs, durationMs }) {
+// `shouldStop` (M4 Task 3.7 addition, optional -- omitting it reproduces Task 3.2's original
+// behaviour exactly, which is what that task's own manual-verification script still relies on):
+// §6.2 requires probes to run "from the pre-query anchor THROUGH the observation envelope", and
+// the envelope's real close instant is not known when the schedule is computed -- it depends on
+// when the query itself finishes. Rather than guess a duration, the live matrix passes a generous
+// `durationMs` upper bound plus a predicate consulted once per scheduled slot; when the envelope
+// has genuinely closed the loop stops issuing further slots. This is NOT the forbidden
+// "await renderer acknowledgement before issuing the next probe" behaviour §6.2 rules out -- the
+// predicate is a pure, synchronous read of Node-side state that never blocks on the renderer, and
+// every slot the loop DOES reach is still dispatched on its own fixed, pre-computed instant.
+async function dispatchInputProbeSequence(page, cdpSession, { canvasSelector, cadenceMs, startNodeMs, durationMs, shouldStop, onDispatch }) {
   const coords = []; // fixed, recorded sequence -- unique per probe, per §6.2
   const count = Math.ceil(durationMs / cadenceMs);
   for (let i = 0; i < count; i++) coords.push({ x: 100 + (i % 50), y: 100 + Math.floor(i / 50) });
@@ -197,6 +292,7 @@ async function dispatchInputProbeSequence(page, cdpSession, { canvasSelector, ca
   // correctly censored rather than silently dropped (dropping would undercount observations and
   // could mask a real stall as "too few samples" instead of a proper FAILURE/INDETERMINATE).
   for (let i = 0; i < coords.length; i++) {
+    if (shouldStop && shouldStop()) break;
     const scheduledNodeMs = startNodeMs + i * cadenceMs; // fixed schedule, independent of jitter
     const sleepMs = scheduledNodeMs - performance.now();
     if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs));
@@ -228,7 +324,13 @@ async function dispatchInputProbeSequence(page, cdpSession, { canvasSelector, ca
     // handled -- silently turning a real OK into a false FAILURE/INDETERMINATE. `coord` must carry
     // the same absolute coordinates that were actually dispatched (and thus the same ones the
     // in-page listener will record), not the pre-offset canvas-local ones.
-    dispatched.push({ coord: { x, y }, scheduledNodeMs, dispatchNodeMs });
+    const entry = { coord: { x, y }, scheduledNodeMs, dispatchNodeMs };
+    dispatched.push(entry);
+    // M4 Task 3.7 addition: §6.1.7's envelope cannot decide "every dispatched probe has either had
+    // its handler run or has exceeded the threshold" without seeing the probes AS THEY ARE ISSUED
+    // -- this function only returns its list once the whole series is finished, which is after the
+    // envelope needed the answer. `onDispatch` is a pure notification; it never gates the schedule.
+    if (onDispatch) onDispatch(entry);
     sendPromises.push(sendPromise);
   }
   // Second real bug found verifying this task's own code (via a targeted empirical repro, not
@@ -263,10 +365,20 @@ async function dispatchInputProbeSequence(page, cdpSession, { canvasSelector, ca
 // have had. Every dispatched timestamp is converted to renderer-clock terms via
 // nodeMsToRendererMs BEFORE this call ever subtracts it from an in-page value; the evaluate
 // function itself only ever sees renderer-clock-space numbers.
+// M4 Task 3.7 fix (independent-review finding, spec-grounded): the converted instant is the
+// probe's INTENDED (scheduled) dispatch time, not the instant Node actually got around to issuing
+// the CDP command. §6.2 is explicit -- "with the INTENDED dispatch timestamp taken in Node,
+// outside the blocked renderer" -- and separately rules that "a slot whose dispatch could not be
+// issued on time ... [is] recorded as censored observations", i.e. Node-side lateness is never
+// allowed to quietly shorten the measured delay. Measuring from the late actual instant instead
+// understates the delay by exactly however far Node's own event loop had fallen behind, which is
+// worst precisely when the renderer is most blocked -- the condition T-c exists to detect. Each
+// observation additionally carries `lateByMs` so Node-side scheduling lateness stays visible in
+// the report rather than being folded silently into the renderer's score.
 async function resolveInputProbeDispositions(page, registryHandle, dispatched, { thresholdMs, calibration }) {
   const rendererDispatched = dispatched.map((d) => ({
     coord: d.coord,
-    dispatchedAtRendererMs: nodeMsToRendererMs(d.dispatchNodeMs, calibration),
+    dispatchedAtRendererMs: nodeMsToRendererMs(d.scheduledNodeMs, calibration),
   }));
   const raw = await page.evaluate(({ registryHandle, rendererDispatched }) => {
     const closeRendererMs = performance.now();
@@ -278,8 +390,10 @@ async function resolveInputProbeDispositions(page, registryHandle, dispatched, {
       return { handled: false, delayMs: closeRendererMs - d.dispatchedAtRendererMs };
     });
   }, { registryHandle, rendererDispatched });
-  return raw.map((r) =>
-    applyClockUncertainty(dispositionForObservation({ ...r, thresholdMs }), calibration.uncertaintyMs, thresholdMs));
+  return raw.map((r, i) => ({
+    ...applyClockUncertainty(dispositionForObservation({ ...r, thresholdMs }), calibration.uncertaintyMs, thresholdMs),
+    lateByMs: dispatched[i].dispatchNodeMs - dispatched[i].scheduledNodeMs,
+  }));
 }
 
 // Orchestrates one query window's T-c measurement: install -> pre-calibrate -> dispatch the
@@ -315,75 +429,758 @@ export {
   dispatchInputProbeSequence, resolveInputProbeDispositions, runInputProbeWindow,
 };
 
-// M4 Task 3.3's manual-verification entry point (`--smoke-cohort-profiler`, a temporary flag task
-// 3.7 removes once the profiler is wired into the real matrix scheduler). Runs
-// browser-probes-m4.mjs's profileStructureCohortDensity ONCE against the live fixture (§5.4's own
-// "profiling pass ... unmeasured" -- no recorder installed here), then feeds the result through
-// this task's own pure rankByDensity/selectCohort to build the low/typical/high cohorts, and
-// prints exactly the shape the brief's manual-verification step asks for.
+// =================================================================================================
+// M4 Task 3.7: the real baseline matrix scheduler.
 //
-// Passes an explicit [modelArch, modelStructure, modelMechanical] array (built from the already
-// URN-verified window.__gate identities set up by loadFixtureAndReconfirm) rather than
-// window.viewer.getAllModels() directly -- profileStructureCohortDensity's own contract indexes
-// `models[1]` for the Structure model, and this codebase already has one confirmed real defect
-// (Task 3.1's own codex-review finding) from trusting getAllModels()'s array position as model
-// identity. Building the array from the URN-resolved identities instead guarantees index 1 really
-// is Structure regardless of getAllModels()'s own internal ordering.
-async function runSmokeCohortProfiler(page) {
-  await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
+// Everything below this line is this task's own: the live CDP trace capture, the observation
+// envelope that actually BRACKETS a measured query (Task 3.2 landed the envelope's parts but never
+// wrapped a real query in them), §6.2's yield-attribution rules including the second
+// ("un-attributable interval") rule, the Rᵢ/Hᵢ -> targets.Ta assembly, the case matrix, and the
+// fresh-world dispatch loop that ties tasks 3.1-3.6 together.
+// =================================================================================================
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- In-page gate helpers ---------------------------------------------------------------------
+// Installed ONCE per page. Every later `page.evaluate` resolves a model by a STABLE STRING KEY
+// through here rather than re-deriving `window.__gate.modelX` (and, for S2T, the live facade)
+// inline in a dozen places -- and, critically, `modelTag` is defined in exactly one spot, so the
+// signature convention Task 3.6's `compareRuns` joins on can never drift between two call sites.
+// (This codebase has already hit the "signatures need model identity, not just dbId" bug three
+// separate times; a single definition is the structural fix.)
+async function installGateHelpers(page) {
+  await page.evaluate(() => {
+    if (window.__m4Gate) return;
+    window.__m4Gate = {
+      resolveModel(key) {
+        const g = window.__gate;
+        if (key === 'arch') return g.modelArch;
+        if (key === 'structure') return g.modelStructure;
+        if (key === 'mechanical') return g.modelMechanical;
+        if (key === 's2tFacade') {
+          if (!g.s2tFacade) throw new Error('__m4Gate.resolveModel: no S2T facade is installed for this tuple');
+          return g.s2tFacade;
+        }
+        throw new Error(`__m4Gate.resolveModel: unknown model key "${key}"`);
+      },
+      modelTag(m) {
+        const g = window.__gate;
+        if (m === g.modelArch) return 'arch';
+        if (m === g.modelStructure) return 'structure';
+        if (m === g.modelMechanical) return 'mechanical';
+        if (g.s2tFacade && m === g.s2tFacade) return 's2tFacade';
+        return 'unknown';
+      },
+      // §6.4 joins diagnostics on `modelTag`, explicitly "rather than modelId, which is documented
+      // as reused-under-collision-prone". `CollisionWorld`'s own diagnostics carry `modelId`
+      // (CollisionWorld.js:107's `fragment: { modelId, dbId, fragId }`), so the translation has to
+      // happen HERE, in the page, while the real Model objects are still reachable -- a Node-side
+      // remap would have nothing but the collision-prone id to work from.
+      tagDiagnostics(diagnostics) {
+        const g = window.__gate;
+        const idOf = (m) => (m && m.id !== undefined ? m.id : m);
+        const byId = new Map();
+        for (const [tag, model] of [['arch', g.modelArch], ['structure', g.modelStructure], ['mechanical', g.modelMechanical], ['s2tFacade', g.s2tFacade]]) {
+          if (model) byId.set(idOf(model), tag);
+        }
+        const retag = (ref) => (ref ? { modelTag: byId.get(ref.modelId) ?? 'unknown', dbId: ref.dbId, fragId: ref.fragId } : null);
+        return diagnostics.map((d) => ({
+          reason: d.reason, scope: d.scope, role: d.role ?? null,
+          fragment: retag(d.fragment), sourceFragment: retag(d.sourceFragment), targetFragment: retag(d.targetFragment),
+        }));
+      },
+      // §6.4's witness tolerance is `1e-9 × max(sourceWorldDiagonal, targetWorldDiagonal)` -- a
+      // PER-PAIR scale. Task 3.6's `compareRuns` takes one scalar per call, so this returns the
+      // diagonal PER MODEL TAG and the caller partitions its pair sets by
+      // `(sourceModelTag, targetModelTag)`, calling `compareRuns` once per partition with that
+      // partition's own exact `max(diagonalByTag[src], diagonalByTag[tgt])`. A single
+      // federation-wide maximum -- the obvious shortcut -- is `>=` every real pairwise scale, so it
+      // would admit witness mismatches the canonical comparator forbids; the partitioned form is
+      // strictly stricter and needs no change to Task 3.6's reviewed interface.
+      //
+      // The diagonal is the union of the model's own FRAGMENT WORLD BOUNDS
+      // (`fragList.getWorldBounds`), deliberately not `model.getBoundingBox()`: world bounds are
+      // unambiguously placement-aware (they are what the collision library's own broad phase reads,
+      // and what R6 mutates via `setPlacementTransform`), whereas whether `getBoundingBox()`
+      // reflects the live placement transform is not something this harness can assert from the
+      // Viewer's public contract. `isNotLoaded` fragments are skipped, matching the profiling
+      // pass's own rule.
+      worldDiagonalsByTag() {
+        const g = window.__gate;
+        const out = {};
+        const box = new window.THREE.Box3();
+        for (const [tag, model] of [['arch', g.modelArch], ['structure', g.modelStructure], ['mechanical', g.modelMechanical], ['s2tFacade', g.s2tFacade]]) {
+          if (!model) continue;
+          const fragList = model.getFragmentList();
+          const count = fragList.getCount();
+          const min = [Infinity, Infinity, Infinity];
+          const max = [-Infinity, -Infinity, -Infinity];
+          for (let f = 0; f < count; f++) {
+            if (fragList.isNotLoaded && fragList.isNotLoaded(f)) continue;
+            fragList.getWorldBounds(f, box);
+            for (let i = 0; i < 3; i++) {
+              const lo = box.min.getComponent(i);
+              const hi = box.max.getComponent(i);
+              if (Number.isFinite(lo) && lo < min[i]) min[i] = lo;
+              if (Number.isFinite(hi) && hi > max[i]) max[i] = hi;
+            }
+          }
+          const d = Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+          out[tag] = Number.isFinite(d) && d > 0 ? d : null;
+        }
+        return out;
+      },
+    };
+  });
+}
+
+// ---- Live CDP trace session (§6.2's pinned configuration) --------------------------------------
+// One session per measured query, opened immediately before the envelope's own opening mark and
+// closed immediately after its closing mark. Listeners are attached and DETACHED per session: a
+// single long-lived `cdp.on` would keep accumulating every later session's events into the first
+// session's array (Playwright's CDPSession is an EventEmitter and never de-registers on its own),
+// which would silently make every window after the first look like it contained every earlier
+// window's tasks.
+async function startTraceSession(cdp) {
+  const traceEvents = [];
+  let dataLossOccurred = null;
+  const onData = ({ value }) => { traceEvents.push(...value); };
+  let resolveComplete;
+  const complete = new Promise((r) => { resolveComplete = r; });
+  const onComplete = (params) => { dataLossOccurred = params.dataLossOccurred === true; resolveComplete(); };
+  cdp.on('Tracing.dataCollected', onData);
+  cdp.on('Tracing.tracingComplete', onComplete);
+  await cdp.send('Tracing.start', {
+    transferMode: 'ReportEvents',
+    traceConfig: { recordMode: 'recordAsMuchAsPossible', includedCategories: TRACE_CATEGORIES },
+  });
+  return {
+    async stop() {
+      try {
+        await cdp.send('Tracing.end');
+        await complete;
+      } finally {
+        cdp.off('Tracing.dataCollected', onData);
+        cdp.off('Tracing.tracingComplete', onComplete);
+      }
+      return { traceEvents, dataLossOccurred };
+    },
+  };
+}
+
+// ---- §6.2's TWO yield-attribution rules --------------------------------------------------------
+//
+// Rule 1 (already implemented, pure, Task 2.2's addendum): "any reconstructed interval that
+// overlaps a recorded yield is SPLIT at that yield's boundaries, and only the resulting
+// sub-segments are treated as stage-attributed time" -- `splitIntervalAroundYields`.
+//
+// Rule 2 (implemented HERE, no prior task owns it): "Where a stage's span overlaps a yield whose
+// own boundaries WERE NOT RECORDED, that stage contributes no attributed interval and the report
+// says so, rather than contributing an interval that may be wrong."
+//
+// The mechanical question rule 2 turns on is: for THIS interval's entire span, was the yield
+// recorder continuously installed, so that every yield inside it is guaranteed to be in
+// `yieldRecords`? The harness controls that instant exactly -- it calls `setYieldRecorder`
+// immediately before the opening mark and `clearYieldRecorder` immediately after the closing mark,
+// inside the SAME page.evaluate turn as the query, and returns both instants
+// (`recorderInstalledAtMs` / `recorderClearedAtMs`) on the renderer's own clock. So:
+//
+//   an interval is ATTRIBUTABLE  <=>  installedAtMs <= interval.startMs && interval.endMs <= clearedAtMs
+//
+// A stage interval reconstructed as `[receiptMs - durationMs, receiptMs]` can genuinely start
+// before the install instant, and this is not hypothetical: `GeometryRegistry`'s build phases
+// ('weld' / 'connectivity' / 'bvh-construction') are world-scoped and asynchronous, so a build
+// triggered by a tuple's COLD query can still be resolving when its WARM query's window opens --
+// the span's receipt lands inside the warm window while its reconstructed start lies before that
+// window's recorder was installed. Every yield in that earlier portion reported to nobody
+// (`collision/scheduler.js`'s `yieldAndRecordResume` only records when a recorder is installed at
+// yield START, and its `_yieldRecorderGeneration` guard additionally silences any yield that was
+// in flight across an install/clear), so splitting such an interval on the yields we DO have would
+// leave the unrecorded ones folded in as if they were synchronous stage time -- exactly the
+// "shrink Rᵢ and qualify a boundary that does not deserve it" failure §6.2 names.
+//
+// The excluded interval is NEVER estimated, interpolated, clipped to the covered part, or allowed
+// to contribute unsplit: it is dropped from the Rᵢ input entirely and reported by name.
+function partitionStageIntervalsByAttributability(stageIntervals, { recorderInstalledAtMs, recorderClearedAtMs }) {
+  const attributable = [];
+  const unattributable = [];
+  for (const interval of stageIntervals) {
+    const covered = recorderInstalledAtMs <= interval.startMs && interval.endMs <= recorderClearedAtMs;
+    if (covered) attributable.push(interval);
+    else {
+      unattributable.push({
+        stage: interval.stage,
+        startMs: interval.startMs,
+        endMs: interval.endMs,
+        durationMs: interval.endMs - interval.startMs,
+        reason: interval.startMs < recorderInstalledAtMs
+          ? 'span-starts-before-yield-recorder-install'
+          : 'span-ends-after-yield-recorder-clear',
+      });
+    }
+  }
+  return { attributable, unattributable };
+}
+
+// Maps `collision/`'s own `(label, ms)` span records onto §6.3's stage names, dropping (and
+// naming) any label the fixed table does not cover rather than letting `classifyStageForScreen`
+// throw mid-run or -- far worse -- silently guessing a classification for it.
+function spanRecordsToStageRecords(spanRecords) {
+  const stageRecords = [];
+  const unmappedSpanLabels = new Set();
+  for (const s of spanRecords) {
+    const stage = SPAN_LABEL_TO_STAGE[s.label];
+    if (!stage) { unmappedSpanLabels.add(s.label); continue; }
+    stageRecords.push({ stage, receiptMs: s.receiptMs, durationMs: s.ms });
+  }
+  return { stageRecords, unmappedSpanLabels: [...unmappedSpanLabels] };
+}
+
+// ---- §7.3's Rᵢ/Hᵢ -> targets.Ta assembly -------------------------------------------------------
+//
+// Produces the tuple's T-a evidence, as FOUR SEPARATE AXES rather than one overloaded field.
+//
+// SHAPE, and why it is this shape (flagged in this task's report): the brief's controller-added
+// section asks for "targets.Ta with a numeric Rᵢ/Hᵢ-derived value, or an explicit
+// UNEVALUABLE/un-attributable reason", while the ALREADY-LANDED Task 2.4
+// (`decision-evidence-model.mjs:72`) requires `targets.tA` to be a BOOLEAN and takes the numerics
+// as separate inputs (`screenResidualMs`, `boundaries[].residualMs`/`occupancyMs`). They are
+// genuinely different quantities and collapsing them into one field is what an independent review
+// of this design flagged first: T-a is decided SOLELY by the maximum CDP main-thread task versus
+// 50 ms; the duty cycle is §6.2's X-2; `Rᵢ` is §7.3 condition 3/4(b)'s residual; `Hᵢ` is a
+// worker-boundary occupancy. So this returns
+//   { tA: {status,pass,maxTaskMs,reason}, dutyCycle: {...}, screenResidualMs, boundaries: [...] }
+// and task 3.8 maps them across one-for-one.
+//
+// **`Hᵢ` is `null` here, never `0`, and that is load-bearing.** Phase 3's baseline gate has no
+// worker: no `postMessage`, no `onmessage` correlation mark, no receipt/deserialization sub-marks,
+// and therefore no delivery task. `computeBoundaryOccupancy` is still CALLED (the brief requires
+// Hᵢ to come from it, and its `deliveryTaskIdentified: false` is the honest answer for a worker-less
+// window) and its result is reported as a diagnostic, but the per-boundary `occupancyMs` handed
+// forward stays `null`. Writing a numeric `0` there instead would make Task 2.4 evaluate
+// `Rᵢ + 0 <= 50 ms` and hand back SUFFICIENT for a boundary whose real crossing cost was never
+// measured at all -- manufacturing worker evidence out of a run that contains no worker.
+function assembleTargetsTa({
+  traceEvents, dataLossOccurred, clockSamples, pageTargetId,
+  spanRecords, yieldRecords, recorderInstalledAtMs, recorderClearedAtMs, openingMs, closingMs,
+}) {
+  const { stageRecords, unmappedSpanLabels } = spanRecordsToStageRecords(spanRecords);
+
+  const parsed = parseTraceAndClock({
+    traceEvents, clockSamples, stageRecords, pageTargetId, dataLossOccurred,
+    acceptedTopLevelTaskNames: TOP_LEVEL_TASK_NAMES,
+  });
+  const unevaluable = (reason) => ({
+    tA: { status: 'UNEVALUABLE', pass: null, maxTaskMs: null, reason },
+    dutyCycle: { status: 'UNEVALUABLE', value: null, reason },
+    screenResidualMs: null,
+    boundaries: Object.entries(BOUNDARY_TABLE).map(([id, meta]) => ({
+      id, class: meta.class, residualMs: null, occupancyMs: null, deliveryTaskIdentified: null,
+    })),
+    unattributableStageIntervals: [],
+    unattributableStageTimeMs: 0,
+    unmappedSpanLabels,
+    reason,
+  });
+
+  if (!parsed.valid) return unevaluable(parsed.reason);
+
+  const taskIntervals = parsed.intervals.filter((i) => i.source === 'cdp-task');
+  const rawStageIntervals = parsed.intervals.filter((i) => i.source === 'harness-stage');
+
+  // A window with ZERO top-level task intervals is NOT a window with no main-thread work -- it is
+  // a window whose task events this build names something the accepted-name list does not cover
+  // (exactly the failure mode `TOP_LEVEL_TASK_NAMES`' own comment documents). Reporting T-a as a
+  // confident numeric pass off an empty task set would be the single worst outcome this whole
+  // pipeline can produce, so it fails closed instead.
+  if (taskIntervals.length === 0) return unevaluable('no-top-level-task-events');
+
+  // §6.2: "each instant on the timeline belongs to exactly ONE task". Task 2.1's
+  // `selectTopLevelTaskEvents` enforces that by SKIPPING any candidate that starts before the
+  // currently-open one ends -- which is exactly right for well-nested events, but silently DROPS
+  // the later interval for a pair that merely CROSSES (partial overlap, neither containing the
+  // other). A crossing pair means the trace is not well-nested and the "outermost wins" selection
+  // has quietly discarded real main-thread occupancy, so the whole window fails closed here rather
+  // than reporting a duty cycle and a T-a computed from a task set known to be incomplete.
+  const byStart = [...taskIntervals].sort((a, b) => a.startMs - b.startMs);
+  for (let i = 1; i < byStart.length; i++) {
+    if (byStart[i].startMs < byStart[i - 1].endMs) return unevaluable('overlapping-top-level-tasks');
+  }
+
+  // §6.2 rule 2, then rule 1 -- in that order. An interval excluded by rule 2 is never split.
+  const { attributable, unattributable } = partitionStageIntervalsByAttributability(
+    rawStageIntervals, { recorderInstalledAtMs, recorderClearedAtMs },
+  );
+  const yieldIntervals = yieldRecordsToIntervals(yieldRecords);
+  const splitStageIntervals = attributable.flatMap((i) => splitIntervalAroundYields(i, yieldIntervals));
+
+  // Defence in depth against a stage name §6.3's table does not classify reaching the engine (it
+  // throws): the mapping table above already guarantees this, but a future label added to
+  // SPAN_LABEL_TO_STAGE with a typo would otherwise abort a multi-minute run mid-matrix.
+  const classifiable = splitStageIntervals.filter((i) => {
+    try { classifyStageForScreen(i.stage); return true; } catch { unmappedSpanLabels.push(i.stage); return false; }
+  });
+
+  const windowMs = closingMs - openingMs;
+  const maxTaskMs = Math.max(...taskIntervals.map((t) => t.endMs - t.startMs));
+  const residualAllMs = computeResidualAll(taskIntervals, classifiable);
+
+  // §7.3 condition 4(b)'s per-boundary residual, for every §8.2 boundary Task 2.4 already tables.
+  const perBoundaryResidualMs = {};
+  for (const [id, meta] of Object.entries(BOUNDARY_TABLE)) {
+    perBoundaryResidualMs[id] = computeResidualForBoundary(taskIntervals, classifiable, meta.ownedStages);
+  }
+
+  // Hᵢ -- §7.3 condition 4(b) / §6.2's worker-response delivery-task correlation. Called through
+  // the real engine (never a substituted constant) so this run exercises the same code path every
+  // later worker-bearing caller will, and so the answer for a worker-less window is stated by the
+  // engine itself rather than assumed. With no correlation mark and no sub-marks it necessarily
+  // reports `{ value: 0, deliveryTaskIdentified: false }` -- kept as a DIAGNOSTIC only; see this
+  // function's header for why the per-boundary `occupancyMs` handed forward is `null`, not that 0.
+  const baselineOccupancyProbe = computeBoundaryOccupancy(taskIntervals, [], null, closingMs);
+
+  // §6.2's X-2: "Σ(task durations from the CDP trace within the marked window) ÷ WINDOW DURATION"
+  // -- the denominator is the marked query window itself, never the span of the tasks that happen
+  // to fall in it (which would report ~1.0 for any window whose first and last tasks bracket it).
+  // Every task interval is already clipped to the window by `parseTraceAndClock`.
+  const taskSumMs = taskIntervals.reduce((acc, t) => acc + (t.endMs - t.startMs), 0);
+
+  return {
+    tA: { status: 'DETERMINED', pass: maxTaskMs <= TA_MAX_TASK_MS, maxTaskMs, reason: null },
+    dutyCycle: {
+      status: windowMs > 0 ? 'DETERMINED' : 'UNEVALUABLE',
+      value: windowMs > 0 ? taskSumMs / windowMs : null,
+      reason: windowMs > 0 ? null : 'non-positive-query-window',
+    },
+    screenResidualMs: residualAllMs,            // §7.3 condition 3's boundary-independent screen, Rᵢ(all,τ)
+    boundaries: Object.entries(BOUNDARY_TABLE).map(([id, meta]) => ({
+      id, class: meta.class,
+      residualMs: perBoundaryResidualMs[id],    // §7.3 condition 4(b)'s Rᵢ(w,τ)
+      occupancyMs: null,                        // Hᵢ -- no worker in the baseline; see header
+      deliveryTaskIdentified: null,
+    })),
+    taskCount: taskIntervals.length,
+    taskSumMs,
+    stageIntervalCount: classifiable.length,
+    yieldCount: yieldRecords.length,
+    unattributableStageIntervals: unattributable,
+    unattributableStageTimeMs: unattributable.reduce((a, u) => a + u.durationMs, 0),
+    unmappedSpanLabels,
+    baselineOccupancyProbe,
+    windowMs,
+    reason: null,
+  };
+}
+
+// ---- §7.2's T-b1 / T-b2, from the rAF cadence recorder -----------------------------------------
+// Measured over §6.1.7's whole observation ENVELOPE (never stopped at the closing mark), so the
+// interval that SPANS the query is always among the samples -- that interval is the single most
+// important one T-b2 exists to catch.
+function summarizeFrameIntervals(frameIntervals, { postQueryFrameObserved }) {
+  if (!postQueryFrameObserved) {
+    return { status: 'INDETERMINATE', reason: 'no post-query rAF callback fired before the envelope limit', tB1: null, tB2: null, count: frameIntervals.length };
+  }
+  if (frameIntervals.length === 0) {
+    return { status: 'INDETERMINATE', reason: 'no inter-frame intervals observed', tB1: null, tB2: null, count: 0 };
+  }
+  const sorted = [...frameIntervals].sort((a, b) => a - b);
+  const p95Ms = nearestRankPercentile(sorted, 0.95);
+  const maxMs = sorted[sorted.length - 1];
+  return {
+    status: 'DETERMINED', reason: null,
+    p95Ms, maxMs, count: sorted.length,
+    over32: sorted.filter((v) => v > 32).length,
+    over100: sorted.filter((v) => v > 100).length,
+    tB1: p95Ms <= TB1_P95_INTERVAL_MS,
+    tB2: maxMs <= TB2_MAX_GAP_MS,
+  };
+}
+
+// ---- §6.4's canonical comparator, applied at the PER-MODEL-PAIR witness scale ------------------
+//
+// §6.4's witness rule is scale-relative and PER PAIR: `1e-9 × max(sourceWorldDiagonal,
+// targetWorldDiagonal)`. Task 3.6's `compareRuns` takes one `worldDiagonalScale` scalar per call,
+// which is exactly right for a single-model comparison but cannot express a per-pair scale over a
+// three-model federation in one call. Feeding it the federation-wide maximum would be `>=` every
+// real pairwise scale -- i.e. a strictly MORE PERMISSIVE tolerance than §6.4 mandates, admitting
+// witness disagreements the canonical comparator is supposed to reject.
+//
+// So the comparison runs twice, and both must hold:
+//   1. ONE whole-run `compareRuns` -- authoritative for pairSet / statistics / diagnostics /
+//      distances, none of which is scale-dependent. It is passed the federation-wide maximum,
+//      which is irrelevant to those four fields (only `witnesses` reads the scale).
+//   2. ONE `compareRuns` per `(sourceModelTag, targetModelTag)` partition, each carrying that
+//      partition's own EXACT `max(diagonalByTag[src], diagonalByTag[tgt])`; only `fields.witnesses`
+//      is taken from these.
+// The result is strictly stricter than (1) alone and needs no change to Task 3.6's reviewed
+// interface. A partition whose scale cannot be resolved to a finite positive number is a hard
+// failure, never a silently-substituted default -- an unknown scale means an unknown tolerance.
+function compareRunsAtPairScale(runA, runB, diagonalByTag) {
+  const finite = Object.values(diagonalByTag).filter((d) => Number.isFinite(d) && d > 0);
+  const federationMax = finite.length ? Math.max(...finite) : null;
+  if (federationMax === null) {
+    return { valid: false, fields: { worldDiagonalScaleResolved: false }, partitions: [], federationMax: null };
+  }
+
+  const whole = compareRuns(runA, runB, { worldDiagonalScale: federationMax });
+
+  const partitionKeys = new Set([...runA.pairs, ...runB.pairs].map((p) => `${p.sourceModelTag}|${p.targetModelTag}`));
+  const partitions = [];
+  let witnessesOk = true;
+  for (const key of partitionKeys) {
+    const [sourceTag, targetTag] = key.split('|');
+    const sd = diagonalByTag[sourceTag];
+    const td = diagonalByTag[targetTag];
+    const usable = [sd, td].filter((d) => Number.isFinite(d) && d > 0);
+    if (usable.length === 0) {
+      partitions.push({ key, scale: null, witnesses: false, reason: 'no finite positive world diagonal for either side' });
+      witnessesOk = false;
+      continue;
+    }
+    const scale = Math.max(...usable);
+    const subA = { pairs: runA.pairs.filter((p) => `${p.sourceModelTag}|${p.targetModelTag}` === key), statistics: runA.statistics };
+    const subB = { pairs: runB.pairs.filter((p) => `${p.sourceModelTag}|${p.targetModelTag}` === key), statistics: runB.statistics };
+    const sub = compareRuns(subA, subB, { worldDiagonalScale: scale });
+    partitions.push({ key, scale, witnesses: sub.fields.witnesses, pairCount: subA.pairs.length });
+    if (!sub.fields.witnesses) witnessesOk = false;
+  }
+
+  return {
+    valid: whole.fields.pairSet && whole.fields.statistics && whole.fields.diagnostics && whole.fields.distances && witnessesOk,
+    fields: { ...whole.fields, witnesses: witnessesOk, witnessesAtFederationScale: whole.fields.witnesses },
+    partitions,
+    federationMax,
+  };
+}
+
+// ---- The one measured query, in the page -------------------------------------------------------
+//
+// EVERYTHING that must be atomic with respect to the query happens inside this single
+// `page.evaluate` turn: recorder installation, the opening `performance.mark` and its paired
+// `performance.now()` sample, the query itself, the closing mark and its paired sample, and
+// recorder teardown. Splitting these across separate Node round trips (the obvious alternative)
+// would put a full CDP round trip -- typically 0.5-2 ms, and unboundedly more while the renderer
+// is blocked, which is precisely the condition being measured -- between the mark and the query
+// on both ends, inflating the window by an amount that grows with the very stall the window
+// exists to measure. Node still observes the query concurrently: the input probes go over CDP
+// `Input.dispatchMouseEvent` (never through `page.evaluate`) and the trace runs in the browser.
+//
+// `world` is a Playwright JSHandle to the live in-page CollisionWorld the CALLER constructed and
+// will dispose (§6.1.4's one-fresh-world-per-tuple lifecycle) -- the same contract Task 3.5's
+// `runR6Sequence` established and this function now generalises to every case.
+//
+// A `CapacityExceededError` is caught HERE, in the page, and returned as data. It must never be
+// allowed to propagate across the evaluate boundary: Playwright reconstructs a thrown in-page
+// Error on the Node side from its message and stack ONLY -- every custom own-property is dropped
+// -- and `CapacityExceededError` puts its entire payload on own properties
+// (`collision/errors.js:121`: `Object.assign(this, details)`), so the `limit`/`attempted`/
+// `requested` values §4 requires the report to name by exact value would be silently lost.
+async function runQueryInPage(page, world, descriptor) {
+  return page.evaluate(async ({ descriptor, world }) => {
+    const sched = await import('/collision/scheduler.js');
+    const G = window.__m4Gate;
+    const sourceModel = G.resolveModel(descriptor.source.modelKey);
+    const targets = descriptor.targets === 'all'
+      ? window.viewer.getAllModels().map((m) => ({ model: m }))
+      : descriptor.targets.map((k) => ({ model: G.resolveModel(k) }));
+
+    const spanRecords = [];
+    const yieldRecords = [];
+    let diagnosticEventCount = 0;
+
+    // §16.4's already-landed instrumentation, all three hooks, installed for this window only.
+    // `receiptMs` is a harness-side `performance.now()` taken AT RECEIPT -- §7.3 condition 3's own
+    // prescribed mechanism ("The harness timestamps each recorder callback at receipt with
+    // performance.now() ... giving every reported stage the interval [end − ms, end] on the same
+    // clock the query's performance.mark pair anchors to the CDP trace"). No library change.
+    sched.setSpanRecorder((label, ms) => { spanRecords.push({ label, ms, receiptMs: performance.now() }); });
+    sched.setYieldRecorder((resumeLatencyMs) => { yieldRecords.push({ resumeLatencyMs, receiptMs: performance.now() }); });
+    sched.setDiagnosticEventRecorder(() => { diagnosticEventCount++; });
+    const recorderInstalledAtMs = performance.now();
+
+    // §6.2's paired clock sample IS the anchor mark ("one mechanism, not two"). `performance.mark`
+    // RETURNS the PerformanceMark it just created, so `.startTime` is the mark's own instant
+    // exactly -- not a `performance.now()` read taken a statement later, which would pair the
+    // trace-side event with a very slightly different renderer instant on both ends of every
+    // window (a small but entirely avoidable systematic error in the linear clock map Task 2.1
+    // fits between the two anchors).
+    const openingMs = performance.mark('m4-query-window-start').startTime;
+
+    let raw = null;
+    let capacityError = null;
+    let otherError = null;
+    try {
+      raw = await world.findClashes({
+        mode: descriptor.mode,
+        ...(descriptor.clearance !== undefined ? { clearance: descriptor.clearance } : {}),
+        source: { model: sourceModel, dbIds: descriptor.source.dbIds },
+        target: { targets },
+        groupBy: 'dbId',
+        broadPhase: descriptor.broadPhase,
+      });
+    } catch (err) {
+      if (err && err.name === 'CapacityExceededError') {
+        capacityError = { name: err.name, kind: err.kind, message: err.message, ...Object.fromEntries(Object.entries(err)) };
+      } else {
+        otherError = { name: err?.name ?? 'Error', message: err?.message ?? String(err), stack: err?.stack ?? null };
+      }
+    }
+
+    const closingMs = performance.mark('m4-query-window-end').startTime;
+
+    sched.clearSpanRecorder();
+    sched.clearYieldRecorder();
+    sched.clearDiagnosticEventRecorder();
+    const recorderClearedAtMs = performance.now();
+    // The trace events for both anchors have already been emitted; clearing only the page's own
+    // performance-timeline entries keeps that buffer from growing across the whole matrix run
+    // (hundreds of windows) and, once full, silently dropping a LATER window's anchor entries.
+    performance.clearMarks('m4-query-window-start');
+    performance.clearMarks('m4-query-window-end');
+
+    const run = raw === null ? null : {
+      pairs: raw.pairs.map((p) => ({
+        sourceModelTag: G.modelTag(p.source.model), sourceDbId: p.source.dbId,
+        targetModelTag: G.modelTag(p.target.model), targetDbId: p.target.dbId,
+        type: p.type,
+        distance: p.distance ?? null,
+        witness: p.witness ?? null,
+      })),
+      statistics: {
+        clearanceExactAabbSurvivors: raw.statistics.clearanceExactAabbSurvivors,
+        narrowPhasePairs: raw.statistics.narrowPhasePairs,
+        clearanceOverlapPrechecksRun: raw.statistics.clearanceOverlapPrechecksRun,
+        clearanceHardClashExclusions: raw.statistics.clearanceHardClashExclusions,
+        clearanceDistanceQueriesRun: raw.statistics.clearanceDistanceQueriesRun,
+        clearanceHits: raw.statistics.clearanceHits,
+        broadPhasePairs: raw.statistics.broadPhasePairs ?? null,
+        tlasBuilds: raw.statistics.tlasBuilds ?? null,
+        diagnostics: G.tagDiagnostics(raw.statistics.diagnostics ?? []),
+      },
+      extractedSourceInstances: raw.statistics.sourceInstances ?? null,
+    };
+
+    return {
+      openingMs, closingMs, recorderInstalledAtMs, recorderClearedAtMs,
+      makespanMs: closingMs - openingMs,
+      spanRecords, yieldRecords, diagnosticEventCount,
+      run, capacityError, otherError,
+    };
+  }, { descriptor, world });
+}
+
+// ---- §6.1.7's observation envelope, wrapped around ONE measured query ---------------------------
+//
+// Sequence: install observers -> pre-query anchor (one observed rAF callback AND one completed
+// input-probe round trip, per §6.1.7) -> pre-window clock calibration -> open the CDP trace session
+// -> run the bracketed query (above) while dispatching probes at the fixed 100 ms cadence -> hold
+// the envelope open until all of {closing mark passed, >=1 post-query rAF, every probe handled or
+// past T-c's threshold} or the envelope's own `max(2 x window, 5 s)` limit -> close the trace ->
+// post-window calibration -> resolve dispositions.
+async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descriptor, label }) {
+  const registryHandle = await installInputProbeRegistry(page, CANVAS_SELECTOR);
+  const rafHandle = await page.evaluateHandle(() => window.__m4Probes.startRafRecorder());
+  const box = await page.locator(CANVAS_SELECTOR).boundingBox();
+
+  const envelope = { limitReached: false, postQueryFrameObserved: false, anchorRafObserved: false, anchorProbeHandled: false };
+  let trace = null;
+  try {
+    // -- Pre-query anchor: one observed rAF callback ------------------------------------------
+    const anchorDeadline = performance.now() + 2000;
+    while (performance.now() < anchorDeadline) {
+      const snap = await rafHandle.evaluate((r) => r.snapshot());
+      if (snap.frameCount >= 1) { envelope.anchorRafObserved = true; break; }
+      await sleep(16);
+    }
+
+    // -- Pre-query anchor: one completed input-probe round trip --------------------------------
+    const anchorCoord = { x: Math.round(box.x + 10), y: Math.round(box.y + 10) };
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: anchorCoord.x, y: anchorCoord.y, timestamp: Date.now() / 1000 });
+    const probeAnchorDeadline = performance.now() + 2000;
+    while (performance.now() < probeAnchorDeadline) {
+      const handled = await page.evaluate(({ h, key }) => window.__m4Probes.getInputProbeRegistry(h).handledAt.has(key), { h: registryHandle, key: `${anchorCoord.x},${anchorCoord.y}` });
+      if (handled) { envelope.anchorProbeHandled = true; break; }
+      await sleep(10);
+    }
+
+    const preSample = await captureClockCalibrationSample(page);
+    trace = await startTraceSession(cdp);
+
+    // -- The bracketed query, and the concurrent fixed-cadence probe series --------------------
+    let queryDone = false;
+    const queryPromise = runQueryInPage(page, world, descriptor).then((r) => { queryDone = true; return r; });
+
+    const probeStartNodeMs = performance.now();
+    const dispatchedSoFar = [];
+    // `durationMs` is an upper bound only -- `shouldStop` ends the series as soon as the envelope
+    // has genuinely closed. 10 minutes is far above any plausible single-query window and exists
+    // purely so the pre-computed coordinate schedule is never the thing that runs out first.
+    const probesPromise = dispatchInputProbeSequence(page, cdp, {
+      canvasSelector: CANVAS_SELECTOR, cadenceMs: PROBE_CADENCE_MS, startNodeMs: probeStartNodeMs,
+      durationMs: 600_000,
+      shouldStop: () => envelope.closed === true,
+      onDispatch: (entry) => dispatchedSoFar.push(entry),
+    });
+
+    const queryResult = await queryPromise;
+    const closingNodeMs = performance.now();
+    const windowMs = queryResult.makespanMs;
+    // §6.1.7: `max(2 x the query window's own duration, 5 s)`, measured FROM THE CLOSING MARK. It
+    // is a TIMEOUT, not a mandatory dwell -- the loop below exits the instant the envelope's three
+    // real closing conditions hold, which for a healthy query is within a frame or two. (Sitting
+    // out the full limit on every window would add well over an hour to the S2 sweep alone.)
+    const limitMs = envelopeLimitMs(windowMs);
+
+    const frameCountAtClose = (await rafHandle.evaluate((r) => r.snapshot())).frameCount;
+    // -- Hold the envelope open until §6.1.7's three closing conditions, or its own limit --------
+    while (true) {
+      if (performance.now() - closingNodeMs >= limitMs) { envelope.limitReached = true; break; }
+      const snap = await rafHandle.evaluate((r) => r.snapshot());
+      if (snap.frameCount > frameCountAtClose) envelope.postQueryFrameObserved = true;
+      // "every dispatched input probe has either had its handler run or has exceeded §7.2's T-c
+      // threshold" -- the second clause is a pure Node-side elapsed check against the probe's own
+      // INTENDED dispatch instant, so a probe that will never be handled still closes the envelope
+      // rather than holding it to the limit.
+      const handledKeys = await page.evaluate((h) => [...window.__m4Probes.getInputProbeRegistry(h).handledAt.keys()], registryHandle);
+      const handledSet = new Set(handledKeys);
+      const nowMs = performance.now();
+      const outstanding = dispatchedSoFar.filter(
+        (d) => !handledSet.has(`${d.coord.x},${d.coord.y}`) && nowMs - d.scheduledNodeMs <= TC_THRESHOLD_MS,
+      );
+      if (queryDone && envelope.postQueryFrameObserved && outstanding.length === 0) break;
+      await sleep(16);
+    }
+    envelope.closed = true;
+
+    const dispatched = await probesPromise;
+    const frameIntervals = await rafHandle.evaluate((r) => r.stop());
+    const { traceEvents, dataLossOccurred } = await trace.stop();
+    trace = null;
+    const postSample = await captureClockCalibrationSample(page);
+    const calibration = calibrateNodeToRendererClock(preSample, postSample);
+
+    // -- T-c ------------------------------------------------------------------------------------
+    let tC;
+    let observations = [];
+    if (!calibration.valid) {
+      tC = { status: 'INDETERMINATE', reason: calibration.reason };
+    } else {
+      const all = await resolveInputProbeDispositions(page, registryHandle, dispatched, { thresholdMs: TC_THRESHOLD_MS, calibration });
+      // §6.2: "Only IN-WINDOW dispatches count toward T-c; probes continue through the envelope's
+      // tail so their handlers can be observed, but a probe issued after the closing mark measures
+      // an already-unblocked main thread and would flatter the statistic." The in/out-of-window
+      // split is decided on the probe's own Node-side dispatch instant against the closing mark's
+      // Node-side instant -- both on the SAME Node monotonic clock, so no calibration conversion
+      // is involved in the split itself (only in each observation's own delay, already applied).
+      observations = all.filter((_, i) => dispatched[i].dispatchNodeMs <= closingNodeMs);
+      tC = tCDispositionForRepetition(observations, TC_THRESHOLD_MS);
+    }
+
+    // -- T-a ------------------------------------------------------------------------------------
+    const clockSamples = [
+      { markName: 'm4-query-window-start', performanceNowMs: queryResult.openingMs },
+      { markName: 'm4-query-window-end', performanceNowMs: queryResult.closingMs },
+    ];
+    const taEvidence = assembleTargetsTa({
+      traceEvents, dataLossOccurred, clockSamples, pageTargetId,
+      spanRecords: queryResult.spanRecords, yieldRecords: queryResult.yieldRecords,
+      recorderInstalledAtMs: queryResult.recorderInstalledAtMs,
+      recorderClearedAtMs: queryResult.recorderClearedAtMs,
+      openingMs: queryResult.openingMs, closingMs: queryResult.closingMs,
+    });
+
+    const frames = summarizeFrameIntervals(frameIntervals, envelope);
+
+    return {
+      label,
+      makespanMs: windowMs,
+      run: queryResult.run,
+      capacityError: queryResult.capacityError,
+      otherError: queryResult.otherError,
+      diagnosticEventCount: queryResult.diagnosticEventCount,
+      yieldCount: queryResult.yieldRecords.length,
+      cumulativeYieldMs: queryResult.yieldRecords.reduce((a, y) => a + y.resumeLatencyMs, 0),
+      spanTotalsMs: queryResult.spanRecords.reduce((acc, s) => { acc[s.label] = (acc[s.label] ?? 0) + s.ms; return acc; }, {}),
+      envelope: { ...envelope, limitMs, dataLossOccurred },
+      // §7.2's four targets, each `true`/`false` where the measurement is DETERMINED and `null`
+      // where it is not. `null` is NEVER collapsed to `false` (which would read as a real,
+      // measured failure) nor to `true` (which would read as a pass that was never demonstrated) --
+      // task 3.8 owns turning an UNEVALUABLE/INDETERMINATE repetition into the right §7.3
+      // disposition, and it can only do that if the distinction survives to it intact.
+      targets: {
+        tA: taEvidence.tA.status === 'DETERMINED' ? taEvidence.tA.pass : null,
+        tB1: frames.tB1, tB2: frames.tB2,
+        tC: tC.status === 'DETERMINED' ? tC.p95Ms <= TC_THRESHOLD_MS : null,
+      },
+      // §6.2/§7.3's four separate evidence axes, kept separate (see assembleTargetsTa's header).
+      targetMeasurements: { tA: taEvidence.tA, dutyCycle: taEvidence.dutyCycle, tC, frames },
+      screenResidualMs: taEvidence.screenResidualMs,
+      boundaries: taEvidence.boundaries,
+      unattributableStageIntervals: taEvidence.unattributableStageIntervals,
+      unattributableStageTimeMs: taEvidence.unattributableStageTimeMs,
+      unmappedSpanLabels: taEvidence.unmappedSpanLabels,
+      taDiagnostics: {
+        taskCount: taEvidence.taskCount ?? 0, taskSumMs: taEvidence.taskSumMs ?? null,
+        stageIntervalCount: taEvidence.stageIntervalCount ?? 0, yieldCount: taEvidence.yieldCount ?? 0,
+        baselineOccupancyProbe: taEvidence.baselineOccupancyProbe ?? null,
+      },
+      observationCount: observations.length,
+    };
+  } finally {
+    // Order matters: the trace session must be closed even on a throw, or the NEXT window's
+    // `Tracing.start` fails outright ("Tracing is already started") and every later tuple in the
+    // run dies with it.
+    if (trace) { try { await trace.stop(); } catch { /* best-effort */ } }
+    try { await rafHandle.evaluate((r) => r.stop()); } catch { /* already stopped */ }
+    await rafHandle.dispose();
+    await disposeInputProbeRegistry(page, registryHandle);
+  }
+}
+
+// ---- §5.4's profiling pass (unmeasured, once per runtime) --------------------------------------
+// Task 3.3's live half, promoted out of its temporary `--smoke-cohort-profiler` block into the
+// real matrix. Passes an explicit [arch, structure, mechanical] array built from the already
+// URN-verified `window.__gate` identities rather than `getAllModels()` directly:
+// `profileStructureCohortDensity`'s own contract indexes `models[1]` for Structure, and this
+// codebase already has one confirmed real defect (Task 3.1's codex-review finding) from trusting
+// `getAllModels()`'s array position as model identity.
+async function runCohortProfiling(page) {
   const rawProfiles = await page.evaluate(() => {
     const { modelArch, modelStructure, modelMechanical } = window.__gate;
     return window.__m4Probes.profileStructureCohortDensity([modelArch, modelStructure, modelMechanical]);
   });
-  // Real bug found running this: Playwright's page.evaluate return-value serialization does NOT
-  // preserve Set objects (confirmed empirically -- a returned Set comes back as `{}`, every member
-  // silently dropped), so profileStructureCohortDensity crosses the boundary with fragmentIds as a
-  // plain array. Reconstruct the real Set here, immediately after the evaluate call, to satisfy
-  // this task's own documented Produces contract (Array<{dbId, proximity, fragmentIds: Set<number>}>)
-  // before anything (rankByDensity/selectCohort) reads .size or iterates it.
+  // Playwright's page.evaluate return-value serialization does NOT preserve Set objects (Task
+  // 3.3's own empirically-confirmed finding -- a returned Set arrives as `{}` with every member
+  // silently dropped), so the probe crosses the boundary with `fragmentIds` as a plain array and
+  // the real Set is reconstructed here, before anything reads `.size` or iterates it.
   const profiles = rawProfiles.map((p) => ({ ...p, fragmentIds: new Set(p.fragmentIds) }));
-
-  const ranked = rankByDensity(profiles);
-  const top5ByDensity = ranked.slice(0, 5).map((r) => ({ dbId: r.dbId, density: r.density, proximity: r.proximity, instances: r.instances }));
-
-  // Representative cohort size for this temporary smoke proof only -- task 3.7 owns wiring the
-  // REAL per-case k values (§5.2's table) for R3/R4/R6/S2. 0.25/0.5/0.9 are §5.4's own
-  // low/typical/high quantiles; SOURCE_DB_ID is forced into the high cohort per §5.4 step 5.
-  const SMOKE_K = 10;
-  const low = selectCohort(ranked, 0.25, SMOKE_K);
-  const typical = selectCohort(ranked, 0.5, SMOKE_K);
-  const high = selectCohort(ranked, 0.9, SMOKE_K, { forceDbId: SOURCE_DB_ID });
-
-  console.log('Cohort profiler smoke result:', JSON.stringify({
-    dbIdCount: profiles.length,
-    top5ByDensity,
-    low: { status: low.status, size: low.requestedDbIds.length, requestedDbIds: low.requestedDbIds },
-    typical: { status: typical.status, size: typical.requestedDbIds.length, requestedDbIds: typical.requestedDbIds },
-    high: { status: high.status, size: high.requestedDbIds.length, requestedDbIds: high.requestedDbIds },
-  }, null, 2));
+  return { profiles, ranked: rankByDensity(profiles) };
 }
 
-// M4 Task 3.4's manual-verification entry point (`--smoke-s2t`, a temporary flag task 3.7 removes
-// once S2T is wired into the real matrix). Builds the S2T facade (browser-probes-m4.mjs's
-// buildS2TFacade) at S2T_LEVELS[0] (baseline, 0 bystanders -- the real Architecture model
-// unchanged) and S2T_LEVELS[1] (10,000 admitted instances), runs an IDENTICAL clearance query
-// through each -- same source (Structure dbId 3076), same clearance, same broadPhase, the facade
-// as the sole target -- in its own fresh CollisionWorld (disposed before the next level, same
-// fresh-world discipline as every other measured tuple in this file), then prints
-// checkS2TLevelToLevelControlRule's result plus facade.getCount() at level 1.
-//
-// Measures the real Architecture model's own fragment AND geometry-id maxima live (never assumes
-// the ~5,435 figure documented in run-gate-m3.mjs's header is exactly right for whatever fixture
-// state is live right now) and feeds both through syntheticIdRangeAbove, so the synthetic
-// fragment/geometry ranges this run hands to bystanderLayout are always genuinely disjoint from
-// the real model's own ids -- not just fragment ids (§5.3.1 point 3's own explicit rationale) but
-// geometry ids too: two fragments sharing a geometry id are treated as sharing one real mesh
-// (createGeometryIdentity is scoped per loadEpoch, and the facade's real and synthetic fragments
-// share the same epoch), so a synthetic geometry id that accidentally collided with a real one
-// would silently alias a bystander onto a real mesh's cached geometry entry.
-async function runSmokeS2T(page) {
-  await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
+// §5.4's three quantiles at one required cohort size `k` (in EXTRACTED INSTANCES, never dbIds).
+// `3076` is forced into the HIGH cohort only (§5.4 step 5's own scope). The achieved-separation
+// label is decided on ACHIEVED results via Task 3.3's `labelDensityUnstratified`, never on band
+// overlap -- a `DENSITY_UNSTRATIFIED` level is a source-count-only arm and no finding at it may be
+// attributed to density.
+function buildCohorts(ranked, k) {
+  const low = selectCohort(ranked, 0.25, k);
+  const typical = selectCohort(ranked, 0.5, k);
+  const high = selectCohort(ranked, 0.9, k, { forceDbId: SOURCE_DB_ID });
+  return { low, typical, high, densityUnstratified: labelDensityUnstratified({ low, typical, high }) };
+}
 
+// ---- §5.3.1's S2T facade, installed per LEVEL --------------------------------------------------
+// Task 3.4's live half, promoted out of its temporary `--smoke-s2t` block. The facade REPLACES the
+// Architecture target's Model identity for the duration of one tuple (§5.3.1 point 1: "one
+// Architecture-equivalent Model object and one target epoch group per run" -- admitting a facade
+// ALONGSIDE the real Architecture model would create a fourth target epoch group, the exact
+// confound that makes R2-vs-R5 uninterpretable).
+//
+// Both synthetic ranges are measured LIVE against whatever fixture state is actually loaded, never
+// assumed from the ~5,435 figure documented in run-gate-m3.mjs's header: fragment ids AND geometry
+// ids both, because two fragments sharing a geometry id are treated as sharing one real mesh and a
+// colliding synthetic geometry id would silently alias a bystander onto a real mesh's cached entry.
+async function installS2TFacade(page, level) {
   const { realFragmentCount, realGeometryIdMax } = await page.evaluate(() => {
     const fragList = window.__gate.modelArch.getFragmentList();
     const count = fragList.getCount();
@@ -394,111 +1191,31 @@ async function runSmokeS2T(page) {
     }
     return { realFragmentCount: count, realGeometryIdMax: geometryIdMax };
   });
-  const syntheticFragmentIdStart = syntheticIdRangeAbove(realFragmentCount - 1);
-  const syntheticGeometryIdStart = syntheticIdRangeAbove(realGeometryIdMax);
-
-  const smokeLevels = S2T_LEVELS.slice(0, 2); // baseline (0 bystanders) + level 1 (10,000) is sufficient for this smoke proof
-  const levelResults = [];
-  let facadeCountAtLevel1 = null;
-  for (const level of smokeLevels) {
-    const bystanderCount = level - realFragmentCount;
-    if (bystanderCount < 0) {
-      throw new Error(`S2T smoke: level ${level} is below the live fixture's own real fragment count ${realFragmentCount}`);
-    }
-    const bystanders = bystanderLayout(bystanderCount, { syntheticFragmentIdStart, syntheticGeometryIdStart });
-
-    const result = await page.evaluate(async ({ sourceDbId, clearance, bystanders }) => {
-      const { CollisionWorld } = await import('/collision/index.js');
-      const facade = window.__m4Probes.buildS2TFacade(window.__gate.modelArch, bystanders);
-      const w = await CollisionWorld.fromViewer(window.viewer);
-      w.admitModel(window.__gate.modelStructure);
-      w.admitModel(facade);
-      try {
-        const { pairs, statistics } = await w.findClashes({
-          mode: 'clearance',
-          clearance,
-          source: { model: window.__gate.modelStructure, dbIds: [sourceDbId] },
-          target: { targets: [{ model: facade }] },
-          groupBy: 'dbId',
-          broadPhase: 'tlas',
-        });
-        // Same keyed-signature convention run-gate-m3.mjs's own TLAS-vs-linear comparator already
-        // established (`modelTag` + sorted "source:dbId:target:dbId:type" strings), reused here
-        // ACROSS LEVELS instead of across broad-phase arms, per §5.3.1 line 237 ("by §6.4's field
-        // rules"). A target dbId < 0 is one of this facade's own synthetic bystander dbIds (see
-        // buildS2TFacade's `getDbIds`) -- tagged 'synthetic' in the key itself, never a raw negative
-        // number, so checkS2TLevelToLevelControlRule's leak check can name it without re-deriving
-        // the synthetic-dbId convention on its own side.
-        //
-        // Deliberately omits M3's own `modelTag` (`(m) => m === modelArch ? 'arch' : ...`) from the
-        // key: this query only ever has two participants, one fixed source (Structure) and one
-        // fixed target (the facade) -- unlike M3's three-model cross-product, there is no model
-        // ambiguity a dbId alone could introduce here, so the literal `source:`/`target:` prefixes
-        // already carry all the disambiguating information a tag would.
-        const targetTag = (dbId) => (dbId < 0 ? 'synthetic' : String(dbId));
-        const keyOf = (p) => `source:${p.source.dbId}:target:${targetTag(p.target.dbId)}`;
-        const sortedPairs = [...pairs].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
-        return {
-          facadeCount: facade.getCount(),
-          facadeId: facade.id,
-          clearanceExactAabbSurvivors: statistics.clearanceExactAabbSurvivors,
-          narrowPhasePairs: statistics.narrowPhasePairs,
-          // Second codex-review pass, Important fix: four more already-public fields off this SAME
-          // `statistics` object -- no new instrumentation -- now also carried per level so the
-          // control rule can check them for level-to-level equality alongside the two above.
-          clearanceOverlapPrechecksRun: statistics.clearanceOverlapPrechecksRun,
-          clearanceHardClashExclusions: statistics.clearanceHardClashExclusions,
-          clearanceDistanceQueriesRun: statistics.clearanceDistanceQueriesRun,
-          clearanceHits: statistics.clearanceHits,
-          diagnostics: statistics.diagnostics,
-          pairSignatures: sortedPairs.map((p) => `${keyOf(p)}:${p.type}`),
-          pairDistances: sortedPairs.map((p) => [keyOf(p), p.distance]),
-          pairWitnesses: sortedPairs.map((p) => [keyOf(p), p.witness]),
-          // §5.3.1 line 239's own verification counter -- see buildS2TFacade's comment.
-          syntheticVizmeshAccessCount: facade.getSyntheticVizmeshAccessCount(),
-        };
-      } finally {
-        w.dispose(); // fresh-world disposed before the next level, per §6.1.4
-      }
-    }, { sourceDbId: SOURCE_DB_ID, clearance: CLEARANCE, bystanders });
-
-    levelResults.push({
-      level,
-      realCount: realFragmentCount,
-      targetModelId: result.facadeId,
-      statistics: {
-        clearanceExactAabbSurvivors: result.clearanceExactAabbSurvivors,
-        narrowPhasePairs: result.narrowPhasePairs,
-        clearanceOverlapPrechecksRun: result.clearanceOverlapPrechecksRun,
-        clearanceHardClashExclusions: result.clearanceHardClashExclusions,
-        clearanceDistanceQueriesRun: result.clearanceDistanceQueriesRun,
-        clearanceHits: result.clearanceHits,
-      },
-      diagnostics: result.diagnostics,
-      pairSignatures: result.pairSignatures,
-      pairDistances: result.pairDistances,
-      pairWitnesses: result.pairWitnesses,
-      syntheticVizmeshAccessCount: result.syntheticVizmeshAccessCount,
-    });
-    if (level === S2T_LEVELS[1]) facadeCountAtLevel1 = result.facadeCount;
+  const bystanderCount = level - realFragmentCount;
+  if (bystanderCount < 0) {
+    throw new Error(`S2T: level ${level} is below the live fixture's own real Architecture fragment count ${realFragmentCount}`);
   }
+  const bystanders = bystanderLayout(bystanderCount, {
+    syntheticFragmentIdStart: syntheticIdRangeAbove(realFragmentCount - 1),
+    syntheticGeometryIdStart: syntheticIdRangeAbove(realGeometryIdMax),
+  });
+  await page.evaluate((b) => {
+    window.__gate.s2tFacade = window.__m4Probes.buildS2TFacade(window.__gate.modelArch, b);
+  }, bystanders);
+  return { realFragmentCount, bystanderCount };
+}
 
-  const controlRuleResult = await page.evaluate(
-    (results) => window.__m4Probes.checkS2TLevelToLevelControlRule(results),
-    levelResults,
-  );
-  console.log('S2T smoke result:', JSON.stringify({
-    realFragmentCount,
-    levelSummaries: levelResults.map((r) => ({
-      level: r.level,
-      statistics: r.statistics,
-      diagnosticCount: r.diagnostics.length,
-      finalPairCount: r.pairSignatures.length,
-      syntheticVizmeshAccessCount: r.syntheticVizmeshAccessCount,
-    })),
-    facadeCountAtLevel1,
-    controlRuleResult,
-  }, null, 2));
+async function disposeS2TFacade(page) {
+  await page.evaluate(() => { window.__gate.s2tFacade = null; });
+}
+
+// Reads the level-scoped observables §5.3.1's control rule needs that the measured-query path does
+// not already carry (the facade's own synthetic-geometry-access counter and its model id).
+async function readS2TFacadeControls(page) {
+  return page.evaluate(() => {
+    const f = window.__gate.s2tFacade;
+    return { targetModelId: f.id, syntheticVizmeshAccessCount: f.getSyntheticVizmeshAccessCount(), facadeCount: f.getCount() };
+  });
 }
 
 // M4 Task 3.5's live half: §5.2.1's R6 one-time calibration pass. Unmeasured, runs ONCE per
@@ -556,7 +1273,7 @@ async function runSmokeS2T(page) {
 // §5.2.1 requires the calibration pass to record "the exact set of pairs entering and leaving...
 // reused unchanged across every arm, state, and repetition" -- a boolean "did it change" alone
 // (the pre-fix `changedFlags`) cannot catch two arms producing DIFFERENT non-empty deltas that both
-// individually satisfy "changed". The caller (`runSmokeR6Sequence`) computes the frozen expected
+// individually satisfy "changed". The caller (main(), below) computes the frozen expected
 // entering/leaving sets from `p0`/`firstChangeP1` via `pairSetDelta` and compares every arm's own
 // observed delta against them for exact equality, not mere non-emptiness.
 async function calibrateR6Translation(page, { cohortDbIds }) {
@@ -630,254 +1347,612 @@ async function calibrateR6Translation(page, { cohortDbIds }) {
   }, { cohortDbIds, sequence: R6_CALIBRATION_SEQUENCE });
 }
 
-// M4 Task 3.5's live half: §5.2.1 steps 1-5, the per-repetition move->invalidate->refresh->
-// restore-in-`finally` protocol. `world` is a single, already-admitted CollisionWorld shared across
-// this whole sequence's four queries (cold, warm, refresh, reconfirm) -- constructed and disposed by
-// the caller (task 3.7's scheduler owns the one-fresh-world-per-tuple lifecycle, §6.1.4), passed in
-// here as a Playwright JSHandle to the real in-page CollisionWorld object (confirmed empirically:
-// Playwright resolves a JSHandle nested as a field inside page.evaluate's args object to the live
-// in-page object reference, not just a bare top-level handle arg).
+// ---- §5.2.1's R6 sequence, DECOMPOSED into individually-bracketed measured queries -------------
 //
-// Real bug found running this task's own manual verification: the brief's own excerpt referenced a
-// bare `world` identifier inside the page.evaluate callback body without ever including it in the
-// destructured parameter or in the object passed as page.evaluate's second argument. Playwright
-// evaluate callbacks are serialized and re-evaluated inside the browser's own execution context --
-// they do NOT close over the calling Node scope -- so `world` was an undeclared free variable.
-// Confirmed empirically against the real fixture: running the excerpt exactly as written throws
-// `ReferenceError: world is not defined` on the very first `world.findClashes(...)` call. Fixed by
-// passing `world` explicitly through the same args object as every other value and destructuring it
-// alongside them (verified empirically: a JSHandle nested as an object field resolves correctly to
-// the live in-page object once actually included).
-async function runR6Sequence(page, world, { cohortDbIds, broadPhase, T0, d }) {
-  await ensureMatricesEqualExposed(page);
-  return page.evaluate(async ({ cohortDbIds, broadPhase, T0, d, world }) => {
-    const { modelArch, modelStructure, modelMechanical } = window.__gate;
-    // Codex-review fix (#2, Important): same model-identity-tagged signature convention as
-    // calibrateR6Translation above (and M3's own comparator, run-gate-m3.mjs:313) -- see that
-    // function's header comment for the dbId-collision rationale, identical here since this
-    // sequence's own query targets the same three federated models.
-    const modelTag = (m) => (m === modelArch ? 'arch' : m === modelStructure ? 'structure' : m === modelMechanical ? 'mechanical' : 'unknown');
-    async function runR3() {
-      const r = await world.findClashes({ mode: 'clearance', clearance: 0.05, source: { model: modelStructure, dbIds: cohortDbIds }, target: { targets: window.viewer.getAllModels().map((m) => ({ model: m })) }, groupBy: 'dbId', broadPhase });
-      return { pairs: r.pairs.map((p) => `${modelTag(p.source.model)}:${p.source.dbId}:${modelTag(p.target.model)}:${p.target.dbId}:${p.type}`).sort(), tlasBuilds: r.statistics.tlasBuilds };
-    }
-    const step1Cold = await runR3(); // R6 cold sample
-    const step1Warm = await runR3(); // R6 warm sample, records P0
-    let refresh;
-    let reconfirm;
-    try {
-      const composed = new window.THREE.Matrix4().makeTranslation(d, 0, 0).multiply(new window.THREE.Matrix4().fromArray(T0));
-      window.viewer.impl.setPlacementTransform(modelArch, composed);
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      world.invalidateModelPlacement(modelArch);
-      refresh = await runR3(); // R6's THIRD measured query, the `refresh` state -- records P1
-    } finally {
-      window.viewer.impl.setPlacementTransform(modelArch, new window.THREE.Matrix4().fromArray(T0));
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      world.invalidateModelPlacement(modelArch);
-      const restored = Array.from(modelArch.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
-      // Task-review fix (Important #2b): calls the REAL, NaN-safe matricesEqual (bridged in via
-      // ensureMatricesEqualExposed above) instead of reimplementing the tolerance check inline.
-      const restoredOk = await window.__r6MatricesEqual(restored, T0);
-      if (!restoredOk) throw new Error('R6 restoration could not be verified — aborting the entire run');
-      // Correctness-only, unmeasured (§5.2.1 step 5) -- but its own tlasBuilds is still returned
-      // below (not just its pairs) so a caller can assert the arm-specific rebuild-delta rule
-      // ("again across restoration") over BOTH invalidations, not just the first (refresh) one.
-      reconfirm = await runR3();
-      if (JSON.stringify(reconfirm.pairs) !== JSON.stringify(step1Warm.pairs)) {
-        throw new Error('R6 restoration verified by matrix but P0 was not recovered — aborting the entire run');
-      }
-    }
-    return { cold: step1Cold, warm: step1Warm, refresh, reconfirm };
-  }, { cohortDbIds, broadPhase, T0, d, world });
+// REAL CONTRACT FINDING against Task 3.5's landed `runR6Sequence`, reported in this task's own
+// write-up. As landed, that function ran all four of R6's queries (cold, warm, refresh, and the
+// unmeasured reconfirm) inside ONE `page.evaluate`. Two things follow that make it unusable
+// verbatim by the real matrix, neither visible until a real consumer wired it up:
+//
+//   1. §6.1.7 requires EVERY observer to be "started and reset immediately before each individual
+//      measured query, bracketed by `performance.mark` pairs naming the tuple", and "no observer
+//      spans two measured queries". Four queries inside one evaluate turn cannot be individually
+//      bracketed by anything -- there is no point between them at which Node can open a trace
+//      session, place an anchor mark pair, or reset the rAF/probe observers. R6's cold, warm and
+//      `refresh` states are verdict-bearing in their own right (§6.1.4's declared exception, §7.2),
+//      so leaving all three unbracketed would have made R6 the one case with no T-a/T-b/T-c at all.
+//   2. It returns each state's pairs as SORTED SIGNATURE STRINGS plus `tlasBuilds` -- there are no
+//      pair objects, no distances, no witnesses, no statistics and no diagnostics in its return
+//      value, so Task 3.6's `compareRuns` (which the brief directs this task to use for R6's own
+//      TLAS-vs-linear parity check, "same as every other case") structurally cannot be called on
+//      its output.
+//
+// Both are resolved here rather than worked around, and WITHOUT weakening any of §5.2.1's
+// assertions: the sequence is decomposed into separate steps against the SAME long-lived
+// CollisionWorld JSHandle (exactly the cross-evaluate contract Task 3.5 itself established and
+// proved), so each of R6's three measured queries now goes through the standard, fully-bracketed
+// `runMeasuredQueryWindow` path and produces a full comparator-shaped run record, while the
+// placement move / invalidate / restore / verify steps keep their own try-finally discipline.
+//
+// The `finally` still carries BOTH halves §5.2.1 requires (restore `T0`, then a SECOND
+// `invalidateModelPlacement`), still verifies the restored matrix against `T0` through the real
+// NaN-safe `matricesEqual`, and still re-confirms `P0` -- and it now does so around a sequence
+// that can throw at more points than before, which makes that discipline more load-bearing, not
+// less: the Architecture model is shared by every later case in the runtime, so any exit with it
+// still displaced would silently contaminate the whole remainder of the run.
+async function r6ApplyMove(page, world, { T0, d }) {
+  await page.evaluate(async ({ T0, d, world }) => {
+    const composed = new window.THREE.Matrix4().makeTranslation(d, 0, 0).multiply(new window.THREE.Matrix4().fromArray(T0));
+    window.viewer.impl.setPlacementTransform(window.__gate.modelArch, composed);
+    // §5.2.1's fixed "render stabilisation": two consecutive requestAnimationFrame turns observed
+    // after the setPlacementTransform call, before the next query is issued.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    world.invalidateModelPlacement(window.__gate.modelArch);
+  }, { T0, d, world });
 }
 
-// M4 Task 3.5's manual-verification entry point (`--smoke-r6`, a temporary flag task 3.7 removes
-// once R6 is wired into the real matrix). Builds R3's source set (the typical cohort, k=10 per
-// §5.2's "target ~10 extracted instances" -- identical k to runSmokeCohortProfiler's own SMOKE_K),
-// runs task 3.5's one-time calibration pass, then exercises the full move->invalidate->refresh->
-// restore-in-`finally` sequence under both broad-phase arms, each in its own fresh, disposable
-// CollisionWorld (§6.1.4), asserting the arm-specific `tlasBuilds` rule and the pair-set-diff rule
-// from §5.2.1's own "Asserted" paragraph.
+async function r6RestoreAndVerify(page, world, { T0 }) {
+  await ensureMatricesEqualExposed(page);
+  return page.evaluate(async ({ T0, world }) => {
+    window.viewer.impl.setPlacementTransform(window.__gate.modelArch, new window.THREE.Matrix4().fromArray(T0));
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    world.invalidateModelPlacement(window.__gate.modelArch);
+    const restored = Array.from(window.__gate.modelArch.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
+    // The REAL, NaN-safe `matricesEqual` from r6-calibration.mjs, bridged in via
+    // `ensureMatricesEqualExposed` -- never an inline reimplementation of the same tolerance check,
+    // which is how the non-finite-element hole this function exists to close got in once already.
+    return { restoredOk: await window.__r6MatricesEqual(restored, T0), restored };
+  }, { T0, world });
+}
+
+// R6's own pair signature convention -- model-identity-tagged exactly as `calibrateR6Translation`
+// and M3's own comparator (run-gate-m3.mjs:313) already are. Derived here from the SAME normalized
+// pair records `compareRuns` consumes, so R6's calibration-consistency check and its parity check
+// can never disagree about what a pair is.
+function r6PairSignatures(run) {
+  return run.pairs.map((p) => `${p.sourceModelTag}:${p.sourceDbId}:${p.targetModelTag}:${p.targetDbId}:${p.type}`).sort();
+}
+
+// ---- The case matrix (§5.2 R-cases, §5.3 S-cases, §5.3.1 S2T) ----------------------------------
 //
-// `statistics.tlasBuilds` is a PER-QUERY count of builds performed DURING that one call, never a
-// cumulative running total across the world's lifetime (confirmed empirically: the world's first,
-// `cold` query reports 3 -- one per target epoch needing its first TLAS -- while the very next,
-// `warm` query on the identical unchanged world reports 0). So the "tlasBuilds delta of 1" §5.2.1
-// describes is each of `refresh`/`reconfirm`'s own count taken against the steady-state `warm`
-// baseline (0, once nothing has changed) -- NOT `reconfirm.tlasBuilds - refresh.tlasBuilds` (which
-// would incorrectly demand a SECOND independent rebuild on top of the first).
-async function runSmokeR6Sequence(page) {
-  await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
-  const rawProfiles = await page.evaluate(() => {
-    const { modelArch, modelStructure, modelMechanical } = window.__gate;
-    return window.__m4Probes.profileStructureCohortDensity([modelArch, modelStructure, modelMechanical]);
+// Each entry expands to one or more VARIANTS. A variant is the unit that gets its own fresh world
+// per (runtime, broadPhase, repetition) -- §6.1.4's tuple identity extended by the `level`
+// dimension the spec already defines for S2T, reused here for every case that has more than one
+// executable configuration (S1's three clearances, S2's cohort x size x mode grid, S3's two modes).
+// Giving each variant its own world is strictly MORE conservative than sharing one: sharing would
+// let the first variant's queries warm the world that the second variant's "cold" sample is
+// supposed to measure, which is the one thing §6.1.4 exists to prevent.
+const S2_INSTANCE_LEVELS = [10, 50, 100, 183]; // §5.3's S2 row, in EXTRACTED SOURCE INSTANCES
+const S1_CLEARANCES = [0.02, 0.05, 0.25];      // §5.3's S1 row
+const R_COHORT_K = 10;                         // §5.2's "target ~10 extracted instances" for R3/R4/R6
+
+function caseVariantsFor(caseName, ctx) {
+  const all = 'all';
+  const src = (dbIds) => ({ modelKey: 'structure', dbIds });
+  const single = src([SOURCE_DB_ID]);
+  const typical = ctx.rCohorts.typical;
+
+  switch (caseName) {
+    case 'R1': return [{ key: null, descriptor: { mode: 'volume-overlap', source: single, targets: all } }];
+    case 'R2': return [{ key: null, descriptor: { mode: 'clearance', clearance: CLEARANCE, source: single, targets: all } }];
+    case 'R3': return [{ key: null, descriptor: { mode: 'clearance', clearance: CLEARANCE, source: src(typical.requestedDbIds), targets: all } }];
+    // §5.2's R4 row: "the same dbId set as R3" -- literally the same array, never re-selected, so
+    // R3-vs-R4 isolates MODE at identical source and target.
+    case 'R4': return [{ key: null, descriptor: { mode: 'volume-overlap', source: src(typical.requestedDbIds), targets: all } }];
+    case 'R5': return [{ key: null, descriptor: { mode: 'clearance', clearance: CLEARANCE, source: single, targets: ['structure'] } }];
+    case 'R6': return [{ key: null, r6: true, descriptor: { mode: 'clearance', clearance: CLEARANCE, source: src(typical.requestedDbIds), targets: all } }];
+    case 'S1':
+      return S1_CLEARANCES.map((c) => ({
+        key: `clearance=${c}`,
+        descriptor: { mode: 'clearance', clearance: c, source: src(typical.requestedDbIds), targets: all },
+      }));
+    case 'S2': {
+      const variants = [];
+      for (const k of S2_INSTANCE_LEVELS) {
+        const cohorts = ctx.s2CohortsByK.get(k);
+        for (const band of ['low', 'typical', 'high']) {
+          const cohort = cohorts[band];
+          for (const mode of ['volume-overlap', 'clearance']) {
+            variants.push({
+              key: `k=${k}:${band}:${mode}`,
+              // §5.4 step 6: a band that cannot reach `k` even after widening to all of L is
+              // recorded NOT EXERCISED with the achieved count -- never silently run at a smaller
+              // size, which would report a k=183 figure measured at whatever it actually reached.
+              notExercised: cohort.status !== 'OK'
+                ? { reason: 'cohort-not-exercised', achievedInstances: cohort.achievedInstances, requestedK: k, band }
+                : null,
+              cohort,
+              densityUnstratified: cohorts.densityUnstratified,
+              descriptor: {
+                mode, ...(mode === 'clearance' ? { clearance: CLEARANCE } : {}),
+                source: src(cohort.requestedDbIds), targets: all,
+              },
+            });
+          }
+        }
+      }
+      return variants;
+    }
+    case 'S3':
+      // §5.3's S3 row names the source ("whole-model-scale") but states no MODE, unlike every other
+      // S-case row. Both modes are run, mirroring S2's own explicit both-modes rule for the same
+      // source-scale axis, rather than silently picking one -- flagged in this task's report as a
+      // spec gap rather than resolved by assumption.
+      return ['volume-overlap', 'clearance'].map((mode) => ({
+        key: `whole-model:${mode}`,
+        descriptor: {
+          mode, ...(mode === 'clearance' ? { clearance: CLEARANCE } : {}),
+          source: src(ctx.allStructureDbIds), targets: all,
+        },
+      }));
+    case 'S4':
+      // §5.3's S4 row requires "two large, densely-tessellated SYNTHETIC meshes at/near
+      // maxSyncTriangleCount (12,000 triangles) with broadly overlapping bounds". No landed Phase-3
+      // task builds such a fixture and this task's brief supplies no construction for it: it needs
+      // a facade delivering a real THREE.BufferGeometry through
+      // `viewer.impl.getRenderProxy -> fragList.getVizmesh` in the exact attribute layout
+      // `adaptViewerGeometry` accepts, which is a fixture-construction task in its own right.
+      // Recorded as an explicit NOT_EXERCISED finding naming what is missing -- never silently
+      // skipped, and never approximated with a real-fixture pair that would not be the pathological
+      // case S4 exists to find. Escalated for a controller ruling in this task's report.
+      return [{ key: 'pathological-pair', notExercised: { reason: 'no-synthetic-dense-mesh-fixture', requires: 'two >=12,000-triangle synthetic meshes with broadly overlapping bounds (spec §5.3, S4 row)' }, descriptor: null }];
+    case 'S2T':
+      // §5.6: S2T's population-level order is counterbalanced ALONGSIDE arm order and case order,
+      // by the same rotation rule -- so the level order is rotated per repetition by the caller.
+      return S2T_LEVELS.map((level) => ({
+        key: `level=${level}`, s2tLevel: level,
+        descriptor: { mode: 'clearance', clearance: CLEARANCE, source: src([SOURCE_DB_ID]), targets: ['s2tFacade'] },
+      }));
+    default:
+      throw new Error(`caseVariantsFor: unknown case "${caseName}"`);
+  }
+}
+
+// §5.6: "Only the representative multi-process runtime is required" for S2T -- the historical
+// `--single-process` configuration exists purely for continuity with M1-M3's archived numbers and
+// S2T has no archived counterpart, so running it there would produce numbers comparable to nothing.
+function caseRunsUnderRuntime(caseName, runtime) {
+  if (caseName === 'S2T') return runtime.authoritative === true;
+  return true;
+}
+
+// ---- One fresh world, one arm, all of that tuple's measured states ------------------------------
+async function runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repetition, runtimeLabel }) {
+  const tupleKey = freshWorldTupleKey({ runtime: runtimeLabel, caseName, level: variant.key ?? undefined, broadPhase, repetition });
+  const admit = variant.s2tLevel
+    // §5.3.1 point 1: the facade REPLACES the Architecture Model identity -- the real Architecture
+    // model is deliberately NOT admitted alongside it, or the run would carry a fourth target epoch
+    // group and the population sweep would measure the wrong thing entirely.
+    ? ['structure', 's2tFacade']
+    : ['arch', 'structure', 'mechanical'];
+
+  const world = await page.evaluateHandle(async (keys) => {
+    const { CollisionWorld } = await import('/collision/index.js');
+    const w = await CollisionWorld.fromViewer(window.viewer);
+    for (const k of keys) w.admitModel(window.__m4Gate.resolveModel(k));
+    return w;
+  }, admit);
+
+  const states = {};
+  try {
+    if (variant.r6) {
+      Object.assign(states, await runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupleKey }));
+    } else {
+      for (const state of measuredStatesFor(caseName)) {
+        const window_ = await runMeasuredQueryWindow(page, cdp, {
+          pageTargetId: ctx.pageTargetId, world,
+          descriptor: { ...variant.descriptor, broadPhase },
+          label: `${tupleKey}:${state}`,
+        });
+        states[state] = window_;
+        // A capacity rejection (§4) is a FINDING, not an abort: it is recorded with its exact limit
+        // and observed value and the run continues. But the REST of this tuple's states are not
+        // measured after one -- a world that has just rejected a query may still have background
+        // geometry work in flight whose spans would report into the next window's recorder without
+        // that window being able to prove the yield recorder covered them (§6.2's second rule), and
+        // a warm sample taken after a failed cold one is not the warm sample §6.1.4 defines anyway.
+        if (window_.capacityError || window_.otherError) { ctx.attributionPoisoned = true; break; }
+      }
+    }
+  } finally {
+    await page.evaluate((w) => w.dispose(), world); // §6.1.4: disposed before the next tuple's world exists
+    await world.dispose();
+  }
+  return { tupleKey, states };
+}
+
+// R6's three measured states, each individually bracketed -- see the decomposition note above.
+async function runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupleKey }) {
+  const { T0, d } = ctx.r6;
+  const descriptor = { ...variant.descriptor, broadPhase };
+  const measure = (state) => runMeasuredQueryWindow(page, cdp, {
+    pageTargetId: ctx.pageTargetId, world, descriptor, label: `${tupleKey}:${state}`,
   });
-  const profiles = rawProfiles.map((p) => ({ ...p, fragmentIds: new Set(p.fragmentIds) }));
-  const ranked = rankByDensity(profiles);
-  const SMOKE_K = 10; // R3's own "target ~10 extracted instances" (§5.2's table)
-  const typical = selectCohort(ranked, 0.5, SMOKE_K);
-  if (typical.status !== 'OK') {
-    throw new Error(`R6 smoke: typical cohort selection did not reach k=${SMOKE_K} (status=${typical.status})`);
-  }
-  const cohortDbIds = typical.requestedDbIds;
 
-  const { T0, changedFlags, p0, p1 } = await calibrateR6Translation(page, { cohortDbIds });
-  const d = selectCalibrationMagnitude(changedFlags);
-  console.log('R6 calibration result:', JSON.stringify({ cohortDbIds, changedFlags, selectedD: d }));
-  if (d === null) {
-    console.log('R6 NOT EXERCISED: no d in the frozen sequence changed the pair set.');
-    return;
-  }
-  // Codex-review fix (#1, Important): the frozen expected pair delta, computed ONCE from the
-  // calibration pass's own p0 (baseline) / p1 (the first-changed set, at this same selected `d`) --
-  // every arm's own observed delta below is compared against this SAME expected delta for EXACT
-  // equality, not merely checked for non-emptiness (§5.2.1: "the resulting expected pair delta...
-  // reused unchanged across every arm, state, and repetition").
-  const expectedPairDelta = pairSetDelta(p0, p1);
-  console.log('R6 expected pair delta (frozen at calibration):', JSON.stringify(expectedPairDelta));
-
-  const armResults = {};
-  for (const broadPhase of ['tlas', 'linear']) {
-    const worldHandle = await page.evaluateHandle(async () => {
-      const { CollisionWorld } = await import('/collision/index.js');
-      const w = await CollisionWorld.fromViewer(window.viewer);
-      w.admitModel(window.__gate.modelArch);
-      w.admitModel(window.__gate.modelStructure);
-      w.admitModel(window.__gate.modelMechanical);
-      return w;
-    });
-    let sequenceResult;
-    try {
-      sequenceResult = await runR6Sequence(page, worldHandle, { cohortDbIds, broadPhase, T0, d });
-    } finally {
-      await page.evaluate((w) => w.dispose(), worldHandle); // fresh-world disposed before the next arm, per §6.1.4
+  const cold = await measure('cold');   // §5.2.1 step 1's first query
+  const warm = await measure('warm');   // §5.2.1 step 1's second query -- records P0
+  let refresh = null;
+  let reconfirm = null;
+  let restoration = null;
+  try {
+    await r6ApplyMove(page, world, { T0, d });   // §5.2.1 steps 2-3
+    refresh = await measure('refresh');          // §5.2.1 step 4 -- records P1, verdict-bearing
+  } finally {
+    // §5.2.1 step 5: restore T0, invalidate a SECOND time, verify, re-confirm P0. Both halves,
+    // both in the `finally`, because the Architecture model is shared by every later case.
+    restoration = await r6RestoreAndVerify(page, world, { T0 });
+    if (!restoration.restoredOk) {
+      throw new Error('R6 restoration could not be verified — aborting the entire run');
     }
-
-    const refreshDelta = sequenceResult.refresh.tlasBuilds - sequenceResult.warm.tlasBuilds;
-    const reconfirmDelta = sequenceResult.reconfirm.tlasBuilds - sequenceResult.warm.tlasBuilds;
-    const expectedDelta = broadPhase === 'tlas' ? 1 : 0;
-    if (refreshDelta !== expectedDelta) {
-      throw new Error(`R6 smoke (${broadPhase}): expected tlasBuilds delta ${expectedDelta} across the refresh query, got ${refreshDelta}`);
-    }
-    if (reconfirmDelta !== expectedDelta) {
-      throw new Error(`R6 smoke (${broadPhase}): expected tlasBuilds delta ${expectedDelta} across restoration, got ${reconfirmDelta}`);
-    }
-    if (broadPhase === 'linear' && [sequenceResult.cold, sequenceResult.warm, sequenceResult.refresh, sequenceResult.reconfirm].some((s) => s.tlasBuilds !== 0)) {
-      throw new Error('R6 smoke (linear): tlasBuilds must be 0 throughout the linear arm');
-    }
-    // Codex-review fix (#1, Important): assert the EXACT frozen delta, not merely "differs".
-    const observedRefreshDelta = pairSetDelta(sequenceResult.warm.pairs, sequenceResult.refresh.pairs);
-    if (JSON.stringify(observedRefreshDelta) !== JSON.stringify(expectedPairDelta)) {
-      throw new Error(`R6 smoke (${broadPhase}): observed refresh pair delta does not match the frozen calibration delta -- expected ${JSON.stringify(expectedPairDelta)}, got ${JSON.stringify(observedRefreshDelta)}`);
-    }
-    if (pairSetsDiffer(sequenceResult.reconfirm.pairs, sequenceResult.warm.pairs)) {
-      throw new Error(`R6 smoke (${broadPhase}): post-restoration reconfirm.pairs must equal warm.pairs (P0 recovered)`);
-    }
-
-    armResults[broadPhase] = {
-      coldTlasBuilds: sequenceResult.cold.tlasBuilds,
-      warmTlasBuilds: sequenceResult.warm.tlasBuilds,
-      refreshTlasBuilds: sequenceResult.refresh.tlasBuilds,
-      reconfirmTlasBuilds: sequenceResult.reconfirm.tlasBuilds,
-      refreshDelta,
-      reconfirmDelta,
-      observedRefreshDelta,
-      warmPairCount: sequenceResult.warm.pairs.length,
-      refreshPairCount: sequenceResult.refresh.pairs.length,
-      reconfirmPairCount: sequenceResult.reconfirm.pairs.length,
-    };
+    // Correctness-only and explicitly UNMEASURED (§5.2.1 step 5), so it deliberately does NOT go
+    // through runMeasuredQueryWindow -- bracketing it would put a fourth "measured" window on a
+    // case the spec says has exactly three.
+    reconfirm = await runQueryInPage(page, world, descriptor);
   }
 
-  console.log('R6 smoke result:', JSON.stringify({ cohortDbIds, selectedD: d, expectedPairDelta, arms: armResults }, null, 2));
+  if (warm.run && reconfirm?.run && pairSetsDiffer(r6PairSignatures(reconfirm.run), r6PairSignatures(warm.run))) {
+    throw new Error('R6 restoration verified by matrix but P0 was not recovered — aborting the entire run');
+  }
+  return { cold, warm, refresh, r6: { restoration, reconfirm } };
+}
+
+// §5.2.1's R6-SPECIFIC assertions, run in addition to (never instead of) §6.4's general comparator.
+// The tlasBuilds rule is stated PER ARM because the two arms genuinely differ: a `linear` call
+// consults no TLAS and passes no armed epochs, so its `tlasBuilds` is 0 by construction, and
+// asserting a delta of 1 there would force a conforming harness to fail on correct library
+// behaviour. The pair delta is compared for EXACT equality against the frozen calibration delta,
+// never merely for non-emptiness -- two arms producing different non-empty deltas both satisfy
+// "changed" while disagreeing about what actually moved.
+function checkR6ArmRules({ states, broadPhase, expectedPairDelta }) {
+  const violations = [];
+  const { cold, warm, refresh, r6 } = states;
+  if (!cold?.run || !warm?.run || !refresh?.run) return ['r6-states-missing'];
+
+  const tb = (w) => w.run.statistics.tlasBuilds;
+  const expectedDelta = broadPhase === 'tlas' ? 1 : 0;
+  // `tlasBuilds` is a PER-QUERY count, never a cumulative total (Task 3.5's own empirical finding:
+  // the world's first `cold` query reports 3, the immediately following unchanged `warm` reports 0)
+  // -- so §5.2.1's "delta of 1" is each of refresh/reconfirm's own count against the steady-state
+  // warm baseline, not `reconfirm - refresh`.
+  if (tb(refresh) - tb(warm) !== expectedDelta) violations.push(`r6-refresh-tlasBuilds-delta=${tb(refresh) - tb(warm)}(want ${expectedDelta})`);
+  const reconfirmBuilds = r6?.reconfirm?.run?.statistics?.tlasBuilds ?? null;
+  if (reconfirmBuilds !== null && reconfirmBuilds - tb(warm) !== expectedDelta) {
+    violations.push(`r6-reconfirm-tlasBuilds-delta=${reconfirmBuilds - tb(warm)}(want ${expectedDelta})`);
+  }
+  if (broadPhase === 'linear' && [cold, warm, refresh].some((s) => tb(s) !== 0)) violations.push('r6-linear-tlasBuilds-nonzero');
+
+  const observed = pairSetDelta(r6PairSignatures(warm.run), r6PairSignatures(refresh.run));
+  if (JSON.stringify(observed) !== JSON.stringify(expectedPairDelta)) {
+    violations.push(`r6-pair-delta-mismatch: observed ${JSON.stringify(observed)} != frozen ${JSON.stringify(expectedPairDelta)}`);
+  }
+  return violations;
+}
+
+// ---- main() -------------------------------------------------------------------------------------
+function parseListFlag(name, fallback) {
+  const raw = process.argv.find((a) => a.startsWith(`--${name}=`));
+  if (!raw) return fallback;
+  return raw.slice(name.length + 3).split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 async function main() {
   await mkdir(RESULTS_DIR, { recursive: true });
-  const smokeCohortProfiler = process.argv.includes('--smoke-cohort-profiler');
-  const smokeS2T = process.argv.includes('--smoke-s2t');
-  const smokeR6 = process.argv.includes('--smoke-r6');
+
+  // Scoping flags. The full matrix is a multi-hour run (5 repetitions x 11 cases, several of which
+  // expand to many variants, x up to 2 arms x 2 runtimes), so these exist so a targeted subset can
+  // be exercised end to end -- for this task's own manual verification, and for any later debugging
+  // of one case -- without ever changing what a flagless `npm run test:performance:gate:m4`
+  // dispatches, which remains the complete baseline matrix.
+  const selectedCases = parseListFlag('cases', M4_CASE_LIST).filter((c) => M4_CASE_LIST.includes(c));
+  const selectedRuntimes = parseListFlag('runtimes', null);
+  const repArg = process.argv.find((a) => a.startsWith('--repetitions='));
+  const repetitionCount = repArg ? Number(repArg.split('=')[1]) : REPETITIONS;
+  if (!Number.isInteger(repetitionCount) || repetitionCount <= 0) throw new Error(`--repetitions must be a positive integer (got ${repArg})`);
+  if (selectedCases.length === 0) throw new Error('--cases selected no known case');
+
+  const results = { startedAt: new Date().toISOString(), runtimes: [] };
+  let failedValidation = null;
+
   for (const runtime of Object.values(RUNTIME_CONFIGS)) {
+    if (selectedRuntimes && !selectedRuntimes.includes(runtime.label)) continue;
     console.log(`\n=== Runtime: ${runtime.label} ===`);
     const browser = await chromium.launch({ args: runtime.args, proxy: resolveProxyFromEnv() });
+    const runtimeReport = { runtime: runtime.label, authoritative: runtime.authoritative, cases: [] };
     try {
-      // page creation lives INSIDE the try (codex-review finding #4 on this task): if newPage()
-      // itself rejects, browser.close() below must still run rather than leaking the Chromium
-      // child process.
       const page = await browser.newPage();
       const identity = await loadFixtureAndReconfirm(page);
       console.log('Fixture identity (re-confirmed live):', JSON.stringify(identity));
+      await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
+      await installGateHelpers(page);
 
-      if (smokeCohortProfiler) {
-        // Task 3.3's manual-verification proof only -- one runtime's live fixture is sufficient to
-        // prove the profiling walk + cohort selection work end to end; skip warm-up and the
-        // fresh-world tuple proof entirely for this temporary smoke pass.
-        await runSmokeCohortProfiler(page);
-        return;
-      }
-
-      if (smokeS2T) {
-        // Task 3.4's manual-verification proof only -- one runtime's live fixture is sufficient to
-        // prove the facade + level-to-level control rule work end to end; skip warm-up and the
-        // fresh-world tuple proof entirely for this temporary smoke pass.
-        await runSmokeS2T(page);
-        return;
-      }
-
-      if (smokeR6) {
-        // Task 3.5's manual-verification proof only -- one runtime's live fixture is sufficient to
-        // prove the calibration pass + full move->invalidate->refresh->restore sequence work end to
-        // end under both broad-phase arms; skip warm-up and the fresh-world tuple proof entirely for
-        // this temporary smoke pass.
-        await runSmokeR6Sequence(page);
-        return;
-      }
+      const cdp = await page.context().newCDPSession(page);
+      const { frameTree } = await cdp.send('Page.getFrameTree');
+      const pageTargetId = frameTree.frame.id;
+      // §6.2: the exact Chromium version is "recorded verbatim in the report along with" the trace
+      // categories, "since event naming is version-dependent and is pinned to the build actually
+      // tested" -- this run has already had to work around exactly that (see TOP_LEVEL_TASK_NAMES).
+      runtimeReport.chromiumVersion = browser.version();
+      runtimeReport.traceCategories = TRACE_CATEGORIES;
+      runtimeReport.acceptedTopLevelTaskNames = TOP_LEVEL_TASK_NAMES;
 
       await sacrificialWarmup(page);
       console.log('Sacrificial warm-up complete (unmeasured, no recorder installed).');
 
-      // Task 3.1 proof: exactly ONE fresh-world tuple, dispose demonstrated. Task 3.7 replaces
-      // this block with the real R1-R6/S1-S4/S2T matrix loop.
-      const tupleKey = freshWorldTupleKey({ runtime: runtime.label, caseName: 'R1', broadPhase: 'tlas', repetition: 0 });
-      console.log(`Fresh-world lifecycle proof tuple: ${tupleKey}, states: ${measuredStatesFor('R1')}`);
-      await page.evaluate(async ({ sourceDbId }) => {
-        const { CollisionWorld } = await import('/collision/index.js');
-        const w = await CollisionWorld.fromViewer(window.viewer);
-        w.admitModel(window.__gate.modelArch);
-        w.admitModel(window.__gate.modelStructure);
-        w.admitModel(window.__gate.modelMechanical);
-        await w.findClashes({
-          mode: 'volume-overlap',
-          source: { model: window.__gate.modelStructure, dbIds: [sourceDbId] },
-          target: { targets: window.viewer.getAllModels().map((m) => ({ model: m })) },
-          groupBy: 'dbId',
-          broadPhase: 'tlas',
-        });
-        w.dispose(); // fresh-world disposed before the next tuple, per §6.1.4
-      }, { sourceDbId: SOURCE_DB_ID });
-      console.log('Fresh-world construct/dispose lifecycle OK.');
+      // §5.4's profiling pass -- ONCE per runtime, unmeasured, no recorder installed.
+      const { profiles, ranked } = await runCohortProfiling(page);
+      const rCohorts = buildCohorts(ranked, R_COHORT_K);
+      const s2CohortsByK = new Map(S2_INSTANCE_LEVELS.map((k) => [k, buildCohorts(ranked, k)]));
+      if (rCohorts.typical.status !== 'OK') {
+        throw new Error(`Cohort profiling could not build the typical cohort at k=${R_COHORT_K} (status=${rCohorts.typical.status}) -- R3/R4/R6/S1 have no source set`);
+      }
+      console.log('Cohort profiling:', JSON.stringify({
+        dbIdCount: profiles.length,
+        typical: { dbIds: rCohorts.typical.requestedDbIds, achieved: rCohorts.typical.achievedInstances, weightedDensity: rCohorts.typical.weightedDensity },
+        densityUnstratifiedAtK: [...s2CohortsByK].map(([k, c]) => ({ k, densityUnstratified: c.densityUnstratified })),
+      }));
+      runtimeReport.cohorts = {
+        profiledDbIdCount: profiles.length,
+        r: rCohorts,
+        s2ByK: Object.fromEntries([...s2CohortsByK].map(([k, c]) => [k, c])),
+      };
+
+      const diagonalByTag = await page.evaluate(() => window.__m4Gate.worldDiagonalsByTag());
+      runtimeReport.worldDiagonalsByTag = diagonalByTag;
+      // §6.4 requires the witness tolerance's "numeric value for the fixture actually used" to be
+      // computed and printed. It is per model pair, so every pair's value is printed, not one.
+      console.log('§6.4 witness tolerances (1e-9 x world diagonal), per model:',
+        JSON.stringify(Object.fromEntries(Object.entries(diagonalByTag).map(([t, d]) => [t, d === null ? null : 1e-9 * d]))));
+
+      // §5.2.1's ONE-TIME, unmeasured R6 calibration pass -- once per runtime, before any measured
+      // tuple, and frozen thereafter ("reused unchanged across every arm, state, and repetition").
+      let r6 = null;
+      if (selectedCases.includes('R6')) {
+        const { T0, changedFlags, p0, p1 } = await calibrateR6Translation(page, { cohortDbIds: rCohorts.typical.requestedDbIds });
+        const d = selectCalibrationMagnitude(changedFlags);
+        console.log('R6 calibration:', JSON.stringify({ changedFlags, selectedD: d }));
+        r6 = d === null
+          // §5.2.1: "If no `d` in the sequence changes the pair set, R6 is reported NOT EXERCISED
+          // with the sequence tried, rather than the sequence being extended ad hoc."
+          ? { notExercised: { reason: 'no-calibration-magnitude-changed-the-pair-set', sequenceTried: R6_CALIBRATION_SEQUENCE } }
+          : { T0, d, expectedPairDelta: pairSetDelta(p0, p1) };
+        runtimeReport.r6Calibration = r6.notExercised ? r6 : { selectedD: d, expectedPairDelta: r6.expectedPairDelta, changedFlags };
+      }
+
+      const allStructureDbIds = profiles.map((p) => p.dbId);
+      const ctx = { pageTargetId, rCohorts, s2CohortsByK, allStructureDbIds, r6, attributionPoisoned: false };
+
+      const activeCases = selectedCases.filter((c) => caseRunsUnderRuntime(c, runtime));
+      const schedule = buildCounterbalancedSchedule(activeCases, repetitionCount);
+      const caseReports = new Map(activeCases.map((c) => [c, { caseName: c, variants: new Map() }]));
+
+      for (const { repetition, caseOrder, armOrder } of schedule) {
+        console.log(`\n-- repetition ${repetition} (arms ${armOrder.join('>')}, cases ${caseOrder.join(',')}) --`);
+        for (const caseName of caseOrder) {
+          if (caseName === 'R6' && ctx.r6?.notExercised) {
+            caseReports.get(caseName).notExercised = ctx.r6.notExercised;
+            continue;
+          }
+          let variants = caseVariantsFor(caseName, ctx);
+          // §5.6: S2T's population-LEVEL order is counterbalanced alongside arm and case order --
+          // higher levels run longer, so a fixed level order would correlate the population factor
+          // with thermal and runtime drift. Same rotation rule, reused rather than re-derived.
+          if (caseName === 'S2T') variants = caseOrderForRepetition(variants, repetition);
+
+          for (const variant of variants) {
+            const caseReport = caseReports.get(caseName);
+            const vKey = variant.key ?? '(single)';
+            if (!caseReport.variants.has(vKey)) caseReport.variants.set(vKey, { key: vKey, repetitions: [], notExercised: variant.notExercised ?? null });
+            const variantReport = caseReport.variants.get(vKey);
+            if (variant.notExercised) continue; // recorded by name above; never silently skipped
+
+            if (variant.s2tLevel !== undefined) await installS2TFacade(page, variant.s2tLevel);
+            try {
+              const arms = {};
+              for (const broadPhase of armOrder) {
+                arms[broadPhase] = await runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repetition, runtimeLabel: runtime.label });
+              }
+
+              // §6.4: every TLAS/linear pair of runs for the same (case, state, repetition) is
+              // compared. A `false` disposition is FAILED_VALIDATION and aborts -- "a performance
+              // verdict never fails the process; a correctness violation always does."
+              const parity = {};
+              for (const state of measuredStatesFor(caseName)) {
+                const a = arms.tlas?.states?.[state];
+                const b = arms.linear?.states?.[state];
+                if (!a?.run || !b?.run) { parity[state] = { compared: false, reason: 'one or both arms produced no result set' }; continue; }
+                const cmp = compareRunsAtPairScale(a.run, b.run, diagonalByTag);
+                parity[state] = cmp;
+                if (!cmp.valid && !failedValidation) {
+                  failedValidation = { runtime: runtime.label, caseName, variant: vKey, state, repetition, fields: cmp.fields, partitions: cmp.partitions };
+                }
+              }
+
+              const r6Violations = variant.r6 && arms.tlas && arms.linear
+                ? Object.fromEntries(armOrder.map((bp) => [bp, checkR6ArmRules({ states: arms[bp].states, broadPhase: bp, expectedPairDelta: ctx.r6.expectedPairDelta })]))
+                : null;
+              if (r6Violations && Object.values(r6Violations).some((v) => v.length) && !failedValidation) {
+                failedValidation = { runtime: runtime.label, caseName, variant: vKey, repetition, r6Violations };
+              }
+
+              const s2tControls = variant.s2tLevel !== undefined ? await readS2TFacadeControls(page) : null;
+              variantReport.repetitions.push({
+                repetition, armOrder,
+                arms: Object.fromEntries(Object.entries(arms).map(([bp, t]) => [bp, summarizeArmTuple(t)])),
+                parity, r6Violations, s2tControls, s2tLevel: variant.s2tLevel ?? null,
+                cohort: variant.cohort ? { status: variant.cohort.status, requestedDbIds: variant.cohort.requestedDbIds, achievedInstances: variant.cohort.achievedInstances, weightedDensity: variant.cohort.weightedDensity ?? null } : null,
+                densityUnstratified: variant.densityUnstratified ?? null,
+              });
+              logTupleLine(runtime.label, caseName, vKey, repetition, arms, parity);
+            } finally {
+              if (variant.s2tLevel !== undefined) await disposeS2TFacade(page);
+            }
+
+            if (failedValidation) break;
+            // The attribution-poisoning rule (independent-review finding): after a capacity
+            // rejection or any other early failure, background collision work may still be in
+            // flight whose spans would report into a LATER window's recorder through a call site
+            // that is not generation-bound (collision/README.md:829 documents exactly this for the
+            // direct `reportSpan` sites). Rather than let that silently corrupt a later tuple's
+            // stage attribution -- or poison the whole remaining run -- the page is rebuilt, which
+            // replaces the module realm those recorders live in outright.
+            if (ctx.attributionPoisoned) {
+              console.log('   ! rebuilding the page: an earlier query failed and background work may still be in flight');
+              ctx.attributionPoisoned = false;
+              await page.reload();
+              await loadFixtureAndReconfirm(page);
+              await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
+              await installGateHelpers(page);
+              await sacrificialWarmup(page);
+            }
+          }
+          if (failedValidation) break;
+        }
+        if (failedValidation) break;
+      }
+
+      // §5.3.1's level-to-level mechanical control rule, over the FULL level set. The optional
+      // `expectedLevels` argument is passed deliberately: without it the checker accepts any two
+      // or more levels, and this is the real sweep, not Task 3.4's two-level smoke proof.
+      if (caseReports.has('S2T')) {
+        runtimeReport.s2tControlRule = await checkS2TControlRule(page, caseReports.get('S2T'));
+      }
+
+      runtimeReport.cases = [...caseReports.values()].map((c) => ({
+        caseName: c.caseName, notExercised: c.notExercised ?? null,
+        variants: [...c.variants.values()],
+      }));
     } finally {
       await browser.close();
     }
+    results.runtimes.push(runtimeReport);
+    if (failedValidation) break;
   }
+
+  results.finishedAt = new Date().toISOString();
+  results.failedValidation = failedValidation;
+  console.log('\n=== Baseline matrix complete ===');
+  console.log(JSON.stringify(summarizeRun(results), null, 2));
+
+  if (failedValidation) {
+    console.error('FAILED_VALIDATION:', JSON.stringify(failedValidation, null, 2));
+    throw new Error('FAILED_VALIDATION — a §6.4 correctness comparison or a §5.2.1 R6 rule failed; see the record above');
+  }
+  return results;
 }
 
-// Guarded so Task 3.2's manual-verification scripts (and Task 3.7+ callers) can `import` this
-// file's now-exported calibration/dispatch/resolve functions without ALSO triggering the whole
-// Task 3.1 fixture-lifecycle main() run as an unwanted side effect of the import. Real bug found
-// running this task's own manual verification (b): before this guard, `import ... from
-// '../run-gate-m4.mjs'` in manual-verify-input-probe-block.mjs (exactly as the brief's own
-// excerpt directs) launched a second, unrelated Chromium instance and started loading the full
-// 3-model fixture against the live dev server purely as an import side effect, racing the manual
-// script's own browser/page and polluting its console output.
-//
-// Matches the established sibling pattern (run-gate.mjs:475-494, run-gate-m2.mjs:596-597,
-// run-gate-m3.mjs:900-901, test/acceptance/room-locator.acceptance.mjs:381,
-// clash-finder.acceptance.mjs:2404) rather than a bare `import.meta.url === file://${argv[1]}`
-// check: a bare argv[1] comparison is NOT sufficient on its own -- Node's `node --test` sweep sets
-// `process.argv[1]` to THIS file's own path when it imports it as a candidate, identical to a
-// direct `node test/performance/run-gate-m4.mjs` invocation (run-gate.mjs's own comment documents
-// this, confirmed during that file's Batch-5 review). `scripts/run-tests.mjs` currently scopes
+// §5.3.1's control rule, evaluated on the LEVELS ACTUALLY MEASURED. Reported as PARTIALLY_VERIFIED
+// rather than as a clean pass, because Task 3.4's own report records two of §5.3.1's six required
+// conditions as deliberately unimplemented (exact `clearanceExactAabbSurvivors` PAIR-SET equality,
+// and the four-way narrow-phase outcome mix) -- neither is derivable from `findClashes`'s current
+// public contract without new `collision/` instrumentation, which is a Global Constraint this task
+// must not cross. Reporting `pass: true` from the existing checker alone would overstate
+// conformance with a rule whose full form was never checked.
+const S2T_UNVERIFIED_CONDITIONS = [
+  'clearanceExactAabbSurvivors pair-set identity (only its COUNT is checkable from the public contract)',
+  'four-way narrow-phase outcome mix, count-for-count (no existing statistic exposes those four buckets)',
+];
+
+async function checkS2TControlRule(page, s2tCaseReport) {
+  const levelResults = [];
+  for (const variant of s2tCaseReport.variants.values()) {
+    const rep = variant.repetitions[0];
+    if (!rep) continue;
+    const tlas = rep.arms.tlas;
+    if (!tlas?.states?.warm?.run) continue;
+    const run = tlas.states.warm.run;
+    levelResults.push({
+      level: rep.s2tLevel,
+      realCount: rep.s2tControls?.realFragmentCount ?? 0,
+      targetModelId: rep.s2tControls?.targetModelId,
+      statistics: run.statistics,
+      diagnostics: run.statistics.diagnostics,
+      pairSignatures: run.pairs.map((p) => `source:${p.sourceDbId}:target:${p.targetDbId < 0 ? 'synthetic' : p.targetDbId}:${p.type}`).sort(),
+      pairDistances: run.pairs.map((p) => [`${p.sourceDbId}:${p.targetDbId}`, p.distance]),
+      pairWitnesses: run.pairs.map((p) => [`${p.sourceDbId}:${p.targetDbId}`, p.witness]),
+      syntheticVizmeshAccessCount: rep.s2tControls?.syntheticVizmeshAccessCount ?? 0,
+    });
+  }
+  if (levelResults.length < 2) {
+    return { coverage: 'NOT_EXERCISED', reason: 'fewer than two S2T levels were measured', unverifiedConditions: S2T_UNVERIFIED_CONDITIONS };
+  }
+  const measuredLevels = levelResults.map((l) => l.level).sort((a, b) => a - b);
+  const checked = await page.evaluate(
+    ({ results, expected }) => window.__m4Probes.checkS2TLevelToLevelControlRule(results, expected),
+    { results: levelResults, expected: measuredLevels },
+  );
+  return {
+    coverage: 'PARTIALLY_VERIFIED',
+    checked,
+    levelsMeasured: measuredLevels,
+    fullLevelSet: S2T_LEVELS,
+    allLevelsMeasured: JSON.stringify(measuredLevels) === JSON.stringify([...S2T_LEVELS].sort((a, b) => a - b)),
+    unverifiedConditions: S2T_UNVERIFIED_CONDITIONS,
+  };
+}
+
+function summarizeArmTuple(tuple) {
+  const out = { tupleKey: tuple.tupleKey, states: {} };
+  for (const [state, w] of Object.entries(tuple.states)) {
+    if (state === 'r6' || !w) continue;
+    out.states[state] = {
+      makespanMs: w.makespanMs,
+      targets: w.targets,
+      targetMeasurements: w.targetMeasurements,
+      screenResidualMs: w.screenResidualMs,
+      boundaries: w.boundaries,
+      unattributableStageIntervals: w.unattributableStageIntervals,
+      unattributableStageTimeMs: w.unattributableStageTimeMs,
+      unmappedSpanLabels: w.unmappedSpanLabels,
+      taDiagnostics: w.taDiagnostics,
+      envelope: w.envelope,
+      yieldCount: w.yieldCount,
+      cumulativeYieldMs: w.cumulativeYieldMs,
+      spanTotalsMs: w.spanTotalsMs,
+      diagnosticEventCount: w.diagnosticEventCount,
+      observationCount: w.observationCount,
+      pairCount: w.run ? w.run.pairs.length : null,
+      statistics: w.run ? { ...w.run.statistics, diagnostics: undefined, diagnosticCount: w.run.statistics.diagnostics.length } : null,
+      // §4: a capacity rejection is reported with its exact limit and observed value, never trimmed.
+      capacityRejection: w.capacityError ? toCapacityRejectedRecord(w.capacityError) : null,
+      error: w.otherError ?? null,
+    };
+  }
+  return out;
+}
+
+function logTupleLine(runtimeLabel, caseName, vKey, repetition, arms, parity) {
+  const parts = [];
+  for (const [bp, tuple] of Object.entries(arms)) {
+    for (const [state, s] of Object.entries(summarizeArmTuple(tuple).states)) {
+      const ta = s.targetMeasurements?.tA;
+      const taStr = ta?.status === 'DETERMINED' ? `maxTask=${ta.maxTaskMs.toFixed(1)}ms${ta.pass ? '' : ' !T-a'}` : `T-a ${ta?.status ?? '?'}(${ta?.reason ?? '-'})`;
+      const cap = s.capacityRejection ? ` CAPACITY_REJECTED(${s.capacityRejection.limitName} ${s.capacityRejection.observedValue}>${s.capacityRejection.limitValue})` : '';
+      parts.push(`${bp}/${state} ${s.makespanMs?.toFixed(0)}ms ${taStr} Ri=${s.screenResidualMs === null ? '-' : s.screenResidualMs.toFixed(1)} pairs=${s.pairCount ?? '-'}${cap}`);
+    }
+  }
+  const parityStr = Object.entries(parity).map(([st, p]) => `${st}:${p.compared === false ? 'n/a' : (p.valid ? 'OK' : 'MISMATCH')}`).join(' ');
+  console.log(`  [${runtimeLabel}] ${caseName}${vKey === '(single)' ? '' : `[${vKey}]`} rep${repetition} | ${parts.join(' | ')} | parity ${parityStr}`);
+}
+
+function summarizeRun(results) {
+  return {
+    runtimes: results.runtimes.map((r) => ({
+      runtime: r.runtime, chromiumVersion: r.chromiumVersion,
+      acceptedTopLevelTaskNames: r.acceptedTopLevelTaskNames,
+      worldDiagonalsByTag: r.worldDiagonalsByTag,
+      s2tControlRule: r.s2tControlRule ?? null,
+      cases: r.cases.map((c) => ({
+        caseName: c.caseName,
+        notExercised: c.notExercised,
+        variants: c.variants.map((v) => ({
+          key: v.key, notExercised: v.notExercised, repetitions: v.repetitions.length,
+        })),
+      })),
+    })),
+    failedValidation: results.failedValidation,
+  };
+}
+
 // `node --test` to an explicit list of this repo's own `*.test.mjs` files (this file does not
 // match that suffix), which already prevents a sweep from reaching this file today -- the
 // `NODE_TEST_CONTEXT` check below is the same defense-in-depth every sibling file carries, in case
