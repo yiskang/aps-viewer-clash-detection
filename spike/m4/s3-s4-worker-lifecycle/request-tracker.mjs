@@ -27,8 +27,14 @@ export class ProtocolFaultError extends Error {
   constructor(message) { super(message); this.name = 'ProtocolFaultError'; }
 }
 
-// A usable requestId is a non-negative integer -- requestId is a monotonically increasing counter
-// (§10.1), never a string/object/NaN/fractional/negative value. Anything else is unattributable.
+// A usable requestId is a POSITIVE integer -- requestId is a monotonically increasing counter
+// starting at 1 (§10.1, see `nextRequestId` below), never a string/object/NaN/fractional/negative
+// value, and never 0. Anything else is unattributable.
+//
+// (The brief's own comment here said "non-negative integer", which would admit 0; the code it
+// annotates has always required `>= 1`, and 0 is verified protocol-fatal. Corrected rather than
+// left to mislead a reader of the ONE canonical protocol implementation -- comment change only,
+// no behavior change.)
 function hasUsableRequestId(raw) {
   return raw != null && typeof raw === 'object'
     && typeof raw.requestId === 'number'
@@ -135,6 +141,34 @@ export function createRequestTracker({ worldGeneration = 1 } = {}) {
     }
     const requestId = raw.requestId;
 
+    // codex-review fix (Important #1, empirically reproduced -- partial, see below): a
+    // STRUCTURALLY INVALID workerGeneration (missing, non-integer, < 1) is a routing-envelope
+    // defect, not a stale-but-legitimate generation. Silently discarding it -- what the guard below
+    // did for every non-matching value alike -- left the named request pending FOREVER when the
+    // CURRENT worker produced it (version skew, a worker-side bug that drops the field). There is no
+    // timeout anywhere in this protocol, so "pending forever" is terminal, and it violates the one
+    // invariant this module exists to guarantee. Probe output before the fix, for a current-worker
+    // response omitting the field entirely:
+    //   {"outcome":"discarded-silent","reason":"stale-worker-generation"} | promise: PENDING | pendingCount: 1
+    // It is now a REQUEST-LOCAL MalformedResponseError (not protocol-fatal: exactly one request is
+    // identified and only that request's contract is in question), so the promise always settles.
+    //
+    // Scoped deliberately to STRUCTURALLY invalid values. A well-formed but non-current generation
+    // still falls through to the silent discard below, because the brief's "reuse safety (message
+    // side)" test requires exactly that -- a forged late message from a replaced worker naming a
+    // live requestId must be discarded WITHOUT disturbing that request, which then resolves
+    // normally. codex-review would have rejected that case too; that half is a genuine conflict
+    // with an explicit brief test and is flagged in this task's report for a controller ruling
+    // rather than resolved here.
+    if (!Number.isInteger(raw.workerGeneration) || raw.workerGeneration < 1) {
+      const named = pending.get(requestId);
+      if (named && named.workerGeneration === currentWorkerGeneration) {
+        finalize(named, 'reject', new MalformedResponseError(`request ${requestId}: response carries a structurally invalid workerGeneration (${String(raw.workerGeneration)})`));
+        return { outcome: 'rejected', errorName: 'MalformedResponseError', reason: 'malformed-worker-generation' };
+      }
+      return { outcome: 'discarded-silent', reason: 'malformed-worker-generation' };
+    }
+
     // Attribution guard #1 (message side): a response whose workerGeneration is not the CURRENT
     // worker's is discarded silently -- closes the request-ID-reuse-across-replacement gap.
     if (raw.workerGeneration !== currentWorkerGeneration) {
@@ -200,6 +234,30 @@ export function createRequestTracker({ worldGeneration = 1 } = {}) {
     attachWorker(worker) {
       if (discardedWorkerInstances.has(worker)) {
         throw new Error('createRequestTracker: cannot reattach a discarded worker instance -- construct a fresh Worker');
+      }
+      // codex-review fix (Important #2, empirically reproduced): replacing a STILL-ATTACHED worker
+      // previously left the outgoing worker's own onmessage/onerror installed and still pointing at
+      // this tracker. A late `onerror` from that already-replaced worker then ran faultAndDiscard(),
+      // which terminates whatever is CURRENTLY attached -- i.e. it killed the REPLACEMENT worker and
+      // rejected the replacement's own unrelated in-flight requests with WorkerFaultError, while
+      // leaving the actually-crashed worker running. Probe output before the fix:
+      //   w1.onerror still installed after replacement? true
+      //     -> w2.terminated: true   (w1.terminated: false)
+      //     -> fresh (worker2's own request): REJECTED:WorkerFaultError
+      // The outgoing worker is therefore neutralized here: its handlers are cleared so it can never
+      // drive this tracker again, and it is marked permanently non-reattachable (the same
+      // "a worker this tracker has let go is never taken back" invariant detachWorker() enforces).
+      //
+      // What is deliberately NOT done here, because the brief specifies otherwise: the outgoing
+      // worker's still-pending requests are NOT rejected (the brief's own "reuse safety
+      // (request-state side)" test asserts they remain pending, which is what makes guard #2 below
+      // testable), and the outgoing worker is NOT terminated (this tracker did not construct it, and
+      // that scenario leaves it a valid object in the caller's own hands). See this task's report --
+      // both are flagged for a controller ruling rather than changed unilaterally.
+      if (attachedWorker && attachedWorker !== worker) {
+        attachedWorker.onmessage = null;
+        attachedWorker.onerror = null;
+        discardedWorkerInstances.add(attachedWorker);
       }
       currentWorkerGeneration += 1; // every attach, including the first, is a new generation
       attachedWorker = worker;

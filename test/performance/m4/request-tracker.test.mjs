@@ -489,6 +489,71 @@ test('request-ID/workerGeneration reuse safety (request-state side): current-gen
   assert.equal(tracker.isPending(staleReq.requestId), true, 'still pending -- neither wrongly resolved nor rejected');
 });
 
+// ---- codex-review regressions (Task 3.10) -------------------------------------------------------
+// Both cases below are real defects reproduced against the brief's own Step 3 implementation before
+// being fixed; neither is contradicted by any brief-specified assertion. See the task report for the
+// findings that were deliberately NOT changed (they conflict with an explicit brief test).
+
+test('codex-review #2 regression: a late onerror from an ALREADY-REPLACED worker must not terminate the replacement or reject ITS requests', async () => {
+  const tracker = createRequestTracker();
+  const worker1 = makeFakeWorker();
+  const worker2 = makeFakeWorker();
+  let worker1Terminated = false, worker2Terminated = false;
+  worker1.terminate = () => { worker1Terminated = true; };
+  worker2.terminate = () => { worker2Terminated = true; };
+  tracker.attachWorker(worker1);
+  tracker.setLiveEpochs([1]);
+  const stale = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }] });
+
+  tracker.attachWorker(worker2); // live replacement -- the brief's own "reuse safety" scenario
+  const fresh = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }] });
+
+  // The outgoing worker must have been fully disconnected by the replacement itself.
+  assert.equal(worker1.onmessage, null, "the replaced worker's onmessage must be cleared at replacement");
+  assert.equal(worker1.onerror, null, "the replaced worker's onerror must be cleared at replacement");
+  assert.throws(() => tracker.attachWorker(worker1), /cannot reattach a discarded worker instance/);
+
+  // worker2 must be untouched and still fully functional.
+  assert.equal(worker2Terminated, false, 'the REPLACEMENT worker must not be terminated by anything to do with worker1');
+  assert.equal(tracker.isPending(fresh.requestId), true);
+  worker2.onmessage({ data: validEchoFor(tracker, fresh, { tag: 'worker2-unaffected' }) });
+  assert.deepEqual(await fresh.promise, { epoch: 1, fragmentIds: [], tag: 'worker2-unaffected' });
+
+  // The brief-specified half, asserted here so a later change cannot silently alter it: the
+  // replaced worker's own in-flight request is NOT rejected by replacement, and the replaced worker
+  // is NOT terminated by this tracker.
+  assert.equal(tracker.isPending(stale.requestId), true);
+  assert.equal(worker1Terminated, false);
+  tracker.discardWorker('test cleanup'); // settle `stale` so it is never left unhandled
+  await assert.rejects(stale.promise, WorkerFaultError);
+});
+
+test('codex-review #1 regression: a CURRENT-worker response with a structurally invalid workerGeneration rejects the named request instead of stranding it', async () => {
+  for (const badGeneration of [undefined, null, 'one', 1.5, 0, -1, NaN]) {
+    const tracker = createRequestTracker();
+    const worker = makeFakeWorker();
+    tracker.attachWorker(worker);
+    tracker.setLiveEpochs([1]);
+    const req = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }] });
+    const captured = tracker.__capturedStateForTest(req.requestId);
+
+    const outcome = worker.onmessage({
+      data: {
+        requestId: req.requestId,
+        workerGeneration: badGeneration,
+        worldGeneration: captured.worldGeneration,
+        epochs: captured.epochs,
+        result: { epoch: 1, fragmentIds: [] },
+      },
+    });
+
+    assert.equal(outcome.outcome, 'rejected', `expected a rejection for workerGeneration=${String(badGeneration)}`);
+    assert.equal(outcome.reason, 'malformed-worker-generation');
+    await assert.rejects(req.promise, MalformedResponseError);
+    assert.equal(tracker.pendingCount(), 0, 'the request must never be left pending forever -- there is no timeout anywhere in this protocol');
+  }
+});
+
 test('no unsettled promise: pendingCount() is 0 after every terminal event, across a mixed run', async () => {
   const tracker = createRequestTracker();
   const worker = makeFakeWorker();
