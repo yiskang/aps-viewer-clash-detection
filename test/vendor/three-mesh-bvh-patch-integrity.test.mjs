@@ -9,15 +9,17 @@
 //
 // This file deliberately does NOT:
 //   - run `npm ci` itself (that is the one-time manual scratch-directory verification recorded in
-//     task-3-report.md, not something safe to do inside a test that may run concurrently with
-//     others);
+//     docs/research/m4-three-mesh-bvh-patch-provenance.md's "Clean-install verification" section,
+//     not something safe to do inside a test that may run concurrently with others);
 //   - invoke `scripts/sync-vendor.mjs` itself (it recursively deletes and recopies a tracked
 //     directory -- unsafe to call from inside a test; `pretest` already ran it before this file
-//     executes, per `package.json`);
+//     executes, per `package.json`; `sync-vendor.mjs` also carries its own independent fail-closed
+//     patch-marker check now, for the modes that never run `npm test` at all -- see
+//     docs/research/m4-three-mesh-bvh-patch-provenance.md);
 //   - import any `*.test.mjs` file's contents (only the pure fixture/helper module
 //     `three-mesh-bvh-defects.fixtures.mjs`, to avoid duplicate `node:test` registration).
 //
-// task-1-brief.md / task-3-brief.md, per a codex-advisor review that flagged both hazards above.
+// Full task-by-task derivation and rulings: docs/research/m4-three-mesh-bvh-patch-provenance.md.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,7 +45,8 @@ const PATCH_FILE = path.join(repoRoot, 'patches', 'three-mesh-bvh+0.9.14.patch')
 const NODE_MODULES_ROOT = path.join(repoRoot, 'node_modules', 'three-mesh-bvh', 'src');
 const VENDOR_ROOT = path.join(repoRoot, 'wwwroot', 'vendor', 'three-mesh-bvh', 'src');
 
-// The 4 files Patch 1 + Patch 2 touch (adjudication Step 4 points 1-2 / task-3-brief.md).
+// The 4 files Patch 1 + Patch 2 touch (adjudication Step 4 points 1-2; see
+// docs/research/m4-three-mesh-bvh-patch-provenance.md for the full patch content record).
 const PATCHED_RELATIVE_PATHS = [
   'core/cast/closestPointToGeometry_indirect.generated.js',
   'core/cast/closestPointToGeometry.generated.js',
@@ -75,7 +78,7 @@ test('patch integrity: OrientedBox.js carries the corrected max[f3] text on both
   );
   const lines = orientedBoxSrc.split('\n');
 
-  // task-3-brief.md: OrientedBox.js lines 420 and 424 (1-indexed), the `start[ f3 ]` and
+  // OrientedBox.js lines 420 and 424 (1-indexed), the `start[ f3 ]` and
   // `end[ f3 ]` assignments -- both must read `max[ f3 ]`, not the unpatched `max[ f2 ]`.
   const startLine = lines[420 - 1];
   const endLine = lines[424 - 1];
@@ -107,6 +110,20 @@ test('patch integrity: all three closestPointToGeometry* files carry the patched
     assert.match(src, /obb2\.min\.copy\( box\.min \);\s*\n\s*obb2\.max\.copy\( box\.max \);\s*\n\s*obb2\.needsUpdate = true;/,
       `${rel} must seed obb2 from the visited node's own box at the top of intersectsRange`);
   }
+
+  // Cross-check against the patch file's own declared correction (belt-and-braces, mirroring the
+  // Patch 2 / OrientedBox.js check above -- I-3 fix wave: previously only Patch 2 was cross-checked
+  // against PATCH_FILE, so a warm workspace whose `.patch` artifact had Patch 1's hunks stripped out
+  // (while `node_modules` remained patched from an earlier install) would stay green here until a
+  // clean install exposed it. Checking one of the three affected files is enough to prove the
+  // artifact itself still declares Patch 1, the same standard the Patch 2 check uses.
+  const patchContent = readFileSync(PATCH_FILE, 'utf8');
+  const closestPointHunk = patchContent.split('diff --git').find((h) => h.includes('closestPointToGeometry.generated.js') && !h.includes('_indirect'));
+  assert.ok(closestPointHunk, 'patch file must contain a closestPointToGeometry.generated.js hunk');
+  assert.ok(closestPointHunk.includes('intersectsRange: ( offset, count, contained, depth, nodeIndex, box ) => {'),
+    'patch file must declare the patched intersectsRange signature');
+  assert.ok(closestPointHunk.includes('obb2.min.copy( box.min );'),
+    'patch file must declare the obb2.min seeding statement');
 });
 
 // ---------------------------------------------------------------------------------------------
