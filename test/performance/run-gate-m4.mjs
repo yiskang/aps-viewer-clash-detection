@@ -63,7 +63,10 @@ import {
 import { rankByDensity, selectCohort, labelDensityUnstratified } from './m4/cohort-selection.mjs';
 import { S2T_LEVELS, bystanderLayout, syntheticIdRangeAbove } from './m4/s2t-bystander-layout.mjs';
 import { R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer, pairSetDelta, matricesEqual } from './m4/r6-calibration.mjs';
-import { compareRuns } from './m4/correctness-comparator.mjs';
+// `distancesEqual` / `witnessesEqual` are imported alongside `compareRuns` so
+// `describeValueDifferences` reports EXACTLY the pairs the comparator rejected, using the
+// comparator's own predicates rather than a locally re-derived (and potentially divergent) copy.
+import { compareRuns, distancesEqual, witnessesEqual } from './m4/correctness-comparator.mjs';
 import {
   M4_CASE_LIST, buildCounterbalancedSchedule, caseOrderForRepetition, toCapacityRejectedRecord,
   recognizeCapacityRejection,
@@ -3065,7 +3068,10 @@ async function main() {
                 // A bare `diagnostics: false` (or `pairSet: false`) is not actionable evidence --
                 // §16.2 aborts the whole run on it, so the record has to say WHAT differed, or the
                 // next person has to reproduce a multi-minute matrix run to find out.
-                const diff = cmp.valid ? null : describeRunDifference(a.run, b.run);
+                // `scales` is the SAME per-model diagonal map `compareRunsAtPairScale` just used, so
+                // the diff's per-pair distance/witness half is evaluated at exactly the §6.4
+                // tolerance that failed -- not a re-derived or federation-wide approximation.
+                const diff = cmp.valid ? null : describeRunDifference(a.run, b.run, { diagonalByTag: scales });
                 const divergence = diff ? classifyDiagnosticsDivergence(diff) : { kind: 'none' };
                 // See TIME_BUDGET_DEPENDENT_DIAGNOSTIC_REASONS above: a divergence confined to the
                 // wall-clock-dependent diagnostic reasons is a NAMED, reported finding rather than
@@ -3527,10 +3533,183 @@ function classifyDiagnosticsDivergence(diff) {
   };
 }
 
+// The per-pair VALUE half of the diff: which pairs the two arms agree exist, but disagree about the
+// `distance` and/or `witness` of. Purely descriptive -- it re-derives the same predicates
+// `correctness-comparator.mjs` already applied (`pairDistancesEqual` / `pairWitnessesEqual`, via the
+// same `distancesEqual` / `witnessesEqual` primitives and the same per-model-pair witness scale
+// `compareRunsAtPairScale` uses) so the reported set is exactly the set that failed, and it decides
+// nothing: `compareRunsAtPairScale`'s own result remains the sole pass/fail authority.
+//
+// This exists because a §6.4 abort whose pairSet/statistics/diagnostics all match is otherwise
+// completely unactionable: the record says "distances: false" and names not one pair, so the only
+// way to learn WHICH pairs and BY HOW MUCH was to re-run a multi-minute matrix by hand. Observed
+// live at S2[k=100:typical:clearance], where 239 of 249 pairs matched in identity but not in value.
+//
+// `run.pairs` (see runMeasuredQueryWindow's own projection) carries model tag + dbId + type +
+// distance + witness and NO fragment identity -- `groupBy: 'dbId'` collapses fragments away before
+// the harness ever sees a pair -- so a pair is named by the same full tuple `pairKey` joins on.
+const VALUE_DIFF_SAMPLE_CAP = 20;
+
+function describeValueDifferences(runA, runB, { diagonalByTag, distanceTolerance }) {
+  const pairKey = (p) => `${p.sourceModelTag}:${p.sourceDbId}:${p.targetModelTag}:${p.targetDbId}:${p.type}`;
+  const partitionOf = (p) => `${p.sourceModelTag}|${p.targetModelTag}`;
+  // First-discovery-wins, the same convention `compareRuns` (and CollisionWorld's own pairsByKey)
+  // uses -- a different join here would describe a different disagreement from the one that aborted.
+  const bByKey = new Map();
+  for (const p of runB.pairs) if (!bByKey.has(pairKey(p))) bByKey.set(pairKey(p), p);
+
+  // §6.4's witness tolerance is `1e-9 x max(sourceWorldDiagonal, targetWorldDiagonal)`, resolved per
+  // model-pair partition exactly as compareRunsAtPairScale resolves it. An unresolvable scale is
+  // reported as such, never silently replaced by a federation-wide (more permissive) default.
+  const scaleFor = (partition) => {
+    if (!diagonalByTag) return null;
+    const [sourceTag, targetTag] = partition.split('|');
+    const sd = diagonalByTag[sourceTag];
+    const td = diagonalByTag[targetTag];
+    if (!(Number.isFinite(sd) && sd > 0) || !(Number.isFinite(td) && td > 0)) return null;
+    return Math.max(sd, td);
+  };
+  const scaleCache = new Map();
+  const cachedScaleFor = (partition) => {
+    if (!scaleCache.has(partition)) scaleCache.set(partition, scaleFor(partition));
+    return scaleCache.get(partition);
+  };
+
+  const vecDelta = (u, v) => {
+    if (!Array.isArray(u) || !Array.isArray(v) || u.length !== v.length) return null;
+    return u.map((c, i) => c - v[i]);
+  };
+  const maxAbs = (arr) => (arr === null ? null : arr.reduce((m, c) => Math.max(m, Math.abs(c)), 0));
+  const norm = (arr) => (arr === null ? null : Math.sqrt(arr.reduce((s, c) => s + c * c, 0)));
+
+  const distanceDiff = [];
+  const witnessDiff = [];
+  const partitions = new Map();
+  const bump = (partition, field, magnitude, scale) => {
+    if (!partitions.has(partition)) {
+      partitions.set(partition, {
+        key: partition, comparedPairs: 0, distanceDiffCount: 0, witnessDiffCount: 0,
+        maxDistanceDelta: 0, maxWitnessDelta: 0,
+        witnessScale: scale, witnessTolerance: scale === null ? null : 1e-9 * scale,
+      });
+    }
+    const rec = partitions.get(partition);
+    if (field === 'compared') { rec.comparedPairs += 1; return; }
+    if (field === 'distance') {
+      rec.distanceDiffCount += 1;
+      rec.maxDistanceDelta = Math.max(rec.maxDistanceDelta, magnitude ?? 0);
+    } else {
+      rec.witnessDiffCount += 1;
+      rec.maxWitnessDelta = Math.max(rec.maxWitnessDelta, magnitude ?? 0);
+    }
+  };
+
+  let unmatchedPairs = 0;
+  let unresolvedScalePartitions = false;
+  for (const pa of runA.pairs) {
+    const pb = bByKey.get(pairKey(pa));
+    if (!pb) { unmatchedPairs += 1; continue; } // a pairSet difference, already reported by pairSetDiff
+    const partition = partitionOf(pa);
+    const scale = cachedScaleFor(partition);
+    if (scale === null) unresolvedScalePartitions = true;
+    bump(partition, 'compared', null, scale);
+
+    const identity = {
+      pair: pairKey(pa), partition,
+      sourceModelTag: pa.sourceModelTag, sourceDbId: pa.sourceDbId,
+      targetModelTag: pa.targetModelTag, targetDbId: pa.targetDbId, type: pa.type,
+    };
+
+    // `distance` is only part of the pair contract for `clearance` pairs -- exactly
+    // correctness-comparator.mjs's own `pairDistancesEqual` guard.
+    if (pa.type === 'clearance' && !distancesEqual(pa.distance, pb.distance, { tolerance: distanceTolerance })) {
+      const delta = Math.abs(pa.distance - pb.distance);
+      if (distanceDiff.length < VALUE_DIFF_SAMPLE_CAP) {
+        distanceDiff.push({
+          ...identity, a: pa.distance, b: pb.distance, delta,
+          relativeDelta: pa.distance ? delta / Math.abs(pa.distance) : null,
+          tolerance: distanceTolerance,
+        });
+      }
+      bump(partition, 'distance', delta, scale);
+    }
+
+    // `witness` is part of the contract for `clearance` and `volume-overlap` -- exactly
+    // `pairWitnessesEqual`'s own guard, including its two-nulls-are-equal / one-null-is-a-mismatch
+    // rule, so the reported set matches the set that actually failed.
+    if (pa.type !== 'clearance' && pa.type !== 'volume-overlap') continue;
+    const wa = pa.witness;
+    const wb = pb.witness;
+    if (wa === null && wb === null) continue;
+    if (wa === null || wb === null) {
+      if (witnessDiff.length < VALUE_DIFF_SAMPLE_CAP) {
+        witnessDiff.push({ ...identity, reason: 'witness-presence-mismatch', a: wa, b: wb, witnessScale: scale, witnessTolerance: scale === null ? null : 1e-9 * scale });
+      }
+      bump(partition, 'witness', null, scale);
+      continue;
+    }
+    // A partition with no resolvable scale cannot be evaluated against §6.4's tolerance at all; it
+    // is reported (with `witnessScale: null`) rather than compared against an invented tolerance.
+    if (scale === null) {
+      if (witnessDiff.length < VALUE_DIFF_SAMPLE_CAP) {
+        witnessDiff.push({ ...identity, reason: 'witness-scale-unresolved', witnessScale: null, witnessTolerance: null });
+      }
+      bump(partition, 'witness', null, scale);
+      continue;
+    }
+    if (witnessesEqual(wa, wb, { worldDiagonalScale: scale })) continue;
+
+    const entry = { ...identity, witnessScale: scale, witnessTolerance: 1e-9 * scale };
+    if ('sourcePoint' in wa && 'sourcePoint' in wb) {
+      const dSource = vecDelta(wa.sourcePoint, wb.sourcePoint);
+      const dTarget = vecDelta(wa.targetPoint, wb.targetPoint);
+      entry.reason = 'clearance-witness-differs';
+      entry.a = { sourcePoint: wa.sourcePoint, targetPoint: wa.targetPoint };
+      entry.b = { sourcePoint: wb.sourcePoint, targetPoint: wb.targetPoint };
+      entry.sourcePointDelta = dSource;
+      entry.targetPointDelta = dTarget;
+      entry.sourcePointDistance = norm(dSource);
+      entry.targetPointDistance = norm(dTarget);
+      entry.maxComponentDelta = Math.max(maxAbs(dSource) ?? 0, maxAbs(dTarget) ?? 0);
+    } else if ('point' in wa && 'point' in wb) {
+      const dPoint = vecDelta(wa.point, wb.point);
+      entry.reason = wa.kind === wb.kind ? 'overlap-witness-point-differs' : 'overlap-witness-kind-differs';
+      entry.a = { kind: wa.kind, point: wa.point };
+      entry.b = { kind: wb.kind, point: wb.point };
+      entry.pointDelta = dPoint;
+      entry.pointDistance = norm(dPoint);
+      entry.maxComponentDelta = maxAbs(dPoint) ?? 0;
+    } else {
+      entry.reason = 'witness-shape-mismatch';
+      entry.a = wa;
+      entry.b = wb;
+      entry.maxComponentDelta = null;
+    }
+    if (witnessDiff.length < VALUE_DIFF_SAMPLE_CAP) witnessDiff.push(entry);
+    bump(partition, 'witness', entry.maxComponentDelta, scale);
+  }
+
+  const partitionList = [...partitions.values()];
+  return {
+    distanceDiff,
+    distanceDiffCount: partitionList.reduce((s, p) => s + p.distanceDiffCount, 0),
+    witnessDiff,
+    witnessDiffCount: partitionList.reduce((s, p) => s + p.witnessDiffCount, 0),
+    valueDiffPartitions: partitionList,
+    valueDiffUnmatchedPairs: unmatchedPairs,
+    valueDiffScaleResolved: !unresolvedScalePartitions,
+    valueDiffSampleCap: VALUE_DIFF_SAMPLE_CAP,
+    distanceTolerance,
+  };
+}
+
 // Names exactly which pair signatures and which diagnostic entries differ between two arms, using
 // the SAME keys §6.4 (and Task 3.6's comparator) join on -- never a narrower key, or the diff would
-// describe a different disagreement from the one that failed the gate.
-function describeRunDifference(runA, runB) {
+// describe a different disagreement from the one that failed the gate. `diagonalByTag` is the same
+// per-model world-diagonal map `compareRunsAtPairScale` was given, so the per-pair distance/witness
+// half below is evaluated at exactly the tolerance that failed; omitting it degrades that half to
+// `valueDiffScaleResolved: false` and never affects the identity/diagnostics/statistics half.
+function describeRunDifference(runA, runB, { diagonalByTag = null, distanceTolerance = 0 } = {}) {
   const pairSig = (p) => `${p.sourceModelTag}:${p.sourceDbId}:${p.targetModelTag}:${p.targetDbId}:${p.type}`;
   const diagKey = (d) => JSON.stringify({
     reason: d.reason, scope: d.scope, role: d.role ?? null,
@@ -3561,8 +3740,11 @@ function describeRunDifference(runA, runB) {
         .filter(([k, v]) => k !== 'diagnostics' && v !== runB.statistics[k])
         .map(([k, v]) => [k, { a: v, b: runB.statistics[k] }]),
     ),
+    ...describeValueDifferences(runA, runB, { diagonalByTag, distanceTolerance }),
   };
 }
+
+export { describeRunDifference };
 
 // §4's capacity-rejection classification, over BOTH error channels -- see the note at its call
 // site for why the plain-`Error` linear ceiling makes this necessary.
