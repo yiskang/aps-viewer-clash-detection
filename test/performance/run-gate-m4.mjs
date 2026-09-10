@@ -1363,16 +1363,23 @@ if (!Number.isInteger(S4_GRID_ROWS)) throw new Error(`S4 grid dims no longer div
 //    volumeOverlapQuery's negative path as `conclusive:true` (ContainmentQuery.js's own unconditional
 //    'unverified-parity-operand' diagnostic for a non-closed container permanently taints it), so it
 //    would get stuck at 'inconclusive' and never reach the distance query at all -- confirmed live.
-// Empirically confirmed (this task's own manual verification, live against the running app):
+// Empirically confirmed (this task's own manual verification, live against the running app) --
+// EXACT millisecond figures deliberately NOT pinned here: they are real measurements, not derived
+// constants, and have already been observed to vary run-to-run (a prior draft of this comment cited
+// specific ms figures from one run that a later re-run reproducibly missed by ~3.5x on the
+// volume-overlap side -- see this task's own report for the actual measured-range table, which is
+// the authoritative source for numbers, not this comment):
 //  - volume-overlap, gap=0.005: real crossing traversal engages and hits its own internal budget
 //    (`crossing-budget-exhausted`, collision/query/ProperCrossingQuery.js's 8ms/50k-candidate/
-//    64-crossing ceiling) at a ~47ms measured atomic-call duration (linear broad phase; ~51ms tlas).
+//    64-crossing ceiling) at an atomic-call duration comfortably UNDER the §7.2 T-a ceiling (50ms),
+//    on both broad-phase arms.
 //  - clearance, gap=2.5 (> the ~2.3 local Z extent, guaranteeing AABB disjointness), clearance
 //    threshold widened to S4_CLEARANCE_GENEROUS (comfortably above the resulting constant ~2.5 real
 //    gap, so the query finds a genuine within-threshold hit requiring a real closest-point
 //    confirmation rather than an early BVH-pruned rejection): `clearanceDistanceQueriesRun: 1`,
-//    `clearanceHits: 1`, at a ~716ms measured atomic-call duration (linear; ~736ms tlas) -- both
-//    dramatically over the spec's 8ms/24.8ms ceilings this row exists to find.
+//    `clearanceHits: 1`, at an atomic-call duration roughly an ORDER OF MAGNITUDE over the §7.2 T-a
+//    ceiling (50ms) and dramatically over the spec's 8ms/24.8ms ceilings this row exists to find, on
+//    both broad-phase arms.
 const S4_VOLUME_OVERLAP_Z_GAP = 0.005;
 const S4_CLEARANCE_Z_GAP = 2.5;
 // "a generous clearance" (spec) -- wide enough that the pair is never hard-clash-excluded before
