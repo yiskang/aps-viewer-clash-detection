@@ -1,0 +1,69 @@
+diff --git a/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry.generated.js b/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry.generated.js
+index 3a10d82..319c237 100644
+--- a/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry.generated.js
++++ b/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry.generated.js
+@@ -91,7 +91,11 @@ function closestPointToGeometry(
+ 
+ 			},
+ 
+-			intersectsRange: ( offset, count ) => {
++			intersectsRange: ( offset, count, contained, depth, nodeIndex, box ) => {
++
++				obb2.min.copy( box.min );
++				obb2.max.copy( box.max );
++				obb2.needsUpdate = true;
+ 
+ 				if ( otherGeometry.boundsTree ) {
+ 
+diff --git a/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry.template.js b/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry.template.js
+index 0dd4953..d8ca678 100644
+--- a/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry.template.js
++++ b/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry.template.js
+@@ -87,7 +87,11 @@ export function closestPointToGeometry/* @echo INDIRECT_STRING */(
+ 
+ 			},
+ 
+-			intersectsRange: ( offset, count ) => {
++			intersectsRange: ( offset, count, contained, depth, nodeIndex, box ) => {
++
++				obb2.min.copy( box.min );
++				obb2.max.copy( box.max );
++				obb2.needsUpdate = true;
+ 
+ 				if ( otherGeometry.boundsTree ) {
+ 
+diff --git a/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry_indirect.generated.js b/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry_indirect.generated.js
+index 78427df..03e7121 100644
+--- a/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry_indirect.generated.js
++++ b/node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry_indirect.generated.js
+@@ -91,7 +91,11 @@ function closestPointToGeometry_indirect(
+ 
+ 			},
+ 
+-			intersectsRange: ( offset, count ) => {
++			intersectsRange: ( offset, count, contained, depth, nodeIndex, box ) => {
++
++				obb2.min.copy( box.min );
++				obb2.max.copy( box.max );
++				obb2.needsUpdate = true;
+ 
+ 				if ( otherGeometry.boundsTree ) {
+ 
+diff --git a/node_modules/three-mesh-bvh/src/math/OrientedBox.js b/node_modules/three-mesh-bvh/src/math/OrientedBox.js
+index 195c15d..25b021b 100644
+--- a/node_modules/three-mesh-bvh/src/math/OrientedBox.js
++++ b/node_modules/three-mesh-bvh/src/math/OrientedBox.js
+@@ -417,11 +417,11 @@ OrientedBox.prototype.distanceToBox = ( function () {
+ 
+ 					start[ f1 ] = min[ f1 ];
+ 					start[ f2 ] = i1 ? min[ f2 ] : max[ f2 ];
+-					start[ f3 ] = i2 ? min[ f3 ] : max[ f2 ];
++					start[ f3 ] = i2 ? min[ f3 ] : max[ f3 ];
+ 
+ 					end[ f1 ] = max[ f1 ];
+ 					end[ f2 ] = i1 ? min[ f2 ] : max[ f2 ];
+-					end[ f3 ] = i2 ? min[ f3 ] : max[ f2 ];
++					end[ f3 ] = i2 ? min[ f3 ] : max[ f3 ];
+ 
+ 					count ++;
+ 

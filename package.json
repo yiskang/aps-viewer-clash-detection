@@ -8,6 +8,7 @@
     "build:vendor": "node scripts/sync-vendor.mjs",
     "prestart": "npm run build:vendor",
     "pretest": "npm run build:vendor",
+    "postinstall": "patch-package --error-on-fail",
     "test": "node scripts/run-tests.mjs",
     "test:acceptance": "node test/acceptance/room-locator.acceptance.mjs",
     "test:acceptance:clash-finder": "node test/acceptance/clash-finder.acceptance.mjs",
@@ -38,6 +39,7 @@
   },
   "devDependencies": {
     "@types/forge-viewer": "*",
+    "patch-package": "^8.0.1",
     "playwright": "^1.62.1"
   }
 }
