@@ -8412,12 +8412,12 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 **Files:**
 - Create: `test/performance/m4/s4-synthetic-mesh.mjs` (pure triangle-grid + overlap-placement generator)
 - Create: `test/performance/m4/s4-synthetic-mesh.test.mjs`
-- Edit: `test/performance/browser-probes-m4.mjs` (live facade: `buildS4Facade`)
-- Edit: `test/performance/run-gate-m4.mjs` (replace the S4 `NOT_EXERCISED` branch with a real descriptor; extend the model-key resolution layer to recognize the S4 facade)
+- Edit: `test/performance/browser-probes-m4.mjs` (live facade factory: `buildS4SyntheticModel`)
+- Edit: `test/performance/run-gate-m4.mjs` (replace the S4 `NOT_EXERCISED` branch with a real descriptor; extend `installGateHelpers`'s four tagging functions — `resolveModel`, `modelTag`, `tagDiagnostics`, `worldDiagonalsByTag` — to recognize the two new S4 facade slots; add `installS4Facades`/`disposeS4Facades`; extend `runArmTuple`'s admit list; add the S4 diagonal-recapture step mirroring S2T's own pattern)
 
 **Interfaces:**
 - Consumes: nothing from other Phase 3 tasks (leaf task closing a gap Task 3.7 left named). Reuses `maxSyncTriangleCount` (`collision/constants.js`, read-only, no instrumentation) and mirrors `measure-geometry-phases.mjs:26-45`'s grid-generation idiom (not imported — that file is a standalone Node script outside this harness's own module graph, and duplicating ~15 lines of a pure, deterministic, well-commented function is cheaper and more legible than adding a cross-directory import between two independent harness scripts).
-- Produces: `buildTriangleGrid(cols, rows)` and `translatedGrid(grid, offset)` (pure, `test/performance/m4/s4-synthetic-mesh.mjs`) plus a live `buildS4Facade()` returning a fully-synthetic, two-fragment `Model`-shaped object `CollisionWorld.admitModel`/`findClashes` can operate on with **zero** delegation to any real Viewer model (unlike Task 3.4's S2T facade, which delegates most accessors to a real model — S4 is the one case that must touch no real geometry at all, per spec's "fully synthetic case" framing).
+- Produces: `buildTriangleGrid(cols, rows)` and `translatedGrid(grid, offset)` (pure, `test/performance/m4/s4-synthetic-mesh.mjs`) plus a live `buildS4SyntheticModel(tag, grid)` factory used to build **two independent single-fragment synthetic models** (`s4Source`, `s4Target`) — not one shared two-fragment facade — each with **zero** delegation to any real Viewer model (unlike Task 3.4's S2T facade, which delegates most accessors to a real model — S4 is the one case that must touch no real geometry at all, per spec's "fully synthetic case" framing). Two independent models, rather than one facade scoped by dbId, because `run-gate-m4.mjs`'s case-descriptor resolution supports a dbId-scoped `source` but only a whole-model `targets` (an array of model-key strings) — see Step 5.
 
 **Global Constraints this task must not cross:** zero new `collision/` files or exports; the facade is harness-only, same class as Task 3.4's S2T facade (spec §5.3.1 point 2's "adds no library seam" reasoning applies identically here — this is not new instrumentation, it is a test-local object shaped like the Viewer's own public accessor surface); `run-gate.mjs`/`run-gate-m2.mjs`/`run-gate-m3.mjs` untouched; no reusable "fixture framework" — this task builds exactly the two meshes S4 needs and nothing more general.
 
@@ -8503,57 +8503,157 @@ Run: `node --test test/performance/m4/s4-synthetic-mesh.test.mjs`
 
 - [ ] **Step 5: Live facade + dispatch wiring + commit**
 
-**Before writing this step, read `run-gate-m4.mjs`'s full model-key-to-model resolution code** — the layer between a case descriptor's `{modelKey, dbIds}` shape and the real `world.findClashes(...)` call — since this draft's `targets: {modelKey, dbIds}` shape for S4 is inferred by analogy with `source`'s shape, not confirmed against that resolution code. Verify empirically (a throwaway probe script, this project's established practice for exactly this kind of uncertainty) which extraction path the target side actually takes before trusting the descriptor shape below.
+**Design: two independent single-fragment synthetic models (`s4Source`, `s4Target`), not one shared two-fragment facade.** `run-gate-m4.mjs`'s `runQueryInPage` resolves a case descriptor's `source` by dbId-scoped extraction (`{modelKey, dbIds}`, already supported) but resolves `targets` only as `'all'` or an array of model-key strings — each resolved to a **whole model**, with no per-target dbId scoping anywhere in the current code. Building the source and target as two separate one-fragment models makes both sides use descriptor shapes the harness already supports unchanged: `source: {modelKey:'s4Source', dbIds:[1]}` (dbId-scoped) and `targets: ['s4Target']` (whole-model array — a 1-fragment model IS "the whole model", so no extra scoping is needed). Two distinct model objects also means there is no "is the source fragment also in the target's own set" self-collision question to reason about — `extractFragments` (source) and `extractAllFragments` (target) each walk an entirely separate model object.
 
-Add to `test/performance/browser-probes-m4.mjs` (mirrors `buildS2TFacade`'s proven shape, but **zero delegation** — every accessor is fully synthetic, since S4 is spec's one fully-synthetic case):
+Add to `test/performance/browser-probes-m4.mjs` (mirrors `buildS2TFacade`'s proven shape, but **zero delegation** — every accessor is fully synthetic, since S4 is spec's one fully-synthetic case. One shared factory for both models, since both are the identical shape: a single fragment at dbId 1, a leaf node in its own one-node tree):
 
 ```js
 // test/performance/browser-probes-m4.mjs (excerpt -- Task 3.12's S4 facade)
-window.__m4Probes.buildS4Facade = function (grids) {
-  // grids: [sourceGrid, targetGrid] -- plain {position, index} objects (from
-  // s4-synthetic-mesh.mjs, passed in via page.evaluate's args since that module runs in Node).
-  // dbId 1 -> fragId 0 (source mesh); dbId 2 -> fragId 1 (target mesh). One fragment per dbId,
-  // per spec's "one atomic call" framing -- S4 measures ONE pair's cost, not a population.
-  const geometries = grids.map((g) => {
-    const geom = new window.THREE.BufferGeometry();
-    geom.setAttribute('position', new window.THREE.Float32BufferAttribute(new Float32Array(g.position), 3));
-    geom.setIndex(g.index);
-    return geom;
-  });
-  const worldBoundsByFrag = geometries.map((g) => { g.computeBoundingBox(); return g.boundingBox; });
+//
+// Two INDEPENDENT single-fragment synthetic models, not one shared two-fragment facade -- this
+// makes both the source (dbId-scoped) and target (whole-model) descriptor shapes the harness
+// already supports apply unchanged, with no new per-target dbId-scoping to add anywhere else.
+window.__m4Probes.buildS4SyntheticModel = function (tag, grid) {
+  const geom = new window.THREE.BufferGeometry();
+  geom.setAttribute('position', new window.THREE.Float32BufferAttribute(new Float32Array(grid.position), 3));
+  geom.setIndex(grid.index);
+  geom.computeBoundingBox();
+  const worldBounds = geom.boundingBox;
 
   const facadeFragList = {
-    getCount: () => 2,
+    getCount: () => 1,
     isNotLoaded: () => false,
-    getDbIds: (fragId) => fragId + 1, // fragId 0 -> dbId 1, fragId 1 -> dbId 2
-    getWorldBounds: (fragId, dst) => dst.copy(worldBoundsByFrag[fragId]),
+    getDbIds: () => 1, // this model's one fragment (fragId 0) belongs to dbId 1
+    getWorldBounds: (fragId, dst) => dst.copy(worldBounds),
     getWorldMatrix: (fragId, dst) => dst.identity(), // no placement transform for a synthetic fixture
-    getGeometryId: (fragId) => `s4-synthetic-${fragId}`,
-    getVizmesh: (fragId) => geometries[fragId],
+    getGeometryId: () => 0, // MUST be a non-negative integer -- createGeometryIdentity
+                            // (collision/geometry/GeometryIdentity.js:8-14) throws TypeError on
+                            // anything else, including a string.
+    getVizmesh: () => geom,
   };
-  // Minimal instanceTree: S4's SOURCE side is queried by explicit dbId (world.findClashes's
-  // `source: {dbIds:[1]}`), which routes through extractFragments -> model.getObjectTree() ->
-  // enumNodeFragments/enumNodeChildren (ViewerModelAdapter.js). Each dbId owns exactly one
-  // fragment and has no children -- callbacks are block-bodied and return nothing, per Task 3.3's
-  // established fix for enumNodeChildren's real "any truthy return stops enumerating" contract
-  // (confirmed against ViewerModelAdapter.js's own extractFragments usage).
+  // extractFragments (source-role extraction) reads model.getObjectTree() -- a SYNCHRONOUS getter
+  // (ViewerModelAdapter.js:94's actual zero-argument call), never the callback-style
+  // `getObjectTree(onSuccess, onError)` -- as long as `isObjectTreeCreated()` also returns true, so
+  // that CollisionWorld's own `_awaitObjectTreeReady` (CollisionWorld.js:1044-1046) takes its
+  // synchronous fast path and never invokes getObjectTree in the callback style at all. Omitting
+  // `isObjectTreeCreated` here would make the awaited Promise never settle -- a silent hang, not a
+  // thrown error.
   const instanceTree = {
-    enumNodeFragments: (dbId, cb) => { cb(dbId - 1); }, // dbId 1 -> fragId 0, dbId 2 -> fragId 1
-    enumNodeChildren: () => {}, // no children -- each synthetic dbId is a leaf
+    enumNodeFragments: (dbId, cb) => { cb(0); }, // this model's one dbId (1) owns fragId 0
+    enumNodeChildren: () => {}, // leaf node -- no children, per Task 3.3's established
+                                // block-bodied-callback-returns-nothing convention for this API
   };
   return {
-    id: `s4-synthetic-${Math.random().toString(36).slice(2)}`,
+    id: `s4-synthetic-${tag}`,
+    getUnitScale: () => 1,
     getFragmentList: () => facadeFragList,
     getObjectTree: () => instanceTree,
-    getUnitScale: () => 1,
-    __isM4SyntheticS4Facade: true,
+    isObjectTreeCreated: () => true,
   };
 };
 ```
 
-**Verify live, before trusting this code**: this is new, never-proven-against-the-real-library wiring (unlike Task 3.4's facade, which reused a proven real-model delegation pattern for most accessors). Empirically confirm, against the real running app: `world.findClashes({mode:'volume-overlap', source:{model:facade, dbIds:[1]}, target:{targets:[{model:facade, dbIds:[2]}]}, broadPhase:'linear'})` resolves with a real pair (source dbId 1, target dbId 2) and non-zero `statistics.narrowPhasePairs`, proving both extraction paths (source via `extractFragments`+the fake instanceTree, target via whatever `targets` resolves to) actually reach real geometry. If either path throws, read the real `ViewerModelAdapter.js`/`CollisionWorld.js` call site the error names and fix the facade to match — do not guess a second time; this project's established discipline is to read the real source before patching.
+Extend `installGateHelpers`'s four tagging functions in `run-gate-m4.mjs` to recognize the two new facade slots, following the exact registration pattern S2T's `s2tFacade` already established in each:
 
-Extend `run-gate-m4.mjs`'s model-key resolution to recognize a new key (e.g. `'s4-synthetic'`) resolving to one `buildS4Facade(...)` instance built once per fresh world (S4 is warm-only, one fresh world per tuple, so build the facade once per world construction, not once per query). Replace the S4 case's `NOT_EXERCISED` branch with:
+```js
+// test/performance/run-gate-m4.mjs (excerpt -- installGateHelpers additions, Task 3.12)
+resolveModel(key) {
+  const g = window.__gate;
+  if (key === 'arch') return g.modelArch;
+  if (key === 'structure') return g.modelStructure;
+  if (key === 'mechanical') return g.modelMechanical;
+  if (key === 's2tFacade') { /* ...unchanged... */ }
+  if (key === 's4Source') {
+    if (!g.s4Source) throw new Error('__m4Gate.resolveModel: no S4 source facade is installed for this tuple');
+    return g.s4Source;
+  }
+  if (key === 's4Target') {
+    if (!g.s4Target) throw new Error('__m4Gate.resolveModel: no S4 target facade is installed for this tuple');
+    return g.s4Target;
+  }
+  throw new Error(`__m4Gate.resolveModel: unknown model key "${key}"`);
+},
+modelTag(m) {
+  const g = window.__gate;
+  if (m === g.modelArch) return 'arch';
+  if (m === g.modelStructure) return 'structure';
+  if (m === g.modelMechanical) return 'mechanical';
+  if (g.s2tFacade && m === g.s2tFacade) return 's2tFacade';
+  if (g.s4Source && m === g.s4Source) return 's4Source';
+  if (g.s4Target && m === g.s4Target) return 's4Target';
+  return 'unknown';
+},
+```
+
+`tagDiagnostics` and `worldDiagonalsByTag` both iterate the SAME `[tag, model]` list — add the two new entries to that literal list in both functions (they are currently two separate, independently written copies of this list, not a shared constant; add to both or a real Structure/Mechanical diagnostic and an S4 diagnostic could silently disagree on provenance):
+
+```js
+// both tagDiagnostics and worldDiagonalsByTag, in run-gate-m4.mjs -- add these two entries
+// to the existing [['arch', g.modelArch], ['structure', g.modelStructure],
+// ['mechanical', g.modelMechanical], ['s2tFacade', g.s2tFacade]] list in EACH function:
+['s4Source', g.s4Source], ['s4Target', g.s4Target],
+```
+
+Add install/dispose helpers next to `installS2TFacade`/`disposeS2TFacade`:
+
+```js
+// test/performance/run-gate-m4.mjs (excerpt -- Task 3.12)
+import { buildTriangleGrid, translatedGrid } from './m4/s4-synthetic-mesh.mjs';
+import { maxSyncTriangleCount } from '../../collision/constants.js';
+
+// A grid sized to land exactly at maxSyncTriangleCount (spec: "at/near" the ceiling) -- 200 cols x
+// 60 rows = 12,000 triangles exactly, matching measure-geometry-phases.mjs's own dimensions.
+// S4_GRID_ROWS must come out an integer -- assert it rather than silently floor/truncate if
+// maxSyncTriangleCount ever changes to a value not evenly divisible this way.
+const S4_GRID_COLS = 200;
+const S4_GRID_ROWS = maxSyncTriangleCount / (S4_GRID_COLS * 2);
+if (!Number.isInteger(S4_GRID_ROWS)) throw new Error(`S4 grid dims no longer divide maxSyncTriangleCount (${maxSyncTriangleCount}) exactly`);
+
+async function installS4Facades(page) {
+  const sourceGrid = buildTriangleGrid(S4_GRID_COLS, S4_GRID_ROWS);
+  // Small offset relative to a 200x60-unit grid extent -- "broadly overlapping bounds" (spec),
+  // not merely touching at one edge; both meshes are coplanar (z=0) by construction, since S4's
+  // pathological case is about triangle DENSITY and pair COUNT under broad overlap, not depth.
+  const targetGrid = translatedGrid(sourceGrid, [5, 5, 0]);
+  await page.evaluate(({ sourceGrid, targetGrid }) => {
+    window.__gate.s4Source = window.__m4Probes.buildS4SyntheticModel('source', sourceGrid);
+    window.__gate.s4Target = window.__m4Probes.buildS4SyntheticModel('target', targetGrid);
+  }, { sourceGrid, targetGrid });
+}
+
+async function disposeS4Facades(page) {
+  await page.evaluate(() => { window.__gate.s4Source = null; window.__gate.s4Target = null; });
+}
+```
+
+Extend `runArmTuple`'s `admit` selection (currently `variant.s2tLevel ? ['structure','s2tFacade'] : ['arch','structure','mechanical']`) with an S4 branch:
+
+```js
+// test/performance/run-gate-m4.mjs, inside runArmTuple -- extend the existing admit ternary
+const admit = variant.s2tLevel
+  ? ['structure', 's2tFacade']
+  : variant.s4
+  ? ['s4Source', 's4Target']
+  : ['arch', 'structure', 'mechanical'];
+```
+
+Extend the per-variant loop's diagonal-recapture (the same `if (variant.s2tLevel !== undefined)` block that calls `installS2TFacade`/re-measures `worldDiagonalsByTag`) with an S4 branch — S4's facades don't change per-repetition the way S2T's bystander count changes per level, but they still don't exist when the federation-wide `diagonalByTag` was captured once at the top of the run, so the same re-measurement is required:
+
+```js
+// test/performance/run-gate-m4.mjs, in the per-variant loop -- extend the existing scales block
+let scales = diagonalByTag;
+if (variant.s2tLevel !== undefined) {
+  await installS2TFacade(page, variant.s2tLevel);
+  scales = await page.evaluate(() => window.__m4Gate.worldDiagonalsByTag());
+} else if (variant.s4) {
+  await installS4Facades(page);
+  scales = await page.evaluate(() => window.__m4Gate.worldDiagonalsByTag());
+}
+```
+
+(Add a matching `disposeS4Facades(page)` call wherever `disposeS2TFacade` is called for the S2T case, or immediately after this variant's arms finish — mirror S2T's own cleanup placement exactly; read that call site before writing this line.)
+
+Replace the S4 case in `caseVariantsFor`:
 
 ```js
 // test/performance/run-gate-m4.mjs (excerpt -- Task 3.12's S4 descriptor, replacing NOT_EXERCISED)
@@ -8563,21 +8663,25 @@ case 'S4': {
   // confirm against fixture-lifecycle.mjs, do not add a cold state here).
   const CLEARANCE_GENEROUS = 1.0; // "a generous clearance" (spec) -- wide enough that the pair
                                    // is never hard-clash-excluded by the precheck before reaching
-                                   // the narrow phase this case exists to time; the exact value is
-                                   // this task's own choice, not spec-pinned -- flag in the report
-                                   // if a smaller/larger value changes which code path gets timed.
+                                   // the narrow phase this case exists to time; this exact value
+                                   // is this task's own choice, not spec-pinned -- verify live
+                                   // that the query actually reaches the narrow phase / distance
+                                   // query rather than being trivially resolved, and adjust if not.
   return ['volume-overlap', 'clearance'].map((mode) => ({
     key: `pathological-pair:${mode}`,
+    s4: true,
     descriptor: {
       mode, ...(mode === 'clearance' ? { clearance: CLEARANCE_GENEROUS } : {}),
-      source: { modelKey: 's4-synthetic', dbIds: [1] },
-      targets: { modelKey: 's4-synthetic', dbIds: [2] },
+      source: { modelKey: 's4Source', dbIds: [1] },
+      targets: ['s4Target'],
     },
   }));
 }
 ```
 
-**Manual verification**: Run `npm run test:performance:gate:m4 -- --cases=S4` against the running dev server. Expected: S4 no longer reports `NOT_EXERCISED`; both modes run, warm-only, under both broad-phase arms and both runtimes; the observation envelope and T-a pipeline (Task 3.7's already-landed machinery) bracket the query exactly as they do for every other case, reporting a real `maxTask`/Rᵢ value for this one atomic call; `compareRuns` (Task 3.6) reports TLAS-vs-linear parity on the synthetic pair exactly as it does for a real one. Report the actual measured atomic-call duration in this task's own report — this is the number spec's S4 row exists to find (whether one call can exceed the 8 ms / 24.8 ms ceilings).
+**Verify live, before trusting this code**: this is new, never-proven-against-the-real-library wiring. Empirically confirm, against the real running app: after `installS4Facades(page)`, `world.findClashes({mode:'volume-overlap', source:{model: window.__gate.s4Source, dbIds:[1]}, target:{targets:[{model: window.__gate.s4Target}]}, broadPhase:'linear'})` resolves with a real pair (source dbId 1, target dbId 1 — each model has its own independent dbId numbering, so a matching dbId on both sides is correct here, not a collision) and non-zero `statistics.narrowPhasePairs`. If either path throws, read the real `ViewerModelAdapter.js`/`CollisionWorld.js` call site the error names and fix the facade to match — do not guess a second time; this project's established discipline is to read the real source before patching.
+
+**Manual verification**: Run `npm run test:performance:gate:m4 -- --cases=S4` against the running dev server. Expected: S4 no longer reports `NOT_EXERCISED`; both modes run, warm-only, under both broad-phase arms and both runtimes; the observation envelope and T-a pipeline (Task 3.7's already-landed machinery) bracket the query exactly as they do for every other case, reporting a real `maxTask`/Rᵢ value for this one atomic call; `compareRuns` (Task 3.6, via `compareRunsAtPairScale`) reports TLAS-vs-linear parity on the synthetic pair exactly as it does for a real one — this is the check that would catch a witness-scale wiring bug, since the recaptured `scales['s4Source']`/`scales['s4Target']` must both be finite numbers, not `undefined`. Report the actual measured atomic-call duration in this task's own report — this is the number spec's S4 row exists to find (whether one call can exceed the 8 ms / 24.8 ms ceilings).
 
 ```bash
 git add test/performance/m4/s4-synthetic-mesh.mjs test/performance/m4/s4-synthetic-mesh.test.mjs test/performance/browser-probes-m4.mjs test/performance/run-gate-m4.mjs
@@ -8587,9 +8691,9 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 ```
 
 **Known open uncertainties for the implementer to verify empirically, not trust verbatim:**
-1. The exact `findClashes` target-resolution path for a dbId-scoped (not whole-model) target is not fully confirmed by this task text — the `targets: {modelKey, dbIds}` shape is inferred by analogy with `source`'s shape. Read the real model-key-to-model resolution code in `run-gate-m4.mjs` in full and verify empirically which extraction path the target side actually takes.
-2. The generous-clearance value (`1.0`) is a placeholder, not derived from spec text — confirm it actually produces a query that reaches the narrow phase / distance query rather than being early-hard-clash-excluded or trivially proven-overlapping, and adjust if the live result doesn't match that intent.
-3. `getWorldMatrix`/`getWorldBounds` identity-transform assumption: both synthetic meshes are placed via their own baked-in grid coordinates (mesh B translated by a small offset) rather than via a placement transform, matching S2T's bystander convention. Confirm this is compatible with however the real narrow phase composes position + transform for a fragment (bake the offset into the position buffer, identity transform, should be equivalent to a real placement — but verify empirically rather than trust).
+1. The generous-clearance value (`1.0`) is a placeholder, not derived from spec text — confirm it actually produces a query that reaches the narrow phase / distance query rather than being early-hard-clash-excluded or trivially proven-overlapping, and adjust if the live result doesn't match that intent.
+2. Coplanar geometry: both grids are flat (`z=0`) and offset only in X/Y, so the two meshes are perfectly coplanar rather than volumetrically overlapping. Confirm this does not trip an unanticipated coplanar-geometry edge case in the narrow phase (e.g. a degenerate normal or zero-thickness AABB assumption) — if it does, the fix is a small `z` offset between the two grids, not a redesign.
+3. `installGateHelpers`'s exact current shape (`resolveModel`/`modelTag`/`tagDiagnostics`/`worldDiagonalsByTag`, and where `disposeS2TFacade` is called) was described here from its S2T registration pattern, not pasted verbatim in full — read the real, current function bodies before writing this step's edits, since the file may have shifted since this task text was drafted.
 
 ---
 
