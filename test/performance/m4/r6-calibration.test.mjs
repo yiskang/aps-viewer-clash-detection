@@ -1,7 +1,7 @@
 // test/performance/m4/r6-calibration.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matricesEqual, R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer } from './r6-calibration.mjs';
+import { matricesEqual, R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer, pairSetDelta } from './r6-calibration.mjs';
 
 test('matricesEqual: true when every one of 16 elements agrees within 1e-9', () => {
   const a = Array(16).fill(0).map((_, i) => i);
@@ -32,4 +32,23 @@ test('selectCalibrationMagnitude: null (NOT EXERCISED) when no d in the sequence
 test('pairSetsDiffer: order-insensitive multiset comparison over signature strings', () => {
   assert.equal(pairSetsDiffer(['a:1', 'b:2'], ['b:2', 'a:1']), false);
   assert.equal(pairSetsDiffer(['a:1'], ['a:1', 'c:3']), true);
+});
+
+// Codex-review fix (Important #1): calibration must freeze the EXACT expected pair delta (the
+// specific pairs entering and leaving), not merely a boolean "did something change" -- §5.2.1's own
+// "the resulting expected pair delta -- the exact set of pairs entering and leaving -- recorded
+// verbatim ... reused unchanged across every arm, state, and repetition". pairSetDelta computes that
+// delta between a baseline (P0) and a comparison (P1) set of pair-signature strings, order-
+// insensitively, so both the calibration pass and every later measured arm can compute it identically
+// and compare for exact equality.
+test('pairSetDelta: identical sets produce no entering/leaving pairs', () => {
+  assert.deepEqual(pairSetDelta(['a:1', 'b:2'], ['b:2', 'a:1']), { entering: [], leaving: [] });
+});
+
+test('pairSetDelta: entering is present in B but not A; leaving is present in A but not B', () => {
+  assert.deepEqual(pairSetDelta(['a:1', 'b:2'], ['b:2', 'c:3']), { entering: ['c:3'], leaving: ['a:1'] });
+});
+
+test('pairSetDelta: entering/leaving are each sorted, for stable exact-equality comparison', () => {
+  assert.deepEqual(pairSetDelta([], ['c:3', 'a:1', 'b:2']), { entering: ['a:1', 'b:2', 'c:3'], leaving: [] });
 });

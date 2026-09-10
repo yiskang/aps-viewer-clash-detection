@@ -36,7 +36,7 @@ import {
 } from './m4/observation-envelope.mjs';
 import { rankByDensity, selectCohort } from './m4/cohort-selection.mjs';
 import { S2T_LEVELS, bystanderLayout, syntheticIdRangeAbove } from './m4/s2t-bystander-layout.mjs';
-import { R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer } from './m4/r6-calibration.mjs';
+import { R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer, pairSetDelta } from './m4/r6-calibration.mjs';
 
 // §6.1 steps 1-2: identical 3-step load + identity re-confirmation to run-gate-m3.mjs:194-242,
 // unchanged in shape (Architecture normal load, Structure/Mechanical as-additional via
@@ -516,39 +516,74 @@ async function runSmokeS2T(page) {
 // Since every calibration query already uses a brand-new world (see above), no invalidation call
 // was ever needed here in the first place; removed rather than wired to a real accessor that would
 // make it fire but still change nothing observable.
+//
+// Codex-review fixes (post-commit round):
+//
+// (#2, Important) Pair signatures now carry the SAME source/target model-identity tag M3's own
+// comparator already uses (run-gate-m3.mjs:313: `(m) => m === modelArch ? 'arch' : m ===
+// modelStructure ? 'structure' : m === modelMechanical ? 'mechanical' : 'unknown'`) rather than
+// dbId+type alone. R6's target is `window.viewer.getAllModels()` -- all three federated models --
+// exactly the multi-model-target shape M3's own comparator was built to disambiguate; dbId
+// numbering is per-model, not global, so a real dbId collision across two of the three discipline
+// models (e.g. a pair leaving Architecture dbId 42 and, at the same calibration step, an unrelated
+// pair entering Mechanical also at dbId 42) would otherwise be indistinguishable in the sorted
+// signature multiset and could silently cancel out of a set-difference comparison. Matched to the
+// existing convention rather than inventing a new one, per this project's own established pattern.
+//
+// (#1, Important) The calibration pass now also returns the EXACT baseline pair set `p0` and the
+// FIRST changed pair set `firstChangeP1` (captured only once, at the same index
+// `selectCalibrationMagnitude` itself would pick via `changedFlags.findIndex(Boolean)` -- never
+// recomputed independently, so the two can never disagree on which `d` "the" change came from).
+// §5.2.1 requires the calibration pass to record "the exact set of pairs entering and leaving...
+// reused unchanged across every arm, state, and repetition" -- a boolean "did it change" alone
+// (the pre-fix `changedFlags`) cannot catch two arms producing DIFFERENT non-empty deltas that both
+// individually satisfy "changed". The caller (`runSmokeR6Sequence`) computes the frozen expected
+// entering/leaving sets from `p0`/`firstChangeP1` via `pairSetDelta` and compares every arm's own
+// observed delta against them for exact equality, not mere non-emptiness.
 async function calibrateR6Translation(page, { cohortDbIds }) {
   return page.evaluate(async ({ cohortDbIds, sequence }) => {
     const { CollisionWorld } = await import('/collision/index.js');
-    const archModel = window.__gate.modelArch;
-    const T0 = Array.from(archModel.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
+    const { modelArch, modelStructure, modelMechanical } = window.__gate;
+    const modelTag = (m) => (m === modelArch ? 'arch' : m === modelStructure ? 'structure' : m === modelMechanical ? 'mechanical' : 'unknown');
+    const T0 = Array.from(modelArch.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
     async function runR3(world) {
       const r = await world.findClashes({
         mode: 'clearance', clearance: 0.05,
-        source: { model: window.__gate.modelStructure, dbIds: cohortDbIds },
+        source: { model: modelStructure, dbIds: cohortDbIds },
         target: { targets: window.viewer.getAllModels().map((m) => ({ model: m })) },
         groupBy: 'dbId', broadPhase: 'tlas',
       });
-      return r.pairs.map((p) => `${p.source.dbId}:${p.target.dbId}:${p.type}`).sort();
+      return r.pairs.map((p) => `${modelTag(p.source.model)}:${p.source.dbId}:${modelTag(p.target.model)}:${p.target.dbId}:${p.type}`).sort();
     }
     const w0 = await CollisionWorld.fromViewer(window.viewer);
-    w0.admitModel(window.__gate.modelArch); w0.admitModel(window.__gate.modelStructure); w0.admitModel(window.__gate.modelMechanical);
+    w0.admitModel(modelArch); w0.admitModel(modelStructure); w0.admitModel(modelMechanical);
     const p0 = await runR3(w0);
     w0.dispose();
     const changedFlags = [];
+    let firstChangeP1 = null;
     for (const d of sequence) {
       // Composition order: T_moved = Translation(d) x T0, pre-multiplied (§5.2.1) -- Matrix4#multiply
       // sets `this = this * arg`, so `Translation.multiply(T0)` is exactly `Translation x T0`.
       const composed = new window.THREE.Matrix4().makeTranslation(d, 0, 0).multiply(new window.THREE.Matrix4().fromArray(T0));
-      window.viewer.impl.setPlacementTransform(archModel, composed);
+      window.viewer.impl.setPlacementTransform(modelArch, composed);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // render stabilisation
       const w = await CollisionWorld.fromViewer(window.viewer);
-      w.admitModel(window.__gate.modelArch); w.admitModel(window.__gate.modelStructure); w.admitModel(window.__gate.modelMechanical);
+      w.admitModel(modelArch); w.admitModel(modelStructure); w.admitModel(modelMechanical);
       const p1 = await runR3(w);
       w.dispose();
-      changedFlags.push(JSON.stringify(p0) !== JSON.stringify(p1));
-      window.viewer.impl.setPlacementTransform(archModel, new window.THREE.Matrix4().fromArray(T0));
+      const changed = JSON.stringify(p0) !== JSON.stringify(p1);
+      changedFlags.push(changed);
+      if (changed && firstChangeP1 === null) firstChangeP1 = p1; // §5.2.1: take the FIRST change only
+      window.viewer.impl.setPlacementTransform(modelArch, new window.THREE.Matrix4().fromArray(T0));
     }
-    return { T0, changedFlags };
+    // Codex-review fix (#3, Minor): the render-stabilisation wait after EVERY setPlacementTransform
+    // call, including this final restore, is §5.2.1's own fixed rule ("two consecutive
+    // requestAnimationFrame turns observed ... before the next query is issued") -- the pre-fix code
+    // restored T0 on the loop's last iteration and returned immediately, so a caller building its
+    // first MEASURED world right after this call could read the Architecture model before its
+    // restored placement had actually stabilised.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return { T0, changedFlags, p0, p1: firstChangeP1 };
   }, { cohortDbIds, sequence: R6_CALIBRATION_SEQUENCE });
 }
 
@@ -572,10 +607,15 @@ async function calibrateR6Translation(page, { cohortDbIds }) {
 // the live in-page object once actually included).
 async function runR6Sequence(page, world, { cohortDbIds, broadPhase, T0, d }) {
   return page.evaluate(async ({ cohortDbIds, broadPhase, T0, d, world }) => {
-    const archModel = window.__gate.modelArch;
+    const { modelArch, modelStructure, modelMechanical } = window.__gate;
+    // Codex-review fix (#2, Important): same model-identity-tagged signature convention as
+    // calibrateR6Translation above (and M3's own comparator, run-gate-m3.mjs:313) -- see that
+    // function's header comment for the dbId-collision rationale, identical here since this
+    // sequence's own query targets the same three federated models.
+    const modelTag = (m) => (m === modelArch ? 'arch' : m === modelStructure ? 'structure' : m === modelMechanical ? 'mechanical' : 'unknown');
     async function runR3() {
-      const r = await world.findClashes({ mode: 'clearance', clearance: 0.05, source: { model: window.__gate.modelStructure, dbIds: cohortDbIds }, target: { targets: window.viewer.getAllModels().map((m) => ({ model: m })) }, groupBy: 'dbId', broadPhase });
-      return { pairs: r.pairs.map((p) => `${p.source.dbId}:${p.target.dbId}:${p.type}`).sort(), tlasBuilds: r.statistics.tlasBuilds };
+      const r = await world.findClashes({ mode: 'clearance', clearance: 0.05, source: { model: modelStructure, dbIds: cohortDbIds }, target: { targets: window.viewer.getAllModels().map((m) => ({ model: m })) }, groupBy: 'dbId', broadPhase });
+      return { pairs: r.pairs.map((p) => `${modelTag(p.source.model)}:${p.source.dbId}:${modelTag(p.target.model)}:${p.target.dbId}:${p.type}`).sort(), tlasBuilds: r.statistics.tlasBuilds };
     }
     const step1Cold = await runR3(); // R6 cold sample
     const step1Warm = await runR3(); // R6 warm sample, records P0
@@ -583,15 +623,15 @@ async function runR6Sequence(page, world, { cohortDbIds, broadPhase, T0, d }) {
     let reconfirm;
     try {
       const composed = new window.THREE.Matrix4().makeTranslation(d, 0, 0).multiply(new window.THREE.Matrix4().fromArray(T0));
-      window.viewer.impl.setPlacementTransform(archModel, composed);
+      window.viewer.impl.setPlacementTransform(modelArch, composed);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      world.invalidateModelPlacement(archModel);
+      world.invalidateModelPlacement(modelArch);
       refresh = await runR3(); // R6's THIRD measured query, the `refresh` state -- records P1
     } finally {
-      window.viewer.impl.setPlacementTransform(archModel, new window.THREE.Matrix4().fromArray(T0));
+      window.viewer.impl.setPlacementTransform(modelArch, new window.THREE.Matrix4().fromArray(T0));
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      world.invalidateModelPlacement(archModel);
-      const restored = Array.from(archModel.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
+      world.invalidateModelPlacement(modelArch);
+      const restored = Array.from(modelArch.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
       const restoredOk = restored.every((v, i) => Math.abs(v - T0[i]) <= 1e-9);
       if (!restoredOk) throw new Error('R6 restoration could not be verified — aborting the entire run');
       // Correctness-only, unmeasured (§5.2.1 step 5) -- but its own tlasBuilds is still returned
@@ -636,13 +676,20 @@ async function runSmokeR6Sequence(page) {
   }
   const cohortDbIds = typical.requestedDbIds;
 
-  const { T0, changedFlags } = await calibrateR6Translation(page, { cohortDbIds });
+  const { T0, changedFlags, p0, p1 } = await calibrateR6Translation(page, { cohortDbIds });
   const d = selectCalibrationMagnitude(changedFlags);
   console.log('R6 calibration result:', JSON.stringify({ cohortDbIds, changedFlags, selectedD: d }));
   if (d === null) {
     console.log('R6 NOT EXERCISED: no d in the frozen sequence changed the pair set.');
     return;
   }
+  // Codex-review fix (#1, Important): the frozen expected pair delta, computed ONCE from the
+  // calibration pass's own p0 (baseline) / p1 (the first-changed set, at this same selected `d`) --
+  // every arm's own observed delta below is compared against this SAME expected delta for EXACT
+  // equality, not merely checked for non-emptiness (§5.2.1: "the resulting expected pair delta...
+  // reused unchanged across every arm, state, and repetition").
+  const expectedPairDelta = pairSetDelta(p0, p1);
+  console.log('R6 expected pair delta (frozen at calibration):', JSON.stringify(expectedPairDelta));
 
   const armResults = {};
   for (const broadPhase of ['tlas', 'linear']) {
@@ -673,8 +720,10 @@ async function runSmokeR6Sequence(page) {
     if (broadPhase === 'linear' && [sequenceResult.cold, sequenceResult.warm, sequenceResult.refresh, sequenceResult.reconfirm].some((s) => s.tlasBuilds !== 0)) {
       throw new Error('R6 smoke (linear): tlasBuilds must be 0 throughout the linear arm');
     }
-    if (!pairSetsDiffer(sequenceResult.refresh.pairs, sequenceResult.warm.pairs)) {
-      throw new Error(`R6 smoke (${broadPhase}): refresh.pairs must differ from warm.pairs (P1 != P0)`);
+    // Codex-review fix (#1, Important): assert the EXACT frozen delta, not merely "differs".
+    const observedRefreshDelta = pairSetDelta(sequenceResult.warm.pairs, sequenceResult.refresh.pairs);
+    if (JSON.stringify(observedRefreshDelta) !== JSON.stringify(expectedPairDelta)) {
+      throw new Error(`R6 smoke (${broadPhase}): observed refresh pair delta does not match the frozen calibration delta -- expected ${JSON.stringify(expectedPairDelta)}, got ${JSON.stringify(observedRefreshDelta)}`);
     }
     if (pairSetsDiffer(sequenceResult.reconfirm.pairs, sequenceResult.warm.pairs)) {
       throw new Error(`R6 smoke (${broadPhase}): post-restoration reconfirm.pairs must equal warm.pairs (P0 recovered)`);
@@ -687,13 +736,14 @@ async function runSmokeR6Sequence(page) {
       reconfirmTlasBuilds: sequenceResult.reconfirm.tlasBuilds,
       refreshDelta,
       reconfirmDelta,
+      observedRefreshDelta,
       warmPairCount: sequenceResult.warm.pairs.length,
       refreshPairCount: sequenceResult.refresh.pairs.length,
       reconfirmPairCount: sequenceResult.reconfirm.pairs.length,
     };
   }
 
-  console.log('R6 smoke result:', JSON.stringify({ cohortDbIds, selectedD: d, arms: armResults }, null, 2));
+  console.log('R6 smoke result:', JSON.stringify({ cohortDbIds, selectedD: d, expectedPairDelta, arms: armResults }, null, 2));
 }
 
 async function main() {

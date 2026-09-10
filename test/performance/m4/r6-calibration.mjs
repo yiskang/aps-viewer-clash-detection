@@ -32,3 +32,20 @@ export function pairSetsDiffer(pairSignaturesA, pairSignaturesB) {
   const b = [...pairSignaturesB].sort();
   return JSON.stringify(a) !== JSON.stringify(b);
 }
+
+// Codex-review fix (Important #1): §5.2.1 requires the calibration pass to freeze the EXACT
+// expected pair delta -- "the resulting expected pair delta -- the exact set of pairs entering and
+// leaving -- recorded verbatim" -- and requires every later measured arm/state/repetition to
+// reproduce that SAME delta, not merely "some" change. `pairSetsDiffer` alone only answers "did
+// anything change", which cannot catch two arms producing genuinely DIFFERENT changes that both
+// happen to be non-empty. `pairSetDelta` computes the exact, order-insensitive entering/leaving
+// sets between a baseline (A, e.g. P0/`warm`) and a comparison (B, e.g. P1/`refresh`) set of
+// pair-signature strings, each returned sorted so two callers computing the same delta always
+// produce byte-identical arrays for a direct equality check.
+export function pairSetDelta(pairSignaturesA, pairSignaturesB) {
+  const a = new Set(pairSignaturesA);
+  const b = new Set(pairSignaturesB);
+  const entering = [...b].filter((sig) => !a.has(sig)).sort();
+  const leaving = [...a].filter((sig) => !b.has(sig)).sort();
+  return { entering, leaving };
+}
