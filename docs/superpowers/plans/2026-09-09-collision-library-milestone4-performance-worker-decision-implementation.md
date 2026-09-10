@@ -8405,6 +8405,194 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
+### Task 3.12: S4 synthetic dense-mesh fixture
+
+**Plan-coverage correction, not new M4 scope.** S4 was always part of §5.3's pre-registered case matrix and Task 3.7 already wires it into the real dispatch loop — but no earlier Phase 3 task was ever assigned to build the synthetic dense-mesh fixture S4 needs, so Task 3.7 correctly reported it `NOT_EXERCISED` rather than guessing or skipping it silently. This task closes that ownership gap.
+
+**Files:**
+- Create: `test/performance/m4/s4-synthetic-mesh.mjs` (pure triangle-grid + overlap-placement generator)
+- Create: `test/performance/m4/s4-synthetic-mesh.test.mjs`
+- Edit: `test/performance/browser-probes-m4.mjs` (live facade: `buildS4Facade`)
+- Edit: `test/performance/run-gate-m4.mjs` (replace the S4 `NOT_EXERCISED` branch with a real descriptor; extend the model-key resolution layer to recognize the S4 facade)
+
+**Interfaces:**
+- Consumes: nothing from other Phase 3 tasks (leaf task closing a gap Task 3.7 left named). Reuses `maxSyncTriangleCount` (`collision/constants.js`, read-only, no instrumentation) and mirrors `measure-geometry-phases.mjs:26-45`'s grid-generation idiom (not imported — that file is a standalone Node script outside this harness's own module graph, and duplicating ~15 lines of a pure, deterministic, well-commented function is cheaper and more legible than adding a cross-directory import between two independent harness scripts).
+- Produces: `buildTriangleGrid(cols, rows)` and `translatedGrid(grid, offset)` (pure, `test/performance/m4/s4-synthetic-mesh.mjs`) plus a live `buildS4Facade()` returning a fully-synthetic, two-fragment `Model`-shaped object `CollisionWorld.admitModel`/`findClashes` can operate on with **zero** delegation to any real Viewer model (unlike Task 3.4's S2T facade, which delegates most accessors to a real model — S4 is the one case that must touch no real geometry at all, per spec's "fully synthetic case" framing).
+
+**Global Constraints this task must not cross:** zero new `collision/` files or exports; the facade is harness-only, same class as Task 3.4's S2T facade (spec §5.3.1 point 2's "adds no library seam" reasoning applies identically here — this is not new instrumentation, it is a test-local object shaped like the Viewer's own public accessor surface); `run-gate.mjs`/`run-gate-m2.mjs`/`run-gate-m3.mjs` untouched; no reusable "fixture framework" — this task builds exactly the two meshes S4 needs and nothing more general.
+
+- [ ] **Step 1: Write the failing test**
+```js
+// test/performance/m4/s4-synthetic-mesh.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildTriangleGrid, translatedGrid } from './s4-synthetic-mesh.mjs';
+import { maxSyncTriangleCount } from '../../../collision/constants.js';
+
+test('buildTriangleGrid: exactly maxSyncTriangleCount triangles, never approximated', () => {
+  const grid = buildTriangleGrid(100, maxSyncTriangleCount / 200); // 100 cols x 60 rows
+  assert.equal(grid.index.length / 3, maxSyncTriangleCount);
+  // position is a flat [x,y,z,...] array, one vertex per (col,row) grid point
+  assert.equal(grid.position.length / 3, 101 * 61);
+});
+
+test('buildTriangleGrid: deterministic — two calls with the same dims produce byte-identical output', () => {
+  const a = buildTriangleGrid(20, 10);
+  const b = buildTriangleGrid(20, 10);
+  assert.deepEqual(a.position, b.position);
+  assert.deepEqual(a.index, b.index);
+});
+
+test('translatedGrid: shifts every vertex by the given offset, index untouched', () => {
+  const grid = buildTriangleGrid(4, 4);
+  const shifted = translatedGrid(grid, [10, 0, 0]);
+  assert.equal(shifted.position[0], grid.position[0] + 10);
+  assert.equal(shifted.position[1], grid.position[1]); // y unchanged
+  assert.deepEqual(shifted.index, grid.index); // topology never touched by a translation
+});
+
+test('translatedGrid: a small offset relative to the grid extent produces BROADLY OVERLAPPING bounds, per spec', () => {
+  // 100x60 grid at unit spacing spans 100x60 world units. A source and a target mesh both
+  // built from this grid, one translated by a few units, overlap over the vast majority of
+  // their extent -- "broadly overlapping", not merely touching at one edge.
+  const grid = buildTriangleGrid(100, 60);
+  const shifted = translatedGrid(grid, [5, 5, 0]);
+  const gridMaxX = Math.max(...Array.from({ length: grid.position.length / 3 }, (_, i) => grid.position[i * 3]));
+  assert.ok(5 < gridMaxX * 0.5, 'offset must be small relative to grid extent, not merely non-zero');
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+Run: `node --test test/performance/m4/s4-synthetic-mesh.test.mjs`
+
+- [ ] **Step 3: Write minimal implementation**
+```js
+// test/performance/m4/s4-synthetic-mesh.mjs
+//
+// M4 Task 3.12: the S4 synthetic dense-mesh fixture's pure geometry generator. Deterministic,
+// no tessellator-formula guessing (measure-geometry-phases.mjs's own documented lesson: an
+// approximated fixture can silently miss the exact ceiling under test). Plain {position, index}
+// arrays, not a THREE.BufferGeometry -- kept framework-agnostic here; the live half (Step 5)
+// wraps this into whatever shape the Viewer's geometry accessors need.
+
+export function buildTriangleGrid(cols, rows) {
+  const position = [];
+  for (let r = 0; r <= rows; r++) for (let c = 0; c <= cols; c++) position.push(c, r, 0);
+  const index = [];
+  const stride = cols + 1;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const a = r * stride + c, b = a + 1, d = a + stride, e = d + 1;
+      index.push(a, d, b, b, d, e);
+    }
+  }
+  return { position, index };
+}
+
+export function translatedGrid(grid, [dx, dy, dz]) {
+  const position = grid.position.slice();
+  for (let i = 0; i < position.length; i += 3) {
+    position[i] += dx; position[i + 1] += dy; position[i + 2] += dz;
+  }
+  return { position, index: grid.index };
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+Run: `node --test test/performance/m4/s4-synthetic-mesh.test.mjs`
+
+- [ ] **Step 5: Live facade + dispatch wiring + commit**
+
+**Before writing this step, read `run-gate-m4.mjs`'s full model-key-to-model resolution code** — the layer between a case descriptor's `{modelKey, dbIds}` shape and the real `world.findClashes(...)` call — since this draft's `targets: {modelKey, dbIds}` shape for S4 is inferred by analogy with `source`'s shape, not confirmed against that resolution code. Verify empirically (a throwaway probe script, this project's established practice for exactly this kind of uncertainty) which extraction path the target side actually takes before trusting the descriptor shape below.
+
+Add to `test/performance/browser-probes-m4.mjs` (mirrors `buildS2TFacade`'s proven shape, but **zero delegation** — every accessor is fully synthetic, since S4 is spec's one fully-synthetic case):
+
+```js
+// test/performance/browser-probes-m4.mjs (excerpt -- Task 3.12's S4 facade)
+window.__m4Probes.buildS4Facade = function (grids) {
+  // grids: [sourceGrid, targetGrid] -- plain {position, index} objects (from
+  // s4-synthetic-mesh.mjs, passed in via page.evaluate's args since that module runs in Node).
+  // dbId 1 -> fragId 0 (source mesh); dbId 2 -> fragId 1 (target mesh). One fragment per dbId,
+  // per spec's "one atomic call" framing -- S4 measures ONE pair's cost, not a population.
+  const geometries = grids.map((g) => {
+    const geom = new window.THREE.BufferGeometry();
+    geom.setAttribute('position', new window.THREE.Float32BufferAttribute(new Float32Array(g.position), 3));
+    geom.setIndex(g.index);
+    return geom;
+  });
+  const worldBoundsByFrag = geometries.map((g) => { g.computeBoundingBox(); return g.boundingBox; });
+
+  const facadeFragList = {
+    getCount: () => 2,
+    isNotLoaded: () => false,
+    getDbIds: (fragId) => fragId + 1, // fragId 0 -> dbId 1, fragId 1 -> dbId 2
+    getWorldBounds: (fragId, dst) => dst.copy(worldBoundsByFrag[fragId]),
+    getWorldMatrix: (fragId, dst) => dst.identity(), // no placement transform for a synthetic fixture
+    getGeometryId: (fragId) => `s4-synthetic-${fragId}`,
+    getVizmesh: (fragId) => geometries[fragId],
+  };
+  // Minimal instanceTree: S4's SOURCE side is queried by explicit dbId (world.findClashes's
+  // `source: {dbIds:[1]}`), which routes through extractFragments -> model.getObjectTree() ->
+  // enumNodeFragments/enumNodeChildren (ViewerModelAdapter.js). Each dbId owns exactly one
+  // fragment and has no children -- callbacks are block-bodied and return nothing, per Task 3.3's
+  // established fix for enumNodeChildren's real "any truthy return stops enumerating" contract
+  // (confirmed against ViewerModelAdapter.js's own extractFragments usage).
+  const instanceTree = {
+    enumNodeFragments: (dbId, cb) => { cb(dbId - 1); }, // dbId 1 -> fragId 0, dbId 2 -> fragId 1
+    enumNodeChildren: () => {}, // no children -- each synthetic dbId is a leaf
+  };
+  return {
+    id: `s4-synthetic-${Math.random().toString(36).slice(2)}`,
+    getFragmentList: () => facadeFragList,
+    getObjectTree: () => instanceTree,
+    getUnitScale: () => 1,
+    __isM4SyntheticS4Facade: true,
+  };
+};
+```
+
+**Verify live, before trusting this code**: this is new, never-proven-against-the-real-library wiring (unlike Task 3.4's facade, which reused a proven real-model delegation pattern for most accessors). Empirically confirm, against the real running app: `world.findClashes({mode:'volume-overlap', source:{model:facade, dbIds:[1]}, target:{targets:[{model:facade, dbIds:[2]}]}, broadPhase:'linear'})` resolves with a real pair (source dbId 1, target dbId 2) and non-zero `statistics.narrowPhasePairs`, proving both extraction paths (source via `extractFragments`+the fake instanceTree, target via whatever `targets` resolves to) actually reach real geometry. If either path throws, read the real `ViewerModelAdapter.js`/`CollisionWorld.js` call site the error names and fix the facade to match — do not guess a second time; this project's established discipline is to read the real source before patching.
+
+Extend `run-gate-m4.mjs`'s model-key resolution to recognize a new key (e.g. `'s4-synthetic'`) resolving to one `buildS4Facade(...)` instance built once per fresh world (S4 is warm-only, one fresh world per tuple, so build the facade once per world construction, not once per query). Replace the S4 case's `NOT_EXERCISED` branch with:
+
+```js
+// test/performance/run-gate-m4.mjs (excerpt -- Task 3.12's S4 descriptor, replacing NOT_EXERCISED)
+case 'S4': {
+  // Both modes, per spec's "under both modes" -- mirrors S1/S2's own explicit both-modes
+  // handling. Warm-only per §5.6 (measuredStatesFor('S4') must already return ['warm'] only --
+  // confirm against fixture-lifecycle.mjs, do not add a cold state here).
+  const CLEARANCE_GENEROUS = 1.0; // "a generous clearance" (spec) -- wide enough that the pair
+                                   // is never hard-clash-excluded by the precheck before reaching
+                                   // the narrow phase this case exists to time; the exact value is
+                                   // this task's own choice, not spec-pinned -- flag in the report
+                                   // if a smaller/larger value changes which code path gets timed.
+  return ['volume-overlap', 'clearance'].map((mode) => ({
+    key: `pathological-pair:${mode}`,
+    descriptor: {
+      mode, ...(mode === 'clearance' ? { clearance: CLEARANCE_GENEROUS } : {}),
+      source: { modelKey: 's4-synthetic', dbIds: [1] },
+      targets: { modelKey: 's4-synthetic', dbIds: [2] },
+    },
+  }));
+}
+```
+
+**Manual verification**: Run `npm run test:performance:gate:m4 -- --cases=S4` against the running dev server. Expected: S4 no longer reports `NOT_EXERCISED`; both modes run, warm-only, under both broad-phase arms and both runtimes; the observation envelope and T-a pipeline (Task 3.7's already-landed machinery) bracket the query exactly as they do for every other case, reporting a real `maxTask`/Rᵢ value for this one atomic call; `compareRuns` (Task 3.6) reports TLAS-vs-linear parity on the synthetic pair exactly as it does for a real one. Report the actual measured atomic-call duration in this task's own report — this is the number spec's S4 row exists to find (whether one call can exceed the 8 ms / 24.8 ms ceilings).
+
+```bash
+git add test/performance/m4/s4-synthetic-mesh.mjs test/performance/m4/s4-synthetic-mesh.test.mjs test/performance/browser-probes-m4.mjs test/performance/run-gate-m4.mjs
+git commit -m "feat(m4): task 3.12 -- S4 synthetic dense-mesh fixture (closes Task 3.7's NOT_EXERCISED gap)
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+**Known open uncertainties for the implementer to verify empirically, not trust verbatim:**
+1. The exact `findClashes` target-resolution path for a dbId-scoped (not whole-model) target is not fully confirmed by this task text — the `targets: {modelKey, dbIds}` shape is inferred by analogy with `source`'s shape. Read the real model-key-to-model resolution code in `run-gate-m4.mjs` in full and verify empirically which extraction path the target side actually takes.
+2. The generous-clearance value (`1.0`) is a placeholder, not derived from spec text — confirm it actually produces a query that reaches the narrow phase / distance query rather than being early-hard-clash-excluded or trivially proven-overlapping, and adjust if the live result doesn't match that intent.
+3. `getWorldMatrix`/`getWorldBounds` identity-transform assumption: both synthetic meshes are placed via their own baked-in grid coordinates (mesh B translated by a small offset) rather than via a placement transform, matching S2T's bystander convention. Confirm this is compatible with however the real narrow phase composes position + transform for a fragment (bake the offset into the position buffer, identity transform, should be equivalent to a real placement — but verify empirically rather than trust).
+
+---
+
 ### Decision checkpoint
 
 Execute this phase's gate for real on both runtimes (`npm run test:performance:gate:m4`), read the
