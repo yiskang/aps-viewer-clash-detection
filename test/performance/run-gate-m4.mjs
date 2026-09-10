@@ -24,9 +24,12 @@
 //        the baseline matrix's own disposition), driven AFTER the baseline matrix completes. Settles
 //        §8.6's open precondition -- module-worker specifier resolution -- decisive for every
 //        worker option (§8.6), so it must run regardless of whether the baseline itself passes.
-//
-// Deliberately NOT here: the S3'/S4' spikes (task 3.10; S3' is also unconditional per §17 but is
-// task 3.10's own scope, not this task's).
+//   3.10 THIS TASK: §17's S3' (worker cold-start cost) and S4' (worker lifecycle protocol) spikes,
+//        also unconditional, driven after S1' on their own shared spike server. S4' exercises all
+//        eight §10.4 scenarios end to end through REAL dedicated Workers wired to the canonical
+//        §10.1/§10.2 request tracker (spike/m4/s3-s4-worker-lifecycle/request-tracker.mjs -- the
+//        same file test/performance/m4/request-tracker.test.mjs drives against a fake worker
+//        object), and carries spec §15.1's one worker-side Metric H sample.
 //
 // Run: node test/performance/run-gate-m4.mjs   (npm run test:performance:gate:m4)
 //      ... --cases=R1,R2 --runtimes=multi-process --repetitions=1   (scoped subset; the flagless
@@ -45,6 +48,7 @@ const PORT = process.env.PORT || 8080;
 const RESULTS_DIR = 'test/performance/results';
 
 import { chromium } from 'playwright';
+import assert from 'node:assert/strict'; // Task 3.10: S4''s per-scenario outcome checks
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
@@ -2429,6 +2433,419 @@ async function runS1PrimeSpike(runtimeConfigs) {
 
 export { runS1PrimeSpike };
 
+// =================================================================================================
+// M4 Task 3.10: S3' (worker cold-start cost) + S4' (worker lifecycle protocol) spikes.
+//
+// Unconditional, exactly like S1' above (§17's table -- "S1' and S3' are cheap and unconditional"),
+// and driven AFTER the baseline matrix so a baseline failure never suppresses evidence §8.6 needs
+// regardless. S4' rides along on the same spike server / browser launches rather than paying for a
+// second set.
+//
+// S3': §17's own bound -- `new Worker(...)` to first acknowledged message, 10 repetitions,
+// median+max, under BOTH §6.1.5 runtimes (the historical single-process configuration is exactly
+// where a worker's process/thread startup cost could plausibly differ, so averaging the two away
+// would hide the one number this spike exists to produce).
+//
+// S4': drives all eight §10.4 scenarios (plus the unknown-fragment-id and protocol-fatal variants
+// and post-fault recovery) end to end through REAL dedicated Workers wired to real
+// `createRequestTracker()` instances via `attachWorker()`. The tracker is
+// spike/m4/s3-s4-worker-lifecycle/request-tracker.mjs -- the SAME file, imported unmodified, that
+// test/performance/m4/request-tracker.test.mjs drives against a fake-but-real-shaped worker object.
+// There is no second, simplified protocol implementation anywhere: the pure tests prove the
+// boundary cases no legitimate worker could ever produce (both directions of the
+// request-ID/workerGeneration reuse guard, all three levels of receipt-time precedence), and S4'
+// proves the real-`Worker`-specific mechanics a fake worker object cannot exercise -- actual
+// out-of-order `postMessage` delivery, actual `terminate()` calls, actual `onerror` events, and
+// actual structured-clone round-tripping of the captured epoch set.
+//
+// Confined ENTIRELY to spike/m4/s3-s4-worker-lifecycle/ (tracker + stub worker + page) plus this
+// file's own driver and the reused test/performance/m4/spike-server.mjs -- never collision/, never
+// wwwroot/, never a route added to server.js. Deleted at M4 close unless a verdict adopts it (§17).
+const S3S4_SPIKE_DIR = 'spike/m4/s3-s4-worker-lifecycle';
+const S3_PRIME_REPETITIONS = 10; // §17's own S3' bound
+
+// §17's S3' bound verbatim: `new Worker(...)` to FIRST ACKNOWLEDGED MESSAGE -- not to construction
+// returning (which is synchronous and measures nothing) and not to a `load` event (which a dedicated
+// Worker does not expose to its creator). Each repetition constructs a genuinely fresh Worker and
+// terminates it, so no repetition can be served by an already-warm worker thread.
+async function runS3PrimeColdStart(page, runtime) {
+  const samples = [];
+  for (let i = 0; i < S3_PRIME_REPETITIONS; i++) {
+    const ms = await page.evaluate(() => new Promise((resolve, reject) => {
+      const t0 = performance.now();
+      const w = window.__spawnStubWorker();
+      const timeout = setTimeout(() => { w.terminate(); reject(new Error("S3' cold-start ack timed out after 10000ms")); }, 10_000);
+      w.onmessage = () => { const dt = performance.now() - t0; clearTimeout(timeout); w.terminate(); resolve(dt); };
+      // Same lesson task 3.9's own page.html records: a DOM ErrorEvent does not survive Playwright's
+      // serialization boundary as anything diagnosable, so reject with a plain Error carrying the
+      // browser's own stated reason instead.
+      w.onerror = (err) => {
+        clearTimeout(timeout); w.terminate();
+        reject(new Error(`S3' cold-start worker error: ${err.message || '(no message)'} (${err.filename || 'unknown'}:${err.lineno ?? '?'})`));
+      };
+      w.postMessage({ requestId: 'warmup', kind: 'ack' });
+    }));
+    samples.push(ms);
+  }
+  const sorted = [...samples].sort((a, b) => a - b);
+  return {
+    runtime: runtime.label,
+    repetitions: S3_PRIME_REPETITIONS,
+    samples,
+    medianMs: sorted[Math.floor(sorted.length / 2)],
+    maxMs: sorted[sorted.length - 1],
+    minMs: sorted[0],
+    // Named explicitly rather than left to be inferred from `samples[0]`: observed empirically (this
+    // task's own manual verification, every run, both runtimes) to be the largest sample, because it
+    // is the ONE repetition that also pays for fetching the worker script over HTTP. Repetitions
+    // 2-10 are served from the page's own script cache and so measure worker THREAD startup alone.
+    // Both readings are legitimate and answer different questions -- `firstMs` is the true one-off
+    // cold start in a fresh page, `medianMs` the cost of re-creating a worker inside an already-warm
+    // session -- so neither is collapsed into the other here.
+    firstMs: samples[0],
+  };
+}
+
+// Drives all eight §10.4 scenarios through real createRequestTracker() instances wired to real
+// Worker instances via attachWorker(), returning per-scenario structured (JSON-serializable)
+// outcomes -- error CLASS NAMES and real awaited result values extracted inside the page, not
+// descriptive strings or bare booleans -- for the Node side to assert against exactly.
+async function runS4PrimeScenarios(page) {
+  return page.evaluate(async () => {
+    const results = {};
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const errorNameOf = async (promise) => { try { await promise; return null; } catch (e) { return e.constructor.name; } };
+
+    // (a) dispose() mid-flight
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1]);
+      const req = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 5000 } });
+      const rejectedCount = tracker.disposeWorld('dispose');
+      worker.terminate();
+      results.a = { rejectedCount, errorName: await errorNameOf(req.promise), pendingCountAfter: tracker.pendingCount() };
+    }
+    // (b) evictModel mid-flight
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1, 2]);
+      const evicted = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 5000 } });
+      const untouched = tracker.dispatch({ epochs: [{ epoch: 2, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo' } });
+      const rejectedCount = tracker.evictEpoch(1);
+      const errorName = await errorNameOf(evicted.promise);
+      const untouchedResult = await untouched.promise; // real awaited value, not isSettled()===true
+      results.b = { rejectedCount, errorName, untouchedResult, pendingCountAfter: tracker.pendingCount() };
+      worker.terminate();
+    }
+    // (c) model reload producing a NEW epoch
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1]);
+      const oldReq = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 5000 } });
+      const rejectedCount = tracker.evictEpoch(1);
+      tracker.setLiveEpochs([2]);
+      const newReq = tracker.dispatch({ epochs: [{ epoch: 2, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo' } });
+      const errorName = await errorNameOf(oldReq.promise);
+      const newReqResult = await newReq.promise;
+      results.c = { rejectedCount, errorName, newReqResult, pendingCountAfter: tracker.pendingCount() };
+      worker.terminate();
+    }
+    // (d) invalidateModelPlacement -- armed rejects, unarmed does not (and still resolves for real)
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1]);
+      tracker.setPlacementRevision(1, 0);
+      const armed = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: true }], extra: { kind: 'echo', delayMs: 5000 } });
+      const unarmed = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 20 } });
+      const rejectedCount = tracker.invalidatePlacement(1);
+      const armedErrorName = await errorNameOf(armed.promise);
+      const unarmedResult = await unarmed.promise;
+      results.d = { rejectedCount, armedErrorName, unarmedResult, pendingCountAfter: tracker.pendingCount() };
+      worker.terminate();
+    }
+    // (e) two concurrent requests, responses OUT OF ORDER -- unique tags prove correct attribution
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1]);
+      const arrivalOrder = [];
+      const slow = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 100, tag: 'slow' } });
+      const fast = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 10, tag: 'fast' } });
+      slow.promise.then((r) => arrivalOrder.push(r.tag));
+      fast.promise.then((r) => arrivalOrder.push(r.tag));
+      const [slowResult, fastResult] = await Promise.all([slow.promise, fast.promise]);
+      // The dispatch ORDER is slow-then-fast, so `slow` holds the LOWER requestId -- proving the
+      // resolution order below really is response arrival order, not dispatch order.
+      results.e = { slowResult, fastResult, arrivalOrder, slowRequestId: slow.requestId, fastRequestId: fast.requestId, pendingCountAfter: tracker.pendingCount() };
+      worker.terminate();
+    }
+    // (f) duplicate response for an already-settled requestId
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1]);
+      const req = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'duplicate' } });
+      const result = await req.promise; // resolves on the FIRST of the two raw messages
+      await wait(50); // let the duplicate raw message arrive and be silently discarded
+      results.f = { result, pendingCountAfter: tracker.pendingCount() };
+      worker.terminate();
+    }
+    // (g) malformed response -- unknown epoch AND unknown fragment id, both request-local
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1]);
+      const badEpoch = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo-unknown-epoch' } });
+      const badFragment = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], knownFragmentIds: [1, 2, 3], extra: { kind: 'echo-unknown-fragment' } });
+      const good = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 20 } });
+      const badEpochErrorName = await errorNameOf(badEpoch.promise);
+      const badFragmentErrorName = await errorNameOf(badFragment.promise);
+      const goodResult = await good.promise;
+      results.g = { badEpochErrorName, badFragmentErrorName, goodResult, pendingCountAfter: tracker.pendingCount() };
+      worker.terminate();
+    }
+    // (g') unattributable message -- protocol-fatal
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1]);
+      const a = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 5000 } });
+      const b = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'no-request-id', delayMs: 20 } });
+      const aErrorName = await errorNameOf(a.promise);
+      const bErrorName = await errorNameOf(b.promise);
+      let reattachThrew = false;
+      try { tracker.attachWorker(worker); } catch { reattachThrew = true; }
+      results.gPrime = { aErrorName, bErrorName, pendingCountAfter: tracker.pendingCount(), reattachThrew };
+    }
+    // (h) worker onerror mid-request -- also proves real termination + forbidden reattachment
+    {
+      const tracker = window.__createRequestTracker();
+      const worker = window.__spawnStubWorker();
+      tracker.attachWorker(worker);
+      tracker.setLiveEpochs([1]);
+      const a = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 5000 } });
+      const b = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: true }], extra: { kind: 'echo', delayMs: 5000 } });
+      worker.postMessage({ requestId: 1, workerGeneration: 999, worldGeneration: 1, epochs: [], kind: 'crash' }); // real crash trigger, out-of-band (the worker THROWS before posting anything back, so nothing ever reaches the tracker's onmessage -- only the thrown exception's onerror side effect matters here)
+      await wait(50); // real onerror event round trip
+      const aErrorName = await errorNameOf(a.promise);
+      const bErrorName = await errorNameOf(b.promise);
+      let reattachThrew = false;
+      try { tracker.attachWorker(worker); } catch { reattachThrew = true; }
+      results.h = { aErrorName, bErrorName, pendingCountAfter: tracker.pendingCount(), reattachThrew };
+    }
+    // post-fault recovery: fresh worker, same tracker, new dispatch succeeds
+    {
+      const tracker = window.__createRequestTracker();
+      const worker1 = window.__spawnStubWorker();
+      tracker.attachWorker(worker1);
+      tracker.setLiveEpochs([1]);
+      const doomed = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo', delayMs: 5000 } });
+      worker1.postMessage({ requestId: 1, workerGeneration: 999, worldGeneration: 1, epochs: [], kind: 'crash' });
+      await wait(50);
+      const doomedErrorName = await errorNameOf(doomed.promise);
+      const worker2 = window.__spawnStubWorker();
+      tracker.attachWorker(worker2); // must succeed -- worker2 was never discarded
+      tracker.setLiveEpochs([1]);
+      const recovered = tracker.dispatch({ epochs: [{ epoch: 1, placementRevision: 0, revisionArmed: false }], extra: { kind: 'echo' } });
+      const recoveredResult = await recovered.promise;
+      results.recovery = { doomedErrorName, recoveredResult, pendingCountAfter: tracker.pendingCount() };
+      // Spec §15.1's worker-side Metric H sample reuses THIS already-attached, still-live real
+      // dedicated Worker rather than spawning a ninth one solely to be measured. It is retained (not
+      // terminated) for the Node-side sampleHeap('worker', ...) call that follows, and terminated by
+      // the driver immediately afterward. Its tracker is left attached and intact -- the sample
+      // reply travels over its own transferred MessagePort and never touches the protocol channel
+      // (see page.html / stub-worker.mjs).
+      window.__metricHWorker = worker2;
+    }
+
+    return results;
+  });
+}
+
+// §15.1's worker-sampling requirement, assigned to this task per task 3.11's own forward-pointer
+// note (Phase 3's baseline gate has no other live worker; task 3.11 deliberately never calls the
+// worker half of sampleHeap because its own scope has none). Task 3.11's `sampleHeap` channel
+// contract for the 'worker' target is a single argument-less `evaluateInWorker()` resolving to a
+// byte count -- supplied here by the page-side MessagePort round trip page.html installs.
+//
+// The brief's contract: the outcome is EITHER {available:true, bytes:<positive integer>} OR an
+// explicit {available:false, reason} -- never a thrown error and never a silently-swallowed
+// rejection. `sampleHeap` itself only converts a RECOGNIZED feature-unavailability signal into the
+// latter (heap-sampler.mjs's own post-review hardening); anything else propagates, which is caught
+// here and reported as a `threw` outcome that fails the S4' checks rather than being lost.
+async function sampleWorkerMetricH(page) {
+  const channel = { evaluateInWorker: () => page.evaluate(() => window.__sampleMetricHWorkerHeap()) };
+  try {
+    return await sampleHeap('worker', channel);
+  } catch (err) {
+    return { threw: true, message: err?.message ?? String(err) };
+  }
+}
+
+// Every S4' outcome the brief names, checked here rather than thrown straight out of main(): a
+// mismatch is collected as a structured failure so the §16.2 report tail below is ALWAYS written
+// (Task 3.8's own hard-won discipline -- an exception escaping main() before the write loses every
+// runtime's already-measured evidence), and only then re-raised as a non-zero exit. Distinct from
+// `setupFailures`, which Task 3.9 established is for INFRASTRUCTURE failures only: an S4' outcome
+// mismatch is neither a harness defect nor a legitimate negative experimental result -- it means the
+// one canonical §10.1/§10.2 implementation is wrong, which must fail loudly and by name.
+function checkS4PrimeOutcomes(runtimeLabel, s4) {
+  const failures = [];
+  const check = (scenario, fn) => {
+    try { fn(); } catch (err) { failures.push({ runtime: runtimeLabel, scenario, message: err?.message ?? String(err) }); }
+  };
+
+  check('(a) dispose() mid-flight', () => {
+    assert.equal(s4.a.rejectedCount, 1);
+    assert.equal(s4.a.errorName, 'WorldDisposedError');
+    assert.equal(s4.a.pendingCountAfter, 0);
+  });
+  check('(b) evictModel mid-flight', () => {
+    assert.equal(s4.b.rejectedCount, 1);
+    assert.equal(s4.b.errorName, 'ModelEvictedError');
+    assert.equal(s4.b.untouchedResult.epoch, 2);
+    assert.equal(s4.b.pendingCountAfter, 0);
+  });
+  check('(c) model reload producing a NEW epoch', () => {
+    assert.equal(s4.c.rejectedCount, 1);
+    assert.equal(s4.c.errorName, 'ModelEvictedError');
+    assert.equal(s4.c.newReqResult.epoch, 2);
+    assert.equal(s4.c.pendingCountAfter, 0);
+  });
+  check('(d) invalidateModelPlacement (armed rejects, unarmed does not)', () => {
+    assert.equal(s4.d.rejectedCount, 1);
+    assert.equal(s4.d.armedErrorName, 'ModelPlacementChangedError');
+    assert.equal(s4.d.unarmedResult.epoch, 1);
+    assert.equal(s4.d.pendingCountAfter, 0);
+  });
+  check('(e) two concurrent requests, responses OUT OF ORDER', () => {
+    assert.equal(s4.e.slowResult.tag, 'slow');
+    assert.equal(s4.e.fastResult.tag, 'fast');
+    assert.deepEqual(s4.e.arrivalOrder, ['fast', 'slow']);
+    assert.ok(s4.e.slowRequestId < s4.e.fastRequestId, 'the slow request must hold the LOWER requestId, so out-of-order arrival is genuinely out of DISPATCH order');
+    assert.equal(s4.e.pendingCountAfter, 0);
+  });
+  check('(f) duplicate response for an already-settled requestId', () => {
+    assert.equal(s4.f.result.seq, 1);
+    assert.equal(s4.f.pendingCountAfter, 0);
+  });
+  check('(g) malformed response -- unknown epoch and unknown fragment id', () => {
+    assert.equal(s4.g.badEpochErrorName, 'MalformedResponseError');
+    assert.equal(s4.g.badFragmentErrorName, 'MalformedResponseError');
+    assert.equal(s4.g.goodResult.epoch, 1);
+    assert.equal(s4.g.pendingCountAfter, 0);
+  });
+  check("(g') unattributable message -- protocol-fatal", () => {
+    assert.equal(s4.gPrime.aErrorName, 'ProtocolFaultError');
+    assert.equal(s4.gPrime.bErrorName, 'ProtocolFaultError');
+    assert.equal(s4.gPrime.pendingCountAfter, 0);
+    assert.equal(s4.gPrime.reattachThrew, true);
+  });
+  check('(h) worker onerror mid-request', () => {
+    assert.equal(s4.h.aErrorName, 'WorkerFaultError');
+    assert.equal(s4.h.bErrorName, 'WorkerFaultError');
+    assert.equal(s4.h.pendingCountAfter, 0);
+    assert.equal(s4.h.reattachThrew, true);
+  });
+  check('post-fault recovery', () => {
+    assert.equal(s4.recovery.doomedErrorName, 'WorkerFaultError');
+    assert.equal(s4.recovery.recoveredResult.epoch, 1);
+    assert.equal(s4.recovery.pendingCountAfter, 0);
+  });
+
+  return failures;
+}
+
+// §15.1's worker Metric H contract, checked with the same collect-don't-throw discipline.
+function checkWorkerMetricHSample(runtimeLabel, sample) {
+  const failures = [];
+  try {
+    assert.equal(sample.threw, undefined, `sampleHeap('worker', ...) threw instead of returning an outcome: ${sample.message}`);
+    if (sample.available === true) {
+      assert.ok(Number.isInteger(sample.bytes) && sample.bytes > 0, `available:true must carry a positive integer byte count (got ${sample.bytes})`);
+    } else {
+      assert.equal(sample.available, false, 'the outcome must be exactly {available:true, bytes} or {available:false, reason}');
+      assert.ok(typeof sample.reason === 'string' && sample.reason.length > 0, 'available:false must carry an explicit, non-empty reason');
+    }
+  } catch (err) {
+    failures.push({ runtime: runtimeLabel, scenario: '§15.1 worker-side Metric H sample', message: err?.message ?? String(err) });
+  }
+  return failures;
+}
+
+// Runs S3' under every runtime and S4' under every runtime, on one shared spike server. The
+// worker-side Metric H sample is taken ONCE, under the AUTHORITATIVE runtime only (§6.1.5:
+// "authoritative for every worker-related conclusion") -- §15.1 asks for one worker heap sample, not
+// one per runtime configuration.
+//
+// Infrastructure-vs-result discipline is Task 3.9's, unchanged: a browser that will not launch, a
+// spike server that will not start, a page that will not navigate, or a worker that never
+// acknowledges is an INFRASTRUCTURE failure -- this run has no trustworthy S3'/S4' evidence for that
+// runtime and the caller folds it into `setupFailures`. An S4' scenario landing on the WRONG typed
+// outcome is not that: it is a defect in the canonical protocol implementation, reported separately
+// in `assertionFailures`.
+async function runS3S4PrimeSpike(runtimeConfigs) {
+  const spike = await startSpikeServer({ port: 0 });
+  const byRuntime = {};
+  const infrastructureFailures = [];
+  const assertionFailures = [];
+  let workerMetricHSample = null;
+  try {
+    for (const runtime of runtimeConfigs) {
+      let browser = null;
+      try {
+        // `--js-flags=--expose-gc` matches main()'s own launch call site (Task 3.11 Step 10) -- §15.1's
+        // Metric H protocol needs gc(), and (empirically, this task's manual verification) that flag
+        // does reach the dedicated worker realm's own isolate, where `gc()` is then a function.
+        browser = await chromium.launch({ args: [...runtime.args, '--js-flags=--expose-gc'], proxy: resolveProxyFromEnv() });
+        const page = await browser.newPage();
+        await page.goto(`http://localhost:${spike.port}/${S3S4_SPIKE_DIR}/page.html`);
+
+        const s3ColdStart = await runS3PrimeColdStart(page, runtime);
+        const s4 = await runS4PrimeScenarios(page);
+        assertionFailures.push(...checkS4PrimeOutcomes(runtime.label, s4));
+
+        let metricH = null;
+        if (runtime.authoritative) {
+          metricH = await sampleWorkerMetricH(page);
+          assertionFailures.push(...checkWorkerMetricHSample(runtime.label, metricH));
+          workerMetricHSample = { runtime: runtime.label, ...metricH };
+        }
+        // The one worker S4' deliberately left alive for the sample above is terminated here --
+        // never left running past the page that owns it.
+        await page.evaluate(() => { window.__metricHWorker?.terminate?.(); window.__metricHWorker = null; });
+
+        byRuntime[runtime.label] = { s3ColdStart, s4, workerMetricHSample: metricH };
+      } catch (err) {
+        infrastructureFailures.push({ runtime: runtime.label, message: err?.message ?? String(err), stack: err?.stack ?? null });
+      } finally {
+        if (browser) await browser.close();
+      }
+      // Same discipline as runS1PrimeSpike/main(): an infrastructure exception means nothing later
+      // can be trusted either, so no further runtime is attempted -- but everything gathered so far
+      // is still returned rather than thrown past this function's own caller.
+      if (infrastructureFailures.length) break;
+    }
+  } finally {
+    await spike.close();
+  }
+  return { byRuntime, infrastructureFailures, assertionFailures, workerMetricHSample };
+}
+
+export { runS3S4PrimeSpike };
+
 // ---- main() -------------------------------------------------------------------------------------
 function parseListFlag(name, fallback) {
   const raw = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -2818,6 +3235,44 @@ async function main() {
   console.log("\n=== S1' module-resolution spike complete ===");
   console.log(JSON.stringify(s1PrimeSpike, null, 2));
 
+  // ---- Task 3.10: S3' cold-start + S4' worker-lifecycle spikes (unconditional) -------------------
+  // Same unconditional/always-runs contract as S1' above, and the same infrastructure-vs-result
+  // discipline: an infrastructure failure is folded into Task 3.8's EXISTING `setupFailures` array
+  // (never a second, parallel status channel), while an S4' outcome MISMATCH is a distinct,
+  // separately named failure -- it means the one canonical §10.1/§10.2 request-tracker
+  // implementation is wrong, which is neither a harness defect nor a legitimate negative result.
+  // Both are surfaced only AFTER the §16.2 report below has been written.
+  let s3s4PrimeSpike;
+  try {
+    s3s4PrimeSpike = await runS3S4PrimeSpike(Object.values(RUNTIME_CONFIGS));
+    if (s3s4PrimeSpike.infrastructureFailures.length) {
+      setupFailures.push({
+        runtime: 's3-s4-prime-spike',
+        message: `S3'/S4' spike infrastructure failure(s): ${JSON.stringify(s3s4PrimeSpike.infrastructureFailures)}`,
+        stack: null,
+      });
+    }
+  } catch (err) {
+    // Only `startSpikeServer` itself (outside runS3S4PrimeSpike's own per-runtime try/catch) can
+    // reach here -- e.g. the spike port genuinely cannot be bound at all.
+    s3s4PrimeSpike = { byRuntime: {}, infrastructureFailures: [{ runtime: null, message: err?.message ?? String(err), stack: err?.stack ?? null }], assertionFailures: [], workerMetricHSample: null };
+    setupFailures.push({ runtime: 's3-s4-prime-spike', message: err?.message ?? String(err), stack: err?.stack ?? null });
+    console.error("S3'/S4' SPIKE SETUP FAILURE:", err?.message ?? String(err));
+  }
+  console.log("\n=== S3' worker cold-start + S4' worker-lifecycle spikes complete ===");
+  for (const [label, record] of Object.entries(s3s4PrimeSpike.byRuntime)) {
+    console.log(`  S3' cold start [${label}]: ${JSON.stringify({ medianMs: record.s3ColdStart.medianMs, maxMs: record.s3ColdStart.maxMs })}`);
+  }
+  // §15.1's one worker-side Metric H sample, reported exactly once (authoritative runtime only).
+  const mh = s3s4PrimeSpike.workerMetricHSample;
+  console.log(`  §15.1 worker-side Metric H: ${
+    !mh ? 'NOT SAMPLED (no authoritative runtime completed)'
+      : mh.threw ? `THREW — ${mh.message}`
+      : mh.available ? `${mh.bytes} bytes (runtime=${mh.runtime})`
+      : `UNAVAILABLE — ${mh.reason} (runtime=${mh.runtime})`
+  }`);
+  console.log(JSON.stringify(s3s4PrimeSpike, null, 2));
+
   // ---- Task 3.8: assemble + write the §16.2-required report -------------------------------------
   //
   // Disposition mirrors run-gate-m3.mjs's own 3-way rule (run-gate-m3.mjs:764): a correctness
@@ -2908,6 +3363,13 @@ async function main() {
     // spike failure alone never throws below. Reported here purely as the §8.6-decisive finding
     // §17 requires this run to surface.
     s1PrimeSpike,
+    // Task 3.10: §17's S3' (worker cold-start) + S4' (worker lifecycle protocol) spikes, run
+    // unconditionally above. Same rule as s1PrimeSpike: spike evidence is never a
+    // performance/correctness verdict input, so it never touches `disposition`. `assertionFailures`
+    // is nonetheless a hard failure of this run (thrown below, after this report is written) --
+    // an S4' outcome mismatch means the canonical §10.1/§10.2 implementation is wrong, which is a
+    // defect rather than a finding.
+    s3s4PrimeSpike,
   };
 
   const resultsPath = `${RESULTS_DIR}/m4-gate-${Date.now()}.json`;
@@ -2925,6 +3387,10 @@ async function main() {
   if (harnessFailures.length) {
     console.error('HARNESS_FAILURE:', JSON.stringify(harnessFailures, null, 2));
     throw new Error(`HARNESS_FAILURE — ${harnessFailures.length} measured quer(ies) threw an unexpected, non-capacity error; the matrix is incomplete and its numbers must not be read as a result`);
+  }
+  if (s3s4PrimeSpike.assertionFailures.length) {
+    console.error("S4' PROTOCOL FAILURE:", JSON.stringify(s3s4PrimeSpike.assertionFailures, null, 2));
+    throw new Error(`S4_PRIME_PROTOCOL_FAILURE — ${s3s4PrimeSpike.assertionFailures.length} §10.4 scenario/§15.1 check(s) landed on the wrong typed outcome against a real dedicated Worker; the canonical §10.1/§10.2 request-tracker implementation is wrong`);
   }
   return results;
 }

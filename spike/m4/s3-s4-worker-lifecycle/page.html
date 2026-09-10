@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html><body><script type="module">
+  import { createRequestTracker } from '/spike/m4/s3-s4-worker-lifecycle/request-tracker.mjs';
+
+  window.__createRequestTracker = createRequestTracker;
+  window.__spawnStubWorker = function () {
+    return new Worker('/spike/m4/s3-s4-worker-lifecycle/stub-worker.mjs'); // classic worker -- no {type:'module'}, decoupled from S1'
+  };
+
+  // Metric H (§15.1), worker half -- driven by heap-sampler.mjs's `evaluateInWorker()` channel
+  // contract (it takes no arguments and resolves to a byte count, or rejects). The worker sampled is
+  // one of S4''s OWN already-attached real dedicated Workers, retained on `window.__metricHWorker` by
+  // the S4' driver rather than a ninth worker spawned solely for this.
+  //
+  // The reply travels over a transferred MessagePort, never the worker's normal message channel:
+  // that channel is owned by a live createRequestTracker()'s onmessage handler, which would
+  // (correctly) classify a requestId-less heap-sample reply as an unattributable PROTOCOL-FATAL
+  // message and tear the whole tracker down. See stub-worker.mjs's own note.
+  window.__sampleMetricHWorkerHeap = function () {
+    const worker = window.__metricHWorker;
+    if (!worker) throw new Error('Metric H: no S4-prime worker was retained for the worker-side heap sample');
+    return new Promise((resolve, reject) => {
+      const channel = new MessageChannel();
+      const timeout = setTimeout(() => {
+        channel.port1.close();
+        reject(new Error('Metric H: worker-side heap sample timed out after 5000ms'));
+      }, 5000);
+      channel.port1.onmessage = (ev) => {
+        clearTimeout(timeout);
+        channel.port1.close();
+        if (ev.data && ev.data.ok) resolve(ev.data.bytes);
+        // Rejecting with the worker's own stated reason (never an opaque event -- see
+        // s1-module-resolution/page.html's own note on ErrorEvent serialization) is what lets
+        // heap-sampler.mjs tell a genuine feature-unavailability signal apart from a harness defect.
+        else reject(new Error(ev.data?.reason ?? 'Metric H: worker-side heap sample failed for an unstated reason'));
+      };
+      worker.postMessage({ kind: 'heap-sample', port: channel.port2 }, [channel.port2]);
+    });
+  };
+</script></body></html>
