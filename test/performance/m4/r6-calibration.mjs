@@ -9,9 +9,20 @@
 // §5.2.1: two placement matrices are equal when every one of their 16 elements agrees within an
 // absolute 1e-9 -- used both for the "restored transform verified equal to T0" gate and for the
 // render-stabilisation confirmation.
+//
+// Task review fix (Important #2a): `Math.abs(a[i] - b[i]) > eps` is `false` whenever the
+// subtraction itself is `NaN` (e.g. either operand is `NaN`, or `Infinity - Infinity`) -- `NaN >
+// eps` is always `false`, so a corrupted placement matrix containing a non-finite element would
+// silently pass this "equal" check, defeating the one guarantee this function exists to provide
+// ("restored transform verified equal to T0 ... a restoration that cannot be verified aborts the
+// entire run", §5.2.1). Both operands are now required to be finite before the tolerance check
+// runs at all; a non-finite element on either side is unconditionally NOT equal.
 export function matricesEqual(a, b, eps = 1e-9) {
   if (a.length !== 16 || b.length !== 16) return false;
-  for (let i = 0; i < 16; i++) if (Math.abs(a[i] - b[i]) > eps) return false;
+  for (let i = 0; i < 16; i++) {
+    if (!Number.isFinite(a[i]) || !Number.isFinite(b[i])) return false;
+    if (Math.abs(a[i] - b[i]) > eps) return false;
+  }
   return true;
 }
 

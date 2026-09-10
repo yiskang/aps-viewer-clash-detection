@@ -36,7 +36,26 @@ import {
 } from './m4/observation-envelope.mjs';
 import { rankByDensity, selectCohort } from './m4/cohort-selection.mjs';
 import { S2T_LEVELS, bystanderLayout, syntheticIdRangeAbove } from './m4/s2t-bystander-layout.mjs';
-import { R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer, pairSetDelta } from './m4/r6-calibration.mjs';
+import { R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer, pairSetDelta, matricesEqual } from './m4/r6-calibration.mjs';
+
+// Task-review fix (Important #2b): `runR6Sequence`'s live "restored transform verified equal to T0"
+// gate must actually CALL the real, NaN-safe `matricesEqual` from r6-calibration.mjs rather than
+// reimplement the same tolerance logic inline inside its own `page.evaluate` callback -- otherwise
+// fix #2a (rejecting non-finite elements) only ever takes effect in the unit-tested pure copy, never
+// live. `test/` is not one of server.js's statically-served roots (only `wwwroot` and `/collision`
+// are, confirmed by reading server.js), so the pure module cannot be `import()`-ed directly from
+// inside the page the way `/collision/index.js` is. `page.exposeFunction` bridges the actual
+// imported Node-side function into the browser as a callable (async) global instead, so the SAME
+// function object this file imports above is what runs on every call -- not a duplicate. Exposed at
+// most once per `page` (Playwright throws if the same name is registered twice on one page), tracked
+// via a module-level WeakSet since `runR6Sequence` can be, and in Task 3.7 will be, called many times
+// against the same long-lived page.
+const pagesWithMatricesEqualExposed = new WeakSet();
+async function ensureMatricesEqualExposed(page) {
+  if (pagesWithMatricesEqualExposed.has(page)) return;
+  await page.exposeFunction('__r6MatricesEqual', matricesEqual);
+  pagesWithMatricesEqualExposed.add(page);
+}
 
 // §6.1 steps 1-2: identical 3-step load + identity re-confirmation to run-gate-m3.mjs:194-242,
 // unchanged in shape (Architecture normal load, Structure/Mechanical as-additional via
@@ -555,26 +574,50 @@ async function calibrateR6Translation(page, { cohortDbIds }) {
       });
       return r.pairs.map((p) => `${modelTag(p.source.model)}:${p.source.dbId}:${modelTag(p.target.model)}:${p.target.dbId}:${p.type}`).sort();
     }
-    const w0 = await CollisionWorld.fromViewer(window.viewer);
-    w0.admitModel(modelArch); w0.admitModel(modelStructure); w0.admitModel(modelMechanical);
-    const p0 = await runR3(w0);
-    w0.dispose();
+    // Task-review fix (Important #1): the initial (never-displaced) baseline query also now runs
+    // inside try/finally purely for world-disposal hygiene -- no placement mutation has happened
+    // yet at this point, so there is no "displaced model" risk here, only a potential world leak if
+    // `findClashes` itself threw before the pre-fix, unconditional `w0.dispose()` ran.
+    let w0;
+    let p0;
+    try {
+      w0 = await CollisionWorld.fromViewer(window.viewer);
+      w0.admitModel(modelArch); w0.admitModel(modelStructure); w0.admitModel(modelMechanical);
+      p0 = await runR3(w0);
+    } finally {
+      try { w0?.dispose(); } catch { /* best-effort; must not mask the original error, if any */ }
+    }
     const changedFlags = [];
     let firstChangeP1 = null;
     for (const d of sequence) {
+      // Task-review fix (Important #1): the ENTIRE per-iteration construct -> admit -> query ->
+      // dispose sequence now runs inside try/finally, with T0 restoration moved into the `finally`
+      // clause. Before this fix, any throw between `setPlacementTransform(composed)` and the
+      // unconditional restore at the bottom of the loop body (e.g. `CollisionWorld.fromViewer`,
+      // `admitModel`, or `findClashes` itself throwing) would leave BOTH the temp world `w`
+      // undisposed AND the Architecture model permanently displaced at `composed` -- and since Task
+      // 3.7 calls this function once per runtime, ahead of every later measured tuple on the SAME
+      // live page, every subsequent case in that runtime would then silently measure against a
+      // displaced model. Mirrors the same discipline `runR6Sequence` (below) already applies to its
+      // own move/restore dance.
+      //
       // Composition order: T_moved = Translation(d) x T0, pre-multiplied (§5.2.1) -- Matrix4#multiply
       // sets `this = this * arg`, so `Translation.multiply(T0)` is exactly `Translation x T0`.
       const composed = new window.THREE.Matrix4().makeTranslation(d, 0, 0).multiply(new window.THREE.Matrix4().fromArray(T0));
       window.viewer.impl.setPlacementTransform(modelArch, composed);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // render stabilisation
-      const w = await CollisionWorld.fromViewer(window.viewer);
-      w.admitModel(modelArch); w.admitModel(modelStructure); w.admitModel(modelMechanical);
-      const p1 = await runR3(w);
-      w.dispose();
-      const changed = JSON.stringify(p0) !== JSON.stringify(p1);
-      changedFlags.push(changed);
-      if (changed && firstChangeP1 === null) firstChangeP1 = p1; // §5.2.1: take the FIRST change only
-      window.viewer.impl.setPlacementTransform(modelArch, new window.THREE.Matrix4().fromArray(T0));
+      let w;
+      try {
+        w = await CollisionWorld.fromViewer(window.viewer);
+        w.admitModel(modelArch); w.admitModel(modelStructure); w.admitModel(modelMechanical);
+        const p1 = await runR3(w);
+        const changed = JSON.stringify(p0) !== JSON.stringify(p1);
+        changedFlags.push(changed);
+        if (changed && firstChangeP1 === null) firstChangeP1 = p1; // §5.2.1: take the FIRST change only
+      } finally {
+        try { w?.dispose(); } catch { /* best-effort disposal; must not block T0 restoration below */ }
+        window.viewer.impl.setPlacementTransform(modelArch, new window.THREE.Matrix4().fromArray(T0));
+      }
     }
     // Codex-review fix (#3, Minor): the render-stabilisation wait after EVERY setPlacementTransform
     // call, including this final restore, is §5.2.1's own fixed rule ("two consecutive
@@ -606,6 +649,7 @@ async function calibrateR6Translation(page, { cohortDbIds }) {
 // alongside them (verified empirically: a JSHandle nested as an object field resolves correctly to
 // the live in-page object once actually included).
 async function runR6Sequence(page, world, { cohortDbIds, broadPhase, T0, d }) {
+  await ensureMatricesEqualExposed(page);
   return page.evaluate(async ({ cohortDbIds, broadPhase, T0, d, world }) => {
     const { modelArch, modelStructure, modelMechanical } = window.__gate;
     // Codex-review fix (#2, Important): same model-identity-tagged signature convention as
@@ -632,7 +676,9 @@ async function runR6Sequence(page, world, { cohortDbIds, broadPhase, T0, d }) {
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       world.invalidateModelPlacement(modelArch);
       const restored = Array.from(modelArch.getPlacementTransform?.()?.elements ?? new window.THREE.Matrix4().elements);
-      const restoredOk = restored.every((v, i) => Math.abs(v - T0[i]) <= 1e-9);
+      // Task-review fix (Important #2b): calls the REAL, NaN-safe matricesEqual (bridged in via
+      // ensureMatricesEqualExposed above) instead of reimplementing the tolerance check inline.
+      const restoredOk = await window.__r6MatricesEqual(restored, T0);
       if (!restoredOk) throw new Error('R6 restoration could not be verified — aborting the entire run');
       // Correctness-only, unmeasured (§5.2.1 step 5) -- but its own tlasBuilds is still returned
       // below (not just its pairs) so a caller can assert the arm-specific rebuild-delta rule

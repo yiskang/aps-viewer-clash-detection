@@ -17,6 +17,27 @@ test('matricesEqual: false when any element exceeds the 1e-9 tolerance', () => {
   assert.equal(matricesEqual(a, b), false);
 });
 
+// Task review fix (Important #2a): NaN - NaN is NaN, and `NaN > eps` is false, so the naive
+// `Math.abs(a[i]-b[i]) > eps` check would previously treat a NaN element as "within tolerance" --
+// silently passing the one guarantee this function exists to provide.
+test('matricesEqual: false when the SAME element is NaN on both sides (NaN is never equal to itself)', () => {
+  const a = Array(16).fill(0);
+  const b = Array(16).fill(0);
+  a[7] = NaN;
+  b[7] = NaN;
+  assert.equal(matricesEqual(a, b), false);
+});
+
+test('matricesEqual: false when one side has a non-finite element (NaN or Infinity), even if only one side does', () => {
+  const a = Array(16).fill(0);
+  const bNaN = Array(16).fill(0);
+  bNaN[0] = NaN;
+  assert.equal(matricesEqual(a, bNaN), false);
+  const bInfinity = Array(16).fill(0);
+  bInfinity[15] = Infinity;
+  assert.equal(matricesEqual(a, bInfinity), false);
+});
+
 test('R6_CALIBRATION_SEQUENCE is the exact frozen sequence', () => {
   assert.deepEqual(R6_CALIBRATION_SEQUENCE, [0.02, 0.04, 0.06, 0.10, 0.20]);
 });
