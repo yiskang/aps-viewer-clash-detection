@@ -273,12 +273,30 @@
   // Every `lvl` entry this function is called with must carry: `level`, `realCount`,
   // `targetModelId` (the facade's own `.id`, used to scope a diagnostic's fragment reference to
   // "the S2T target" rather than trusting a bare fragId number, which is only meaningful WITHIN one
-  // model), `statistics.{clearanceExactAabbSurvivors,narrowPhasePairs}`, `diagnostics` (the raw
-  // array), `pairSignatures`/`pairDistances`/`pairWitnesses` (the final result set, keyed and
-  // sorted exactly like run-gate-m3.mjs's own established TLAS-vs-linear comparator convention --
-  // reused here across LEVELS instead of across broad-phase arms), and
-  // `syntheticVizmeshAccessCount` (`facade.getSyntheticVizmeshAccessCount()`, read immediately
-  // after the query).
+  // model), `statistics.{clearanceExactAabbSurvivors,narrowPhasePairs,clearanceOverlapPrechecksRun,
+  // clearanceHardClashExclusions,clearanceDistanceQueriesRun,clearanceHits}` (all six already-public
+  // fields off the SAME `statistics` object `findClashes` already returns -- no new instrumentation
+  // for any of them), `diagnostics` (the raw array), `pairSignatures`/`pairDistances`/`pairWitnesses`
+  // (the final result set, keyed and sorted exactly like run-gate-m3.mjs's own established
+  // TLAS-vs-linear comparator convention -- reused here across LEVELS instead of across broad-phase
+  // arms), and `syntheticVizmeshAccessCount` (`facade.getSyntheticVizmeshAccessCount()`, read
+  // immediately after the query).
+  //
+  // Second codex-review pass, Critical fix: `levelResults` must carry at least two levels for a
+  // level-to-level comparison to mean anything at all. Previously, `levelResults.slice(1)` over a
+  // `[]` or single-element array iterated zero times, so the function vacuously returned
+  // `{ pass: true, violated: [] }` with NO comparison ever performed -- silently defeating §5.3.1's
+  // own "interpretable only if all of the following hold across all four population levels" rule
+  // the moment a caller passed anything incomplete. Fixed below by rejecting fewer than two levels
+  // outright, and by an optional `expectedLevels` second parameter a caller can pass to additionally
+  // require the FULL named level set (e.g. the real S2T matrix's `S2T_LEVELS`, all four) -- not
+  // required unconditionally, because this task's OWN manual-verification smoke test (per the
+  // brief's own Step 5) deliberately checks only two of the four real levels (`S2T_LEVELS[0]` and
+  // `[1]`) and is expected to report `{ pass: true }` for that partial-but-valid two-level check;
+  // hard-requiring all four unconditionally would make this file's own brief-mandated smoke test
+  // fail. `S2T_LEVELS` itself is not importable here to compare against directly -- this file is a
+  // plain script, never an ES module (see this file's own header) -- so the expected set, when one
+  // is being enforced, is the caller's responsibility to supply.
   //
   // Two of §5.3.1's six required conditions are DELIBERATELY NOT checked here, because they are not
   // safely derivable from `findClashes`'s current PUBLIC contract without either new instrumentation
@@ -302,8 +320,19 @@
   // Flagged explicitly in this task's own report rather than approximated silently -- a wrong
   // approximation here would be worse than an honest gap, since it could either invalidate a
   // genuinely-good run or (worse) pass a genuinely-bad one under a false sense of full coverage.
-  window.__m4Probes.checkS2TLevelToLevelControlRule = function (levelResults) {
+  window.__m4Probes.checkS2TLevelToLevelControlRule = function (levelResults, expectedLevels) {
     const violated = [];
+    // Vacuous-pass guard (see the comment block above): fewer than two levels can never support a
+    // level-to-level comparison, so this is reported as a distinct, named violation rather than an
+    // empty, silently-passing loop.
+    if (!Array.isArray(levelResults) || levelResults.length < 2) {
+      return { pass: false, violated: ['incomplete-level-set'] };
+    }
+    if (expectedLevels) {
+      const gotLevels = levelResults.map((r) => r.level).slice().sort((a, b) => a - b);
+      const wantLevels = expectedLevels.slice().sort((a, b) => a - b);
+      if (JSON.stringify(gotLevels) !== JSON.stringify(wantLevels)) violated.push('incomplete-level-set');
+    }
     const base = levelResults[0];
     const isSyntheticTargetRef = (ref, lvl) => !!ref && ref.modelId === lvl.targetModelId && ref.fragId >= lvl.realCount;
     for (const lvl of levelResults.slice(1)) {
@@ -311,6 +340,13 @@
       if (lvl.statistics.narrowPhasePairs !== base.statistics.narrowPhasePairs) violated.push(`narrowPhasePairs@${lvl.level}`);
       // line 234 (count half only -- see the note above for the pair-set half this cannot check).
       if (lvl.statistics.clearanceExactAabbSurvivors !== base.statistics.clearanceExactAabbSurvivors) violated.push(`clearanceExactAabbSurvivors@${lvl.level}`);
+      // Second codex-review pass, Important fix: these four fields are already public on the exact
+      // same `statistics` object the two checks above already read -- no new instrumentation, just
+      // previously-unused existing observables. Checked for level-to-level equality alongside them.
+      if (lvl.statistics.clearanceOverlapPrechecksRun !== base.statistics.clearanceOverlapPrechecksRun) violated.push(`clearanceOverlapPrechecksRun@${lvl.level}`);
+      if (lvl.statistics.clearanceHardClashExclusions !== base.statistics.clearanceHardClashExclusions) violated.push(`clearanceHardClashExclusions@${lvl.level}`);
+      if (lvl.statistics.clearanceDistanceQueriesRun !== base.statistics.clearanceDistanceQueriesRun) violated.push(`clearanceDistanceQueriesRun@${lvl.level}`);
+      if (lvl.statistics.clearanceHits !== base.statistics.clearanceHits) violated.push(`clearanceHits@${lvl.level}`);
 
       // line 237: final pair set, distances, and witnesses identical, by §6.4's own field rules
       // (sorted signature-set equality; bit-identical distance/witness comparison -- no worker is

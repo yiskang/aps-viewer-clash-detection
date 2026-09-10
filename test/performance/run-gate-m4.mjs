@@ -409,6 +409,12 @@ async function runSmokeS2T(page) {
         // buildS2TFacade's `getDbIds`) -- tagged 'synthetic' in the key itself, never a raw negative
         // number, so checkS2TLevelToLevelControlRule's leak check can name it without re-deriving
         // the synthetic-dbId convention on its own side.
+        //
+        // Deliberately omits M3's own `modelTag` (`(m) => m === modelArch ? 'arch' : ...`) from the
+        // key: this query only ever has two participants, one fixed source (Structure) and one
+        // fixed target (the facade) -- unlike M3's three-model cross-product, there is no model
+        // ambiguity a dbId alone could introduce here, so the literal `source:`/`target:` prefixes
+        // already carry all the disambiguating information a tag would.
         const targetTag = (dbId) => (dbId < 0 ? 'synthetic' : String(dbId));
         const keyOf = (p) => `source:${p.source.dbId}:target:${targetTag(p.target.dbId)}`;
         const sortedPairs = [...pairs].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
@@ -417,6 +423,13 @@ async function runSmokeS2T(page) {
           facadeId: facade.id,
           clearanceExactAabbSurvivors: statistics.clearanceExactAabbSurvivors,
           narrowPhasePairs: statistics.narrowPhasePairs,
+          // Second codex-review pass, Important fix: four more already-public fields off this SAME
+          // `statistics` object -- no new instrumentation -- now also carried per level so the
+          // control rule can check them for level-to-level equality alongside the two above.
+          clearanceOverlapPrechecksRun: statistics.clearanceOverlapPrechecksRun,
+          clearanceHardClashExclusions: statistics.clearanceHardClashExclusions,
+          clearanceDistanceQueriesRun: statistics.clearanceDistanceQueriesRun,
+          clearanceHits: statistics.clearanceHits,
           diagnostics: statistics.diagnostics,
           pairSignatures: sortedPairs.map((p) => `${keyOf(p)}:${p.type}`),
           pairDistances: sortedPairs.map((p) => [keyOf(p), p.distance]),
@@ -436,6 +449,10 @@ async function runSmokeS2T(page) {
       statistics: {
         clearanceExactAabbSurvivors: result.clearanceExactAabbSurvivors,
         narrowPhasePairs: result.narrowPhasePairs,
+        clearanceOverlapPrechecksRun: result.clearanceOverlapPrechecksRun,
+        clearanceHardClashExclusions: result.clearanceHardClashExclusions,
+        clearanceDistanceQueriesRun: result.clearanceDistanceQueriesRun,
+        clearanceHits: result.clearanceHits,
       },
       diagnostics: result.diagnostics,
       pairSignatures: result.pairSignatures,
