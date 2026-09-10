@@ -13,12 +13,15 @@
 //   3.4  §5.3.1's S2T bystander facade and its level-to-level mechanical control rule.
 //   3.5  §5.2.1's R6 calibration pass and move -> invalidate -> refresh -> restore sequence.
 //   3.6  §6.4's canonical TLAS-vs-linear correctness comparator.
-//   3.7  THIS TASK: the real R1-R6/S1-S4/S2T dispatch loop wiring all of the above together, plus
-//        the live CDP trace capture -> §6.2 stage attribution (BOTH yield rules) -> Rᵢ/Hᵢ -> T-a
-//        pipeline that task 3.8's `buildEvidenceRecord` consumes.
+//   3.7  the real R1-R6/S1-S4/S2T dispatch loop wiring all of the above together, plus the live CDP
+//        trace capture -> §6.2 stage attribution (BOTH yield rules) -> Rᵢ/Hᵢ -> T-a pipeline that
+//        task 3.8's `buildEvidenceRecord` consumes.
+//   3.11 THIS TASK (Steps 9b-11, live half only -- Steps 1-9 landed the pure
+//        memory-snapshot-adapter.mjs/heap-sampler.mjs modules): interleaves §15.2's cold/warm/
+//        peak/retained Metric M + Metric H sampling into the per-tuple loop task 3.7 built, and adds
+//        `--js-flags=--expose-gc` to the launched browser's args.
 //
-// Deliberately NOT here: the S1'/S3'/S4' spikes (tasks 3.9/3.10) and Metric M/Metric H memory
-// sampling (task 3.11, which interleaves into this file's own per-tuple loop afterwards).
+// Deliberately NOT here: the S1'/S3'/S4' spikes (tasks 3.9/3.10).
 //
 // Run: node test/performance/run-gate-m4.mjs   (npm run test:performance:gate:m4)
 //      ... --cases=R1,R2 --runtimes=multi-process --repetitions=1   (scoped subset; the flagless
@@ -61,6 +64,9 @@ import {
 import { BOUNDARY_TABLE } from './m4/decision-evidence-model.mjs';
 import { buildTriangleGrid, translatedGrid } from './m4/s4-synthetic-mesh.mjs';
 import { maxSyncTriangleCount } from '../../collision/constants.js';
+import { toMemorySnapshot } from './m4/memory-snapshot-adapter.mjs';
+import { sampleHeap } from './m4/heap-sampler.mjs';
+import { computeMetricM } from './m4/metric-m-calculator.mjs';
 
 // ---- §6.1.6 / §7.2 protocol constants ---------------------------------------------------------
 const REPETITIONS = 5;                 // §6.1.6
@@ -1600,6 +1606,76 @@ function r6PairSignatures(run) {
   return run.pairs.map((p) => `${p.sourceModelTag}:${p.sourceDbId}:${p.targetModelTag}:${p.targetDbId}:${p.type}`).sort();
 }
 
+// =================================================================================================
+// M4 Task 3.11 (Steps 9b-11): §15.2's cold/warm/peak/retained memory reporting, live half.
+// Steps 1-9 landed the pure `toMemorySnapshot` (memory-snapshot-adapter.mjs) and `sampleHeap`
+// (heap-sampler.mjs) modules; this section wires both into the per-tuple loop Task 3.7 built.
+// =================================================================================================
+
+// Step 9b: installs the in-page `__m4HeapSample` function `sampleHeap`'s 'main' branch calls,
+// implementing spec §15.1's exact settling protocol -- `gc()` twice separated by two
+// `requestAnimationFrame` turns, one further turn, then `performance.memory.usedJSHeapSize`.
+// Idempotent-guarded per PAGE (a WeakSet, matching `ensureMatricesEqualExposed`'s own convention
+// just above): `window.__m4HeapSample` lives in the page's own window realm and is reused by every
+// later world/tuple on that page, so "once per fresh world" (this step's own header) reduces to
+// "once per fresh page context" here -- and every place a NEW page context is created (initial
+// per-runtime setup, and the attribution-poisoning `page.reload()` rebuild) calls this again.
+const pagesWithHeapSampleInstalled = new WeakSet();
+async function installHeapSampleFunction(page) {
+  if (pagesWithHeapSampleInstalled.has(page)) return;
+  await page.evaluate(() => {
+    window.__m4HeapSample = () => new Promise((resolve, reject) => {
+      if (typeof window.gc !== 'function' || !window.performance?.memory) {
+        reject(new Error('gc()/performance.memory unavailable -- launch without --js-flags=--expose-gc?'));
+        return;
+      }
+      window.gc();
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.gc();
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => resolve(window.performance.memory.usedJSHeapSize));
+          });
+        });
+      });
+    });
+  });
+  pagesWithHeapSampleInstalled.add(page);
+}
+
+// Step 10: samples Metric M + Metric H together at one scope ('cold'/'warm'/'refresh'/'retained' --
+// 'peak' is never sampled directly, see runArmTuple below). `world` is the Playwright JSHandle to
+// the live in-page CollisionWorld the caller constructed (same contract as runQueryInPage/
+// runMeasuredQueryWindow). `toMemorySnapshot`/`computeMetricM` are plain Node modules that cannot
+// run INSIDE the page -- `test/` is not one of server.js's statically-served roots (only `wwwroot`
+// and `/collision` are; see ensureMatricesEqualExposed's own comment above for the same constraint
+// on a different function) -- so this fetches every live epoch's three diagnostic shapes out of the
+// page in ONE round trip and runs the adapter/calculator here in Node against a plain-data
+// `accessors` shim built from that fetch. Functionally identical to calling them directly against
+// `world` (`toMemorySnapshot` only ever calls its three accessor methods synchronously, by
+// `loadEpoch`), and strictly better for a hundreds-of-windows matrix run: one CDP round trip per
+// scope instead of one per accessor call per epoch.
+async function sampleMemoryAtScope(scope, world, page) {
+  const diagnosticsByEpoch = await world.evaluate((w) => (w.__m4LiveEpochs ?? []).map((epoch) => ({
+    epoch,
+    geometry: w.getEpochGeometryDiagnostics(epoch),
+    tlas: w.getEpochTlasDiagnostics(epoch),
+    placement: w.getEpochPlacementDiagnostics(epoch),
+  })));
+  const epochs = diagnosticsByEpoch.map((d) => d.epoch);
+  const byEpoch = new Map(diagnosticsByEpoch.map((d) => [d.epoch, d]));
+  const accessors = {
+    getEpochGeometryDiagnostics: (epoch) => byEpoch.get(epoch)?.geometry ?? [],
+    getEpochTlasDiagnostics: (epoch) => byEpoch.get(epoch)?.tlas
+      ?? { state: 'absent', primitiveCount: null, primitiveBufferBytes: null, builtAtRevision: null },
+    getEpochPlacementDiagnostics: (epoch) => byEpoch.get(epoch)?.placement
+      ?? { instanceCount: 0, placementCount: 0, placementRevision: 0, invalidatedAtRevision: null },
+  };
+  const metricM = computeMetricM(toMemorySnapshot(epochs, accessors));
+  const metricH = await sampleHeap('main', page);
+  return { metricM, metricH };
+}
+
 // ---- The case matrix (§5.2 R-cases, §5.3 S-cases, §5.3.1 S2T) ----------------------------------
 //
 // Each entry expands to one or more VARIANTS. A variant is the unit that gets its own fresh world
@@ -1731,14 +1807,32 @@ async function runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repe
   const world = await page.evaluateHandle(async (keys) => {
     const { CollisionWorld } = await import('/collision/index.js');
     const w = await CollisionWorld.fromViewer(window.viewer);
-    for (const k of keys) w.admitModel(window.__m4Gate.resolveModel(k));
+    // Task 3.11: `sampleMemoryAtScope` needs this tuple's live epoch numbers to call Task 1.6's
+    // per-epoch diagnostic accessors, and `admitModel`'s returned lease is the ONLY place that
+    // number is ever produced -- CollisionWorld exposes no public "list every live epoch" accessor.
+    // Stashed on the world instance itself (an own property a class instance is free to carry,
+    // matching `window.__gate`/`window.__m4Gate`'s own convention elsewhere in this file) rather
+    // than returned separately, so callers reading `world` later (sampleMemoryAtScope, retained
+    // sampling in the `finally` below) don't need a second value threaded alongside every
+    // `world` handle in this function.
+    w.__m4LiveEpochs = [];
+    for (const k of keys) w.__m4LiveEpochs.push(w.admitModel(window.__m4Gate.resolveModel(k)).epoch);
     return w;
   }, admit);
 
   const states = {};
+  // Task 3.11: per-state Metric M/Metric H samples for THIS tuple, keyed by state name
+  // ('cold'/'warm'/'refresh') -- separate from `states` because `states.cold`/`.warm`/`.refresh`
+  // must stay exactly the runMeasuredQueryWindow result object (checkR6ArmRules and the §6.4 parity
+  // comparison above both read `.run`/`.statistics` off it directly), never a wrapper.
+  const memoryByState = {};
+  let memory = null;
   try {
     if (variant.r6) {
-      Object.assign(states, await runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupleKey }));
+      const r6Result = await runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupleKey });
+      const { memory: r6Memory, ...r6States } = r6Result;
+      Object.assign(states, r6States);
+      Object.assign(memoryByState, r6Memory);
     } else {
       for (const state of measuredStatesFor(caseName)) {
         const window_ = await runMeasuredQueryWindow(page, cdp, {
@@ -1747,6 +1841,14 @@ async function runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repe
           label: `${tupleKey}:${state}`,
         });
         states[state] = window_;
+        // Task 3.11 Step 10: sampled immediately after this state's measured query's closing mark
+        // (`window_` only resolves once runQueryInPage's closing mark, and the recorder teardown
+        // immediately after it, have already happened) -- unconditionally, including a
+        // capacity-rejected or otherwise-errored window, because the closing mark is taken in
+        // runQueryInPage's `try` unconditionally too (a rejected `findClashes` call is caught THERE,
+        // not allowed to skip the closing mark), so a real "state of the world at this window's
+        // close" reading exists to sample regardless of whether the query itself succeeded.
+        memoryByState[state] = await sampleMemoryAtScope(state, world, page);
         // A capacity rejection (§4) is a FINDING, not an abort: it is recorded with its exact limit
         // and observed value and the run continues. But the REST of this tuple's states are not
         // measured after one -- a world that has just rejected a query may still have background
@@ -1770,19 +1872,51 @@ async function runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repe
       }
     }
   } finally {
+    // Task 3.11 Step 10: 'retained' sampled immediately before world disposal -- after every measured
+    // state (success or failure) has already run, and before either the in-page `w.dispose()` or the
+    // Playwright handle's own `world.dispose()` below. Runs even down the throw path (R6's
+    // restoration-failure abort included): "the memory the world is holding right before it goes
+    // away" is exactly as meaningful, arguably more so, on an aborted tuple as on a clean one.
+    const retained = await sampleMemoryAtScope('retained', world, page);
+    // Task 3.11 Step 10: peak is the maximum Metric M actually OBSERVED across every state this
+    // tuple measured -- never a fixed alias (R6's `refresh` can admit new geometry cold/warm never
+    // saw; see this task's own brief). `.filter(Boolean)` always leaves at least one entry:
+    // measuredStatesFor always yields >=1 state, and the first iteration of the loop above (or R6's
+    // unconditional `cold`/`warm`) always samples memory before any capacity/error break can fire.
+    const { cold, warm, refresh } = memoryByState;
+    const peakSample = [cold, warm, refresh].filter(Boolean).reduce((max, s) => (s.metricM > max.metricM ? s : max));
+    // Assigned to the OUTER `memory` variable, never `return`ed from inside this `finally` --
+    // a `return` (or `break`/`continue`) here would silently swallow any exception the `try` above
+    // just threw (R6's "restoration could not be verified" / "P0 was not recovered" aborts, in
+    // particular, exist specifically to abort the ENTIRE RUN, not to be eaten by a `finally` that
+    // looks like ordinary cleanup). Disposal happens unconditionally either way, exactly as before
+    // this task's change.
+    memory = {
+      ...(cold ? { cold } : {}), ...(warm ? { warm } : {}), ...(refresh ? { refresh } : {}),
+      peak: { ...peakSample, sourceState: peakSample === cold ? 'cold' : peakSample === warm ? 'warm' : 'refresh' },
+      retained,
+    };
     await page.evaluate((w) => w.dispose(), world); // §6.1.4: disposed before the next tuple's world exists
     await world.dispose();
   }
-  return { tupleKey, states };
+  return { tupleKey, states, memory };
 }
 
 // R6's three measured states, each individually bracketed -- see the decomposition note above.
 async function runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupleKey }) {
   const { T0, d } = ctx.r6;
   const descriptor = { ...variant.descriptor, broadPhase };
-  const measure = (state) => runMeasuredQueryWindow(page, cdp, {
-    pageTargetId: ctx.pageTargetId, world, descriptor, label: `${tupleKey}:${state}`,
-  });
+  const memory = {};
+  // Task 3.11 Step 10: memory sampled immediately after EACH of R6's own three measured states'
+  // closing marks -- cold, warm, and (uniquely to R6) refresh, since the placement move §5.2.1
+  // brackets around `refresh` can admit genuinely new geometry the cold/warm samples never saw.
+  const measure = async (state) => {
+    const result = await runMeasuredQueryWindow(page, cdp, {
+      pageTargetId: ctx.pageTargetId, world, descriptor, label: `${tupleKey}:${state}`,
+    });
+    memory[state] = await sampleMemoryAtScope(state, world, page);
+    return result;
+  };
 
   const cold = await measure('cold');   // §5.2.1 step 1's first query
   const warm = await measure('warm');   // §5.2.1 step 1's second query -- records P0
@@ -1801,14 +1935,15 @@ async function runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupl
     }
     // Correctness-only and explicitly UNMEASURED (§5.2.1 step 5), so it deliberately does NOT go
     // through runMeasuredQueryWindow -- bracketing it would put a fourth "measured" window on a
-    // case the spec says has exactly three.
+    // case the spec says has exactly three, and (Task 3.11) is never memory-sampled either, for the
+    // same reason.
     reconfirm = await runQueryInPage(page, world, descriptor);
   }
 
   if (warm.run && reconfirm?.run && pairSetsDiffer(r6PairSignatures(reconfirm.run), r6PairSignatures(warm.run))) {
     throw new Error('R6 restoration verified by matrix but P0 was not recovered — aborting the entire run');
   }
-  return { cold, warm, refresh, r6: { restoration, reconfirm } };
+  return { cold, warm, refresh, memory, r6: { restoration, reconfirm } };
 }
 
 // §5.2.1's R6-SPECIFIC assertions, run in addition to (never instead of) §6.4's general comparator.
@@ -1877,7 +2012,17 @@ async function main() {
   for (const runtime of Object.values(RUNTIME_CONFIGS)) {
     if (selectedRuntimes && !selectedRuntimes.includes(runtime.label)) continue;
     console.log(`\n=== Runtime: ${runtime.label} ===`);
-    const browser = await chromium.launch({ args: runtime.args, proxy: resolveProxyFromEnv() });
+    // Task 3.11 Step 10: Metric H (§15.1) needs `window.gc()`, which Chromium only exposes under
+    // `--js-flags=--expose-gc`. Applied HERE, at the launch call site, rather than by editing
+    // `RUNTIME_CONFIGS.*.args` in fixture-lifecycle.mjs itself (Task 3.1) -- that file's own
+    // `fixture-lifecycle.test.mjs` asserts `RUNTIME_CONFIGS.historical.args`/`.multiProcess.args` by
+    // exact `deepEqual` with no expose-gc flag, so mutating the exported constant in place would
+    // break an already-landed, passing unit test outside this task's file list (Steps 10/11's own
+    // "Files" section names only run-gate-m4.mjs, heap-sampler.mjs/.test.mjs). The brief's own Step
+    // 10 excerpt already has this shape (`[...runtime.args, '--js-flags=--expose-gc']`) -- spreading
+    // the existing array rather than assigning into it -- which is exactly a launch-call-site
+    // application, not a RUNTIME_CONFIGS mutation.
+    const browser = await chromium.launch({ args: [...runtime.args, '--js-flags=--expose-gc'], proxy: resolveProxyFromEnv() });
     const runtimeReport = { runtime: runtime.label, authoritative: runtime.authoritative, cases: [] };
     try {
       const page = await browser.newPage();
@@ -1885,6 +2030,7 @@ async function main() {
       console.log('Fixture identity (re-confirmed live):', JSON.stringify(identity));
       await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
       await installGateHelpers(page);
+      await installHeapSampleFunction(page); // Task 3.11 Step 9b -- once per fresh page context
 
       const cdp = await page.context().newCDPSession(page);
       const { frameTree } = await cdp.send('Page.getFrameTree');
@@ -2075,6 +2221,13 @@ async function main() {
               await loadFixtureAndReconfirm(page);
               await page.addScriptTag({ path: 'test/performance/browser-probes-m4.mjs' });
               await installGateHelpers(page);
+              // Task 3.11 Step 9b: `page.reload()` replaces the whole window realm, wiping out
+              // `window.__m4HeapSample` along with everything else `installGateHelpers` re-installs
+              // here -- a genuinely NEW "fresh page context" per this step's own header, not merely
+              // a fresh CollisionWorld, so this needs a fresh install too or every later Metric H
+              // sample in this runtime after the FIRST rebuild would throw
+              // "window.__m4HeapSample is not a function" instead of degrading to UNAVAILABLE.
+              await installHeapSampleFunction(page);
               await sacrificialWarmup(page);
             }
           }
@@ -2299,7 +2452,10 @@ function capacityRejectionOf(w) {
 }
 
 function summarizeArmTuple(tuple) {
-  const out = { tupleKey: tuple.tupleKey, states: {} };
+  // Task 3.11 / note for task 3.8: `memory` is passed through UNMODIFIED, per this task's own
+  // "Note for task 3.8" -- the `{cold, warm, refresh?, peak, retained}` shape runArmTuple already
+  // assembled is exactly what task 3.8's report-writing code is meant to consume as-is.
+  const out = { tupleKey: tuple.tupleKey, states: {}, memory: tuple.memory ?? null };
   for (const [state, w] of Object.entries(tuple.states)) {
     if (state === 'r6' || !w) continue;
     out.states[state] = {

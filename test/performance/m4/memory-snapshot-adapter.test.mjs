@@ -30,3 +30,18 @@ test('toMemorySnapshot skips a geometry entry that is not ready (building/oversi
   const snapshot = toMemorySnapshot([1], fakeAccessors);
   assert.equal(computeMetricM(snapshot), 0);
 });
+
+// Task 3.11 Step 10: `peak` is the maximum Metric M actually OBSERVED across cold/warm/refresh, never
+// a fixed alias of `cold` -- run-gate-m4.mjs's `runArmTuple` inlines this exact selection logic
+// against its own live `memoryByState` samples; this proves the pure selection rule in isolation.
+test('peak sampling: the maximum observed Metric M across cold/warm/refresh, never a fixed alias', () => {
+  function selectPeak(cold, warm, refresh) {
+    return [cold, warm, refresh].filter(Boolean).reduce((max, s) => (s.metricM > max.metricM ? s : max));
+  }
+  const cold = { metricM: 1000 };
+  const warm = { metricM: 900 }; // warm usually shrinks or holds -- but this test proves refresh can exceed both
+  const refresh = { metricM: 1500 }; // R6's placement move admitted new geometry
+  const peak = selectPeak(cold, warm, refresh);
+  assert.equal(peak, refresh);
+  assert.equal(selectPeak(cold, warm, undefined), cold); // no refresh state (every non-R6 case): cold still wins here, but because it was measured larger, not by default
+});
