@@ -1131,6 +1131,9 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
       unissued.push({
         coord: { x: -1 - i, y: -1 }, // unreachable by construction: no handler can ever record it
         scheduledNodeMs: probeStartNodeMs + i * PROBE_CADENCE_MS,
+        // Not a real dispatch instant -- this slot was never issued. Recorded as "now" so the
+        // observation's own `lateByMs` states how overdue the slot already was when the harness
+        // stopped issuing, which is the honest reading of a slot the schedule could not reach.
         dispatchNodeMs: performance.now(),
         neverIssued: true,
       });
@@ -1152,15 +1155,14 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
       const all = await resolveInputProbeDispositions(page, registryHandle, dispatched, { thresholdMs: TC_THRESHOLD_MS, calibration });
       // §6.2: "Only IN-WINDOW dispatches count toward T-c; probes continue through the envelope's
       // tail so their handlers can be observed, but a probe issued after the closing mark measures
-      // an already-unblocked main thread and would flatter the statistic." The in/out-of-window
-      // split is decided on the probe's own Node-side dispatch instant against the closing mark's
-      // Node-side instant -- both on the SAME Node monotonic clock, so no calibration conversion
-      // is involved in the split itself (only in each observation's own delay, already applied).
+      // an already-unblocked main thread and would flatter the statistic."
+      //
       // Membership is decided on the slot's INTENDED instant, never on when Node physically got the
       // CDP command out (independent-review finding, Critical): a probe scheduled inside the window
-      // but issued late -- precisely because the machine was overloaded -- belongs in the sample.
-      // Filtering on the late actual instant would drop exactly the observations that carry the
-      // stall. Both instants are Node-monotonic, so no calibration conversion enters the split.
+      // but issued late -- precisely because the machine was overloaded -- belongs in the sample,
+      // and filtering on the late actual instant would drop exactly the observations that carry the
+      // stall. Both instants are Node-monotonic, so no calibration conversion enters this split
+      // (only each observation's own delay is converted, already done above).
       observations = all.filter((_, i) => dispatched[i].scheduledNodeMs <= closingNodeMs);
       tC = tCDispositionForRepetition(observations, TC_THRESHOLD_MS);
     }
