@@ -51,6 +51,7 @@ import { R6_CALIBRATION_SEQUENCE, selectCalibrationMagnitude, pairSetsDiffer, pa
 import { compareRuns } from './m4/correctness-comparator.mjs';
 import {
   M4_CASE_LIST, buildCounterbalancedSchedule, caseOrderForRepetition, toCapacityRejectedRecord,
+  recognizeCapacityRejection,
 } from './m4/counterbalancing-schedule.mjs';
 import { parseTraceAndClock } from './m4/trace-clock-parser.mjs';
 import {
@@ -105,6 +106,25 @@ const TOP_LEVEL_TASK_NAMES = ['RunTask', 'ThreadControllerImpl::RunTask'];
 // THROWS on an unknown stage name, so an unmapped span is excluded from the Rᵢ inputs and recorded
 // by name on the tuple as `unmappedSpanLabels`, which is a reportable gap rather than a crash or a
 // silent under-subtraction.
+//
+// The FIRST live run surfaced eight further labels arriving through the same `(label, ms)` hook.
+// They are NOT missing stages -- they are the checkpoint port's own INTER-CHECKPOINT spans
+// (`collision/scheduler.js:197`, `reportSpan(label, now - lastSpanAt)` from every
+// `checkpoint({ label })` call site). Each measures "synchronous time since this port's previous
+// checkpoint", which is §6.2's SCHEDULER-CONFORMANCE metric -- a completely different quantity
+// from a §6.3 stage duration, and one that must never be subtracted from a main-thread task as
+// transferable stage time (doing so would shrink Rᵢ using a number that is not a stage at all,
+// exactly the class of error §6.2's yield-splitting rule exists to prevent). They are therefore
+// EXCLUDED from stage attribution by design, and reported separately as §6.2 requires: "the
+// maximum inter-checkpoint span across every checkpoint label". Enumerated exhaustively from every
+// `checkpoint({ label })` call site on disk, so a genuinely NEW, genuinely unmapped label still
+// shows up in `unmappedSpanLabels` rather than being swallowed by a catch-all.
+const CHECKPOINT_SPAN_LABELS = new Set([
+  'broad-phase-scan', 'clearance-broad-phase-scan', 'clearance-narrow-phase-pair',
+  'clearance-tlas-broad-phase-query', 'composed-narrow-phase-stage', 'extraction-node-descend',
+  'extraction-node-visit', 'narrow-phase-pair', 'placement-refresh-fragment',
+  'tlas-broad-phase-query', 'whole-model-enumeration-start', 'whole-model-fragment-visit',
+]);
 const SPAN_LABEL_TO_STAGE = {
   'geometry-extraction': 'viewerExtraction',
   'weld': 'compactAndWeld',
@@ -622,18 +642,40 @@ function partitionStageIntervalsByAttributability(stageIntervals, { recorderInst
   return { attributable, unattributable };
 }
 
+// Exported for direct unit testing: this is §6.2's second yield rule, the one piece of this task's
+// logic no earlier task's brief, implementation, or review covers, and it is verdict-bearing (a
+// wrongly-INCLUDED interval shrinks Rᵢ and can qualify a worker boundary that does not deserve it;
+// a wrongly-EXCLUDED one inflates Rᵢ and can disqualify one that does). See
+// test/performance/m4/yield-attribution.test.mjs.
+export { partitionStageIntervalsByAttributability, spanRecordsToStageRecords, SPAN_LABEL_TO_STAGE, CHECKPOINT_SPAN_LABELS };
+
 // Maps `collision/`'s own `(label, ms)` span records onto §6.3's stage names, dropping (and
 // naming) any label the fixed table does not cover rather than letting `classifyStageForScreen`
 // throw mid-run or -- far worse -- silently guessing a classification for it.
 function spanRecordsToStageRecords(spanRecords) {
   const stageRecords = [];
   const unmappedSpanLabels = new Set();
+  // §6.2's scheduler-conformance metric: "the maximum inter-checkpoint span ACROSS EVERY CHECKPOINT
+  // LABEL -- not one primitive, which is what let M3 report 6.10 ms where the same runs' worst
+  // bracketed span was 12.2 ms". Reported alongside, never unioned into stage attribution.
+  let maxInterCheckpointSpanMs = null;
+  let maxInterCheckpointSpanLabel = null;
   for (const s of spanRecords) {
+    if (CHECKPOINT_SPAN_LABELS.has(s.label)) {
+      if (maxInterCheckpointSpanMs === null || s.ms > maxInterCheckpointSpanMs) {
+        maxInterCheckpointSpanMs = s.ms;
+        maxInterCheckpointSpanLabel = s.label;
+      }
+      continue;
+    }
     const stage = SPAN_LABEL_TO_STAGE[s.label];
     if (!stage) { unmappedSpanLabels.add(s.label); continue; }
     stageRecords.push({ stage, receiptMs: s.receiptMs, durationMs: s.ms });
   }
-  return { stageRecords, unmappedSpanLabels: [...unmappedSpanLabels] };
+  return {
+    stageRecords, unmappedSpanLabels: [...unmappedSpanLabels],
+    schedulerConformance: { maxInterCheckpointSpanMs, maxInterCheckpointSpanLabel },
+  };
 }
 
 // ---- §7.3's Rᵢ/Hᵢ -> targets.Ta assembly -------------------------------------------------------
@@ -664,7 +706,7 @@ function assembleTargetsTa({
   traceEvents, dataLossOccurred, clockSamples, pageTargetId,
   spanRecords, yieldRecords, recorderInstalledAtMs, recorderClearedAtMs, openingMs, closingMs,
 }) {
-  const { stageRecords, unmappedSpanLabels } = spanRecordsToStageRecords(spanRecords);
+  const { stageRecords, unmappedSpanLabels, schedulerConformance } = spanRecordsToStageRecords(spanRecords);
 
   const parsed = parseTraceAndClock({
     traceEvents, clockSamples, stageRecords, pageTargetId, dataLossOccurred,
@@ -680,6 +722,7 @@ function assembleTargetsTa({
     unattributableStageIntervals: [],
     unattributableStageTimeMs: 0,
     unmappedSpanLabels,
+    schedulerConformance,
     reason,
   });
 
@@ -766,6 +809,7 @@ function assembleTargetsTa({
     unattributableStageIntervals: unattributable,
     unattributableStageTimeMs: unattributable.reduce((a, u) => a + u.durationMs, 0),
     unmappedSpanLabels,
+    schedulerConformance,
     baselineOccupancyProbe,
     windowMs,
     reason: null,
@@ -1123,6 +1167,7 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
         taskCount: taEvidence.taskCount ?? 0, taskSumMs: taEvidence.taskSumMs ?? null,
         stageIntervalCount: taEvidence.stageIntervalCount ?? 0, yieldCount: taEvidence.yieldCount ?? 0,
         baselineOccupancyProbe: taEvidence.baselineOccupancyProbe ?? null,
+        schedulerConformance: taEvidence.schedulerConformance ?? null,
       },
       observationCount: observations.length,
     };
@@ -1890,6 +1935,14 @@ async function checkS2TControlRule(page, s2tCaseReport) {
   };
 }
 
+// §4's capacity-rejection classification, over BOTH error channels -- see the note at its call
+// site for why the plain-`Error` linear ceiling makes this necessary.
+function capacityRejectionOf(w) {
+  if (w.capacityError) return toCapacityRejectedRecord(w.capacityError);
+  if (w.otherError && recognizeCapacityRejection(w.otherError)) return toCapacityRejectedRecord(w.otherError);
+  return null;
+}
+
 function summarizeArmTuple(tuple) {
   const out = { tupleKey: tuple.tupleKey, states: {} };
   for (const [state, w] of Object.entries(tuple.states)) {
@@ -1913,8 +1966,15 @@ function summarizeArmTuple(tuple) {
       pairCount: w.run ? w.run.pairs.length : null,
       statistics: w.run ? { ...w.run.statistics, diagnostics: undefined, diagnosticCount: w.run.statistics.diagnostics.length } : null,
       // §4: a capacity rejection is reported with its exact limit and observed value, never trimmed.
-      capacityRejection: w.capacityError ? toCapacityRejectedRecord(w.capacityError) : null,
-      error: w.otherError ?? null,
+      //
+      // `otherError` is classified too, not just `capacityError` -- found on the first live S3 run:
+      // the §9.3.1 LINEAR broad-phase ceiling is thrown as a PLAIN `Error`
+      // (collision/CollisionWorld.js:1598), not a `CapacityExceededError`, so the in-page catch
+      // routes it to `otherError` and it was being reported as an anonymous run failure instead of
+      // the §4 capacity FINDING it actually is. `recognizeCapacityRejection` reads its limit and
+      // observed value out of the message, which is the only place that error carries them.
+      capacityRejection: capacityRejectionOf(w),
+      error: capacityRejectionOf(w) ? null : (w.otherError ?? null),
     };
   }
   return out;
@@ -1934,9 +1994,59 @@ function logTupleLine(runtimeLabel, caseName, vKey, repetition, arms, parity) {
   console.log(`  [${runtimeLabel}] ${caseName}${vKey === '(single)' ? '' : `[${vKey}]`} rep${repetition} | ${parts.join(' | ')} | parity ${parityStr}`);
 }
 
+// Aggregate HEALTH signals across every measured window in a runtime. These are the things that,
+// left un-surfaced, would let a green-looking multi-hour run hide the fact that its central
+// evidence was never actually produced -- every T-a UNEVALUABLE for one reason, or every stage
+// interval discarded as un-attributable, or a span label silently outside §6.3's table.
+function healthCounters(runtimeReport) {
+  const taStatus = {};
+  const tcStatus = {};
+  const framesStatus = {};
+  const unevaluableReasons = {};
+  const unmappedSpanLabels = new Set();
+  let windows = 0;
+  let unattributableIntervals = 0;
+  let unattributableMs = 0;
+  let envelopeLimitReached = 0;
+  let capacityRejections = 0;
+  let errors = 0;
+
+  for (const c of runtimeReport.cases ?? []) {
+    for (const v of c.variants ?? []) {
+      for (const rep of v.repetitions ?? []) {
+        for (const arm of Object.values(rep.arms ?? {})) {
+          for (const s of Object.values(arm.states ?? {})) {
+            windows++;
+            const ta = s.targetMeasurements?.tA;
+            taStatus[ta?.status ?? 'MISSING'] = (taStatus[ta?.status ?? 'MISSING'] ?? 0) + 1;
+            if (ta?.status === 'UNEVALUABLE') unevaluableReasons[ta.reason] = (unevaluableReasons[ta.reason] ?? 0) + 1;
+            tcStatus[s.targetMeasurements?.tC?.status ?? 'MISSING'] = (tcStatus[s.targetMeasurements?.tC?.status ?? 'MISSING'] ?? 0) + 1;
+            framesStatus[s.targetMeasurements?.frames?.status ?? 'MISSING'] = (framesStatus[s.targetMeasurements?.frames?.status ?? 'MISSING'] ?? 0) + 1;
+            unattributableIntervals += (s.unattributableStageIntervals ?? []).length;
+            unattributableMs += s.unattributableStageTimeMs ?? 0;
+            for (const l of s.unmappedSpanLabels ?? []) unmappedSpanLabels.add(l);
+            if (s.envelope?.limitReached) envelopeLimitReached++;
+            if (s.capacityRejection) capacityRejections++;
+            if (s.error) errors++;
+          }
+        }
+      }
+    }
+  }
+  return {
+    measuredWindows: windows, taStatus, tcStatus, frameRecorderStatus: framesStatus,
+    taUnevaluableReasons: unevaluableReasons,
+    unattributableStageIntervals: unattributableIntervals,
+    unattributableStageTimeMs: Number(unattributableMs.toFixed(3)),
+    unmappedSpanLabels: [...unmappedSpanLabels],
+    envelopeLimitReached, capacityRejections, errors,
+  };
+}
+
 function summarizeRun(results) {
   return {
     runtimes: results.runtimes.map((r) => ({
+      health: healthCounters(r),
       runtime: r.runtime, chromiumVersion: r.chromiumVersion,
       acceptedTopLevelTaskNames: r.acceptedTopLevelTaskNames,
       worldDiagonalsByTag: r.worldDiagonalsByTag,
