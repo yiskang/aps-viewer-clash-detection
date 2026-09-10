@@ -1100,6 +1100,17 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
     });
 
     const queryResult = await queryPromise;
+    // Task 3.11 fix (codex-review finding #4): Metric M is captured HERE -- immediately after the
+    // closing mark, before the envelope's own tail-wait loop below -- rather than after this whole
+    // function returns. `GeometryRegistry`'s build phases are world-scoped and asynchronous (see
+    // installGateHelpers's `tagDiagnostics` comment above: "a build triggered by a tuple's COLD
+    // query can still be resolving when its WARM query's window opens"), so waiting out the
+    // envelope's own `max(2 x window, 5 s)` tail before sampling would let more of that background
+    // work finish first and understate what a state genuinely held AT ITS OWN close. Reading Task
+    // 1.6's diagnostic accessors has no page-side side effects (no forced gc()/rAF), so moving this
+    // earlier carries none of Metric H's own contamination risk (see the header comment above
+    // `runArmTuple`'s Metric H call for why THAT stays deferred to after this function returns).
+    const metricMAtClose = await sampleMetricMAtClose(world);
     const closingNodeMs = performance.now();
     const windowMs = queryResult.makespanMs;
     // §6.1.7: `max(2 x the query window's own duration, 5 s)`, measured FROM THE CLOSING MARK. It
@@ -1206,6 +1217,7 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
       run: queryResult.run,
       capacityError: queryResult.capacityError,
       otherError: queryResult.otherError,
+      metricMAtClose, // Task 3.11 -- Metric M sampled immediately after the closing mark, above
       diagnosticEventCount: queryResult.diagnosticEventCount,
       yieldCount: queryResult.yieldRecords.length,
       cumulativeYieldMs: queryResult.yieldRecords.reduce((a, y) => a + y.resumeLatencyMs, 0),
@@ -1620,9 +1632,20 @@ function r6PairSignatures(run) {
 // later world/tuple on that page, so "once per fresh world" (this step's own header) reduces to
 // "once per fresh page context" here -- and every place a NEW page context is created (initial
 // per-runtime setup, and the attribution-poisoning `page.reload()` rebuild) calls this again.
-const pagesWithHeapSampleInstalled = new WeakSet();
+// Task 3.11 fix (codex-review finding #1, Important): this was originally guarded by a module-level
+// `WeakSet<Page>` idempotency check, copying `ensureMatricesEqualExposed`'s own convention above.
+// That convention is correct THERE because `page.exposeFunction` bindings are CDP-level and survive
+// navigation (Playwright throws on a second `exposeFunction` call with the same name, even across a
+// reload, which is exactly what that WeakSet guards against) -- but `window.__m4HeapSample` is a
+// plain `page.evaluate()` assignment into the page's OWN window realm, which `page.reload()`
+// deletes along with everything else in that realm while leaving the Playwright `Page` OBJECT
+// (the WeakSet's key) unchanged. A `Page`-keyed cache therefore made the post-reload reinstall call
+// below (in main()'s attribution-poisoning rebuild) a silent no-op: `sampleHeap('main', page)` would
+// then evaluate a `window.__m4HeapSample` that no longer exists, throwing on every tuple for the
+// rest of that runtime instead of the first-reload-and-recover this was meant to provide. Fixed by
+// dropping the cache entirely -- (re)installing this function is a plain, side-effect-free
+// assignment, safe and cheap to call unconditionally on every invocation, unlike `exposeFunction`.
 async function installHeapSampleFunction(page) {
-  if (pagesWithHeapSampleInstalled.has(page)) return;
   await page.evaluate(() => {
     window.__m4HeapSample = () => new Promise((resolve, reject) => {
       if (typeof window.gc !== 'function' || !window.performance?.memory) {
@@ -1633,29 +1656,48 @@ async function installHeapSampleFunction(page) {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           window.gc();
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => resolve(window.performance.memory.usedJSHeapSize));
-          });
+          // Task 3.11 fix (last testing-gap item, per this task's brief's own Step 9b prose AND
+          // heap-sampler.mjs's own header comment -- both independently say "two GC passes separated
+          // by two requestAnimationFrame turns, [wait] ONE FURTHER TURN" before sampling): the brief's
+          // own Step 9b CODE excerpt nested a second pair of `requestAnimationFrame` calls here
+          // (two further turns, not one) -- a mismatch between that excerpt's prose and its own code,
+          // most plausibly a copy/paste of the first settling pair one level too deep. Aligned to the
+          // prose here, since it is stated identically in two independently-authored places (this
+          // task's brief AND the already-reviewed heap-sampler.mjs module describing the same
+          // protocol) while the deeper nesting appears only once, in the excerpt this function was
+          // transcribed from.
+          requestAnimationFrame(() => resolve(window.performance.memory.usedJSHeapSize));
         });
       });
     });
   });
-  pagesWithHeapSampleInstalled.add(page);
 }
 
-// Step 10: samples Metric M + Metric H together at one scope ('cold'/'warm'/'refresh'/'retained' --
-// 'peak' is never sampled directly, see runArmTuple below). `world` is the Playwright JSHandle to
-// the live in-page CollisionWorld the caller constructed (same contract as runQueryInPage/
-// runMeasuredQueryWindow). `toMemorySnapshot`/`computeMetricM` are plain Node modules that cannot
-// run INSIDE the page -- `test/` is not one of server.js's statically-served roots (only `wwwroot`
-// and `/collision` are; see ensureMatricesEqualExposed's own comment above for the same constraint
-// on a different function) -- so this fetches every live epoch's three diagnostic shapes out of the
-// page in ONE round trip and runs the adapter/calculator here in Node against a plain-data
-// `accessors` shim built from that fetch. Functionally identical to calling them directly against
-// `world` (`toMemorySnapshot` only ever calls its three accessor methods synchronously, by
-// `loadEpoch`), and strictly better for a hundreds-of-windows matrix run: one CDP round trip per
-// scope instead of one per accessor call per epoch.
-async function sampleMemoryAtScope(scope, world, page) {
+// Step 10 (split per codex-review finding #4 -- see runMeasuredQueryWindow's own call site comment
+// above for the full rationale): Metric M and Metric H are sampled at genuinely DIFFERENT instants
+// for cold/warm/refresh. Metric M has no page-side side effects (plain diagnostic-accessor reads),
+// so `sampleMetricMAtClose` is called from INSIDE runMeasuredQueryWindow, immediately after the
+// closing mark. Metric H's protocol forces `gc()` and four `requestAnimationFrame` turns per
+// reading (three readings per sample), which WOULD contaminate the very envelope this function's
+// caller is still measuring at that instant -- the observation envelope's own rAF-based frame
+// recorder (§7.2 T-b1/T-b2) and outstanding input-probe resolution (T-c) are both live until
+// runMeasuredQueryWindow itself returns, so Metric H stays deferred to after that, exactly as
+// before this fix. `sampleMemoryAtScope` (below) is for 'retained' only, where no envelope/rAF
+// recorder is active to contaminate (retained is sampled once per tuple, after every measured state
+// has already finished, immediately before world disposal) -- there both metrics can safely be
+// sampled together.
+//
+// `world` is the Playwright JSHandle to the live in-page CollisionWorld the caller constructed
+// (same contract as runQueryInPage/runMeasuredQueryWindow). `toMemorySnapshot`/`computeMetricM` are
+// plain Node modules that cannot run INSIDE the page -- `test/` is not one of server.js's
+// statically-served roots (only `wwwroot` and `/collision` are; see ensureMatricesEqualExposed's own
+// comment above for the same constraint on a different function) -- so this fetches every live
+// epoch's three diagnostic shapes out of the page in ONE round trip and runs the adapter/calculator
+// here in Node against a plain-data `accessors` shim built from that fetch. Functionally identical
+// to calling them directly against `world` (`toMemorySnapshot` only ever calls its three accessor
+// methods synchronously, by `loadEpoch`), and strictly better for a hundreds-of-windows matrix run:
+// one CDP round trip per sample instead of one per accessor call per epoch.
+async function sampleMetricMAtClose(world) {
   const diagnosticsByEpoch = await world.evaluate((w) => (w.__m4LiveEpochs ?? []).map((epoch) => ({
     epoch,
     geometry: w.getEpochGeometryDiagnostics(epoch),
@@ -1671,7 +1713,13 @@ async function sampleMemoryAtScope(scope, world, page) {
     getEpochPlacementDiagnostics: (epoch) => byEpoch.get(epoch)?.placement
       ?? { instanceCount: 0, placementCount: 0, placementRevision: 0, invalidatedAtRevision: null },
   };
-  const metricM = computeMetricM(toMemorySnapshot(epochs, accessors));
+  return computeMetricM(toMemorySnapshot(epochs, accessors));
+}
+
+// Combined Metric M + Metric H sample -- 'retained' only (see header above for why cold/warm/refresh
+// split the two metrics across different instants instead of calling this).
+async function sampleMemoryAtScope(scope, world, page) {
+  const metricM = await sampleMetricMAtClose(world);
   const metricH = await sampleHeap('main', page);
   return { metricM, metricH };
 }
@@ -1841,14 +1889,16 @@ async function runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repe
           label: `${tupleKey}:${state}`,
         });
         states[state] = window_;
-        // Task 3.11 Step 10: sampled immediately after this state's measured query's closing mark
-        // (`window_` only resolves once runQueryInPage's closing mark, and the recorder teardown
-        // immediately after it, have already happened) -- unconditionally, including a
-        // capacity-rejected or otherwise-errored window, because the closing mark is taken in
+        // Task 3.11 Step 10: Metric M was already captured inside runMeasuredQueryWindow, truly
+        // immediately after this state's closing mark (`window_.metricMAtClose` -- see that
+        // function's own call-site comment for why). Metric H is sampled HERE, only after the whole
+        // envelope (rAF recorder, trace, probe resolution) has finished, so its forced gc()/rAF
+        // protocol never contaminates T-b1/T-b2/T-c. Both unconditionally, including for a
+        // capacity-rejected or otherwise-errored window: the closing mark is taken in
         // runQueryInPage's `try` unconditionally too (a rejected `findClashes` call is caught THERE,
         // not allowed to skip the closing mark), so a real "state of the world at this window's
         // close" reading exists to sample regardless of whether the query itself succeeded.
-        memoryByState[state] = await sampleMemoryAtScope(state, world, page);
+        memoryByState[state] = { metricM: window_.metricMAtClose, metricH: await sampleHeap('main', page) };
         // A capacity rejection (§4) is a FINDING, not an abort: it is recorded with its exact limit
         // and observed value and the run continues. But the REST of this tuple's states are not
         // measured after one -- a world that has just rejected a query may still have background
@@ -1872,32 +1922,40 @@ async function runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repe
       }
     }
   } finally {
-    // Task 3.11 Step 10: 'retained' sampled immediately before world disposal -- after every measured
-    // state (success or failure) has already run, and before either the in-page `w.dispose()` or the
-    // Playwright handle's own `world.dispose()` below. Runs even down the throw path (R6's
-    // restoration-failure abort included): "the memory the world is holding right before it goes
-    // away" is exactly as meaningful, arguably more so, on an aborted tuple as on a clean one.
-    const retained = await sampleMemoryAtScope('retained', world, page);
-    // Task 3.11 Step 10: peak is the maximum Metric M actually OBSERVED across every state this
-    // tuple measured -- never a fixed alias (R6's `refresh` can admit new geometry cold/warm never
-    // saw; see this task's own brief). `.filter(Boolean)` always leaves at least one entry:
-    // measuredStatesFor always yields >=1 state, and the first iteration of the loop above (or R6's
-    // unconditional `cold`/`warm`) always samples memory before any capacity/error break can fire.
-    const { cold, warm, refresh } = memoryByState;
-    const peakSample = [cold, warm, refresh].filter(Boolean).reduce((max, s) => (s.metricM > max.metricM ? s : max));
-    // Assigned to the OUTER `memory` variable, never `return`ed from inside this `finally` --
-    // a `return` (or `break`/`continue`) here would silently swallow any exception the `try` above
-    // just threw (R6's "restoration could not be verified" / "P0 was not recovered" aborts, in
-    // particular, exist specifically to abort the ENTIRE RUN, not to be eaten by a `finally` that
-    // looks like ordinary cleanup). Disposal happens unconditionally either way, exactly as before
-    // this task's change.
-    memory = {
-      ...(cold ? { cold } : {}), ...(warm ? { warm } : {}), ...(refresh ? { refresh } : {}),
-      peak: { ...peakSample, sourceState: peakSample === cold ? 'cold' : peakSample === warm ? 'warm' : 'refresh' },
-      retained,
-    };
-    await page.evaluate((w) => w.dispose(), world); // §6.1.4: disposed before the next tuple's world exists
-    await world.dispose();
+    // Task 3.11 fix (codex-review Medium finding): world disposal is now in its OWN, innermost
+    // `finally`, so it runs even if 'retained' sampling itself throws. `sampleHeap` deliberately
+    // RE-THROWS (never masks as `{available:false}`) on a genuine protocol defect rather than a
+    // recognized feature-unavailability signal (heap-sampler.mjs's own header comment) -- before
+    // this fix, that throw would have skipped BOTH `w.dispose()` calls below entirely, since they
+    // were plain statements after the throwing line in the same `finally` block, leaking the
+    // in-page CollisionWorld (its GeometryRegistry buffers, TLAS cache, instance cache) for the rest
+    // of a run that can go on to measure hundreds of further tuples. A `return`/`break`/`continue`
+    // is still never used to reach disposal (that would silently swallow whatever the outer `try`
+    // above just threw -- R6's "restoration could not be verified"/"P0 was not recovered" aborts, in
+    // particular, exist specifically to abort the ENTIRE RUN); ordinary fall-through control flow
+    // reaches the same result without that risk.
+    try {
+      // Task 3.11 Step 10: 'retained' sampled immediately before world disposal -- after every
+      // measured state (success or failure) has already run. Runs even down the throw path (R6's
+      // restoration-failure abort included): "the memory the world is holding right before it goes
+      // away" is exactly as meaningful, arguably more so, on an aborted tuple as on a clean one.
+      const retained = await sampleMemoryAtScope('retained', world, page);
+      // Task 3.11 Step 10: peak is the maximum Metric M actually OBSERVED across every state this
+      // tuple measured -- never a fixed alias (R6's `refresh` can admit new geometry cold/warm never
+      // saw; see this task's own brief). `.filter(Boolean)` always leaves at least one entry:
+      // measuredStatesFor always yields >=1 state, and the first iteration of the loop above (or
+      // R6's unconditional `cold`) always samples memory before any capacity/error break can fire.
+      const { cold, warm, refresh } = memoryByState;
+      const peakSample = [cold, warm, refresh].filter(Boolean).reduce((max, s) => (s.metricM > max.metricM ? s : max));
+      memory = {
+        ...(cold ? { cold } : {}), ...(warm ? { warm } : {}), ...(refresh ? { refresh } : {}),
+        peak: { ...peakSample, sourceState: peakSample === cold ? 'cold' : peakSample === warm ? 'warm' : 'refresh' },
+        retained,
+      };
+    } finally {
+      await page.evaluate((w) => w.dispose(), world); // §6.1.4: disposed before the next tuple's world exists
+      await world.dispose();
+    }
   }
   return { tupleKey, states, memory };
 }
@@ -1907,28 +1965,50 @@ async function runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupl
   const { T0, d } = ctx.r6;
   const descriptor = { ...variant.descriptor, broadPhase };
   const memory = {};
-  // Task 3.11 Step 10: memory sampled immediately after EACH of R6's own three measured states'
-  // closing marks -- cold, warm, and (uniquely to R6) refresh, since the placement move §5.2.1
-  // brackets around `refresh` can admit genuinely new geometry the cold/warm samples never saw.
+  // Task 3.11 fix (codex-review finding #2, Important): R6's own three states previously ran
+  // unconditionally regardless of an earlier state's capacity rejection or unexpected error, unlike
+  // every other case's loop in runArmTuple above -- a rejected `cold` would still measure `warm`,
+  // still apply R6's placement move, and still measure `refresh` against a world whose collision
+  // state after a rejection is unspecified, and `checkR6ArmRules` would then report a MISLEADING
+  // 'r6-states-missing' correctness violation (FAILED_VALIDATION) for what is actually a tolerated
+  // §4 finding (checkR6ArmRules itself is fixed to match, below). `stateFailed` mirrors the non-R6
+  // loop's own classification exactly: set ctx.attributionPoisoned, record a genuinely unexpected
+  // (non-capacity) error in ctx.harnessFailures, and stop advancing to this tuple's later R6 states.
+  let stateFailed = false;
+  // Task 3.11 Step 10 (split per finding #4 -- see sampleMetricMAtClose's own header for the full
+  // rationale): Metric M is already captured inside runMeasuredQueryWindow, immediately after each
+  // state's own closing mark; Metric H is sampled HERE, only after that state's whole envelope has
+  // closed, so its forced gc()/rAF protocol never contaminates T-b1/T-b2/T-c.
   const measure = async (state) => {
     const result = await runMeasuredQueryWindow(page, cdp, {
       pageTargetId: ctx.pageTargetId, world, descriptor, label: `${tupleKey}:${state}`,
     });
-    memory[state] = await sampleMemoryAtScope(state, world, page);
+    memory[state] = { metricM: result.metricMAtClose, metricH: await sampleHeap('main', page) };
+    if (result.capacityError || result.otherError) {
+      ctx.attributionPoisoned = true;
+      if (result.otherError && !recognizeCapacityRejection(result.otherError)) {
+        ctx.harnessFailures.push({ tupleKey, state, error: result.otherError });
+      }
+      stateFailed = true;
+    }
     return result;
   };
 
   const cold = await measure('cold');   // §5.2.1 step 1's first query
-  const warm = await measure('warm');   // §5.2.1 step 1's second query -- records P0
+  const warm = stateFailed ? null : await measure('warm');   // §5.2.1 step 1's second query -- records P0
   let refresh = null;
   let reconfirm = null;
   let restoration = null;
   try {
-    await r6ApplyMove(page, world, { T0, d });   // §5.2.1 steps 2-3
-    refresh = await measure('refresh');          // §5.2.1 step 4 -- records P1, verdict-bearing
+    if (!stateFailed) {
+      await r6ApplyMove(page, world, { T0, d });   // §5.2.1 steps 2-3
+      refresh = await measure('refresh');          // §5.2.1 step 4 -- records P1, verdict-bearing
+    }
   } finally {
     // §5.2.1 step 5: restore T0, invalidate a SECOND time, verify, re-confirm P0. Both halves,
-    // both in the `finally`, because the Architecture model is shared by every later case.
+    // both in the `finally`, because the Architecture model is shared by every later case -- run
+    // even after an earlier state's rejection stopped this tuple short, since T0 must stay correct
+    // for every LATER tuple regardless of whether this one's own measurement completed.
     restoration = await r6RestoreAndVerify(page, world, { T0 });
     if (!restoration.restoredOk) {
       throw new Error('R6 restoration could not be verified — aborting the entire run');
@@ -1936,11 +2016,14 @@ async function runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupl
     // Correctness-only and explicitly UNMEASURED (§5.2.1 step 5), so it deliberately does NOT go
     // through runMeasuredQueryWindow -- bracketing it would put a fourth "measured" window on a
     // case the spec says has exactly three, and (Task 3.11) is never memory-sampled either, for the
-    // same reason.
-    reconfirm = await runQueryInPage(page, world, descriptor);
+    // same reason. Skipped once `stateFailed`: comparing a reconfirm query's pair set against a
+    // `warm` that itself never validly measured would be meaningless.
+    if (!stateFailed) {
+      reconfirm = await runQueryInPage(page, world, descriptor);
+    }
   }
 
-  if (warm.run && reconfirm?.run && pairSetsDiffer(r6PairSignatures(reconfirm.run), r6PairSignatures(warm.run))) {
+  if (!stateFailed && warm.run && reconfirm?.run && pairSetsDiffer(r6PairSignatures(reconfirm.run), r6PairSignatures(warm.run))) {
     throw new Error('R6 restoration verified by matrix but P0 was not recovered — aborting the entire run');
   }
   return { cold, warm, refresh, memory, r6: { restoration, reconfirm } };
@@ -1956,6 +2039,12 @@ async function runR6ArmStates(page, cdp, ctx, { world, variant, broadPhase, tupl
 function checkR6ArmRules({ states, broadPhase, expectedPairDelta }) {
   const violations = [];
   const { cold, warm, refresh, r6 } = states;
+  // Task 3.11 fix (codex-review finding #2, Important): a recognized capacity rejection or an
+  // unexpected harness failure on any of R6's three states (already recorded, respectively, as a §4
+  // finding or in ctx.harnessFailures by runR6ArmStates above) legitimately stops `warm`/`refresh`
+  // short of a full three-state run -- that is NOT a §5.2.1 correctness violation, and reporting it
+  // as the generic 'r6-states-missing' would misclassify a tolerated finding as FAILED_VALIDATION.
+  if ([cold, warm, refresh].some((s) => s?.capacityError || s?.otherError)) return [];
   if (!cold?.run || !warm?.run || !refresh?.run) return ['r6-states-missing'];
 
   const tb = (w) => w.run.statistics.tlasBuilds;
