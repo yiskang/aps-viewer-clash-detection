@@ -16,12 +16,17 @@
 //   3.7  the real R1-R6/S1-S4/S2T dispatch loop wiring all of the above together, plus the live CDP
 //        trace capture -> §6.2 stage attribution (BOTH yield rules) -> Rᵢ/Hᵢ -> T-a pipeline that
 //        task 3.8's `buildEvidenceRecord` consumes.
-//   3.11 THIS TASK (Steps 9b-11, live half only -- Steps 1-9 landed the pure
+//   3.11 (Steps 9b-11, live half only -- Steps 1-9 landed the pure
 //        memory-snapshot-adapter.mjs/heap-sampler.mjs modules): interleaves §15.2's cold/warm/
 //        peak/retained Metric M + Metric H sampling into the per-tuple loop task 3.7 built, and adds
 //        `--js-flags=--expose-gc` to the launched browser's args.
+//   3.9  THIS TASK: §17's S1' module-resolution spike (unconditional -- always runs, never gated on
+//        the baseline matrix's own disposition), driven AFTER the baseline matrix completes. Settles
+//        §8.6's open precondition -- module-worker specifier resolution -- decisive for every
+//        worker option (§8.6), so it must run regardless of whether the baseline itself passes.
 //
-// Deliberately NOT here: the S1'/S3'/S4' spikes (tasks 3.9/3.10).
+// Deliberately NOT here: the S3'/S4' spikes (task 3.10; S3' is also unconditional per §17 but is
+// task 3.10's own scope, not this task's).
 //
 // Run: node test/performance/run-gate-m4.mjs   (npm run test:performance:gate:m4)
 //      ... --cases=R1,R2 --runtimes=multi-process --repetitions=1   (scoped subset; the flagless
@@ -40,11 +45,13 @@ const PORT = process.env.PORT || 8080;
 const RESULTS_DIR = 'test/performance/results';
 
 import { chromium } from 'playwright';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { RUNTIME_CONFIGS, resolveProxyFromEnv, freshWorldTupleKey, measuredStatesFor } from './m4/fixture-lifecycle.mjs';
+import { startSpikeServer } from './m4/spike-server.mjs';
+import { buildBundledWorkerGraph } from './m4/build-worker-graph.mjs';
 import {
   dispositionForObservation, tCDispositionForRepetition, envelopeLimitMs, nearestRankPercentile,
   calibrateNodeToRendererClock, nodeMsToRendererMs, applyClockUncertainty,
@@ -2261,6 +2268,167 @@ function buildRuntimeEvidence(runtimeLabel, caseReports, acc, expectedRepetition
   return records;
 }
 
+// =================================================================================================
+// M4 Task 3.9: S1' module-resolution spike (unconditional, §17's table -- "S1' and S3' are cheap
+// and unconditional"). Settles §8.6's open precondition empirically: can a same-origin served
+// dedicated MODULE worker resolve `three`/`three-mesh-bvh` bare specifiers with no bundler, relying
+// on whatever import-map inheritance its realm actually has? If not, what is the minimal remedy --
+// a relative-path-only worker entry, or -- only if that also fails -- a bounded, dependency-free
+// Node rewrite of the bare specifiers to the same relative vendor paths the page's own import map
+// already resolves to?
+//
+// Confined ENTIRELY to spike/m4/ (worker entries + page) plus this file's own driver,
+// test/performance/m4/spike-server.mjs (§16.3's own permission for the harness to start an
+// independent express instance), and test/performance/m4/build-worker-graph.mjs -- never collision/,
+// never wwwroot/, never a route added to server.js. Deleted at M4 close unless a verdict adopts it
+// (§17); the generated build-variant graph under `${S1_WORKER_DIR}/built/`, produced only on the
+// escape-hatch path below, is removed again immediately after each attempt (never left behind, and
+// never committed to git -- confirmed via this task's own manual verification, see its report).
+//
+// Real bug found running this task's own brief excerpts against the live app (the established
+// Phase 3 pattern -- an excerpt run for real has repeatedly surfaced a non-obvious bug):
+// `express.static('wwwroot')` (server.js:7, and this file's own spike-server.mjs) serves wwwroot/'s
+// CONTENTS at the URL ROOT, so the served vendor path is `/vendor/...`, never `/wwwroot/vendor/...`
+// -- confirmed directly against wwwroot/index.html's own import map
+// (`"three": "/vendor/three/build/three.module.js"`, wwwroot/index.html:49). The worker entries are
+// served three path segments below that root (`/spike/m4/s1-module-resolution/...`), so the correct
+// relative-vendor prefix is `../../../vendor/` (three `../`, no `wwwroot` segment) -- confirmed
+// empirically via `new URL(relativePath, workerUrl).pathname`. `worker.relative.mjs` uses this
+// corrected prefix directly. `rewrite-specifiers.test.mjs`'s own `'../../../wwwroot/vendor/'`
+// fixture value is untouched, since that test exercises only the pure string-substitution behavior
+// against an arbitrary caller-supplied prefix, never this app's real served paths.
+//
+// SECOND real bug, found by this task's own live manual verification AND independently confirmed by
+// a codex-review pass (Important #1): rewriting only the worker ENTRY's two bare imports is not
+// enough. `three-mesh-bvh`'s OWN internal source files (`wwwroot/vendor/three-mesh-bvh/src/core/
+// MeshBVH.js` and ~20 siblings) import `three` by bare specifier too, so both the relative-path
+// variant AND an entry-only build rewrite fail identically -- the SAME unresolved-bare-specifier
+// error, one level deeper in the graph. `build-worker-graph.mjs`'s `buildBundledWorkerGraph` walks
+// the full reachable module graph instead (still no bundler, no new dependency -- see that module's
+// own header), which is what §17's own text already requires ("reads the single worker entry AND
+// THE MODULES IT PULLS IN").
+const S1_WORKER_DIR = 'spike/m4/s1-module-resolution';
+const S1_VENDOR_ROOT = 'wwwroot/vendor';
+const S1_BUILT_DIR = `${S1_WORKER_DIR}/built`;
+
+// §17's own escape-hatch order, named explicitly rather than left to be inferred from which of the
+// three result objects is non-null: `null` means "no change needed" (bare specifiers already
+// resolve), and `'none-succeeded'` means every variant -- including the bounded build/rewrite
+// escape hatch -- failed, which is itself a reportable finding, never silently swallowed.
+function minimalChangeForS1Outcome(bareSpecifierResult, relativePathResult, buildVariantResult) {
+  if (bareSpecifierResult.ok) return null;
+  if (relativePathResult?.ok) return 'relative-path';
+  if (buildVariantResult?.ok) return 'build-variant';
+  return 'none-succeeded';
+}
+
+// The bounded build/rewrite escape hatch, run only when the relative-path variant has already
+// failed. Generates the full rewritten graph, verifies (codex-review's own recommendation) that no
+// bare `three`/`three-mesh-bvh` specifier survives ANYWHERE in it before ever launching the result --
+// a worker built from a graph that still failed this check would just reproduce the exact failure
+// S1' already has evidence for, dressed up as a fresh attempt -- then always deletes the generated
+// tree afterward, success or failure, so nothing from one spike attempt can leak into the next.
+async function runS1BuildVariant(page) {
+  try {
+    const graph = await buildBundledWorkerGraph({
+      entryPath: `${S1_WORKER_DIR}/worker.bare.mjs`,
+      outDir: S1_BUILT_DIR,
+      vendorRoot: S1_VENDOR_ROOT,
+    });
+    if (graph.remainingBareSpecifiers.length) {
+      return { ok: false, error: `build variant still contains unresolved bare specifier(s): ${JSON.stringify(graph.remainingBareSpecifiers)}` };
+    }
+    try {
+      return await page.evaluate((p) => window.__runS1Worker(p), `/${S1_WORKER_DIR}/built/worker.mjs`);
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  } finally {
+    await rm(S1_BUILT_DIR, { recursive: true, force: true });
+  }
+}
+
+// Runs both variants (and, only if needed, the bounded build escape hatch) under every runtime in
+// `runtimeConfigs`. Returns a per-runtime record plus one overall `minimalChangeIfFailed` mirroring
+// the AUTHORITATIVE runtime's own outcome (§6.1.5: "authoritative for every worker-related
+// conclusion" -- §8.6's module-resolution precondition is exactly such a conclusion). Every
+// runtime's full record is still reported, so a runtime-specific divergence is itself visible
+// rather than averaged away.
+//
+// codex-review fix (Important #3 -- "spike infrastructure failures still produce a successful gate
+// result"): a genuine infrastructure/protocol failure (chromium won't launch, the spike server won't
+// start, page navigation fails) is fundamentally different from a legitimate NEGATIVE experimental
+// result -- a worker construction/module-resolution failure the browser itself reports cleanly
+// through its own error event, which the per-variant `try`/`catch` inside the loop below already
+// turns into `{ok:false, error}`. That is real, decisive evidence (exactly what S1' exists to
+// produce), never a harness defect, and must never flip the gate's own disposition. An
+// infrastructure failure, in contrast, means this run has NO trustworthy S1' evidence for the
+// affected runtime at all and must be visible to the same disposition/exit-code machinery a
+// baseline-matrix setup exception already uses -- so it is collected here and the caller folds it
+// into `setupFailures`. Whatever OTHER runtimes already completed successfully are preserved in
+// `byRuntime` rather than discarded (codex-review's own explicit recommendation).
+async function runS1PrimeSpike(runtimeConfigs) {
+  const spike = await startSpikeServer({ port: 0 });
+  const byRuntime = {};
+  const infrastructureFailures = [];
+  try {
+    for (const runtime of runtimeConfigs) {
+      let browser = null;
+      try {
+        browser = await chromium.launch({ args: runtime.args, proxy: resolveProxyFromEnv() });
+        const page = await browser.newPage();
+        await page.goto(`http://localhost:${spike.port}/spike/m4/s1-module-resolution/page.html`);
+
+        let bareSpecifierResult;
+        try {
+          bareSpecifierResult = await page.evaluate((p) => window.__runS1Worker(p), `/${S1_WORKER_DIR}/worker.bare.mjs`);
+        } catch (err) {
+          bareSpecifierResult = { ok: false, error: err.message };
+        }
+
+        let relativePathResult = null;
+        let buildVariantResult = null;
+        if (!bareSpecifierResult.ok) {
+          try {
+            relativePathResult = await page.evaluate((p) => window.__runS1Worker(p), `/${S1_WORKER_DIR}/worker.relative.mjs`);
+          } catch (err) {
+            relativePathResult = { ok: false, error: err.message };
+          }
+          if (!relativePathResult.ok) {
+            buildVariantResult = await runS1BuildVariant(page);
+          }
+        }
+
+        byRuntime[runtime.label] = {
+          bareSpecifierResult, relativePathResult, buildVariantResult,
+          minimalChangeIfFailed: minimalChangeForS1Outcome(bareSpecifierResult, relativePathResult, buildVariantResult),
+        };
+      } catch (err) {
+        infrastructureFailures.push({ runtime: runtime.label, message: err?.message ?? String(err), stack: err?.stack ?? null });
+      } finally {
+        if (browser) await browser.close();
+      }
+      // Matches the baseline matrix's own discipline (main(), below): an unhandled setup exception
+      // means nothing later can be trusted either, so no further runtime is attempted -- but
+      // everything gathered so far, across BOTH `byRuntime` and `infrastructureFailures`, is still
+      // returned rather than thrown past this function's own caller.
+      if (infrastructureFailures.length) break;
+    }
+  } finally {
+    await spike.close();
+  }
+
+  const authoritativeLabel = runtimeConfigs.find((r) => r.authoritative)?.label ?? null;
+  const authoritative = authoritativeLabel ? byRuntime[authoritativeLabel] : null;
+  return {
+    byRuntime,
+    infrastructureFailures,
+    minimalChangeIfFailed: authoritative ? authoritative.minimalChangeIfFailed : null,
+  };
+}
+
+export { runS1PrimeSpike };
+
 // ---- main() -------------------------------------------------------------------------------------
 function parseListFlag(name, fallback) {
   const raw = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -2613,6 +2781,43 @@ async function main() {
   console.log('\n=== Baseline matrix complete ===');
   console.log(JSON.stringify(summarizeRun(results), null, 2));
 
+  // ---- Task 3.9: S1' module-resolution spike (unconditional) ------------------------------------
+  // Always runs, regardless of the baseline matrix's own disposition -- §17: "S1' and S3' are cheap
+  // and unconditional", decisive for EVERY worker option (§8.6) independent of whether this run's
+  // baseline passed or failed. Uses the full RUNTIME_CONFIGS, never the baseline matrix's own
+  // `--runtimes=` scoping flag: a scoped baseline verification run must not silently narrow a
+  // finding §8.6 says is decisive for every worker option regardless of which case/runtime subset
+  // the baseline itself happened to be scoped to.
+  //
+  // codex-review fix (Important #3): a genuine S1' infrastructure/protocol failure -- the spike
+  // server failing to start, or any exception outside runS1PrimeSpike's own per-variant try/catch --
+  // is reused through Task 3.8's EXISTING `setupFailures` array (never a second, parallel status
+  // channel a later consumer would also have to know to check), so it correctly flips `disposition`
+  // to `'FAILED'` and the process to a non-zero exit below, exactly like a baseline-matrix setup
+  // exception already does. A legitimate NEGATIVE experimental result (every S1' variant genuinely
+  // failing with a browser-reported module-resolution error) is explicitly NOT a setup failure --
+  // that is real, decisive §8.6 evidence, and must never be treated as a harness defect merely for
+  // being unwelcome. Either way, this section never skips the report-assembly-and-write tail below.
+  let s1PrimeSpike;
+  try {
+    s1PrimeSpike = await runS1PrimeSpike(Object.values(RUNTIME_CONFIGS));
+    if (s1PrimeSpike.infrastructureFailures.length) {
+      setupFailures.push({
+        runtime: 's1-prime-spike',
+        message: `S1' spike infrastructure failure(s): ${JSON.stringify(s1PrimeSpike.infrastructureFailures)}`,
+        stack: null,
+      });
+    }
+  } catch (err) {
+    // Only `startSpikeServer` itself (outside runS1PrimeSpike's own per-runtime try/catch) can reach
+    // here -- e.g. the spike port genuinely cannot be bound at all.
+    s1PrimeSpike = { byRuntime: {}, infrastructureFailures: [{ runtime: null, message: err?.message ?? String(err), stack: err?.stack ?? null }], minimalChangeIfFailed: null };
+    setupFailures.push({ runtime: 's1-prime-spike', message: err?.message ?? String(err), stack: err?.stack ?? null });
+    console.error("S1' SPIKE SETUP FAILURE:", err?.message ?? String(err));
+  }
+  console.log("\n=== S1' module-resolution spike complete ===");
+  console.log(JSON.stringify(s1PrimeSpike, null, 2));
+
   // ---- Task 3.8: assemble + write the §16.2-required report -------------------------------------
   //
   // Disposition mirrors run-gate-m3.mjs's own 3-way rule (run-gate-m3.mjs:764): a correctness
@@ -2697,6 +2902,12 @@ async function main() {
     harnessFailures,
     setupFailures,
     health: results.runtimes.map((r) => ({ runtime: r.runtime, ...healthCounters(r) })),
+    // Task 3.9: §17's S1' module-resolution spike, run unconditionally above -- NEVER a
+    // performance/correctness verdict input (a spike is disposable evidence, not the gate's own
+    // §6.4/§5.2.1 correctness surface), so its outcome never touches `disposition` above and a
+    // spike failure alone never throws below. Reported here purely as the §8.6-decisive finding
+    // §17 requires this run to surface.
+    s1PrimeSpike,
   };
 
   const resultsPath = `${RESULTS_DIR}/m4-gate-${Date.now()}.json`;
