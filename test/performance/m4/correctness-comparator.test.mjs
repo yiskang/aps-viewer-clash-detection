@@ -44,3 +44,43 @@ test('compareRuns: aggregates every field into one valid/invalid disposition', (
   const result = compareRuns(run, structuredClone(run), { worldDiagonalScale: 100 });
   assert.equal(result.valid, true);
 });
+
+const stats = (over = {}) => ({ clearanceExactAabbSurvivors: 0, narrowPhasePairs: 0, clearanceOverlapPrechecksRun: 0, clearanceHardClashExclusions: 0, clearanceDistanceQueriesRun: 0, clearanceHits: 0, diagnostics: [], ...over });
+
+test('compareRuns: a real volume-overlap pair (no `distance` field at all, per the public pair contract) is valid when identical', () => {
+  const run = {
+    pairs: [{ sourceModelTag: 'structure', sourceDbId: 1, targetModelTag: 'arch', targetDbId: 2, type: 'volume-overlap', witness: { kind: 'aabb-overlap', point: [0, 0, 0] } }],
+    statistics: stats(),
+  };
+  const result = compareRuns(run, structuredClone(run), { worldDiagonalScale: 100 });
+  assert.equal(result.valid, true, JSON.stringify(result.fields));
+});
+
+test('compareRuns: matching witness-unavailable (`witness: null`) volume-overlap pairs are valid, not a shape-mismatch failure', () => {
+  const run = {
+    pairs: [{ sourceModelTag: 'structure', sourceDbId: 1, targetModelTag: 'arch', targetDbId: 2, type: 'volume-overlap', witness: null }],
+    statistics: stats(),
+  };
+  const result = compareRuns(run, structuredClone(run), { worldDiagonalScale: 100 });
+  assert.equal(result.valid, true, JSON.stringify(result.fields));
+});
+
+test('compareRuns: a null witness on only one side is a real mismatch, not treated as equal', () => {
+  const runA = {
+    pairs: [{ sourceModelTag: 'structure', sourceDbId: 1, targetModelTag: 'arch', targetDbId: 2, type: 'volume-overlap', witness: null }],
+    statistics: stats(),
+  };
+  const runB = { pairs: [{ ...runA.pairs[0], witness: { kind: 'aabb-overlap', point: [0, 0, 0] } }], statistics: stats() };
+  const result = compareRuns(runA, runB, { worldDiagonalScale: 100 });
+  assert.equal(result.valid, false);
+  assert.equal(result.fields.witnesses, false);
+});
+
+test('compareRuns: join key must include sourceModelTag -- two source models sharing a dbId, reordered between runs, must not cross-match', () => {
+  const structurePair = { sourceModelTag: 'structure', sourceDbId: 1, targetModelTag: 'arch', targetDbId: 2, type: 'clearance', distance: 5, witness: { sourcePoint: [0, 0, 0], targetPoint: [1, 1, 1] } };
+  const mechanicalPair = { sourceModelTag: 'mechanical', sourceDbId: 1, targetModelTag: 'arch', targetDbId: 2, type: 'clearance', distance: 9, witness: { sourcePoint: [0, 0, 0], targetPoint: [9, 9, 9] } };
+  const runA = { pairs: [structurePair, mechanicalPair], statistics: stats() };
+  const runB = { pairs: [mechanicalPair, structurePair], statistics: stats() }; // identical set, reversed order
+  const result = compareRuns(runA, runB, { worldDiagonalScale: 100 });
+  assert.equal(result.valid, true, JSON.stringify(result.fields));
+});
