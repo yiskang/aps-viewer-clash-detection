@@ -1100,17 +1100,22 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
     });
 
     const queryResult = await queryPromise;
-    // Task 3.11 fix (codex-review finding #4): Metric M is captured HERE -- immediately after the
-    // closing mark, before the envelope's own tail-wait loop below -- rather than after this whole
-    // function returns. `GeometryRegistry`'s build phases are world-scoped and asynchronous (see
-    // installGateHelpers's `tagDiagnostics` comment above: "a build triggered by a tuple's COLD
-    // query can still be resolving when its WARM query's window opens"), so waiting out the
-    // envelope's own `max(2 x window, 5 s)` tail before sampling would let more of that background
-    // work finish first and understate what a state genuinely held AT ITS OWN close. Reading Task
-    // 1.6's diagnostic accessors has no page-side side effects (no forced gc()/rAF), so moving this
-    // earlier carries none of Metric H's own contamination risk (see the header comment above
-    // `runArmTuple`'s Metric H call for why THAT stays deferred to after this function returns).
-    const metricMAtClose = await sampleMetricMAtClose(world);
+    // Task 3.11 fix (independent review, Important -- codex-advisor confirmed): `closingNodeMs` and
+    // `frameCountAtClose` are captured HERE, IMMEDIATELY after `queryPromise` resolves, with no
+    // intervening `await`, exactly as before Metric M sampling was added. `closingNodeMs` is the
+    // SOLE boundary T-c sample membership and censored-slot materialization are measured against
+    // (below, and at this function's `resolveInputProbeDispositions`/`unissued` call sites) -- a
+    // first version of this fix called `sampleMetricMAtClose` (a real page.evaluate CDP round trip)
+    // BEFORE this line, which delayed `closingNodeMs` by that round trip's own duration and could
+    // misclassify a probe that resolved during the gap (genuinely after the query finished) as
+    // in-window -- exactly the "flattering" contamination this file's own adjacent T-c comment
+    // below exists to prevent, just introduced through a delayed reference point instead of late
+    // probe issuance. Same failure mode for `frameCountAtClose`: a post-query rAF landing during
+    // that round trip would have been misclassified as pre-close. Metric M itself has no such
+    // sensitivity (a live-epoch diagnostic snapshot, not a timing boundary), so it is sampled
+    // AFTER these two captures instead -- still well before the envelope's own tail-wait loop,
+    // which is this fix's original goal, just reordered within that same window so the
+    // timing-critical captures go first.
     const closingNodeMs = performance.now();
     const windowMs = queryResult.makespanMs;
     // §6.1.7: `max(2 x the query window's own duration, 5 s)`, measured FROM THE CLOSING MARK. It
@@ -1120,6 +1125,18 @@ async function runMeasuredQueryWindow(page, cdp, { pageTargetId, world, descript
     const limitMs = envelopeLimitMs(windowMs);
 
     const frameCountAtClose = (await rafHandle.evaluate((r) => r.snapshot())).frameCount;
+    // Task 3.11 (codex-review finding #4, reordered per the fix above): Metric M is captured here,
+    // after the timing-critical `closingNodeMs`/`frameCountAtClose` captures but still well before
+    // the envelope's own tail-wait loop below -- rather than after this whole function returns.
+    // `GeometryRegistry`'s build phases are world-scoped and asynchronous (see installGateHelpers's
+    // `tagDiagnostics` comment above: "a build triggered by a tuple's COLD query can still be
+    // resolving when its WARM query's window opens"), so waiting out the envelope's own
+    // `max(2 x window, 5 s)` tail before sampling would let more of that background work finish
+    // first and understate what a state genuinely held at its own close. Reading Task 1.6's
+    // diagnostic accessors has no page-side side effects (no forced gc()/rAF), so it carries none
+    // of Metric H's own contamination risk (see the header comment above `runArmTuple`'s Metric H
+    // call for why THAT stays deferred to after this function returns).
+    const metricMAtClose = await sampleMetricMAtClose(world);
     // -- Hold the envelope open until §6.1.7's three closing conditions, or its own limit --------
     while (true) {
       if (performance.now() - closingNodeMs >= limitMs) { envelope.limitReached = true; break; }
