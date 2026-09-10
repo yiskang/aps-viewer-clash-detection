@@ -1,7 +1,11 @@
 // M4 Task 3.11 (Steps 6-9): Metric H (§15.1): performance.memory.usedJSHeapSize under `gc()`
 // (requires the harness's own `--js-flags=--expose-gc` launch flag, task 3.1's RUNTIME_CONFIGS),
 // two GC passes separated by two rAF turns, one further turn, median of three readings
-// (main-thread target only -- rAF does not exist in a worker realm). UNAVAILABLE (never silently
+// (main-thread target only -- a dedicated worker's `requestAnimationFrame` exists syntactically
+// per the HTML spec's `AnimationFrameProvider` mixin, and Task 3.10's own live probe confirmed
+// Chromium defines it there, but its callbacks only fire while the worker drives a displayed
+// `OffscreenCanvas`; relying on it here would hang, so the page drives the settling turns instead
+// and the worker only samples on command -- see the 'worker' branch below). UNAVAILABLE (never silently
 // zero, never silently substituted with the main-thread figure) when the target genuinely lacks
 // the required API.
 //
@@ -12,8 +16,10 @@
 // Steps 9b/10/11, explicitly deferred to when Phase 3 proper starts.
 //
 // Post-review hardening (codex-review `code`, medium, round 2): a genuine feature-unavailability
-// signal (missing gc()/performance.memory, missing requestAnimationFrame in a worker realm) is the
-// ONLY thing this module converts into {available:false}. Anything else -- a page crash, a missing
+// signal (missing gc()/performance.memory on main, or -- per Task 3.10's live confirmation that
+// `performance.memory` itself is `undefined` in a Chromium dedicated-worker realm even though
+// `gc()`/`requestAnimationFrame` are both defined there -- missing performance.memory on worker) is
+// the ONLY thing this module converts into {available:false}. Anything else -- a page crash, a missing
 // channel method, an uninstalled window.__m4HeapSample, a non-Error rejection, or an invalid
 // (non-finite/negative) reading -- is a harness/protocol defect, not a capability absence, and must
 // propagate (reject) so it fails the gate loudly instead of masquerading as a plausible-looking
@@ -34,7 +40,8 @@ function toErrorMessage(err) {
 
 // Recognized feature-unavailability signatures: only errors whose message matches one of these
 // are legitimate "this runtime lacks the capability" signals per spec §15.1 (missing gc()/
-// performance.memory on main, missing requestAnimationFrame in a worker realm). Everything else is
+// performance.memory on main; missing performance.memory on worker -- confirmed the actual
+// Chromium gap, per Task 3.10's live probe, not a missing requestAnimationFrame). Everything else is
 // treated as an unexpected operational failure and rethrown rather than silently downgraded.
 const UNAVAILABLE_SIGNATURE = /\bgc\b|performance\.memory|requestAnimationFrame|\brAF\b/i;
 
@@ -66,9 +73,12 @@ export async function sampleHeap(target, pageOrWorkerChannel) {
       const c = assertValidReading(await pageOrWorkerChannel.evaluate(() => window.__m4HeapSample()), target);
       return { available: true, bytes: median3(a, b, c) };
     }
-    // Worker target: no requestAnimationFrame in a worker realm (spec §15.1) -- the page drives the
-    // settling turns and sends the worker an explicit sample command; the worker calls gc() twice
-    // (if available) and returns the median of three usedJSHeapSize readings.
+    // Worker target (spec §15.1): `requestAnimationFrame` exists in a dedicated worker but its
+    // callbacks only fire while the worker drives a displayed OffscreenCanvas, so a worker-side
+    // settling loop built on it would hang -- the page drives the settling turns instead and sends
+    // the worker an explicit sample command; the worker calls gc() twice (if available) and returns
+    // the median of three usedJSHeapSize readings (Task 3.10 confirmed `performance.memory` itself,
+    // not rAF, is the API Chromium actually omits from the worker realm).
     const bytes = assertValidReading(await pageOrWorkerChannel.evaluateInWorker(), target);
     return { available: true, bytes };
   } catch (err) {
