@@ -270,6 +270,64 @@
     };
   };
 
+  // M4 Task 3.12: the S4 (pathological dense-mesh pair) live facade factory. Two INDEPENDENT
+  // single-fragment synthetic models (`s4Source`, `s4Target`) -- not one shared two-fragment facade
+  // like S2T's -- built by calling this ONE shared factory twice, since both models are the
+  // identical shape: a single fragment at dbId 1, a leaf node in its own one-node tree. Unlike
+  // buildS2TFacade above, this facade delegates to NOTHING real -- every accessor is fully
+  // synthetic, since S4 is spec's one case that must touch no real Viewer geometry at all.
+  window.__m4Probes.buildS4SyntheticModel = function (tag, grid) {
+    const geom = new window.THREE.BufferGeometry();
+    geom.setAttribute('position', new window.THREE.Float32BufferAttribute(new Float32Array(grid.position), 3));
+    geom.setIndex(grid.index);
+    geom.computeBoundingBox();
+    const worldBounds = geom.boundingBox;
+
+    const facadeFragList = {
+      getCount: () => 1,
+      isNotLoaded: () => false,
+      getDbIds: () => 1, // this model's one fragment (fragId 0) belongs to dbId 1
+      getWorldBounds: (fragId, dst) => dst.copy(worldBounds),
+      getWorldMatrix: (fragId, dst) => dst.identity(), // no placement transform for a synthetic fixture
+      getGeometryId: () => 0, // MUST be a non-negative integer -- createGeometryIdentity
+                              // (collision/geometry/GeometryIdentity.js:8-14) throws TypeError on
+                              // anything else, including a string.
+      // Real bug found running this task's own manual verification against the live app: the
+      // brief's own excerpt returned the bare BufferGeometry here. `_resolveGeometryView`
+      // (CollisionWorld.js:2972-2977) reads `viewer.impl.getRenderProxy(model, fragId)` -- whose
+      // ENTIRE real body (confirmed live: `viewer.impl.getRenderProxy.toString()`) is
+      // `model.getFragmentList()?.getVizmesh(fragId)` -- and then requires the RETURNED VALUE
+      // to carry a `.geometry` property (`if (!proxy || !proxy.geometry) throw
+      // RenderProxyUnavailableError`), matching the shape of a real render proxy (a THREE.Mesh-like
+      // object with its geometry on `.geometry`, confirmed live by inspecting a real fragment's
+      // proxy: `Object.keys(proxy)` includes `geometry` alongside `matrix`/`material`/etc.).
+      // Returning the bare geometry made `proxy.geometry` read `undefined` on every call, which
+      // silently downgraded to a `geometry-not-yet-available` diagnostic instead of resolving --
+      // confirmed empirically: the live query returned `narrowPhasePairs: 1` but the source
+      // fragment was permanently diagnosed as having no available geometry.
+      getVizmesh: () => ({ geometry: geom }),
+    };
+    // extractFragments (source-role extraction) reads model.getObjectTree() -- a SYNCHRONOUS getter
+    // (ViewerModelAdapter.js:94's actual zero-argument call), never the callback-style
+    // `getObjectTree(onSuccess, onError)` -- as long as `isObjectTreeCreated()` also returns true, so
+    // that CollisionWorld's own `_awaitObjectTreeReady` (CollisionWorld.js:1043-1046) takes its
+    // synchronous fast path and never invokes getObjectTree in the callback style at all. Omitting
+    // `isObjectTreeCreated` here would make the awaited Promise never settle -- a silent hang, not a
+    // thrown error.
+    const instanceTree = {
+      enumNodeFragments: (dbId, cb) => { cb(0); }, // this model's one dbId (1) owns fragId 0
+      enumNodeChildren: () => {}, // leaf node -- no children, per Task 3.3's established
+                                  // block-bodied-callback-returns-nothing convention for this API
+    };
+    return {
+      id: `s4-synthetic-${tag}`,
+      getUnitScale: () => 1,
+      getFragmentList: () => facadeFragList,
+      getObjectTree: () => instanceTree,
+      isObjectTreeCreated: () => true,
+    };
+  };
+
   // §5.3.1's level-to-level mechanical control rule (lines 232-239 of
   // docs/superpowers/specs/2026-09-08-collision-library-milestone4-performance-worker-decision-design.md,
   // the actual governing spec -- task-3.4-brief.md's own excerpt only implemented a SUBSET of this

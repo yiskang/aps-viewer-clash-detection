@@ -59,6 +59,8 @@ import {
   yieldRecordsToIntervals, splitIntervalAroundYields, classifyStageForScreen,
 } from './m4/stage-attribution-engine.mjs';
 import { BOUNDARY_TABLE } from './m4/decision-evidence-model.mjs';
+import { buildTriangleGrid, translatedGrid } from './m4/s4-synthetic-mesh.mjs';
+import { maxSyncTriangleCount } from '../../collision/constants.js';
 
 // ---- §6.1.6 / §7.2 protocol constants ---------------------------------------------------------
 const REPETITIONS = 5;                 // §6.1.6
@@ -481,6 +483,14 @@ async function installGateHelpers(page) {
           if (!g.s2tFacade) throw new Error('__m4Gate.resolveModel: no S2T facade is installed for this tuple');
           return g.s2tFacade;
         }
+        if (key === 's4Source') {
+          if (!g.s4Source) throw new Error('__m4Gate.resolveModel: no S4 source facade is installed for this tuple');
+          return g.s4Source;
+        }
+        if (key === 's4Target') {
+          if (!g.s4Target) throw new Error('__m4Gate.resolveModel: no S4 target facade is installed for this tuple');
+          return g.s4Target;
+        }
         throw new Error(`__m4Gate.resolveModel: unknown model key "${key}"`);
       },
       modelTag(m) {
@@ -489,6 +499,8 @@ async function installGateHelpers(page) {
         if (m === g.modelStructure) return 'structure';
         if (m === g.modelMechanical) return 'mechanical';
         if (g.s2tFacade && m === g.s2tFacade) return 's2tFacade';
+        if (g.s4Source && m === g.s4Source) return 's4Source';
+        if (g.s4Target && m === g.s4Target) return 's4Target';
         return 'unknown';
       },
       // §6.4 joins diagnostics on `modelTag`, explicitly "rather than modelId, which is documented
@@ -500,7 +512,7 @@ async function installGateHelpers(page) {
         const g = window.__gate;
         const idOf = (m) => (m && m.id !== undefined ? m.id : m);
         const byId = new Map();
-        for (const [tag, model] of [['arch', g.modelArch], ['structure', g.modelStructure], ['mechanical', g.modelMechanical], ['s2tFacade', g.s2tFacade]]) {
+        for (const [tag, model] of [['arch', g.modelArch], ['structure', g.modelStructure], ['mechanical', g.modelMechanical], ['s2tFacade', g.s2tFacade], ['s4Source', g.s4Source], ['s4Target', g.s4Target]]) {
           if (model) byId.set(idOf(model), tag);
         }
         // `modelId` is KEPT alongside the tag, not replaced by it (independent-review finding,
@@ -535,7 +547,7 @@ async function installGateHelpers(page) {
         const g = window.__gate;
         const out = {};
         const box = new window.THREE.Box3();
-        for (const [tag, model] of [['arch', g.modelArch], ['structure', g.modelStructure], ['mechanical', g.modelMechanical], ['s2tFacade', g.s2tFacade]]) {
+        for (const [tag, model] of [['arch', g.modelArch], ['structure', g.modelStructure], ['mechanical', g.modelMechanical], ['s2tFacade', g.s2tFacade], ['s4Source', g.s4Source], ['s4Target', g.s4Target]]) {
           if (!model) continue;
           const fragList = model.getFragmentList();
           const count = fragList.getCount();
@@ -1321,6 +1333,71 @@ async function readS2TFacadeControls(page) {
   });
 }
 
+// ---- §5.3's S4 (synthetic pathological dense-mesh pair) facade, installed per (variant, mode) ----
+// M4 Task 3.12's live half. §5.3's S4 row requires "two large, densely-tessellated SYNTHETIC meshes
+// at/near maxSyncTriangleCount (12,000 triangles) with broadly overlapping bounds" -- built here as
+// two INDEPENDENT single-fragment synthetic models (never one shared two-fragment facade like S2T's;
+// see s4-synthetic-mesh.mjs's own header and browser-probes-m4.mjs's buildS4SyntheticModel for why).
+//
+// A grid sized to land exactly at maxSyncTriangleCount (spec: "at/near" the ceiling) -- 200 cols x 60
+// rows... no: 200 cols x 30 rows = 12,000 triangles exactly (200*30*2). S4_GRID_ROWS must come out an
+// integer -- assert it rather than silently floor/truncate if maxSyncTriangleCount ever changes to a
+// value not evenly divisible this way.
+const S4_GRID_COLS = 200;
+const S4_GRID_ROWS = maxSyncTriangleCount / (S4_GRID_COLS * 2);
+if (!Number.isInteger(S4_GRID_ROWS)) throw new Error(`S4 grid dims no longer divide maxSyncTriangleCount (${maxSyncTriangleCount}) exactly`);
+
+// MODE-SPECIFIC Z placement -- a real, empirically-forced deviation from a single shared placement
+// for both modes, found running this task's own manual verification and confirmed via an independent
+// codex-advisor consultation that directly re-ran the experiment against this repo's pinned BVH
+// backend. See s4-synthetic-mesh.mjs's own header for the full causal chain (the aspect-ratio gate on
+// a perfectly flat mesh, and why `buildTriangleGrid` now tilts each grid by TILT_SLOPE*(col-row)).
+// Given that intrinsic per-mesh tilt (~2.3-unit local Z extent over this 200x30 grid), the two modes
+// need OPPOSITE Z-gap regimes to each reach real narrow-phase work:
+//  - volume-overlap needs the two meshes' BVH LEAF AABBs to keep overlapping so the real crossing
+//    (hard-clash) traversal engages broadly -- a gap smaller than the tilt's own per-cell Z variation.
+//  - clearance needs the two meshes' WORLD-SPACE AABBs to be fully DISJOINT so
+//    classifyHardClashPrecheck (collision/query/ClearanceHardClashPrecheck.js:20) takes its
+//    'skip-precheck'/'aabb-disjoint' fast path straight into the real clearanceQuery -- an
+//    AABB-OVERLAPPING pair of these open (non-closed-manifold) meshes can never resolve
+//    volumeOverlapQuery's negative path as `conclusive:true` (ContainmentQuery.js's own unconditional
+//    'unverified-parity-operand' diagnostic for a non-closed container permanently taints it), so it
+//    would get stuck at 'inconclusive' and never reach the distance query at all -- confirmed live.
+// Empirically confirmed (this task's own manual verification, live against the running app):
+//  - volume-overlap, gap=0.005: real crossing traversal engages and hits its own internal budget
+//    (`crossing-budget-exhausted`, collision/query/ProperCrossingQuery.js's 8ms/50k-candidate/
+//    64-crossing ceiling) at a ~47ms measured atomic-call duration (linear broad phase; ~51ms tlas).
+//  - clearance, gap=2.5 (> the ~2.3 local Z extent, guaranteeing AABB disjointness), clearance
+//    threshold widened to S4_CLEARANCE_GENEROUS (comfortably above the resulting constant ~2.5 real
+//    gap, so the query finds a genuine within-threshold hit requiring a real closest-point
+//    confirmation rather than an early BVH-pruned rejection): `clearanceDistanceQueriesRun: 1`,
+//    `clearanceHits: 1`, at a ~716ms measured atomic-call duration (linear; ~736ms tlas) -- both
+//    dramatically over the spec's 8ms/24.8ms ceilings this row exists to find.
+const S4_VOLUME_OVERLAP_Z_GAP = 0.005;
+const S4_CLEARANCE_Z_GAP = 2.5;
+// "a generous clearance" (spec) -- wide enough that the pair is never hard-clash-excluded before
+// reaching the narrow phase / distance query this case exists to time. NOT the brief's own original
+// placeholder (1.0): that value predates this task's mode-specific-Z-placement fix and would leave
+// the real ~2.5 constant gap OUTSIDE the threshold, which still exercises the real distance query
+// (clearanceDistanceQueriesRun still increments regardless of hit/no-hit) but risks the query's own
+// maxDistance-bounded BVH traversal pruning early once it can prove nothing is within a much smaller
+// threshold -- widened here so the traversal must do a real closest-point CONFIRMATION instead.
+const S4_CLEARANCE_GENEROUS = 3.0;
+
+async function installS4Facades(page, mode) {
+  const sourceGrid = buildTriangleGrid(S4_GRID_COLS, S4_GRID_ROWS);
+  const zGap = mode === 'clearance' ? S4_CLEARANCE_Z_GAP : S4_VOLUME_OVERLAP_Z_GAP;
+  const targetGrid = translatedGrid(sourceGrid, [5, 5, zGap]);
+  await page.evaluate(({ sourceGrid, targetGrid }) => {
+    window.__gate.s4Source = window.__m4Probes.buildS4SyntheticModel('source', sourceGrid);
+    window.__gate.s4Target = window.__m4Probes.buildS4SyntheticModel('target', targetGrid);
+  }, { sourceGrid, targetGrid });
+}
+
+async function disposeS4Facades(page) {
+  await page.evaluate(() => { window.__gate.s4Source = null; window.__gate.s4Target = null; });
+}
+
 // M4 Task 3.5's live half: §5.2.1's R6 one-time calibration pass. Unmeasured, runs ONCE per
 // runtime -- finds the smallest d in R6_CALIBRATION_SEQUENCE whose translation of the Architecture
 // model along world +X changes R3's pair set (R3's source set == the typical cohort, per §5.2's
@@ -1590,15 +1667,26 @@ function caseVariantsFor(caseName, ctx) {
       }));
     case 'S4':
       // §5.3's S4 row requires "two large, densely-tessellated SYNTHETIC meshes at/near
-      // maxSyncTriangleCount (12,000 triangles) with broadly overlapping bounds". No landed Phase-3
-      // task builds such a fixture and this task's brief supplies no construction for it: it needs
-      // a facade delivering a real THREE.BufferGeometry through
-      // `viewer.impl.getRenderProxy -> fragList.getVizmesh` in the exact attribute layout
-      // `adaptViewerGeometry` accepts, which is a fixture-construction task in its own right.
-      // Recorded as an explicit NOT_EXERCISED finding naming what is missing -- never silently
-      // skipped, and never approximated with a real-fixture pair that would not be the pathological
-      // case S4 exists to find. Escalated for a controller ruling in this task's report.
-      return [{ key: 'pathological-pair', notExercised: { reason: 'no-synthetic-dense-mesh-fixture', requires: 'two >=12,000-triangle synthetic meshes with broadly overlapping bounds (spec §5.3, S4 row)' }, descriptor: null }];
+      // maxSyncTriangleCount (12,000 triangles) with broadly overlapping bounds". Task 3.12 closes
+      // the fixture-construction gap Task 3.7 correctly reported as NOT_EXERCISED (no earlier
+      // Phase-3 task was ever assigned to build it). Both modes, per spec's "under both modes" --
+      // mirrors S1/S2's own explicit both-modes handling. Warm-only per §5.6
+      // (measuredStatesFor('S4') already returns ['warm'] only, confirmed against
+      // fixture-lifecycle.mjs -- no cold state here).
+      //
+      // `source`/`targets` use descriptor shapes the harness already supports unchanged: a
+      // dbId-scoped source ({modelKey, dbIds}) and a whole-model targets array -- a 1-fragment
+      // model IS "the whole model", so no new per-target dbId-scoping is needed anywhere. `s4: true`
+      // drives runArmTuple's admit list and the per-variant loop's install/dispose lifecycle below.
+      return ['volume-overlap', 'clearance'].map((mode) => ({
+        key: `pathological-pair:${mode}`,
+        s4: true,
+        descriptor: {
+          mode, ...(mode === 'clearance' ? { clearance: S4_CLEARANCE_GENEROUS } : {}),
+          source: { modelKey: 's4Source', dbIds: [1] },
+          targets: ['s4Target'],
+        },
+      }));
     case 'S2T':
       // §5.6: S2T's population-level order is counterbalanced ALONGSIDE arm order and case order,
       // by the same rotation rule -- so the level order is rotated per repetition by the caller.
@@ -1627,6 +1715,10 @@ async function runArmTuple(page, cdp, ctx, { caseName, variant, broadPhase, repe
     // model is deliberately NOT admitted alongside it, or the run would carry a fourth target epoch
     // group and the population sweep would measure the wrong thing entirely.
     ? ['structure', 's2tFacade']
+    : variant.s4
+    // S4 is spec's one fully-synthetic case -- zero delegation to any real Viewer model, so neither
+    // real discipline model is admitted alongside the two synthetic facades.
+    ? ['s4Source', 's4Target']
     : ['arch', 'structure', 'mechanical'];
 
   const world = await page.evaluateHandle(async (keys) => {
@@ -1876,6 +1968,14 @@ async function main() {
             if (variant.s2tLevel !== undefined) {
               await installS2TFacade(page, variant.s2tLevel);
               scales = await page.evaluate(() => window.__m4Gate.worldDiagonalsByTag());
+            } else if (variant.s4) {
+              // S4's facades don't change per-repetition the way S2T's bystander count changes per
+              // level, but they still don't exist when the federation-wide `diagonalByTag` was
+              // captured once at the top of the run, so the same re-measurement is required.
+              // Mode-specific Z placement (installS4Facades's own header comment): `variant.descriptor.mode`
+              // decides which Z gap regime this variant's facades use.
+              await installS4Facades(page, variant.descriptor.mode);
+              scales = await page.evaluate(() => window.__m4Gate.worldDiagonalsByTag());
             }
             try {
               const arms = {};
@@ -1950,6 +2050,7 @@ async function main() {
               logTupleLine(runtime.label, caseName, vKey, repetition, arms, parity);
             } finally {
               if (variant.s2tLevel !== undefined) await disposeS2TFacade(page);
+              if (variant.s4) await disposeS4Facades(page);
             }
 
             if (failedValidation || ctx.harnessFailures.length) break;
