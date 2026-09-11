@@ -14,8 +14,7 @@ import * as THREE from 'three';
 import { properCrossingQuery, createCrossingStats } from './ProperCrossingQuery.js';
 import { anyComponentInside } from './ContainmentQuery.js';
 import { reportDiagnosticEvent } from '../scheduler.js';
-
-const defaultCompareCanonical = () => -1; // always treats `source` as canonical-first
+import { orientForCrossing } from './orientForCrossing.js';
 
 // M2.1 Task 3: transforms a leaf witness (in SOME operand's local frame) into world
 // space via that operand's own world matrix, and validates the result is 3 finite
@@ -43,7 +42,7 @@ export function toFiniteWorldArray(localPoint, worldMatrix) {
  * @typedef {{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix, aspectRatioExceeded?: boolean }} Instance
  * @param {Instance} source - fixed PUBLIC role, used for diagnostic naming; never swapped
  * @param {Instance} target - fixed PUBLIC role, used for diagnostic naming; never swapped
- * @param {{ crossing?: object, containment?: object, scheduler?: object, compareCanonical?: (source: Instance, target: Instance) => number }} [options]
+ * @param {{ crossing?: object, containment?: object, scheduler?: object }} [options]
  */
 export async function volumeOverlapQuery(source, target, options = {}) {
   // Default scheduler's `elapsedMs()` must report REAL, increasing wall-clock time
@@ -55,17 +54,38 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   const t0 = performance.now();
   const defaultScheduler = { elapsedMs: () => performance.now() - t0, checkpointIfDue: async () => {} };
   const scheduler = options.scheduler ?? defaultScheduler;
+  // Fail-loud guard (design doc §4.3 C-3 / §9.6(b)): operand orientation is no longer
+  // caller-injectable. A caller-supplied comparator could put a DIFFERENT operand
+  // canonically-first than orientForCrossing's own total geometric order would, which
+  // would silently break the cross-call consistency (same pair, same canonical order,
+  // regardless of which call site or argument order) that order exists to guarantee.
+  if (options.compareCanonical !== undefined) {
+    throw new TypeError(
+      'volumeOverlapQuery: options.compareCanonical was removed — operand orientation is now decided ' +
+      'internally by orientForCrossing (a total geometric order), and can no longer be supplied by the ' +
+      'caller. Remove this option.'
+    );
+  }
   // Decides ONLY which operand's fields go first into properCrossingQuery, for
   // correct L_canonical scaling (docs/...:1609-1621) -- NEVER which operand this
   // function calls `source`/`target` for diagnostic role-naming, which stay fixed to
   // the caller's own public arguments throughout (the conflict a Codex spec-review of
   // an earlier draft found: swapping operands for canonical order would otherwise
-  // also swap which one gets blamed in a diagnostic). Default: source is always
-  // treated as canonical-first, preserving today's behavior for standalone tests;
-  // CollisionWorld (a later task) supplies a real comparator once it has
-  // (modelId, geometryKey, instanceId) identity.
-  const compareCanonical = options.compareCanonical ?? defaultCompareCanonical;
-  const [canonicalFirst, canonicalSecond] = compareCanonical(source, target) <= 0 ? [source, target] : [target, source];
+  // also swap which one gets blamed in a diagnostic). orientForCrossing (Task A1.2) is
+  // a pure total geometric order over the two operands -- no identity field
+  // participates at any rank -- so the same pair always canonicalizes the same way
+  // regardless of which call site or argument order invoked it.
+  const { first: canonicalFirst, second: canonicalSecond, rank: orientationRank } = orientForCrossing(source, target);
+  // `orientationRank` is not consumed within this task's scope -- retained per the
+  // brief's Step 3 destructure so a later task (A2.4, telemetry) can read it without
+  // another edit to this call site. Not yet read anywhere in this file.
+  void orientationRank;
+  // Derived immediately after orientForCrossing's destructure (brief's Step 3), not only
+  // inside the positive-crossing branch below: Task A2.4's telemetry needs both
+  // `orientationRank` and `canonicalFirstIsSource` available at this point, and this is a
+  // pure identity comparison (no `.matrix` read), so hoisting it earlier changes nothing
+  // about the crossing computation's own timing/read pattern below.
+  const canonicalFirstIsSource = canonicalFirst === source;
 
   const diagnostics = [];
   const addDiagnostic = (reason, role) => {
@@ -175,8 +195,8 @@ export async function volumeOverlapQuery(source, target, options = {}) {
     if (!target.closedManifold) addDiagnostic('unverified-parity-operand', 'target');
     // crossing.witnessPoint is in canonicalFirst's local frame (Task 1) -- transform
     // it into world space via whichever PHYSICAL operand (source/target) resolved to
-    // canonicalFirst, never the other one (docs spec Sec 0.3).
-    const canonicalFirstIsSource = canonicalFirst === source;
+    // canonicalFirst, never the other one (docs spec Sec 0.3). `canonicalFirstIsSource`
+    // itself is computed earlier, immediately after the orientForCrossing destructure.
     const worldMatrix = canonicalFirstIsSource ? source.matrix : target.matrix;
     const point = toFiniteWorldArray(crossing.witnessPoint, worldMatrix);
     return {
