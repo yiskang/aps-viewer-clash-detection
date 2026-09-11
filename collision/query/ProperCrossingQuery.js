@@ -6,6 +6,7 @@
 import { ExtendedTriangle } from 'three-mesh-bvh';
 import * as THREE from 'three';
 import { classifyPoint } from './ContainmentQuery.js';
+import { stretch } from './geometryScale.js';
 import {
   coplanarAngleEpsilon,
   surfaceEpsilonFactor,
@@ -112,7 +113,21 @@ export function properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, loca
   // offsetLadder is scaled by L_canonical = L of whichever operand sorts first
   // (docs/...:1609-1621); the caller is responsible for passing that operand as A.
   const ladder = offsetLadderFactors.map((f) => f * localDiagonalA);
-  const surfaceEpsilon = surfaceEpsilonFactor * localDiagonalA;
+  // surfaceEpsilon (design doc Sec 4.3 C-2) is a DIFFERENT tolerance from the probe
+  // ladder above -- it gates the coplanar-discard branch below, which DISCARDS a
+  // candidate pair without ever probing it. Tightened to the symmetric
+  // `min(localDiagonalA, localDiagonalB * stretch(matrixBtoA))` -- monotonically <=
+  // either single-operand value the pre-fix code could produce (previously
+  // `localDiagonalA` alone), so this change can only shrink what gets discarded, never
+  // grow it: a pair the pre-fix epsilon would have probed is never newly discarded by
+  // this change, under either operand ordering. `localDiagonalB * stretch(matrixBtoA)`
+  // is B's diagonal expressed in A's local frame (the same frame `surfaceEpsilon` and
+  // the coplanar-branch offset check both operate in), commensurate with
+  // `localDiagonalA` directly -- not a raw cross-frame comparison.
+  const surfaceEpsilon = surfaceEpsilonFactor * Math.min(
+    localDiagonalA,
+    localDiagonalB * stretch(matrixBtoA)
+  );
   const matrixAtoB = matrixBtoA.clone().invert();
 
   let candidatePairsExamined = 0;

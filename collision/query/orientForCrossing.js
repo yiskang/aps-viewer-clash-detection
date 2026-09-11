@@ -1,10 +1,4 @@
-function stretch(matrix) {
-  const e = matrix.elements;
-  const col0 = Math.hypot(e[0], e[1], e[2]);
-  const col1 = Math.hypot(e[4], e[5], e[6]);
-  const col2 = Math.hypot(e[8], e[9], e[10]);
-  return Math.max(col0, col1, col2);
-}
+import { stretch } from './geometryScale.js';
 
 export function worldDiagonal(instance) {
   return instance.localDiagonal * stretch(instance.matrix);

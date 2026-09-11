@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { properCrossingQuery } from '../../collision/query/ProperCrossingQuery.js';
 import { classifyPoint } from '../../collision/query/ContainmentQuery.js';
 import { box, at, comb, testInstance } from '../fixtures/geometry.mjs';
+import { stretch } from '../../collision/query/geometryScale.js';
+import { surfaceEpsilonFactor } from '../../collision/constants.js';
 
 function relativeMatrix(a, b) {
   return a.matrix.clone().invert().multiply(b.matrix);
@@ -310,4 +312,106 @@ test('a returned witnessPoint is an owned clone, immune to later scratch mutatio
     [captured.x, captured.y, captured.z],
     'first call\'s witnessPoint must not change after a later call reuses module-level scratch',
   );
+});
+
+// Design doc Sec 4.3 C-2's worked example: the coplanar-discard branch's angle test
+// (|nA.nB| >= 1 - coplanarAngleEpsilon) only bounds how far the two triangles' NORMALS
+// diverge, while its offset test reads a SINGLE vertex (`triB.a`). A triangle can
+// therefore pass both checks with `triB.a` sitting a hair's breadth from A's face, while
+// its OTHER two vertices -- unconstrained by either check -- carry the plane
+// substantially through A's surface. Reproducing this needs an extreme-ratio pair (a
+// small operand B whose diagonal, scaled into A's frame, is much smaller than A's own --
+// echoing the 290.969/3.918 class-B ratio used elsewhere in this plan) so that
+// `min(localDiagonalA, localDiagonalB * stretch(matrixBtoA))` (the new epsilon) is
+// tight enough to sit BELOW the offset, while `localDiagonalA` alone (the pre-fix
+// epsilon) is loose enough to sit AT OR ABOVE it.
+//
+// B is a small closed solid: a flat-topped box whose "roof" is a shallow 4-triangle
+// tent rather than a flat quad. The tent's rim sits a hair's breadth (`g`) BELOW A's
+// top face (so B is, overall, embedded in A), while its apex rises just above A's top
+// face -- so each roof triangle (rim-vertex, apex, rim-vertex) has its FIRST vertex (the
+// one `ProperCrossingQuery.js` reads as `triA.a`/`triB.a`) sitting at the tiny offset
+// `g`, and its OTHER two vertices diverging outward through A's face at the apex.
+// Critically, B's SOLID interior lies BELOW the tent (same side as A's own interior,
+// which lies below its top face) -- unlike a downward-carved dimple, where the two
+// interiors would face opposite ways and no combination of the probe ladder's four
+// (nA, nB) sign combinations could land inside both operands without first crossing
+// either's own boundary-proximity tolerance. With matching interior orientation, the
+// `-(nA + nB)` combination drives almost the full ladder offset into both solids at
+// once, letting the probe ladder actually PROVE the crossing once the pair is no longer
+// discarded (verified against the real bvhcast/classifyPoint pipeline, and against the
+// pre-fix `surfaceEpsilonFactor * localDiagonalA` epsilon, before writing this test).
+function tentEmbeddedInSlab() {
+  const planeY = 5; // A = box(1000, 10, 1000) has its top face at y = 5
+  const g = 1e-4; // offset at each roof triangle's vertex 'a' -- pinned in the target band
+  const apexRise = 1e-3; // apex rises this far ABOVE A's top face -- the "far end" divergence
+  const bottomY = 2; // B's flat bottom, deep inside A -- irrelevant to the coplanar pair
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -5, planeY - g, -5, // 0: rim
+     5, planeY - g, -5, // 1: rim
+     5, planeY - g,  5, // 2: rim
+    -5, planeY - g,  5, // 3: rim
+     0, planeY + apexRise, 0, // 4: apex, pokes above A's top face
+    -5, bottomY, -5, // 5: bottom ring
+     5, bottomY, -5, // 6: bottom ring
+     5, bottomY,  5, // 7: bottom ring
+    -5, bottomY,  5, // 8: bottom ring
+  ], 3));
+  geometry.setIndex([
+    // Tent roof -- each triangle's FIRST index is a rim vertex, matching
+    // `ProperCrossingQuery.js`'s own reading of `.a` as the coplanar-offset vertex.
+    0, 4, 1,  1, 4, 2,  2, 4, 3,  3, 4, 0,
+    // Vertical sides, entirely below A's top face (never crosses it).
+    0, 1, 6,  0, 6, 5,
+    1, 2, 7,  1, 7, 6,
+    2, 3, 8,  2, 8, 7,
+    3, 0, 5,  3, 5, 8,
+    // Flat bottom.
+    5, 6, 7,  5, 7, 8,
+  ]);
+  return geometry;
+}
+
+function extremeRatioCoplanarFixture() {
+  const a = testInstance(box(1000, 10, 1000));
+  const b = testInstance(tentEmbeddedInSlab());
+  const matrixBtoA = new THREE.Matrix4(); // both built directly in A's frame
+  return { bvhA: a.bvh, bvhB: b.bvh, matrixBtoA, localDiagonalA: a.localDiagonal, localDiagonalB: b.localDiagonal, a, b };
+}
+
+test('surfaceEpsilon is the min of both operands\' world-scaled tolerance, monotonically tighter than either pre-fix value', () => {
+  const { bvhA, bvhB, matrixBtoA, localDiagonalA, localDiagonalB, a, b } = extremeRatioCoplanarFixture();
+
+  // Pin the fixture's own preconditions before trusting its outcome: an extreme-ratio
+  // pair (echoing the plan's 290.969/3.918 class-B ratio) whose vertex-'a' offset `g`
+  // sits strictly between the tightened (min-based) epsilon and the pre-fix
+  // (single-operand) epsilon -- exactly the band the fix is supposed to close.
+  assert.ok(localDiagonalA / localDiagonalB > 50,
+    'extreme-ratio pair: A\'s diagonal dwarfs B\'s, echoing the 290.969/3.918 class-B ratio');
+  const oldEpsilon = surfaceEpsilonFactor * localDiagonalA;
+  const newEpsilon = surfaceEpsilonFactor * Math.min(localDiagonalA, localDiagonalB * stretch(matrixBtoA));
+  const actualOffset = Math.abs(5 - b.geometry.attributes.position.getY(0)); // vertex 'a' of each roof triangle
+  assert.ok(newEpsilon < actualOffset,
+    `fixture precondition: the tightened epsilon (${newEpsilon}) must NOT reach the vertex-'a' offset (${actualOffset}), or this pair would be (correctly) discarded either way`);
+  assert.ok(actualOffset <= oldEpsilon,
+    `fixture precondition: the pre-fix epsilon (${oldEpsilon}) must reach the vertex-'a' offset (${actualOffset}), or old code wouldn't have discarded this pair either`);
+
+  const result = properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, localDiagonalB, {});
+
+  // The concrete, specific outcome: a genuine crossing, proven (not merely
+  // "inconclusive") via an owned witness point that classifies as inside BOTH operands.
+  // Against the pre-fix epsilon (`surfaceEpsilonFactor * localDiagonalA` alone), this
+  // exact fixture returns `crossing: false` -- the pair is wrongly discarded as
+  // coplanar and never reaches the probe ladder at all (verified while writing this
+  // test, before the fix landed).
+  assert.equal(result.crossing, true,
+    'the tightened min-based epsilon no longer discards this pair, and the probe ladder proves a genuine crossing');
+  assert.equal(result.aborted, false);
+  assert.equal(result.inconclusive, false,
+    'a definitive proof, not a boundary-only near-miss');
+  assert.ok(result.witnessPoint, 'a proven crossing carries an owned witness');
+  assert.equal(classifyPoint(result.witnessPoint, bvhA, localDiagonalA), 'inside');
+  assert.equal(classifyPoint(result.witnessPoint, bvhB, localDiagonalB), 'inside');
 });
