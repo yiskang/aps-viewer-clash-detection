@@ -2887,10 +2887,44 @@ async function main() {
   // tell the two apart from `disposition` alone. Named explicitly in `report.scope` below (not by
   // a different filename/disposition value, which would change this file's existing, already-
   // consumed contract surface -- see this task's own report for why that was judged out of scope).
+  if (selectedCases.length === 0) throw new Error('--cases selected no known case');
+
+  // Task D2 (canonical-ordering/operand-symmetry-fix implementation plan, Phase D): "same-arm
+  // repeated stability" -- does running the SAME workload N>=10 times under ONE broad-phase arm
+  // FORCED (never the other arm) produce stable, drift-free results within that arm alone. No
+  // existing flag/env var did this (confirmed by inspection: `armOrderForRepetition` in
+  // counterbalancing-schedule.mjs always returns BOTH arms, alternating only which runs first) --
+  // this is the minimal, additive support needed to execute D2, per this task's own brief
+  // ("check for an existing mechanism... do not invent a new one if one already exists"; none
+  // existed). Both flags are OFF by default (`null`), leaving every existing invocation --
+  // including the flagless full canonical matrix -- completely unchanged.
+  //
+  // `--force-arm=tlas|linear`: overrides every repetition's `armOrder` (from the counterbalancing
+  // schedule) to a single-element array. The existing per-repetition parity computation already
+  // handles a missing counterpart arm gracefully (`parity[state] = {compared:false, ...}`, a named
+  // NOT_COMPARED outcome distinct from FAILED_VALIDATION -- never an abort), so this alone is
+  // sufficient to make the harness run exactly one arm, end to end, with zero changes to that
+  // existing per-repetition logic.
+  const forceArmArg = process.argv.find((a) => a.startsWith('--force-arm='));
+  const forceArm = forceArmArg ? forceArmArg.slice('--force-arm='.length) : null;
+  if (forceArm && forceArm !== 'tlas' && forceArm !== 'linear') {
+    throw new Error(`--force-arm must be 'tlas' or 'linear' (got ${forceArm})`);
+  }
+  // `--variant-key=<key>`: scopes S2's 24-variant matrix down to exactly one variant (e.g.
+  // `k=100:typical:clearance`), purely a time-saving filter applied AFTER `caseVariantsFor` returns
+  // -- `caseVariantsFor` itself is untouched. Task D1's own report found no existing flag reaches
+  // this granularity and accepted the full 24-variant cost for a single run; D2 runs the matrix
+  // TWICE (once per forced arm), so this filter keeps the total live-browser time comparable to a
+  // single D1-style run instead of doubling it.
+  const variantKeyArg = process.argv.find((a) => a.startsWith('--variant-key='));
+  const variantKeyFilter = variantKeyArg ? variantKeyArg.slice('--variant-key='.length) : null;
+  // Task D2 (codex-advisor review finding, minor): a scoped-by-`--force-arm`/`--variant-key`
+  // invocation must never claim to be the full canonical matrix, even if `--cases=`/`--runtimes=`/
+  // `--repetitions=` happen to be left at their defaults.
   const isFullCanonicalMatrix = !selectedRuntimes
     && selectedCases.length === M4_CASE_LIST.length
-    && repetitionCount === REPETITIONS;
-  if (selectedCases.length === 0) throw new Error('--cases selected no known case');
+    && repetitionCount === REPETITIONS
+    && !forceArm && !variantKeyFilter;
 
   const results = { startedAt: new Date().toISOString(), runtimes: [] };
   let failedValidation = null;
@@ -3006,11 +3040,21 @@ async function main() {
 
       const activeCases = selectedCases.filter((c) => caseRunsUnderRuntime(c, runtime));
       const schedule = buildCounterbalancedSchedule(activeCases, repetitionCount);
+      // Task D2: force every repetition's arm order down to the single requested arm. Applied AFTER
+      // the real counterbalancing schedule is built (never by editing `armOrderForRepetition` /
+      // counterbalancing-schedule.mjs itself), so the schedule's case/S2T-level rotation is still the
+      // real, reviewed logic -- only which arm(s) run is overridden here.
+      if (forceArm) { for (const s of schedule) s.armOrder = [forceArm]; }
       // Task 3.8: §16.2 provenance requires the counterbalancing schedule itself be named, not just
       // its effect -- so a later reader can confirm rotation actually happened rather than trusting
       // the console log.
       runtimeReport.counterbalancingSchedule = schedule.map((s) => ({ repetition: s.repetition, caseOrder: s.caseOrder, armOrder: s.armOrder }));
       const caseReports = new Map(activeCases.map((c) => [c, { caseName: c, variants: new Map() }]));
+      // Task D2: per (case, variant, state) series of this run's forced-arm raw results, one entry
+      // per repetition -- collected here (never persisted to the normal JSON report, which only
+      // keeps one "representative" repetition's statistics) so the same-arm rep-to-rep comparison
+      // below has every repetition's real `run` object to compare, not a reduced summary.
+      const sameArmSeries = forceArm ? new Map() : null;
 
       for (const { repetition, caseOrder, armOrder } of schedule) {
         console.log(`\n-- repetition ${repetition} (arms ${armOrder.join('>')}, cases ${caseOrder.join(',')}) --`);
@@ -3020,6 +3064,20 @@ async function main() {
             continue;
           }
           let variants = caseVariantsFor(caseName, ctx);
+          // Task D2: scope S2's 24-variant matrix down to one variant when requested (a pure
+          // post-filter on caseVariantsFor's own output; caseVariantsFor itself is untouched).
+          if (variantKeyFilter && caseName === 'S2') {
+            variants = variants.filter((v) => v.key === variantKeyFilter);
+            // codex-advisor review finding (High): an unknown/mistyped `--variant-key=` silently
+            // filtered every S2 variant out, leaving `sameArmSeries` empty for the whole run --
+            // which the (also-fixed, see below) empty-series check would otherwise have to catch
+            // AFTER a multi-minute live run completed. Failing immediately, on repetition 0's first
+            // encounter, is faster and gives a much clearer error than a downstream empty-series
+            // failure.
+            if (variants.length === 0 && repetition === 0) {
+              throw new Error(`--variant-key='${variantKeyFilter}' matched no S2 variant`);
+            }
+          }
           // §5.6: S2T's population-LEVEL order is counterbalanced alongside arm and case order --
           // higher levels run longer, so a fixed level order would correlate the population factor
           // with thermal and runtime drift. Same rotation rule, reused rather than re-derived.
@@ -3094,7 +3152,45 @@ async function main() {
                 }
               }
 
-              const r6Violations = variant.r6 && arms.tlas && arms.linear
+              // Task D2: with `forceArm` set, `arms[otherArm]` never exists (only `forceArm` is in
+              // `armOrder`), so the §6.4 cross-arm `parity` loop just above always records
+              // NOT_COMPARED for this tuple -- expected, and never a FAILED_VALIDATION (see that
+              // loop's own `compared: false` branch). The forced arm's own raw `run` per state is
+              // captured here, per repetition, for the same-arm rep-to-rep comparison performed once
+              // the whole schedule finishes below.
+              if (forceArm) {
+                for (const state of measuredStatesFor(caseName)) {
+                  const w = arms[forceArm]?.states?.[state];
+                  const key = `${caseName}|${vKey}|${state}`;
+                  if (!sameArmSeries.has(key)) sameArmSeries.set(key, []);
+                  sameArmSeries.get(key).push({
+                    repetition,
+                    run: w?.run ?? null,
+                    capacityError: w?.capacityError ?? null,
+                    otherError: w?.otherError ?? null,
+                    // codex-advisor review finding (Medium): S2T/S4 recompute `scales` per variant
+                    // (their facades don't exist in the federation-wide diagonal map measured once
+                    // per runtime) -- captured HERE, per entry, rather than reusing the outer
+                    // `diagonalByTag` closure variable later, which would be wrong for those two
+                    // cases (S2 itself never recomputes `scales`, so `scales === diagonalByTag`
+                    // here always, but the capture must be correct for every case, not only S2).
+                    scales,
+                    // codex-advisor review finding (nit): clone, not a live reference, so a later
+                    // mutation of `variant.cohort.requestedDbIds` (there is none today, but nothing
+                    // guarantees that forever) can't retroactively rewrite every captured entry.
+                    cohort: variant.cohort ? { requestedDbIds: [...variant.cohort.requestedDbIds], achievedInstances: variant.cohort.achievedInstances } : null,
+                  });
+                }
+              }
+
+              // codex-advisor review finding (High): this guard originally required BOTH `arms.tlas`
+              // and `arms.linear` to exist -- always false under `--force-arm`, which silently
+              // skipped R6's own §5.2.1 correctness rules entirely for a forced-arm run (same-arm
+              // rep-to-rep equality proves repeatability, never R6 correctness on its own).
+              // `checkR6ArmRules` is itself already arm-specific and takes one `broadPhase` at a
+              // time, so requiring every arm that actually ran (not literally both) is correct and
+              // preserves the exact same two-arm behavior for every ordinary (non-forced) invocation.
+              const r6Violations = variant.r6 && armOrder.every((bp) => arms[bp])
                 ? Object.fromEntries(armOrder.map((bp) => [bp, checkR6ArmRules({ states: arms[bp].states, broadPhase: bp, expectedPairDelta: ctx.r6.expectedPairDelta })]))
                 : null;
               if (r6Violations && Object.values(r6Violations).some((v) => v.length) && !failedValidation) {
@@ -3158,6 +3254,111 @@ async function main() {
         }
         if (failedValidation || ctx.harnessFailures.length) break;
       }
+
+      // Task D2: same-arm repeated stability. Every repetition of THIS run used the same single
+      // forced arm (never the other), so any real drift here is drift within one arm across
+      // repetitions -- not the §6.4 cross-arm comparison D1 already did. Reuses the unchanged §6.4
+      // comparator (`compareRunsAtPairScale`) exactly as written, just fed different inputs:
+      // repetition i's run vs. repetition 0's run of the SAME arm, instead of TLAS vs. linear of the
+      // same repetition.
+      //
+      // codex-advisor review finding (Medium): comparing every repetition against repetition 0 alone
+      // is NOT, in general, transitively equivalent to an all-pairs comparison -- §6.4's `witness`
+      // field is TOLERANCE-based (unlike pairSet/statistics/diagnostics/distances, which are exact),
+      // so two repetitions could each sit within tolerance of repetition 0 while differing from each
+      // other by up to 2x tolerance. Baseline-vs-every-repetition (this implementation) is still the
+      // right design for "does this arm drift away from its own first repetition" (the question this
+      // task actually asks), and is far cheaper than all-pairs; it is deliberately NOT a claim that
+      // every pair of repetitions individually satisfies §6.4 (that stronger claim would need all
+      // N*(N-1)/2 pairwise comparisons, cheap at N=10 but not what is computed here).
+      //
+      // Deliberately stricter than the gate's normal TIME_BUDGET_DIAGNOSTIC_DIVERGENCE tolerance:
+      // D2 requires ZERO within-arm drift, so ANY `!cmp.valid` here -- diagnostics-only divergence
+      // included -- is treated as drift, never "tolerated" (per this task's own standing directive
+      // against relaxing §6.4 or papering over a real incompatibility).
+      //
+      // Also checks arm-dependent counters (`broadPhasePairs`, `tlasBuilds`, `extractedSourceInstances`)
+      // that `compareRunsAtPairScale`'s own `statistics` field deliberately excludes (they legitimately
+      // differ BETWEEN arms, which is why §6.4 omits them from cross-arm parity) but which must still
+      // be rep-invariant WITHIN one forced arm -- and the cohort's own `requestedDbIds`, so a change
+      // in which dbIds got selected would be caught rather than silently comparing two different
+      // workloads against each other.
+      let sameArmValidation = null;
+      if (forceArm) {
+        sameArmValidation = { arm: forceArm, series: [] };
+        for (const [key, entries] of sameArmSeries) {
+          const sorted = entries.slice().sort((a, b) => a.repetition - b.repetition);
+          const seriesEntry = { key, repetitionCount: sorted.length, comparisons: [], extraCounterDrift: [] };
+          // codex-advisor review finding (High): the original version never checked that a series
+          // actually covers repetitions 0..N-1 with N >= the requested `repetitionCount` -- an
+          // incomplete series (a missing repetition, a duplicate, or one that stopped early) could
+          // report zero comparisons/zero drift and be indistinguishable from a genuinely complete,
+          // stable one. Every one of these is now a hard `seriesEntry.error`, never silently passed.
+          const expectedRepetitions = Array.from({ length: repetitionCount }, (_, i) => i);
+          const actualRepetitions = sorted.map((e) => e.repetition);
+          const coverageOk = repetitionCount >= 10
+            && actualRepetitions.length === expectedRepetitions.length
+            && expectedRepetitions.every((r, i) => actualRepetitions[i] === r);
+          if (!coverageOk) {
+            seriesEntry.error = `incomplete repetition coverage for --force-arm stability: expected exactly [0..${repetitionCount - 1}] (repetitionCount >= 10), got [${actualRepetitions.join(',')}]`;
+          } else {
+            const baseline = sorted[0];
+            if (!baseline?.run) {
+              seriesEntry.error = 'baseline repetition (0) produced no run (capacity rejection or harness/other error) -- cannot assert stability for this series';
+            } else {
+              for (const cur of sorted) {
+                if (cur.repetition === baseline.repetition) continue;
+                if (!cur.run) {
+                  seriesEntry.comparisons.push({ repetition: cur.repetition, valid: false, reason: cur.capacityError ? 'capacity-rejected' : cur.otherError ? 'harness/other error' : 'no run produced' });
+                  continue;
+                }
+                // codex-advisor review finding (Medium): S2T/S4 recompute their own `scales` per
+                // variant (facade model tags don't exist in the federation-wide diagonal map measured
+                // once per runtime) -- using the outer `diagonalByTag` closure here instead of each
+                // entry's OWN captured `scales` would silently mis-score those two cases (S2, the
+                // only case this task actually exercised, never recomputes `scales`, so this branch
+                // is a no-op for S2's own data, but must still be correct in general).
+                const baseScales = JSON.stringify(baseline.scales ?? null);
+                const curScales = JSON.stringify(cur.scales ?? null);
+                if (baseScales !== curScales) {
+                  seriesEntry.extraCounterDrift.push({ repetition: cur.repetition, counter: 'worldDiagonalsByTag (scales)', baseline: baseline.scales ?? null, current: cur.scales ?? null });
+                }
+                const cmp = compareRunsAtPairScale(baseline.run, cur.run, cur.scales ?? baseline.scales);
+                seriesEntry.comparisons.push({ repetition: cur.repetition, valid: cmp.valid, fields: cmp.fields });
+                for (const counterName of ['broadPhasePairs', 'tlasBuilds', 'extractedSourceInstances']) {
+                  const baseVal = counterName === 'extractedSourceInstances' ? baseline.run[counterName] : baseline.run.statistics?.[counterName];
+                  const curVal = counterName === 'extractedSourceInstances' ? cur.run[counterName] : cur.run.statistics?.[counterName];
+                  if (baseVal !== curVal) {
+                    seriesEntry.extraCounterDrift.push({ repetition: cur.repetition, counter: counterName, baseline: baseVal, current: curVal });
+                  }
+                }
+                const baseDbIds = JSON.stringify(baseline.cohort?.requestedDbIds ?? null);
+                const curDbIds = JSON.stringify(cur.cohort?.requestedDbIds ?? null);
+                if (baseDbIds !== curDbIds) {
+                  seriesEntry.extraCounterDrift.push({ repetition: cur.repetition, counter: 'cohort.requestedDbIds', baseline: baseline.cohort?.requestedDbIds ?? null, current: cur.cohort?.requestedDbIds ?? null });
+                }
+              }
+            }
+          }
+          sameArmValidation.series.push(seriesEntry);
+        }
+        // codex-advisor review finding (High): an EMPTY `series` array (e.g. an unexercised-but-
+        // selected S2 variant, or -- before the fail-fast fix above -- an unknown `--variant-key=`)
+        // made `.some(...)` vacuously false, silently reporting `STABLE` for a run that validated
+        // NOTHING. A same-arm stability claim now requires at least one populated series.
+        const anyInvalid = sameArmValidation.series.length === 0
+          || sameArmValidation.series.some((s) => s.error || s.comparisons.length === 0 || s.comparisons.some((c) => !c.valid) || s.extraCounterDrift.length > 0);
+        sameArmValidation.disposition = sameArmValidation.series.length === 0
+          ? 'INCONCLUSIVE' // nothing was populated to validate -- distinct from a real observed drift
+          : anyInvalid ? 'DRIFT_DETECTED' : 'STABLE';
+        if (sameArmValidation.series.length === 0) sameArmValidation.error = 'no series was populated at all -- nothing was validated';
+        console.log(`\n=== Task D2 same-arm repeated stability (forced arm: ${forceArm}) ===`);
+        console.log(JSON.stringify(sameArmValidation, null, 2));
+        if (anyInvalid && !failedValidation) {
+          failedValidation = { runtime: runtime.label, kind: 'SAME_ARM_DRIFT (Task D2)', forceArm, sameArmValidation };
+        }
+      }
+      runtimeReport.sameArmValidation = sameArmValidation;
 
       // §5.3.1's level-to-level mechanical control rule, over the FULL level set. The optional
       // `expectedLevels` argument is passed deliberately: without it the checker accepts any two
@@ -3315,6 +3516,10 @@ async function main() {
       requestedRuntimes: selectedRuntimes ?? Object.values(RUNTIME_CONFIGS).map((r) => r.label),
       repetitionCount,
       isFullCanonicalMatrix,
+      // Task D2's own scoping flags -- `null` for every ordinary invocation (including the
+      // flagless full canonical matrix), non-null only for a deliberate same-arm stability run.
+      forceArm,
+      variantKeyFilter,
     },
     startedAt: results.startedAt,
     finishedAt: results.finishedAt,
@@ -3376,6 +3581,9 @@ async function main() {
     // an S4' outcome mismatch means the canonical §10.1/§10.2 implementation is wrong, which is a
     // defect rather than a finding.
     s3s4PrimeSpike,
+    // Task D2: per-runtime same-arm repeated-stability verdict (`null` for every runtime whose
+    // report was not built with `--force-arm=`, i.e. every ordinary invocation).
+    sameArmValidation: results.runtimes.map((r) => ({ runtime: r.runtime, sameArmValidation: r.sameArmValidation ?? null })),
   };
 
   const resultsPath = `${RESULTS_DIR}/m4-gate-${Date.now()}.json`;
