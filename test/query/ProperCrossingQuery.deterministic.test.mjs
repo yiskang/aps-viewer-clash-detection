@@ -1,6 +1,7 @@
 // Phase C's deterministic regression matrix for
 // docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md
-// -- §13 items A (committed synthetic backstop), B, C, D1-D3 and H1-H4.
+// -- §13 items A (committed synthetic backstop), B, C, D1-D3 and H1-H4, plus (Task C3) the
+// kernel/wrapper-level same-call repeat-stability proxy for §13 F.
 //
 // Why this file exists at all, in one paragraph. §13's opening names the gap that let this defect
 // survive 1000+ green tests: every clearance unit suite that exercises the precheck builds its
@@ -26,8 +27,13 @@
 //    `containmentSamplesUsed` -- an equality assertion over swapped arguments would be asserting
 //    something the library never promised. The arm-order half stays live-gate-only and is NOT
 //    claimed complete by this file.
-//  * §13 E and F are live-gate items by construction (`test/performance/run-gate-m4.mjs`) and are
-//    not represented here.
+//  * §13 E and F, as literally written (TLAS-only vs. linear-only), are live-gate items by
+//    construction (`test/performance/run-gate-m4.mjs`) -- `broadPhase` is exclusively a
+//    `CollisionWorld.findClashes` option, so no unit call to `properCrossingQuery`/
+//    `volumeOverlapQuery` has an "arm" to hold fixed in the first place. Task C3 (this file's
+//    section immediately after A) covers the layer-appropriate PROXY of F's intent at the
+//    kernel/wrapper level: the same call repeated N >= 10 times with no varying options and no
+//    injected clock must be byte-identical. The arm-specific half of F stays live-gate-only.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -62,6 +68,34 @@ function semanticFingerprint(r) {
     crossingPairsExamined: r.stats.crossingPairsExamined,
     pointClassifications: r.stats.pointClassifications,
     exhaustedBudget: r.stats.exhaustedBudget,
+  });
+}
+
+// Wrapper-level (`volumeOverlapQuery`) full-output fingerprint. Section A's own N-run loop
+// below fingerprints only the underlying `crossOf` (kernel) call -- it checks `overlap.conclusive`
+// and `overlap.inconclusiveCauses` against fixed constants each iteration, but never collects the
+// WRAPPER's own full output into a per-run fingerprint set the way the kernel-level tests do. That
+// is a real, narrow gap in Task C3's own scope (properCrossingQuery/volumeOverlapQuery, both), not
+// just of the kernel: `overlap`, `via`, `witness`, `containmentSamplesUsed`, and the nested
+// containment-term stats (`aInB`/`bInA`) were never asserted stable across N >= 10 identical calls.
+// Excludes `elapsedMs`/`timeBudgetExceeded` for the same §13 C reason `semanticFingerprint` does --
+// those are the only two fields a clock is permitted to move.
+function volumeOverlapFingerprint(r) {
+  const term = (t) => (t ? { samplesUsed: t.samplesUsed, unresolvedComponentCount: t.unresolvedComponentCount, budgetExhausted: t.budgetExhausted } : null);
+  return JSON.stringify({
+    overlap: r.overlap,
+    conclusive: r.conclusive,
+    via: r.via ?? null,
+    diagnostics: r.diagnostics,
+    inconclusiveCauses: r.inconclusiveCauses ?? [],
+    containmentSamplesUsed: r.containmentSamplesUsed,
+    witness: r.witness ?? null,
+    candidatePairsExamined: r.stats.crossing.candidatePairsExamined,
+    crossingPairsExamined: r.stats.crossing.crossingPairsExamined,
+    pointClassifications: r.stats.crossing.pointClassifications,
+    exhaustedBudget: r.stats.crossing.exhaustedBudget,
+    aInB: term(r.stats.aInB),
+    bInA: term(r.stats.bInA),
   });
 }
 
@@ -126,6 +160,54 @@ test('A (backstop): a synthetic operand pair reaching a real pointClassification
   assert.equal(fingerprints.size, 1,
     `stability across ${REPEATS} runs is the PRIMARY contract; the literal values are secondary (§13 A, §10)`);
 });
+
+// ---------------------------------------------------------------------------
+// Task C3 -- wrapper-level (volumeOverlapQuery) same-call repeat stability.
+//
+// "Arm" (TLAS vs. linear broad phase) is exclusively a `CollisionWorld.findClashes` concept
+// (`collision/CollisionWorld.js`'s `query.broadPhase` option) -- neither `properCrossingQuery` nor
+// `volumeOverlapQuery` accepts an arm parameter at all, confirmed by inspection of both files. §13
+// F's literal "N >= 10 under TLAS-only, N >= 10 under linear-only" therefore cannot be expressed at
+// this layer, exactly as this file's own header already says of §13 E/F: they are live-gate items
+// by construction. The valid proxy at the kernel/wrapper level is what the tests above and below
+// already do -- repeat the SAME call N >= 10 times with no varying options and no injected clock,
+// and assert the full output projection (minus the two clock-permitted telemetry fields) is
+// identical every time. Section A above already establishes this for the KERNEL (`crossOf` /
+// `properCrossingQuery`). This section closes the matching gap for the WRAPPER
+// (`volumeOverlapQuery`) itself, which section A's loop never fingerprinted in full.
+// ---------------------------------------------------------------------------
+
+const VOQ_CASES = [
+  {
+    id: 'VOQ-positive',
+    what: 'a genuine crossing overlap resolves via the crossing term',
+    operands: () => [testInstance(box(2, 2, 2), at(0, 0, 0)), testInstance(box(2, 2, 2), at(1, 0, 0))],
+    expectOverlap: true,
+  },
+  {
+    id: 'VOQ-negative',
+    what: 'two disjoint boxes resolve to a negative result with stable causes',
+    operands: () => [testInstance(box(1, 1, 1)), testInstance(box(1, 1, 1), at(10, 10, 10))],
+    expectOverlap: false,
+  },
+];
+
+for (const c of VOQ_CASES) {
+  test(`Task C3 (${c.id}): ${c.what} -- volumeOverlapQuery's own full output is byte-stable over ${REPEATS} identical calls, no clock injected`, async () => {
+    const [source, target] = c.operands();
+
+    const probe = await volumeOverlapQuery(source, target);
+    assert.equal(probe.overlap, c.expectOverlap, `${c.id}: sanity -- the fixture resolves the way this case names`);
+
+    const fingerprints = new Set();
+    for (let i = 0; i < REPEATS; i++) {
+      const r = await volumeOverlapQuery(source, target);
+      fingerprints.add(volumeOverlapFingerprint(r));
+    }
+    assert.equal(fingerprints.size, 1,
+      `${c.id}: all ${REPEATS} volumeOverlapQuery calls on identical operands must be byte-identical in overlap/conclusive/via/witness/diagnostics/containmentSamplesUsed and all deterministic counters (Task C3)`);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // §13 B -- predecessor / warm-up independence (see the header for the declared gap)
