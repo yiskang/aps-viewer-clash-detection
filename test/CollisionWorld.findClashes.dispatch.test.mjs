@@ -281,9 +281,13 @@ test('volume-overlap dispatch: an AABB-overlapping but geometrically disjoint pa
 // (1e-3 x 4.24) lands inside the duct's own classifyPoint boundary band, every probe reports
 // 'boundary', and it returns a clean overlap: false.
 //
-// With the identity-based comparator wired in, canonical order is fixed by
-// (loadEpoch, geometryIndex, fragmentId) -- the duct (geometryIndex 0) always sorts first -- so both
-// call directions agree. Without it, this fixture reports 1 pair one way and 0 the other.
+// orientForCrossing orients the duct (world diagonal ~3000) first regardless of caller-supplied
+// operand order or which fragment/geometryIndex the Viewer happened to assign it on this load --
+// world-space diagonal is rank 1 of a total geometric order (design doc
+// docs/superpowers/specs/2026-09-11-canonical-ordering-operand-symmetry-fix-design.md §4.3 C-1), so
+// both call directions agree without reading any identity field. This regression is the repository's
+// strongest evidence for the dead-rung theorem (§4.0): pre-fix, the small-operand orientation made
+// every probe rung classify `boundary` and silently lost this crossing.
 
 const ductThroughBeamFixture = () => makeFixture(
   [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
