@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { CollisionWorld } from '../collision/CollisionWorld.js';
+import { CollisionWorld, compareAggregationIdentity } from '../collision/CollisionWorld.js';
 import { CollisionWorld as IndexExportedCollisionWorld } from '../collision/index.js';
 import {
   WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
@@ -1122,7 +1122,7 @@ test('two same-kind witnesses from different physical fragment pairs converge to
   // witnessForFrag100 and frag101 always resolves to witnessForFrag101 regardless of which one the
   // broad phase happens to visit first). Naively swapping which SCRIPTED witness lands on which
   // call index (as the other reversed-order tests above do) would be the wrong test here: since the
-  // winner is decided by the placement tie-break (comparePlacedCanonically), swapping which VALUE
+  // winner is decided by the placement tie-break (compareAggregationIdentity), swapping which VALUE
   // attaches to which fragment changes the correct answer, not just the winner's identity -- it is
   // only a genuine order-independence probe if the fragment<->witness association stays fixed and
   // the loop's OWN iteration order is what varies.
@@ -1181,6 +1181,21 @@ test('two null-witness candidates for the same dbId pair get the SAME diagnostic
     provenances.push(witnessDiagnostics[0].sourceFragment.fragId);
   }
   assert.equal(provenances[0], provenances[1], 'the diagnosed sourceFragment.fragId must be the SAME canonical choice regardless of which physical fragment the broad phase visits first');
+});
+
+test('compareAggregationIdentity no longer discriminates on geometryIndex — only fragmentId decides among equal-epoch candidates', () => {
+  // Construct two PlacedInstance-shaped candidates (compareAggregationIdentity is called as
+  // compareAggregationIdentity(a.sourcePlaced, b.sourcePlaced), CollisionWorld.js, so its
+  // arguments are placed-instance-shaped, not bare instances). `fragmentId` lives directly on
+  // `.instance`, NOT nested under `.instance.geometryIdentity` -- confirmed against current source
+  // (`const fragA = a.instance.fragmentId;`). geometryIndex DOES live under
+  // `.instance.geometryIdentity`. Differ ONLY in geometryIndex (one smaller, one larger) and in
+  // fragmentId (opposite order from geometryIndex, to prove geometryIndex is no longer consulted).
+  const a = { instance: { geometryIdentity: { loadEpoch: 0, geometryIndex: 5 }, fragmentId: 100 } };
+  const b = { instance: { geometryIdentity: { loadEpoch: 0, geometryIndex: 1 }, fragmentId: 200 } };
+  // Pre-fix: geometryIndex 1 < 5 would make b sort first. Post-fix: fragmentId 100 < 200 makes a sort first.
+  const result = compareAggregationIdentity(a, b);
+  assert.ok(result < 0, 'a (lower fragmentId) must sort first once geometryIndex is removed from the chain');
 });
 
 test('containment pairs never carry a witness field or a witness-unavailable diagnostic (only volume-overlap has a witness concept)', async () => {

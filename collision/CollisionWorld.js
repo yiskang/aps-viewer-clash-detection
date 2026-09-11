@@ -159,38 +159,41 @@ function computeRelativeMatrix(sourceWorldMatrix, targetWorldMatrix) {
   return source.invert().multiply(target);
 }
 
-// The stable, identity-based comparator that decides CANONICAL ORDER for volume-overlap
-// (docs/superpowers/specs/2026-08-06-collision-library-milestone1-design.md:1626-1632; implementation
-// plan :2415-2437, which assigns supplying a real comparator to CollisionWorld). It exists ONLY to
-// pick which operand's `localDiagonal` becomes L_canonical for ProperCrossingQuery's offset ladder
-// (`{1e-3,1e-4,1e-5} x L_canonical`) -- never which operand is publicly named `source`/`target` in a
-// diagnostic, which stays fixed to the caller's own arguments.
+// A dbId-level AGGREGATION tie-break only -- decides which of two equal-quality candidate pairs
+// "wins" when they collapse onto the same dbId aggregation key (compareWitnessCandidates,
+// compareClearanceCandidates below). It is NEVER reachable from a geometric call site: the two
+// former geometric orientation call sites that used to feed a canonical-order comparator into
+// VolumeOverlapQuery's offset ladder were removed (canonical-ordering/operand-symmetry fix, Decision
+// 1/5; `orientForCrossing` now supplies that ranking independently -- see the volumeOverlapQuery call
+// site). This function's only remaining job is the aggregation-loop min-reduction below.
 //
-// Without it VolumeOverlapQuery falls back to its library default ("public source is always
-// canonical-first"), which makes the ladder scale depend on which side the CALLER happened to label
-// source. That is a public verdict bug, not a tolerance nuance: for a pair whose two operands differ
-// sharply in local diagonal (a long duct crossing a short beam, ~700:1), findClashes(A -> B) and
-// findClashes(B -> A) return DIFFERENT pair counts for the identical physical pair.
-//
-// (loadEpoch, geometryIndex, fragmentId) compared lexicographically is total and stable, and is
-// sufficient for Milestone 1: cross-model queries are rejected at entry, so one call's operands
-// always share a model and therefore a loadEpoch, and (loadEpoch, fragmentId) alone already
-// uniquely identifies a CollisionInstance. geometryIndex sits between them so that two fragments
-// sharing one geometry sort together, and all three are included so the order stays total if a
-// later milestone lifts the single-model restriction.
+// (loadEpoch, fragmentId) compared lexicographically is total and stable, and is sufficient for
+// Milestone 1: cross-model queries are rejected at entry, so one call's operands always share a
+// model and therefore a loadEpoch, and (loadEpoch, fragmentId) alone already uniquely identifies a
+// CollisionInstance. `geometryIndex` is deliberately EXCLUDED from this comparator: it is a
+// reload-unstable runtime cache/lookup key, never a correctness-bearing ordering signal, anywhere in
+// this codebase (canonical-ordering/operand-symmetry fix design doc). `loadEpoch` is retained for
+// totality but is provably non-discriminating within any one call, since both candidates under one
+// aggregation key already share both epochs by construction.
 //
 // The two operands compare EQUAL only when they are literally the same fragment (a dbId appearing
-// on both sides of the query), and that case is degenerate in the right way: one geometry, one
-// placement, so L_canonical is the same number whichever operand is picked.
+// on both sides of the query).
 //
 // Compared field by field off the PlacedInstances rather than through a materialized key array:
 // this runs once per composed narrow-phase pair, and the broad phase admits up to
 // maxBroadPhaseInstancePairs of them.
-function comparePlacedCanonically(a, b) {
+//
+// Future work: if `fragmentId`'s empirical-only stability ever needs strengthening, a named fallback
+// chain (witness-point -> world-matrix -> digest -> fragmentId) is documented as a follow-up option
+// in the canonical-ordering/operand-symmetry fix design doc -- not implemented here.
+//
+// Exported (test-only; NOT re-exported from collision/index.js, so the public library surface is
+// unaffected -- same convention as `toInstance`/`normalizeNarrowPhaseHit` above) so the
+// geometryIndex-exclusion contract can be asserted directly.
+export function compareAggregationIdentity(a, b) {
   const idA = a.instance.geometryIdentity;
   const idB = b.instance.geometryIdentity;
   if (idA.loadEpoch !== idB.loadEpoch) return idA.loadEpoch < idB.loadEpoch ? -1 : 1;
-  if (idA.geometryIndex !== idB.geometryIndex) return idA.geometryIndex < idB.geometryIndex ? -1 : 1;
   const fragA = a.instance.fragmentId;
   const fragB = b.instance.fragmentId;
   if (fragA !== fragB) return fragA < fragB ? -1 : 1;
@@ -211,16 +214,16 @@ function comparePlacedCanonically(a, b) {
 //      to lie ON the intersection curve, not interior to either solid -- so a crossing witness is
 //      more directly localized to the actual interference than a point of one solid found somewhere
 //      inside the other).
-//   3. among two real witnesses of the SAME kind, `comparePlacedCanonically` (this file's own
-//      existing (loadEpoch, geometryIndex, fragmentId) total order, reused rather than reimplemented)
-//      breaks the tie off the two candidates' OWN placements, so the winner never depends on which
-//      fragment pair the broad phase happened to visit first.
+//   3. among two real witnesses of the SAME kind, `compareAggregationIdentity` (this file's own
+//      existing (loadEpoch, fragmentId) total order, reused rather than reimplemented) breaks the
+//      tie off the two candidates' OWN placements, so the winner never depends on which fragment
+//      pair the broad phase happened to visit first.
 //
 // A valid total order for a stable min-reduction: reflexive (every branch compares a value against
 // itself as equal), antisymmetric (swapping a/b negates every branch's sign -- the null-vs-real
-// branch swaps -1/1, the kind branch swaps -1/1, and comparePlacedCanonically is itself
+// branch swaps -1/1, the kind branch swaps -1/1, and compareAggregationIdentity is itself
 // antisymmetric), and transitive (the three ranks above are lexicographic: null-ness, then kind,
-// then comparePlacedCanonically's own already-total order) -- so
+// then compareAggregationIdentity's own already-total order) -- so
 // `compareWitnessCandidates(candidate, existing) < 0` inside the aggregation loop below always
 // converges to the SAME winner regardless of arrival order.
 //
@@ -241,8 +244,8 @@ function compareWitnessCandidates(a, b) {
   if (Boolean(aw) !== Boolean(bw)) return aw ? -1 : 1;
   if (aw && bw && aw.kind !== bw.kind) return aw.kind === 'surface-crossing' ? -1 : 1;
   return (
-    comparePlacedCanonically(a.sourcePlaced, b.sourcePlaced) ||
-    comparePlacedCanonically(a.targetPlaced, b.targetPlaced)
+    compareAggregationIdentity(a.sourcePlaced, b.sourcePlaced) ||
+    compareAggregationIdentity(a.targetPlaced, b.targetPlaced)
   );
 }
 
@@ -251,13 +254,13 @@ function compareWitnessCandidates(a, b) {
 // candidates collapse onto one key. Mirrors compareWitnessCandidates's EXACT structure above, minus
 // the witness-kind rank (clearance has exactly one witness kind, so there is nothing to rank there):
 // distance first (the whole point of "minimum clearance distance wins"), then the same
-// comparePlacedCanonically tie-break, applied source-then-target -- so the winner never depends on
+// compareAggregationIdentity tie-break, applied source-then-target -- so the winner never depends on
 // which fragment pair the broad phase happened to visit first (fixtures 10/14, order independence).
 function compareClearanceCandidates(a, b) {
   if (a.distance !== b.distance) return a.distance < b.distance ? -1 : 1;
   return (
-    comparePlacedCanonically(a.sourcePlaced, b.sourcePlaced) ||
-    comparePlacedCanonically(a.targetPlaced, b.targetPlaced)
+    compareAggregationIdentity(a.sourcePlaced, b.sourcePlaced) ||
+    compareAggregationIdentity(a.targetPlaced, b.targetPlaced)
   );
 }
 
@@ -382,9 +385,9 @@ async function resolveGeometryRecord(registry, placed, role, operand, needsConne
 // `matrix` must be a real THREE.Matrix4: both consumers call `.clone().invert().multiply(...)` on
 // it. Extraction stores world matrices as plain 16-number arrays, so the conversion happens here.
 //
-// Note what is deliberately NOT here: any identity field. Canonical ordering is decided from the
-// PlacedInstances at the call site (comparePlacedCanonically above), so this object stays exactly
-// the shape both consumers' typedefs declare.
+// Note what is deliberately NOT here: any identity field. Aggregation tie-break ordering is decided
+// from the PlacedInstances at the call site (compareAggregationIdentity above), so this object stays
+// exactly the shape both consumers' typedefs declare.
 export function toInstance(record, placedWorldMatrix) {
   return {
     geometry: record.geometry,
