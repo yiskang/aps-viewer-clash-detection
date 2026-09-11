@@ -1,5 +1,51 @@
 # Changelog
 
+## Correctness fix — volume-overlap and clearance crossing results no longer depend on operand order or reload identity (not yet tagged)
+
+**What was wrong.** The crossing term shared by `mode: 'volume-overlap'` and `mode: 'clearance'`'s
+Hard-Clash exclusion precheck ordered its two operands by a reload-unstable identity key
+(`(modelId, geometryKey, instanceId)`-derived), not by anything geometric. Two page loads of the
+identical model could assign that identity differently, so the same physical pair of elements could
+canonicalize in the opposite order across loads — and orientation was not merely cosmetic: it
+decided which operand's tolerance scale (`L_canonical`) the crossing kernel used, so a pair whose
+small operand happened to win the identity comparison could silently lose a real crossing the same
+pair would have found under the other order. The library's own declared goal ("a deterministic
+function of the pair, not of argument order") was never actually achieved by this mechanism.
+
+**What changed.** Operand orientation is now decided by `orientForCrossing`
+(`collision/query/orientForCrossing.js`), a total geometric order with **no identity field at any
+rank**: world diagonal (larger operand first), then triangle count, then vertex count, then
+world-matrix elements, then a content-derived `geometryDigest`, then (rank 6) a stable fallback to
+the caller's public `source` role as the tie-break of last resort. `volumeOverlapQuery`
+(`collision/query/VolumeOverlapQuery.js`) is the canonical wrapper that applies this ordering before
+calling the directional `properCrossingQuery` kernel, guaranteeing the same physical pair always
+canonicalizes the same way regardless of load order or which way the caller labels the pair —
+**except at rank 6**, which is order-dependent by construction (it is reached whenever the pair
+ties through rank 5, including byte-identical geometry, not only a digest collision between
+distinct meshes) and remains the one residual place orientation still depends on which operand the
+caller happened to label `source`. `L_canonical` is now well-defined and achievable per pair for
+the first time: it is the canonical-first operand's own local diagonal — the operand chosen because
+it has the larger *world* diagonal, so `L_canonical` corresponds to that larger world diagonal under
+the transform classes this library supports, rather than being that world diagonal itself.
+
+**What consumers will see.** No public *result schema or exported symbol* changed: no field is
+added, removed, renamed or retyped on `findClashes`'s result shape, and neither query is on the
+exported surface (internal diagnostic-event fields and the internal geometry-record shape did
+change — see below). **Observable results will change for borderline pairs, expected primarily in
+the direction of recovering crossings the small-operand orientation previously and silently lost**
+— this is a behavioral change, not preserved for backward compatibility, because backward
+compatibility would mean preserving the defect. A consumer whose baseline was pinned to the old,
+reload-unstable results should expect some borderline pairs to newly report `overlap: true` (or a
+Hard-Clash exclusion that previously came back inconclusive); the fix does not carry a proof that no
+pair moves in the opposite direction (the crossing kernel remains directional and orientation can
+still change candidate enumeration and budget exhaustion), so any such regression should be treated
+as a genuine finding to investigate, not dismissed as expected.
+
+**Internal API migration.** `volumeOverlapQuery`'s `options.compareCanonical` — never re-exported
+from `collision/index.js`, an internal seam used by two call sites inside `collision/` — is
+**removed**. Passing it now throws a `TypeError` at the first call rather than being silently
+ignored, so any missed caller fails loudly instead of quietly losing control of orientation.
+
 ## Correctness fix — volume-overlap and clearance results no longer depend on machine speed (not yet tagged)
 
 **What was wrong.** `properCrossingQuery`, the crossing term shared by `mode: 'volume-overlap'` and

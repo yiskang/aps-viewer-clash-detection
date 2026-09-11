@@ -105,6 +105,36 @@ poisoning the vendored `bvhcast`'s module-global `_active` flag. The double unde
 never-supplied-by-production; no code under `collision/` passes it. See
 `docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md` §13 G.
 
+### Kernel/wrapper layer contract for crossing queries
+
+`properCrossingQuery` (`collision/query/ProperCrossingQuery.js`) and `volumeOverlapQuery`
+(`collision/query/VolumeOverlapQuery.js`) sit in two deliberately different layers, per
+`docs/superpowers/specs/2026-09-11-canonical-ordering-operand-symmetry-fix-design.md` §3.1:
+
+- **`properCrossingQuery` is a directional kernel.** It carries **no** swap-invariance contract of
+  its own: exchanging its first and second operands is expected to change candidate enumeration,
+  `aborted`, `pointClassifications`, the accepted witness, and float rounding. Tests may
+  characterize that directional behavior; nothing in the library depends on it being symmetric.
+- **`volumeOverlapQuery` is the canonical wrapper.** It carries the library's entire symmetry
+  contract for the crossing term, and discharges it by orienting the two operands with
+  `orientForCrossing` (`collision/query/orientForCrossing.js`) — a total geometric order (world
+  diagonal, then triangle count, then vertex count, then world-matrix elements, then a
+  content-derived `geometryDigest`, then, as rank 6, a stable fallback to the caller's public
+  `source` role) — before ever calling the kernel, so the kernel is almost always handed the same
+  physical operand as its first argument regardless of which way the caller labels the pair.
+  `overlap`, `conclusive`, `inconclusiveCauses`, and every crossing-term counter are therefore
+  invariant under a caller-side operand swap **except when the pair ties through rank 5** (this
+  includes byte-identical geometry, not only a digest collision between two distinct meshes) —
+  there, rank 6 falls back to the caller's public `source` role, which is order-dependent by
+  construction, and orientation (and with it the kernel's directional behavior) again depends on
+  which operand the caller happened to label `source`. Outside that residual case, only
+  caller-facing role labels (`source`/`target`, `via`, `witness.point`) are legitimately allowed to
+  move.
+
+`volumeOverlapQuery`'s operand orientation is decided **internally**, not by the caller: an earlier
+`options.compareCanonical` injection point was removed, and `volumeOverlapQuery` now throws a
+`TypeError` if a caller supplies `compareCanonical` at all, rather than silently ignoring it.
+
 ### Deterministic crossing budgets
 
 `properCrossingQuery` — the crossing term of `mode: 'volume-overlap'` and of the `mode: 'clearance'`

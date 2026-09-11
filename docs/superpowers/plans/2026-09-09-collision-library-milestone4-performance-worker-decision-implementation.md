@@ -10504,6 +10504,41 @@ narrow-phase pairs instead of geometry-preparation phases. **Resolution:**
 per-pair gate and the inner composed-stage scheduler — sharing one real checkpoint port/accumulator,
 and calls the REAL `classifyHardClashPrecheck` through it.
 
+> **Superseded note (canonical-ordering/operand-symmetry fix, Task D6):** the "Missing production
+> `classifyHardClashPrecheck` options and telemetry (Critical)" bullet below, and the
+> `compareIdentityCanonically`/`compareCanonical` machinery it and `compareIdentityCanonically`
+> (further down this task) justify, were both written against production's *former*
+> `options.compareCanonical` — an identity-based orientation comparator injected by the caller.
+> That option was **removed** by the canonical-ordering/operand-symmetry fix
+> (`docs/superpowers/specs/2026-09-11-canonical-ordering-operand-symmetry-fix-design.md`,
+> Task A2.1): `volumeOverlapQuery` now decides operand orientation internally via
+> `orientForCrossing`, a total *geometric* order, and throws if a caller supplies
+> `compareCanonical` at all. This task (4.5) is a Phase-4-conditional, currently unbuilt spike —
+> `spike/m4/s7-precheck/` does not exist — so nothing here has shipped or needs a code fix; this
+> note documents that **if Task 4.5 is ever activated**, the replica code below must, at minimum:
+> (1) remove the `compareCanonical` option entirely — there is nothing left to inject it into;
+> (2) forward `geometryDigest` into `buildInstanceFromRegistryRecord`'s reconstructed instances the
+> same way production's own `toInstance` does (`collision/CollisionWorld.js:391`) — the replica
+> currently omits it, and without it any tie through rank 4 would incorrectly fall to rank 6 instead
+> of being decided by content; and (3) read orientation provenance (`orientedFirstRole`,
+> `orientationRank`, `sourceWorldDiagonal`/`targetWorldDiagonal`, the actual telemetry fields
+> `volumeOverlapQuery` emits on the `hard-clash-precheck` event, `VolumeOverlapQuery.js:176-184`)
+> from that existing diagnostic event rather than independently recomputing an orientation decision
+> in the replica. The *narrow* dbId-level tie-break this plan's other replica code reuses elsewhere,
+> `compareAggregationIdentity` (`collision/CollisionWorld.js`), is unrelated to this concern in its
+> **current** form — its predecessor `comparePlacedCanonically` (before the Task A3.1 rename) DID
+> serve both a geometric-orientation role and this aggregation role at once, which is exactly what
+> this fix separated; only the surviving `compareAggregationIdentity` is orientation-unrelated, and
+> it remains a pure aggregation-loop tie-break with no `geometryIndex` term. The tolerance/
+> traversal-order fidelity concern the original "Critical #3" finding raised is therefore **moot at
+> the identity-comparator level** (orientation is no longer identity-driven at all, by production or
+> by any correct replica of it) — but a *geometric*-fidelity question of the same shape would still
+> apply to a reactivated Task 4.5: does the replica's own operand orientation match
+> `orientForCrossing`'s total order closely enough for the two arms' results to be comparable? Point
+> (3) above is the recommended way to answer that without re-deriving it: read the real event rather
+> than reimplementing the comparison. This is new analysis, not yet load-bearing anywhere, and out
+> of scope for this documentation-only pass beyond stating it.
+
 **Further fixes applied (independent Codex spec-review of this fix, this round — each verified
 directly against source before being accepted):**
 
@@ -11004,6 +11039,23 @@ function createComposedStageScheduler(checkpoint, now) {
   };
 }
 
+// SUPERSEDED (canonical-ordering/operand-symmetry fix, Task D6) -- see the note above the
+// "Further fixes applied" list for the full explanation. Two things below are stale relative to
+// the shipped implementation and are preserved here only as an unbuilt spike's historical
+// planning text, not as a template to reuse if Task 4.5 is ever activated:
+//   1. `comparePlacedCanonically`, referenced by name below, was renamed to
+//      `compareAggregationIdentity` and had its `geometryIndex` term removed entirely (Task A3.1).
+//      Before the rename it DID double as a geometric-orientation comparator (the two former call
+//      sites around CollisionWorld.js:1418/1441 fed its result into volumeOverlapQuery's
+//      compareCanonical option) as well as this aggregation tie-break -- this fix separated those
+//      two responsibilities; the surviving `compareAggregationIdentity` keeps only the narrow
+//      dbId-level aggregation role and is no longer wired into any geometric-orientation call site.
+//   2. Production's `options.compareCanonical` -- the option `compareIdentityCanonically` below
+//      exists to reproduce the fidelity of -- was removed by Task A2.1. `volumeOverlapQuery` no
+//      longer accepts caller-supplied orientation at all; it decides internally via
+//      `orientForCrossing` (a total geometric order over world diagonal, triangle count, vertex
+//      count, world-matrix elements, content digest, then public-role fallback -- see
+//      `docs/superpowers/specs/2026-09-11-canonical-ordering-operand-symmetry-fix-design.md`).
 // Structural copy of CollisionWorld.js's own (unexported) comparePlacedCanonically
 // (CollisionWorld.js:186-195), adapted to accept plain identity objects rather than
 // PlacedInstances -- this harness never constructs PlacedInstance objects, only their identity
