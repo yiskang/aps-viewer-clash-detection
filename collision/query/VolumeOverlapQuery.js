@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { properCrossingQuery, createCrossingStats } from './ProperCrossingQuery.js';
 import { anyComponentInside } from './ContainmentQuery.js';
 import { reportDiagnosticEvent } from '../scheduler.js';
-import { orientForCrossing } from './orientForCrossing.js';
+import { orientForCrossing, worldDiagonal } from './orientForCrossing.js';
 
 // M2.1 Task 3: transforms a leaf witness (in SOME operand's local frame) into world
 // space via that operand's own world matrix, and validates the result is 3 finite
@@ -76,10 +76,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   // participates at any rank -- so the same pair always canonicalizes the same way
   // regardless of which call site or argument order invoked it.
   const { first: canonicalFirst, second: canonicalSecond, rank: orientationRank } = orientForCrossing(source, target);
-  // `orientationRank` is not consumed within this task's scope -- retained per the
-  // brief's Step 3 destructure so a later task (A2.4, telemetry) can read it without
-  // another edit to this call site. Not yet read anywhere in this file.
-  void orientationRank;
+  // `orientationRank` is consumed below by Task A2.4's recorder-gated telemetry
+  // (the `hard-clash-precheck` / stage:'crossing' event) -- not by the crossing
+  // computation itself, which never reads it.
   // Derived immediately after orientForCrossing's destructure (brief's Step 3), not only
   // inside the positive-crossing branch below: Task A2.4's telemetry needs both
   // `orientationRank` and `canonicalFirstIsSource` available at this point, and this is a
@@ -174,6 +173,15 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       crossingPairsExamined: crossing.stats.crossingPairsExamined,
       pointClassifications: crossing.stats.pointClassifications,
       exhaustedBudget: crossing.stats.exhaustedBudget,
+      // Task A2.4 (design doc C-4): orientation provenance telemetry. Rides this same
+      // opt-in event and nowhere else -- not a public result field, not a §6.4-compared
+      // field. `canonicalFirstIsSource`/`orientationRank` are already available here from
+      // the orientForCrossing destructure above; `worldDiagonal` is imported directly from
+      // orientForCrossing.js (Task A1.2's named export) rather than recomputed inline.
+      orientedFirstRole: canonicalFirstIsSource ? 'source' : 'target',
+      orientationRank,
+      sourceWorldDiagonal: worldDiagonal(source),
+      targetWorldDiagonal: worldDiagonal(target),
     });
   }
 

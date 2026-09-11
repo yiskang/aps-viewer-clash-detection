@@ -70,6 +70,32 @@ test('a containment-positive pair emits crossing (negative) then containment-a-i
   }
 });
 
+test('a crossing-positive pair carries orientation provenance on the crossing stage event (A2.4)', async () => {
+  // duct's worldDiagonal is far larger than beam's (~20 vs ~2), so orientForCrossing's
+  // rank-1 (worldDiagonal) comparison alone decides canonical order here -- duct (the
+  // caller's `source`) canonicalizes first, unambiguously, with no need to fall through
+  // to any lower-rank tiebreak.
+  const duct = testInstance(box(20, 0.4, 0.4));
+  const beam = testInstance(box(0.4, 0.4, 2));
+  const events = [];
+  setDiagnosticEventRecorder((kind, payload) => events.push({ kind, payload }));
+  try {
+    const result = await volumeOverlapQuery(duct, beam, {
+      diagnosticPairContext: { sourceEpoch: 1, sourceFragmentId: 1, targetEpoch: 1, targetFragmentId: 2 },
+    });
+    assert.equal(result.via, 'crossing');
+    const crossingEvent = events.find((e) => e.kind === 'hard-clash-precheck' && e.payload.stage === 'crossing');
+    assert.ok(crossingEvent);
+    assert.equal(crossingEvent.payload.orientedFirstRole, 'source');
+    assert.equal(crossingEvent.payload.orientationRank, 1);
+    assert.equal(typeof crossingEvent.payload.sourceWorldDiagonal, 'number');
+    assert.equal(typeof crossingEvent.payload.targetWorldDiagonal, 'number');
+    assert.ok(crossingEvent.payload.sourceWorldDiagonal > crossingEvent.payload.targetWorldDiagonal);
+  } finally {
+    clearDiagnosticEventRecorder();
+  }
+});
+
 test('no diagnosticPairContext supplied -- zero events, matching every existing caller', async () => {
   const a = testInstance(box(2, 2, 2));
   const sep = testInstance(box(2, 2, 2), at(10, 0, 0));
