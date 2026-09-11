@@ -6,9 +6,9 @@ import { reportDiagnosticEvent } from '../scheduler.js';
  * Tri-state Hard-Clash exclusion precheck for a clearance candidate pair. Never collapses to boolean:
  * an inconclusive volumeOverlapQuery result must never be treated as "proven no overlap".
  *
- * @param {object} volumeOverlapOptions - {scheduler, compareCanonical}, threaded through to
- *   volumeOverlapQuery unchanged. Omit/pass {} to use volumeOverlapQuery's own defaults (standalone
- *   unit-test convenience only -- CollisionWorld always supplies the real call-scoped values).
+ * @param {object} volumeOverlapOptions - {scheduler}, threaded through to volumeOverlapQuery
+ *   unchanged. Omit/pass {} to use volumeOverlapQuery's own defaults (standalone unit-test
+ *   convenience only -- CollisionWorld always supplies the real call-scoped values).
  * @returns {
  *   {status: 'skip-precheck', precheckNotRunReason: 'aabb-disjoint'} | {status: 'excluded'} |
  *   {status: 'proceed'} | {status: 'inconclusive', diagnostic: object}

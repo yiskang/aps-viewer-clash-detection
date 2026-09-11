@@ -9,9 +9,11 @@ function worldBoundsOf(instance) {
   return { min: [box3.min.x, box3.min.y, box3.min.z], max: [box3.max.x, box3.max.y, box3.max.z] };
 }
 
-const noOptions = {}; // classifyHardClashPrecheck must default scheduler/compareCanonical itself when
-                        // the caller omits them, exactly as volumeOverlapQuery's own defaults do, so a
-                        // standalone unit test need not construct a real CollisionWorld checkpoint.
+const noOptions = {}; // classifyHardClashPrecheck must default scheduler itself when the caller omits
+                        // it, exactly as volumeOverlapQuery's own default does, so a standalone unit
+                        // test need not construct a real CollisionWorld checkpoint. (compareCanonical
+                        // no longer exists on this path -- removed from volumeOverlapQuery in Task
+                        // A2.1 and from this call site in Task A2.2.)
 
 test('AABBs genuinely disjoint -> skip-precheck (volumeOverlapQuery never called)', async () => {
   const source = testInstance(box(2, 2, 2), at(0, 0, 0));
@@ -108,25 +110,20 @@ test('fixture 14: conclusive:false volumeOverlapQuery result -> inconclusive, ne
   assert.equal(result.diagnostic.reason, 'clearance-hard-clash-precheck-inconclusive');
 });
 
-test('threads a caller-supplied scheduler/compareCanonical into volumeOverlapQuery', async () => {
+test('threads a caller-supplied scheduler into volumeOverlapQuery', async () => {
+  // Re-expression of a deleted `compareCanonical`-injection assertion (Task A3.2; the option
+  // itself was removed from volumeOverlapQuery's public API in Task A2.1, and Task A2.2 removed
+  // it from this call site). The `scheduler`-threading half of the original test is untouched --
+  // `scheduler` was never part of this plan's fix -- only the compareCanonical half (and its
+  // `sawCompareCanonical` tracking variable) is dropped, since there is nothing left to thread.
   let sawScheduler = false;
-  let sawCompareCanonical = false;
   const source = testInstance(box(2, 2, 2), at(0, 0, 0));
   const target = testInstance(box(2, 2, 2), at(2, 0, 0));
   const scheduler = { elapsedMs: () => 0, checkpointIfDue: async () => { sawScheduler = true; } };
-  // codex-advisor (medium, pre-commit review) finding: `compareCanonical: () => -1` alone is
-  // indistinguishable from volumeOverlapQuery's own default comparator (also "source always
-  // canonical-first") -- this test would still pass even if classifyHardClashPrecheck silently
-  // dropped the caller's compareCanonical and let volumeOverlapQuery fall back to its default.
-  // Flip a flag from inside the comparator itself so a dropped callback is actually observable.
-  const compareCanonical = (a, b) => { sawCompareCanonical = true; return -1; };
   await classifyHardClashPrecheck(source, target, worldBoundsOf(source), worldBoundsOf(target), {
-    scheduler, compareCanonical,
+    scheduler,
   });
   // At least one between-term checkpoint must have run through the supplied scheduler, proving it was
   // actually passed to volumeOverlapQuery rather than a fresh default being constructed internally.
   assert.equal(sawScheduler, true);
-  // compareCanonical is called unconditionally near the top of volumeOverlapQuery (before the crossing
-  // term even runs) -- proving THIS caller-supplied function, not a fresh default, was invoked.
-  assert.equal(sawCompareCanonical, true);
 });
