@@ -42,10 +42,14 @@
 const ARCH_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0';
 const STRUCTURE_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0';
 const MECHANICAL_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA';
-const SOURCE_DB_ID = 3076; // Structure model (index 1) -- see run-gate-m3.mjs's header comment.
-const CLEARANCE = 0.05;    // DEFAULT_CLEARANCE (ClashFinderExtension.js:60), model units.
-const PORT = process.env.PORT || 8080;
-const RESULTS_DIR = 'test/performance/results';
+// Task D3: exported (`export const`, not a re-declaration) so test/performance/m4/cross-reload-
+// parity.mjs can reuse the EXACT same fixture identity/port/results-dir constants rather than
+// hand-copying them a second time (this file's `isMainModule` guard, at the bottom, means importing
+// these bindings never triggers this file's own `main()`).
+export const SOURCE_DB_ID = 3076; // Structure model (index 1) -- see run-gate-m3.mjs's header comment.
+export const CLEARANCE = 0.05;    // DEFAULT_CLEARANCE (ClashFinderExtension.js:60), model units.
+export const PORT = process.env.PORT || 8080;
+export const RESULTS_DIR = 'test/performance/results';
 
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict'; // Task 3.10: S4''s per-scenario outcome checks
@@ -188,7 +192,13 @@ async function ensureMatricesEqualExposed(page) {
 // unchanged in shape (Architecture normal load, Structure/Mechanical as-additional via
 // #keep-current-models, isLoadDone() AND getData().instanceTree waited on every model, live
 // re-confirmation of model count and source dbId ownership -- "nothing taken on faith").
-async function loadFixtureAndReconfirm(page) {
+// Task D3: exported so cross-reload-parity.mjs reuses this EXACT idiom by reference rather than
+// re-implementing its own copy (every other sibling script under test/performance/m4/ that needed
+// this idiom instead hand-copied it locally, since it was not exported at the time -- D3 is the
+// first task to need this file's own copy called directly, per its own brief's explicit instruction
+// to reuse the idiom "not as a literal reuse of that recovery codepath" -- reusing the IDENTICAL
+// function is a strictly more faithful way to honor that than a hand-copied near-duplicate would be).
+export async function loadFixtureAndReconfirm(page) {
   await page.goto(`http://localhost:${PORT}/#${ARCH_URN}`);
   await page.waitForFunction(() => window.viewer && window.viewer.model && window.viewer.model.isLoadDone(), null, { timeout: 180_000 });
 
@@ -497,7 +507,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // signature convention Task 3.6's `compareRuns` joins on can never drift between two call sites.
 // (This codebase has already hit the "signatures need model identity, not just dbId" bug three
 // separate times; a single definition is the structural fix.)
-async function installGateHelpers(page) {
+// Task D3: exported alongside loadFixtureAndReconfirm above, same rationale.
+export async function installGateHelpers(page) {
   await page.evaluate(() => {
     if (window.__m4Gate) return;
     window.__m4Gate = {
@@ -898,7 +909,13 @@ function summarizeFrameIntervals(frameIntervals, { postQueryFrameObserved }) {
 // The result is strictly stricter than (1) alone and needs no change to Task 3.6's reviewed
 // interface. A partition whose scale cannot be resolved to a finite positive number is a hard
 // failure, never a silently-substituted default -- an unknown scale means an unknown tolerance.
-function compareRunsAtPairScale(runA, runB, diagonalByTag) {
+// Task D3 (codex-advisor review, request 20260912-044359-20626-30617): exported so cross-reload-
+// parity.mjs reuses this EXACT §6.4 pair-scale comparator by reference. A standalone script
+// re-implementing (or worse, re-deriving a weaker version of) this comparator would either use a
+// laxer witness tolerance than §6.4 mandates or duplicate this function outright, both of which the
+// plan's standing directive against touching/relaxing §6.4 forbids risking. THIS function's own body
+// is completely unmodified by Task D3.
+export function compareRunsAtPairScale(runA, runB, diagonalByTag) {
   const finite = Object.values(diagonalByTag).filter((d) => Number.isFinite(d) && d > 0);
   const federationMax = finite.length ? Math.max(...finite) : null;
   if (federationMax === null) {
@@ -966,7 +983,9 @@ function compareRunsAtPairScale(runA, runB, diagonalByTag) {
 // -- and `CapacityExceededError` puts its entire payload on own properties
 // (`collision/errors.js:121`: `Object.assign(this, details)`), so the `limit`/`attempted`/
 // `requested` values §4 requires the report to name by exact value would be silently lost.
-async function runQueryInPage(page, world, descriptor) {
+// Task D3: exported alongside compareRunsAtPairScale above, same rationale -- reused verbatim so
+// the `run` shape it produces is guaranteed to stay exactly what compareRunsAtPairScale expects.
+export async function runQueryInPage(page, world, descriptor) {
   return page.evaluate(async ({ descriptor, world }) => {
     const sched = await import('/collision/scheduler.js');
     const G = window.__m4Gate;
@@ -4097,6 +4116,27 @@ function summarizeRun(results) {
 // a future change reintroduces a bare, unscoped `node --test`.
 const isMainModule = !process.env.NODE_TEST_CONTEXT
   && process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+// Task D3 (canonical-ordering/operand-symmetry fix implementation plan, Phase D): off-by-default,
+// same convention as Task D2's `--force-arm=`/`--variant-key=` -- ordinary invocations (no flag) are
+// completely unaffected, confirmed by the unchanged full `node --test` suite. Unlike D2, D3's own
+// work (regression E's cross-reload §6.4 parity, regression C's cross-load pinning, the §9.2
+// fragId-identity measurements, and regression F(b)'s cross-reload aggregation-determinism check)
+// needs NONE of this file's cohort-profiling/CDP-trace/heap-sampling/worker-spike machinery -- it is
+// a fixture-identity/aggregation-correctness replay, not a timing measurement -- so per codex-advisor
+// review (request 20260912-044359-20626-30617), the bulk of D3's own logic lives in a new sibling
+// file (test/performance/m4/cross-reload-parity.mjs) rather than being woven into this file's own
+// ~1200-line dispatch loop. This file still satisfies the task brief's own "Extend run-gate-m4.mjs"
+// instruction: it exports the exact fixture-load idiom, in-page query runner and UNMODIFIED §6.4
+// comparator that file imports and reuses BY REFERENCE (never a re-implementation, per the same
+// review's explicit finding that a standalone duplicate risks comparator drift), and this dispatch
+// branch is the literal extension point.
+const runD3CrossReload = process.argv.includes('--d3-cross-reload');
 if (isMainModule) {
-  main().catch((err) => { console.error(err); process.exitCode = 1; });
+  if (runD3CrossReload) {
+    import('./m4/cross-reload-parity.mjs')
+      .then((mod) => mod.runCrossReloadParitySuite())
+      .catch((err) => { console.error(err); process.exitCode = 1; });
+  } else {
+    main().catch((err) => { console.error(err); process.exitCode = 1; });
+  }
 }
