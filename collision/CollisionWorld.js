@@ -2271,11 +2271,9 @@ export class CollisionWorld {
     // The sign is computed once, from the two PlacedInstances, and the comparator merely reports it
     // for whichever argument order it is handed -- so nothing identity-shaped has to be smuggled
     // into the `Instance` objects, and the comparison itself allocates nothing per pair.
-    const canonicalOrder = comparePlacedCanonically(sourcePlaced, targetPlaced);
     const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
     const result = await volumeOverlapQuery(sourceInstance, targetInstance, {
       scheduler,
-      compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
     });
     if (isDiagnosticEventRecorderActive()) {
       reportDiagnosticEvent('narrow-phase-pair', {
@@ -2407,7 +2405,6 @@ export class CollisionWorld {
     }
 
     const scheduler = createComposedStageScheduler(checkpoint, this._now);
-    const canonicalOrder = comparePlacedCanonically(sourcePlaced, targetPlaced);
     // Task 1.4: per-pair diagnostic context for THIS function's own volumeOverlapQuery call
     // (via classifyHardClashPrecheck) -- distinct from Task 1.3's candidate-list capture point in
     // the top-level clearance findClashes dispatch, one level up. Gated on
@@ -2418,7 +2415,6 @@ export class CollisionWorld {
     } : undefined;
     const volumeOverlapOptions = {
       scheduler,
-      compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
       diagnosticPairContext,
       // Task reviewer fix (Important #1, fix round): without this, ProperCrossingQuery.js's own
       // `options.now ?? (() => performance.now())` default (ProperCrossingQuery.js:40) reads the
