@@ -29,10 +29,14 @@ Bash call instead, per this project's own documented gotcha).
 | 2 | acceptance:clash-finder | 252/257 checks pass, 5 fail (all one scenario) | Pre-existing, already documented at M3 acceptance — no (i)-(iv) classification applies |
 | 3 | gate (M1) | Hard crash, `TypeError: Cannot read properties of undefined (reading 'spans')` | Pre-existing latent defect in `run-gate.mjs` itself, predates Phase A by days — not a "changed result" from this fix |
 | 4 | gate:m2 (M2) | disposition `MEASURED`, 0 errors, all correctness cross-checks `true` | Clean — no classification needed |
-| 5 | gate:m3 (M3) | disposition `MEASURED`, 0 errors/validation failures, all correctness cross-checks `true`; distance-query population shifted 130→133 (inconclusive 464→461), reproduced twice; Criterion 6 (informational-only, non-gating) worst-span verdict escalated CAUTION → NO-GO, reproduced twice (19.8ms, 19.5ms) | **(ii)** — tightened coplanarity epsilon resolves 3 more precheck-inconclusive pairs, which reach an unmodified but geometry-dependent, uncapped distance function |
+| 5a | gate:m3 (M3) — counter shift | disposition `MEASURED`, 0 errors/validation failures, all correctness cross-checks `true`; distance-query population shifted 130→133 (inconclusive 464→461), reproduced twice | **(ii)**, routine — the direct, intended effect of the tightened coplanarity epsilon resolving more precheck-inconclusive pairs |
+| 5b | gate:m3 (M3) — Criterion 6 verdict | Criterion 6 (informational-only, non-gating) worst-span verdict escalated CAUTION → NO-GO, reproduced twice (19.8ms, 19.5ms; ~2.4x `frameBudgetMs`) | **(ii)-derived, consequential** — a real, reproducible downstream *consequence* of 5a's population shift landing on an unmodified but geometry-dependent, uncapped distance function; not itself a counter shift, and not a defect in Phase A-D's own code. Requires milestone-owner acknowledgment (see below) — not merely noted |
 
 No item is classified **(iv) unexplained**. Nothing here blocks Phase E under design doc §11 regression G's
-rule, though items 3 and 5 are flagged as concerns worth the milestone owner's attention (see below).
+rule. Item 3 is flagged as a concern worth the milestone owner's attention; item 5b is a consequential
+finding requiring the milestone owner's affirmative acknowledgment before or alongside Phase E (see below
+— this is a disposition-visibility requirement, not a reclassification: 5b stays (ii)-derived, not (iv),
+and does not itself block Phase E).
 
 ## Item 1 — `node --test`
 
@@ -143,11 +147,13 @@ verdict exists in this gate. This is the gate's normal, expected-shape PASS outp
 
 **Classification:** clean, no (i)-(iv) classification applies (no changed/failing result).
 
-## Item 5 — `test:performance:gate:m3` (M3)
+## Item 5 — `test:performance:gate:m3` (M3) — two distinct findings (5a, 5b)
 
 `disposition: "MEASURED"`, zero errored runs, zero validation failures. `correctnessCrossCheck` all
 `true`: pair signature sets agree across every broad-phase-arm/cold-warm combination, and
 `maxAbsoluteDelta: 0` for per-pair clearance distances across broad-phase arms.
+
+### 5a — counter shift (routine)
 
 **Correction to an earlier draft of this doc:** an initial pass at this classification claimed the
 fixture's counters were "bit-identical" to `db64324`'s documented baseline. A `codex-advisor medium`
@@ -174,8 +180,10 @@ The arithmetic is exact and self-consistent: 3 fragment pairs that used to be dr
 *excluded* or newly *hit*. This is precisely the documented, intended effect of `cae78bb` ("tighten
 coplanarity epsilon to symmetric min(D_A, D_B) — design doc C-2"): a tighter epsilon lets the precheck
 prove/disprove crossing for pairs it previously couldn't decide, converting `inconclusive` outcomes into
-decisive ones. **This part is squarely classification (ii)**, and reproduced identically across two
-independent gate runs (both showed `clearanceDistanceQueriesRun: 133` / inconclusive: 461).
+decisive ones. **This part (5a) is squarely classification (ii), routine**, and reproduced identically
+across two independent gate runs (both showed `clearanceDistanceQueriesRun: 133` / inconclusive: 461).
+
+### 5b — Criterion 6 verdict escalation (consequential, not routine)
 
 **What else changed:** Criterion 6, the single-call frame-budget disposition — an explicitly non-gating,
 reported-only performance finding (`run-gate-m3.mjs`'s own `dispositionCaveat`: *"This is a REPORTED
@@ -218,25 +226,35 @@ function — and among the 3 newly-admitted pairs, at least one appears to be a 
 geometry comparison than any of the previously-admitted 130, reproducibly. This is a bounded,
 well-explained population change (+3 well-defined pairs), not an unbounded-growth or runaway-cost risk.
 
-**Classification:** **(ii)**, non-blocking — the counter shift is squarely (ii) and reproduced twice;
-the timing escalation is the direct, reproducible downstream consequence of that same (ii) population
-change reaching an unmodified, geometry-dependent, uncapped function, not a new defect in Phase A-D's own
-code. Disposition remains `MEASURED` (no correctness/validation failure); the GO/CAUTION/NO-GO verdict is
-explicitly documented, in both the gate script's own comments and the M3 spec, as advisory/non-gating ("a
-genuine NO-GO does not by itself block M3 — a tighter `DEFAULT_CLEARANCE`, or scoping Soft Clash to
-smaller selections, may be sufficient mitigation"). This was not accepted at face value: a codex-advisor
-consult initially and correctly pushed back on my first-draft mechanism and "bit-identical" claim, and
-this section was revised (including one additional confirmation gate run) in response before finalizing.
+**Classification:** **(ii)-derived**, not itself a counter shift — 5a's population change is squarely
+(ii) and reproduced twice; 5b (this verdict escalation) is the direct, reproducible downstream
+*consequence* of that same (ii) population change reaching an unmodified, geometry-dependent, uncapped
+function, not a new defect in Phase A-D's own code, and not (iv) unexplained (the mechanism is understood
+and reproduced). This was not accepted at face value: a codex-advisor consult initially and correctly
+pushed back on my first-draft mechanism and "bit-identical" claim, and this section was revised (including
+one additional confirmation gate run) in response before finalizing.
 
-**Flagged as a concern, not a blocker:** the worst-case single-call span for this fixture has now grown
-roughly 3x from its M3-acceptance value (6.1-6.5ms → ~19.5-19.8ms) and is now ~2.4x `frameBudgetMs`. This
-is real, measured, reproducible latency that a future performance pass (or the milestone owner, per the
-M3 spec's own stated mitigation options) should look at — but per this task's explicit brief and the
-user's standing directive, `frameBudgetMs` and the §6.4 comparator are not mine to touch, and no
-tolerance was widened or loosened to make this pass. Exact per-pair attribution of which of the 3 newly-
-admitted fragment pairs is the expensive one was not established — the gate's own span instrumentation
-does not carry per-pair identity (only aggregate/`byReason` diagnostics), so this would need new
-instrumentation to pin down further.
+**Disposition: requires explicit milestone-owner acknowledgment before or alongside Phase E — not merely
+a noted concern.** The worst-case single-call span for this fixture has grown roughly 3x from its
+M3-acceptance value (6.1-6.5ms → ~19.5-19.8ms, ~2.4x `frameBudgetMs`), reproducibly, and landed the M3
+gate's own Criterion 6 in its NO-GO band. `disposition: MEASURED` at the gate-script level is a statement
+about *correctness* (no error, no validation failure) — it is not, and does not substitute for, sign-off
+on this *performance* finding. The M3 design spec is explicit about exactly this situation: *"A genuine
+failure here does not necessarily block M3 ... but it must be an explicit, reported finding, not an
+assumption"* (`docs/superpowers/specs/2026-09-07-collision-library-milestone3-clearance-design.md:350`).
+This finding is classified (not (iv), does not block Phase E on its own), but classification is not the
+same thing as disposition: a NO-GO on this criterion, now measurably worse than the CAUTION the milestone
+owner would have seen if this were re-checked right after `db64324`, needs a human — the milestone owner
+— to see this specific number and either accept it, request the M3 spec's own suggested mitigation (a
+tighter `DEFAULT_CLEARANCE`, or scoping Soft Clash to smaller selections), or decide it needs deeper
+investigation, before or alongside Phase E — not have it pass by silently inside a `MEASURED`/(ii) label.
+Per this task's explicit brief and the user's standing directive, `frameBudgetMs`, `DEFAULT_CLEARANCE`,
+and the §6.4 comparator are not mine to touch, and no tolerance was widened or loosened to make this
+pass — this doc is reporting the finding for that acknowledgment, not resolving it. Exact per-pair
+attribution of which of the 3 newly-admitted fragment pairs is the expensive one was also not established
+— the gate's own span instrumentation does not carry per-pair identity (only aggregate/`byReason`
+diagnostics) — so a milestone owner who wants to act on this rather than merely accept it would need new
+instrumentation to pin the specific pair down first.
 
 ## Files touched by this task
 
