@@ -51,14 +51,37 @@
 //   set), the diagnostic REASON multiset with `role` stripped (role legitimately differs between
 //   forward/backward since the public source/target labels swap — only the reason population is
 //   promised invariant, "up to role relabelling"), and the three crossing counters +
-//   `exhaustedBudget`/`timeBudgetExceeded` bit-identically (the same kernel call is made either way).
-//   Deliberately NOT asserted: `via`, `witness` (kind/point), `containmentSamplesUsed`,
-//   `stats.aInB`/`stats.bInA`, raw `role` labels, or `elapsedMs` (real wall-clock — expected to vary
-//   run to run, asserting it would make this test flaky by construction).
+//   `exhaustedBudget` bit-identically (the same kernel call is made either way).
+//   Deliberately NOT asserted: `via` (forward-vs-backward — see below for a DIFFERENT, sound use of
+//   it), `witness` (kind/point), `containmentSamplesUsed`, `stats.aInB`/`stats.bInA`, raw `role`
+//   labels, `elapsedMs`, or `timeBudgetExceeded` (both real wall-clock-derived,
+//   ProperCrossingQuery.js:313 — expected to vary run to run on a pair whose traversal runs close to
+//   `timeBudgetMs`; asserting either equal would make this test flaky by construction. Fix round 1,
+//   Important #1: `timeBudgetExceededMatch` was wrongly asserted in the first draft, removed here —
+//   both values are still retained as observational data in the per-pair crossing-stats fields).
 // A second, kernel-adjacent check is kept from the original brief (judged sound, unaffected by the
 // over-assertion above): `orientForCrossing` must select the SAME physical operand as `.first` (and
 // the same `.rank`) regardless of which one the caller calls `source`/`target` — the mechanism the
 // wrapper-level invariance above is built on.
+//
+// Fix round 1, Important #2: the checks above cover raw kernel `crossing`/`aborted`/`inconclusive`
+// only INDIRECTLY (`exhaustedBudget`⟺`aborted` mostly, an `inconclusive-crossing` reason mostly
+// covers `inconclusive`) — a crossing-only divergence had no clean, DIRECT check. Closed per-pair via
+// an internal-consistency check (NOT a forward-vs-backward kernel equality — the kernel is
+// directional by design, per this whole plan's layer contract, §3.1 of the design doc; a swap
+// equality on it would be wrong): replay the exact canonical `(first, second)` orientation
+// `forward`'s own internal crossing call used, call the exported `properCrossingQuery` directly, and
+// check the wrapper's fields are consistent with what the kernel itself reports for that call —
+// `via === 'crossing'` is a true biconditional with kernel `crossing` (VolumeOverlapQuery.js's
+// crossing branch returns immediately, unconditionally, whenever `crossing.crossing` is true, and
+// only then), `aborted` is checked against the design doc's own cited Phase C invariant
+// (`aborted === true` iff `exhaustedBudget !== null`), and `inconclusive` is checked against the
+// diagnostic reason multiset ONLY when `forward.overlap === false` (the only state where
+// `inconclusive-crossing` is cleanly observable at all — a positive containment rescue deliberately
+// withholds it, VolumeOverlapQuery.js's own documented "truncation diagnostics must never attach to
+// a positive" rule). This does NOT assert raw witness-point equality anywhere (explicitly rejected
+// per review: `witness.kind`/`witness.point` are "Legitimately directional" per the same predicate
+// table cited above).
 
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
@@ -217,12 +240,57 @@ async function runProductionQueryAndReplay(page) {
       const fwdOrient = orientForCrossing(sourceInstance, targetInstance);
       const bwdOrient = orientForCrossing(targetInstance, sourceInstance);
 
+      // Fix round 1 (Important #2): raw kernel `crossing`/`aborted`/`inconclusive` have no clean
+      // OBSERVABLE proxy on the wrapper return -- `overlapMatch`/`conclusiveMatch`/
+      // `exhaustedBudgetMatch`/`reasonMultisetMatch` cover most of the ground indirectly, but a
+      // crossing-only divergence could theoretically hide inside the containment composition. This
+      // is NOT a forward-vs-backward kernel equality (the kernel is directional by design, per this
+      // whole plan's own layer contract -- see file header) -- it is a per-pair INTERNAL-CONSISTENCY
+      // check: replay the SAME canonical (first, second) orientation `forward`'s own internal
+      // crossing computation used (fwdOrient.first/.second, identical to volumeOverlapQuery's own
+      // canonicalFirst/canonicalSecond -- VolumeOverlapQuery.js:141-145), call the exported
+      // `properCrossingQuery` directly with it, and check the wrapper's ALREADY-asserted fields are
+      // consistent with what the kernel itself reports for that exact call.
+      //
+      // Skipped (not asserted, `applicable: false`) when either operand is aspect-ratio-gated:
+      // VolumeOverlapQuery.js:120-140 substitutes a SYNTHETIC crossing record on that path (never
+      // calls properCrossingQuery at all), so a direct kernel call here would not be reproducing
+      // what `forward` actually did -- none of this fixture's 40 pairs hit that gate, but the guard
+      // is kept for correctness rather than assumed away.
+      let kernelConsistency = { applicable: false };
+      if (!sourceInstance.aspectRatioExceeded && !targetInstance.aspectRatioExceeded) {
+        const first = fwdOrient.first;
+        const second = fwdOrient.second;
+        const matrixBtoA = first.matrix.clone().invert().multiply(second.matrix);
+        const kr = properCrossingQuery(first.bvh, second.bvh, matrixBtoA, first.localDiagonal, second.localDiagonal, {});
+        // `via === 'crossing'` is set if-and-only-if the kernel's own `crossing` was true
+        // (VolumeOverlapQuery.js:181-209 returns immediately, unconditionally, in that branch) --
+        // a true biconditional, so this alone closes the "raw crossing has no proxy" gap directly.
+        const crossingMatchesVia = kr.crossing === (forward.via === 'crossing');
+        // Design doc's own cited Phase C invariant: `aborted === true` iff `exhaustedBudget !== null`
+        // (docs/superpowers/specs/2026-09-11-...-design.md:762). `fc` (forward.stats.crossing) is
+        // literally the same stats object this exact kernel call would have produced.
+        const abortedMatchesExhaustedBudget = kr.aborted === (fc.exhaustedBudget !== null);
+        // `inconclusive-crossing` is merged into `forward.diagnostics` ONLY on the negative overall
+        // path (VolumeOverlapQuery.js:429-431, "crossing.diagnostics ... deliberately NOT merged"
+        // on a positive containment rescue) -- so this specific piece is only cleanly observable
+        // when forward.overlap is false; `null` (not `false`) marks it not-applicable otherwise,
+        // rather than asserting something the design doesn't promise.
+        const inconclusiveConsistent = forward.overlap === false
+          ? kr.inconclusive === forwardReasons.includes('inconclusive-crossing')
+          : null;
+        kernelConsistency = {
+          applicable: true, crossingMatchesVia, abortedMatchesExhaustedBudget, inconclusiveConsistent,
+          kernelCrossing: kr.crossing, kernelAborted: kr.aborted, kernelInconclusive: kr.inconclusive,
+        };
+      }
+
       pairs.push({
         sourceFragId: d.sourceFragment.fragId,
         targetFragId: d.targetFragment.fragId,
         productionReason: d.reason,
-        forward: { overlap: forward.overlap, conclusive: forward.conclusive },
-        backward: { overlap: backward.overlap, conclusive: backward.conclusive },
+        forward: { overlap: forward.overlap, conclusive: forward.conclusive, via: forward.via ?? null },
+        backward: { overlap: backward.overlap, conclusive: backward.conclusive, via: backward.via ?? null },
         checks: {
           overlapMatch: forward.overlap === backward.overlap,
           conclusiveMatch: forward.conclusive === backward.conclusive,
@@ -232,14 +300,26 @@ async function runProductionQueryAndReplay(page) {
           crossingPairsExaminedMatch: fc.crossingPairsExamined === bc.crossingPairsExamined,
           pointClassificationsMatch: fc.pointClassifications === bc.pointClassifications,
           exhaustedBudgetMatch: fc.exhaustedBudget === bc.exhaustedBudget,
-          timeBudgetExceededMatch: fc.timeBudgetExceeded === bc.timeBudgetExceeded,
+          // timeBudgetExceededMatch REMOVED (fix round 1, Important #1): timeBudgetExceeded is
+          // derived from real per-call performance.now() timing (ProperCrossingQuery.js:313), the
+          // same nondeterministic-wall-clock class as elapsedMs (already excluded, see header) --
+          // asserting it equal is an unsound flakiness risk (a pair whose traversal runs close to
+          // timeBudgetMs could genuinely differ forward vs backward by a few ms of GC/scheduling
+          // noise with no semantic divergence at all). Both values are still retained below as
+          // observational data, exactly like elapsedMs already is.
           orientSameFirst: fwdOrient.first === bwdOrient.first,
           orientRankMatch: fwdOrient.rank === bwdOrient.rank,
+          // Only asserted when kernelConsistency.applicable -- see the block above for why.
+          kernelCrossingMatchesVia: kernelConsistency.applicable ? kernelConsistency.crossingMatchesVia : true,
+          kernelAbortedMatchesExhaustedBudget: kernelConsistency.applicable ? kernelConsistency.abortedMatchesExhaustedBudget : true,
         },
         forwardReasons, backwardReasons, forwardCauses, backwardCauses,
         forwardCrossingStats: { candidatePairsExamined: fc.candidatePairsExamined, crossingPairsExamined: fc.crossingPairsExamined, pointClassifications: fc.pointClassifications, exhaustedBudget: fc.exhaustedBudget, timeBudgetExceeded: fc.timeBudgetExceeded },
         backwardCrossingStats: { candidatePairsExamined: bc.candidatePairsExamined, crossingPairsExamined: bc.crossingPairsExamined, pointClassifications: bc.pointClassifications, exhaustedBudget: bc.exhaustedBudget, timeBudgetExceeded: bc.timeBudgetExceeded },
         orientRank: fwdOrient.rank,
+        // Not folded into `checks` (assert.ok loop expects only booleans): `null` means
+        // "not applicable to this pair" (positive containment-rescue path), not "unchecked".
+        kernelConsistency,
       });
     }
 
@@ -320,6 +400,18 @@ async function main() {
     for (const [check, passed] of Object.entries(p.checks)) {
       try {
         assert.ok(passed, `[${label}] ${check} failed`);
+      } catch (err) {
+        failures.push(err.message);
+        console.error(`FAIL ${err.message}`);
+      }
+    }
+    // `inconclusiveConsistent` is `null` (not a boolean) when not applicable to this pair (a
+    // positive containment-rescue path -- see the in-page comment above where it's computed) --
+    // asserted separately from `checks` so a `null` is never mistaken for a `false`/failure.
+    const ic = p.kernelConsistency?.inconclusiveConsistent;
+    if (ic !== null && ic !== undefined) {
+      try {
+        assert.ok(ic, `[${label}] kernelInconclusiveMatchesReasonMultiset failed`);
       } catch (err) {
         failures.push(err.message);
         console.error(`FAIL ${err.message}`);
