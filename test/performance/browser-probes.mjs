@@ -224,6 +224,10 @@
       const identityMatrix = new THREE.Matrix4();
       let crossingMs = null;
       let witnessMs = null;
+      // This is a self-pair (bvh, bvh) smallest-call overhead probe — it deliberately bypasses
+      // volumeOverlapQuery/orientForCrossing because there is no meaningful canonical order for an operand
+      // against itself. Not in scope for Phase B' recalibration (docs/superpowers/specs/
+      // 2026-09-11-canonical-ordering-operand-symmetry-fix-design.md §9.4).
       if (typeof properCrossingQuery === 'function') {
         [crossingMs] = await rec.around('proper-crossing-smallest-call', () =>
           properCrossingQuery(bvh, bvh, identityMatrix, localDiagonal, localDiagonal, {}));
