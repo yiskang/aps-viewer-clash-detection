@@ -45,6 +45,21 @@
 //
 // Output: a raw JSON record set under test/performance/results/, which
 // docs/research/proper-crossing-query-deterministic-budget-calibration.md is written from.
+//
+// PHASE B' UPDATE (design doc §9.4 "Call seam -- CORRECTED", §14 finding #7): the I1/I3 synthetic
+// measurement loop now routes through `orientForCrossing` before `properCrossingQuery`, exactly as
+// the production seam (VolumeOverlapQuery.js) does post-Phase-A, instead of calling the kernel
+// directly with a hardcoded operand order. Records from THIS harness are NOT byte-comparable with
+// the pre-existing Phase B results documented in
+// docs/research/proper-crossing-query-deterministic-budget-calibration.md -- the operand fed to the
+// kernel as `first`/`second` (and therefore the relative matrix) can now differ from the old
+// hardcoded a/b order, so a spanMs recorded here is not measuring the same call shape a pre-Phase-B'
+// spanMs measured. Old-shaped fields (spanMs, etc.) are kept for continuity of the existing
+// consumers/console output; new fields (kernelSpanMs, wrapperSpanMs, orientationRank,
+// canonicalFirstIsA) are additive, for Task B'.3's cross-comparison. NOTE: this measures the KERNEL
+// call path only (orientForCrossing + properCrossingQuery) -- it does not replicate the full
+// volumeOverlapQuery wrapper lifecycle (e.g. the aspectRatioExceeded skip-gate, or production's own
+// options.crossing), by design, since this is a direct kernel-timing calibration.
 
 import { chromium } from 'playwright';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -97,6 +112,7 @@ async function installFixtureModule(page) {
     const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
     window.__fx = await import(url);
     window.__pcq = await import('/collision/query/ProperCrossingQuery.js');
+    window.__orient = await import('/collision/query/orientForCrossing.js');
     window.__consts = await import('/collision/constants.js');
   }, rewritten);
 }
@@ -108,6 +124,7 @@ const MEASURE_SYNTHETIC = /* js */ `
 async ({ repetition, state, classes }) => {
   const { box, at, comb, mergeGeometries, openBottomedBox, testInstance, THREE } = window.__fx;
   const { properCrossingQuery } = window.__pcq;
+  const { orientForCrossing } = window.__orient;
 
   const rot = (r) => new THREE.Matrix4().makeRotationY(r);
   const scale = (x, y, z) => new THREE.Matrix4().makeScale(x, y, z);
@@ -220,15 +237,37 @@ async ({ repetition, state, classes }) => {
       records.push({ inputClass, fixtureId, provenance, repetition, state, error: String(err && err.message || err) });
       continue;
     }
-    const matrixBtoA = a.matrix.clone().invert().multiply(b.matrix);
     // §14.1: the wall clock is neutralized for the measurement only, via the EXISTING
     // options.frameBudgetMs seam. No code change, and no semantics observed here that Phase C
     // would not also produce.
-    const t0 = performance.now();
-    const r = properCrossingQuery(a.bvh, b.bvh, matrixBtoA, a.localDiagonal, b.localDiagonal, { frameBudgetMs: Infinity });
-    const spanMs = performance.now() - t0;
+    //
+    // Phase B' (design §9.4 "Call seam -- CORRECTED"): route through orientForCrossing first,
+    // exactly as the production seam (VolumeOverlapQuery.js) does post-Phase-A, instead of calling
+    // the kernel directly with a hardcoded a/b order. The relative-matrix computation below --
+    // canonicalFirst.matrix.clone().invert().multiply(canonicalSecond.matrix) -- is copied
+    // VERBATIM from VolumeOverlapQuery.js's own canonicalSecondToFirst (its production call,
+    // Task A2.1), not re-derived, so this harness genuinely exercises the production orientation
+    // policy rather than a parallel reimplementation of it.
+    const wrapperT0 = performance.now();
+    const { first: canonicalFirst, second: canonicalSecond, rank: orientationRank } = orientForCrossing(a, b);
+    const canonicalFirstIsA = canonicalFirst === a;
+    const canonicalSecondToFirst = canonicalFirst.matrix.clone().invert().multiply(canonicalSecond.matrix);
+    const kernelT0 = performance.now();
+    const r = properCrossingQuery(
+      canonicalFirst.bvh, canonicalSecond.bvh, canonicalSecondToFirst,
+      canonicalFirst.localDiagonal, canonicalSecond.localDiagonal,
+      { frameBudgetMs: Infinity }
+    );
+    const kernelSpanMs = performance.now() - kernelT0;
+    const wrapperSpanMs = performance.now() - wrapperT0;
+    // spanMs is kept, old-shaped, as the direct analog of the pre-Phase-B' measurement (which timed
+    // only the kernel call) -- it is now an alias for kernelSpanMs, NOT byte-comparable with old
+    // spanMs values since the operand order/relative matrix fed to the kernel can now differ (see
+    // this file's header note).
+    const spanMs = kernelSpanMs;
     records.push({
       inputClass, fixtureId, provenance, repetition, state, buildMs, spanMs,
+      kernelSpanMs, wrapperSpanMs, orientationRank, canonicalFirstIsA,
       crossing: r.crossing, aborted: r.aborted, inconclusive: r.inconclusive,
       candidatePairsExamined: r.stats.candidatePairsExamined,
       crossingPairsExamined: r.stats.crossingPairsExamined,
