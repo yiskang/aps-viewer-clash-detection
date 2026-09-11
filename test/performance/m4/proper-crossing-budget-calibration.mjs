@@ -689,6 +689,17 @@ async function main() {
         const i2Variants = [
           { key: 'failing-pair-source', dbIds: [FAILING_SOURCE_DB_ID] },
           ...(typical.status === 'OK' ? [{ key: `S2[k=${S2_K}:typical:clearance]`, dbIds: typical.requestedDbIds }] : []),
+          // Task B'.3 fix (codex-advisor review caught this: the harness computed a HIGH cohort
+          // forcing dbId COHORT_SOURCE_DB_ID (3076, the Effect-B-investigated class-B pair's
+          // source, structure frag 537 -> frag 427) into it, but never actually QUERIED that
+          // dbId -- only `typical` was ever measured. A forced-into-a-cohort dbId is not the same
+          // as a measured one. This variant queries it directly, alone, exactly mirroring
+          // `failing-pair-source`'s own pattern and the Effect-B investigation's own query shape
+          // (docs/research/m4-effect-b-precheck-diagnostic-nondeterminism-investigation.md:164,
+          // "source: Structure dbId 3076") -- so family (b)'s "pinned Effect B pairs" claim is
+          // backed by an actual measured traversal, not merely a "reachable via the same cohort
+          // machinery" claim.
+          { key: 'effect-b-pinned-source', dbIds: [COHORT_SOURCE_DB_ID] },
         ];
         for (let rep = 0; rep < args.i2Repetitions; rep++) {
           const state = rep === 0 ? 'cold' : 'warm';
