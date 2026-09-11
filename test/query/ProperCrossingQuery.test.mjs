@@ -124,43 +124,76 @@ test('candidate-count budget exhaustion (round 5 regression)', () => {
   assert.ok(elapsed < 500, `completes within a wall-clock bound (${elapsed.toFixed(1)}ms)`);
 });
 
-test('time budget trips before count budgets (round 10 regression)', () => {
-  // Many confirmed non-coplanar pairs, each requiring the full 12-probe classification,
-  // sized so the TIME budget trips before either count budget would. A mocked clock
-  // makes this deterministic: it advances by more than frameBudgetMs on the very
-  // first callback-entry check, so the traversal aborts immediately regardless of how
-  // many genuinely-crossing pairs exist in the geometry.
+test('a wall-clock overrun is TELEMETRY ONLY and never suppresses a proven crossing (round 10 regression, re-expressed by Phase C)', () => {
+  // RE-EXPRESSED. Until Phase C this test was the defect written down as a contract:
+  // the identical fixture and the identical mocked clock, asserting `aborted === true`
+  // and `crossing === false`. Two box(3,3,3)s at a (0.1,0.1,0.1) offset are an
+  // UNAMBIGUOUS deep overlap -- a proper crossing genuinely exists and the traversal
+  // proves it in 26 point classifications and 2 confirmed pairs -- so the old
+  // assertions encoded "a slow machine turns a real overlap into a clean negative",
+  // which is exactly the correctness defect
+  // docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md
+  // exists to remove (its §2.2 row 6: "wall clock crossed AND crossing later proven"
+  // is the real failing pair, and its only permitted effect is on the two telemetry
+  // fields).
+  //
+  // The clock is left deliberately hostile -- it reports a 100 ms span against the 8 ms
+  // default from its second read onward -- so this test FAILS against the pre-Phase-C
+  // implementation (which aborts at the first callback-entry check) and passes only once
+  // the wall clock can no longer reach a semantic field.
   const a = testInstance(box(3, 3, 3));
   const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1)); // deep overlap, many confirmed pairs
   let calls = 0;
-  const mockNow = () => { calls++; return calls === 1 ? 0 : 100; }; // second read already past frameBudgetMs=8
+  const mockNow = () => { calls++; return calls === 1 ? 0 : 100; }; // 100 > frameBudgetMs = 8
   const r = crossOf(a, b, { now: mockNow });
-  assert.equal(r.aborted, true, 'time budget trips: aborted');
-  assert.equal(r.crossing, false, 'time budget trips: not a crossing');
-  assert.equal(r.diagnostics.some((d) => d.reason === 'crossing-budget-exhausted'), true,
-    'carries crossing-budget-exhausted');
+  assert.equal(r.crossing, true, 'the geometry crosses, so the query must say so no matter what the clock says');
+  assert.equal(r.aborted, false, 'a wall-clock breach must never set aborted (§2.1)');
+  assert.equal(r.inconclusive, false);
+  assert.deepEqual(r.diagnostics, [], 'no crossing-budget-exhausted: no deterministic budget was exhausted');
+  assert.equal(r.stats.exhaustedBudget, null, 'post-fix invariant: aborted <=> exhaustedBudget !== null');
+  assert.ok(r.witnessPoint, 'a proven crossing still carries its owned witness clone');
+  // ...and the breach is still OBSERVABLE, just only as telemetry.
+  assert.equal(r.stats.timeBudgetExceeded, true, 'the 8 ms concept survives exactly here and nowhere else');
+  assert.equal(r.stats.elapsedMs, 100, 'measured end-to-end from the entry read to the exit read (§9.1)');
+  assert.equal(calls, 2, 'exactly two clock reads remain, both outside intersectsTriangles (§9.2)');
 });
 
-test('callback exception does not poison subsequent bvhcast traversals (defect fix)', () => {
+test('callback exception does not poison subsequent bvhcast traversals (defect fix, re-anchored by Phase C)', () => {
   // three-mesh-bvh's bvhcast sets a module-global `_active` flag true at entry and
   // clears it only on its normal-completion path (no try/finally). If
   // intersectsTriangles were allowed to let an exception escape straight out of
   // bvhcast, `_active` would stay stuck true and permanently break every LATER
   // bvhcast-based query in the process ("Recursive calls to bvhcast not supported")
-  // until reload -- including SurfaceIntersectionQuery and, once built,
-  // SurfaceCrossingWitness. Verified directly against the installed
-  // three-mesh-bvh's bvhcast.js: `_active` is set true at entry and cleared only on
-  // the normal-completion path.
+  // until reload -- including SurfaceIntersectionQuery and SurfaceCrossingWitness.
+  // Verified directly against the installed three-mesh-bvh's bvhcast.js: `_active` is
+  // set true at entry and cleared only on the normal-completion path.
+  //
+  // RE-ANCHORED, not merely adjusted (design §13 G, itself the review's §16 High
+  // finding 4). Until Phase C this test injected a clock that threw on its SECOND read,
+  // which worked only because the clock was read INSIDE intersectsTriangles. After
+  // Phase C there are exactly two clock reads, both outside the callback, and §9.1a
+  // additionally requires a throwing clock to be swallowed rather than propagated. A
+  // naively-updated version of this test would have kept passing while exercising
+  // nothing: the exception would originate after bvhcast had already completed
+  // normally, and the `_active`-poisoning protocol this test exists to defend would be
+  // free to regress unseen. The throw is injected instead through the internal
+  // `options.__classifyPoint` seam, called from the probe ladder -- squarely inside
+  // intersectsTriangles.
   const a = testInstance(box(3, 3, 3));
-  const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1)); // deep overlap: callback invoked
-  let calls = 0;
-  const throwingNow = () => {
-    calls++;
-    if (calls === 2) throw new Error('injected clock failure');
-    return 0;
+  const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1)); // deep overlap: the probe ladder is entered
+  let invocations = 0;
+  const throwingClassifier = (...args) => {
+    invocations++;
+    // Throw on the SECOND invocation, delegating the first to the real classifier --
+    // the same shape as the clock-based original, and proof that the traversal was
+    // genuinely mid-flight (real candidate and probe work already done) when it threw.
+    if (invocations === 2) throw new Error('injected classifier failure');
+    return classifyPoint(...args);
   };
-  assert.throws(() => crossOf(a, b, { now: throwingNow }), /injected clock failure/,
+  assert.throws(() => crossOf(a, b, { __classifyPoint: throwingClassifier }), /injected classifier failure/,
     'the injected exception propagates out of properCrossingQuery, not swallowed');
+  assert.equal(invocations, 2,
+    'the throw originated INSIDE intersectsTriangles -- the classifier is reachable only from the probe ladder, so a post-bvhcast throw could never satisfy this assertion');
 
   // A completely normal, immediately-following call must still succeed -- proves the
   // callback's catch/return-true/rethrow protocol let bvhcast reach its
@@ -170,52 +203,84 @@ test('callback exception does not poison subsequent bvhcast traversals (defect f
     'subsequent traversal is not poisoned by the prior callback exception');
 });
 
-test('callback exception with a FALSY thrown value still propagates (final whole-branch review Finding 2)', () => {
+test('callback exception with a FALSY thrown value still propagates (final whole-branch review Finding 2, re-anchored by Phase C)', () => {
   // A plain `if (caughtError) throw caughtError;` rethrow guard is broken for falsy
   // thrown values -- JS permits `throw null`/`throw 0`/`throw undefined`/`throw ''`/
   // `throw false`. If the callback ever catches one of those, that guard would
   // silently fail to rethrow, and this function would return a FABRICATED,
   // misleadingly-clean result (e.g. crossing:false, aborted:false) as if the traversal
-  // completed normally, when it actually crashed on its first candidate. This test
-  // must fail against the old `if (caughtError)` guard and pass against the fixed
+  // completed normally, when it actually crashed mid-traversal. This test must fail
+  // against the old `if (caughtError)` guard and pass against the fixed
   // `hasCaughtError` boolean flag.
+  //
+  // RE-ANCHORED to `options.__classifyPoint` for exactly the reason spelled out on the
+  // truthy case above: post-Phase-C, a throwing clock no longer throws from inside the
+  // callback at all (and is swallowed besides), so the clock-based form would have
+  // become a test of nothing while still appearing to pass.
   const a = testInstance(box(3, 3, 3));
-  const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1)); // deep overlap: callback invoked
-  let calls = 0;
-  const throwingNow = () => {
-    calls++;
-    if (calls === 2) throw null; // eslint-disable-line no-throw-literal -- deliberately falsy
-    return 0;
+  const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1)); // deep overlap: the probe ladder is entered
+  let invocations = 0;
+  const throwingClassifier = (...args) => {
+    invocations++;
+    if (invocations === 2) throw null; // eslint-disable-line no-throw-literal -- deliberately falsy
+    return classifyPoint(...args);
   };
-  assert.throws(() => crossOf(a, b, { now: throwingNow }), (err) => err === null,
+  assert.throws(() => crossOf(a, b, { __classifyPoint: throwingClassifier }), (err) => err === null,
     'a falsy thrown value (null) still propagates out of properCrossingQuery, not silently swallowed into a clean-looking result');
+  assert.equal(invocations, 2,
+    'the falsy throw also originated inside intersectsTriangles, not after bvhcast had already returned');
+
+  // `_active` must have been cleared despite the falsy throw, or every later
+  // bvhcast-based query in this process is broken.
+  const r = crossOf(a, b);
+  assert.equal(typeof r.crossing, 'boolean',
+    'subsequent traversal is not poisoned by the prior falsy callback exception');
 });
 
-test('time budget aborts strictly mid-probe-loop (round 11 regression)', () => {
-  // Round 10's fix checked only at callback entry, letting up to 24 classifyPoint
-  // calls (a full 12-probe loop for a confirmed pair) run unchecked. This fixture
-  // proves the check now fires INSIDE the probe loop: the mocked clock returns a
-  // just-under-budget value for the first several reads, then crosses the deadline
-  // partway through one pair's probe classification, and we assert fewer than 12
-  // probes were evaluated for that pair by counting classifyPoint-shaped calls via
-  // the mock clock's own call count (each probe reads the clock exactly once before
-  // classification, per the round-11 checkpoint-granularity fix).
+test('the probe budget aborts at exactly its pointClassifications granularity, clock or no clock (round 11 regression, re-expressed by Phase C)', () => {
+  // RE-EXPRESSED. Round 10's fix checked the clock only at callback entry, letting up
+  // to 24 classifyPoint calls (a full probe ladder for one confirmed pair) run
+  // unchecked; round 11 moved the check INSIDE the probe loop, and this test pinned
+  // that finer granularity by counting the mock clock's own reads. Phase C deletes that
+  // check outright: bounding the OVERSHOOT of a timing-driven abort never made the
+  // abort any less timing-driven, and an abort suppresses a crossing that a
+  // not-yet-executed probe would have proven. The granularity round 11 bought is
+  // preserved exactly -- one probe classification -- by the deterministic
+  // `maxCrossingPointClassifications` terminator, so the contract is re-expressed in
+  // that unit and needs no clock at all (design §13 G).
+  //
+  // The hostile clock is nonetheless left injected, tripping partway through the first
+  // confirmed pair's ladder exactly as the original's did. That is what makes this test
+  // FAIL against the pre-Phase-C implementation -- which aborts on that trip, with
+  // fewer than CAP classifications and a null `exhaustedBudget` -- and pass only once
+  // the clock is genuinely inert.
   const a = testInstance(box(3, 3, 3));
   const b = testInstance(box(3, 3, 3), at(0.1, 0.1, 0.1));
+  const CAP = 7;
   let probeClockReads = 0;
-  const TRIP_AFTER_READS = 5; // trips partway through the first confirmed pair's ladder
-  const mockNow = () => {
+  const TRIP_AFTER_READS = 5;
+  const hostileNow = () => {
     probeClockReads++;
     return probeClockReads > TRIP_AFTER_READS ? 100 : 0; // 100 > frameBudgetMs(8)
   };
-  const r = crossOf(a, b, { now: mockNow });
-  assert.equal(r.aborted, true, 'mid-probe-loop time trip: aborted');
-  assert.equal(r.crossing, false, 'mid-probe-loop time trip: not a crossing');
-  // The very first callback-entry read (probeClockReads === 1) does not trip; the
-  // trip must happen on a LATER read while still inside the probe loop for the same
-  // confirmed pair, i.e. strictly fewer than 12 probes were evaluated for it.
-  assert.ok(probeClockReads <= 12,
-    `aborted having evaluated strictly fewer than 12 probes for that pair (clock read ${probeClockReads} times before abort)`);
+  let invocations = 0;
+  const countingClassifier = (...args) => { invocations++; return classifyPoint(...args); };
+  const r = crossOf(a, b, {
+    maxCrossingPointClassifications: CAP,
+    now: hostileNow,
+    __classifyPoint: countingClassifier,
+  });
+  assert.equal(r.aborted, true, 'the deterministic probe budget is exhausted, so the traversal aborts');
+  assert.equal(r.crossing, false, 'an aborted traversal never reports a crossing');
+  assert.equal(r.inconclusive, false, 'aborted masks inconclusive, unchanged');
+  assert.equal(r.stats.exhaustedBudget, 'point-classifications',
+    'attributed to the budget that actually fired -- never to the clock, which can no longer abort anything');
+  assert.equal(r.stats.pointClassifications, CAP,
+    'checked BEFORE each call, so the cap is reached exactly and never exceeded');
+  assert.equal(invocations, CAP,
+    'and the classifier really was invoked exactly that many times -- never one more');
+  assert.equal(r.diagnostics.some((d) => d.reason === 'crossing-budget-exhausted'), true,
+    'carries crossing-budget-exhausted, a string whose meaning is now always an actual exhausted budget');
 });
 
 test('positive crossing returns an owned witnessPoint classifying inside both operands', () => {

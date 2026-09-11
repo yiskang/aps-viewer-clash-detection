@@ -11,7 +11,7 @@
 // symmetry; the containment terms are "any component," not "the whole of A."
 
 import * as THREE from 'three';
-import { properCrossingQuery } from './ProperCrossingQuery.js';
+import { properCrossingQuery, createCrossingStats } from './ProperCrossingQuery.js';
 import { anyComponentInside } from './ContainmentQuery.js';
 import { reportDiagnosticEvent } from '../scheduler.js';
 
@@ -113,7 +113,14 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       inconclusive: true,
       skipped: true,
       diagnostics: skippedDiagnostics,
-      stats: { candidatePairsExamined: 0, crossingPairsExamined: 0 },
+      // ONE normalized stats shape on every path, including this one (design Sec 5.2a). Built by
+      // the SAME factory the real traversal uses, so the two can never drift and an instrumented
+      // aspect-ratio-gated pair can never emit undefined fields that downstream aggregation reads
+      // as a missing record, NaN, or schema corruption. The defaults are exactly this path's
+      // specified row -- notably elapsedMs: null, NOT 0: the traversal did not take zero time, it
+      // did not happen. Reads no clock, so the gate still short-circuits BEFORE properCrossingQuery
+      // (which this file's own tests prove by injecting a throwing options.crossing.now).
+      stats: createCrossingStats(),
     };
   } else {
     const canonicalSecondToFirst = canonicalFirst.matrix.clone().invert().multiply(canonicalSecond.matrix);
@@ -125,6 +132,28 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   if (diagnosticPairContext) {
     reportDiagnosticEvent('hard-clash-precheck', {
       ...diagnosticPairContext, ...triangleCovariates, stage: 'crossing', ms: performance.now() - crossingStartedAt,
+      // Crossing-term telemetry rides THIS already-emitted, already-bounded, opt-in event and
+      // nowhere else (design Sec 5.4). It must NEVER enter crossing.diagnostics / result.diagnostics:
+      // that array is attached verbatim to statistics.diagnostics on the volume-overlap path and is
+      // a Sec 6.4-compared field, so a timing-derived reason there would manufacture a brand-new
+      // nondeterministic PUBLIC diagnostic. Exactly one event per pair, never inside a hot loop,
+      // gated on diagnosticPairContext (itself gated on an installed recorder), so production emits
+      // and costs nothing. `crossingElapsedMs` is null whenever the span was not measurable --
+      // an unmeasured traversal, or one whose clock threw/went backward/returned non-finite.
+      //
+      // candidatePairsExamined/crossingPairsExamined ride here too (Phase C; Phase B's declared
+      // schema deviation #2). Without them this event reported only ONE of the three
+      // deterministic counters, so an `exhaustedBudget: 'candidate-pairs'` or `'crossing-pairs'`
+      // attribution could be SEEN but never sized -- cap usage and cap exhaustion were
+      // indistinguishable from the outside. All three now travel together on the one event, which
+      // is the whole deterministic work-budget state, and travel ONLY here: no new field on the
+      // public result shape (Sec 5.2/5.3) and no new export from collision/index.js.
+      timeBudgetExceeded: crossing.stats.timeBudgetExceeded,
+      crossingElapsedMs: crossing.stats.elapsedMs,
+      candidatePairsExamined: crossing.stats.candidatePairsExamined,
+      crossingPairsExamined: crossing.stats.crossingPairsExamined,
+      pointClassifications: crossing.stats.pointClassifications,
+      exhaustedBudget: crossing.stats.exhaustedBudget,
     });
   }
 

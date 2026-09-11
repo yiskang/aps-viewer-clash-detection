@@ -15,10 +15,13 @@ test('crossing-budget-exhausted is surfaced as its own named cause', async () =>
 });
 
 test('crossing-tolerance-ambiguous (boundary-probe grazed, NOT budget-aborted) is a DISTINCT cause from crossing-budget-exhausted', async () => {
-  // Reused verbatim from VolumeOverlapQuery.conclusive.test.mjs's own flush-touching fixture.
+  // Reused verbatim from VolumeOverlapQuery.conclusive.test.mjs's own flush-touching fixture,
+  // including the removal of that fixture's obsolete `crossing: { frameBudgetMs: 5000 }` cold-start
+  // workaround -- after Phase C the wall clock cannot set `aborted`, so nothing can divert this
+  // fixture from the inconclusive branch it exists to cover.
   const a = testInstance(box(2, 2, 2));
   const b = testInstance(box(2, 2, 2), at(0, 2, 0));
-  const result = await volumeOverlapQuery(a, b, { crossing: { frameBudgetMs: 5000 } });
+  const result = await volumeOverlapQuery(a, b);
   assert.equal(result.overlap, false);
   assert.equal(result.conclusive, false);
   assert.deepEqual(result.inconclusiveCauses, ['crossing-tolerance-ambiguous']);

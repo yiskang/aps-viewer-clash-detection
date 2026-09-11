@@ -97,6 +97,32 @@ In practice you never need to pass `options` at all in M1.
 scheduler injection for this library's own unit tests) — not part of the supported developer API,
 even though nothing in JavaScript prevents passing them.
 
+`properCrossingQuery`'s `options.__classifyPoint` is an internal test seam of the same kind, under
+the same declaration: it substitutes the point classifier the probe ladder calls, and exists solely
+so this library's own tests can inject work that runs *inside* the `intersectsTriangles` callback —
+the only way to keep exercising the callback-exception containment protocol that stops a throw from
+poisoning the vendored `bvhcast`'s module-global `_active` flag. The double underscore marks it as
+never-supplied-by-production; no code under `collision/` passes it. See
+`docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md` §13 G.
+
+### Deterministic crossing budgets
+
+`properCrossingQuery` — the crossing term of `mode: 'volume-overlap'` and of the `mode: 'clearance'`
+Hard-Clash exclusion precheck — terminates on **deterministic operation counts only**:
+`maxCandidatePairsExamined` (50,000), `maxCrossingPairsExamined` (64) and
+`maxCrossingPointClassifications` (1,536 = 64 × 24, the structural maximum its probe ladder can
+already reach). Elapsed wall-clock time is **not** one of them: it cannot set `aborted`, cannot
+produce a `crossing-budget-exhausted` diagnostic, and cannot change an overlap verdict or a
+Hard-Clash exclusion. Identical geometry therefore always produces the identical answer, on any
+machine, under any load. The 8 ms `frameBudgetMs` concept survives for this query only as
+opt-in telemetry on the internal `hard-clash-precheck` diagnostic event, never in a result.
+
+Two other queries are **not** yet covered by that guarantee and are known exceptions:
+`mode: 'surface-intersection'` (`SurfaceIntersectionQuery`) and `mode: 'containment'`'s witness term
+(`SurfaceCrossingWitness`) still let elapsed time set `aborted`, so their results can still depend
+on machine speed. That is a knowingly deferred, tracked follow-up (design §7.3), recorded here
+rather than left to be rediscovered.
+
 `viewer` may be `null` for lifecycle-only use (no narrow-phase query is reachable without one) —
 the only thing ever called on it is `viewer.impl.getRenderProxy(model, fragId)`.
 
@@ -305,7 +331,7 @@ partitioned.
 |---|---|---|
 | `clearance-invalid-transform` | **fragment**, deduped per `(epoch, fragmentId)` | Clearance's own admission validation found a non-finite/singular `worldMatrix`, or non-finite/mis-ordered `worldBounds`, for an extracted instance. Fires **before any pair exists** — it is an admission-time filter, not a pair evaluation. |
 | `clearance-anisotropic-scale-unsupported` | **fragment**, deduped per `(epoch, fragmentId)`, one per offending side — with one rare exception, see the note below the table | An operand's `worldMatrix` failed `validateUniformScale` — anisotropic, sheared, reflected/negative, or otherwise unsupported scale. Diagnosed, never approximated. |
-| `clearance-hard-clash-precheck-inconclusive` | **pair** (`sourceFragment` + `targetFragment`) | The tri-state Hard-Clash exclusion precheck could neither prove nor disprove volume overlap for this fragment pair (e.g. its crossing term hit `frameBudgetMs`), so the pair was dropped rather than assumed non-overlapping. |
+| `clearance-hard-clash-precheck-inconclusive` | **pair** (`sourceFragment` + `targetFragment`) | The tri-state Hard-Clash exclusion precheck could neither prove nor disprove volume overlap for this fragment pair (e.g. its crossing term exhausted one of its deterministic work budgets, or a containment term could not resolve every component), so the pair was dropped rather than assumed non-overlapping. **This is a deterministic property of the geometry, never of machine speed** — see the "Deterministic crossing budgets" note below. |
 | `clearance-distance-unavailable` | **pair** (`sourceFragment` + `targetFragment`) | `clearanceQuery` reached `closestPointToGeometry` but could not produce a trustworthy answer: a non-finite local distance, a failed world-space conversion of a closest point, or the two independently-derived world distances disagreeing beyond the documented cross-check tolerance. |
 
 **Scope caveat on `clearance-anisotropic-scale-unsupported`.** It is fragment-scoped on the ordinary
@@ -902,6 +928,14 @@ to Float32 quantization) — a cross-check that uses no part of the collision pi
   "proven no overlap" — and it is correctly surfaced through the incompleteness caveat rather than
   hidden. It is nonetheless a real volume, and the first thing any future clearance-performance or
   clearance-recall work should look at.
+  **Re-measured after the deterministic-budget correctness fix** (see the CHANGELOG entry and
+  "Deterministic crossing budgets" above), since that fix removes *false* inconclusives caused by a
+  wall-clock abort rather than by geometry: on this gate's fixture the figure is **unchanged** —
+  464 of 1,913, all `clearance-hard-clash-precheck-inconclusive`, with `clearanceHardClashExclusions`
+  also unchanged at 1,197 and the same 30 reported pairs on both broad-phase arms. So on *this*
+  fixture the inconclusive volume was already genuine, and the fix moved only timing (worst single
+  `clearanceQuery` span 6.40 ms → 10.80 ms). On the denser M4 `S2[k=100:typical:clearance]` query the
+  fix *does* change the numbers, which is where the nondeterminism was actually observable.
 - **Live acceptance found a real near-miss — and the threshold it was measured with is not an
   independent oracle.** The bounded discovery spike genuinely discovered a near-miss on its second
   call (Structure dbId 3965 → 3976/4135 at ~0.0417 world units), so M3's positive acceptance case ran

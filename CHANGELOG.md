@@ -1,5 +1,53 @@
 # Changelog
 
+## Correctness fix — volume-overlap and clearance results no longer depend on machine speed (not yet tagged)
+
+**What was wrong.** `properCrossingQuery`, the crossing term shared by `mode: 'volume-overlap'` and
+by `mode: 'clearance'`'s Hard-Clash exclusion precheck, let an 8 ms wall-clock deadline set its
+`aborted` flag, and `aborted` forces the geometric verdict to "not a crossing". A genuinely-proven
+overlap was therefore suppressed whenever the machine happened to be slow at that instant, making a
+correctness-bearing verdict a function of machine speed rather than of geometry. The same inputs
+could produce different results on two runs of the same query on the same machine.
+
+**What changed.** Both wall-clock branches are deleted from the semantic path. The traversal now
+terminates only on deterministic operation counts — `maxCandidatePairsExamined` (50,000, unchanged),
+`maxCrossingPairsExamined` (64, unchanged) and the new `maxCrossingPointClassifications` (1,536,
+which is exactly `64 × 24`, the structural maximum the probe ladder can already reach, so it cannot
+censor any traversal the previous code would have completed). **No budget was tightened and no
+geometry the library previously searched is searched less**; the fix is purely the removal of a
+timing dependency. The 8 ms concept survives only as opt-in internal telemetry
+(`elapsedMs` / `timeBudgetExceeded` on the `hard-clash-precheck` diagnostic event), which is never
+emitted in production and can never change a result. `frameBudgetMs` itself is unchanged at 8.
+
+**What consumers will see.** No public schema change: no field is added, removed, renamed or
+retyped, and neither query is on the exported surface. Behavior does change, always in the direction
+of completeness, and a consumer relying on any of the following **will see different output**:
+
+- `mode: 'volume-overlap'` reports overlaps that were previously suppressed by timing — pairs that
+  used to vanish now appear, with a real `surface-crossing` witness.
+- False `crossing-budget-exhausted` entries disappear from `statistics.diagnostics`.
+- On `mode: 'clearance'`, false `clearance-hard-clash-precheck-inconclusive` entries disappear and
+  `statistics.clearanceHardClashExclusions` rises to its true deterministic value; correspondingly,
+  a dbId pair that previously survived into `pairs` by timing luck can now be correctly excluded.
+- Every one of those values was previously nondeterministic run-to-run, which is why the change is
+  sound — but "previously nondeterministic" is not a reason it is invisible. Any baseline pinned to
+  the old numbers must be refreshed.
+
+**Cost, measured not estimated.** Removing the deadline makes the traversal a larger atomic unit.
+Phase B of the fix measured complete end-to-end traversal spans over 21,300 traversals across two
+pre-registered runtime tiers: the **worst single observed synchronous span is 15.5 ms** (on
+pathological synthetic geometry built to saturate the 50,000-candidate scan) and the **worst on real
+model geometry is 10.8 ms**. Both sit inside the 24.8 ms reference-hardware ceiling — the CAUTION
+band — and **zero** traversals exceeded it. Full distributions, per tier and per input class:
+`docs/research/proper-crossing-query-deterministic-budget-calibration.md`. Deleting the in-loop
+clock reads (up to ~51,500 per traversal) is itself a small speedup that partly offsets the growth.
+
+**Known remaining exceptions.** `mode: 'surface-intersection'` and `mode: 'containment'`'s witness
+term carry the same defect class and are **not** fixed here — a knowingly deferred, tracked
+follow-up. Their results can still depend on machine speed. Design, evidence and the deferral's
+reasoning:
+`docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md`.
+
 ## Dependency correctness fix — `three-mesh-bvh@0.9.14` local patch (not yet tagged)
 
 The pinned `three-mesh-bvh@0.9.14` dependency had two confirmed correctness defects that could

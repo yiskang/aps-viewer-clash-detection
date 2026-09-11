@@ -42,6 +42,36 @@ export const maxLocalAspectRatio = 10_000;              // max/min local AABB ex
 export const frameBudgetMs = 8;
 export const maxCandidatePairsExamined = 50_000;
 export const maxCrossingPairsExamined = 64;
+// Bounds ProperCrossingQuery's DOMINANT cost tier -- classifyPoint invocations made by its probe
+// ladder (docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md,
+// Decision 3 / Sec 4.2-4.3 / Sec 14.4 item 5). The value is ARITHMETIC, not measured and not judged:
+// maxCrossingPairsExamined x (2 signs x 2 signs x 3 offsetLadderFactors rungs x 2 operands) = 64 x 24
+// = 1536 is EXACTLY the structural maximum that file's fixed nested probe loop can already reach
+// today. It is therefore NON-BINDING BY CONSTRUCTION -- it can never censor a traversal the shipped
+// algorithm would have completed -- which is what makes the design's Phase A (behavior-neutral
+// instrumentation) possible at all.
+//
+// Why it exists despite being non-binding (design Sec 4.3): the 1536 bound is an EMERGENT property of
+// a nested loop, invisible at any single site and silently broken by anyone adding an
+// offsetLadderFactors rung or a quadrant sign -- as an explicit cap it becomes a checked contract;
+// it is the deterministic test seam for probe-budget exhaustion that needs no injected clock; and it
+// is the unit any future span-motivated retune would have to be argued in.
+//
+// Any value BELOW 1536 is explicitly OUT OF SCOPE for that design: it would be a reduction in
+// geometric search completeness and needs its own acceptance criteria and compatibility
+// classification, never a quiet retune (design Sec 4.3). Derived rather than written as a literal so
+// the two can never drift.
+//
+// The per-pair factor is exported separately because ProperCrossingQuery must be able to re-derive
+// the cap from the EFFECTIVE crossing-pair budget, not only from the shipped one. An earlier draft
+// defaulted to this fixed 1536 unconditionally, which silently broke the non-binding guarantee for
+// any caller that raised options.maxCrossingPairsExamined above 64: such a traversal would newly
+// abort on 'point-classifications' having searched LESS geometry than the same override bought
+// before the cap existed (found by an independent codex-review of the Phase C diff, reproduced at
+// maxCrossingPairsExamined: 200 -- 105 admitted pairs instead of 201). Deriving from the effective
+// budget makes "non-binding by construction" true unconditionally, which is what the design claims.
+export const maxProbeClassificationsPerCrossingPair = 2 * 2 * offsetLadderFactors.length * 2; // 24
+export const maxCrossingPointClassifications = maxCrossingPairsExamined * maxProbeClassificationsPerCrossingPair; // 1536
 export const maxContainmentSamples = 512;
 export const samplesPerComponent = 8;
 export const maxWitnessTriangles = 8;
