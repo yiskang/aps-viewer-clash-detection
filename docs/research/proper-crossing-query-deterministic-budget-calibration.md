@@ -932,3 +932,29 @@ comparable figure existed before this task.
   different in effect than Phase B measured. The measurements are not on byte-comparable terms
   (§B′.0, §B′.10), and this document reports the numbers without characterizing what, if anything,
   their differences mean.
+
+### B′.12 Disposition (Task B′.4)
+
+Applying calibration doc §14.4's rule (reused verbatim per design doc §9.4) to §B′.10's `S_worst`
+figures:
+
+| Tier | `S_worst` (wrapper = kernel, §B′.0) | Bracket |
+|---|---|---|
+| multi-process (authoritative) | 14.500 ms | `8 ms < S_worst ≤ 24.8 ms` |
+| historical | 14.600 ms | `8 ms < S_worst ≤ 24.8 ms` |
+
+Both tiers' `S_worst` fall strictly inside the CAUTION bracket — neither at or under 8ms
+(CONFORMANT), nor over 24.8ms (stop and escalate to the milestone owner).
+
+### **Classification: CAUTION (§14.4 branch 2).**
+
+Per §14.4 branch 2, CAUTION is status quo: no milestone-owner sign-off is required, and this plan's
+remaining phases (C onward) may proceed. This bare classification carries no claim about *why* the
+measured span is what it is (session load, real workload, or the corrected orientation seam) — §B′.9
+and §B′.10 already document that these numbers are not byte-comparable with Phase B's own
+15.5ms/10.8ms headline figures, for reasons unrelated to whether the fix is correct.
+
+**Milestone-owner decision: N/A (CAUTION is status quo, proceeds without escalation).**
+
+The checkpoint artifact enforcing this classification for later, isolated task dispatches is
+`docs/research/phase-b-prime-checkpoint.md` (Task B′.4 Step 3).
