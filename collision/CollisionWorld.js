@@ -2262,15 +2262,8 @@ export class CollisionWorld {
       return result.contained;
     }
     // mode === 'volume-overlap' -- the only remaining member of supportedModes.
-    //
-    // `compareCanonical` is REQUIRED here, not optional polish: VolumeOverlapQuery's own default
-    // ("public source is always canonical-first") would make L_canonical -- and therefore
-    // ProperCrossingQuery's offset ladder -- depend on which side the caller labelled source, so the
-    // same physical pair could clash one way and not the other. See comparePlacedCanonically above.
-    //
-    // The sign is computed once, from the two PlacedInstances, and the comparator merely reports it
-    // for whichever argument order it is handed -- so nothing identity-shaped has to be smuggled
-    // into the `Instance` objects, and the comparison itself allocates nothing per pair.
+    // Operand orientation for crossing queries is now decided internally by orientForCrossing
+    // (Task A2.1), which provides a total geometric order independent of caller's source/target labeling.
     const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
     const result = await volumeOverlapQuery(sourceInstance, targetInstance, {
       scheduler,
