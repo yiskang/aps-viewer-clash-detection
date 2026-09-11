@@ -4,8 +4,8 @@ import * as THREE from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
 import { build } from '../../collision/blas/ThreeMeshBvhBackend.js';
 
-function rawBoxWelded(size) {
-  const box = new THREE.BoxGeometry(size, size, size);
+function rawBoxWelded(w, h = w, d = w) {
+  const box = new THREE.BoxGeometry(w, h, d);
   return {
     position: box.attributes.position.array,
     index: Uint32Array.from(box.index.array),
@@ -133,4 +133,39 @@ test('build: M1 aspect-ratio disposition guard -- boundary: just past maxLocalAs
   const { aspectRatio, aspectRatioExceeded } = build(weldedFromBox(1, 10_001, 1));
   assert.ok(Math.abs(aspectRatio - 10_001) < 1, `expected aspectRatio ~10,001, got ${aspectRatio}`);
   assert.equal(aspectRatioExceeded, true);
+});
+
+test('build() returns a 32-hex-char geometryDigest', () => {
+  const geo = rawBoxWelded(1, 1, 1); // reuse the file's own existing fixture helper, adapt args to
+                                       // its real signature
+  const result = build(geo);
+  assert.equal(typeof result.geometryDigest, 'string');
+  assert.match(result.geometryDigest, /^[0-9a-f]{32}$/);
+});
+
+test('build() geometryDigest is identical for byte-identical geometry across two calls', () => {
+  const geoA = rawBoxWelded(2, 3, 4);
+  const geoB = rawBoxWelded(2, 3, 4);
+  const a = build(geoA);
+  const b = build(geoB);
+  assert.equal(a.geometryDigest, b.geometryDigest);
+});
+
+test('build() geometryDigest differs for geometrically distinct meshes', () => {
+  const a = build(rawBoxWelded(2, 3, 4));
+  const b = build(rawBoxWelded(2, 3, 5));
+  assert.notEqual(a.geometryDigest, b.geometryDigest);
+});
+
+test('build() geometryDigest ignores vertex/index count coincidence via the header', () => {
+  // Two geometries with the same vertexCount/triangleCount but different bytes must not collide.
+  // Build this fixture inline here (do not invent a new shared helper): take rawBoxWelded(1,1,1)'s
+  // position array, clone it, and perturb one coordinate by a value large enough to move the digest
+  // while keeping vertexCount/triangleCount identical -- e.g. add 1.0 to position[0].
+  const geoA = rawBoxWelded(1, 1, 1);
+  const geoB = rawBoxWelded(1, 1, 1);
+  geoB.position[0] += 1.0;
+  const a = build(geoA);
+  const b = build(geoB);
+  assert.notEqual(a.geometryDigest, b.geometryDigest);
 });

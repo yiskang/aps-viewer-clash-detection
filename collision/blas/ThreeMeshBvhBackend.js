@@ -14,13 +14,41 @@
 import * as THREE from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
 import { maxLocalAspectRatio } from '../constants.js';
+import { computeContentDigest } from '../geometry/contentDigest.js';
+
+/**
+ * Dependency-free 128-bit content digest of a welded geometry's own bytes (vertex/triangle count
+ * header + position + index buffers). Computed once per `build()` call -- `build()` is already the
+ * once-per-geometry-per-epoch hook, so no separate caching layer belongs here; the caching
+ * *lifecycle* comes from the caller (GeometryRegistry) only calling `build()` once per geometry per
+ * epoch. See design doc §4.3 C-1 rank 5: this is what later tasks use as the reload-stable geometric
+ * tiebreaker in place of `geometryIndex`.
+ * @param {{ position: Float32Array, index: Uint32Array, triangleCount: number }} weldedGeometry
+ * @returns {string} 32 lowercase hex characters (128 bits)
+ */
+function computeGeometryDigest(weldedGeometry) {
+  const positionArray = weldedGeometry.position; // bare Float32Array -- see this task's Interfaces note
+  const indexArray = weldedGeometry.index;       // bare Uint32Array/Uint16Array, same note
+  const vertexCount = positionArray.length / 3;
+  const triangleCount = weldedGeometry.triangleCount ?? (indexArray.length / 3);
+
+  const header = new DataView(new ArrayBuffer(8));
+  header.setUint32(0, vertexCount >>> 0, true);
+  header.setUint32(4, triangleCount >>> 0, true);
+
+  const headerBytes = new Uint8Array(header.buffer);
+  const positionBytes = new Uint8Array(positionArray.buffer, positionArray.byteOffset, positionArray.byteLength);
+  const indexBytes = new Uint8Array(indexArray.buffer, indexArray.byteOffset, indexArray.byteLength);
+
+  return computeContentDigest([headerBytes, positionBytes, indexBytes]);
+}
 
 /**
  * @param {{ position: Float32Array, index: Uint32Array, triangleCount: number }} weldedGeometry
  *   Exactly the resolved shape of GeometryRecord.weldPromise.
  * @returns {{ bvh: import('three-mesh-bvh').MeshBVH, localDiagonal: number, aspectRatio: number,
- *   aspectRatioExceeded: boolean, geometry: import('three').BufferGeometry }} `geometry` is the
- *   welded, collision-owned BufferGeometry this BVH was built over (the one
+ *   aspectRatioExceeded: boolean, geometry: import('three').BufferGeometry, geometryDigest: string }}
+ *   `geometry` is the welded, collision-owned BufferGeometry this BVH was built over (the one
  *   `ContainmentQuery.anyComponentInside` samples vertices from).
  *   `aspectRatio`/`aspectRatioExceeded` are the M1 single-geometry
  *   aspect-ratio disposition guard (spec Tolerances section) -- this module only COMPUTES and
@@ -33,6 +61,8 @@ import { maxLocalAspectRatio } from '../constants.js';
  *   classifyPoint for that target and emitting a
  *   `geometry-aspect-ratio-exceeds-tolerance-model` diagnostic instead of trusting a classification
  *   this tolerance model cannot make correctly at that aspect ratio.
+ *   `geometryDigest` is a 32-hex-char (128-bit) dependency-free content digest of the welded
+ *   position/index buffers (design doc §4.3 C-1 rank 5) -- see `computeGeometryDigest` above.
  */
 export function build(weldedGeometry) {
   const geometry = new THREE.BufferGeometry();
@@ -73,11 +103,13 @@ export function build(weldedGeometry) {
   const aspectRatio = minExtent > 0 ? maxExtent / minExtent : Infinity;
   const aspectRatioExceeded = aspectRatio > maxLocalAspectRatio;
 
+  const geometryDigest = computeGeometryDigest(weldedGeometry);
+
   // `geometry` is returned, not merely used locally: ContainmentQuery.anyComponentInside reads the
   // WELDED geometry directly (`sourceGeometry.index.array` / `.attributes.position`), so
   // `containment` / `volume-overlap` need it on the resolved GeometryRegistry record. It costs
   // nothing to surface -- `bvh` already holds a hard reference to this exact object -- and
   // GeometryRegistry._awaitEntry spreads this whole return value, so no change is needed there or
   // in BlasCache (batch4 reconciliation note item 6).
-  return { bvh, localDiagonal, aspectRatio, aspectRatioExceeded, geometry };
+  return { bvh, localDiagonal, aspectRatio, aspectRatioExceeded, geometry, geometryDigest };
 }
