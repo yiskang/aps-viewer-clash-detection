@@ -533,7 +533,23 @@ test('negative overlap result shape is unchanged by witness support', async () =
 
 test('a non-finite transformed witness degrades to witness:null without affecting the overlap verdict', async () => {
   const duct = testInstance(box(20, 0.4, 0.4));
-  const beam = testInstance(box(0.4, 0.4, 20));
+  const beam = testInstance(box(0.4, 0.4, 10));
+  // Reviewer finding (post-commit review of this task's fix-round): this fixture's
+  // correctness depends on `duct` (source) winning orientForCrossing's rank-1
+  // world-diagonal comparison and becoming `canonicalFirst` -- the witness-transform
+  // step below only reads the WINNING operand's matrix (`canonicalFirstIsSource ?
+  // source.matrix : target.matrix`). The two boxes are therefore deliberately sized so
+  // duct's diagonal (~20.008) is unambiguously, comfortably larger than beam's
+  // (~10.016) -- NOT the original `box(0.4, 0.4, 20)` (mathematically the same
+  // diagonal as duct's, just dimension-permuted), whose rank-1 outcome depended on a
+  // razor-thin ~3.55e-15 floating-point rounding artifact of argument order rather
+  // than a deliberate distinguishing difference. That margin is asserted explicitly
+  // immediately below, rather than left as an implicit, undocumented precondition.
+  const orientation = orientForCrossing(duct, beam);
+  assert.equal(orientation.first, duct,
+    'precondition: duct must win orientForCrossing and become canonicalFirst -- otherwise the witness-transform step below reads beam.matrix instead, and this fixture proves nothing');
+  assert.equal(orientation.rank, 1,
+    'precondition: decided by an unambiguous world-diagonal margin (rank 1), not a floating-point tie-break falling through to a later rank');
   // Inject a degenerate matrix on one operand AFTER the verdict-relevant BVH/
   // localDiagonal are built, so the crossing verdict itself is computed from valid
   // local geometry but the world-space transform step receives a matrix that
