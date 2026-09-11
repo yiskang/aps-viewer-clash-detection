@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { CollisionWorld, normalizeNarrowPhaseHit } from '../collision/CollisionWorld.js';
+import { CollisionWorld, normalizeNarrowPhaseHit, toInstance } from '../collision/CollisionWorld.js';
 import { buildMockModel } from './fixtures/mockInstanceTree.mjs';
 import { mergeGeometries } from './fixtures/geometry.mjs';
 
@@ -558,6 +558,30 @@ test('an extreme-aspect-ratio target under containment emits geometry-aspect-rat
   assert.equal(gated.targetFragment.fragId, 200);
   assert.equal(gated.targetFragment.dbId, 20);
   assert.equal(gated.targetFragment.modelId, 1);
+});
+
+// === geometryDigest forwarding (Task A1.2) =====================================================
+//
+// `toInstance` is exported (like `normalizeNarrowPhaseHit` above) solely so this pure
+// record -> Instance mapping can be unit-tested directly, following this file's existing pattern.
+// `geometryDigest` is not consumed by any production code path yet -- Task A2.1 wires it into
+// `orientForCrossing` -- so there is no observable findClashes-level behavior to assert on the way
+// `aspectRatioExceeded`'s forwarding test above does; this is a direct shape check instead.
+
+test('toInstance forwards record.geometryDigest onto the Instance it builds', () => {
+  const record = {
+    geometry: { index: { count: 36 }, attributes: { position: { count: 8 } } },
+    bvh: {},
+    localDiagonal: 1.7320508075688772,
+    geometryDigest: '082d39a862364291983594df7749a69d', // a real digest, from A1.1's browser-load verification
+    connectivity: null,
+    aspectRatioExceeded: false,
+  };
+  const instance = toInstance(record, new THREE.Matrix4().identity().toArray());
+  assert.equal(typeof instance.geometryDigest, 'string');
+  assert.equal(instance.geometryDigest.length, 32);
+  assert.match(instance.geometryDigest, /^[0-9a-f]{32}$/, 'must be exactly 32 lowercase hex chars');
+  assert.equal(instance.geometryDigest, record.geometryDigest, 'forwarded verbatim, not recomputed');
 });
 
 // === the Task 19 placeholder is gone ===========================================================

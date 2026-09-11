@@ -95,11 +95,11 @@ function weldedFromRaw(geometry) {
 export function testInstance(geometry, matrix = new THREE.Matrix4()) {
   const welded = weld(geometry);
   const raw = weldedFromRaw(welded);
-  const { bvh, geometry: builtGeometry, localDiagonal, aspectRatio, aspectRatioExceeded } = buildBvh(raw);
+  const { bvh, geometry: builtGeometry, localDiagonal, aspectRatio, aspectRatioExceeded, geometryDigest } = buildBvh(raw);
   const connectivity = computeGeometryConnectivity(raw);
   return {
     geometry: builtGeometry, bvh, localDiagonal, connectivity,
     closedManifold: connectivity.closedManifold.every(Boolean) && connectivity.componentCount > 0,
-    matrix, aspectRatio, aspectRatioExceeded,
+    matrix, aspectRatio, aspectRatioExceeded, geometryDigest,
   };
 }

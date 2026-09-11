@@ -385,11 +385,12 @@ async function resolveGeometryRecord(registry, placed, role, operand, needsConne
 // Note what is deliberately NOT here: any identity field. Canonical ordering is decided from the
 // PlacedInstances at the call site (comparePlacedCanonically above), so this object stays exactly
 // the shape both consumers' typedefs declare.
-function toInstance(record, placedWorldMatrix) {
+export function toInstance(record, placedWorldMatrix) {
   return {
     geometry: record.geometry,
     bvh: record.bvh,
     localDiagonal: record.localDiagonal,
+    geometryDigest: record.geometryDigest,
     connectivity: record.connectivity,
     closedManifold: record.connectivity ? record.connectivity.closedManifold.every(Boolean) : undefined,
     aspectRatioExceeded: record.aspectRatioExceeded,
