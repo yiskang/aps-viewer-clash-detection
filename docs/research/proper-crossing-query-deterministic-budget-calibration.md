@@ -548,3 +548,387 @@ Nothing under `collision/` was touched.
   measurement; no verdict may cite it.
 - Phase C remains gated on milestone-owner ratification of §7.2's compatibility classification **and**
   of this envelope. Neither is granted by this document.
+
+---
+
+## Phase B′ — Post-Orientation-Fix Recalibration (Corrected Call Seam)
+
+**Design this executes:** `docs/superpowers/specs/2026-09-11-canonical-ordering-operand-symmetry-fix-design.md`,
+§9.4's "Scope — five case families" row and finding #7. Task: `Task B′.3` of the
+2026-09-11 canonical-ordering/operand-symmetry-fix implementation plan.
+
+**Scope note carried over from Phase B, still true here:** measurement only. No constant was
+changed and no semantics were changed by this task. **This document does not apply §14.4's
+CONFORMANT/CAUTION/escalate disposition rule, and does not characterize whether any measured
+change is an improvement, a regression, or neither — that determination is Task B′.4's job,
+explicitly reserved** ("the implementer must not choose"). Every comparison below is stated as a
+bare number-to-number or number-to-threshold fact; where this draft originally used evaluative
+language (e.g. "reassuring," "did not make anything worse," "points away from a regression"), an
+independent `codex-advisor` review flagged it as an undisclosed disposition judgment and it has been
+removed.
+
+### B′.0 The call seam this measures (read this before comparing anything to Phase B)
+
+**Synthetic (I1/I3).** Phase B's I1/I3 loop called `properCrossingQuery` directly, with a
+hardcoded `a`/`b` operand order and a hand-rolled relative matrix. Task B′.1 (commit `fe1649c`)
+rewired that same loop to go through the production seam instead: `orientForCrossing(a, b)` first,
+then the kernel, on whichever operand order `orientForCrossing` decides. Two spans are now
+recorded per synthetic traversal:
+
+- **`kernelSpanMs`** — the raw `properCrossingQuery` call only (Phase B's own measurement scope).
+- **`wrapperSpanMs`** — `orientForCrossing` + the relative-matrix invert/multiply + the kernel call
+  (the *orient+kernel* seam — **not** the full `volumeOverlapQuery` wrapper: no
+  `aspectRatioExceeded` skip-gate, no `options.crossing`, by the harness's own header comment).
+
+This IS a genuine harness-level call-seam change for I1/I3: the operand order fed to the kernel can
+now differ from Phase B's own hardcoded order, so even the *kernel-only* column is not a
+re-measurement of Phase B's own kernel figure on the same input.
+
+**A known, already-reviewed scope reduction from the design doc's own literal wording.** The design
+doc (§9.4's own listing) calls for measuring both the kernel span and a full end-to-end
+`volumeOverlapQuery` wrapper span. `wrapperSpanMs` here is neither of those in the design's own
+sense — it is the reduced `orient+matrix+kernel` seam described above, not the full wrapper
+lifecycle (`aspectRatioExceeded`, containment terms, diagnostics). This reduction was made and
+reviewed twice in Task B′.1 (already landed, per this task's own brief), which explicitly instructs
+this task to "keep that framing" rather than build a genuine full-wrapper measurement. This document
+does not claim literal compliance with the design's "end-to-end `volumeOverlapQuery` span" wording —
+it reports the `orient+matrix+kernel` seam Task B′.1 established, named accurately throughout.
+
+**Live (I2) — a different situation, stated precisely rather than by analogy to I1/I3.**
+`VolumeOverlapQuery.js`'s `stage:'crossing'` diagnostic event is the **same measurement boundary**
+in both Phase B and Phase B′ — it has always started marginally before the query call (before the
+aspect-ratio branch test and the relative-matrix computation) and ended after it. What changed
+between the two measurements is **the production code inside that boundary**: this milestone
+replaced the per-pair ordering scheme `VolumeOverlapQuery.js` used at Phase B's measurement time
+(`comparePlacedCanonically`, keyed on the Viewer's own `geometryIndex` — the mechanism the Effect-B
+investigation traced the nondeterminism to) with `orientForCrossing` (this milestone's own fix,
+landed via Task A2.1). So I2's non-comparability with Phase B is **not** "a different call seam"
+in the I1/I3 sense — it is: (a) the production ordering logic under test changed, which is the
+milestone's own change being evaluated, and (b) the two measurements were taken in different
+sessions on the same machine, with no control for session-to-session load (§B′.4 below gives a
+concrete, measured example of each).
+
+### B′.1 Provenance
+
+| | |
+|---|---|
+| Commit measured against | `eedad40780a6e2fae0897423bac965c5f6eca143` (the raw JSON's own `baseCommitSha`) **plus an uncommitted 11-line harness diff** (adding the `effect-b-pinned-source` I2 variant — see §B′.2); `workingTreeDirty: true` in the raw JSON confirms the dirty state at measurement time |
+| Branch | `feature/m4-performance-worker-decision-design` |
+| Working-tree note | That exact diff was committed, unmodified, afterward as `b569d03ace00bf0cec2645cd4e0c715559313566`. The raw JSON does not store the dirty diff's own content or a hash of it, so this document cannot independently prove the committed tree is byte-identical to what produced the data — it records that no further edit was made to the harness between the run and the commit, which is as far as this evidence goes. This is the same class of declared deviation Phase B itself recorded for its own Phase-A-uncommitted case (§1.1 above). |
+| Harness | `test/performance/m4/proper-crossing-budget-calibration.mjs` (extended across two commits this task: `eedad40` — case (e) aggregate pass, live digest-lifecycle instrumentation; `b569d03` — the pinned-pair fix above) |
+| Raw data | `test/performance/results/proper-crossing-budget-calibration-1789134637415.json` (47.2 MB; gitignored, same convention as Phase B — see §1.2 above) |
+| Chromium | `151.0.7922.34` on both tiers — identical to Phase B's own build |
+| Run window | 2026-09-11T13:48:43.184Z – 2026-09-11T13:50:37.415Z (both tiers, all classes — under 2 minutes wall-clock) |
+| Fixture cohort (`typical`) | dbId `2383`, 101 achieved instances, `weightedDensity 14.178` — identical to Phase B's own cohort selection, both tiers |
+| Console errors | none, either tier |
+| `maxCrossingPointClassifications` read back from the page | 1536, both tiers (unchanged) |
+
+**Totals:** 190 I1 + 50 I3 + 29,540 I2 = **29,780 traversals per tier, 59,560 total.** I2's own count
+is larger than Phase B's (10,410/tier) because this run adds the `effect-b-pinned-source` variant
+(§B′.2); I1/I3 counts (190/50) are identical to Phase B's own.
+
+### B′.2 The five case families, as covered
+
+| Family | Coverage | Where |
+|---|---|---|
+| (a) boundary-heavy pairs | existing I1 catalogue (coplanar-touching, edge-vertex-contact, thin-overlap, below-min-penetration, etc.) — unchanged from Phase B | I1 |
+| (b) real-model pairs incl. pinned Effect B pairs | `failing-pair-source` (dbId 3547, the real failing pair — unchanged from Phase B) **plus a new `effect-b-pinned-source` variant, added and verified this task**, querying dbId 3076 alone against all three federated models | I2 |
+| (c) candidate-saturation (`H1-combs-1500`) | existing I3 | I3, unchanged from Phase B |
+| (d) early-exit co-occurrence | existing I3 (`HX-combs-flush-600/1500`) | I3, unchanged from Phase B |
+| (e) aggregate million-candidate pass, per-pair orientation + digest cost end to end | new this task — no prior implementation existed | I4, built this task |
+
+**On family (b): this task's own Step 0 investigation was initially wrong about this row.** The
+first draft of this document asserted the pinned Effect-B pair was "reachable through the same
+cohort machinery" that forces dbId 3076 into a HIGH-quantile cohort (`COHORT_SOURCE_DB_ID` in the
+harness). An independent `codex-advisor` review checked this against the source and found that the
+HIGH cohort, once computed, was used **only** to feed `labelDensityUnstratified` — it was never
+queried, so no traversal in the prior run ever touched dbId 3076 or fragment 537/427. This has been
+corrected: `runClearanceArm` now runs a dedicated `effect-b-pinned-source` variant (dbId 3076 alone,
+mirroring `failing-pair-source`'s own pattern), and the pair's actual appearance in the recorded
+data is verified directly in §B′.5 below, not assumed from the variant's name.
+
+### B′.3 The worst observed spans (§14.3 item 4 analog)
+
+| Tier | Worst wrapper span | Input | Worst kernel span | Input |
+|---|---|---|---|---|
+| **multi-process (AUTHORITATIVE)** | 14.500 ms | I3 `H1-combs-1500`, rep 1, warm | 14.500 ms | same traversal |
+| historical | 14.600 ms | I3 `H1-combs-1500`, rep 1, warm | 14.600 ms | same traversal |
+
+**Wrapper and kernel spans are identical, or differ by exactly one 0.1 ms quantization tick, in
+this data set.** This is consistent with Chromium's documented 0.1 ms `performance.now()`
+coarsening (§4.2 above) combined with the orientation preamble's own measured cost of roughly
+100 ns/decision (§B′.7) — a cost three-plus orders of magnitude below the 0.1 ms floor, so it is not
+expected to move the quantized reading in most samples.
+
+`S_worst` (wrapper-level, authoritative tier, over every input class per §14.4's own definition) =
+max(I1 5.3 ms, I2 8.2 ms, I3 14.5 ms) = **14.5 ms**. Kernel-level `S_worst`, computed over I1∪I3
+only (I2 has no separately-measured kernel-only figure — see §B′.0), is also **14.5 ms**, same
+traversal.
+
+**Neither figure is byte-comparable with Phase B's own 15.5 ms** (§B′.0).
+
+### B′.4 Real-model worst, pathological-synthetic worst, and two specific counter differences observed against Phase B
+
+| | multi-process | historical | Phase B (for reference — NOT byte-comparable, §B′.0) |
+|---|---|---|---|
+| Real-model worst (I2, any variant) | 8.200 ms (`failing-pair-source`, structure frag 363 → arch frag 30 — the same real failing pair Phase B measured) | 8.300 ms | 10.800 / 8.700 ms |
+| Pathological-synthetic worst (I3) | 14.500 ms (`H1-combs-1500`, rep 1 warm) | 14.600 ms (`H1-combs-1500`, rep 1 warm) | 15.500 / 15.500 ms |
+
+Two specific, checkable differences from Phase B's own recorded numbers, on the identical fixtures:
+
+- **`H1-combs-600`/`H1-combs-1500`'s `candidatePairsExamined` reads exactly 50,001 here, on both
+  tiers** — identical to Phase B's own saturation figure. `H1-combs-200` reads exactly 48,032 here
+  — also identical to Phase B. For these three specific fixtures, the candidate-scan count Phase B
+  measured is reproduced exactly.
+- **`HX-combs-flush-600`'s `candidatePairsExamined` reads 768 here (both tiers) vs. Phase B's own
+  recorded 968, and its `pointClassifications` reads 786 here vs. Phase B's 784** (both tiers,
+  reproducible across all 5 repetitions in this run). `HX-combs-flush-1500` shows no such
+  difference (496/791 here, identical to Phase B's own 496/791). `HX-combs-flush-600`'s own
+  construction is a coplanarity-sensitive early-exit fixture (family (d)'s literal definition), and
+  `orientForCrossing` can select a different operand as kernel `first` than Phase B's hardcoded
+  order did, which changes the relative matrix fed to the kernel. A changed relative matrix moving
+  an early-exit boundary in exactly this kind of fixture is consistent with that mechanism; this
+  document does not independently isolate the cause with a controlled A/B replay, and reports the
+  observation without claiming to have proven the mechanism.
+- The synthetic worst-case span (I3) is lower here (14.5/14.6 ms) than Phase B's own recorded
+  15.5 ms, and the real-model worst (I2) is also lower here (8.2/8.3 ms) than Phase B's 10.8/8.7 ms,
+  while the underlying candidate counts for the saturating H1 fixtures are identical between the two
+  measurements. Both measurements used the identical Chromium build (`151.0.7922.34`); this document
+  does not have a controlled way to attribute the span difference to session/machine load versus any
+  other factor, and does not attempt to.
+
+### B′.5 The pinned Effect-B pair (structure frag 537 → frag 427), directly verified
+
+The `effect-b-pinned-source` I2 variant (dbId 3076 alone, all three models as targets) was added
+this task specifically to close the family-(b) coverage gap described in §B′.2. Its recorded
+crossing events were searched directly for `sourceFragmentId === 537 && targetFragmentId === 427`
+(both structure, `sourceEpoch === 2`):
+
+| | |
+|---|---|
+| Occurrences found | **20 total — 10 per tier** (2 tiers × 2 broad-phase arms × 5 repetitions = 20; 1 per (tier, arm, rep) combination) |
+| `sourceTriangles` / `targetTriangles` | **172 / 72** on all 20 — matches the Effect-B investigation doc's own recorded figure for this pair verbatim |
+| `sourceWorldDiagonal` / `targetWorldDiagonal` | **290.969 / 3.918** on all 20 — matches the design doc's own §-table row for "Effect B class-B (F6)" (line 218) verbatim |
+| `pointClassifications` | **198** on all 20 occurrences | 
+| `exhaustedBudget` | `null` on all 20 occurrences — the traversal completes, it does not exhaust a budget |
+| `orientationRank` | 1 (world-diagonal disparity — 290.969 vs. 3.918 — decides it outright) |
+
+The design doc's own table (line 218) records this pair's **pre-fix** behavior as oscillating
+between `inconclusive` (147 classifications) and `conclusive` (198 classifications, precheck →
+`proceed`) depending on load-order-dependent `geometryIndex` permutation. Every one of the 20
+occurrences measured here reads exactly **198** — the design doc's own documented "conclusive"
+value. This document reports that observation as a bare fact: 20 out of 20 occurrences, identical
+value, matching one specific side of the pre-fix oscillation the design doc recorded. Whether this
+constitutes evidence the oscillation is closed is a disposition-adjacent question this document does
+not answer.
+
+### B′.6 Traversals exceeding 8 ms and 24.8 ms, per tier
+
+| Tier | Traversals | > 8 ms | | > 24.8 ms | |
+|---|---|---|---|---|---|
+| multi-process | 29,780 | **17** | 0.057 % | **0** | 0.00 % |
+| historical | 29,780 | **17** | 0.057 % | **0** | 0.00 % |
+
+Breakdown (identical on both tiers):
+
+| Count | Input |
+|---|---|
+| 5 | I3 `H1-combs-200` |
+| 5 | I3 `H1-combs-600` |
+| 5 | I3 `H1-combs-1500` |
+| 2 | I2 `failing-pair-source` |
+
+Both runs independently recorded zero traversals exceeding 24.8 ms.
+
+### B′.7 Case (e) — aggregate orientation-preamble loop benchmark, with separately reported pool-construction amortization (I4)
+
+Built this task (`MEASURE_AGGREGATE_ORIENTATION`); no prior implementation existed (Step 0's
+investigation). Design reviewed via `codex-advisor` before implementation.
+
+**What each figure measures, precisely** (an earlier draft of this section used looser labels —
+"orientation only," "digest computation," "nanosecond resolution" — that an independent
+`codex-advisor` review of the write-up found overstated; the labels below are the corrected ones):
+
+1. **`buildMs`** — the time to construct a small, deliberately rank-stratified pool of 24 real
+   `testInstance()` Instances. This is **pool-construction time**, not digest time in isolation: each
+   `testInstance()` call performs geometry construction, `weld()`, `ThreeMeshBvhBackend.build()`
+   (which computes `geometryDigest` unconditionally, exactly once, with no internal cache —
+   `ThreeMeshBvhBackend.js:106`), and `computeGeometryConnectivity()`. What IS exact: 24
+   `testInstance()` calls means exactly **24 digest computations** for this pass, a fact read
+   directly off `ThreeMeshBvhBackend.build()`'s own unconditional call, independent of how much
+   other work each `testInstance()` call also does.
+2. **`orientationMs`** — the time for 1,000,000 top-level decisions, each of which runs
+   `orientForCrossing(a, b)` **plus** the relative-matrix invert/multiply, **plus** schedule
+   indexing, per-rank counting, and a dead-code-elimination checksum — i.e. the full loop body, not
+   `orientForCrossing` in isolation. The pair schedule is precomputed outside the timed region and
+   cycled inside it, so no `Math.random()` or pair-construction cost is included in `orientationMs`.
+
+| Tier | pool size (= digest computations) | `buildMs` | `N` (top-level decisions) | `orientationMs` | ns/decision (full loop body) | amortized ns/decision incl. pool build |
+|---|---|---|---|---|---|---|
+| multi-process | 24 | 2.3 ms | 1,000,000 | 102.6 ms | 102.6 ns | 104.9 ns |
+| historical | 24 | 2.6 ms | 1,000,000 | 105.0 ms | 105.0 ns | 107.6 ns |
+
+**On timer resolution.** `performance.now()` remains coarsened to 0.1 ms in this configuration
+(§4.2). The 102.6–105.0 ms *aggregate* totals above are each bounded by at most one such
+quantization tick at their start and end points (≤ 0.1 ms out of ~103 ms, well under 0.1% relative
+error), so dividing by 1,000,000 gives a per-decision estimate on the order of 100 ns — this is a
+derived average from a coarse-but-large aggregate measurement, not a claim that any individual call
+was measured at nanosecond resolution.
+
+**The one comparison this pass licenses against the 8 ms budget:** the full-loop-body figure,
+102.6–105.0 ns per top-level decision, is roughly **75,000–78,000× smaller** than the 8,000,000 ns
+(8 ms) single-traversal budget this whole design calibrates against — a per-*pair* cost compared
+against a per-*traversal* budget. This is not the same comparison as the *aggregate* loop total
+(102.6–105.0 ms, before pool-build amortization) against the 8 ms threshold — the aggregate total is,
+trivially, larger than 8 ms, and comparing it to the per-traversal budget directly would not be
+meaningful; an earlier draft of this section made exactly that comparison and stated the wrong
+aggregate figure (108 ms) while doing so. The two reported per-decision figures — 102.6–105.0 ns
+(loop body only) and 104.9–107.6 ns (loop body plus amortized pool construction) — are kept
+separate throughout this section and in §B′.10/§B′.11 below; neither is a single "digest cost"
+figure in isolation (see the per-metric breakdown above).
+
+Rank distribution over the 1,000,000 decisions (identical both tiers — a deterministic synthetic
+schedule):
+
+| Rank | Count | % | What actually happens at this rank |
+|---|---|---|---|
+| 1 (world diagonal) | 920,300 | 92.03 % | one numeric comparison; digest never touched |
+| 2 (triangle count) | 36,236 | 3.62 % | two numeric comparisons; digest never touched |
+| 3 (vertex count) | 0 | 0.00 % | not forced in this pool — disclosed limitation, below |
+| 4 (matrix) | 36,220 | 3.62 % | a 16-element matrix scan; digest never touched |
+| 5 (geometry digest) | 3,622 | 0.36 % | `compareDigest` runs and the two digests differ — decided here |
+| 6 (caller role, residual) | 3,622 | 0.36 % | `compareDigest` runs (same call as rank 5's own check) and the two digests are equal — falls through to the caller-role residual |
+
+**Digest computations vs. digest comparisons: 24 computations; 7,244 decisions (ranks 5+6
+combined, 0.72% of the 1,000,000) reached `compareDigest`; zero digest recomputations during the
+decision loop.** Every one of those 7,244 comparisons read an already-computed value — this is the
+digest-reuse evidence this pass produces. This document does not claim a specific count of runtime
+property reads (`compareDigest` accesses each side's `geometryDigest` field, and JIT behavior makes
+counting individual field reads an unreliable metric); "24 computations, 7,244 comparisons" is the
+precise, harness-observable figure. (An earlier draft described this as a "1,000,000 : 24 reuse
+ratio," which conflated the count of orientation *decisions* with the count of digest
+*comparisons*; corrected here.)
+
+**Disclosed limitation:** rank 3 (triangle-count tie, vertex-count differs) has no natural
+low-effort construction from this repo's existing fixture helpers and was not deliberately forced.
+Its 0-count here is a property of this specific pool's construction; `test/query/orientForCrossing.test.mjs`
+already proves rank 3 is reachable at the unit level with hand-built fixtures.
+
+**Cross-check against the live I2 path.** The C-4 orientation-provenance telemetry (already emitted
+by `VolumeOverlapQuery.js`, newly *projected* by this task's harness change — see §B′.8) shows every
+one of the 29,540 real-model crossing traversals per tier resolving at **rank 1**, both tiers, across
+all three I2 variants including the newly-added `effect-b-pinned-source`. **None of the live traffic
+measured in this run ever reads `geometryDigest` at all** — on real Revit geometry, the fragments
+compared here differ enough in world diagonal that the digest/rank-5-6 machinery is never reached.
+This is a property of the specific fixtures and cohorts measured here, not a general claim about all
+possible production traffic.
+
+### B′.8 Geometry-build reuse on the live production path (I2)
+
+New instrumentation this task, added to `runClearanceArm` (no `collision/` library file touched —
+both hooks below are pre-existing, documented production diagnostic seams):
+
+- **`bvhConstructionSpanCount`** — installs the existing `setSpanRecorder` hook (`scheduler.js`,
+  Task 23) and counts `'bvh-construction'` spans. `GeometryRegistry._chainAcceleration` reports
+  exactly this label once per `_buildAcceleration` call
+  (`collision/geometry/GeometryRegistry.js:229-231`), which is what calls
+  `ThreeMeshBvhBackend.build()` — the same unconditional, once-per-call `geometryDigest`
+  computation §B′.7 relies on. This count is the digest-*computation* count for the run (it says
+  nothing about how many times, if any, a computed digest is later *read* — see §B′.7's own
+  distinction).
+- **`readyGeometryCount`** — captures each `admitModel()` lease's `epoch` (each admitted model
+  mints its own epoch — `CollisionWorld.js:716`) and sums the stable, public
+  `world.getEpochGeometryDiagnostics(epoch)` accessor (Task 1.6) across all three, filtered to
+  `buildState === 'ready'`, read before `dispose()`.
+
+| Variant | `bvhConstructionSpanCount` | `readyGeometryCount` | Match? | `clearanceOverlapPrechecksRun` (pairs reaching the crossing stage) | `clearanceHardClashExclusions` |
+|---|---|---|---|---|---|
+| `failing-pair-source` | 10 | 10 | yes | 7 | 3 |
+| `S2[k=100:typical:clearance]` | 467 | 467 | yes | 1,034 | 347 |
+| `effect-b-pinned-source` | 1,461 | 1,461 | yes | 1,913 | 1,197 |
+
+**`bvhConstructionSpanCount === readyGeometryCount` on every one of the 30 measured clearance runs
+per tier (3 variants × 2 arms × 5 reps), 60 runs total, zero mismatches.** Two independently-read
+production instrumentation points — one counting a span-recorder event, the other reading the
+registry's own per-epoch entry count — agree exactly, on every run, on both tiers. This is
+consistent with `GeometryRegistry`'s "insert first, then build" single-flight design
+(`GeometryRegistry.js:58-77`) building each `(loadEpoch, geometryIndex)` at most once; it is not, on
+its own, an independent proof of that property in the general case — two aggregate counters agreeing
+is evidence consistent with the single-flight design, not a substitute for reading the design itself
+(§B′.0's own citation of the source remains the actual argument for "at most once per key").
+
+**What this table does and does not show about reuse.** `clearanceOverlapPrechecksRun /
+readyGeometryCount` is a ratio of *crossing-stage pairs per built geometry* — 1,034/467 ≈ 2.2 for
+the typical cohort, 1,913/1,461 ≈ 1.3 for the pinned-pair-source query, and 7/10 < 1 for
+`failing-pair-source` (more geometries got built during broad-phase candidate resolution across all
+three models than ended up reaching the narrow-phase crossing stage for that single source dbId).
+None of these ratios is a "digest reuse ratio": §B′.7 already shows that on this specific measured
+run, **orientation never resolved past rank 1**, so no digest value was ever read/compared on the
+live path at all in this run. What these ratios do show is **geometry/BVH build reuse** — a
+geometry, once built, is available to every later candidate pair in its epoch without being rebuilt
+— which is the broader property the digest computation rides on top of, not a measurement of digest
+comparison frequency specifically.
+
+### B′.9 Deterministic counters — `M_legit`, and what does and does not follow from it
+
+| | Phase B | Phase B′ (this task, both tiers) |
+|---|---|---|
+| `M_legit` (max `pointClassifications`, I1 ∪ I2) | 1152 | 1152 |
+| Cap | 1536 | 1536 |
+| Cap fired | 0 times | 0 times, both tiers, 59,560 traversals |
+| Overall max across every class (incl. I3) | 1152 | 1152 |
+
+**This is an observed-maximum match, reported as a bare fact — not evidence of per-traversal
+operand-order invariance.** An earlier draft of this section argued the identical `M_legit` value
+"confirms" that `properCrossingQuery`'s counters are operand-order-invariant. An independent
+`codex-advisor` review pointed out that this document's own §B′.4 reports a counter that is NOT
+identical between Phase B and Phase B′ on a specific fixture (`HX-combs-flush-600`'s
+`candidatePairsExamined`: 968 → 768, `pointClassifications`: 784 → 786) — so a blanket
+order-invariance claim is directly contradicted by this document's own data and has been removed.
+What is true, narrowly: the *maximum* `pointClassifications` value observed over I1 ∪ I2 is 1152 in
+both measurements, and the 1536 cap fired zero times in both. Nothing broader should be inferred
+from that coincidence.
+
+### B′.10 Side-by-side vs. Phase B's headline numbers
+
+| | Phase B | Phase B′ (this task) | Comparable? |
+|---|---|---|---|
+| Synthetic worst (multi-process) | 15.500 ms | 14.500 ms (wrapper = kernel) | No — I1/I3 call-seam changed (§B′.0) |
+| Real-model worst (multi-process) | 10.800 ms | 8.200 ms | No — same measurement boundary, but the ordering logic inside it changed, and the two measurements are different sessions (§B′.0, §B′.4) |
+| Real-model worst (historical) | 8.700 ms | 8.300 ms | No, same reason |
+| Synthetic worst (historical) | 15.500 ms | 14.600 ms | No — I1/I3 call-seam changed |
+| `M_legit` | 1152 | 1152 | The two *maximum values* are identical, reported as a bare fact (§B′.9) — this is not the same as the underlying per-traversal counters being comparable in general, which §B′.4/§B′.9 show they are not always |
+| Traversals > 8 ms (both tiers combined) | 35 (17 + 18) | 34 (17 + 17) | No — same reasons as above, plus I2's traversal count itself is larger this run (the new `effect-b-pinned-source` variant) |
+| Traversals > 24.8 ms | 0 | 0 | Both runs independently observed zero — not stated as "seam-independent," since a large enough change in measured work could in principle move a span across that threshold |
+| Orientation-preamble loop cost (aggregate, new in Phase B′) | not measured — this omission was finding #7's own critique | 102.6–105.0 ns/decision (loop body); 104.9–107.6 ns/decision (loop body + amortized pool construction) — see §B′.7 | N/A — new in Phase B′, closes finding #7 |
+
+**Every "No" row compares numbers produced under different conditions** — a different harness call
+seam for I1/I3, or the same measurement boundary over changed production ordering logic plus an
+uncontrolled session difference for I2. This document reports both sets of numbers and the
+differences between them; it draws no conclusion about whether those differences represent an
+improvement, a regression, or neither. The one row with a genuinely new figure — the aggregate
+orientation-preamble loop benchmark — is the number finding #7 asked this task to produce, and no
+comparable figure existed before this task.
+
+### B′.11 What this does and does not authorize
+
+- It measures all five case families (a)–(e) the design's §9.4 scope row specifies, across both
+  pre-registered runtime tiers, including a corrected, directly-verified measurement of the pinned
+  Effect-B pair (§B′.5) that an earlier draft of this task had incorrectly claimed was already
+  covered.
+- It reports `M_legit`'s observed maximum as unchanged and the 1536 cap as never firing, without
+  inferring general per-traversal counter invariance from that fact (§B′.9).
+- It reports two specific, checkable differences from Phase B's own counters
+  (`HX-combs-flush-600`'s `candidatePairsExamined`/`pointClassifications`) without asserting a
+  causal mechanism beyond "consistent with" (§B′.4).
+- It measures, for the first time, an aggregate orientation-preamble loop benchmark
+  (102.6–105.0 ns/decision, loop body only; 104.9–107.6 ns/decision including amortized pool
+  construction), closing finding #7's own critique that this cost had only ever been "declared
+  negligible from operation counts" — and reports precisely what each figure does and does not
+  include (§B′.7), rather than a single undifferentiated "digest cost."
+- **It does not** apply §14.4's (or any) disposition rule to these numbers. Task B′.4 owns that
+  decision.
+- **It does not** claim the orientation fix made `properCrossingQuery` faster, slower, or otherwise
+  different in effect than Phase B measured. The measurements are not on byte-comparable terms
+  (§B′.0, §B′.10), and this document reports the numbers without characterizing what, if anything,
+  their differences mean.
