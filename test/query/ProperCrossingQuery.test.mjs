@@ -341,23 +341,35 @@ test('a returned witnessPoint is an owned clone, immune to later scratch mutatio
 // once, letting the probe ladder actually PROVE the crossing once the pair is no longer
 // discarded (verified against the real bvhcast/classifyPoint pipeline, and against the
 // pre-fix `surfaceEpsilonFactor * localDiagonalA` epsilon, before writing this test).
-function tentEmbeddedInSlab() {
-  const planeY = 5; // A = box(1000, 10, 1000) has its top face at y = 5
-  const g = 1e-4; // offset at each roof triangle's vertex 'a' -- pinned in the target band
-  const apexRise = 1e-3; // apex rises this far ABOVE A's top face -- the "far end" divergence
-  const bottomY = 2; // B's flat bottom, deep inside A -- irrelevant to the coplanar pair
+// `matrixScale` parameterizes B's geometry against a NON-identity `matrixBtoA`, so that
+// `stretch(matrixBtoA)` is load-bearing rather than incidentally 1 (see the
+// stretch-regression test below). B's LOCAL coordinates are built at
+// `referenceWorldCoordinate / matrixScale`, and the caller is expected to pair this with
+// `matrixBtoA = makeScale(matrixScale, matrixScale, matrixScale)` -- their product
+// reproduces the EXACT same real (A-frame) geometry regardless of `matrixScale`, so
+// every already-verified number below (the offset `g`, the apex rise, the crossing
+// itself) is unaffected by which `matrixScale` is chosen; only `localDiagonalB` (the
+// LOCAL, pre-transform diagonal `testInstance` reports) and `stretch(matrixBtoA)` shift,
+// in exactly opposite directions, leaving `localDiagonalB * stretch(matrixBtoA)`
+// invariant.
+function tentEmbeddedInSlab(matrixScale = 1) {
+  const planeY = 5 / matrixScale; // A = box(1000, 10, 1000) has its top face at y = 5 (world)
+  const g = 1e-4 / matrixScale; // world-frame offset at vertex 'a' is 1e-4 regardless of matrixScale
+  const apexRise = 1e-3 / matrixScale; // apex rises this far ABOVE A's top face (world) -- the "far end" divergence
+  const bottomY = 2 / matrixScale; // B's flat bottom, deep inside A (world) -- irrelevant to the coplanar pair
+  const half = 5 / matrixScale; // B's footprint half-width, 5 in world units
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute([
-    -5, planeY - g, -5, // 0: rim
-     5, planeY - g, -5, // 1: rim
-     5, planeY - g,  5, // 2: rim
-    -5, planeY - g,  5, // 3: rim
+    -half, planeY - g, -half, // 0: rim
+     half, planeY - g, -half, // 1: rim
+     half, planeY - g,  half, // 2: rim
+    -half, planeY - g,  half, // 3: rim
      0, planeY + apexRise, 0, // 4: apex, pokes above A's top face
-    -5, bottomY, -5, // 5: bottom ring
-     5, bottomY, -5, // 6: bottom ring
-     5, bottomY,  5, // 7: bottom ring
-    -5, bottomY,  5, // 8: bottom ring
+    -half, bottomY, -half, // 5: bottom ring
+     half, bottomY, -half, // 6: bottom ring
+     half, bottomY,  half, // 7: bottom ring
+    -half, bottomY,  half, // 8: bottom ring
   ], 3));
   geometry.setIndex([
     // Tent roof -- each triangle's FIRST index is a rim vertex, matching
@@ -374,10 +386,12 @@ function tentEmbeddedInSlab() {
   return geometry;
 }
 
-function extremeRatioCoplanarFixture() {
+function extremeRatioCoplanarFixture(matrixScale = 1) {
   const a = testInstance(box(1000, 10, 1000));
-  const b = testInstance(tentEmbeddedInSlab());
-  const matrixBtoA = new THREE.Matrix4(); // both built directly in A's frame
+  const b = testInstance(tentEmbeddedInSlab(matrixScale));
+  // matrixScale === 1 gives the identity, matching every prior verification of this
+  // fixture's real-world geometry exactly.
+  const matrixBtoA = new THREE.Matrix4().makeScale(matrixScale, matrixScale, matrixScale);
   return { bvhA: a.bvh, bvhB: b.bvh, matrixBtoA, localDiagonalA: a.localDiagonal, localDiagonalB: b.localDiagonal, a, b };
 }
 
@@ -414,4 +428,71 @@ test('surfaceEpsilon is the min of both operands\' world-scaled tolerance, monot
   assert.ok(result.witnessPoint, 'a proven crossing carries an owned witness');
   assert.equal(classifyPoint(result.witnessPoint, bvhA, localDiagonalA), 'inside');
   assert.equal(classifyPoint(result.witnessPoint, bvhB, localDiagonalB), 'inside');
+});
+
+test('surfaceEpsilon genuinely reads stretch(matrixBtoA), not just localDiagonalB, under a non-identity relative scale', () => {
+  // The test above uses an identity `matrixBtoA`, so `stretch(matrixBtoA) === 1` there
+  // and `localDiagonalB * stretch(matrixBtoA)` reduces to plain `localDiagonalB` --
+  // that alone can't tell a correct `min(localDiagonalA, localDiagonalB *
+  // stretch(matrixBtoA))` apart from a regression that silently drops the `stretch`
+  // term (e.g. `Math.min(localDiagonalA, localDiagonalB)`). This test closes that gap
+  // with a genuinely non-unit relative scale.
+  //
+  // matrixScale = 0.1 builds B's LOCAL geometry at 10x the reference fixture's
+  // coordinates, paired with `matrixBtoA = makeScale(0.1, 0.1, 0.1)` -- their product
+  // reproduces the EXACT same real (A-frame) crossing as the identity-matrix test
+  // above (same world-frame `g = 1e-4`, same apex rise, same genuine crossing),
+  // verified empirically below via the same fixture-precondition assertions, not
+  // assumed. What DOES change is `localDiagonalB` itself: `testInstance` reports the
+  // LOCAL (pre-transform) diagonal, which is now ~10x the reference value, so
+  // `localDiagonalB * stretch(matrixBtoA)` (~10x smaller * 0.1x factor) lands back on
+  // the same effective value -- while a stretch-dropping regression would instead use
+  // the raw (~10x-too-large) local diagonal directly, computing an epsilon roughly
+  // 10x LOOSER than correct. That looser, buggy epsilon is enough to wrongly swallow
+  // this fixture's `g = 1e-4` offset as "coplanar" -- i.e. a stretch-dropping
+  // regression would flip this test's outcome from `crossing: true` back to
+  // `crossing: false`, exactly the failure mode this test exists to catch (confirmed
+  // by temporarily reproducing that exact regression locally and observing this test
+  // go red, before restoring the real implementation -- see task report).
+  const matrixScale = 0.1;
+  const { bvhA, bvhB, matrixBtoA, localDiagonalA, localDiagonalB, a, b } = extremeRatioCoplanarFixture(matrixScale);
+
+  const actualStretch = stretch(matrixBtoA);
+  assert.equal(actualStretch, matrixScale, 'a pure uniform scale: stretch(matrixBtoA) must equal the scale factor itself, not 1');
+  assert.notEqual(actualStretch, 1, 'the whole point of this test: a non-unit relative scale');
+
+  // The CORRECT formula's effective B-in-A-frame diagonal must match the reference
+  // (identity-matrix) fixture's B diagonal (~14.46) regardless of matrixScale --
+  // proving `stretch` is actually being applied, not merely present in the expression.
+  const effectiveDiagonalB = localDiagonalB * actualStretch;
+  const referenceLocalDiagonalB = extremeRatioCoplanarFixture(1).localDiagonalB;
+  assert.ok(Math.abs(effectiveDiagonalB - referenceLocalDiagonalB) < 1e-6,
+    `localDiagonalB * stretch(matrixBtoA) (${effectiveDiagonalB}) must reproduce the reference fixture's real-world B diagonal (${referenceLocalDiagonalB}), proving stretch is genuinely applied`);
+  assert.ok(localDiagonalB > referenceLocalDiagonalB * 5,
+    'sanity check on the fixture itself: the LOCAL (pre-transform) diagonal must be substantially larger than the reference, or this case would not actually exercise stretch at all');
+
+  const oldEpsilon = surfaceEpsilonFactor * localDiagonalA;
+  const newEpsilon = surfaceEpsilonFactor * Math.min(localDiagonalA, effectiveDiagonalB);
+  const buggyEpsilonWithoutStretch = surfaceEpsilonFactor * Math.min(localDiagonalA, localDiagonalB); // stretch dropped
+  const actualOffset = Math.abs(5 - b.geometry.attributes.position.getY(0) * matrixScale); // vertex 'a' offset, in WORLD units
+
+  assert.ok(newEpsilon < actualOffset && actualOffset <= oldEpsilon,
+    'fixture precondition: the correct (stretch-aware) epsilon must sit in the same target band as the reference fixture');
+  assert.ok(actualOffset <= buggyEpsilonWithoutStretch,
+    'fixture precondition: a stretch-dropping regression\'s (looser) epsilon must actually reach this offset, or this fixture would not catch that regression');
+
+  const result = properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, localDiagonalB, {});
+  assert.equal(result.crossing, true,
+    'stretch(matrixBtoA) correctly scales localDiagonalB into A\'s frame, so this pair is not wrongly discarded');
+  assert.equal(result.aborted, false);
+  assert.equal(result.inconclusive, false);
+  assert.ok(result.witnessPoint);
+  assert.equal(classifyPoint(result.witnessPoint, bvhA, localDiagonalA), 'inside');
+  // Unlike the identity-matrix fixture above, `matrixBtoA` here is a genuine (0.1x)
+  // scale -- witnessPoint is documented to be in bvhA's own local frame, so it must be
+  // mapped through matrixAtoB before classifying it against bvhB, exactly as the
+  // production probe ladder does internally.
+  const matrixAtoB = matrixBtoA.clone().invert();
+  const witnessInB = result.witnessPoint.clone().applyMatrix4(matrixAtoB);
+  assert.equal(classifyPoint(witnessInB, bvhB, localDiagonalB), 'inside');
 });
