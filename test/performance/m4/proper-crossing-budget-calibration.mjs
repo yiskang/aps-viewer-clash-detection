@@ -81,7 +81,8 @@ const FAILING_SOURCE_DB_ID = 3547;  // structure:3547/frag363 -- the real failin
 const COHORT_SOURCE_DB_ID = 3076;   // forced into the HIGH cohort by run-gate-m4's buildCohorts
 
 function parseArgs(argv) {
-  const out = { inputs: ['I1', 'I2', 'I3'], tiers: ['multiProcess', 'historical'], repetitions: 5 };
+  // I4 = Task B'.3's case (e) aggregate orientation+digest pass (MEASURE_AGGREGATE_ORIENTATION).
+  const out = { inputs: ['I1', 'I2', 'I3', 'I4'], tiers: ['multiProcess', 'historical'], repetitions: 5 };
   for (const a of argv.slice(2)) {
     const [k, v] = a.replace(/^--/, '').split('=');
     if (k === 'inputs') out.inputs = v.split(',');
@@ -286,6 +287,137 @@ async ({ repetition, state, classes }) => {
 `;
 
 // ---------------------------------------------------------------------------------------------
+// I4 -- Task B'.3, case (e): an aggregate pass over ONE MILLION top-level orientForCrossing
+// decisions, measuring per-pair orientation AND digest cost end to end (design doc §9.4's scope
+// row, finding #7: "measure per-pair orientation cost in aggregate rather than declaring it
+// negligible from operation counts"). Families (a)-(d) are already covered by the existing I1/I2/I3
+// catalogue above; only (e) had no prior implementation (Step 0 of this task's own investigation).
+//
+// Two phases, reported separately, per an independent codex-advisor review of this design:
+//   1. `buildMs` -- construct a small, deliberately RANK-STRATIFIED pool of `testInstance()`
+//      Instances. Each `testInstance()` call is exactly one `ThreeMeshBvhBackend.build()` call,
+//      which computes `geometryDigest` unconditionally and exactly once (ThreeMeshBvhBackend.js:106,
+//      no internal cache) -- so `poolSize` here IS the digest-computation count for this pass, a
+//      fact read directly off the source, not instrumented separately.
+//   2. `orientationMs` -- N = 1,000,000 top-level `orientForCrossing(a, b)` calls (the same
+//      production preamble VolumeOverlapQuery.js's canonicalSecondToFirst performs, copied
+//      verbatim from MEASURE_SYNTHETIC above), CYCLING a precomputed pair schedule built from that
+//      same small pool -- i.e. reusing the already-computed digests across all N pair decisions,
+//      exactly as GeometryRegistry's single-flight build cache does across many real candidate
+//      pairs in production.
+// `amortizedEndToEndNs = (buildMs + orientationMs) * 1e6 / N` is therefore a genuine end-to-end
+// per-pair cost INCLUSIVE of the (amortized) digest-construction cost, not orientation cost alone.
+//
+// The pool deliberately forces pairs at every orientForCrossing rank (1, 2, 4, 5, 6) using the same
+// constructions `test/query/orientForCrossing.test.mjs` already validates at the unit level (rank 4's
+// matrix-element-12 translation trick, rank 6's byte-identical-geometry digest tie). Rank 3 (triangle
+// count tie, vertex count differs) has no natural low-effort construction from this repo's existing
+// fixture helpers and was NOT deliberately forced -- its observed count below may be 0; this is a
+// disclosed limitation, not an oversight.
+const MEASURE_AGGREGATE_ORIENTATION = /* js */ `
+async () => {
+  const { box, at, subdividedBox, testInstance, THREE } = window.__fx;
+  const { orientForCrossing } = window.__orient;
+
+  const rot = (r) => new THREE.Matrix4().makeRotationY(r);
+  // Reverses the raw index array's TRIANGLE order (not per-triangle winding) before weld().
+  // weld()'s mergeVertices dedups by scanning the POSITION attribute directly (order-independent
+  // of the index), so the deduped position array is byte-identical either way -- but the remapped
+  // INDEX byte array preserves whatever traversal order it was given, so this changes
+  // geometryDigest (which hashes position+index bytes) while leaving triangle count, vertex count
+  // and the bounding-box diagonal all unchanged. Exists solely to construct a genuine rank-5 pair
+  // (geometryDigest tie-break) below -- same triangle SET, different byte layout.
+  const reindexedBox = (w, h, d) => {
+    const g = box(w, h, d);
+    const idx = g.index.array;
+    const triCount = idx.length / 3;
+    const out = new idx.constructor(idx.length);
+    for (let t = 0; t < triCount; t++) {
+      const src = (triCount - 1 - t) * 3;
+      out[t * 3] = idx[src]; out[t * 3 + 1] = idx[src + 1]; out[t * 3 + 2] = idx[src + 2];
+    }
+    g.setIndex(new THREE.BufferAttribute(out, 1));
+    return g;
+  };
+
+  const buildT0 = performance.now();
+  const pool = []; // { name, inst }
+  const tag = (name, inst) => { pool.push({ name, inst }); };
+
+  // Rank 1 stratum: ten distinct world diagonals (varying box size, identity matrix).
+  for (const size of [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]) {
+    tag('rank1-size-' + size, testInstance(box(size, size, size)));
+  }
+  // Rank 2 stratum: subdividedBox's OWN documented purpose (test/fixtures/geometry.mjs:20-22,
+  // "used by tests that need a NATURAL... e.g. rank 2 (triangle count)") -- same bounding box
+  // (size=4, so identical world diagonal), five different tessellations (different triangle AND
+  // vertex counts), identity matrix.
+  for (const segments of [1, 2, 4, 6, 9]) {
+    tag('rank2-subdividedBox4-seg' + segments, testInstance(subdividedBox(4, 4, 4, segments)));
+  }
+  // Rank 4 stratum: the SAME geometry object, built into five SEPARATE Instances at different
+  // rigid transforms. stretch(matrix) (geometryScale.js) reads only the 3x3 linear part, so pure
+  // translation and pure rotation both leave worldDiagonal unchanged; triangle/vertex counts and
+  // geometryDigest are identical (same geometry); only raw matrix elements differ -- every pair
+  // drawn from this stratum resolves at rank 4, never reaching digest comparison.
+  const rank4Geometry = box(6, 6, 6);
+  tag('rank4-identity', testInstance(rank4Geometry));
+  tag('rank4-translated', testInstance(rank4Geometry, at(37, -11, 4)));
+  tag('rank4-rotated', testInstance(rank4Geometry, rot(Math.PI / 3)));
+  tag('rank4-rotated-translated', testInstance(rank4Geometry, rot(1.7).multiply(at(5, 5, 5))));
+  tag('rank4-translated-2', testInstance(rank4Geometry, at(-9, 200, 0.5)));
+  // Rank 5 stratum: identical bounding-box diagonal, triangle count, vertex count and (identity)
+  // matrix, but DIFFERENT geometryDigest (reindexedBox's index-order permutation above).
+  tag('rank5-box7-a', testInstance(box(7, 7, 7)));
+  tag('rank5-box7-b-reindexed', testInstance(reindexedBox(7, 7, 7)));
+  // Rank 6 stratum: two SEPARATELY-BUILT Instances from byte-identical geometry construction
+  // (box() is a pure, deterministic function of its arguments) at the identical (identity) matrix
+  // -- every rank ties, including digest, so orientForCrossing must fall through to its declared
+  // rank-6 residual (caller's public source role).
+  tag('rank6-box9-a', testInstance(box(9, 9, 9)));
+  tag('rank6-box9-b', testInstance(box(9, 9, 9)));
+
+  const buildMs = performance.now() - buildT0;
+  const poolSize = pool.length;
+
+  // Precomputed pair schedule, built OUTSIDE the timed region (independent codex-advisor review:
+  // no Math.random() inside the timed loop) -- every ordered (i, j), i !== j, from the pool above.
+  const schedule = [];
+  for (let i = 0; i < poolSize; i++) {
+    for (let j = 0; j < poolSize; j++) {
+      if (i !== j) schedule.push([i, j]);
+    }
+  }
+
+  const N = 1_000_000; // "one million top-level orientation decisions" (design §9.4's own framing)
+  const rankCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  let checksum = 0; // defeats dead-code elimination of the loop below; not itself meaningful
+  const orientT0 = performance.now();
+  for (let k = 0; k < N; k++) {
+    const [i, j] = schedule[k % schedule.length];
+    const a = pool[i].inst, b = pool[j].inst;
+    // Copied verbatim from this file's own MEASURE_SYNTHETIC call above (itself copied verbatim
+    // from VolumeOverlapQuery.js's production canonicalSecondToFirst, Task A2.1): the FULL
+    // per-pair preamble production pays before ever calling properCrossingQuery, not
+    // orientForCrossing alone.
+    const { first, second, rank } = orientForCrossing(a, b);
+    const relative = first.matrix.clone().invert().multiply(second.matrix);
+    rankCounts[rank]++;
+    checksum += rank + relative.elements[0];
+  }
+  const orientationMs = performance.now() - orientT0;
+
+  return {
+    poolSize, poolTags: pool.map((p) => p.name), buildMs,
+    orientationN: N, orientationMs, rankCounts,
+    amortizedEndToEndNs: (buildMs + orientationMs) * 1e6 / N,
+    orientationOnlyNsPerCall: orientationMs * 1e6 / N,
+    checksum,
+  };
+}
+`;
+
+// ---------------------------------------------------------------------------------------------
 // I2 -- live federated Audubon fixture
 // ---------------------------------------------------------------------------------------------
 
@@ -349,6 +481,16 @@ async function runClearanceArm(page, { dbIds, broadPhase }) {
     const crossingEvents = [];
     let projectionErrors = 0;
     let world = null;
+    // Task B'.3 addition: count 'bvh-construction' spans -- the EXISTING, production
+    // `setSpanRecorder` hook (scheduler.js, Task 23's diagnostic seam, "an external harness
+    // cannot otherwise observe internal synchronous spans"). GeometryRegistry._chainAcceleration
+    // reports exactly this label once per `_buildAcceleration` call
+    // (collision/geometry/GeometryRegistry.js:229-231), and `_buildAcceleration` is what calls
+    // ThreeMeshBvhBackend.build(), which computes `geometryDigest` unconditionally and
+    // exactly once per call (ThreeMeshBvhBackend.js:106). So this count IS the digest-computation
+    // count for this run, read off an existing production instrumentation point -- no library
+    // change, no private-field reach-in.
+    let bvhConstructionSpanCount = 0;
     const t0 = performance.now();
     try {
       // Non-throwing projection callback: it runs INSIDE library code via reportDiagnosticEvent,
@@ -376,17 +518,29 @@ async function runClearanceArm(page, { dbIds, broadPhase }) {
               timeBudgetExceeded: payload.timeBudgetExceeded,
               sourceTriangles: payload.sourceTriangles, targetTriangles: payload.targetTriangles,
               sourceComponents: payload.sourceComponents, targetComponents: payload.targetComponents,
+              // Task B'.3 additions: Task A2.4's own C-4 orientation-provenance telemetry already
+              // rides this exact event (VolumeOverlapQuery.js:178-182) -- it was simply never
+              // projected here before. This is the real-model orientation-rank distribution for
+              // family (b), not a synthetic proxy for it.
+              orientedFirstRole: payload.orientedFirstRole, orientationRank: payload.orientationRank,
+              sourceWorldDiagonal: payload.sourceWorldDiagonal, targetWorldDiagonal: payload.targetWorldDiagonal,
             });
           }
         } catch { projectionErrors++; }
       });
+      sched.setSpanRecorder((label) => { if (label === 'bvh-construction') bvhConstructionSpanCount++; });
 
       // §14.1's wall-clock neutralization for the live path: a frozen `_now` makes
       // `now() - traversalStart` identically 0, so neither semantic branch can fire.
       world = await CollisionWorld.fromViewer(window.viewer, { now: () => 0 });
-      world.admitModel(modelArch);
-      world.admitModel(modelStructure);
-      world.admitModel(modelMechanical);
+      // Task B'.3: capture the per-model lease -- each admitModel call mints its OWN loadEpoch
+      // (CollisionWorld.js:716), so this run has three epochs, not one. Leases are the only route
+      // to those epoch ids (admitModel returns them; nothing else exposes the mapping) and are
+      // exactly what the stable, PUBLIC `world.getEpochGeometryDiagnostics(epoch)` accessor
+      // (Task 1.6) needs below -- no reach into `world._registry` at all.
+      const leaseArch = world.admitModel(modelArch);
+      const leaseStructure = world.admitModel(modelStructure);
+      const leaseMechanical = world.admitModel(modelMechanical);
 
       const targets = window.viewer.getAllModels().map((m) => ({ model: m }));
       const result = await world.findClashes({
@@ -396,6 +550,15 @@ async function runClearanceArm(page, { dbIds, broadPhase }) {
         groupBy: 'dbId',
         broadPhase,
       });
+
+      // Task B'.3: geometry-lifecycle cross-check, read BEFORE dispose() (which releases every
+      // entry). One summary array per admitted model's epoch, via the stable public accessor.
+      const geometryEntries = [leaseArch, leaseStructure, leaseMechanical]
+        .flatMap((lease) => world.getEpochGeometryDiagnostics(lease.epoch));
+      const readyGeometryCount = geometryEntries.filter((e) => e.buildState === 'ready').length;
+      const oversizedGeometryCount = geometryEntries.filter((e) => e.buildState === 'oversized').length;
+      const buildingGeometryCount = geometryEntries.filter((e) => e.buildState === 'building').length;
+
       return {
         wallMs: performance.now() - t0,
         pairCount: result.pairs.length,
@@ -407,11 +570,13 @@ async function runClearanceArm(page, { dbIds, broadPhase }) {
           inconclusiveDiagnostics: result.statistics.diagnostics.filter((d) => d.reason === 'clearance-hard-clash-precheck-inconclusive').length,
         },
         crossingEvents, projectionErrors,
+        bvhConstructionSpanCount, readyGeometryCount, oversizedGeometryCount, buildingGeometryCount,
       };
     } finally {
       // §12.1 item 1: unconditional cleanup, so no failure can leave the module-global recorder
       // installed and silently contaminate every later run in this page.
       sched.clearDiagnosticEventRecorder();
+      sched.clearSpanRecorder();
       if (world) world.dispose();
     }
   }, { dbIds, broadPhase, clearance: CLEARANCE });
@@ -493,6 +658,17 @@ async function main() {
           const worst = recs.reduce((m, r) => Math.max(m, r.spanMs ?? 0), 0);
           console.log(`  [${runtime.label}] synthetic rep ${rep} (${state}): ${recs.length} traversals, worst span ${worst.toFixed(3)} ms`);
         }
+      }
+
+      // --- I4: case (e), the aggregate million-pair orientation+digest pass --------------------
+      // Run once per tier (a fixed synthetic measurement, not part of the counterbalanced
+      // cold/warm repetition schedule -- there is nothing to warm up across repetitions here).
+      if (args.inputs.includes('I4')) {
+        const agg = await page.evaluate(`(${MEASURE_AGGREGATE_ORIENTATION})()`);
+        tierReport.aggregateOrientation = agg;
+        console.log(`  [${runtime.label}] I4 aggregate: pool ${agg.poolSize} (buildMs ${agg.buildMs.toFixed(3)}), `
+          + `${agg.orientationN.toLocaleString()} orientForCrossing calls in ${agg.orientationMs.toFixed(1)} ms `
+          + `(${agg.orientationOnlyNsPerCall.toFixed(1)} ns/call), ranks ${JSON.stringify(agg.rankCounts)}`);
       }
 
       // --- I2: the live Audubon inputs ----------------------------------------------------------
