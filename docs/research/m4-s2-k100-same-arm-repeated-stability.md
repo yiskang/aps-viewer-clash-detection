@@ -181,8 +181,22 @@ node test/performance/run-gate-m4.mjs --cases=S2 --runtimes=multi-process --repe
 
 | Run | `startedAt` | `finishedAt` | Duration | Report file |
 |---|---|---|---|---|
-| TLAS-only | 2026-09-11T18:32:09.891Z | 2026-09-11T18:34:22.260Z | ≈2.2 min | `test/performance/results/m4-gate-1789151663590.json` |
+| TLAS-only (original) | 2026-09-11T18:32:09.891Z | 2026-09-11T18:34:22.260Z | ≈2.2 min | `test/performance/results/m4-gate-1789151663590.json` |
 | Linear-only | 2026-09-11T18:36:17.092Z | 2026-09-11T18:41:46.502Z | ≈5.5 min | `test/performance/results/m4-gate-1789152107888.json` |
+
+**Citation correction (post-review):** the original TLAS-only run above ran BEFORE
+`report.sameArmValidation` was wired into the written JSON (that top-level field was added, per §3.1,
+between this run and the linear-only run) — its own JSON file genuinely contains zero
+`sameArmValidation` data, confirmed directly (`grep -c sameArmValidation
+m4-gate-1789151663590.json` → `0`). The linear-only run above already postdates that addition and its
+JSON does carry the field correctly. §6.1 below (the TLAS-only same-arm result) is therefore sourced
+from the **post-fix TLAS-only confirmation re-run** instead (§3.1's `m4-gate-1789152844734.json`,
+`startedAt` `2026-09-11T18:51:51.462Z` → `finishedAt` `2026-09-11T18:54:03.487Z`) — the SAME tuple,
+same forced arm, same 10-repetition scope, run after `report.sameArmValidation` existed, and
+independently confirmed to reproduce the identical console-log result (`pairs=258` every repetition,
+§5's TLAS-only table) as the original run. The original run's own console log (`d2-tlas-run.log`,
+not committed) is still the source for §5's TLAS-only makespan/pairs table, since that data was never
+affected by the missing field.
 
 Both durations include the unconditional cohort-profiling pass and the unconditional S1′/S3′/S4′
 spikes (§17), same as every other invocation of this file. The `--variant-key=` filter kept each run
@@ -254,7 +268,9 @@ vs. 0, ..., repetition 9 vs. 0, all using the unedited `compareRunsAtPairScale` 
 comparator, exactly as `correctness-comparator.mjs` implements it — no tolerance widened, no
 carve-out applied).
 
-### 6.1 TLAS-only — `report.sameArmValidation` (from `m4-gate-1789151663590.json`)
+### 6.1 TLAS-only — `report.sameArmValidation` (from `m4-gate-1789152844734.json`, the post-fix
+confirmation re-run — see the citation correction note in §4; the original TLAS-only run's own JSON
+predates `report.sameArmValidation` being wired in and contains no such field)
 
 | Series | Comparisons | All `valid: true`? | `extraCounterDrift` |
 |---|---|---|---|
@@ -329,10 +345,16 @@ passed after every edit.
   itself) was not touched.**
 - `docs/research/m4-s2-k100-same-arm-repeated-stability.md` (new — this document)
 
-The raw gate outputs (`test/performance/results/m4-gate-1789151663590.json` (TLAS, pre-fix),
-`-1789152107888.json` (linear, pre-fix), and `-1789152844734.json` (TLAS, post-fix confirmation)) are
-gitignored (`test/performance/results/` in `.gitignore`) and were not committed, matching this plan's
-established convention for prior gate-run artifacts.
+The raw gate outputs are gitignored (`test/performance/results/` in `.gitignore`) and were not
+committed, matching this plan's established convention for prior gate-run artifacts:
+
+- `test/performance/results/m4-gate-1789151663590.json` — original TLAS-only run; source for §5's
+  TLAS-only makespan/pairs table only. Predates `report.sameArmValidation` being wired in and
+  contains **no** such field — NOT the source for §6.1 (see the §4 citation-correction note).
+- `test/performance/results/m4-gate-1789152107888.json` — linear-only run; postdates
+  `report.sameArmValidation` and genuinely contains it. Source for §5's and §6.2's linear-only data.
+- `test/performance/results/m4-gate-1789152844734.json` — post-fix TLAS-only confirmation re-run.
+  The actual source for §6.1's TLAS-only `sameArmValidation` data.
 
 ---
 
