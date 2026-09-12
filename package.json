@@ -15,7 +15,10 @@
     "test:performance:gate": "node test/performance/run-gate.mjs",
     "test:performance:gate:m2": "node test/performance/run-gate-m2.mjs",
     "test:performance:gate:m3": "node test/performance/run-gate-m3.mjs",
-    "test:performance:gate:m4": "node test/performance/run-gate-m4.mjs"
+    "test:performance:gate:m4": "node test/performance/run-gate-m4.mjs",
+    "test:regression:swap-replay": "node test/performance/m4/operand-swap-replay.mjs",
+    "test:regression:arm-order": "node test/performance/m4/arm-order-independence.mjs",
+    "test:regression:blocker-reload": "node test/performance/m4/hard-clash-precheck-blocker-reload.mjs"
   },
   "engines": {
     "node": ">=20"

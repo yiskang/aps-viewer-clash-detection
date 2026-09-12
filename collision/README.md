@@ -978,6 +978,24 @@ to Float32 quantization) — a cross-check that uses no part of the collision pi
   0 pairs at 0.02, exactly 2 at 0.05). A fully independent Viewer-owned world-bounds oracle would
   close the residual circularity and remains available as future work.
 
+## Reload-stability and order-independence regressions
+
+The canonical-ordering / operand-symmetry fix's standing protection is four live-Playwright
+regression scripts. None of them is a `node --test` file (`npm test` must never require a live dev
+server or Autodesk Platform Services credentials), so each is run directly, **with the dev server
+already running** (`npm start` / `node server.js`, default `PORT` 8080):
+
+| Script | npm script | What it protects |
+|---|---|---|
+| `test/performance/m4/operand-swap-replay.mjs` | `npm run test:regression:swap-replay` | Design doc §11 regression B — operand-swap invariance at the `volumeOverlapQuery` wrapper, over a real fragment-pair replay set |
+| `test/performance/m4/arm-order-independence.mjs` | `npm run test:regression:arm-order` | Design doc §13 B's arm-order axis — identical disposition regardless of which broad-phase arm (`tlas`/`linear`) runs first in a live session |
+| `test/performance/m4/hard-clash-precheck-blocker-reload.mjs` | `npm run test:regression:blocker-reload` | The exact real failing pair (`structure:3547/frag363` → `architecture:3551/frag30`) pinned stable across ≥ 10 genuine `page.reload()` transitions |
+| `test/performance/m4/cross-reload-parity.mjs` | `node test/performance/run-gate-m4.mjs --d3-cross-reload` (already wired into the M4 gate; imports the gate's own unmodified §6.4 comparator rather than duplicating it) | Design doc §11 regression E, regression C's cross-load half, and the two pending §9.2 measurements — parity across independent page loads |
+
+All four retain one per-session JSON report under `test/performance/results/`, which is
+`.gitignore`d — the evidence is local-working-tree-only, never committed to the repo, so re-running
+them is how a future contributor reproduces the proof rather than trusting a stale artifact.
+
 ## Developer entry points
 
 Read these, in this order, before making changes — no design-spec reading required for ordinary use:
