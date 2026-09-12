@@ -154,6 +154,16 @@ This is L-3, its probability is stated there, and it is the *only* remaining swa
 wrapper. Reload-invariance is unaffected by it, because the public role is caller-determined and
 stable across loads.
 
+> **Superseded note (final-review fix round, Minor #1):** "up to a digest collision between two
+> geometrically distinct meshes" understates how often rank 6 is actually reached. Rank 6 is reached
+> whenever a pair ties through rank 5 for **any** reason — including two byte-identical or co-located
+> instances of the same catalogue part, a routine BIM condition, not only a hash-collision edge case
+> between distinct meshes. The shipped documentation already states this correctly: see
+> `collision/README.md`'s kernel/wrapper contract section ("includes byte-identical geometry, not only
+> a digest collision between two distinct meshes") and CHANGELOG.md's residue entry ("including
+> byte-identical geometry, not only a digest collision between"). Treat those two as the accurate
+> statement of the residue; this paragraph is the historical, narrower framing.
+
 ---
 
 ## 4. Decision 3 — must `ProperCrossingQuery` itself become swap-invariant?
@@ -867,6 +877,17 @@ now makes the same kernel call either way. Pre-fix baseline: **66/106 flips on `
 A separate **kernel-level** replay (forced A/B swap on `properCrossingQuery`) is retained as a
 **characterization** test documenting that the kernel *is* directional — never as a contract.
 **Retention requirement:** per-session JSON under `test/performance/results/`, closing research doc
+
+> **Superseded note (final-review fix round, Important #3):** this paragraph's requirement that the
+> **witness point** be asserted **bit-identical** directly contradicts §3.2's own predicate table,
+> which lists `witness.kind` / `witness.point` under "Legitimately directional" for `volumeOverlapQuery`
+> — those two statements cannot both hold. Task A4.2's implementation resolved this in favor of §3.2:
+> the shipped assertion set (`test/performance/m4/operand-swap-replay.mjs`) is role-normalized
+> diagnostic-*reason* multiset equality, plus `overlap` / `conclusive` / `inconclusiveCauses` and every
+> crossing-term counter, and it **explicitly rejects** witness-point equality as contradicting §3.2 —
+> see that file's own header comment for the full reasoning. Deriving regression B from this
+> paragraph's literal text again would reintroduce a flaky assertion the branch already removed once;
+> §3.2's predicate table is the authority here, not this sentence.
 limitation 9.
 
 **C. The exact known-unstable pairs, pinned.**
