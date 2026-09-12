@@ -182,6 +182,43 @@ test('rank 1 fix makes rank 4\'s NaN guard genuinely reachable for a NaN in the 
   assert.equal(r2.first, b, 'swap-invariant: same physical operand wins regardless of call order');
 });
 
+// === Final-review fix round: +Infinity must NOT be treated like NaN (codex-review, request
+// 20260912-112925-19507-8893 -- a real bug caught in the first draft of the rank-1 NaN fix, which
+// used `Number.isFinite()` and so lumped a genuinely-larger OVERFLOWED world diagonal in with NaN,
+// sorting it to canonical-second and reversing rank 1's "larger world diagonal wins" contract) =====
+
+test('rank 1: a genuinely overflowed (+Infinity) world diagonal still sorts first as the larger operand, regardless of call order', () => {
+  // Realistic overflow, not a literally-typed Infinity: an enormous localDiagonal times a large
+  // uniform scale genuinely overflows to +Infinity in IEEE754 double arithmetic.
+  const hugeScale = new Matrix4().makeScale(1e200, 1e200, 1e200);
+  const overflowed = makeInstance({ localDiagonal: 1e200, matrix: hugeScale }); // worldDiagonal -> Infinity
+  const finite = makeInstance({ localDiagonal: 5 });
+  assert.equal(worldDiagonal(overflowed), Infinity, 'fixture precondition: this must genuinely overflow to +Infinity, not merely be a large finite number');
+
+  const r1 = orientForCrossing(overflowed, finite);
+  const r2 = orientForCrossing(finite, overflowed);
+  assert.equal(r1.first, overflowed, 'the overflowed (genuinely larger) operand must sort FIRST, not be treated like NaN');
+  assert.equal(r2.first, overflowed, 'swap-invariant: same physical operand wins regardless of call order');
+  assert.equal(r1.rank, 1);
+  assert.equal(r2.rank, 1);
+});
+
+test('rank 1: two operands both overflowing to +Infinity is an ordinary tie, falls through past rank 1 (not treated like the NaN case)', () => {
+  const hugeScale = new Matrix4().makeScale(1e200, 1e200, 1e200);
+  const a = makeInstance({ localDiagonal: 1e200, matrix: hugeScale, triangleCount: 10 });
+  const b = makeInstance({ localDiagonal: 1e200, matrix: hugeScale, triangleCount: 20 });
+  assert.equal(worldDiagonal(a), Infinity);
+  assert.equal(worldDiagonal(b), Infinity);
+
+  const r1 = orientForCrossing(a, b);
+  const r2 = orientForCrossing(b, a);
+  assert.notEqual(r1.rank, 1, 'two equal +Infinity diagonals must tie at rank 1 (Infinity === Infinity), like any other equal-magnitude pair');
+  assert.equal(r1.rank, 2);
+  assert.equal(r1.first, b); // larger triangle count sorts first at rank 2
+  assert.equal(r2.rank, 2);
+  assert.equal(r2.first, b);
+});
+
 // === Final-review fix round: rank 5 missing/non-string geometryDigest (Important #2) ============
 
 test('rank 5: a missing geometryDigest is a TIE, not a decisive comparison -- falls through to rank 6', () => {

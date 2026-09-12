@@ -53,30 +53,40 @@ function compareDigest(a, b) {
 export function orientForCrossing(x, y) {
   const dx = worldDiagonal(x);
   const dy = worldDiagonal(y);
-  const dxFinite = Number.isFinite(dx);
-  const dyFinite = Number.isFinite(dy);
-  if (dxFinite !== dyFinite) {
-    // Exactly one operand's world diagonal is non-finite (malformed `localDiagonal` or a NaN in the
-    // world matrix's linear part, which `stretch()` reads). Final-review fix: the pre-fix
-    // `dx !== dy` / `dx > dy` comparison broke swap-invariance here, because `NaN !== finite` is
-    // always true while `NaN > finite` is always false, so the SAME physical operand did not sort
-    // first under both argument orders. Sort the non-finite operand to canonical-second,
-    // symmetrically regardless of call order -- this is still a decision made by the world-diagonal
-    // predicate (extended to treat "no comparable magnitude" as "sorts last"), so reporting rank: 1
-    // stays honest.
-    return dxFinite
-      ? { first: x, second: y, rank: 1 }
-      : { first: y, second: x, rank: 1 };
+  const dxIsNaN = Number.isNaN(dx);
+  const dyIsNaN = Number.isNaN(dy);
+  // NaN is the only value that needs defensive handling here: relational comparisons against NaN
+  // are always false, which is what broke swap-invariance pre-fix. `+Infinity` (a genuine, if
+  // extreme, overflowed magnitude -- e.g. an enormous `localDiagonal` times a large uniform scale)
+  // is NOT treated the same way: ordinary `>`/`!==` already compare it correctly against a finite
+  // value (and against another `+Infinity`, where `Infinity === Infinity` correctly ties), so a
+  // codex-review pass on this exact fix (request 20260912-112925-19507-8893) correctly caught that
+  // an earlier `Number.isFinite()`-based version of this guard incorrectly lumped a genuinely-larger
+  // overflowed operand in with NaN and sorted it to canonical-second, reversing rank 1's contract.
+  if (dxIsNaN !== dyIsNaN) {
+    // Exactly one operand's world diagonal is NaN (malformed `localDiagonal` or a NaN in the world
+    // matrix's linear part, which `stretch()` reads). The pre-fix `dx !== dy` / `dx > dy`
+    // comparison broke swap-invariance here, because `NaN !== finite` is always true while
+    // `NaN > finite` is always false, so the SAME physical operand did not sort first under both
+    // argument orders. Sort the NaN operand to canonical-second, symmetrically regardless of call
+    // order -- this is still a decision made by the world-diagonal predicate (extended to treat "no
+    // comparable magnitude" as "sorts last"), so reporting rank: 1 stays honest.
+    return dxIsNaN
+      ? { first: y, second: x, rank: 1 }
+      : { first: x, second: y, rank: 1 };
   }
-  if (dxFinite && dx !== dy) {
+  if (!dxIsNaN && dx !== dy) {
+    // Neither is NaN (both finite, or one/both `+Infinity`): ordinary magnitude comparison, which
+    // JavaScript already gets right for Infinity vs. a finite number.
     return dx > dy
       ? { first: x, second: y, rank: 1 }
       : { first: y, second: x, rank: 1 };
   }
-  // Either both finite and equal, or both non-finite. A non-finite world diagonal carries no
-  // magnitude to compare against another non-finite one, so both-non-finite is an honest rank-1 TIE
-  // (not a rank-1 decision) -- fall through and let ranks 2-6 have their normal chance to decide,
-  // rather than the pre-fix code's order-dependent `NaN !== NaN` branch.
+  // Either both equal (including both finite-and-equal, or both +Infinity, which ties under ===),
+  // or both NaN. A NaN world diagonal carries no magnitude to compare against another NaN one, so
+  // both-NaN is an honest rank-1 TIE (not a rank-1 decision) -- fall through and let ranks 2-6 have
+  // their normal chance to decide, rather than the pre-fix code's order-dependent `NaN !== NaN`
+  // branch.
 
   const tx = x.geometry.index.count;
   const ty = y.geometry.index.count;

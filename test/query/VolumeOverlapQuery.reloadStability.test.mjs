@@ -320,3 +320,69 @@ test('A.5 — two geometrically distinct meshes sharing diagonal/triangle-count/
   // asserted in a comment), and it would fall to rank 6 (public source role), which the
   // digest assertions above rule out.
 });
+
+// === A.5b — missing geometryDigest at the WRAPPER, documenting the accepted rank-6 residue =========
+//
+// Final-review fix round (Important #2 / codex-review request 20260912-112925-19507-8893,
+// controller ruling): the fix makes a missing/non-string geometryDigest a rank-5 TIE that falls
+// through to rank 6 -- codex-review separately argued this should instead fail loud, but that was
+// explicitly overruled as re-litigating this plan's own already-accepted, already-documented L-3
+// residue (design doc §3.2, collision/README.md, CHANGELOG.md): rank 6 is the one INTENTIONALLY
+// order-dependent fallback of last resort, reached whenever a pair ties through rank 5 for any
+// reason. This test makes that accepted behavior visible end-to-end through the real wrapper
+// (not only at the orientForCrossing unit level above), using the same digest-collision fixture as
+// A.5 but with one operand's digest removed -- simulating the real seams that can produce this (an
+// injected accelerationImpl override, or a CollisionWorld built directly rather than via
+// fromViewer()).
+test('A.5b — a missing geometryDigest reaches the documented, order-dependent rank-6 fallback at the wrapper, not a false rank-5 decision', async () => {
+  const meshA = testInstance(cube(5, 0));
+  const meshB = testInstance(cube(5, 1));
+  delete meshA.geometryDigest;
+
+  // Fixture precondition: ranks 1-4 still genuinely tie (identical to A.5's own precondition).
+  assert.equal(meshA.localDiagonal, meshB.localDiagonal);
+  assert.equal(meshA.geometry.index.count, meshB.geometry.index.count);
+  assert.equal(meshA.geometry.attributes.position.count, meshB.geometry.attributes.position.count);
+  assert.deepEqual(meshA.matrix.elements, meshB.matrix.elements);
+  assert.match(meshB.geometryDigest, /^[0-9a-f]{32}$/, 'fixture precondition: meshB still has a valid digest');
+  assert.equal(meshA.geometryDigest, undefined, 'fixture precondition: meshA genuinely lacks a digest');
+
+  // orientForCrossing itself: rank 6, not a misreported rank 5, and (correctly, per the documented
+  // residue) the caller's argument order decides which physical operand wins.
+  const fwdOrientation = orientForCrossing(meshA, meshB);
+  const bwdOrientation = orientForCrossing(meshB, meshA);
+  assert.equal(fwdOrientation.rank, 6);
+  assert.equal(bwdOrientation.rank, 6);
+  assert.equal(fwdOrientation.first, meshA);
+  assert.equal(bwdOrientation.first, meshB);
+
+  // The wrapper: same accepted order-dependence, visible through the real diagnostic-event
+  // telemetry regressions A.2/A.4 above already rely on for a genuine rank decision.
+  const events = [];
+  setDiagnosticEventRecorder((kind, payload) => events.push({ kind, payload }));
+  let forward, backward;
+  try {
+    forward = await volumeOverlapQuery(meshA, meshB, {
+      diagnosticPairContext: { sourceEpoch: 1, sourceFragmentId: 1, targetEpoch: 1, targetFragmentId: 2 },
+    });
+    backward = await volumeOverlapQuery(meshB, meshA, {
+      diagnosticPairContext: { sourceEpoch: 1, sourceFragmentId: 1, targetEpoch: 1, targetFragmentId: 2 },
+    });
+  } finally {
+    clearDiagnosticEventRecorder();
+  }
+  const crossingEvents = events.filter((e) => e.payload?.stage === 'crossing').map((e) => e.payload);
+  assert.equal(crossingEvents.length, 2);
+  assert.equal(crossingEvents[0].orientationRank, 6, 'documented residue: rank 6, not a false rank 5');
+  assert.equal(crossingEvents[1].orientationRank, 6);
+  // The public source role wins both times -- this IS the documented order-dependence, not a bug:
+  // orientForCrossing's rank-6 fallback always returns the caller's positional first argument.
+  assert.equal(crossingEvents[0].orientedFirstRole, 'source');
+  assert.equal(crossingEvents[1].orientedFirstRole, 'source');
+  // overlap/conclusive still tie here (this fixture's two meshes are geometrically close enough
+  // that the residual order-dependence happens not to move the verdict) -- that is a property of
+  // THIS fixture, not a guarantee rank 6 makes; the point of this test is the orientation
+  // telemetry above, which proves the fallback path was genuinely exercised.
+  assert.equal(forward.overlap, backward.overlap);
+  assert.equal(forward.conclusive, backward.conclusive);
+});
