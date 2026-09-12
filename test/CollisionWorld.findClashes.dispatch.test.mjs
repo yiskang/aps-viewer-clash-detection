@@ -266,11 +266,14 @@ test('volume-overlap dispatch: an AABB-overlapping but geometrically disjoint pa
 
 // === canonical operand ordering (fix round 1, Finding 1) =======================================
 //
-// `compareCanonical` decides which operand's localDiagonal becomes L_canonical for
-// ProperCrossingQuery's offset ladder (`{1e-3,1e-4,1e-5} x L_canonical`). VolumeOverlapQuery's own
-// library default treats the PUBLIC source as canonical-first, which makes that scale depend on
-// which side the caller happened to label source -- a public VERDICT difference, not a tolerance
-// nuance, whenever the two operands' local diagonals differ sharply.
+// Historically, VolumeOverlapQuery exposed a `compareCanonical` option that decided which operand's
+// localDiagonal became L_canonical for ProperCrossingQuery's offset ladder
+// (`{1e-3,1e-4,1e-5} x L_canonical`); that option has since been REMOVED in favor of
+// orientForCrossing's total geometric order (see the fail-loud removal guard in
+// VolumeOverlapQuery.js). Before removal, the library's own default treated the PUBLIC source as
+// canonical-first, which made that scale depend on which side the caller happened to label source --
+// a public VERDICT difference, not a tolerance nuance, whenever the two operands' local diagonals
+// differed sharply.
 //
 // The geometry below is that case, measured rather than assumed: a 3000 x 1 x 1 duct
 // (localDiagonal ~3000) crossing a 1 x 1 x 4 beam (localDiagonal ~4.24) at the origin -- a ~707:1

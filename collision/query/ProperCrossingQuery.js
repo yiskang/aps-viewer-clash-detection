@@ -122,8 +122,21 @@ export function properCrossingQuery(bvhA, bvhB, matrixBtoA, localDiagonalA, loca
   // grow it: a pair the pre-fix epsilon would have probed is never newly discarded by
   // this change, under either operand ordering. `localDiagonalB * stretch(matrixBtoA)`
   // is B's diagonal expressed in A's local frame (the same frame `surfaceEpsilon` and
-  // the coplanar-branch offset check both operate in), commensurate with
-  // `localDiagonalA` directly -- not a raw cross-frame comparison.
+  // the coplanar-branch offset check both operate in).
+  //
+  // The `min` is REDUNDANT for uniform-scale operands: rank 1's world-diagonal ordering already
+  // guarantees `worldDiagonalA >= worldDiagonalB`, so for that transform class the first term
+  // (`localDiagonalA`) is always the smaller one and the `min` never selects the second term. It
+  // becomes genuinely LOAD-BEARING under the anisotropy this path (`_runNarrowPhasePair`, unlike
+  // `_runClearanceNarrowPhasePair`) does not exclude: `stretch()` is the max column norm, an
+  // OVER-estimate of an anisotropic/sheared transform's actual per-axis scale, not an exact
+  // transformed diagonal, so `localDiagonalB * stretch(matrixBtoA)` can exceed `localDiagonalA` and
+  // the `min` really does pick the first term in that case (worked example: A scaled (1,1,100) with
+  // localDiagonal 1, B unscaled with localDiagonal 2 -- rank 1 picks A on world-diagonal 100 > 2, yet
+  // localDiagonalB * stretch(A^-1 B) = 2 > localDiagonalA = 1). Either way the result can only get
+  // TIGHTER (safer) than the pre-fix single-operand formula, never looser -- `min(a, b) <= a` for any
+  // b -- so this is not a raw cross-frame comparison in the anisotropic case, but the monotonic
+  // shrink-only guarantee holds regardless.
   const surfaceEpsilon = surfaceEpsilonFactor * Math.min(
     localDiagonalA,
     localDiagonalB * stretch(matrixBtoA)

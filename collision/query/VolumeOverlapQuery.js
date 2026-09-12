@@ -102,7 +102,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   // plays -- so it needs the identical gate. Checked here against the PUBLIC
   // source/target roles (never canonicalFirst/canonicalSecond: diagnostic
   // role-naming must stay tied to the public roles regardless of canonical order,
-  // per this file's own convention -- see the compareCanonical comment above).
+  // per this file's own convention -- see the "Decides ONLY which operand's fields go first into
+  // properCrossingQuery ... NEVER which operand this function calls source/target for diagnostic
+  // role-naming" comment above orientForCrossing's own call site, a few lines up in this function).
   // When gated, properCrossingQuery is never called at all; a synthetic result is
   // substituted so the rest of this function's control flow is unaffected.
   // Task 1.4: optional per-pair diagnostic-event context (Task 1.2's reportDiagnosticEvent
