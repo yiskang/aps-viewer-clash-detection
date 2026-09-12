@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { orientForCrossing } from '../../collision/query/orientForCrossing.js';
+import { orientForCrossing, worldDiagonal } from '../../collision/query/orientForCrossing.js';
 import { Matrix4 } from 'three';
 
 function makeInstance({ localDiagonal, matrix = new Matrix4(), triangleCount = 12, vertexCount = 8, geometryDigest = 'a'.repeat(32) }) {
@@ -109,6 +109,107 @@ test('rank 6: identical digest falls back to the caller\'s public source role', 
   assert.equal(r1.first, a);
   assert.equal(r2.first, b);
   assert.equal(r1.rank, 6);
+});
+
+// === Final-review fix round: rank 1 NaN-safety (Important #1) ==================================
+
+test('rank 1: exactly one operand has a non-finite world diagonal -- the finite operand always sorts first, regardless of call order (NaN first)', () => {
+  const nanOne = makeInstance({ localDiagonal: NaN });
+  const finite = makeInstance({ localDiagonal: 5 });
+  const r1 = orientForCrossing(nanOne, finite);
+  const r2 = orientForCrossing(finite, nanOne);
+  assert.equal(r1.first, finite, 'NaN operand passed first as the call argument must still sort second');
+  assert.equal(r2.first, finite, 'NaN operand passed second as the call argument must still sort second');
+  // This is still a rank-1 decision (the world-diagonal predicate, extended to treat a non-finite
+  // diagonal as "sorts last"), so reporting rank: 1 is honest -- it must NOT be misreported as if a
+  // lower rank had decided it.
+  assert.equal(r1.rank, 1);
+  assert.equal(r2.rank, 1);
+});
+
+test('rank 1: exactly one operand has a non-finite world diagonal -- the finite operand always sorts first, regardless of call order (NaN second)', () => {
+  // Same fixture, opposite physical role of "which local variable holds the NaN instance" -- proves
+  // the fix does not merely happen to work for one argument position.
+  const finite = makeInstance({ localDiagonal: 290.969 });
+  const nanOne = makeInstance({ localDiagonal: NaN });
+  const r1 = orientForCrossing(finite, nanOne);
+  const r2 = orientForCrossing(nanOne, finite);
+  assert.equal(r1.first, finite);
+  assert.equal(r2.first, finite);
+  assert.equal(r1.rank, 1);
+  assert.equal(r2.rank, 1);
+});
+
+test('rank 1: both operands have a non-finite world diagonal -- falls through past rank 1 (honest tie, not a decision)', () => {
+  // Distinguish at rank 2 (triangle count) so the fall-through is observable and unambiguous.
+  const a = makeInstance({ localDiagonal: NaN, triangleCount: 10 });
+  const b = makeInstance({ localDiagonal: NaN, triangleCount: 20 });
+  assert.doesNotThrow(() => orientForCrossing(a, b));
+  const r1 = orientForCrossing(a, b);
+  const r2 = orientForCrossing(b, a);
+  assert.notEqual(r1.rank, 1, 'both-NaN must not be reported as a rank-1 decision');
+  assert.equal(r1.rank, 2);
+  assert.equal(r1.first, b); // larger triangle count sorts first at rank 2
+  assert.equal(r2.rank, 2);
+  assert.equal(r2.first, b); // swap-invariant
+});
+
+test('rank 1 fix makes rank 4\'s NaN guard genuinely reachable for a NaN in the world matrix\'s LINEAR part (not only translation)', () => {
+  // Before the rank-1 fix, ANY NaN in the linear part (elements 0-2/4-6/8-10) poisoned
+  // worldDiagonal via stretch(), so the pair was always (mis)decided at rank 1 and rank 4's own NaN
+  // guard could never run for this case -- only a translation-part NaN (elements 12-14, outside
+  // every stretch() column) could reach it, per the existing test above. Here both operands carry a
+  // linear-part NaN at DIFFERENT indices, so both world diagonals are non-finite (an honest rank-1
+  // tie under the fix), both tie at ranks 2-3 (identical default counts), and the pair genuinely
+  // reaches rank 4's per-element comparator.
+  const matA = new Matrix4(); matA.elements[0] = NaN; // column 0 (stretch's col0) -> NaN
+  const matB = new Matrix4(); matB.elements[4] = NaN; // column 1 (stretch's col1) -> NaN, index 0 still finite (=1) on B
+  const a = makeInstance({ localDiagonal: 5, matrix: matA, geometryDigest: 'a'.repeat(32) });
+  const b = makeInstance({ localDiagonal: 5, matrix: matB, geometryDigest: 'a'.repeat(32) });
+
+  // Fixture preconditions: both world diagonals are genuinely non-finite (reaches the both-NaN
+  // rank-1 tie), and ranks 2-3 genuinely tie.
+  assert.equal(Number.isFinite(worldDiagonal(a)), false);
+  assert.equal(Number.isFinite(worldDiagonal(b)), false);
+
+  assert.doesNotThrow(() => orientForCrossing(a, b));
+  const r1 = orientForCrossing(a, b);
+  const r2 = orientForCrossing(b, a);
+  assert.equal(r1.rank, 4, 'must reach rank 4 -- not misdecided at rank 1');
+  assert.equal(r2.rank, 4);
+  // Index 0 is the first differing index (a: NaN, b: 1) -- NaN sorts after finite, so b sorts first.
+  assert.equal(r1.first, b);
+  assert.equal(r2.first, b, 'swap-invariant: same physical operand wins regardless of call order');
+});
+
+// === Final-review fix round: rank 5 missing/non-string geometryDigest (Important #2) ============
+
+test('rank 5: a missing geometryDigest is a TIE, not a decisive comparison -- falls through to rank 6', () => {
+  // Bypass makeInstance's default digest entirely (its default parameter would otherwise apply even
+  // to an explicit `geometryDigest: undefined`), matching the real seams that can produce this: an
+  // injected accelerationImpl override, or a CollisionWorld constructed directly rather than via
+  // fromViewer().
+  const withoutDigest = (overrides = {}) => {
+    const instance = makeInstance({ localDiagonal: 5, ...overrides });
+    delete instance.geometryDigest;
+    return instance;
+  };
+  const a = withoutDigest();
+  const b = makeInstance({ localDiagonal: 5, geometryDigest: 'b'.repeat(32) });
+
+  const r1 = orientForCrossing(a, b);
+  const r2 = orientForCrossing(b, a);
+  assert.equal(r1.rank, 6, 'a missing digest must not be misreported as a rank-5 decision');
+  assert.equal(r2.rank, 6);
+  // Rank 6 is the documented order-dependent fallback to the caller's public "first" role.
+  assert.equal(r1.first, a);
+  assert.equal(r2.first, b);
+
+  // Both digests missing/non-string is the same tie.
+  const c = withoutDigest();
+  const d = withoutDigest();
+  const r3 = orientForCrossing(c, d);
+  assert.equal(r3.rank, 6);
 });
 
 test('ranks 1-5 are swap-invariant, and rank-5 digest ordering is transitive', () => {
