@@ -132,5 +132,4 @@ decision to begin Phase 4 work is a separate, later, optional decision for the m
 owner — this closeout does not need to make that decision, and does not need Phase 4 to run,
 in order to be complete itself.
 
-**No merge, no push.** This report and the branch state it describes (`b6a0787`) await the
-milestone owner's final review before any further action.
+**No merge, no push.** This report is closed; the branch state it describes (`b6a0787`) is unchanged and awaits a separate decision to merge or push.
