@@ -51,3 +51,16 @@ Keep `docs/handoffs/latest.md` current with at least:
 6. Report branch, HEAD, and final git status.
 
 Do not create a commit solely because the handoff was updated unless explicitly authorized.
+
+## Internal review loop
+
+For specification, design, plan, or implementation work that requires review:
+
+- Use the configured Codex review workflow as the internal reviewer.
+- Resolve blocking findings and repeat review as needed without requiring the user to manually relay each review round.
+- Continue the internal review/remediation loop until:
+  - no Critical or High findings remain, and
+  - remaining Medium/Low findings are explicitly dispositioned.
+- Do not treat the internal Codex review as the final independent acceptance gate.
+- When the work reaches a stable checkpoint, update `docs/handoffs/latest.md` and mark it ready for independent ChatGPT Work review.
+- If an independent Work review later introduces blocking findings, remediate them and repeat the internal loop before requesting another independent gate.
