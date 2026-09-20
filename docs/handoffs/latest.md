@@ -2,9 +2,9 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 - **Branch:** `feature/m4-performance-worker-decision-design`
-- **HEAD:** `017eb7d6e18dc2bc39031fa6cdc4e94bb40148e1` (`017eb7d`, "docs: add Federated Clash Test remediation review")
-- **Working tree:** the spec is modified and **uncommitted** (round 8 plus round 9 remediation); this handoff is modified; the round 8 and round 9 independent reviews are untracked. No production code or tests changed. No commit was made this session.
-- **Milestone context:** M4 — Performance / Worker Decision Gate (closed, Verdict D). Current work: **Federated Clash Test & Results design remediation** (specification only; no production code). Independent round 9 review found no remaining Critical/High issue, but two Medium cross-section defects require revision; the draft is **not ready for implementation planning**.
+- **HEAD:** `256b09277ed43a453e78b666ac8bb8130323ebbe` (`256b092`, "docs: remediate Federated Clash Test spec rounds 8-9 and add review records")
+- **Working tree:** the spec (round 10 remediation of R9-M1/R9-M2) and this handoff are modified and **uncommitted**; everything through round 9, including the round 8 and round 9 review records, is committed at HEAD. No production code or tests changed.
+- **Milestone context:** M4 — Performance / Worker Decision Gate (closed, Verdict D). Current work: **Federated Clash Test & Results design remediation** (specification only; no production code). The two Medium findings left by the round 9 review (R9-M1, R9-M2) have been remediated in the spec (round 10) but are **not yet independently re-verified**; the draft is **not cleared for implementation planning**.
 - **M4 status:** Closed with Verdict D, accepted by the milestone owner. Phase 4 was not started or authorized, and was not touched by the new spec.
 
 ## Governing documents
@@ -21,11 +21,11 @@
 
 ## Federated Clash Test & Results spec — review state
 
-- **Verdict:** `revise spec before implementation planning`. Current authority: [`docs/reviews/2026-09-20-federated-clash-test-and-results-round9-review.md`](../reviews/2026-09-20-federated-clash-test-and-results-round9-review.md). Reviewed spec SHA-256: `4960814b1f6c2bd0c5c655deba21888f93add110a85a1d0d3b632b9c1c158643`.
-- **NH3 core design — resolved:** permanent `ResultStore.tombstoneTest`, atomic rejection in `put`, fail-closed engine admission, and result-store-first `engine.deleteTest` ordering close the direct-definition/embedded-rerun durable alias path. Store-level concurrency coverage is adequate.
-- **M2 core boundedness — resolved:** every runtime allocation class has a pre-reserved, independently capped, atomic-refusal, or planning-failure path; exhaustion can only widen taint or turn a split into a gap.
-- **Two Medium revisions remain:** **R9-M1** AC-1(b) calls `retryPersist` after `persist:false`, but §13.5.1 and §18 permit retry only from `failed`, while that set is `skipped`. **R9-M2** the claimed `D ≥ maxUnitsPerRun` proof treats `maxPlanReferences` as a bound on `planRecords`, although §6.5.1 counts several additional planning classes only under `maxLedgerRecords`; AC-16's minimum-budget runtime fixture may therefore fail during planning.
-- **Verification performed:** independently checked the round 9 changes against the current persistence API, ledger accounting, acceptance criteria, architecture, roadmap, M4 closeout, and prior findings. `git diff --check` passes. No `npm test` run was needed because only documentation was reviewed. The spec was not modified.
+- **Verdict authority:** [`docs/reviews/2026-09-20-federated-clash-test-and-results-round9-review.md`](../reviews/2026-09-20-federated-clash-test-and-results-round9-review.md) (reviewed spec SHA-256 `4960814b…`) said `revise spec before implementation planning`; it judged the NH3 and M2 designs resolved (no Critical/High) and left two Medium defects. Round 10 edits are unreviewed, so the spec is still **not cleared for implementation planning**.
+- **R9-M1 — remediated (spec §25 Round 10).** AC-1(b) required `retryPersist` from a `persist:false` (`skipped`) set, which §13.5.1/§18 forbid (`failed` only). Kept the API contract; fixed the acceptance case: AC-1(b) now retrieves the sealed set with `getResultSet(runId)` and calls the configured `ResultStore.put` directly (expects `TestDeletedError`, nothing inserted, no `modelKey` claimed), and exercises the *legal* `retryPersist` path with a persisting run whose `put` first failed for an unrelated injected reason and is retried after `deleteTest`. §5.5 layers 1/2 no longer list `retryPersist` as an entry point for a `skipped` set. `retryPersist` was deliberately **not** broadened.
+- **R9-M2 — remediated.** The proof `D ≥ maxUnitsPerRun` assumed `planRecords ≤ maxPlanReferences`, but `maxPlanReferences` counted only table entries and range records. `maxPlanReferences` now bounds **every** planning-time record class (`planRecords`), so the bound holds by construction and the proof (`planRecords + maxUnitsPerRun ≤ maxLedgerRecords − maxUnitsPerRun`) is sound; the end-of-planning check stays as an asserted internal invariant (unreachable under validated options; violation ⇒ `failed:internal-error`). AC-16's fixture is now specified so planning succeeds and runtime exhaustion is reached (`maxUnitsPerRun = N`, `maxLedgerRecords = maxPlanReferences + 2N`, plan within `maxPlanReferences` counting all classes, `N/2` initial units); the option-level `plan-too-large` case is the `maxPlanReferences` overrun. Affected text: §5.5 (layers 1/2), §6.5.1 (guard definition, proof), §17.1 (`maxPlanReferences` row), AC-1(b), AC-16. The 2,000,000 default now covers more record classes and stays provisional/unmeasured.
+- **Unchanged this session:** NH3 design (`ResultStore` tombstone, admission check, `deleteTest` order), M2 exhaustion table and reserved slots, all earlier-round decisions.
+- **Verification performed:** every `§` reference and AC/OQ id in the spec resolves; edited markdown table rows have consistent column counts; `git diff --check` passed; spec SHA-256 `22bb434a42c499ea1dd60a32bf802440d5f8414311ca54d3f11a4c46bd31ea55`; grep confirmed `retryPersist` is described as `failed`-only everywhere and no remaining statement bounds `planRecords` by a narrower counter. **No independent re-review since the round 10 edits; no `npm test` run** (docs only, no production code touched).
 
 ## Implementation and tests (unchanged by this task)
 
@@ -37,8 +37,7 @@
 
 ## Explicitly unresolved or deferred
 
-- **Required spec revision:** make AC-1(b)'s post-`persist:false` tombstone test use a legal persistence path, or redefine the retry contract consistently.
-- **Required spec revision:** correct the `maxPlanReferences`/`planRecords` reserve proof and ensure AC-16 reaches runtime exhaustion under its configured budget.
+- **Pending verification:** the round 10 remediations of R9-M1 and R9-M2 need a fresh independent review; no revision-required finding is currently known, but none has been re-verified.
 - **Outstanding external gate:** live Viewer owner-mapping evidence (OQ-4 gate) has not been gathered and independently blocks Viewer-adapter implementation planning.
 - **Open Low findings from the original review:** L2 (partly reworded) and L4 for AC-15(d)–(g). All new caps (`maxLedgerRecords` 4,000,000, target caps, lowered validation ceiling) are provisional.
 - Spec open questions remain in §24. OQ-16 now has a fail-closed interim (claim blocked until product acceptance is recorded); OQ-4 and OQ-17 remain trust boundaries. OQ-16 acceptance itself is a product decision not yet made.
@@ -48,4 +47,4 @@
 
 ## Suggested next action
 
-Remediate R9-M1 and R9-M2 against the round 9 review, then perform another independent consistency review. Implementation planning remains unauthorized until the specification has no revision-required findings and the OQ-4 live feasibility artifact exists. Do not reopen M4 or start Phase 4 unless explicitly authorized. No commit is authorized yet.
+Commission another independent consistency review of the round 10 spec against the round 9 review's criteria (AC-1(b) legality against §13.5.1/§18; the `planRecords`/`maxPlanReferences` reserve proof and AC-16 reachability), e.g. `codex-review spec docs/superpowers/specs/2026-09-20-federated-clash-test-and-results-design.md medium` or the independent-review process used for earlier verification reviews. Implementation planning remains unauthorized until no revision-required findings remain and the OQ-4 live feasibility artifact exists. Do not reopen M4 or start Phase 4 unless explicitly authorized. No further commit is authorized yet.
