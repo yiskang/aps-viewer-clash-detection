@@ -6,6 +6,8 @@
 
 Master: ../2026-09-20-federated-clash-test-core-engine-implementation.md
 
+> **Implementation status (2026-09-21): P3.1–P3.9 IMPLEMENTED and committed (owner-authorized); internal review dispositioned; awaiting the independent Work review + adjudication gate before P4.** The implementation, not the code sketches above, is authoritative where they differ; the deviations (all keep the observable contracts) are recorded in [`docs/reviews/2026-09-21-federated-clash-test-core-p3-internal-codex-review.md`](../../../reviews/2026-09-21-federated-clash-test-core-p3-internal-codex-review.md).
+
 ## Global Constraints
 
 This phase **inherits the master's Global Constraints** in full (no `collision/` change, no Viewer/`three` import, ESM `.js` modules + `*.test.mjs` tests, plain data at every boundary, fail-closed semantics, defaults only from `clashtest/options.js`, injectable `now`/`yieldToScheduler`, TDD, commits only on explicit authorization). Phase-specific constraints, copied verbatim from the spec:
@@ -119,7 +121,7 @@ The port is the whole Viewer seam. Nothing else in the core may assume anything 
 
 **Steps**
 
-- [ ] **Step 1: Write the failing port-validation test.** Create `test/clashtest/planning/ElementEnumerator.test.mjs`:
+- [x] **Step 1: Write the failing port-validation test.** Create `test/clashtest/planning/ElementEnumerator.test.mjs`:
 
 ```js
 // test/clashtest/planning/ElementEnumerator.test.mjs
@@ -187,9 +189,9 @@ test('conformance reports, never throws, for a non-cooperating enumerator', asyn
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/ElementEnumerator.test.mjs` → `ERR_MODULE_NOT_FOUND` for `clashtest/planning/ElementEnumerator.js`.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/ElementEnumerator.test.mjs` → `ERR_MODULE_NOT_FOUND` for `clashtest/planning/ElementEnumerator.js`.
 
-- [ ] **Step 3: Write the port module.** `clashtest/planning/ElementEnumerator.js` carries (a) the JSDoc typedefs copied from spec §6.2 verbatim in structure, (b) the two validators, (c) the conformance helper. The validators are pure and allocate one `issues` array:
+- [x] **Step 3: Write the port module.** `clashtest/planning/ElementEnumerator.js` carries (a) the JSDoc typedefs copied from spec §6.2 verbatim in structure, (b) the two validators, (c) the conformance helper. The validators are pure and allocate one `issues` array:
 
 ```js
 export const ENUMERATION_SCOPE_WHOLE = 'whole';
@@ -267,7 +269,7 @@ export function validateResolveRootsResult(result, { scope }) {
 
   `validateDigestScopeResult` is the same style over the two `digestScope` shapes (`{kind:'population', count, digest}` for whole; `{kind:'roots', roots:[{dbId, fragmentCount, subtreeDigest}]}` for explicit, ascending by `dbId`).
 
-- [ ] **Step 4: Write the conformance helper.** `checkEnumeratorConformance` is the artifact every future enumerator (including the OQ-4 Viewer adapter) must pass. It asserts the **port contract only** — never a particular model's content:
+- [x] **Step 4: Write the conformance helper.** `checkEnumeratorConformance` is the artifact every future enumerator (including the OQ-4 Viewer adapter) must pass. It asserts the **port contract only** — never a particular model's content:
 
 ```js
 export async function checkEnumeratorConformance({ enumerator, binding, cases }) {
@@ -308,7 +310,7 @@ export async function checkEnumeratorConformance({ enumerator, binding, cases })
 }
 ```
 
-- [ ] **Step 5: Write the synthetic enumerator fixture.** `test/clashtest/support/syntheticModels.mjs` turns a plain model spec into a conforming enumerator. Spec shape and the fake's rules:
+- [x] **Step 5: Write the synthetic enumerator fixture.** `test/clashtest/support/syntheticModels.mjs` turns a plain model spec into a conforming enumerator. Spec shape and the fake's rules:
 
 ```js
 /** modelSpec = {
@@ -325,7 +327,7 @@ export async function checkEnumeratorConformance({ enumerator, binding, cases })
 
   `resolveRoots(binding, 'whole')` returns every root ascending with a real `subtreeDigest` (computed with P3.2's `digestSubtree` once that exists — until then a deterministic placeholder that Step 3 of P3.2 replaces), `population` over *all* fragments (root fragments ∪ `unreachable`) ascending by `fragId`, `unreachable` reconciled into `{count, ownerDbIds, unattributable}` where `count` counts only class-`L` entries with a numeric owner and `unattributable` counts class `N`/`U`, and `ownerMismatch: {count: spec.ownerMismatchCount ?? 0, first20: […]}`. `resolveRoots(binding, {dbIds})` drops any listed dbId that has a listed ancestor (via `ancestorOf`), reports `missingDbIds` as `not-found` and `emptyDbIds` as `no-fragments`, and returns `population/ownerMismatch/unreachable` as `null`. Both call `ctx.checkpoint()` once per model and `await` it, unless the fixture is built with `{ignoreCheckpoint: true}`.
 
-- [ ] **Step 6: Run and see it pass.** `node --test test/clashtest/planning/ElementEnumerator.test.mjs` → all tests pass.
+- [x] **Step 6: Run and see it pass.** `node --test test/clashtest/planning/ElementEnumerator.test.mjs` → all tests pass.
 
 - [ ] **Step 7: Checkpoint commit (only if the user has authorized commits).** `docs(plan): P3.1 ElementEnumerator port contract + conformance helper`.
 
@@ -348,7 +350,7 @@ P3 owns the **pure** digest functions and the comparator. The loop that *runs* t
 
 **Steps**
 
-- [ ] **Step 1: Write the failing digest test.**
+- [x] **Step 1: Write the failing digest test.**
 
 ```js
 // test/clashtest/planning/scopeDigest.test.mjs
@@ -502,9 +504,9 @@ test('a population that grows and REVERTS between pre- and post-check is still c
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/scopeDigest.test.mjs` → module not found.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/scopeDigest.test.mjs` → module not found.
 
-- [ ] **Step 3: Implement the module.**
+- [x] **Step 3: Implement the module.**
 
 ```js
 // P0 `util/canonical.js`: digestCanonical is SYNCHRONOUS ("small values only");
@@ -564,7 +566,7 @@ export function compareScopeExpectation(expect, observed) {
 
   **`role` is an opaque label (P3's confirmation of P6's open item O8).** `compareScopeExpectation` copies `expect.role` into its result and **never branches on it**; `checkScopeBracket` does not read it at all. Any string is therefore legal, which is what makes P6's read-time `sealedScopeExpect` entries — which carry `role: 'recorded'`, because a sealed set records scopes rather than planning roles — valid input to the same one comparator P4 drives with `role: 'source'|'target'`. P3 will not add a branch on `role` without telling P6; the test above that feeds a `'target'` and a `'source'` entry through identical code paths is the standing guard.
 
-- [ ] **Step 4: Implement `checkScopeBracket` in the same module (duplicate-ownership D1).** It is **one side** of a bracket: re-`digestScope` every scope the expectation lists and fold `compareScopeExpectation` over the answers. Both callers — P4's `LocalUnitExecutor` per unit (pre and post) and P6's `getFreshness` at read time — use this one implementation, which is why it lives beside the comparator it folds and **not** in `run/` (P4 may not import from `run/`; that would invert the master's dependency graph).
+- [x] **Step 4: Implement `checkScopeBracket` in the same module (duplicate-ownership D1).** It is **one side** of a bracket: re-`digestScope` every scope the expectation lists and fold `compareScopeExpectation` over the answers. Both callers — P4's `LocalUnitExecutor` per unit (pre and post) and P6's `getFreshness` at read time — use this one implementation, which is why it lives beside the comparator it folds and **not** in `run/` (P4 may not import from `run/`; that would invert the master's dependency graph).
 
 ```js
 /**
@@ -606,9 +608,9 @@ export async function checkScopeBracket(scopeExpect, { enumerator, bindings, ctx
 
   Three properties the tests pin and both consumers depend on: the expectation is **never rebuilt here** (it arrives from `materializeUnit(plan, unit).scopeExpect`, the sole R20-1 producer); each side compares against that **planning-time** expectation rather than against the other side, which is what catches a grow-and-revert between the pre- and post-check; and `EnumerationCancelledError` propagates unwrapped rather than being laundered into `unverifiable`.
 
-- [ ] **Step 5: Make the fixture use the real digests.** Replace the placeholder in `syntheticModels.mjs` with `digestSubtree`/`digestPopulation` so every later test's digests are the production ones.
+- [x] **Step 5: Make the fixture use the real digests.** Replace the placeholder in `syntheticModels.mjs` with `digestSubtree`/`digestPopulation` so every later test's digests are the production ones.
 
-- [ ] **Step 6: Run and see it pass.** `node --test test/clashtest/planning/scopeDigest.test.mjs test/clashtest/planning/ElementEnumerator.test.mjs`.
+- [x] **Step 6: Run and see it pass.** `node --test test/clashtest/planning/scopeDigest.test.mjs test/clashtest/planning/ElementEnumerator.test.mjs`.
 
 - [ ] **Step 7: Checkpoint commit (only if the user has authorized commits).**
 
@@ -628,7 +630,7 @@ This is the memory-bound core of §6.5.1 and is built before anything allocates,
 
 **Steps**
 
-- [ ] **Step 1: Write the failing budget test.**
+- [x] **Step 1: Write the failing budget test.**
 
 ```js
 // test/clashtest/planning/ledger.budget.test.mjs
@@ -693,9 +695,9 @@ test('every §6.5.1 record class is named', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/ledger.budget.test.mjs` → module not found.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/ledger.budget.test.mjs` → module not found.
 
-- [ ] **Step 3: Implement `createRecordBudget`.**
+- [x] **Step 3: Implement `createRecordBudget`.**
 
 ```js
 export const PLAN_RECORD_CLASSES = Object.freeze([
@@ -743,7 +745,7 @@ export function createRecordBudget({ maxPlanReferences, maxLedgerRecords, maxUni
 
   Two properties the tests pin: admission is **checked before allocation** and a block is **atomic** (`split` admits the two child unit records *and* their range records as one `n`), so no half-recorded split can exist (§6.5.1 table row 5).
 
-- [ ] **Step 4: Run and see it pass.** `node --test test/clashtest/planning/ledger.budget.test.mjs`.
+- [x] **Step 4: Run and see it pass.** `node --test test/clashtest/planning/ledger.budget.test.mjs`.
 
 - [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).**
 
@@ -761,7 +763,7 @@ export function createRecordBudget({ maxPlanReferences, maxLedgerRecords, maxUni
 
 **Steps**
 
-- [ ] **Step 1: Write the failing table test.**
+- [x] **Step 1: Write the failing table test.**
 
 ```js
 // test/clashtest/planning/planTables.test.mjs
@@ -823,9 +825,9 @@ test('a duplicate owner across two roots is an enumerator defect', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/planTables.test.mjs`.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/planTables.test.mjs`.
 
-- [ ] **Step 3: Implement `planTables.js`.** Tables are positional (`t0`, `t1`, …) rather than keyed by `modelKey` so no `modelKey` string ever needs escaping in a range id, and the ids are a pure function of the canonical (ascending `modelKey`, then class order `A'`, `C`, `B'`) build order. Per model, the roots' ascending `ownerDbIds` are concatenated **in root order** into one `ownersByModel[modelKey]` array; each row keeps `[ownerStart, ownerEnd)` into it, and `ownerRootByModel[modelKey]` is a `Map<ownerDbId, rootDbId>` (the §5.6.4 `rootOwners` map). Because roots are a subtree-disjoint antichain, an owner appearing under two roots is an enumerator defect and fails planning `enumeration-failed`. Budget: `admitPlan('root-table', rows)` then `admitPlan('root-owner', owners)` per model, each checked before allocation, returning `{ok:false, overflowClass}` on refusal so the caller raises `plan-too-large`.
+- [x] **Step 3: Implement `planTables.js`.** Tables are positional (`t0`, `t1`, …) rather than keyed by `modelKey` so no `modelKey` string ever needs escaping in a range id, and the ids are a pure function of the canonical (ascending `modelKey`, then class order `A'`, `C`, `B'`) build order. Per model, the roots' ascending `ownerDbIds` are concatenated **in root order** into one `ownersByModel[modelKey]` array; each row keeps `[ownerStart, ownerEnd)` into it, and `ownerRootByModel[modelKey]` is a `Map<ownerDbId, rootDbId>` (the §5.6.4 `rootOwners` map). Because roots are a subtree-disjoint antichain, an owner appearing under two roots is an enumerator defect and fails planning `enumeration-failed`. Budget: `admitPlan('root-table', rows)` then `admitPlan('root-owner', owners)` per model, each checked before allocation, returning `{ok:false, overflowClass}` on refusal so the caller raises `plan-too-large`.
 
 ```js
 export function rangeRootCount(range) { return range.end - range.start; }
@@ -856,7 +858,7 @@ export function bisectRanges(plan, ranges) {
 }
 ```
 
-- [ ] **Step 4: Write the failing owner-class test and implement `owners.js`.**
+- [x] **Step 4: Write the failing owner-class test and implement `owners.js`.**
 
 ```js
 // test/clashtest/planning/owners.test.mjs
@@ -881,7 +883,7 @@ test('classification is independent of input order and always ascending', () => 
 
   `classifyOwners` is a two-pointer merge over the two ascending arrays (pure, O(n)). `ownerClassOf(plan, modelKey, dbId)` reads the model's recorded sets; `rootOfOwner` reads `ownerRootByModel`. Neither depends on which unit produced a result — that invariance is what AC-17 (b) needs.
 
-- [ ] **Step 5: Run and see both pass.** `node --test test/clashtest/planning/planTables.test.mjs test/clashtest/planning/owners.test.mjs`.
+- [x] **Step 5: Run and see both pass.** `node --test test/clashtest/planning/planTables.test.mjs test/clashtest/planning/owners.test.mjs`.
 
 - [ ] **Step 6: Checkpoint commit (only if the user has authorized commits).**
 
@@ -904,7 +906,7 @@ test('classification is independent of input order and always ascending', () => 
 
 **Steps**
 
-- [ ] **Step 1: Write the failing stage test.**
+- [x] **Step 1: Write the failing stage test.**
 
 ```js
 // test/clashtest/planning/rootResolution.test.mjs
@@ -1006,9 +1008,9 @@ test('the three resolveRoots answers for one model must agree, else enumeration-
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/rootResolution.test.mjs`.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/rootResolution.test.mjs`.
 
-- [ ] **Step 3: Implement the stage.** For each `modelKey` in the union of the two selections' entries, in ascending `modelKey` order, `await`ing `checkpoint()` between models:
+- [x] **Step 3: Implement the stage.** For each `modelKey` in the union of the two selections' entries, in ascending `modelKey` order, `await`ing `checkpoint()` between models:
 
   1. `scopeA`, `scopeB` from the normalized entries (`'whole'` for `kind:'model'`, `{dbIds}` otherwise); `scopeU = ('whole' if either is 'whole') else {dbIds: merge(ascending unique)}`. A model named by only one selection has the other scope `null` and its role set empty.
   2. `resolveRoots` for each non-null scope **and** for `scopeU`; validate each answer with `validateResolveRootsResult`; a rejection ⇒ `enumeration-failed`.
@@ -1022,7 +1024,7 @@ test('the three resolveRoots answers for one model must agree, else enumeration-
   10. **`scopeKinds`:** per model `{A: 'model'|'elements'|null, B: …}`, recorded so a consumer can tell which operands had a population witness (§6.2 residual limit).
   11. Every recorded row is admitted through the budget (`unreachable-population`, `unresolved-selection`, `hierarchy-internal`, `scope-digest`, `planning-gap`) *before* allocation; a refusal returns `{ok:false, cause:'plan-too-large', overflowClass}`.
 
-- [ ] **Step 4: Run and see it pass.** `node --test test/clashtest/planning/rootResolution.test.mjs`.
+- [x] **Step 4: Run and see it pass.** `node --test test/clashtest/planning/rootResolution.test.mjs`.
 
 - [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).**
 
@@ -1040,7 +1042,7 @@ test('the three resolveRoots answers for one model must agree, else enumeration-
 
 **Steps**
 
-- [ ] **Step 1: Write the failing decomposition test.** It compares cell output against a brute-force `P` built from the root sets directly.
+- [x] **Step 1: Write the failing decomposition test.** It compares cell output against a brute-force `P` built from the root sets directly.
 
 ```js
 // test/clashtest/planning/decompose.test.mjs
@@ -1160,9 +1162,9 @@ test('cells are emitted in canonical order and are byte-identical under model re
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/decompose.test.mjs`.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/decompose.test.mjs`.
 
-- [ ] **Step 3: Implement `decomposeCells`.** All sets are *ranges*, never copied dbId arrays (§6.5).
+- [x] **Step 3: Implement `decomposeCells`.** All sets are *ranges*, never copied dbId arrays (§6.5).
 
 ```js
 export const CELL_IDS = Object.freeze(['1', '2', '3a', '3b']);
@@ -1237,7 +1239,7 @@ export function decomposeCells({ models, plan, ordered }) {
 
   `plan.rangeOfClass(modelKey, cls)` is added to `planTables.js` in this task: it returns the full half-open range of that (model, class) table or `null` when the class is empty.
 
-- [ ] **Step 4: Run and see it pass.** `node --test test/clashtest/planning/decompose.test.mjs`.
+- [x] **Step 4: Run and see it pass.** `node --test test/clashtest/planning/decompose.test.mjs`.
 
 - [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).**
 
@@ -1255,7 +1257,7 @@ export function decomposeCells({ models, plan, ordered }) {
 
 **Steps**
 
-- [ ] **Step 1: Write the failing sizing test.**
+- [x] **Step 1: Write the failing sizing test.**
 
 ```js
 // test/clashtest/planning/sizing.test.mjs  (excerpt — the full file also repeats each case under reordering)
@@ -1331,9 +1333,9 @@ test('changing sizing options changes chunking, never coverage', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/sizing.test.mjs`.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/planning/sizing.test.mjs`.
 
-- [ ] **Step 3: Implement `sizeUnits`.** Two independent packers plus a cross product (§6.4 item 4):
+- [x] **Step 3: Implement `sizeUnits`.** Two independent packers plus a cross product (§6.4 item 4):
 
 ```js
 function packSource(plan, ranges, { maxSourceFragmentsPerUnit, maxSourceDbIdsPerUnit }) {
@@ -1376,7 +1378,7 @@ function sliceTargets(plan, targets, { maxTargetModelsPerUnit, maxTargetFragment
 
   `sizeUnits` then emits, per cell, `sourceChunks × targetSlices` in that nested order, assigning `unitId = `${cell}.${seq}`` from a per-cell counter that advances in emission order, and `pairSpaceWeight = |source roots| × |target roots|` where a whole-model target contributes the model's **run-start root count** (§6.5). Every target slice that contains an *oversize* entry produces a `not-run:target-too-large` gap record carrying the same `pairSpaceWeight`, and no unit — a deterministic, pre-call outcome.
 
-- [ ] **Step 4: Run and see it pass.** `node --test test/clashtest/planning/sizing.test.mjs`.
+- [x] **Step 4: Run and see it pass.** `node --test test/clashtest/planning/sizing.test.mjs`.
 
 - [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).**
 
@@ -1398,7 +1400,7 @@ function sliceTargets(plan, targets, { maxTargetModelsPerUnit, maxTargetFragment
 
 **Steps**
 
-- [ ] **Step 1: Write the failing split test.**
+- [x] **Step 1: Write the failing split test.**
 
 ```js
 // test/clashtest/planning/splitting.test.mjs  (excerpt)
@@ -1499,7 +1501,7 @@ test('a refused split records NOTHING — admission is atomic in both directions
 
   `makeSplitFixture` gains three options this task adds to `syntheticModels.mjs`: `limits` (merged over `RUN_OPTION_DEFAULTS` before `createRecordBudget`), `liveUnitRecords` (pre-populates the ledger with that many `recordUnit` calls so the unit-record cap is reachable without building a real 10,000-unit plan), and `exhaustLedgerRecords` (drains `budget.discretionaryRemaining`). The fixture returns a `plan` whose **`plan.ledger`** is the live, un-frozen ledger `planSplit` admits through.
 
-- [ ] **Step 2: Write the failing ledger-exhaustion test (AC-16 planner parts).**
+- [x] **Step 2: Write the failing ledger-exhaustion test (AC-16 planner parts).**
 
 ```js
 // test/clashtest/planning/ledger.exhaustion.test.mjs  (excerpt)
@@ -1620,9 +1622,9 @@ test('budgetExhausted and the first refusing unit id are recorded', () => {
 
   `leafUnit(unitId, pairSpaceWeight)` is this file's one-line helper for P5's pinned self-describing record: `{unitId, kind:'leaf', parentUnitId:null, sourceModelKey:'m', sourceRootDbIds:[1], targets:[{modelKey:'m', scope:'roots', rootDbIds:[2]}], pairSpaceWeight, ranges:1}`. There is **no `cell` field** — the cell is the `unitId` prefix.
 
-- [ ] **Step 3: Run both and see them fail.** `node --test test/clashtest/planning/splitting.test.mjs test/clashtest/planning/ledger.exhaustion.test.mjs`.
+- [x] **Step 3: Run both and see them fail.** `node --test test/clashtest/planning/splitting.test.mjs test/clashtest/planning/ledger.exhaustion.test.mjs`.
 
-- [ ] **Step 4: Implement `planSplit`.** Two halves, in this order: the §6.4 **cut** (pure, with `bisectRanges` doing every cut so no root is ever split), then R8's **atomic admission** of the cut through the run's live ledger.
+- [x] **Step 4: Implement `planSplit`.** Two halves, in this order: the §6.4 **cut** (pure, with `bisectRanges` doing every cut so no root is ever split), then R8's **atomic admission** of the cut through the run's live ledger.
 
 ```js
 export const SPLIT_REFUSAL_REASONS = Object.freeze(['unsplittable', 'unit-cap', 'ledger-cap']);
@@ -1685,7 +1687,7 @@ function child(parent, i, patch) {
 
   **Refusal → settlement (P6's half, stated here so the contract is unambiguous):** `unit-cap` and `ledger-cap` are both the §16.7 fact **`unit-cap`** ⇒ `failed:unit-cap`, with the parent's `pairSpaceWeight` recorded as a gap and `pairSpaceTotal` unchanged; `capDetail` is written through to the ledger `UnitRecord.capDetail`, which is exactly the `'ledger-records' | 'unit-records' | null` field P5 pins. `unsplittable` maps the same way, which is why P6's existing handling needs only the widened `.reason` test, not a new branch.
 
-- [ ] **Step 5: Implement the ledger's runtime classes, in P5's pinned sealed shape.** `createLedger` keeps `unitRecords: Map<unitId, UnitRecord>`. **The record shape is not P3's to choose: P5 pins the sealed ledger's JSON** (`p5-result-set.md` → *Shapes this phase pins*), because `validateResultSet` is written against it, and the reconciliation's **S-P5-4** makes it binding — "P3 and P6 must emit exactly that shape". P3's in-memory record therefore carries exactly P5's fields:
+- [x] **Step 5: Implement the ledger's runtime classes, in P5's pinned sealed shape.** `createLedger` keeps `unitRecords: Map<unitId, UnitRecord>`. **The record shape is not P3's to choose: P5 pins the sealed ledger's JSON** (`p5-result-set.md` → *Shapes this phase pins*), because `validateResultSet` is written against it, and the reconciliation's **S-P5-4** makes it binding — "P3 and P6 must emit exactly that shape". P3's in-memory record therefore carries exactly P5's fields:
 
 ```js
 /** UnitRecord (P5's pinned typedef — every field, no extra key) =
@@ -1710,7 +1712,7 @@ function child(parent, i, patch) {
   - `recordPlanningGap({phase, cause})` appends `{phase, cause}` — **and nothing else** — to the ledger's `planningGaps` array, in call order, de-duplicated on the `(phase, cause)` pair. It allocates no `UnitRecord`, charges no budget class and cannot be refused (the array is bounded by §6.6.2's closed cause enum), so it is callable on a ledger that will seal with `units: []`. `PlanResult.planningGaps` may carry an extra run-scoped `detail` (§5.6.5 offenders, §6.6 dbIds); `toLedgerRecord()` projects `detail` away, because P5's pinned row is `{phase, cause}` — see cross-file need 3.
   - `toLedgerRecord()` projects to arrays-only plain data (no `Map`) in **exactly P5's `Ledger` typedef** — `{planExists, pairSpaceTotal, emptyOperand, units, rootOwners, unresolvedSelections, unreachablePopulation, hierarchyInternal, planningGaps, exclusions, warnings, budgetExhausted, firstRefusalUnitId}` — so `ledgerDigest` (P5) can be computed over it. Two shapes to get exactly right: `planningGaps` rows are `{phase, cause}` only (a *planning-level* gap has no weight because there is no plan; a **unit-level** gap such as `not-run:target-too-large` is a `UnitRecord` with `outcome:'not-run'` and its own `pairSpaceWeight`, which is what makes ruling **R11**'s accessor and the ledger agree), and **`rootOwners` rows are `{rootDbId, ownerDbIds, cls}` (controller ruling R2)**, `cls` being the `ROOT_CLASS` marker assigned in Task P3.5 step 7. `cls` is **digested** — that is the whole point of the ruling: it makes a hierarchy-internal (`A ∩ B`) root recoverable from the sealed ledger alone, instead of from the bounded first-20 `hierarchyInternal.examples`, which would silently under-report P8's element-level caveats.
 
-- [ ] **Step 6: Run and see both pass.** `node --test test/clashtest/planning/splitting.test.mjs test/clashtest/planning/ledger.exhaustion.test.mjs`.
+- [x] **Step 6: Run and see both pass.** `node --test test/clashtest/planning/splitting.test.mjs test/clashtest/planning/ledger.exhaustion.test.mjs`.
 
 - [ ] **Step 7: Checkpoint commit (only if the user has authorized commits).**
 
@@ -1730,7 +1732,7 @@ function child(parent, i, patch) {
 
 **Steps**
 
-- [ ] **Step 1: Write the failing facade test.**
+- [x] **Step 1: Write the failing facade test.**
 
 ```js
 // test/clashtest/planning/planner.test.mjs  (excerpt)
@@ -1895,7 +1897,7 @@ test('the planner yields: checkpoint is awaited at least once per model', async 
 });
 ```
 
-- [ ] **Step 2: Write the failing seeded property suite.** This is the phase's headline test — it is the master's Definition-of-Done item 5.
+- [x] **Step 2: Write the failing seeded property suite.** This is the phase's headline test — it is the master's Definition-of-Done item 5.
 
 ```js
 // test/clashtest/planning/planner.property.test.mjs
@@ -2002,9 +2004,9 @@ test('(d) nested roots produce a hierarchy-overlap failure, never a mis-cover', 
 
   `bruteForcePairs.mjs` builds `P` straight from spec §6.1 over the model specs' root sets (with whole-model selections expanded to every root), independently of `decompose.js`, and `expandUnitPairs` expands a unit through `materializeUnit` + the plan's per-model run-start root list (so a `'whole'` target expands to that model's roots — the unreachable population is deliberately **outside** `P` and is excluded, matching §6.2's `not-required` class).
 
-- [ ] **Step 3: Run both and see them fail.** `node --test test/clashtest/planning/planner.test.mjs test/clashtest/planning/planner.property.test.mjs`.
+- [x] **Step 3: Run both and see them fail.** `node --test test/clashtest/planning/planner.test.mjs test/clashtest/planning/planner.property.test.mjs`.
 
-- [ ] **Step 4: Implement `createPlan`.** The stages, in order, with `await checkpoint()` between each model and each cell batch:
+- [x] **Step 4: Implement `createPlan`.** The stages, in order, with `await checkpoint()` between each model and each cell batch:
 
   1. `resolveSelectionRoots` (P3.5). A `{ok:false}` returns `{status:'failed', plan:null, planningGaps:[{phase:'planning', cause, detail}], ledger, preTerminalGapWeight: 0}` — `unitsTotal = 0`, `pairSpaceTotal = 0`, `coverage: 'partial'` (never vacuously full, §6.6 item 2). The **run-scoped** `PlanningGap` carries `detail` (the §5.6.5 first-20 `{ancestor, descendant}` offenders, the first-20 `element-unresolvable` dbIds, the `plan-too-large` overflow class); the **persisted** row is P5's pinned `{phase, cause}` two-field shape, so `toLedgerRecord()` projects `detail` away and P6 is the phase that surfaces it (on the run's failure and `RunOutcome.reasons`). See *cross-file needs* in this file's Gates section: if those offenders must be durable rather than run-scoped, it is P5's `planningGaps` row that gains the field, not P3's projection that keeps one P5 does not declare.
   2. `buildRootTables` (P3.4), budget-charged; refusal ⇒ `plan-too-large`.
@@ -2016,7 +2018,7 @@ test('(d) nested roots produce a hierarchy-overlap failure, never a mis-cover', 
   8. Deep-freeze the plan — **skipping the `ledger` key**, which is the run's live, mutable coverage ledger and the path `planSplit(plan, unit)` reaches the `RecordBudget` through (R8) — and return `{status:'planned', plan, ledger, planningGaps: [], preTerminalGapWeight}`. Everything else on the plan is frozen, so §6.4 invariant P1 still holds: the plan's data is a pure function of *(definition semantics, sorted enumerations, run sizing options)* and never changes after `createPlan` returns.
   9. **Empty operands (§6.6 item 4):** when every root set is empty the plan is `{units: [], pairSpaceTotal: 0, emptyOperand: true}` with a `warnings` entry (P5's pinned `{code, modelKey?}` row shape) — `coverage: 'full'` but never claimable (P5 enforces the claim side). `emptyOperand` and `pairSpaceTotal` live on the **ledger** in the sealed shape, which is where P5 pins them (register **S-P5-3**).
 
-- [ ] **Step 5: Implement `materializeUnit`.** Reads the ranges, produces the transient ids, and assembles `scopeExpect` — **the only place the R20-1 whole-model-source rule lives**:
+- [x] **Step 5: Implement `materializeUnit`.** Reads the ranges, produces the transient ids, and assembles `scopeExpect` — **the only place the R20-1 whole-model-source rule lives**:
 
 ```js
 export function materializeUnit(plan, unit) {
@@ -2045,7 +2047,7 @@ export function materializeUnit(plan, unit) {
 }
 ```
 
-- [ ] **Step 6: Run the whole phase suite and see it pass.** `node --test test/clashtest/planning/*.test.mjs`, then `npm test`.
+- [x] **Step 6: Run the whole phase suite and see it pass.** `node --test test/clashtest/planning/*.test.mjs`, then `npm test`.
 
 - [ ] **Step 7: Checkpoint commit (only if the user has authorized commits).**
 
@@ -2074,18 +2076,18 @@ The convergence review (§2) pushes these to the plan. Each picks the simplest m
 
 Run from the repo root. Every test below must pass; the whole suite must also pass under `npm test`.
 
-- [ ] `node --test test/clashtest/planning/ElementEnumerator.test.mjs` — port shape validation, the planning-cause enum, and **the conformance helper passing for the synthetic enumerator and reporting (not throwing) for a non-cooperating one**. → spec §6.2; the Viewer adapter's acceptance gate (AC-15 (g)) later reuses this helper.
-- [ ] `node --test test/clashtest/planning/scopeDigest.test.mjs` — population/subtree digests change under every mutation class (status flip, owner change, count-preserving geometry replacement, growth, shrink) and the comparator distinguishes `equal`/`mismatch`/`unverifiable`. **Plus `checkScopeBracket` (reconciliation D1, inherited from P6's deleted `run/scopeBracket.test.mjs`):** unchanged root subtrees with a moved population reports `drift` naming the model; `unverifiable` is absorbing over `equal` while `drift` dominates both; an all-equal bracket reports `equal`; and a population that grows *and reverts* between the pre-check and the post-check is still caught, because both sides compare against the planning-time expectation rather than against each other. → **AC-2 "Scope-digest conformance"**, the P3 half of AC-8's digest classes, and §16.3.2/§16.3.4 invariant I-scope.
-- [ ] `node --test test/clashtest/planning/ledger.budget.test.mjs` — `planRecords ≤ maxPlanReferences` always; the reserve fits and is consumed in place; runtime refusal is atomic and flags exhaustion. → **AC-16 (planner parts)**, §6.5.1.
-- [ ] `node --test test/clashtest/planning/planTables.test.mjs test/clashtest/planning/owners.test.mjs` — canonical table ids, half-open ranges, bisection never splits a root, duplicate-owner enumerator defect fails planning; owner classes root-only/unreachable-only/mixed. → **AC-17 (a)**, §6.2 (H1), §6.5.1.
-- [ ] `node --test test/clashtest/planning/rootResolution.test.mjs` — `hierarchy-overlap` with the first 20 offenders and no units; `element-unresolvable` vs. the claim-blocking `no-fragments` record; `owner-mapping-mismatch`; `unreachablePopulation` + `unattributable` recorded orientation-independently; three-answer agreement. → **AC-2 (hierarchy cases, tree-unreachable population, unresolved selections)**, **AC-17 (g)**, §5.6.5, §6.2.
-- [ ] `node --test test/clashtest/planning/decompose.test.mjs` — the four cells, exact cover against a brute-force `P` for unordered and ordered modes, same-model disjointness (F2), sentinel eligibility, canonical emission order. → **AC-2 (exact cover)**, §6.3.
-- [ ] `node --test test/clashtest/planning/sizing.test.mjs` — source packing target vs. hard target caps; explicit entries cut between roots; a whole sentinel never partitioned; over-cap entries become `not-run:target-too-large` gaps with **zero** calls; sizing options change chunking, never coverage. → **AC-18 (a), (b), (c)** planner parts; §6.4.
-- [ ] `node --test test/clashtest/planning/splitting.test.mjs` — the four-step split order, `${unitId}.0`/`.1` ids, children's weights partitioning the parent's exactly, unsplittable ⇒ gap, the cut's purity under input reordering. **Plus controller ruling R8 (live split admission):** the refusal vocabulary is exactly `['unsplittable','unit-cap','ledger-cap']` and every refusal is a **truthy** object carrying `.reason`; a **nested** split of a child is refused `unit-cap`/`capDetail:'unit-records'` when the run's live unit-record population (9,999 of `maxUnitsPerRun` = 10,000) leaves no room for two more children; an exhausted record budget is refused `ledger-cap`/`capDetail:'ledger-records'`; a refused split records **nothing**. → **AC-9 (split order / split lifecycle planner parts)**, **AC-16**, §6.4, §6.5.1.
-- [ ] `node --test test/clashtest/planning/ledger.exhaustion.test.mjs` — every runtime record class exercised; `used ≤ maxLedgerRecords` after every admitted record; `taint-overflow` always admitted; refused split not performed with `capDetail` `ledger-records`/`unit-records`; inline fields still update; `budgetExhausted` + first refusing unit id recorded. **Plus the P5-pinned sealed shape:** taint `kind` is `element`/`target-model`/`unit` (never a budget class id); an admitted split flips the parent to `kind:'split'`/`outcome:'split'` and writes `parentUnitId` on the leaves, with `pairSpaceTotal` = Σ over **leaf** units only; and **ruling R4** — `secondaryCauses` stored ascending by cause code, capped at 8, byte-identical under a reordered observation sequence. → **AC-16 (planner parts)**, §6.5.1, §13.6 (a producer never emits a set its own reader rejects).
-- [ ] `node --test test/clashtest/planning/planner.test.mjs` — `scopeExpect` for whole-model target, whole-model source (R20-1) and explicit-root target; `plan-too-large`; units hold ranges only; the planner yields per model. **`materializeUnit(...).scopeExpect` is the sole producer of the R20-1 rule (reconciliation D1), so this file also carries the cases from P6's deleted `buildScopeExpect` suite:** a `kind:'model'` source emits **both** a `roots` entry and a `whole` population entry for its own model; an explicit-list (`kind:'elements'`) source emits **no** population entry; and the emitted list is canonically ordered by `(modelKey, role, scope)`. **Plus the two controller rulings this task carries: R11** — `PlanResult.preTerminalGapWeight` is exposed, is `> 0` exactly when the plan holds `not-run:target-too-large` unit records, is `0` otherwise, and **equals the ledger sum it summarizes** so the accessor can never drift from the ledger; and **R2** — a hierarchy-internal (`A ∩ B`, `cls === 'C'`) root with ≥ 2 owners is recoverable from the **persisted** ledger alone (`JSON.parse(JSON.stringify(toLedgerRecord()))`, no plan, no run-scoped tables, not the bounded `hierarchyInternal.examples`), and the marker distinguishes all three classes (`'A'`/`'B'`/`'C'`). → **AC-2**, **AC-20 (c)** (the element-level half), §6.2.1, §6.5, §16.3.2; the P3 hooks for **AC-8**'s bracketing loop.
-- [ ] `node --test test/clashtest/planning/planner.property.test.mjs` — 200 seeded cases × 2 modes: exact-cover equality with the brute-force reference and no pair covered twice; ledger accounting sums to `pairSpaceTotal` over **leaf** unit records, with `Σ plan.units.pairSpaceWeight + preTerminalGapWeight` closing the same total (R11); F2 self-exclusion; byte-identical plans under input reordering; nested roots ⇒ `hierarchy-overlap`, never a mis-cover. → **AC-2**, master Definition of Done item 5.
-- [ ] `npm test` — the full existing suite still passes; no new runtime dependency; no `collision/` file touched (`git diff --stat -- collision/` empty).
+- [x] `node --test test/clashtest/planning/ElementEnumerator.test.mjs` — port shape validation, the planning-cause enum, and **the conformance helper passing for the synthetic enumerator and reporting (not throwing) for a non-cooperating one**. → spec §6.2; the Viewer adapter's acceptance gate (AC-15 (g)) later reuses this helper.
+- [x] `node --test test/clashtest/planning/scopeDigest.test.mjs` — population/subtree digests change under every mutation class (status flip, owner change, count-preserving geometry replacement, growth, shrink) and the comparator distinguishes `equal`/`mismatch`/`unverifiable`. **Plus `checkScopeBracket` (reconciliation D1, inherited from P6's deleted `run/scopeBracket.test.mjs`):** unchanged root subtrees with a moved population reports `drift` naming the model; `unverifiable` is absorbing over `equal` while `drift` dominates both; an all-equal bracket reports `equal`; and a population that grows *and reverts* between the pre-check and the post-check is still caught, because both sides compare against the planning-time expectation rather than against each other. → **AC-2 "Scope-digest conformance"**, the P3 half of AC-8's digest classes, and §16.3.2/§16.3.4 invariant I-scope.
+- [x] `node --test test/clashtest/planning/ledger.budget.test.mjs` — `planRecords ≤ maxPlanReferences` always; the reserve fits and is consumed in place; runtime refusal is atomic and flags exhaustion. → **AC-16 (planner parts)**, §6.5.1.
+- [x] `node --test test/clashtest/planning/planTables.test.mjs test/clashtest/planning/owners.test.mjs` — canonical table ids, half-open ranges, bisection never splits a root, duplicate-owner enumerator defect fails planning; owner classes root-only/unreachable-only/mixed. → **AC-17 (a)**, §6.2 (H1), §6.5.1.
+- [x] `node --test test/clashtest/planning/rootResolution.test.mjs` — `hierarchy-overlap` with the first 20 offenders and no units; `element-unresolvable` vs. the claim-blocking `no-fragments` record; `owner-mapping-mismatch`; `unreachablePopulation` + `unattributable` recorded orientation-independently; three-answer agreement. → **AC-2 (hierarchy cases, tree-unreachable population, unresolved selections)**, **AC-17 (g)**, §5.6.5, §6.2.
+- [x] `node --test test/clashtest/planning/decompose.test.mjs` — the four cells, exact cover against a brute-force `P` for unordered and ordered modes, same-model disjointness (F2), sentinel eligibility, canonical emission order. → **AC-2 (exact cover)**, §6.3.
+- [x] `node --test test/clashtest/planning/sizing.test.mjs` — source packing target vs. hard target caps; explicit entries cut between roots; a whole sentinel never partitioned; over-cap entries become `not-run:target-too-large` gaps with **zero** calls; sizing options change chunking, never coverage. → **AC-18 (a), (b), (c)** planner parts; §6.4.
+- [x] `node --test test/clashtest/planning/splitting.test.mjs` — the four-step split order, `${unitId}.0`/`.1` ids, children's weights partitioning the parent's exactly, unsplittable ⇒ gap, the cut's purity under input reordering. **Plus controller ruling R8 (live split admission):** the refusal vocabulary is exactly `['unsplittable','unit-cap','ledger-cap']` and every refusal is a **truthy** object carrying `.reason`; a **nested** split of a child is refused `unit-cap`/`capDetail:'unit-records'` when the run's live unit-record population (9,999 of `maxUnitsPerRun` = 10,000) leaves no room for two more children; an exhausted record budget is refused `ledger-cap`/`capDetail:'ledger-records'`; a refused split records **nothing**. → **AC-9 (split order / split lifecycle planner parts)**, **AC-16**, §6.4, §6.5.1.
+- [x] `node --test test/clashtest/planning/ledger.exhaustion.test.mjs` — every runtime record class exercised; `used ≤ maxLedgerRecords` after every admitted record; `taint-overflow` always admitted; refused split not performed with `capDetail` `ledger-records`/`unit-records`; inline fields still update; `budgetExhausted` + first refusing unit id recorded. **Plus the P5-pinned sealed shape:** taint `kind` is `element`/`target-model`/`unit` (never a budget class id); an admitted split flips the parent to `kind:'split'`/`outcome:'split'` and writes `parentUnitId` on the leaves, with `pairSpaceTotal` = Σ over **leaf** units only; and **ruling R4** — `secondaryCauses` stored ascending by cause code, capped at 8, byte-identical under a reordered observation sequence. → **AC-16 (planner parts)**, §6.5.1, §13.6 (a producer never emits a set its own reader rejects).
+- [x] `node --test test/clashtest/planning/planner.test.mjs` — `scopeExpect` for whole-model target, whole-model source (R20-1) and explicit-root target; `plan-too-large`; units hold ranges only; the planner yields per model. **`materializeUnit(...).scopeExpect` is the sole producer of the R20-1 rule (reconciliation D1), so this file also carries the cases from P6's deleted `buildScopeExpect` suite:** a `kind:'model'` source emits **both** a `roots` entry and a `whole` population entry for its own model; an explicit-list (`kind:'elements'`) source emits **no** population entry; and the emitted list is canonically ordered by `(modelKey, role, scope)`. **Plus the two controller rulings this task carries: R11** — `PlanResult.preTerminalGapWeight` is exposed, is `> 0` exactly when the plan holds `not-run:target-too-large` unit records, is `0` otherwise, and **equals the ledger sum it summarizes** so the accessor can never drift from the ledger; and **R2** — a hierarchy-internal (`A ∩ B`, `cls === 'C'`) root with ≥ 2 owners is recoverable from the **persisted** ledger alone (`JSON.parse(JSON.stringify(toLedgerRecord()))`, no plan, no run-scoped tables, not the bounded `hierarchyInternal.examples`), and the marker distinguishes all three classes (`'A'`/`'B'`/`'C'`). → **AC-2**, **AC-20 (c)** (the element-level half), §6.2.1, §6.5, §16.3.2; the P3 hooks for **AC-8**'s bracketing loop.
+- [x] `node --test test/clashtest/planning/planner.property.test.mjs` — 200 seeded cases × 2 modes: exact-cover equality with the brute-force reference and no pair covered twice; ledger accounting sums to `pairSpaceTotal` over **leaf** unit records, with `Σ plan.units.pairSpaceWeight + preTerminalGapWeight` closing the same total (R11); F2 self-exclusion; byte-identical plans under input reordering; nested roots ⇒ `hierarchy-overlap`, never a mis-cover. → **AC-2**, master Definition of Done item 5.
+- [x] `npm test` (run as `node scripts/run-tests.mjs`; `npm test`'s pretest rewrites `wwwroot/vendor`) — the full existing suite still passes; no new runtime dependency; no `collision/` file touched (`git diff --stat -- collision/` empty).
 
 ---
 
