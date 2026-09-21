@@ -2,15 +2,16 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 - **Branch:** `feature/federated-clash-test-core-engine` (created 2026-09-21 from `main`). Historical branches (`feature/m4-performance-worker-decision-design`, `feature/m3-clearance`, `collision-library-m1-batch2`, `backup/pre-reword-spec-msg`) are untouched.
-- **Baseline / HEAD at branch transition:** `438a832987986ccc5b51f789781948981d227cdb` (`main` = `origin/main`). The planning/authorization baseline (`docs: authorize federated clash core implementation`, merged via `7ee67f5`) is already in `main`.
-- **Working tree:** clean at branch creation (this handoff update is the only change before P0). No production or test implementation exists (`clashtest/` and `test/clashtest/` are absent); P0 is the active task and has not produced code yet.
-- **Verified test baseline (`main` @ `438a832`):** 1,126 tests total, 1,125 pass, 0 fail, 1 todo.
-- **Milestone context:** M4 — Performance / Worker Decision Gate is closed (Verdict D; Phase 4 unstarted and unauthorized). Current work: **Federated Clash Test & Results** — design frozen, core-engine plan authorized, implementation branch open.
-- **Current task: P0 (foundations) — the ONLY active implementation scope.** P1–P7 are authorized overall (core-only) but must not begin until their plan prerequisites (master §3 dependency graph) are satisfied and the P0 phase is complete and verified. P8 and every separately gated scope (Viewer adapter, OQ-4, host integration, remote persistence, annotation, calibration values, M4 Phase 4) remain excluded.
+- **Baseline:** `main` = `origin/main` = `438a832987986ccc5b51f789781948981d227cdb` (planning/authorization baseline already merged). Branch-transition handoff commit: `8762af5`. **HEAD:** the P0 implementation commit `feat(clashtest): P0 foundations …` (see `git log -1`).
+- **Working tree:** clean after the P0 commit. New: `clashtest/` (errors, options, util/{capture,canonical,slicer}) and `test/clashtest/` (5 module tests + `support/` doubles). No change to `collision/`, `wwwroot/`, `package.json`.
+- **Verified tests:** P0 suite 108/108 (errors 7, capture 31, options 20 + defaults 12, support 6, slicer 12, canonical 20); full `npm test` 1,234 total, 1,233 pass, 0 fail, 1 todo (= 1,126 baseline + 108). Layering grep (`clashtest/` imports no `collision/` module) empty.
+- **Milestone context:** M4 — Performance / Worker Decision Gate is closed (Verdict D; Phase 4 unstarted and unauthorized). Current work: **Federated Clash Test & Results** core engine, branch `feature/federated-clash-test-core-engine`.
+- **Current task status: P0 (foundations) — P0.1–P0.7 COMPLETE and verified; P0.8 (freeze calibrated defaults) BLOCKED by G-CAL by design (defaults stay provisional, `DEFAULTS_STATUS.provisional === true`).** Status artifacts: [P0 phase file](../superpowers/plans/federated-clash-test-core/p0-foundations.md) ("Implementation status" block, checkboxes) and the [P0 internal review](../reviews/2026-09-21-federated-clash-test-core-p0-internal-codex-review.md) (6 accepted hardening fixes, 1 deferral to G-CAL, 3 Low notes carried to P5).
+- **P1 has NOT started.** P1 (identity) is authorized under core-only P0–P7 but requires an explicit go from the owner/session to begin (this task was scoped "P0 only"). P8 and every separately gated scope (Viewer adapter, OQ-4, host integration, remote persistence, annotation, calibration values, M4 Phase 4) remain excluded.
 
 ## Status in one line
 
-**Core engine implementation plan: G-PLAN is complete — all five master §6 lines (a)–(e) are checked. Core-only implementation of P0–P7 is AUTHORIZED (owner Eason, 2026-09-21). P0 is now the active task on branch `feature/federated-clash-test-core-engine`; P1–P7 wait on plan prerequisites.** Authorization scope is limited to core-only P0–P7 (see below); everything else remains gated. Spec errata A1–A9 are technically aligned. **Viewer adapter / integration remains gated** (OQ-4 research not done; no adapter plan).
+**Core engine implementation plan: G-PLAN is complete — all five master §6 lines (a)–(e) are checked. Core-only implementation of P0–P7 is AUTHORIZED (owner Eason, 2026-09-21). P0 (P0.1–P0.7) is implemented and verified on branch `feature/federated-clash-test-core-engine`; P0.8 is G-CAL-blocked; P1 has not started.** Authorization scope is limited to core-only P0–P7 (see below); everything else remains gated. Spec errata A1–A9 are technically aligned. **Viewer adapter / integration remains gated** (OQ-4 research not done; no adapter plan).
 
 ## Governing documents
 
@@ -90,7 +91,8 @@ Viewer adapter and OQ-4 research; remote-persistence reconciliation/disposal mac
 
 ## Suggested next action
 
-1. Execute P0 (foundations) per `docs/superpowers/plans/federated-clash-test-core/p0-foundations.md` — P0 only. Do not start P1 until P0 is verified and recorded here.
-2. Commit policy: the owner authorized the branch-transition commit and the P0 commit (2026-09-21 task); later phases need their own commit authorization.
+1. **Awaiting owner go-ahead to start P1** (`docs/superpowers/plans/federated-clash-test-core/p1-identity.md`; prerequisite P0 satisfied). Do not begin P1–P7 work without that instruction; only P0–P7, no P8/adapter/OQ-4/host/remote/Phase 4.
+2. Carry-forward notes: P0.8 waits for G-CAL; P5 review must cover the Low capture-helper notes (never publish a draft before `deepFreezeSliced` resolves; own-property validation on captured copies). The phase file's per-task counts are plan-time; implemented counts are above.
+3. Commit policy: commits only when explicitly authorized (the branch-transition and P0 commits were authorized in the 2026-09-21 task).
 
 Viewer-adapter work, OQ-4-dependent integration, remote persistence, annotation, calibrated-default promotion, and M4 Phase 4 must not begin without their applicable gate and explicit owner authorization.
