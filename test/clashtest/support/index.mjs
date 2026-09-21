@@ -38,3 +38,4 @@ export * from './fakeRegistry.mjs';
 //   P7  export * from './realWorld.mjs';             // makeRealWorldFixture
 //   P7  export * from './bruteForce.mjs';            // per-pair differential reference
 //   P7  export * from './maximumShape.mjs';          // maximum-shape synthesizer
+export * from './definitions.mjs';
