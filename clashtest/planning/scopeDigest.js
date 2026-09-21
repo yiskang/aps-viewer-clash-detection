@@ -9,7 +9,7 @@
 // This is the ONLY planning module that imports P0's canonical/digest utilities (design choice D8:
 // the enumerator computes the digests it returns; P3 only folds them).
 import { digestCanonical, digestCanonicalSliced, DIGEST_VERSION } from '../util/canonical.js';
-import { ENUMERATION_SCOPE_WHOLE } from './ElementEnumerator.js';
+import { ENUMERATION_SCOPE_WHOLE, validateDigestScopeResult } from './ElementEnumerator.js';
 
 // digestCanonical is SYNCHRONOUS ("small values only"); digestCanonicalSliced is its byte-identical
 // Promise-returning form for a caller that holds large data (the Viewer enumerator adapter over a real
@@ -23,57 +23,133 @@ const isDbId = (n) => Number.isSafeInteger(n) && n >= 0;
 /** The three population record classes of spec 6.2.1: loaded, not loaded, owner-unresolvable. */
 export const POPULATION_CLASS = Object.freeze({ LOADED: 'L', NOT_LOADED: 'N', OWNER_UNRESOLVABLE: 'U' });
 
+// ---- preprocessing: ONE generator body per record class, driven synchronously or sliced (H3) -------------------
+// Validation + projection is a generator in which each `yield` marks one record. The synchronous driver ignores the
+// yields; the sliced driver turns each into `slicer.tick(label)` and awaits a returned Promise (spec 17.3: a clock
+// check at least every 64 items), so the two forms share their rules and cannot drift. Rows are projected FIRST, in
+// INPUT order, and sorted afterwards: which malformed record is reported therefore never depends on the sort
+// (native on the synchronous path, P0 `slicer.sortSliced` on the sliced one). Both sorts are stable and every
+// projected row has a valid integer `row[0]` (the fragId), so equal keys keep input order and the two paths agree.
+const byFragId = (a, b) => a[0] - b[0];
+const arrayOf = (records) => (Array.isArray(records) ? records : Array.from(records));
+
+function runSync(steps) {
+  let r = steps.next();
+  while (!r.done) r = steps.next();
+  return r.value;
+}
+
+function* populationRowSteps(records) {
+  const list = arrayOf(records);
+  const rows = new Array(list.length);
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (!isDbId(r.fragId)) throw new TypeError('population record: fragId must be a non-negative safe integer');
+    if (r.cls === POPULATION_CLASS.NOT_LOADED) rows[i] = [r.fragId, 'N'];
+    else if (r.cls === POPULATION_CLASS.OWNER_UNRESOLVABLE) rows[i] = [r.fragId, 'U'];
+    else if (r.cls !== POPULATION_CLASS.LOADED) throw new TypeError(`population record ${r.fragId}: unknown class ${String(r.cls)}`);
+    else if (!isDbId(r.ownerDbId) || !Number.isSafeInteger(r.geometryId))
+      throw new TypeError(`population record ${r.fragId}: a loaded fragment needs ownerDbId and geometryId`);
+    else rows[i] = [r.fragId, 'L', r.ownerDbId, r.geometryId];
+    yield;
+  }
+  return rows;
+}
+
+function* subtreeRowSteps(records) {
+  const list = arrayOf(records);
+  const rows = new Array(list.length);
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (!isDbId(r.fragId) || !isDbId(r.ownerDbId) || !Number.isSafeInteger(r.geometryId))
+      throw new TypeError('subtree record: fragId and ownerDbId must be non-negative safe integers and geometryId a safe integer');
+    rows[i] = [r.fragId, r.ownerDbId, r.geometryId];
+    yield;
+  }
+  return rows;
+}
+
+/** A P0 slicer, or a TypeError: a caller-supplied slicer that cannot slice the SORT would silently reintroduce the stall. */
+function requireSlicer(slicer) {
+  if (!slicer || typeof slicer.tick !== 'function' || typeof slicer.sortSliced !== 'function')
+    throw new TypeError('digest slicer must provide tick() and sortSliced() (a P0 createSlicer slicer)');
+  return slicer;
+}
+
+async function slicedRows(steps, slicer, label) {
+  requireSlicer(slicer);
+  let r = steps.next();
+  while (!r.done) {
+    const pending = slicer.tick(`${label}-encode`);
+    if (pending) await pending;
+    r = steps.next();
+  }
+  return slicer.sortSliced(r.value, byFragId, { label: `${label}-sort` });
+}
+
 /**
  * Canonical, ascending-by-fragId record list for a population digest: `[fragId,'N']`, `[fragId,'U']`
- * or `[fragId,'L',ownerDbId,geometryId]`. Sorts a copy; a malformed record is a TypeError (a
- * digest over a guessed record would be evidence about nothing).
+ * or `[fragId,'L',ownerDbId,geometryId]`. Never reorders the caller's array; a malformed record is a
+ * TypeError (a digest over a guessed record would be evidence about nothing), the FIRST in input order.
+ * Synchronous: for small inputs; a caller holding a large population uses the sliced form.
  * @param {Array<{fragId:number, cls:'L'|'N'|'U', ownerDbId?:number, geometryId?:number}>} records
  * @returns {Array<Array<number|string>>}
  */
 export function encodePopulationRecords(records) {
-  const sorted = [...records].sort((a, b) => a.fragId - b.fragId);
-  return sorted.map((r) => {
-    if (!isDbId(r.fragId)) throw new TypeError('population record: fragId must be a non-negative safe integer');
-    if (r.cls === POPULATION_CLASS.NOT_LOADED) return [r.fragId, 'N'];
-    if (r.cls === POPULATION_CLASS.OWNER_UNRESOLVABLE) return [r.fragId, 'U'];
-    if (r.cls !== POPULATION_CLASS.LOADED) throw new TypeError(`population record ${r.fragId}: unknown class ${String(r.cls)}`);
-    if (!isDbId(r.ownerDbId) || !Number.isSafeInteger(r.geometryId))
-      throw new TypeError(`population record ${r.fragId}: a loaded fragment needs ownerDbId and geometryId`);
-    return [r.fragId, 'L', r.ownerDbId, r.geometryId];
-  });
+  return runSync(populationRowSteps(records)).sort(byFragId);
+}
+
+/**
+ * `encodePopulationRecords` in deadline-aware slices: validation/projection ticks once per record and the sort runs
+ * through `slicer.sortSliced`; byte-identical rows, the same TypeError for a bad record.
+ * @param {object[]} records
+ * @param {{tick:Function, sortSliced:Function}} slicer  a P0 slicer
+ * @param {{label?: string}} [opts]
+ * @returns {Promise<Array<Array<number|string>>>}
+ */
+export function encodePopulationRecordsSliced(records, slicer, { label = 'digest-population' } = {}) {
+  return slicedRows(populationRowSteps(records), slicer, label);
 }
 
 /**
  * Population digest for a whole-model scope; covers `count` and the record list (spec 6.2.1), so a
  * status flip, an owner change, a count-preserving geometry replacement, growth and shrink all move it.
+ * With a slicer the preprocessing (validation, projection, sort) and the canonical encoding all run sliced (H3);
+ * without one everything runs synchronously and only the return type is a Promise.
  * @param {{count:number, records:object[]}} population
- * @param {{slicer?: {tick:(label?:string)=>(void|Promise<void>)}}} [opts]  a P0 slicer for large data
+ * @param {{slicer?: {tick:Function, sortSliced:Function}}} [opts]  a P0 slicer for large data
  * @returns {Promise<{kind:'population', count:number, digest:string, digestVersion:number}>}
  */
 export async function digestPopulation({ count, records }, { slicer } = {}) {
-  const digest = await digestOne(
-    { k: 'population', count, r: encodePopulationRecords(records) }, slicer, 'digest-population');
+  const rows = slicer ? await encodePopulationRecordsSliced(records, slicer) : encodePopulationRecords(records);
+  const digest = await digestOne({ k: 'population', count, r: rows }, slicer, 'digest-population');
   return { kind: 'population', count, digest, digestVersion: DIGEST_VERSION };
 }
 
 /**
  * Subtree digest for one root (an explicit target root or a source root): the sorted
- * `[fragId, ownerDbId, geometryId]` rows of the fragments extractFragments would take from it.
+ * `[fragId, ownerDbId, geometryId]` rows of the fragments extractFragments would take from it. Records are
+ * validated like a loaded population fragment (a digest over a guessed row is evidence about nothing).
  * @param {Array<{fragId:number, ownerDbId:number, geometryId:number}>} records
- * @param {{slicer?: {tick:(label?:string)=>(void|Promise<void>)}}} [opts]
+ * @param {{slicer?: {tick:Function, sortSliced:Function}}} [opts]
  * @returns {Promise<{digest:string, digestVersion:number}>}
  */
 export async function digestSubtree(records, { slicer } = {}) {
-  const rows = [...records]
-    .sort((a, b) => a.fragId - b.fragId)
-    .map((r) => [r.fragId, r.ownerDbId, r.geometryId]);
+  const rows = slicer
+    ? await slicedRows(subtreeRowSteps(records), slicer, 'digest-subtree')
+    : runSync(subtreeRowSteps(records)).sort(byFragId);
   const digest = await digestOne({ k: 'subtree', r: rows }, slicer, 'digest-subtree');
   return { digest, digestVersion: DIGEST_VERSION };
 }
 
 const isDigestRow = (r) => isObject(r) && isDbId(r.dbId);
+// A whole-scope population is read with the port's OWN boundary rule (validateDigestScopeResult: `count` a safe
+// non-negative integer, `digest` the durable `sha256:<64 lowercase hex>` format), on both the expectation and the
+// observation side, so a value the port would have rejected is "could not read", never a demonstrated change.
+const isWholePopulation = (p) => isObject(p)
+  && validateDigestScopeResult({ kind: 'population', count: p.count, digest: p.digest }, { scope: ENUMERATION_SCOPE_WHOLE }).ok;
 const expectationOk = (e) => isObject(e) && (
-  (e.scope === 'whole' && isObject(e.population))
+  (e.scope === 'whole' && isWholePopulation(e.population))
   || (e.scope === 'roots' && Array.isArray(e.roots) && e.roots.every(isObject)));
 
 /**
@@ -95,6 +171,7 @@ export function compareScopeExpectation(expect, observed) {
   if (!isObject(observed)) return { ...base, status: 'unverifiable', detail: 'no-observation' };
   if (expect.scope === 'whole') {
     if (observed.kind !== 'population') return { ...base, status: 'unverifiable', detail: 'kind-mismatch' };
+    if (!isWholePopulation(observed)) return { ...base, status: 'unverifiable', detail: 'malformed-observation' };
     return observed.count === expect.population.count && observed.digest === expect.population.digest
       ? { ...base, status: 'equal', detail: null }
       : { ...base, status: 'mismatch', detail: 'population' };

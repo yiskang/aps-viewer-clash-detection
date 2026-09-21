@@ -1,8 +1,10 @@
 // test/clashtest/planning/decompose.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decomposeCells, targetScopeFor, CELL_IDS } from '../../../clashtest/planning/decompose.js';
-import { buildRootTables, readRange } from '../../../clashtest/planning/planTables.js';
+import { decomposeCells, decomposeCellsLazy, targetScopeFor, CELL_IDS } from '../../../clashtest/planning/decompose.js';
+import { buildRootTables, readRange, rangeRootCount, bisectRanges } from '../../../clashtest/planning/planTables.js';
+import { sizeUnits } from '../../../clashtest/planning/sizing.js';
+import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
 import { createRecordBudget } from '../../../clashtest/planning/ledger.js';
 
 const budget = () => createRecordBudget({ maxPlanReferences: 1e6, maxLedgerRecords: 3e6, maxUnitsPerRun: 1e4 });
@@ -267,4 +269,125 @@ test('the cell list depends only on the class tables: a fresh decomposition is i
   assert.deepEqual(one, two);
   one[0].sourceRanges[0].start = 99;                       // mutating a returned range must not reach the plan or a later call
   assert.deepEqual(decomposeCells({ models, plan, ordered: true }), two);
+});
+
+// ---- H1: lazy decomposition (spec 6.5.1 plan memory O(roots + owners + unit records), spec 17.3) ------------------------
+
+// The pre-remediation EAGER implementation, kept verbatim as the byte-identity oracle: the lazy generator must emit
+// exactly what it did, in the same order, for every case that completes.
+function referenceDecomposeCells({ models, plan, ordered }) {
+  const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const keys = [...models.keys()].sort(byCodeUnit);
+  const cells = [];
+  const rangeOf = (modelKey, cls) => plan.rangeOfClass(modelKey, cls);
+  const targetsOf = (classes) => keys.flatMap((nk) => {
+    const ranges = classes.map((cls) => rangeOf(nk, cls)).filter(Boolean);
+    return ranges.length === 0 ? [] : [{ modelKey: nk, scope: targetScopeFor(models.get(nk), ranges) }];
+  });
+  for (const mk of keys) {
+    const source = rangeOf(mk, "A'");
+    if (!source) continue;
+    const targets = targetsOf(['C', "B'"]);
+    if (targets.length > 0) cells.push({ cell: '1', sourceModelKey: mk, sourceRanges: [source], targets, orientationRole: 'A->B' });
+  }
+  for (const mk of keys) {
+    const source = rangeOf(mk, 'C');
+    if (!source) continue;
+    const targets = targetsOf(["B'"]);
+    if (targets.length > 0) cells.push({ cell: '2', sourceModelKey: mk, sourceRanges: [source], targets, orientationRole: 'A->B' });
+  }
+  for (let i = 0; i < keys.length; i++) {
+    for (let j = i + 1; j < keys.length; j++) {
+      const a = rangeOf(keys[i], 'C');
+      const b = rangeOf(keys[j], 'C');
+      if (!a || !b) continue;
+      cells.push({ cell: '3a', sourceModelKey: keys[i], sourceRanges: [a], targets: [{ modelKey: keys[j], scope: { ranges: [b] } }],
+        orientationRole: ordered ? 'A->B' : 'canonical' });
+      if (ordered) {
+        cells.push({ cell: '3a', sourceModelKey: keys[j], sourceRanges: [b], targets: [{ modelKey: keys[i], scope: { ranges: [a] } }],
+          orientationRole: 'B->A' });
+      }
+    }
+  }
+  for (const mk of keys) {
+    const c = rangeOf(mk, 'C');
+    if (!c) continue;
+    const bisect = (ranges) => {
+      if (ranges.reduce((n, r) => n + rangeRootCount(r), 0) <= 1) return;
+      const [left, right] = bisectRanges(plan, ranges);
+      cells.push({ cell: '3b', sourceModelKey: mk, sourceRanges: left, targets: [{ modelKey: mk, scope: { ranges: right } }],
+        orientationRole: ordered ? 'A->B' : 'canonical' });
+      if (ordered) {
+        cells.push({ cell: '3b', sourceModelKey: mk, sourceRanges: right, targets: [{ modelKey: mk, scope: { ranges: left } }],
+          orientationRole: 'B->A' });
+      }
+      bisect(left);
+      bisect(right);
+    };
+    bisect([c]);
+  }
+  return cells;
+}
+
+test('the lazy generator emits byte-identically what the eager decomposition emitted, unordered and ordered (H1)', () => {
+  const rng = seeded(7742);
+  for (let round = 0; round < 250; round++) {
+    const { models, plan } = fixture(randomDefs(rng));
+    for (const ordered of [false, true]) {
+      const lazy = [...decomposeCellsLazy({ models, plan, ordered })];
+      assert.equal(JSON.stringify(lazy), JSON.stringify(referenceDecomposeCells({ models, plan, ordered })), `round ${round} ordered=${ordered}`);
+      assert.equal(JSON.stringify(decomposeCells({ models, plan, ordered })), JSON.stringify(lazy));
+    }
+  }
+});
+
+// A model per index, one row per class (dbId 1 / 2), with `wholeB: false` so every target is an explicit range.
+const manyModels = (count, classesOf) => {
+  const models = new Map(Array.from({ length: count }, (_, i) => [`m${String(i).padStart(5, '0')}`, { wholeB: false, classes: classesOf() }]));
+  const plan = buildRootTables({ models: [...models].map(([modelKey, m]) => ({ modelKey, classes: m.classes })), budget: budget() });
+  assert.equal(plan.ok, true);
+  return { models, plan };
+};
+// The counting seams: every plan lookup the generator makes, and every cell the consumer pulls from it.
+const counted = (plan) => {
+  const stats = { rangeOfCalls: 0 };
+  return { stats, plan: { ...plan, rangeOfClass: (modelKey, cls) => { stats.rangeOfCalls += 1; return plan.rangeOfClass(modelKey, cls); } } };
+};
+function* pulled(cells, stats) { for (const cell of cells) { stats.pulled += 1; yield cell; } }
+
+for (const ordered of [false, true]) {
+  test(`many-model class-C case (ordered=${ordered}): the unit cap stops decomposition after limit+1 units, not after all M(M-1)/2 pair cells (H1)`, () => {
+    const M = 1024;
+    const limit = 10;
+    const { models, plan } = manyModels(M, () => ({ C: [row(1)] }));
+    const { plan: seen, stats } = counted(plan);
+    const pulls = { pulled: 0 };
+    const res = sizeUnits({ cells: pulled(decomposeCellsLazy({ models, plan: seen, ordered }), pulls), plan: seen, options: RUN_OPTION_DEFAULTS, limit });
+    assert.equal(res.exceeded, true);
+    assert.equal(res.units.length + res.gaps.length, limit + 1);
+    assert.ok(pulls.pulled >= 1 && pulls.pulled <= limit + 1, `cells generated: ${pulls.pulled}`);
+    // O(M) prefilter of the class tables + O(1) per generated cell; the eager form did ~ M^2 lookups (and built 523,776 cells).
+    assert.ok(stats.rangeOfCalls <= 6 * M + 4 * (limit + 1), `plan lookups: ${stats.rangeOfCalls}`);
+  });
+}
+
+test('many-model A\'/B\' case: the per-cell target list is built once, so target entries are O(M), not O(M^2) (H1)', () => {
+  const M = 1024;
+  const limit = 10;
+  const { models, plan } = manyModels(M, () => ({ "A'": [row(1)], "B'": [row(2)] }));
+  // (a) capped consumption: bounded cells AND bounded lookups.
+  const { plan: seen, stats } = counted(plan);
+  const pulls = { pulled: 0 };
+  const res = sizeUnits({ cells: pulled(decomposeCellsLazy({ models, plan: seen, ordered: false }), pulls), plan: seen, options: RUN_OPTION_DEFAULTS, limit });
+  assert.equal(res.exceeded, true);
+  assert.equal(res.units.length + res.gaps.length, limit + 1);
+  assert.ok(pulls.pulled >= 1 && pulls.pulled <= limit + 1, `cells generated: ${pulls.pulled}`);
+  assert.ok(stats.rangeOfCalls <= 8 * M, `plan lookups: ${stats.rangeOfCalls}`);   // the eager form: ~ M^2 lookups
+  // (b) a full run of the generator: 1,024 cells, but the distinct target-entry lists total O(M) entries, not M x M.
+  const all = [...decomposeCellsLazy({ models, plan, ordered: false })];
+  assert.equal(all.length, M);
+  const distinct = new Set(all.map((c) => c.targets));
+  const retained = [...distinct].reduce((n, targets) => n + targets.length, 0);
+  assert.ok(retained <= 2 * M, `target entries retained: ${retained}`);
+  assert.equal(all[0].targets.length, M);
 });

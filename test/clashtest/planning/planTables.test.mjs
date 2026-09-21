@@ -1,12 +1,13 @@
 // test/clashtest/planning/planTables.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRootTables, readRange, rangeRootCount, rangeFragmentWeight, bisectRanges, TABLE_CLASSES }
+import { buildRootTables, buildRootTablesSliced, readRange, rangeRootCount, rangeFragmentWeight, bisectRanges, TABLE_CLASSES }
   from '../../../clashtest/planning/planTables.js';
 import { createRecordBudget } from '../../../clashtest/planning/ledger.js';
 
 const model = (modelKey, aPrime, c, bPrime) => ({ modelKey, classes: { "A'": aPrime, C: c, "B'": bPrime } });
 const root = (dbId, owners, frags) => ({ dbId, fragmentCount: frags, ownerDbIds: owners, subtreeDigest: `sha256:${dbId}` });
+const roomyBig = () => createRecordBudget({ maxPlanReferences: 100000, maxLedgerRecords: 300000, maxUnitsPerRun: 100 });
 const roomy = () => createRecordBudget({ maxPlanReferences: 1000, maxLedgerRecords: 3000, maxUnitsPerRun: 10 });
 
 test('table ids are positional and canonical (ascending modelKey, then A&prime;, C, B&prime;)', () => {
@@ -222,4 +223,34 @@ test('rangeOfClass is the full half-open range of one (model, class) table, null
   // Asking about a model the plan does not hold, or a class that does not exist, is a caller bug, not "empty".
   assert.throws(() => plan.rangeOfClass('zz', 'C'), RangeError);
   assert.throws(() => plan.rangeOfClass('a', 'X'), TypeError);
+});
+
+// ---- H2: the sliced build shares its logic with the synchronous one -------------------------------------------------
+
+test('buildRootTablesSliced is the synchronous build plus a tick per root row and per owner, and its defects and refusals are identical', async () => {
+  const many = Array.from({ length: 200 }, (_, i) => root(i + 1, [i * 2 + 1, i * 2 + 2].map((o) => o + 1000), 2));
+  const models = [model('b', many.slice(0, 120), many.slice(120, 160), many.slice(160)), model('a', [root(9999, [9999], 1)], [], [])];
+  const labels = [];
+  const sliced = await buildRootTablesSliced({ models, budget: roomyBig() }, { tick: (label) => { labels.push(label); } });
+  const sync = buildRootTables({ models, budget: roomyBig() });
+  // Same plan (Maps and closures compared through their observable content).
+  assert.equal(JSON.stringify(sliced.tables), JSON.stringify(sync.tables));
+  assert.deepEqual([...sliced.ownersByModel], [...sync.ownersByModel]);
+  assert.deepEqual([...sliced.ownerRootByModel].map(([k, m]) => [k, [...m]]), [...sync.ownerRootByModel].map(([k, m]) => [k, [...m]]));
+  assert.deepEqual(sliced.rangeOfClass('b', 'C'), sync.rangeOfClass('b', 'C'));
+  const count = (label) => labels.filter((l) => l === label).length;
+  assert.deepEqual([count('planTables:count'), count('planTables:row'), count('planTables:owner')], [201, 201, 401]);
+  // Refusals and defects come back as the same results, not as throws.
+  const tight = createRecordBudget({ maxPlanReferences: 10, maxLedgerRecords: 30, maxUnitsPerRun: 10 });
+  assert.deepEqual(await buildRootTablesSliced({ models, budget: tight }, { tick() {} }),
+    buildRootTables({ models, budget: createRecordBudget({ maxPlanReferences: 10, maxLedgerRecords: 30, maxUnitsPerRun: 10 }) }));
+  const bad = [model('m', [root(2, [2], 1), root(1, [1], 1)], [], [])];
+  assert.deepEqual(await buildRootTablesSliced({ models: bad, budget: roomyBig() }, { tick() {} }), buildRootTables({ models: bad, budget: roomyBig() }));
+});
+
+test('a tick that throws (cancellation) aborts the sliced build', async () => {
+  const boom = new Error('cancelled');
+  let n = 0;
+  await assert.rejects(buildRootTablesSliced({ models: [model('m', [root(1, [1], 1), root(2, [2], 1)], [], [])], budget: roomyBig() },
+    { tick: () => { if (++n === 2) throw boom; } }), (e) => e === boom);
 });

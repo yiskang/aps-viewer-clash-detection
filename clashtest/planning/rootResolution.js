@@ -185,7 +185,9 @@ export async function resolveSelectionRoots({ definition, snapshot, enumerator, 
         if (u.reason === 'not-found') notFound.push({ selectionRole: role, modelKey, dbId: u.dbId });
         else noFragments.push(u.dbId);
       }
-      if (noFragments.length > 0) softRows.push({ selectionRole: role, modelKey, cause: 'no-fragments', dbIds: noFragments.sort(ascending) });
+      // P5's pinned `UnresolvedSelection.dbIds` is `dbId[] unique`. validateResolveRootsResult already refuses a repeated or
+      // misordered `unresolved` list (H4), so this is a defensive canonicalization: the row never carries a duplicate.
+      if (noFragments.length > 0) softRows.push({ selectionRole: role, modelKey, cause: 'no-fragments', dbIds: ascendingUnique(noFragments) });
     }
     if (notFound.length > 0) {
       notFound.sort((x, y) => byCodeUnit(x.selectionRole, y.selectionRole) || x.dbId - y.dbId);

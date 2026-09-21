@@ -307,3 +307,52 @@ test('a whole answer that lists unreachable owners without counting fragments is
   assert.deepEqual(w((r) => { r.roots[0].subtreeDigest = `sha256:${'A'.repeat(64)}`; }), ['not-a-digest']);
   assert.deepEqual(w((r) => { r.ownerMismatch = { count: 0, first20: [{ dbId: 1 }] }; }), ['malformed']);
 });
+
+// ---------------------------------------------------------------------------
+// H4 (P3 independent review): an explicit answer's `unresolved` ids are strictly ascending and unique, exactly like
+// its `roots` -- P3's own plan says "ascending" and P5's pinned `UnresolvedSelection.dbIds` is `dbId[] unique`.
+// ---------------------------------------------------------------------------
+test('H4: unresolved ids must be strictly ascending and unique, reported once per list (explicit scopes)', () => {
+  const scope = { scope: { dbIds: [1, 4, 5, 9] } };
+  const explicit = (unresolved, roots = []) => codes(validateResolveRootsResult(
+    { roots, population: null, ownerMismatch: null, unreachable: null, unresolved }, scope));
+  const nf = (dbId) => ({ dbId, reason: 'not-found' });
+  const nofrag = (dbId) => ({ dbId, reason: 'no-fragments' });
+  // the accepted shapes: empty, one, strictly ascending (either reason, mixed)
+  assert.deepEqual(explicit([]), []);
+  assert.deepEqual(explicit([nofrag(4)]), []);
+  assert.deepEqual(explicit([nf(4), nofrag(5), nf(9)]), []);
+  // a duplicate id, whatever its reason
+  assert.deepEqual(explicit([nofrag(4), nofrag(4)]), ['unresolved-not-ascending']);
+  assert.deepEqual(explicit([nf(4), nofrag(4)]), ['unresolved-not-ascending']);
+  // a descent
+  assert.deepEqual(explicit([nofrag(5), nofrag(4)]), ['unresolved-not-ascending']);
+  // several defects in the same list still add ONE issue for the list (not one per following row), at the list path
+  const many = validateResolveRootsResult({ roots: [], population: null, ownerMismatch: null, unreachable: null,
+    unresolved: [nf(9), nf(5), nf(5), nf(4), nf(1)] }, scope);
+  assert.deepEqual(many.issues, [{ path: '/unresolved', code: 'unresolved-not-ascending' }]);
+  assert.equal(many.ok, false);
+  // rows that are already reported as not-a-dbid do not additionally read as unordered
+  assert.deepEqual(explicit([nf(4), { dbId: 'x', reason: 'not-found' }, nf(5)]), ['not-a-dbid']);
+  // it is independent of the other explicit-scope rules (root-not-requested etc. still fire alongside)
+  assert.deepEqual(explicit([nf(9), nf(4)], [{ dbId: 1, fragmentCount: 1, ownerDbIds: [1], subtreeDigest: D('r') }]),
+    ['unresolved-not-ascending']);
+});
+
+test('H4: a whole answer is untouched (unresolved must be empty there)', () => {
+  const w = okWhole(); w.unresolved = [{ dbId: 4, reason: 'no-fragments' }, { dbId: 4, reason: 'no-fragments' }];
+  assert.deepEqual(codes(validateResolveRootsResult(w, WHOLE)), ['unresolved-forbidden']);
+});
+
+test('H4: conformance reports (never throws for) an enumerator whose explicit answer repeats or misorders an unresolved id', async () => {
+  const dup = await conform((e) => ({ ...e, resolveRoots: async (b, s, c) => {
+    const r = await e.resolveRoots(b, s, c);
+    return r.unresolved.length > 0 ? { ...r, unresolved: [...r.unresolved, ...r.unresolved] } : r; } }));
+  assert.ok(dup.some((f) => f.includes('shape') && f.includes('/unresolved:unresolved-not-ascending')), dup.join('\n'));
+  const reversedTwo = await conform((e) => ({ ...e, resolveRoots: async (b, s, c) => {
+    const r = await e.resolveRoots(b, s, c);
+    return r.unresolved.length > 0 ? { ...r, unresolved: [{ dbId: 900, reason: 'not-found' }, ...r.unresolved] } : r; } }));
+  assert.ok(reversedTwo.some((f) => f.includes('/unresolved:unresolved-not-ascending')), reversedTwo.join('\n'));
+  // and the conforming synthetic enumerator is still clean
+  assert.deepEqual(await conform((e) => e), []);
+});

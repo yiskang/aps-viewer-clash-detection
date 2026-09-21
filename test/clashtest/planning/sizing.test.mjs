@@ -1,7 +1,7 @@
 // test/clashtest/planning/sizing.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sizeUnits, unitIdFor, rangeRecordCount, pairSpaceWeightOf, targetEntryWeight, targetEntryRootCount, targetWeightOf, unitRecordFields } from '../../../clashtest/planning/sizing.js';
+import { sizeUnits, sizeUnitsSliced, SIZING_BATCH_LABEL, unitIdFor, rangeRecordCount, pairSpaceWeightOf, targetEntryWeight, targetEntryRootCount, targetWeightOf, unitRecordFields } from '../../../clashtest/planning/sizing.js';
 import { decomposeCells } from '../../../clashtest/planning/decompose.js';
 import { buildRootTables, readRange } from '../../../clashtest/planning/planTables.js';
 import { createRecordBudget } from '../../../clashtest/planning/ledger.js';
@@ -282,4 +282,34 @@ test('`limit` counts gaps too', () => {
   const r = sizeUnits({ cells, plan, options: opts({ maxTargetFragmentsPerUnit: 4, maxSourceDbIdsPerUnit: 1 }), limit: 1 });   // two source chunks -> two gaps
   assert.equal(r.exceeded, true);
   assert.equal(r.units.length + r.gaps.length, 2);
+});
+
+// ---- H1/H2: sizing consumes any iterable lazily and has a sliced form sharing the synchronous logic ---------------------
+
+test('sizeUnitsSliced returns exactly what sizeUnits returns, ticking inside packing, slicing and unit construction and once per cell batch', async () => {
+  const { cells, plan } = makeSizingFixture({ sourceWeights: [1, 1, 1, 1, 1, 1, 1], targets: [{ modelKey: 'a', roots: 5 }, { modelKey: 'b', roots: 4 }, { modelKey: 'w', whole: true }] });
+  const o = opts({ maxSourceDbIdsPerUnit: 2, maxTargetFragmentsPerUnit: 3, maxTargetModelsPerUnit: 2 });
+  const twoCells = [...cells, { ...cells[0], cell: '2' }];
+  const labels = [];
+  const sliced = await sizeUnitsSliced({ cells: twoCells, plan, options: o }, { tick: (label) => { labels.push(label); } });
+  assert.deepEqual(sliced, sizeUnits({ cells: twoCells, plan, options: o }));
+  assert.equal(labels.filter((l) => l === SIZING_BATCH_LABEL).length, 2);                // one per cell id
+  for (const kind of ['sizing:source-root', 'sizing:target-root', 'sizing:target-entry', 'sizing:unit']) assert.ok(labels.includes(kind), kind);
+  // The limit behaves identically in the sliced form.
+  const capped = await sizeUnitsSliced({ cells: twoCells, plan, options: o, limit: 3 }, { tick() {} });
+  assert.deepEqual(capped, sizeUnits({ cells: twoCells, plan, options: o, limit: 3 }));
+  assert.equal(capped.exceeded, true);
+});
+
+test('sizing releases a lazy cell generator as soon as it stops, and a cancelling tick abandons it (H1, H2)', async () => {
+  const { cells, plan } = makeSizingFixture({ sourceWeights: [1, 1, 1, 1], targets: [{ modelKey: 'y', roots: 4 }] });
+  let closed = 0;
+  function* lazyCells() { try { for (let i = 0; i < 100; i++) yield cells[0]; } finally { closed += 1; } }
+  const o = opts({ maxSourceDbIdsPerUnit: 1, maxTargetFragmentsPerUnit: 1 });
+  assert.equal(sizeUnits({ cells: lazyCells(), plan, options: o, limit: 2 }).exceeded, true);
+  assert.equal(closed, 1);
+  const boom = new Error('cancelled');
+  let n = 0;
+  await assert.rejects(sizeUnitsSliced({ cells: lazyCells(), plan, options: o }, { tick: () => { if (++n === 5) throw boom; } }), (e) => e === boom);
+  assert.equal(closed, 2);
 });

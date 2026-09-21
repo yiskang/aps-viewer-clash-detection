@@ -7,11 +7,19 @@
 //                              (it charges scope-digest / unresolved-selection / unreachable-population /
 //                              hierarchy-internal rows itself when given the run budget)
 //   2  buildRootTables         the run-scoped root tables (charges root-table / root-owner rows)
-//   3  decomposeCells          the three-cell exact-cover decomposition
-//   4  sizeUnits               source packing x target slicing, one cell batch at a time
-//   5  admit + record          unit records and their range records, as blocks, then the ledger's planning sections
-//   6  reserveUnitSlots        the overflow reserve (the budget identity planRecords + maxUnitsPerRun <= maxLedgerRecords)
-//   7  deep-freeze the plan    EXCEPT `plan.ledger` (D10): planSplit reaches the live budget through it
+//   3  decomposeCellsLazy +    the three-cell exact-cover decomposition, generated cell by cell and consumed by sizing
+//      sizeUnits               (source packing x target slicing) under the remaining unit cap: an oversized plan is refused
+//                              after `limit + 1` units without ever materializing the unadmitted pair space (spec 6.5.1)
+//   4  admit                   unit records and their range records, as blocks
+//   5  reserveUnitSlots        the overflow reserve (the budget identity planRecords + maxUnitsPerRun <= maxLedgerRecords)
+//   6  stage + assemble        every ledger record and the plan are BUILT (validated, copied, deep-frozen EXCEPT
+//                              `plan.ledger`, D10) without touching the ledger
+//   7  commit                  ONE O(1) `ledger.commitPlanned` assignment after the last checkpoint, so a cancelled or
+//                              failed plan leaves the ledger untouched (spec 6.6.2)
+//
+// Spec 17.3: every size-dependent loop above yields through `checkpoint(label)` at least every 64 items (the label names the
+// span, for AC-12's spanRecorder; a checkpoint may ignore it), and once per model, per cell batch and per stage. The two
+// spans that stay synchronous are named in the JSDoc of `createPlan`.
 //
 // It never throws synchronously: it is an `async` function, so every failure is a `{status: 'failed'}` result (a
 // spec 6.6.2 planning cause) or a rejected promise (enumerator errors, caller bugs, internal errors), controller
@@ -53,11 +61,12 @@
 // @typedef {object} Ledger  the ledger.js projection (`toLedgerRecord()`), exactly P5's pinned sealed-ledger shape
 
 import { pairSemanticsOf } from '../identity/ids.js';
+import { runSliced } from './steps.js';
 import { resolveSelectionRoots } from './rootResolution.js';
-import { buildRootTables, readRange } from './planTables.js';
-import { decomposeCells } from './decompose.js';
-import { sizeUnits, rangeRecordCount, unitRecordFields } from './sizing.js';
-import { createRecordBudget, createLedger, rootOwnerRowsOf } from './ledger.js';
+import { buildRootTablesSliced, readRange } from './planTables.js';
+import { decomposeCellsLazy, CELL_IDS } from './decompose.js';
+import { sizeUnitsSliced, SIZING_BATCH_LABEL, rangeRecordCount, unitRecordFields } from './sizing.js';
+import { createRecordBudget, createLedger, rootOwnerRowsOfSliced } from './ledger.js';
 
 /** Spec 17.3: a checkpoint at least every 64 items of an engine-controlled span (the slicer's own cadence). */
 const CHECK_EVERY = 64;
@@ -66,7 +75,7 @@ const PLANNING_PHASE = 'planning';
 export const EMPTY_OPERAND_WARNING = 'empty-operand';
 const TARGET_TOO_LARGE = 'target-too-large';
 const SIZING_KEYS = Object.freeze(['maxSourceFragmentsPerUnit', 'maxSourceDbIdsPerUnit', 'maxTargetModelsPerUnit', 'maxTargetFragmentsPerUnit']);
-const LEDGER_METHODS = Object.freeze(['recordUnit', 'recordGap', 'recordPlanning', 'recordPlanningGap']);
+const LEDGER_METHODS = Object.freeze(['recordUnit', 'recordGap', 'recordPlanning', 'recordPlanningGap', 'stagePlanned', 'commitPlanned']);
 
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const ascending = (a, b) => a - b;
@@ -81,22 +90,34 @@ function readOnlyMap(map) {
 }
 
 /**
- * Deep-freeze `value` in place: arrays, plain objects, and the entries of Maps (which are also made read-only). Skips
- * the top-level keys in `skip` (the live ledger), functions, and anything already visited.
+ * Deep-freeze `value` in place, in deadline-aware slices (spec 17.3): arrays, plain objects, and the entries of Maps (which
+ * are also made read-only). Skips the top-level keys in `skip` (the live ledger), functions, and anything already frozen
+ * (a frozen subtree is never entered: the plan tables freeze their own rows). One `tick` per node (`plan:freeze`) and per Map entry (`plan:freeze-map`).
  */
-function deepFreeze(value, skip = [], seen = new WeakSet()) {
-  if (value === null || typeof value !== 'object' || seen.has(value)) return value;
-  seen.add(value);
-  if (value instanceof Map) {
-    for (const [, v] of value) deepFreeze(v, [], seen);
-    return readOnlyMap(value);
+async function deepFreezeSliced(value, skip, tick) {
+  const stack = [value];
+  while (stack.length) {
+    const v = stack.pop();
+    if (v === null || typeof v !== 'object' || Object.isFrozen(v)) continue;
+    if (v instanceof Map) {
+      for (const [, entry] of v) {
+        if (entry !== null && typeof entry === 'object') stack.push(entry);
+        const pending = tick('plan:freeze-map');
+        if (pending) await pending;
+      }
+      readOnlyMap(v);
+    } else {
+      for (const key of Reflect.ownKeys(v)) {
+        if (v === value && skip.includes(key)) continue;
+        const child = v[key];
+        if (child !== null && typeof child === 'object') stack.push(child);
+      }
+    }
+    Object.freeze(v);
+    const pending = tick('plan:freeze');
+    if (pending) await pending;
   }
-  for (const key of Reflect.ownKeys(value)) {
-    if (skip.includes(key)) continue;
-    const v = value[key];
-    if (v !== null && typeof v === 'object') deepFreeze(v, [], seen);
-  }
-  return Object.freeze(value);
+  return value;
 }
 
 // ---- lookups -----------------------------------------------------------------------------------------------------
@@ -193,17 +214,48 @@ export function materializeUnit(plan, unit) {
 
 const fail = (cause, detail) => ({ ok: false, cause, detail });
 
-/** Cells grouped by cell id, in first-appearance order: the id counter of sizeUnits is per cell id, so grouping keeps ids stable. */
-function groupByCell(cells) {
-  const groups = new Map();
-  for (const spec of cells) {
-    if (!groups.has(spec.cell)) groups.set(spec.cell, []);
-    groups.get(spec.cell).push(spec);
-  }
-  return [...groups.values()];
+const seqOf = (unit) => Number(unit.unitId.slice(unit.unitId.lastIndexOf('.') + 1));
+/** Slice items a unit record's expansion is worth: one, plus one per 64 root ids it copies (its cost scales with its roots). */
+const idsTicks = (fields) => 1 + Math.floor((fields.sourceRootDbIds.length
+  + fields.targets.reduce((n, t) => n + (t.rootDbIds?.length ?? 0), 0)) / CHECK_EVERY);
+const CELL_RANK = new Map(CELL_IDS.map((id, rank) => [id, rank]));
+
+/**
+ * The checkpoint adapter every sliced stage runs through: `checkpoint(label)` at least every CHECK_EVERY items, and at
+ * once at the end of each cell batch. (The label is an extra argument a zero-argument checkpoint simply ignores.)
+ */
+function tickThrough(checkpoint) {
+  let items = 0;
+  return (label) => (label === SIZING_BATCH_LABEL || ++items % CHECK_EVERY === 0 ? checkpoint(label) : undefined);
 }
 
-const seqOf = (unit) => Number(unit.unitId.slice(unit.unitId.lastIndexOf('.') + 1));
+/**
+ * Sizing returns issuable units and pre-terminal gaps as two lists, each already in emission order (per cell id, by the
+ * one shared id sequence). One linear merge on (cell rank, seq) restores the canonical interleaving, with the plan-level
+ * sums (range records, pair space, gap weight) taken in the same pass.
+ */
+function* assembleSteps(sizedUnits, sizedGaps) {
+  const records = [];
+  const units = [];
+  const gaps = [];
+  let rangeTotal = 0;
+  let pairSpaceTotal = 0;
+  let gapWeight = 0;
+  const before = (a, b) => (CELL_RANK.get(a.cell) - CELL_RANK.get(b.cell)) || (seqOf(a) - seqOf(b));
+  let u = 0;
+  let g = 0;
+  while (u < sizedUnits.length || g < sizedGaps.length) {
+    const takeGap = u >= sizedUnits.length || (g < sizedGaps.length && before(sizedGaps[g], sizedUnits[u]) < 0);
+    const unit = takeGap ? sizedGaps[g++] : sizedUnits[u++];
+    records.push({ unit, gap: takeGap });
+    (takeGap ? gaps : units).push(unit);
+    rangeTotal += rangeRecordCount(unit);
+    pairSpaceTotal += unit.pairSpaceWeight;
+    if (takeGap) gapWeight += unit.pairSpaceWeight;
+    yield 'plan:assemble';
+  }
+  return { records, units, gaps, rangeTotal, pairSpaceTotal, gapWeight };
+}
 
 /** The run's budget and ledger: a caller-supplied ledger (P6 owns both, reconciliation A17) or a fresh pair. */
 function budgetAndLedger(options, suppliedLedger) {
@@ -228,7 +280,13 @@ function budgetAndLedger(options, suppliedLedger) {
  * @param {{bindings: ReadonlyArray<object|null>}} args.snapshot  P1 `snapshotBindings(keys)`: positional over the definition's ascending model keys
  * @param {object} args.enumerator  the ElementEnumerator port
  * @param {object} args.options  resolved run options (the sizing caps and the budget limits are read)
- * @param {() => (void|Promise<void>)} args.checkpoint  awaited between models, stages and cell batches (spec 17.3)
+ * @param {(label?: string) => (void|Promise<void>)} args.checkpoint  awaited between models, stages and cell batches and at
+ *   least every 64 items inside every size-dependent loop (spec 17.3). Called with a span label (`planTables:*`, `plan:*`,
+ *   `sizing:*`, `ledger:*`) a zero-argument checkpoint ignores. Anything it throws (cancellation) aborts planning and
+ *   leaves the ledger exactly as it was: the ledger is written by ONE O(1) `commitPlanned` after the last checkpoint.
+ *   Spans that stay synchronous (AC-12 / G-CAL gate items, not measured closed): the per-model `structuredClone` of the
+ *   resolved entry (one model at ~100,000 roots measured ~90-140 ms), and the per-unit expansion + sort of one unit's
+ *   root ids (bounded by the per-unit caps, not by plan size). The commit and the return are sub-millisecond.
  * @param {object} [args.ledger]  the run's coverage ledger (which carries its RecordBudget); created when omitted
  * @returns {Promise<PlanResult>}
  */
@@ -261,41 +319,42 @@ export async function createPlan({ definition, snapshot, enumerator, options, ch
     return failed({ cause: resolved.cause, detail });
   }
 
-  // 2. Root tables (charged), from the resolved per-model classes.
-  const built = buildRootTables({
+  const tick = tickThrough(checkpoint);
+
+  // 2. Root tables (charged), from the resolved per-model classes, built in slices.
+  const built = await buildRootTablesSliced({
     models: [...resolved.models].map(([modelKey, m]) => ({ modelKey, classes: m.classes })),
     budget,
-  });
+  }, { tick });
   if (!built.ok) return failed(built.cause === 'plan-too-large' ? { cause: built.cause, detail: { overflowClass: built.overflowClass } } : built);
-  await checkpoint();
+  await checkpoint('plan:tables');
 
   // The plan's own per-model entries: detached copies (freezing the plan must never freeze an enumerator-owned array).
-  const models = new Map([...resolved.models].map(([modelKey, m]) => [modelKey, structuredClone(m)]));
+  // `structuredClone` of one model is not sliceable, so the checkpoint runs between models (see the JSDoc: AC-12 gate).
+  const models = new Map();
+  for (const [modelKey, m] of resolved.models) {
+    models.set(modelKey, structuredClone(m));
+    await checkpoint('plan:models');
+  }
   const tablePlan = { ...built, models };
 
-  // 3. Decomposition, then sizing one cell batch at a time (a yield between batches), guarding the unit cap as we go
-  //    so an oversized plan is refused as soon as it is known to be oversized.
-  const cells = decomposeCells({ models, plan: tablePlan, ordered });
-  await checkpoint();
-  const records = [];   // { unit, gap } in canonical emission order: per cell id, by the shared id sequence
-  for (const group of groupByCell(cells)) {
-    // `limit`: the room left under maxUnitsPerRun, so the sizer stops after `limit + 1` units instead of building the
-    // whole source-chunk x target-slice cross product of an oversized plan before it can be refused (spec 6.5.1).
-    const limit = Math.max(0, maxUnitsPerRun - ledger.unitRecordCount - records.length);
-    const { units: sized, gaps: sizedGaps, exceeded } = sizeUnits({ cells: group, plan: tablePlan, options, limit });
-    if (exceeded) return tooLarge('unit-record');
-    const batch = [...sized.map((unit) => ({ unit, gap: false })), ...sizedGaps.map((unit) => ({ unit, gap: true }))]
-      .sort((a, b) => seqOf(a.unit) - seqOf(b.unit));
-    for (const item of batch) records.push(item);
-    if (ledger.unitRecordCount + records.length > maxUnitsPerRun) return tooLarge('unit-record');
-    await checkpoint();
-  }
+  // 3. Decomposition fused into sizing: cells are generated lazily and consumed by `sizeUnitsSliced` under `limit`, the
+  //    room left under maxUnitsPerRun, so an oversized plan is refused after `limit + 1` units without ever building the
+  //    unadmitted pair space (cells or units, spec 6.5.1). Sizing yields inside every loop and once per cell batch.
+  const limit = Math.max(0, maxUnitsPerRun - ledger.unitRecordCount);
+  const sized = await sizeUnitsSliced({ cells: decomposeCellsLazy({ models, plan: tablePlan, ordered }), plan: tablePlan, options, limit }, { tick });
+  if (sized.exceeded) return tooLarge('unit-record');
+  const { records, units, gaps, rangeTotal, pairSpaceTotal, gapWeight: preTerminalGapWeight } = await runSliced(assembleSteps(sized.units, sized.gaps), tick);
+  await checkpoint('plan:sized');
 
   // 4. Admission, as blocks, BEFORE anything is recorded (spec 6.5.1): unit records, then their range records.
-  const rangeTotal = records.reduce((n, { unit }) => n + rangeRecordCount(unit), 0);
-  const rootOwners = rootOwnerRowsOf(resolved.models);
-  const raRoots = [...models.values()].reduce((n, m) => n + m.classes["A'"].length + m.classes.C.length, 0);
-  const rbRoots = [...models.values()].reduce((n, m) => n + m.classes["B'"].length + m.classes.C.length, 0);
+  const rootOwners = await rootOwnerRowsOfSliced(resolved.models, { tick });
+  let raRoots = 0;
+  let rbRoots = 0;
+  for (const m of models.values()) {   // O(models) with O(1) work each (models <= maxEntriesPerSelection)
+    raRoots += m.classes["A'"].length + m.classes.C.length;
+    rbRoots += m.classes["B'"].length + m.classes.C.length;
+  }
   const emptyOperand = raRoots === 0 || rbRoots === 0;   // spec 6.6 item 4: a selection with no root in any model
   const warnings = emptyOperand ? [{ code: EMPTY_OPERAND_WARNING }] : [];
   if (!budget.admitPlanBlock([['unit-record', records.length], ['unit-range', rangeTotal], ['planning-gap', warnings.length]])) {
@@ -308,36 +367,41 @@ export async function createPlan({ definition, snapshot, enumerator, options, ch
     throw new Error('internal-error: planRecords + maxUnitsPerRun exceeds maxLedgerRecords (the record budget cannot hold the overflow reserve)');
   }
 
-  // 6. Build every record (yielding), then commit them to the ledger in one synchronous pass: a cancellation or a
-  //    failure above can never leave a half-written ledger behind a `failed` result.
-  const fields = [];
-  for (const { unit } of records) {
-    fields.push(unitRecordFields(tablePlan, unit));
-    if (fields.length % CHECK_EVERY === 0) await checkpoint();
+  // 6. BUILD everything without touching the ledger (a cancellation or failure in any slice below leaves it exactly as it
+  //    was): the unit records' self-describing fields, the ledger's staged commit, and the frozen plan.
+  const stagedUnits = [];
+  for (const { unit, gap } of records) {
+    const fields = unitRecordFields(tablePlan, unit);
+    stagedUnits.push(gap ? { fields, gapCause: TARGET_TOO_LARGE } : { fields });
+    for (let n = 0; n < idsTicks(fields); n++) {   // one item per unit plus one per 64 expanded root ids: a unit's cost is its size
+      const pending = tick('plan:unit-fields');
+      if (pending) await pending;
+    }
   }
-  ledger.recordPlanning({
-    planExists: true,
-    emptyOperand,
-    rootOwners,
-    unresolvedSelections: resolved.unresolvedSelections,
-    unreachablePopulation: resolved.unreachablePopulation,
-    hierarchyInternal: resolved.hierarchyInternal,
-    exclusions: resolved.libraryExclusions,
-    warnings,
-  });
-  records.forEach(({ unit, gap }, i) => {
-    if (gap) ledger.recordGap(unit.unitId, { ...fields[i], cause: TARGET_TOO_LARGE });
-    else ledger.recordUnit(fields[i]);
-  });
+  const staged = await ledger.stagePlanned({
+    planning: {
+      planExists: true,
+      emptyOperand,
+      rootOwners,
+      unresolvedSelections: resolved.unresolvedSelections,
+      unreachablePopulation: resolved.unreachablePopulation,
+      hierarchyInternal: resolved.hierarchyInternal,
+      exclusions: resolved.libraryExclusions,
+      warnings,
+    },
+    units: stagedUnits,
+  }, { tick });
 
-  // 7. Assemble and freeze (everything but the live ledger).
-  const units = records.filter((r) => !r.gap).map((r) => r.unit);
-  const gaps = records.filter((r) => r.gap).map((r) => r.unit);
-  const preTerminalGapWeight = gaps.reduce((n, g) => n + g.pairSpaceWeight, 0);
   const selectionKindByRole = { A: [], B: [] };
   for (const [modelKey, m] of models) {
     if (m.scopeKinds.A !== null) selectionKindByRole.A.push({ modelKey, kind: m.scopeKinds.A });
     if (m.scopeKinds.B !== null) selectionKindByRole.B.push({ modelKey, kind: m.scopeKinds.B });
+  }
+  const unitsById = new Map();
+  for (const u of units) {
+    unitsById.set(u.unitId, u);
+    const pending = tick('plan:units-index');
+    if (pending) await pending;
   }
   const plan = {
     tables: built.tables,
@@ -350,13 +414,18 @@ export async function createPlan({ definition, snapshot, enumerator, options, ch
     selectionKindByRole,
     units,
     gaps,
-    unitsById: new Map(units.map((u) => [u.unitId, u])),
-    pairSpaceTotal: records.reduce((n, { unit }) => n + unit.pairSpaceWeight, 0),
+    unitsById,
+    pairSpaceTotal,
     planRecords: budget.planRecords,
     sizing,
     ledger,
   };
-  deepFreeze(plan, ['ledger']);
+  await deepFreezeSliced(plan, ['ledger'], tick);   // everything but the live ledger (D10)
+  await checkpoint('plan:built');
+
+  // 7. Commit: the last statement before the result, after the last checkpoint, and O(1): the ledger is either fully
+  //    planned or exactly as the caller handed it over.
+  ledger.commitPlanned(staged);
   return { status: 'planned', plan, ledger, planningGaps: [], preTerminalGapWeight };
 }
 

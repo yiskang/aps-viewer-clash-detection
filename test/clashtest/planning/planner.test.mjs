@@ -6,7 +6,10 @@ import { planSplit, splitUnit } from '../../../clashtest/planning/splitting.js';
 import { createRecordBudget, createLedger } from '../../../clashtest/planning/ledger.js';
 import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
 import { EnumerationCancelledError } from '../../../clashtest/errors.js';
-import { makeSyntheticEnumerator, defOf, snapshotOf } from '../support/syntheticModels.mjs';
+import { makeSyntheticEnumerator, defOf, snapshotOf, makeSizingFixture } from '../support/syntheticModels.mjs';
+import { sizeUnits } from '../../../clashtest/planning/sizing.js';
+import { createSlicer } from '../../../clashtest/util/slicer.js';
+import { createFakeClock } from '../support/fakeClock.mjs';
 
 const frag = (fragId, ownerDbId, geometryId = 1) => ({ fragId, ownerDbId, geometryId });
 const rootOf = (dbId, fragId) => ({ dbId, owners: [dbId], fragments: [frag(fragId, dbId)] });
@@ -530,18 +533,41 @@ test('sizing options change chunking, never coverage: tight caps plan the same r
 
 test('an oversized plan is refused after limit+1 units, never after building the whole cross product (spec 6.5.1)', async () => {
   // 1500 source roots x 1500 target roots at one root per unit is 2.25M units unbounded; with maxUnitsPerRun 10 the
-  // sizer must stop at 11. (Time is a proxy: the bounded path is milliseconds, the unbounded one seconds and ~1 GB.)
+  // sizer must stop at 11.
   const N = 1500;
   const models = [{ modelKey: 'a', roots: Array.from({ length: N }, (_, i) => rootOf(i + 1, i)) },
     { modelKey: 'b', roots: Array.from({ length: N }, (_, i) => rootOf(i + 1, i)) }];
-  const started = performance.now();
+  const options = { ...RUN_OPTION_DEFAULTS, maxUnitsPerRun: 10, maxSourceDbIdsPerUnit: 1, maxTargetFragmentsPerUnit: 1 };
   const res = await plan2({ models, keys: ['a', 'b'], A: [{ kind: 'model', modelKey: 'a' }], B: [{ kind: 'elements', modelKey: 'b', dbIds: Array.from({ length: N }, (_, i) => i + 1) }],
-    options: { ...RUN_OPTION_DEFAULTS, maxUnitsPerRun: 10, maxSourceDbIdsPerUnit: 1, maxTargetFragmentsPerUnit: 1 } });
-  const elapsed = performance.now() - started;
+    options });
   assert.equal(res.status, 'failed');
   assert.deepEqual(res.planningGaps.map((g) => g.cause), ['plan-too-large']);
   assert.equal(res.planningGaps[0].detail.overflowClass, 'unit-record');
-  assert.ok(elapsed < 500, `planning took ${Math.round(elapsed)} ms: the unit cap is not applied while sizing`);
+  // Deterministic, not a stopwatch (L1): the same shape through the counting seam. The sizer produces EXACTLY limit + 1
+  // records, however large the cross product, and a lazily consumed decomposition is pulled only that far.
+  const sizeSeam = makeSizingFixture({ sourceWeights: Array.from({ length: N }, () => 1), targets: [{ modelKey: 'b', roots: N }] });
+  const pulls = { pulled: 0 };
+  const seamed = sizeUnits({ cells: (function* () { for (const c of sizeSeam.cells) { pulls.pulled += 1; yield c; } })(), plan: sizeSeam.plan,
+    options: { ...RUN_OPTION_DEFAULTS, maxSourceDbIdsPerUnit: 1, maxTargetFragmentsPerUnit: 1 }, limit: 10 });
+  assert.equal(seamed.exceeded, true);
+  assert.equal(seamed.units.length + seamed.gaps.length, 11);
+  assert.equal(pulls.pulled, 1);
+});
+
+test('a many-model class-C plan over the unit cap is a deterministic plan-too-large (H1: no M(M-1)/2 cell list is built to refuse it)', async () => {
+  const M = 40;
+  const models = Array.from({ length: M }, (_, i) => ({ modelKey: `m${String(i).padStart(3, '0')}`, roots: [rootOf(1, 0)] }));
+  const keys = models.map((m) => m.modelKey);
+  const side = keys.map((modelKey) => ({ kind: 'model', modelKey }));
+  const res = await plan2({ models, keys, A: side, B: side, options: { ...RUN_OPTION_DEFAULTS, maxUnitsPerRun: 25 } });
+  assert.equal(res.status, 'failed');
+  assert.equal(res.planningGaps[0].cause, 'plan-too-large');
+  assert.equal(res.planningGaps[0].detail.overflowClass, 'unit-record');
+  assert.equal(res.ledger.unitRecordCount, 0);
+  // The same universe with room for every cell plans, so the refusal above was the cap and nothing else.
+  const roomy = await plan2({ models, keys, A: side, B: side });
+  assert.equal(roomy.status, 'planned');
+  assert.equal(roomy.plan.units.length, M * (M - 1) / 2);   // cell 3a only: every model is one C root, so 3b has nothing to bisect
 });
 
 // R20-1 is "every model the unit uses as a SOURCE through a kind:'model' selection" (spec 16.3.2; AC-8: an explicit-list
@@ -574,4 +600,125 @@ test('R20-1 for the unordered canonical pair: either role naming the model whole
   const u = plan.units.find((x) => x.cell === '3b');
   assert.equal(u.orientationRole, 'canonical');
   assert.equal(sourceWholeOf(plan, u).length, 1);
+});
+
+// ---- H2: cap-shaped planning yields INSIDE every large stage and stays atomic under cancellation (spec 17.3, 6.6.2) ------
+
+// 40 models x 25 roots, every model in both selections: 1,000 roots, 780 model pairs (cell 3a) plus 3b bisection = thousands
+// of units. Small next to the caps, but with a 2-checkpoint slice every stage below is many slices long.
+const CAP_M = 40;
+const capShaped = () => {
+  const models = Array.from({ length: CAP_M }, (_, i) => ({ modelKey: `m${String(i).padStart(2, '0')}`,
+    roots: Array.from({ length: 25 }, (__, k) => rootOf(k + 1, k)) }));
+  const keys = models.map((m) => m.modelKey);
+  const side = keys.map((modelKey) => ({ kind: 'model', modelKey }));
+  return { models, keys, side };
+};
+// Stage families, by the label prefix each sliced span passes to `checkpoint(label)`.
+const STAGES = {
+  tables: /^planTables:/,
+  models: /^plan:models$/,
+  sizing: /^sizing:/,
+  assemble: /^plan:assemble$/,
+  rootOwners: /^ledger:root-owner$/,
+  unitFields: /^plan:unit-fields$/,
+  staging: /^ledger:stage-unit$/,
+  unitsIndex: /^plan:units-index$/,
+  freeze: /^plan:freeze$/,
+  freezeMaps: /^plan:freeze-map$/,
+};
+
+async function planCapShaped({ checkpoint, ledger }) {
+  const { models, keys, side } = capShaped();
+  const { enumerator, binding } = makeSyntheticEnumerator(models);
+  return createPlan({ definition: defOf({ A: side, B: side }), snapshot: snapshotOf(binding, keys), enumerator,
+    options: RUN_OPTION_DEFAULTS, checkpoint, ...(ledger ? { ledger } : {}) });
+}
+
+test('cap-shaped planning yields repeatedly inside every large stage: tables, model copies, sizing, assembly, root-owner rows, unit records, ledger staging, the unit index and the final freeze (H2)', async () => {
+  const clock = createFakeClock();
+  const yields = [];
+  const slicer = createSlicer({ now: clock.now, yieldToScheduler: clock.yieldToScheduler, sliceBudgetMs: 1_000_000, maxItemsPerSlice: 2,
+    spanRecorder: (label) => yields.push(label) });
+  const res = await planCapShaped({ checkpoint: (label = 'slice') => slicer.tick(label) });
+  assert.equal(res.status, 'planned');
+  assert.ok(res.plan.units.length > 1_500, `units: ${res.plan.units.length}`);
+  for (const [stage, pattern] of Object.entries(STAGES)) {
+    const n = yields.filter((label) => pattern.test(label)).length;
+    assert.ok(n >= 3, `stage ${stage} yielded ${n} times (labels seen: ${[...new Set(yields)].join(', ')})`);
+  }
+  assert.equal(res.ledger.unitRecordCount, res.plan.units.length);
+});
+
+test('a cancellation raised at a checkpoint INSIDE any large stage aborts planning with the ledger untouched (H2, spec 6.6.2)', async () => {
+  const fresh = () => {
+    const budget = createRecordBudget(RUN_OPTION_DEFAULTS);
+    return createLedger({ limits: RUN_OPTION_DEFAULTS, budget });
+  };
+  const pristine = fresh().toLedgerRecord();
+  for (const [stage, pattern, nth] of [...Object.entries(STAGES).map(([k, v]) => [k, v, 2]), ['last checkpoint', /^plan:built$/, 1]]) {
+    const ledger = fresh();
+    let seen = 0;
+    const cancel = new EnumerationCancelledError({ reason: `test-${stage}` });
+    await assert.rejects(planCapShaped({ ledger, checkpoint: (label = 'slice') => { if (pattern.test(label) && ++seen === nth) throw cancel; } }),
+      (err) => err === cancel, `stage ${stage}: the cancellation surfaces unwrapped`);
+    assert.equal(seen, nth, `stage ${stage} was reached`);
+    assert.deepEqual(ledger.toLedgerRecord(), pristine, `stage ${stage}: the ledger is exactly as it was handed over`);
+    assert.equal(ledger.unitRecordCount, 0);
+  }
+});
+
+test('the ledger is committed by one O(1) swap after the last checkpoint: nothing is written before it (H2, P3.9 atomicity)', async () => {
+  const budget = createRecordBudget(RUN_OPTION_DEFAULTS);
+  const ledger = createLedger({ limits: RUN_OPTION_DEFAULTS, budget });
+  const counts = [];
+  await planCapShaped({ ledger, checkpoint: (label) => { counts.push([label, ledger.unitRecordCount]); } });
+  assert.ok(counts.length > 100);
+  assert.deepEqual(counts.filter(([, n]) => n !== 0), []);   // every checkpoint of the run saw an empty ledger
+  assert.ok(ledger.unitRecordCount > 1_500);                 // ... and the commit happened after the last of them
+});
+
+test('the sliced freeze reaches every reachable object of the plan except the ledger, and every Map (inner ones too) is read-only (D10)', async () => {
+  const { plan } = await planCapShaped({ checkpoint: () => {} });
+  const seen = new Set();
+  const stack = [plan];
+  let maps = 0;
+  while (stack.length) {
+    const v = stack.pop();
+    if (v === null || typeof v !== 'object' || seen.has(v) || v === plan.ledger) continue;
+    seen.add(v);
+    assert.equal(Object.isFrozen(v), true, `unfrozen ${Array.isArray(v) ? 'array' : v instanceof Map ? 'Map' : 'object'}`);
+    if (v instanceof Map) {
+      maps += 1;
+      assert.throws(() => v.set('x', 1), TypeError);
+      assert.throws(() => v.delete('x'), TypeError);
+      assert.throws(() => v.clear(), TypeError);
+      for (const [, x] of v) stack.push(x);
+    } else {
+      for (const k of Reflect.ownKeys(v)) stack.push(v[k]);
+    }
+  }
+  assert.ok(maps >= CAP_M + 3, `maps seen: ${maps}`);   // models, unitsById, ownersByModel, ownerRootByModel + one owner Map per model
+  assert.ok(seen.size > 10_000);
+  assert.equal(Object.isFrozen(plan.ledger), false);
+});
+
+test('createPlan consumes the decomposition as a lazy generator: no CellSpec ARRAY is ever iterated or built (H1 at the planner seam)', async () => {
+  // The planner's own wiring cannot be reached from outside, so the seam is the array iterator: an eager decomposition
+  // hands sizing an array of CellSpecs (or spreads the generator into one), and both walk Array.prototype[Symbol.iterator].
+  const isCellSpecArray = (a) => a.length > 0 && a[0] !== null && typeof a[0] === 'object' && typeof a[0].cell === 'string' && Array.isArray(a[0].sourceRanges) && a[0].unitId === undefined;   // a CellSpec, not a WorkUnit
+  const original = Array.prototype[Symbol.iterator];
+  let cellSpecArrays = 0;
+  Array.prototype[Symbol.iterator] = function patchedIterator() {
+    if (isCellSpecArray(this)) cellSpecArrays += 1;
+    return original.call(this);
+  };
+  let res;
+  try {
+    res = await planCapShaped({ checkpoint: () => {} });
+  } finally {
+    Array.prototype[Symbol.iterator] = original;
+  }
+  assert.equal(res.status, 'planned');
+  assert.equal(cellSpecArrays, 0);
 });

@@ -23,6 +23,7 @@
 // plus { outcome: 'not-run', cause: 'target-too-large' }: P5 persists it as a leaf unit record.
 
 import { rangeRootCount, readRange } from './planTables.js';
+import { runSync, runSliced } from './steps.js';
 
 /** The unit id of the `seq`-th unit (zero-based) of a cell: `${cell}.${seq}`; split children append `.0` / `.1`. */
 export const unitIdFor = (cell, seq) => `${cell}.${seq}`;
@@ -120,8 +121,11 @@ function appendRoot(ranges, table, i) {
   else ranges.push({ table, start: i, end: i + 1 });
 }
 
+// The size-dependent loops below are step generators (see steps.js): one `yield` per root row / unit, so the sliced form
+// can checkpoint at least every 64 items while the synchronous form shares every line of the logic.
+
 /** Greedy packing of the source roots in range order. A packing TARGET, not a bound: an overweight root stands alone. */
-function packSource(plan, ranges, { maxSourceFragmentsPerUnit, maxSourceDbIdsPerUnit }) {
+function* packSource(plan, ranges, { maxSourceFragmentsPerUnit, maxSourceDbIdsPerUnit }) {
   const chunks = [];
   let cur = [];
   let curRoots = 0;
@@ -139,6 +143,7 @@ function packSource(plan, ranges, { maxSourceFragmentsPerUnit, maxSourceDbIdsPer
       appendRoot(cur, range.table, i);
       curRoots++;
       curFrags += w;
+      yield 'sizing:source-root';
     }
   }
   if (curRoots > 0) chunks.push(cur);
@@ -151,7 +156,7 @@ function packSource(plan, ranges, { maxSourceFragmentsPerUnit, maxSourceDbIdsPer
  * sentinel above the fragment cap, and the roots above it of each explicit entry, grouped per model. Oversize
  * entries are taken out of packing entirely (they can never be issued), so they do not disturb the slices.
  */
-function sliceTargets(plan, targets, { maxTargetModelsPerUnit, maxTargetFragmentsPerUnit }) {
+function* sliceTargets(plan, targets, { maxTargetModelsPerUnit, maxTargetFragmentsPerUnit }) {
   const slices = [];
   const oversize = [];
   let cur = [];
@@ -164,6 +169,7 @@ function sliceTargets(plan, targets, { maxTargetModelsPerUnit, maxTargetFragment
     if (t.scope === 'whole') {
       const weight = populationCount(plan, t.modelKey);
       const entry = { modelKey: t.modelKey, whole: true, ranges: null, roots: wholeRootCount(plan, t.modelKey), weight };
+      yield 'sizing:target-entry';
       if (weight > maxTargetFragmentsPerUnit) { oversize.push(entry); continue; }   // M7: never issued
       flush();                                                                      // not partitionable: alone in a slice
       slices.push([entry]);
@@ -179,6 +185,7 @@ function sliceTargets(plan, targets, { maxTargetModelsPerUnit, maxTargetFragment
           appendRoot(over.ranges, range.table, i);
           over.roots++;
           over.weight += w;
+          yield 'sizing:target-root';
           continue;
         }
         const sameModel = cur.length > 0 && cur[cur.length - 1].modelKey === t.modelKey;
@@ -190,6 +197,7 @@ function sliceTargets(plan, targets, { maxTargetModelsPerUnit, maxTargetFragment
         entry.roots++;
         entry.weight += w;
         curWeight += w;
+        yield 'sizing:target-root';
       }
     }
   }
@@ -199,20 +207,15 @@ function sliceTargets(plan, targets, { maxTargetModelsPerUnit, maxTargetFragment
 
 const toTarget = (e) => ({ modelKey: e.modelKey, scope: e.whole ? 'whole' : { ranges: e.ranges.map((r) => ({ ...r })) } });
 
+/** The label a sizing step yields when a cell id's batch is complete (the planner checkpoints there unconditionally). */
+export const SIZING_BATCH_LABEL = 'sizing:batch';
+
 /**
- * @param {object} args
- * @param {object[]} args.cells  decomposeCells output, canonical order
- * @param {object} args.plan     buildRootTables' result widened with `models` (whole-model population counts)
- * @param {object} args.options  resolved run options; the four sizing caps are read
- * @param {number} [args.limit]  stop as soon as units + gaps EXCEED this many (default: no limit). The planner passes its
- *   remaining `maxUnitsPerRun`, so an oversized plan is refused after `limit + 1` units, never after the whole cross product
- *   of source chunks x target slices has been built (spec 6.5.1 "checked incrementally, before allocation").
- * @returns {{units: object[], gaps: object[], exceeded: boolean}} `exceeded` is true when the limit tripped (the lists then
- *   hold the first `limit + 1` records only); `units` are issuable WorkUnits; `gaps` are the pre-terminal
- *   `not-run:target-too-large` unit records (same shape plus `outcome` and `cause`). Unit ids come from ONE per-cell
- *   counter shared by both, in emission order (source chunk outer; slices, then that chunk's gaps, inner).
+ * `sizeUnits` as a step generator (steps.js): yields at every root row, target entry, unit and cell, and at the end of
+ * each cell id's batch (`SIZING_BATCH_LABEL`); returns the `sizeUnits` result. `cells` is ANY iterable of CellSpecs, so a
+ * lazy `decomposeCellsLazy` generator is consumed cell by cell and each CellSpec is released once its units exist.
  */
-export function sizeUnits({ cells, plan, options, limit = Infinity }) {
+export function* sizeUnitSteps({ cells, plan, options, limit = Infinity }) {
   if (limit !== Infinity && (!Number.isSafeInteger(limit) || limit < 0)) throw new TypeError('sizeUnits: limit must be a non-negative safe integer');
   const caps = {
     maxSourceFragmentsPerUnit: positive(options, 'maxSourceFragmentsPerUnit'),
@@ -228,9 +231,12 @@ export function sizeUnits({ cells, plan, options, limit = Infinity }) {
     seqByCell.set(cell, seq + 1);
     return unitIdFor(cell, seq);
   };
+  let batchCell = null;
   for (const cell of cells) {
-    const chunks = packSource(plan, cell.sourceRanges, caps);
-    const { slices, oversize } = sliceTargets(plan, cell.targets, caps);
+    if (batchCell !== null && cell.cell !== batchCell) yield SIZING_BATCH_LABEL;
+    batchCell = cell.cell;
+    const chunks = yield* packSource(plan, cell.sourceRanges, caps);
+    const { slices, oversize } = yield* sliceTargets(plan, cell.targets, caps);
     for (const chunk of chunks) {
       const sourceRoots = sourceRootCount(chunk);
       const make = (entries) => ({
@@ -246,12 +252,45 @@ export function sizeUnits({ cells, plan, options, limit = Infinity }) {
       for (const slice of slices) {
         units.push(make(slice));
         if (units.length + gaps.length > limit) return { units, gaps, exceeded: true };
+        yield 'sizing:unit';
       }
       for (const entry of oversize) {
         gaps.push({ ...make([entry]), outcome: 'not-run', cause: 'target-too-large' });
         if (units.length + gaps.length > limit) return { units, gaps, exceeded: true };
+        yield 'sizing:unit';
       }
     }
+    yield 'sizing:cell';
   }
+  if (batchCell !== null) yield SIZING_BATCH_LABEL;
   return { units, gaps, exceeded: false };
+}
+
+/**
+ * @param {object} args
+ * @param {Iterable<object>} args.cells  decomposeCells output (or the lazy `decomposeCellsLazy` generator), canonical order
+ * @param {object} args.plan     buildRootTables' result widened with `models` (whole-model population counts)
+ * @param {object} args.options  resolved run options; the four sizing caps are read
+ * @param {number} [args.limit]  stop as soon as units + gaps EXCEED this many (default: no limit). The planner passes its
+ *   remaining `maxUnitsPerRun`, so an oversized plan is refused after `limit + 1` units, never after the whole cross product
+ *   of source chunks x target slices has been built (spec 6.5.1 "checked incrementally, before allocation"); and, because
+ *   `cells` is consumed lazily, never after the whole cell list has been built either.
+ * @returns {{units: object[], gaps: object[], exceeded: boolean}} `exceeded` is true when the limit tripped (the lists then
+ *   hold the first `limit + 1` records only); `units` are issuable WorkUnits; `gaps` are the pre-terminal
+ *   `not-run:target-too-large` unit records (same shape plus `outcome` and `cause`). Unit ids come from ONE per-cell
+ *   counter shared by both, in emission order (source chunk outer; slices, then that chunk's gaps, inner).
+ */
+export function sizeUnits(args) {
+  return runSync(sizeUnitSteps(args));
+}
+
+/**
+ * `sizeUnits` for planning-sized inputs (spec 17.3): the same result, but `tick(label)` is awaited at every step, so the
+ * caller checkpoints inside packing, slicing and unit construction and not only between cells. `tick` returns undefined
+ * (not due) or a Promise; a throw (cancellation) abandons the sizing and releases the cell generator.
+ * @param {object} args  as `sizeUnits`
+ * @param {{tick: (label: string) => (void | Promise<void>)}} hooks
+ */
+export function sizeUnitsSliced(args, { tick }) {
+  return runSliced(sizeUnitSteps(args), tick);
 }

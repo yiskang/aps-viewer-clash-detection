@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveSelectionRoots } from '../../../clashtest/planning/rootResolution.js';
-import { createRecordBudget } from '../../../clashtest/planning/ledger.js';
+import { createRecordBudget, createLedger } from '../../../clashtest/planning/ledger.js';
+import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
 import { EnumerationCancelledError } from '../../../clashtest/errors.js';
 import { makeSyntheticEnumerator, defOf, snapshotOf, shuffleDefinition } from '../support/syntheticModels.mjs';
 
@@ -451,4 +452,61 @@ test('a whole answer that lists unreachable owners under count 0 cannot suppress
   assert.equal(out.ok, false);
   assert.equal(out.cause, 'enumeration-failed');
   assert.ok(out.detail.issues.some((i) => i.code === 'owners-exceed-count'));
+});
+
+// ---------------------------------------------------------------------------
+// H4 (P3 independent review): the `unresolvedSelections[].dbIds` rows that reach the ledger are strictly ascending and
+// unique -- P5's pinned `UnresolvedSelection.dbIds` is `dbId[] unique`. A duplicate/misordered answer is refused at the
+// port boundary, so the row invariant holds by construction and the ledger never carries a shape P5 must reject.
+// ---------------------------------------------------------------------------
+const strictlyAscendingUnique = (ids) => ids.every((id, i) => Number.isSafeInteger(id) && id >= 0 && (i === 0 || id > ids[i - 1]));
+
+const withUnresolved = (enumerator, rewrite) => ({
+  ...enumerator,
+  resolveRoots: async (b, s, c) => {
+    const r = await enumerator.resolveRoots(b, s, c);
+    return s === 'whole' ? r : { ...r, unresolved: rewrite(r.unresolved) };
+  },
+});
+const H4_SPEC = { modelKey: 'm', roots: [leafRoot(1), leafRoot(2)], emptyDbIds: [55, 66, 77], missingDbIds: [777] };
+
+test('H4: a duplicate unresolved id in an explicit answer is enumeration-failed / invalid-answer (never a [1,1] row)', async () => {
+  for (const [name, rewrite] of Object.entries({
+    'duplicated no-fragments id': (u) => [...u, ...u],
+    'the same id under both reasons': (u) => [...u, { dbId: u[0].dbId, reason: u[0].reason === 'not-found' ? 'no-fragments' : 'not-found' }],
+    'descending ids': (u) => [...u].reverse(),
+  })) {
+    const { enumerator, binding } = makeSyntheticEnumerator([H4_SPEC]);
+    const out = await resolveSelectionRoots({
+      definition: defOf({ A: [elements('m', [1, 55, 66])], B: [whole('m')] }),
+      snapshot: snapshotOf(binding, ['m']), enumerator: withUnresolved(enumerator, rewrite), checkpoint: noop });
+    assert.equal(out.ok, false, name);
+    assert.equal(out.cause, 'enumeration-failed', name);
+    assert.equal(out.detail.code, 'invalid-answer', name);
+    assert.equal(out.detail.scope, 'A', name);
+    assert.ok(out.detail.issues.some((i) => i.path === '/unresolved' && i.code === 'unresolved-not-ascending'), name);
+  }
+});
+
+test('H4: the rows a valid answer produces are strictly ascending unique and survive a ledger round trip against P5\'s `unique` rule', async () => {
+  const { out } = await resolve([H4_SPEC], {
+    A: [elements('m', [77, 1, 55, 66, 55])],                          // unsorted AND duplicated INPUT ids: the definition side repairs it
+    B: [elements('m', [66, 2, 66, 55])],
+  });
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.unresolvedSelections, [
+    { selectionRole: 'A', modelKey: 'm', cause: 'no-fragments', dbIds: [55, 66, 77] },
+    { selectionRole: 'B', modelKey: 'm', cause: 'no-fragments', dbIds: [55, 66] },       // the same missing id in BOTH roles: one row per role, each unique
+  ]);
+  for (const row of out.unresolvedSelections) assert.equal(strictlyAscendingUnique(row.dbIds), true, JSON.stringify(row));
+
+  const budget = createRecordBudget(RUN_OPTION_DEFAULTS);
+  const ledger = createLedger({ limits: RUN_OPTION_DEFAULTS, budget });
+  ledger.recordPlanning({ unresolvedSelections: out.unresolvedSelections });
+  const record = ledger.toLedgerRecord();
+  assert.deepEqual(record.unresolvedSelections, out.unresolvedSelections);
+  assert.ok(record.unresolvedSelections.length > 0);
+  for (const row of record.unresolvedSelections) {
+    assert.equal(strictlyAscendingUnique(row.dbIds), true, `ledger row ${JSON.stringify(row)} violates P5's UnresolvedSelection.dbIds unique rule`);
+  }
 });

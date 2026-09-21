@@ -40,69 +40,91 @@ export function targetScopeFor(model, ranges) {
 }
 
 /**
+ * The cells of spec 6.3 as a LAZY generator, in canonical order (1, 2, 3a, 3b). Each CellSpec is built when the consumer
+ * pulls it and is garbage as soon as the consumer drops it, so an oversized plan is refused after the first `limit + 1`
+ * units WITHOUT materializing the unadmitted pair space (spec 6.5.1: plan memory is O(roots + owners + unit records),
+ * never O(cells); a class-C model set has M(M-1)/2 pair cells, doubled in ordered mode). Two consequences of that bound:
+ *
+ *   - the target list of cell 1 / cell 2 does not depend on the source model, so it is built ONCE and every cell of that
+ *     id shares the same (read-only) `targets` array: O(M) target entries, not M x M;
+ *   - cell 3a walks only the models that hold a C table, so a model set with few C tables costs O(M), not O(M^2).
+ *
+ * The emitted cells are byte-identical to the eager decomposition this replaces.
+ *
  * @param {object} args
  * @param {Map<string, {classes: object, wholeB: boolean}>} args.models  per-model entries of resolveSelectionRoots
  * @param {{rangeOfClass: (modelKey: string, cls: string) => object | null}} args.plan  buildRootTables' result
  * @param {boolean} args.ordered  containment: ordered pairs, so cells 3a/3b run both orientations
- * @returns {object[]} CellSpec[] in canonical order
+ * @returns {Generator<object, void, void>} CellSpec, in canonical order
  */
-export function decomposeCells({ models, plan, ordered }) {
+export function* decomposeCellsLazy({ models, plan, ordered }) {
   const keys = [...models.keys()].sort(byCodeUnit);              // code-unit order, spec 5.3 normalization
-  const cells = [];
   const rangeOf = (modelKey, cls) => plan.rangeOfClass(modelKey, cls);   // null when the class is empty
 
-  // The target entries of one cell: per model n (ascending), the given classes' ranges, or nothing when all are empty.
+  // The target entries of one cell id: per model n (ascending), the given classes' ranges, or nothing when all are empty.
   const targetsOf = (classes) => keys.flatMap((nk) => {
     const ranges = classes.map((cls) => rangeOf(nk, cls)).filter(Boolean);
     return ranges.length === 0 ? [] : [{ modelKey: nk, scope: targetScopeFor(models.get(nk), ranges) }];
   });
+  // Source-independent, so built at most once per cell id (on the first source model that needs it).
+  const once = (classes) => { let list = null; return () => (list ??= targetsOf(classes)); };
+  const cell1Targets = once(['C', "B'"]);
+  const cell2Targets = once(["B'"]);
 
   // Cell 1: A'_m -> B_n (= C_n u B'_n) for every n.
   for (const mk of keys) {
     const source = rangeOf(mk, "A'");
     if (!source) continue;
-    const targets = targetsOf(['C', "B'"]);
-    if (targets.length > 0) cells.push({ cell: '1', sourceModelKey: mk, sourceRanges: [source], targets, orientationRole: 'A->B' });
+    const targets = cell1Targets();
+    if (targets.length > 0) yield { cell: '1', sourceModelKey: mk, sourceRanges: [source], targets, orientationRole: 'A->B' };
   }
   // Cell 2: C_m -> B'_n for every n.
   for (const mk of keys) {
     const source = rangeOf(mk, 'C');
     if (!source) continue;
-    const targets = targetsOf(["B'"]);
-    if (targets.length > 0) cells.push({ cell: '2', sourceModelKey: mk, sourceRanges: [source], targets, orientationRole: 'A->B' });
+    const targets = cell2Targets();
+    if (targets.length > 0) yield { cell: '2', sourceModelKey: mk, sourceRanges: [source], targets, orientationRole: 'A->B' };
   }
-  // Cell 3a: C_m -> C_n, one unordered model pair (m < n); both orientations when ordered.
-  for (let i = 0; i < keys.length; i++) {
-    for (let j = i + 1; j < keys.length; j++) {
-      const a = rangeOf(keys[i], 'C');
-      const b = rangeOf(keys[j], 'C');
-      if (!a || !b) continue;
-      cells.push({ cell: '3a', sourceModelKey: keys[i], sourceRanges: [a], targets: [{ modelKey: keys[j], scope: { ranges: [b] } }],
-        orientationRole: ordered ? 'A->B' : 'canonical' });
+  // Cell 3a: C_m -> C_n, one unordered model pair (m < n); both orientations when ordered. Only models with a C table pair up.
+  const withC = keys.filter((mk) => rangeOf(mk, 'C') !== null);
+  for (let i = 0; i < withC.length; i++) {
+    for (let j = i + 1; j < withC.length; j++) {
+      const a = rangeOf(withC[i], 'C');
+      const b = rangeOf(withC[j], 'C');
+      yield { cell: '3a', sourceModelKey: withC[i], sourceRanges: [a], targets: [{ modelKey: withC[j], scope: { ranges: [b] } }],
+        orientationRole: ordered ? 'A->B' : 'canonical' };
       if (ordered) {
-        cells.push({ cell: '3a', sourceModelKey: keys[j], sourceRanges: [b], targets: [{ modelKey: keys[i], scope: { ranges: [a] } }],
-          orientationRole: 'B->A' });
+        yield { cell: '3a', sourceModelKey: withC[j], sourceRanges: [b], targets: [{ modelKey: withC[i], scope: { ranges: [a] } }],
+          orientationRole: 'B->A' };
       }
     }
   }
   // Cell 3b: recursive bisection of C_m against itself. The recursion depth is log2 |C_m| (bisectRanges halves by root
   // count), so it needs no explicit stack.
-  for (const mk of keys) {
+  for (const mk of withC) {
     const c = rangeOf(mk, 'C');
-    if (!c) continue;
-    const bisect = (ranges) => {
-      if (ranges.reduce((n, r) => n + rangeRootCount(r), 0) <= 1) return;
-      const [left, right] = bisectRanges(plan, ranges);
-      cells.push({ cell: '3b', sourceModelKey: mk, sourceRanges: left, targets: [{ modelKey: mk, scope: { ranges: right } }],
-        orientationRole: ordered ? 'A->B' : 'canonical' });
-      if (ordered) {
-        cells.push({ cell: '3b', sourceModelKey: mk, sourceRanges: right, targets: [{ modelKey: mk, scope: { ranges: left } }],
-          orientationRole: 'B->A' });
-      }
-      bisect(left);
-      bisect(right);
-    };
-    bisect([c]);
+    yield* bisect(plan, mk, [c], ordered);
   }
-  return cells;
+}
+
+function* bisect(plan, mk, ranges, ordered) {
+  if (ranges.reduce((n, r) => n + rangeRootCount(r), 0) <= 1) return;
+  const [left, right] = bisectRanges(plan, ranges);
+  yield { cell: '3b', sourceModelKey: mk, sourceRanges: left, targets: [{ modelKey: mk, scope: { ranges: right } }],
+    orientationRole: ordered ? 'A->B' : 'canonical' };
+  if (ordered) {
+    yield { cell: '3b', sourceModelKey: mk, sourceRanges: right, targets: [{ modelKey: mk, scope: { ranges: left } }],
+      orientationRole: 'B->A' };
+  }
+  yield* bisect(plan, mk, left, ordered);
+  yield* bisect(plan, mk, right, ordered);
+}
+
+/**
+ * The eager form of `decomposeCellsLazy`: the whole cell list as an array. For small inputs, oracles and tests only;
+ * planning consumes the generator so an oversized plan is never materialized.
+ * @returns {object[]} CellSpec[] in canonical order
+ */
+export function decomposeCells(args) {
+  return [...decomposeCellsLazy(args)];
 }

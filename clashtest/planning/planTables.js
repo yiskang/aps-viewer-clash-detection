@@ -8,6 +8,12 @@
 //
 // Every allocation is charged to the run's RecordBudget BEFORE it is made (spec 6.5.1). Plain data throughout,
 // except the Maps used for O(1) lookup, which never cross a durable boundary.
+//
+// The build is written once as a step generator (steps.js): `buildRootTables` runs it synchronously (small inputs,
+// oracles, tests) and `buildRootTablesSliced` awaits a `tick` at every root row and every fragment owner (spec 17.3), so
+// a 100,000-root model never runs as one uncheckpointed span.
+
+import { runSync, runSliced } from './steps.js';
 
 /** The table classes, in canonical build order. */
 export const TABLE_CLASSES = Object.freeze(["A'", 'C', "B'"]);
@@ -19,6 +25,7 @@ const isId = (v) => Number.isSafeInteger(v) && v >= 0;
 const defect = (modelKey, code) => ({ ok: false, cause: 'enumeration-failed', detail: { modelKey, code } });
 
 /**
+ * The step generator behind `buildRootTables` / `buildRootTablesSliced`: yields a label per root row and per owner.
  * @param {{models: Array<{modelKey: string, classes: Record<string, Array<{dbId: number, fragmentCount: number,
  *   ownerDbIds: number[], subtreeDigest: string}>>}>, budget: object}} args each class list is ascending by dbId
  * @returns {{ok: true, tables: object[], tableById: Map, ownersByModel: Map<string, number[]>,
@@ -26,7 +33,7 @@ const defect = (modelKey, code) => ({ ok: false, cause: 'enumeration-failed', de
  *   | {ok: false, cause: 'plan-too-large', overflowClass: string}
  *   | {ok: false, cause: 'enumeration-failed', detail: {modelKey: string, code: string}}}
  */
-export function buildRootTables({ models, budget }) {
+function* buildRootTablesSteps({ models, budget }) {
   const ordered = [...models].sort((a, b) => byCodeUnit(a.modelKey, b.modelKey));
   for (let i = 1; i < ordered.length; i++) {
     if (ordered[i].modelKey === ordered[i - 1].modelKey) throw new TypeError(`buildRootTables: modelKey ${ordered[i].modelKey} listed twice`);
@@ -53,6 +60,7 @@ export function buildRootTables({ models, budget }) {
       for (const r of rows) {
         if (!Array.isArray(r?.ownerDbIds)) return defect(modelKey, 'owners-not-an-array');
         ownerCount += r.ownerDbIds.length;
+        yield 'planTables:count';
       }
     }
     if (!budget.admitPlanBlock([['root-table', rowCount], ['root-owner', ownerCount]])) {
@@ -85,11 +93,13 @@ export function buildRootTables({ models, budget }) {
           previousOwner = o;
           ownerRoot.set(o, r.dbId);
           owners.push(o);
+          yield 'planTables:owner';
         }
         if (bad !== null) break;
         rows.push(Object.freeze({
           dbId: r.dbId, fragmentCount: r.fragmentCount, subtreeDigest: r.subtreeDigest, ownerStart, ownerEnd: owners.length,
         }));
+        yield 'planTables:row';
       }
       if (bad === null) {
         const table = Object.freeze({ id: `t${tables.length}`, modelKey, cls: TABLE_CLASSES[ci], rows: Object.freeze(rows) });
@@ -118,6 +128,21 @@ export function buildRootTables({ models, budget }) {
   }
 
   return { ok: true, tables: Object.freeze(tables), tableById, ownersByModel, ownerRootByModel, rangeOfClass };
+}
+
+/** The root tables of one run, built synchronously (small inputs, oracles, tests). Planning uses `buildRootTablesSliced`. */
+export function buildRootTables(args) {
+  return runSync(buildRootTablesSteps(args));
+}
+
+/**
+ * `buildRootTables` for planning-sized inputs: the same result, with `tick(label)` awaited at every root row and owner
+ * (returns undefined when no yield is due, else a Promise; a throw, e.g. cancellation, aborts the build).
+ * @param {object} args  as `buildRootTables`
+ * @param {{tick: (label: string) => (void | Promise<void>)}} hooks
+ */
+export function buildRootTablesSliced(args, { tick }) {
+  return runSliced(buildRootTablesSteps(args), tick);
 }
 
 /** A range that does not name a real slice of a real table is a caller bug: refuse, never read out of bounds. */

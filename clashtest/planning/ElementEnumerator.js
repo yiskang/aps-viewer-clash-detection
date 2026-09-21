@@ -66,7 +66,7 @@ function checkAscendingDbIds(list, path, add) {
 
 /**
  * Pure boundary validation of one `resolveRoots` answer: shape, strict ascending order (which also
- * rules out duplicate roots and owners) and the whole-only / explicit-only field rules.
+ * rules out duplicate roots, owners and unresolved ids) and the whole-only / explicit-only field rules.
  * @param {unknown} result
  * @param {{ scope: EnumerationScope }} opts
  * @returns {{ ok: boolean, issues: Array<{ path: string, code: string }> }}
@@ -126,11 +126,20 @@ export function validateResolveRootsResult(result, { scope }) {
     if (result.ownerMismatch !== null) add('/ownerMismatch', 'owner-mismatch-forbidden');
     if (result.unreachable !== null) add('/unreachable', 'unreachable-forbidden');
     if (!Array.isArray(result.unresolved)) add('/unresolved', 'not-an-array');
-    else for (let i = 0; i < result.unresolved.length; i++) {
-      const u = result.unresolved[i];
-      if (!isObject(u) || !isSafeNonNegInt(u.dbId)) add(`/unresolved/${i}/dbId`, 'not-a-dbid');
-      if (!isObject(u) || (u.reason !== 'not-found' && u.reason !== 'no-fragments'))
-        add(`/unresolved/${i}/reason`, 'unknown-reason');
+    else {
+      // Like `roots`, the unresolved ids are strictly ascending (which also rules out a repeated id): P3's plan says
+      // "ascending" and P5's pinned `UnresolvedSelection.dbIds` is `dbId[] unique`, so a duplicate accepted here
+      // would surface as a ledger the Result Set validator must reject. Reported once for the whole list.
+      let prevUnresolved = -1;
+      let unorderedUnresolved = false;
+      for (let i = 0; i < result.unresolved.length; i++) {
+        const u = result.unresolved[i];
+        if (!isObject(u) || !isSafeNonNegInt(u.dbId)) add(`/unresolved/${i}/dbId`, 'not-a-dbid');
+        else if (u.dbId <= prevUnresolved) { if (!unorderedUnresolved) add('/unresolved', 'unresolved-not-ascending'); unorderedUnresolved = true; }
+        else prevUnresolved = u.dbId;
+        if (!isObject(u) || (u.reason !== 'not-found' && u.reason !== 'no-fragments'))
+          add(`/unresolved/${i}/reason`, 'unknown-reason');
+      }
     }
     // An explicit answer is about the requested dbIds and nothing else: a root or unresolved id that was never
     // asked for, or one id reported both resolved and unresolved, plans the wrong element set (false-clean).

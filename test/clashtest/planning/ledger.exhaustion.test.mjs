@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createRecordBudget, createLedger, rootOwnerRowsOf, LEDGER_RECORD_CLASSES, ROOT_CLASS, UNIT_RECORD_KEYS, LEDGER_KEYS,
+  createRecordBudget, createLedger, rootOwnerRowsOf, rootOwnerRowsOfSliced, LEDGER_RECORD_CLASSES, ROOT_CLASS, UNIT_RECORD_KEYS, LEDGER_KEYS,
 } from '../../../clashtest/planning/ledger.js';
 
 const limits = { maxPlanReferences: 20, maxLedgerRecords: 20 + 2 * 4, maxUnitsPerRun: 4, maxElementTaintsPerUnit: 2000 };
@@ -507,4 +507,77 @@ test('durationMs and taint occurrences stay safe integers (P5 int rows), never r
   ledger.addTaint('1.0', { ...elementTaint(1), occurrences: Number.MAX_SAFE_INTEGER });
   assert.throws(() => ledger.addTaint('1.0', elementTaint(1)), RangeError);
   assert.equal(ledger.unitRecord('1.0').taints[0].occurrences, Number.MAX_SAFE_INTEGER);
+});
+
+// ---- H2: sliced rootOwnerRowsOf and the atomic stage/commit pair -------------------------------------------------------
+
+const rootOwnerModels = () => new Map([
+  ['b', { rootOwners: [{ rootDbId: 4, ownerDbIds: [4, 5], cls: 'C' }, { rootDbId: 9, ownerDbIds: [9], cls: 'B' }] }],
+  ['a', { rootOwners: [{ rootDbId: 1, ownerDbIds: [1], cls: 'A' }] }],
+]);
+
+test('rootOwnerRowsOfSliced returns the synchronous rows, ticking once per root, with detached owner arrays', async () => {
+  const models = rootOwnerModels();
+  let ticks = 0;
+  const sliced = await rootOwnerRowsOfSliced(models, { tick: () => { ticks++; } });
+  assert.deepEqual(sliced, rootOwnerRowsOf(models));
+  assert.equal(ticks, 3);
+  sliced[1].owners[0].ownerDbIds.push(99);
+  assert.deepEqual(models.get('b').rootOwners[0].ownerDbIds, [4, 5]);
+});
+
+const stagedInput = (units, extra = {}) => ({
+  planning: { planExists: true, rootOwners: rootOwnerRowsOf(rootOwnerModels()), warnings: [{ code: 'w' }], ...extra },
+  units: units.map((u) => (typeof u === 'string' ? { fields: leafUnit(u, 1) } : u)),
+});
+
+test('stagePlanned mutates nothing; commitPlanned then equals the synchronous recordPlanning + recordUnit/recordGap', async () => {
+  const a = fresh({}, { units: [] });
+  const b = fresh({}, { units: [] });
+  const gapFields = { ...leafUnit('1.1', 4), cause: undefined };
+  const input = stagedInput(['1.0', { fields: gapFields, gapCause: 'target-too-large' }, '1.2']);
+  const before = a.ledger.toLedgerRecord();
+  const staged = await a.ledger.stagePlanned(input, { tick() {} });
+  assert.deepEqual(a.ledger.toLedgerRecord(), before);          // staging wrote nothing
+  assert.equal(a.ledger.unitRecordCount, 0);
+  a.ledger.commitPlanned(staged);
+  b.ledger.recordPlanning(input.planning);
+  b.ledger.recordUnit(leafUnit('1.0', 1));
+  b.ledger.recordGap('1.1', { ...leafUnit('1.1', 4), cause: 'target-too-large' });
+  b.ledger.recordUnit(leafUnit('1.2', 1));
+  assert.deepEqual(a.ledger.toLedgerRecord(), b.ledger.toLedgerRecord());
+  assert.equal(a.ledger.unitRecord('1.1').outcome, 'not-run');
+  assert.throws(() => a.ledger.commitPlanned(staged), TypeError);   // a commit is single-use
+});
+
+test('a throwing tick or a malformed unit during staging leaves the ledger untouched (spec 6.6.2)', async () => {
+  const { ledger } = fresh({}, { units: ['1.0'] });
+  const before = ledger.toLedgerRecord();
+  const boom = new Error('cancelled');
+  for (const stopAt of [1, 2, 3, 4]) {
+    let n = 0;
+    await assert.rejects(ledger.stagePlanned(stagedInput(['1.1', '1.2']), { tick: () => { if (++n === stopAt) throw boom; } }), (e) => e === boom);
+    assert.deepEqual(ledger.toLedgerRecord(), before);
+  }
+  await assert.rejects(ledger.stagePlanned(stagedInput([{ fields: { ...leafUnit('1.1', 1), sourceModelKey: '' } }]), { tick() {} }), TypeError);
+  await assert.rejects(ledger.stagePlanned(stagedInput(['1.0']), { tick() {} }), /already exists/);          // duplicate of an existing record
+  await assert.rejects(ledger.stagePlanned(stagedInput(['1.1', '1.1']), { tick() {} }), /already exists/);    // duplicate within the batch
+  await assert.rejects(ledger.stagePlanned(stagedInput(['1.1', '1.2', '1.3', '1.4']), { tick() {} }), /maxUnitsPerRun/);   // 1 + 4 > 4
+  assert.deepEqual(ledger.toLedgerRecord(), before);
+});
+
+test('commitPlanned refuses a stale or foreign commit BEFORE changing anything', async () => {
+  const one = fresh({}, {});
+  const two = fresh({}, {});
+  const staged = await one.ledger.stagePlanned(stagedInput(['1.0']), { tick() {} });
+  assert.deepEqual(Object.keys(staged), []);                                   // an identity-only token: nothing to tamper with
+  assert.equal(Object.isFrozen(staged), true);
+  assert.throws(() => two.ledger.commitPlanned(staged), TypeError);            // staged by another ledger
+  one.ledger.recordUnit(leafUnit('9.9', 1));                                   // the ledger moved on since staging
+  const before = one.ledger.toLedgerRecord();
+  assert.throws(() => one.ledger.commitPlanned(staged), RangeError);
+  assert.deepEqual(one.ledger.toLedgerRecord(), before);
+  const changedPlanning = await two.ledger.stagePlanned(stagedInput(['1.0']), { tick() {} });
+  two.ledger.recordPlanning({ emptyOperand: true });
+  assert.throws(() => two.ledger.commitPlanned(changedPlanning), RangeError);
 });

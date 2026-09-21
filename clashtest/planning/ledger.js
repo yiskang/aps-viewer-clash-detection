@@ -12,6 +12,8 @@
 // "taint-overflow" slot per unit record (unit records are themselves capped at maxUnitsPerRun), which is why a unit
 // can always record that its taints collapsed, however full the budget is.
 
+import { runSync, runSliced } from './steps.js';
+
 /** Budget class ids of the planning-time records (exhaustion of any of these is `plan-too-large`). */
 export const PLAN_RECORD_CLASSES = Object.freeze([
   'root-table', 'root-owner', 'unreachable-population', 'scope-digest',
@@ -273,9 +275,30 @@ const compareTaints = (a, b) => byCodeUnit(a.kind, b.kind) || byCodeUnit(a.model
  * @param {Map<string, {rootOwners: Array<{rootDbId: number, ownerDbIds: number[], cls: string}>}>} models
  */
 export function rootOwnerRowsOf(models) {
-  return [...models].sort(([a], [b]) => byCodeUnit(a, b)).map(([modelKey, m]) => ({
-    modelKey, owners: m.rootOwners.map((o) => ({ rootDbId: o.rootDbId, ownerDbIds: [...o.ownerDbIds], cls: o.cls })),
-  }));
+  return runSync(rootOwnerRowsOfSteps(models));
+}
+
+/**
+ * `rootOwnerRowsOf` for planning-sized inputs (spec 17.3): the same rows, with `tick(label)` awaited per root, so a
+ * 100,000-root plan never runs as one uncheckpointed copy.
+ * @param {Map<string, {rootOwners: Array<{rootDbId: number, ownerDbIds: number[], cls: string}>}>} models
+ * @param {{tick: (label: string) => (void | Promise<void>)}} hooks
+ */
+export function rootOwnerRowsOfSliced(models, { tick }) {
+  return runSliced(rootOwnerRowsOfSteps(models), tick);
+}
+
+function* rootOwnerRowsOfSteps(models) {
+  const rows = [];
+  for (const [modelKey, m] of [...models].sort(([a], [b]) => byCodeUnit(a, b))) {
+    const owners = [];
+    for (const o of m.rootOwners) {
+      owners.push({ rootDbId: o.rootDbId, ownerDbIds: [...o.ownerDbIds], cls: o.cls });
+      yield 'ledger:root-owner';
+    }
+    rows.push({ modelKey, owners });
+  }
+  return rows;
 }
 
 // P5 pins these rows unique by modelKey: a writer must not emit a set its own reader rejects.
@@ -288,23 +311,62 @@ function requireUniqueModels(rows, what) {
   }
 }
 
-function normalizeRootOwners(rows) {
+function* normalizeRootOwnersSteps(rows) {
   if (!Array.isArray(rows)) throw new TypeError('rootOwners must be an array');
   requireUniqueModels(rows, 'rootOwners');
-  return rows.map((row) => {
+  const out = [];
+  for (const row of rows) {
     if (!Array.isArray(row.owners)) throw new TypeError('rootOwners row needs owners');
     const seenRoots = new Set();
-    return {
-      modelKey: row.modelKey,
-      owners: row.owners.map((o) => {
-        if (!ROOT_CLASS_VALUES.has(o?.cls)) throw new TypeError(`rootOwners cls must be one of ${[...ROOT_CLASS_VALUES].join(' | ')}, got ${String(o?.cls)}`);
-        if (!isId(o.rootDbId)) throw new TypeError('rootOwners rootDbId must be a non-negative safe integer');
-        if (seenRoots.has(o.rootDbId)) throw new TypeError(`rootOwners repeats root ${o.rootDbId} of ${row.modelKey}`);
-        seenRoots.add(o.rootDbId);
-        return { rootDbId: o.rootDbId, ownerDbIds: idList(o.ownerDbIds, 'rootOwners ownerDbIds'), cls: o.cls };
-      }),
-    };
-  });
+    const owners = [];
+    for (const o of row.owners) {
+      if (!ROOT_CLASS_VALUES.has(o?.cls)) throw new TypeError(`rootOwners cls must be one of ${[...ROOT_CLASS_VALUES].join(' | ')}, got ${String(o?.cls)}`);
+      if (!isId(o.rootDbId)) throw new TypeError('rootOwners rootDbId must be a non-negative safe integer');
+      if (seenRoots.has(o.rootDbId)) throw new TypeError(`rootOwners repeats root ${o.rootDbId} of ${row.modelKey}`);
+      seenRoots.add(o.rootDbId);
+      owners.push({ rootDbId: o.rootDbId, ownerDbIds: idList(o.ownerDbIds, 'rootOwners ownerDbIds'), cls: o.cls });
+      yield 'ledger:root-owner';
+    }
+    out.push({ modelKey: row.modelKey, owners });
+  }
+  return out;
+}
+
+/** `structuredClone` of a row array, one row at a time (a yield per row): the same value for plain rows, without one long span. */
+function* cloneRowsSteps(rows) {
+  const out = [];
+  for (const row of rows) {
+    out.push(structuredClone(row));
+    yield 'ledger:planning-row';
+  }
+  return out;
+}
+
+/**
+ * Validate and copy the planning-only sections against the CURRENT planning state, returning the next state. Pure: it
+ * mutates nothing (the caller assigns), which is what lets a sliced staging pass run before an atomic commit.
+ */
+function* planningSteps(sections, current) {
+  for (const key of Object.keys(sections)) if (!PLANNING_SECTIONS.has(key)) throw new TypeError(`recordPlanning: unknown section ${key}`);
+  const next = { ...current };
+  for (const key of ['planExists', 'emptyOperand']) {
+    if (sections[key] === undefined) continue;
+    if (typeof sections[key] !== 'boolean') throw new TypeError(`${key} must be a boolean`);
+    next[key] = sections[key];
+  }
+  if (sections.rootOwners !== undefined) next.rootOwners = yield* normalizeRootOwnersSteps(sections.rootOwners);
+  for (const key of ['unresolvedSelections', 'unreachablePopulation', 'hierarchyInternal', 'warnings']) {
+    if (sections[key] === undefined) continue;
+    if (!Array.isArray(sections[key])) throw new TypeError(`${key} must be an array`);
+    if (key === 'unreachablePopulation' || key === 'hierarchyInternal') requireUniqueModels(sections[key], key);
+    next[key] = yield* cloneRowsSteps(sections[key]);
+  }
+  if (sections.exclusions !== undefined) {
+    if (!Array.isArray(sections.exclusions)) throw new TypeError('exclusions must be an array');
+    for (const e of sections.exclusions) nonEmptyString(e, 'exclusion');
+    next.exclusions = [...new Set(sections.exclusions)].sort(byCodeUnit);
+  }
+  return next;
 }
 
 /**
@@ -318,8 +380,9 @@ export function createLedger({ limits, budget }) {
     throw new TypeError('createLedger: budget must be the run\'s RecordBudget');
   }
 
-  const unitRecords = new Map();          // unitId -> internal record, insertion order = record order
+  let unitRecords = new Map();            // unitId -> internal record, insertion order = record order (`let`: commitPlanned swaps it)
   const planningGaps = [];
+  const stagedCommits = new WeakMap();   // token -> {planning, records, base}: closure-private, so a caller can never edit a staged commit
   let planning = { planExists: false, emptyOperand: false, rootOwners: [], unresolvedSelections: [], unreachablePopulation: [],
     hierarchyInternal: [], exclusions: [], warnings: [] };
 
@@ -336,6 +399,14 @@ export function createLedger({ limits, budget }) {
     // private bookkeeping, never projected
     taintIndex: new Map(), elementTaints: 0, overflowed: false, children: [],
   });
+
+  // A validated initial (leaf) unit record; the stateful checks (duplicate id, unit cap) are the caller's.
+  const newLeaf = (fields) => {
+    const unitId = nonEmptyString(fields?.unitId, 'unitId');
+    if (fields.kind !== undefined && fields.kind !== 'leaf') throw new TypeError('recordUnit records leaf units only; a split parent is made by tryRecordSplit');
+    if (fields.parentUnitId !== undefined && fields.parentUnitId !== null) throw new TypeError('recordUnit records initial units only; children are made by tryRecordSplit');
+    return newRecord(unitId, null, normalizeUnitFields(fields));
+  };
 
   const projectTaints = (rec) => [...rec.taints].sort(compareTaints).map((t) => ({ ...t }));
   const projectUnit = (rec) => ({
@@ -377,14 +448,11 @@ export function createLedger({ limits, budget }) {
      * (planned, not yet settled) until `recordOutcome`.
      */
     recordUnit(fields) {
-      const unitId = nonEmptyString(fields?.unitId, 'unitId');
-      if (fields.kind !== undefined && fields.kind !== 'leaf') throw new TypeError('recordUnit records leaf units only; a split parent is made by tryRecordSplit');
-      if (fields.parentUnitId !== undefined && fields.parentUnitId !== null) throw new TypeError('recordUnit records initial units only; children are made by tryRecordSplit');
-      const rec = newRecord(unitId, null, normalizeUnitFields(fields));
-      if (unitRecords.has(unitId)) throw new RangeError(`unit record ${unitId} already exists`);
+      const rec = newLeaf(fields);
+      if (unitRecords.has(rec.unitId)) throw new RangeError(`unit record ${rec.unitId} already exists`);
       // The cap is an invariant the planner guards BEFORE recording (plan-too-large), never a refusal here.
       if (unitRecords.size + 1 > maxUnitsPerRun) throw new RangeError('recordUnit: maxUnitsPerRun exceeded');
-      unitRecords.set(unitId, rec);
+      unitRecords.set(rec.unitId, rec);
     },
 
     /** A unit-level gap: a leaf unit record already terminal, `outcome: 'not-run'` with its `cause` (today only `target-too-large`). */
@@ -516,26 +584,60 @@ export function createLedger({ limits, budget }) {
      * must be a ROOT_CLASS literal (R2). Data is copied, never aliased.
      */
     recordPlanning(sections) {
-      for (const key of Object.keys(sections)) if (!PLANNING_SECTIONS.has(key)) throw new TypeError(`recordPlanning: unknown section ${key}`);
-      const next = { ...planning };
-      for (const key of ['planExists', 'emptyOperand']) {
-        if (sections[key] === undefined) continue;
-        if (typeof sections[key] !== 'boolean') throw new TypeError(`${key} must be a boolean`);
-        next[key] = sections[key];
+      planning = runSync(planningSteps(sections, planning));
+    },
+
+    /**
+     * ATOMIC, SLICED form of `recordPlanning` + `recordUnit` / `recordGap` for a planner that must not run one long
+     * synchronous pass (spec 17.3) yet must leave the ledger untouched when planning is cancelled or fails (spec 6.6.2).
+     * STAGING does all the validation and copying -- the planning sections, then every unit record, gaps included -- with
+     * `tick(label)` awaited per item, and mutates NOTHING: a throw (cancellation, a malformed record) leaves the ledger
+     * exactly as it was. `commitPlanned(staged)` is then one O(1) assignment.
+     * @param {{planning: object, units: Array<{fields: object, gapCause?: string}>}} plan  `planning` as `recordPlanning`;
+     *   each unit as `recordUnit(fields)`, or `recordGap(fields.unitId, {...fields, cause: gapCause})` when `gapCause` is set
+     * @param {{tick: (label: string) => (void | Promise<void>)}} hooks
+     * @returns {Promise<object>} an opaque, identity-only token for THIS ledger (its contents are closure-private)
+     */
+    async stagePlanned({ planning: sections, units }, { tick }) {
+      const base = { records: unitRecords, size: unitRecords.size, planning };
+      const staged = await runSliced((function* stageSteps() {
+        const nextPlanning = yield* planningSteps(sections, planning);
+        const nextRecords = new Map();
+        for (const [id, rec] of unitRecords) { nextRecords.set(id, rec); yield 'ledger:stage-existing'; }
+        for (const { fields, gapCause } of units) {
+          const rec = newLeaf(fields);
+          if (gapCause !== undefined) {
+            rec.outcome = 'not-run';
+            rec.cause = nonEmptyString(gapCause, 'gap cause');
+          }
+          if (nextRecords.has(rec.unitId)) throw new RangeError(`unit record ${rec.unitId} already exists`);
+          if (nextRecords.size + 1 > maxUnitsPerRun) throw new RangeError('recordUnit: maxUnitsPerRun exceeded');
+          nextRecords.set(rec.unitId, rec);
+          // one slice item per unit plus one per 64 root ids it copied and sorted (a unit's cost scales with its roots)
+          const ids = rec.sourceRootDbIds.length + rec.targets.reduce((n, t) => n + (t.rootDbIds?.length ?? 0), 0);
+          for (let k = 0; k <= Math.floor(ids / 64); k++) yield 'ledger:stage-unit';
+        }
+        return { planning: nextPlanning, records: nextRecords };
+      })(), tick);
+      const commit = Object.freeze(Object.create(null));   // an identity-only token: everything it stands for stays in this closure
+      stagedCommits.set(commit, { ...staged, base });
+      return commit;
+    },
+
+    /**
+     * Apply a `stagePlanned` commit: verify (in O(1)) that nothing wrote to the ledger since staging, then swap the staged
+     * state in. It cannot fail half-way; a stale or foreign commit throws BEFORE anything changes.
+     */
+    commitPlanned(commit) {
+      const staged = stagedCommits.get(commit);
+      if (staged === undefined) throw new TypeError('commitPlanned: not a commit staged by this ledger');
+      const { base } = staged;
+      if (unitRecords !== base.records || unitRecords.size !== base.size || planning !== base.planning) {
+        throw new RangeError('commitPlanned: the ledger changed since the commit was staged');
       }
-      if (sections.rootOwners !== undefined) next.rootOwners = normalizeRootOwners(sections.rootOwners);
-      for (const key of ['unresolvedSelections', 'unreachablePopulation', 'hierarchyInternal', 'warnings']) {
-        if (sections[key] === undefined) continue;
-        if (!Array.isArray(sections[key])) throw new TypeError(`${key} must be an array`);
-        if (key === 'unreachablePopulation' || key === 'hierarchyInternal') requireUniqueModels(sections[key], key);
-        next[key] = structuredClone(sections[key]);
-      }
-      if (sections.exclusions !== undefined) {
-        if (!Array.isArray(sections.exclusions)) throw new TypeError('exclusions must be an array');
-        for (const e of sections.exclusions) nonEmptyString(e, 'exclusion');
-        next.exclusions = [...new Set(sections.exclusions)].sort(byCodeUnit);
-      }
-      planning = next;
+      stagedCommits.delete(commit);
+      unitRecords = staged.records;
+      planning = staged.planning;
     },
 
     /** One unit's record in its persisted shape (a detached copy), or null when the ledger holds no such unit. */
