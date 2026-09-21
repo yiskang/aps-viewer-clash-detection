@@ -204,3 +204,91 @@ test('the generator sort equals the native sort on random inputs, incl. duplicat
     assert.deepEqual(normalizeDefinition(captured).selectionA.entries[0].dbIds, ids.slice().sort((a, b) => a - b));
   }
 });
+
+// ---- P2 review remediation H2: the model-key sort is sliced (no native Array#sort span, spec 5.3 / 17.3) ----
+
+const KEY_LIMITS = { maxEntriesPerSelection: 10_000, aggregationSliceMaxItems: 64 };
+const modelOnly = (keys) => keys.map((modelKey) => ({ kind: 'model', modelKey }));
+const capturedKeys = (keys, limits = KEY_LIMITS) => captureAndValidate(
+  makeDefinition({ selectionA: { entries: modelOnly(keys) } }), { limits },
+).captured;
+const codeUnitSorted = (keys) => [...new Set(keys)].sort();   // native default sort compares UTF-16 code units
+
+test('10,000 model entries with long distinct keys: the key sort alone costs >= n*ceil(log2 n)/64 normalize yields', async () => {
+  const n = 10_000;
+  const rand = mulberry(11);
+  const order = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i -= 1) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  const keys = order.map((i) => `model-${'x'.repeat(120)}-${String(i).padStart(6, '0')}`);   // distinct, shuffled, long
+  const captured = capturedKeys(keys);
+  const clock = createFakeClock();
+  const spans = [];
+  const { definition } = await prepareDefinition(captured, {
+    now: clock.now, yieldToScheduler: clock.yieldToScheduler, limits: KEY_LIMITS, spanRecorder: (label, ms) => spans.push([label, ms]),
+  });
+  assert.deepEqual(definition.selectionA.entries.map((e) => e.modelKey), codeUnitSorted(keys));
+  assert.ok(definition.selectionA.entries.every((e) => e.kind === 'model'));
+  // ticks in normalize: n (entries) + n (key copy) + n*ceil(log2 n) (merge sort) + n (emit); at 64 items per slice
+  // each yield is attributed to the label of the tick that triggered it, so 'normalize' spans measure this phase only.
+  const normalizeYields = spans.filter(([label]) => label === 'normalize').length;
+  const floor = Math.floor((n * (3 + Math.ceil(Math.log2(n)))) / 64) - 2;
+  assert.ok(normalizeYields >= floor, `expected >= ${floor} normalize yields, saw ${normalizeYields}`);
+});
+
+test('model-key order equals the native code-unit sort on random keys, incl. surrogate pairs and prefix keys', async () => {
+  const rand = mulberry(12);
+  const alphabet = ['a', 'b', 'B', 'Z', 'é', '～', '', '😀', '😁', '\uD800', '\uDFFF', '0'];
+  const randomKey = () => Array.from({ length: 1 + Math.floor(rand() * 4) }, () => alphabet[Math.floor(rand() * alphabet.length)]).join('');
+  for (let round = 0; round < 300; round += 1) {
+    const keys = Array.from({ length: 1 + Math.floor(rand() * 40) }, randomKey);   // duplicates and prefixes ('a', 'aa') occur
+    const captured = capturedKeys(keys);
+    const expected = codeUnitSorted(keys);
+    assert.deepEqual(normalizeDefinition(captured).selectionA.entries.map((e) => e.modelKey), expected);
+    if (round % 20 === 0) {
+      const sliced = await prepareDefinition(captured, { now: () => 0, yieldToScheduler: async () => {} });
+      assert.deepEqual(sliced.definition.selectionA.entries.map((e) => e.modelKey), expected);
+    }
+  }
+  // the code-unit order is NOT code-point order: U+FF5E sorts after the surrogate pair U+1F600 (D83D DE00) by code unit
+  assert.deepEqual(codeUnitSorted(['～', '😀']), ['😀', '～']);
+  const mixed = capturedKeys(['～', '😀', 'a', 'aa', 'A']);
+  assert.deepEqual(normalizeDefinition(mixed).selectionA.entries.map((e) => e.modelKey), ['A', 'a', 'aa', '😀', '～']);
+});
+
+test('sync normalizeDefinition and sliced prepareDefinition agree on 10,000 model keys, digest included', async () => {
+  const rand = mulberry(13);
+  const keys = Array.from({ length: 10_000 }, () => `k${Math.floor(rand() * 1e9)}`);   // a few duplicates: model entries merge
+  const captured = capturedKeys(keys);
+  const sync = normalizeDefinition(captured);
+  const sliced = await prepareDefinition(captured, { now: () => 0, yieldToScheduler: async () => {}, limits: KEY_LIMITS });
+  assert.deepEqual(sliced.definition, sync);
+  assert.equal(sliced.semanticDigest, computeSemanticDigest(sync));
+  assert.deepEqual(sync.selectionA.entries.map((e) => e.modelKey), codeUnitSorted(keys));
+});
+
+// ---- P2 review remediation H3: prepareDefinition forwards spanRecorder to its slicer ------------------------
+
+// Enough canonical text (>64 chunks of 8 KiB) that the digest phase alone triggers a yield at 64 items per slice.
+const spanCapture = () => captureAndValidate(makeDefinition({
+  selectionA: { entries: Array.from({ length: 700 }, (_, i) => ({ kind: 'model', modelKey: `${String(i).padStart(4, '0')}${'k'.repeat(1_000)}` })) },
+}), { limits: KEY_LIMITS }).captured;
+
+test('prepareDefinition records slice spans labelled normalize and semanticDigest (never digest)', async () => {
+  const clock = createFakeClock();
+  const spans = [];
+  await prepareDefinition(spanCapture(), {
+    now: clock.now, yieldToScheduler: clock.yieldToScheduler, limits: KEY_LIMITS, spanRecorder: (label, ms) => spans.push([label, ms]),
+  });
+  const labels = new Set(spans.map(([label]) => label));
+  assert.ok(labels.has('normalize'), `labels: ${[...labels]}`);
+  assert.ok(labels.has('semanticDigest'), `labels: ${[...labels]}`);
+  assert.ok(!labels.has('digest'));
+  assert.ok(spans.every(([, ms]) => typeof ms === 'number' && ms >= 0));
+});
+
+test('prepareDefinition without a spanRecorder (absent or undefined) records nothing and still works', async () => {
+  const seam = { now: () => 0, yieldToScheduler: async () => {}, limits: KEY_LIMITS };
+  const a = await prepareDefinition(spanCapture(), seam);
+  const b = await prepareDefinition(spanCapture(), { ...seam, spanRecorder: undefined });
+  assert.equal(a.semanticDigest, b.semanticDigest);
+});

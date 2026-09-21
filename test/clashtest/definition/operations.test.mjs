@@ -329,3 +329,46 @@ test('getTest shares no structure with the stored object', async () => {
   assert.notEqual(got.selectionA.entries[0].dbIds, stored.selectionA.entries[0].dbIds);
   assert.notEqual(got.selectionB.entries[0], stored.selectionB.entries[0]);
 });
+
+// ---- P2 review remediation H3: createDefinitionOperations forwards spanRecorder (saveTest and store definitions) ----
+
+const SPAN_LIMITS = { maxEntriesPerSelection: 1_000, aggregationSliceMaxItems: 64 };
+// >64 chunks of 8 KiB of canonical text, so the digest phase itself yields at 64 items per slice.
+const spanDef = () => makeDefinition({
+  selectionA: { entries: Array.from({ length: 700 }, (_, i) => ({ kind: 'model', modelKey: `${String(i).padStart(4, '0')}${'k'.repeat(1_000)}` })) },
+});
+const recordingOps = (testStore) => {
+  const c = createFakeClock();
+  const spans = [];
+  const operations = createDefinitionOperations({
+    testStore, now: c.now, yieldToScheduler: c.yieldToScheduler, limits: SPAN_LIMITS, spanRecorder: (label, ms) => spans.push([label, ms]),
+  });
+  return { operations, spans, labels: () => new Set(spans.map(([label]) => label)) };
+};
+
+test('saveTest records normalize and semanticDigest spans through the injected spanRecorder', async () => {
+  const { operations, spans, labels } = recordingOps(createInMemoryClashTestStore());
+  await operations.saveTest(spanDef());
+  assert.ok(spans.length > 0);
+  assert.ok(labels().has('normalize'), `labels: ${[...labels()]}`);
+  assert.ok(labels().has('semanticDigest'), `labels: ${[...labels()]}`);
+  assert.ok(!labels().has('digest'));
+});
+
+test('a store-returned definition prepared by getTest records spans through the same spanRecorder', async () => {
+  const store = createInMemoryClashTestStore();
+  await ops(store).saveTest(spanDef());                            // seed the store without a recorder
+  const { operations, spans, labels } = recordingOps(store);
+  const got = await operations.getTest('T1');
+  assert.equal(got.testId, 'T1');
+  assert.ok(spans.length > 0, 'getTest must forward the recorder to prepareDefinition');
+  assert.ok(labels().has('normalize') && labels().has('semanticDigest'), `labels: ${[...labels()]}`);
+});
+
+test('operations without a spanRecorder (absent or undefined) still save and get', async () => {
+  const store = createInMemoryClashTestStore();
+  const c = createFakeClock();
+  const plain = createDefinitionOperations({ testStore: store, now: c.now, yieldToScheduler: c.yieldToScheduler, spanRecorder: undefined });
+  await plain.saveTest(makeDefinition());
+  assert.equal((await plain.getTest('T1')).testId, 'T1');
+});

@@ -21,10 +21,11 @@ export const RESOLVE_STATUS_TO_PLANNING_CAUSE = Object.freeze({
  * @param {object} [o.limits]          resolved engine limits, merged over P0's defaults
  * @param {() => (void | Promise<void>)} [o.yieldToScheduler]
  * @param {() => number} [o.now]
+ * @param {(label: string, ms: number) => void} [o.spanRecorder]  optional slice-span recorder (spec 17.3)
  */
-export function createDefinitionOperations({ testStore = null, limits = {}, yieldToScheduler, now } = {}) {
+export function createDefinitionOperations({ testStore = null, limits = {}, yieldToScheduler, now, spanRecorder } = {}) {
   const resolved = { ...ENGINE_LIMIT_DEFAULTS, ...limits };
-  const slice = { yieldToScheduler, now, limits: resolved };
+  const slice = { yieldToScheduler, now, limits: resolved, spanRecorder };
   const requireStore = () => { if (!testStore) throw new StoreNotConfiguredError({ store: 'testStore' }); };
 
   async function prepareUntrusted(value) {

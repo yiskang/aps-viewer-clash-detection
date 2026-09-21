@@ -1,8 +1,10 @@
 // test/clashtest/definition/roots.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertRootAntichain, checkCrossRoleNesting, hierarchyInternalCandidates }
-  from '../../../clashtest/definition/normalize.js';
+import {
+  assertRootAntichain, checkCrossRoleNesting, hierarchyInternalCandidates,
+  assertRootAntichainSliced, checkCrossRoleNestingSliced, hierarchyInternalCandidatesSliced,
+} from '../../../clashtest/definition/normalize.js';
 
 const root = (dbId, ownerDbIds) => ({ dbId, ownerDbIds });
 
@@ -186,4 +188,178 @@ test('checkCrossRoleNesting equals the pre-fix implementation on random inputs (
     const input = { rootsA: mk(), rootsB: mk(), rootsUnion: mk() };
     assert.deepEqual(checkCrossRoleNesting(input), reference(input), JSON.stringify(input));
   }
+});
+
+// ---- P2 review remediation H1: the deadline-aware *Sliced forms (spec 5.3 / 17.3, checkpoint at least every 64 items) ----
+
+// Every read of a root's dbId / ownerDbIds / an owner element counts as one unit of work.
+const instrumented = (counter, dbId, owners) => ({
+  get dbId() { counter.reads += 1; return dbId; },
+  get ownerDbIds() { counter.reads += 1; return counted(owners, counter); },
+});
+
+// A `{ tick }` contract stand-in: counts ticks, records the largest number of work reads between two ticks, and
+// (asyncEvery > 0) returns a Promise on every asyncEvery-th tick and checks that NO work ran until it resolved.
+function makeTicker(counter = { reads: 0 }, { asyncEvery = 0 } = {}) {
+  const t = { ticks: 0, maxSpan: 0, unawaited: 0, labels: new Set() };
+  let last = 0;
+  t.tick = (label) => {
+    t.ticks += 1;
+    t.labels.add(label);
+    t.maxSpan = Math.max(t.maxSpan, counter.reads - last);
+    last = counter.reads;
+    if (asyncEvery > 0 && t.ticks % asyncEvery === 0) {
+      const at = counter.reads;
+      return Promise.resolve().then(() => { if (counter.reads !== at) t.unawaited += 1; });
+    }
+    return undefined;
+  };
+  return t;
+}
+const passesOf = (n) => Math.ceil(Math.log2(n));
+
+test('assertRootAntichainSliced: 20,000 disjoint roots plus one 6,000-owner root tick at least every 64 work reads', async () => {
+  const counter = { reads: 0 };
+  const N = 20_000;
+  const wide = instrumented(counter, 1_000_000, Array.from({ length: 6_000 }, (_, k) => 2_000_000 + k));
+  const roots = [wide, ...Array.from({ length: N }, (_, i) => instrumented(counter, i, [N + 3 * i, N + 3 * i + 1, N + 3 * i + 2]))];
+  const t = makeTicker(counter, { asyncEvery: 50 });
+  const r = await assertRootAntichainSliced(roots, t);
+  assert.deepEqual(r, { ok: true, violations: [] });
+  assert.ok(t.ticks >= N / 64, `${t.ticks} ticks`);
+  assert.ok(t.ticks >= 3 * N + 6_000, `one tick per owner read expected, saw ${t.ticks}`);
+  assert.ok(t.maxSpan <= 64, `${t.maxSpan} work reads between two ticks`);
+  assert.equal(t.unawaited, 0, 'a Promise returned by tick must be awaited before more work');
+  assert.deepEqual(r, assertRootAntichain(roots));
+});
+
+test('assertRootAntichainSliced: the scan phase (index buckets, candidates) also ticks at least every 64 work reads', async () => {
+  const N = 5_000;
+  for (const bigFirst of [true, false]) {
+    const counter = { reads: 0 };
+    const small = Array.from({ length: N }, (_, k) => instrumented(counter, 100 + k, [100 + k]));
+    const big = instrumented(counter, 1, Array.from({ length: N }, (_, k) => 100 + k));
+    const roots = bigFirst ? [big, ...small] : [...small, big];
+    const t = makeTicker(counter);
+    const r = await assertRootAntichainSliced(roots, t);
+    assert.equal(r.ok, false);
+    assert.equal(r.violations.length, 20);
+    assert.deepEqual(r.violations.map((v) => v.descendant), Array.from({ length: 20 }, (_, k) => 100 + k));
+    assert.ok(t.maxSpan <= 64, `bigFirst=${bigFirst}: ${t.maxSpan} work reads between two ticks`);
+    assert.ok(t.ticks <= 30 * N, `early stop must keep ticks near-linear: ${t.ticks} ticks for ${N} nested roots`);
+    assert.deepEqual(r, assertRootAntichain(roots.map((x) => ({ dbId: x.dbId, ownerDbIds: [...x.ownerDbIds] }))));
+  }
+});
+
+test('assertRootAntichainSliced: the candidate sort is sliced (5,000 empty-owner descendants cost >= n*ceil(log2 n) sort ticks)', async () => {
+  const N = 5_000;
+  const roots = [root(1, [5]), ...Array.from({ length: N }, (_, k) => root(10 + k, []))];
+  const t = makeTicker();
+  const r = await assertRootAntichainSliced(roots, t);
+  assert.equal(r.violations.length, 20);
+  assert.ok(t.ticks >= N * (2 + passesOf(N)), `saw ${t.ticks} ticks`);
+});
+
+test('checkCrossRoleNestingSliced: 12,000 role roots / 3,000 union roots / 9,000 dropped: bounded cadence, sorted, equals sync', async () => {
+  const counter = { reads: 0 };
+  const mk = (id) => instrumented(counter, id, [1_000_000 + id]);
+  const rootsA = Array.from({ length: 6_000 }, (_, k) => mk(5_999 - k));            // descending: the dropped-id sort has real work
+  const rootsB = Array.from({ length: 6_000 }, (_, k) => mk(11_999 - k));
+  const rootsUnion = Array.from({ length: 3_000 }, (_, k) => mk(k));
+  const t = makeTicker(counter, { asyncEvery: 64 });
+  const r = await checkCrossRoleNestingSliced({ rootsA, rootsB, rootsUnion }, t);
+  assert.equal(r.supported, false);
+  assert.equal(r.offenders.length, 20);
+  assert.deepEqual(r.offenders.map((o) => o.descendant), Array.from({ length: 20 }, (_, k) => 3_000 + k));
+  assert.ok(r.offenders.every((o) => o.ancestor === null));
+  assert.ok(t.ticks >= 9_000 * passesOf(9_000) + 12_000 + 3_000 + 12_000, `saw ${t.ticks} ticks`);   // the dropped-id sort is included
+  assert.ok(t.ticks >= 20 * 3_000, 'the offender scan over the union roots ticks per union root');
+  assert.ok(t.maxSpan <= 64, `${t.maxSpan} work reads between two ticks`);
+  assert.equal(t.unawaited, 0);
+  const plain = (x) => ({ dbId: x.dbId, ownerDbIds: [...x.ownerDbIds] });
+  assert.deepEqual(r, checkCrossRoleNesting({ rootsA: rootsA.map(plain), rootsB: rootsB.map(plain), rootsUnion: rootsUnion.map(plain) }));
+});
+
+test('checkCrossRoleNestingSliced: a single wide owner list (cached owner sets) ticks per owner', async () => {
+  const counter = { reads: 0 };
+  const owners = Array.from({ length: 8_000 }, (_, k) => k);
+  const rootsUnion = [instrumented(counter, 1, owners)];
+  const rootsA = [instrumented(counter, 1, owners), instrumented(counter, 2, owners.slice(0, 3_000))];
+  const t = makeTicker(counter);
+  const r = await checkCrossRoleNestingSliced({ rootsA, rootsB: [], rootsUnion }, t);
+  assert.deepEqual(r, { supported: false, offenders: [{ ancestor: 1, descendant: 2 }], enumeratorInconsistent: false });
+  assert.ok(t.ticks >= 8_000 + 3_000, `saw ${t.ticks} ticks`);
+  assert.ok(t.maxSpan <= 64, `${t.maxSpan} work reads between two ticks`);
+});
+
+test('hierarchyInternalCandidatesSliced: 10,000 shared roots cost >= 2n + n*ceil(log2 n) ticks (the dbId sort is sliced)', async () => {
+  const counter = { reads: 0 };
+  const n = 10_000;
+  const mk = () => Array.from({ length: n }, (_, k) => instrumented(counter, n - k, [1, 2]));   // dbIds descending
+  const rootsA = mk();
+  const rootsB = mk();
+  const t = makeTicker(counter, { asyncEvery: 100 });
+  const r = await hierarchyInternalCandidatesSliced({ rootsA, rootsB }, t);
+  assert.deepEqual(r.slice(0, 3), [{ dbId: 1, ownerCount: 2 }, { dbId: 2, ownerCount: 2 }, { dbId: 3, ownerCount: 2 }]);
+  assert.equal(r.length, n);
+  assert.ok(t.ticks >= 2 * n + n * passesOf(n), `saw ${t.ticks} ticks`);
+  assert.ok(t.maxSpan <= 64, `${t.maxSpan} work reads between two ticks`);
+  assert.equal(t.unawaited, 0);
+  const plain = (x) => ({ dbId: x.dbId, ownerDbIds: [...x.ownerDbIds] });
+  assert.deepEqual(r, hierarchyInternalCandidates({ rootsA: rootsA.map(plain), rootsB: rootsB.map(plain) }));
+});
+
+test('every Sliced form labels its ticks and works with a tick that never yields a Promise', async () => {
+  const t = makeTicker();
+  await assertRootAntichainSliced([root(1, [2]), root(3, [4])], t);
+  await checkCrossRoleNestingSliced({ rootsA: [root(1, [2])], rootsB: [], rootsUnion: [root(1, [2])] }, t);
+  await hierarchyInternalCandidatesSliced({ rootsA: [root(1, [2, 3])], rootsB: [root(1, [2, 3])] }, t);
+  assert.ok(t.ticks > 0);
+  assert.deepEqual([...t.labels], ['plan']);
+});
+
+test('the Sliced forms equal the sync forms (and the pre-fix references) on the 300-round random corpora, with async ticks', async () => {
+  const asyncTick = (() => { let n = 0; return () => ((n += 1) % 5 === 0 ? Promise.resolve() : undefined); })();
+  const tickSeam = { tick: asyncTick };
+
+  let seed = 12345;
+  const rand = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 4294967296; };
+  const pick = (n) => Math.floor(rand() * n);
+  for (let round = 0; round < 300; round += 1) {
+    const roots = Array.from({ length: pick(9) }, () => root(1 + pick(6), Array.from({ length: pick(5) }, () => 1 + pick(8))));
+    const expected = referenceAntichain(roots);
+    assert.deepEqual(await assertRootAntichainSliced(roots, tickSeam), expected, JSON.stringify(roots));
+    assert.deepEqual(assertRootAntichain(roots), expected);
+  }
+  const big = Array.from({ length: 40 }, (_, k) => root(1 + (k % 7), Array.from({ length: k % 4 }, (__, m) => 1 + ((k + m) % 9))));
+  assert.deepEqual(await assertRootAntichainSliced(big, tickSeam), referenceAntichain(big));
+
+  seed = 777;
+  const mk = () => Array.from({ length: pick(6) }, () => root(1 + pick(10), Array.from({ length: pick(4) }, () => 1 + pick(8))));
+  let unsupported = 0;
+  for (let round = 0; round < 300; round += 1) {
+    const input = { rootsA: mk(), rootsB: mk(), rootsUnion: mk() };
+    const sync = checkCrossRoleNesting(input);
+    assert.deepEqual(await checkCrossRoleNestingSliced(input, tickSeam), sync, JSON.stringify(input));
+    if (!sync.supported) unsupported += 1;
+  }
+  assert.ok(unsupported > 30);
+
+  // pre-fix hierarchyInternalCandidates, verbatim (filter -> map -> stable native sort), incl. duplicate dbIds
+  const referenceHierarchy = ({ rootsA, rootsB }) => {
+    const inB = new Set(rootsB.map((r) => r.dbId));
+    return rootsA.filter((r) => inB.has(r.dbId) && r.ownerDbIds.length >= 2)
+      .map((r) => ({ dbId: r.dbId, ownerCount: r.ownerDbIds.length })).sort((a, b) => a.dbId - b.dbId);
+  };
+  seed = 4242;
+  let nonEmpty = 0;
+  for (let round = 0; round < 300; round += 1) {
+    const mkH = () => Array.from({ length: pick(12) }, () => root(1 + pick(9), Array.from({ length: pick(5) }, () => 1 + pick(8))));
+    const input = { rootsA: mkH(), rootsB: mkH() };
+    const expected = referenceHierarchy(input);
+    assert.deepEqual(hierarchyInternalCandidates(input), expected, JSON.stringify(input));
+    assert.deepEqual(await hierarchyInternalCandidatesSliced(input, tickSeam), expected, JSON.stringify(input));
+    if (expected.length > 1) nonEmpty += 1;
+  }
+  assert.ok(nonEmpty > 30, 'the generator must produce multi-element results');
 });
