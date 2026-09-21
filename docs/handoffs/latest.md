@@ -2,8 +2,8 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 - **Branch:** `feature/m4-performance-worker-decision-design`
-- **HEAD:** `9c65903` ("docs: refine internal review loop rules in CLAUDE.md"; parent `62aa070`). Only `CLAUDE.md` was committed in this session.
-- **Working tree (uncommitted, nothing committed by the plan task):** the design spec with the bounded errata applied (1,956 lines, SHA-256 `9bee6af5f206cbcb3a00d4c12545e8dba42b0bef33805ad9bc6e62a16d5ff29c`); this handoff; the master plan, ten phase/reconciliation files under `docs/superpowers/plans/federated-clash-test-core/`; Round 10–21 internal review records, the convergence review, and two plan-review records (`docs/reviews/2026-09-20-core-engine-plan-p5-…` and `…p6-internal-codex-review.md`). Some review records are staged, others untracked. **No production code and no tests exist** (`clashtest/` and `test/clashtest/` are absent).
+- **HEAD:** `0a5e10d` ("docs: add Federated Clash Test review records") when this handoff was last verified. Session commits, oldest first: `9c65903` (CLAUDE.md review-loop rules) → `c9707e3` (core-engine plan + handoff) → `a4e6ea1` (spec rounds 11–21 remediation + errata E1–E13) → `0a5e10d` (review records). Any commit after `0a5e10d` postdates this handoff.
+- **Working tree:** clean at `0a5e10d` — the plan, spec (1,956 lines, SHA-256 `9bee6af5f206cbcb3a00d4c12545e8dba42b0bef33805ad9bc6e62a16d5ff29c`), review records and this handoff are all committed; nothing pushed. This handoff line update itself is uncommitted. **No production code and no tests exist** (`clashtest/` and `test/clashtest/` are absent).
 - **Milestone context:** M4 — Performance / Worker Decision Gate is closed (Verdict D; Phase 4 unstarted and unauthorized). Current work: **Federated Clash Test & Results** — design frozen, core-engine implementation plan authored.
 
 ## Status in one line

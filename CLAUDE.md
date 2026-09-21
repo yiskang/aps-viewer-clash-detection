@@ -39,7 +39,8 @@ Keep `docs/handoffs/latest.md` current with at least:
 - current milestone/task context and status
 - governing spec/plan and latest status authority
 - explicitly unresolved or deferred work
-- suggested next action
+- next authorized action, or explicitly `awaiting owner authorization`
+- work that must not begin without explicit authorization
 
 ### Before declaring a substantial task complete
 
@@ -51,6 +52,39 @@ Keep `docs/handoffs/latest.md` current with at least:
 6. Report branch, HEAD, and final git status.
 
 Do not create a commit solely because the handoff was updated unless explicitly authorized.
+
+## Milestone and phase transition authorization
+
+Repository consistency does not itself authorize a transition.
+
+A roadmap entry, closed milestone, suggested next action, or independent review recommendation may identify the likely next step, but must not be treated as authorization to begin a new milestone, phase, or abstraction level.
+
+Before advancing from:
+
+- research → design/specification
+- design/specification → implementation planning
+- implementation planning → implementation
+- one milestone → the next milestone
+- a conditional phase → execution
+
+the agent must verify that the transition is explicitly authorized by one of:
+
+1. the user / milestone owner in the current task;
+2. the latest authoritative repository artifact that explicitly grants that transition; or
+3. a reviewed handoff entry that explicitly records the action as authorized.
+
+If the latest closeout or status is `D`, `blocked`, `conditional`, `deferred`, or otherwise leaves work unresolved, do not infer that the next roadmap milestone is automatically authorized.
+
+Instead:
+
+- report the candidate next action;
+- identify the artifact or roadmap basis for it;
+- distinguish `recommended next action` from `authorized next action`;
+- stop and request milestone-owner confirmation when authorization is not explicit.
+
+An independent ChatGPT Work review may recommend a transition, but recommendation alone does not authorize execution unless the user explicitly accepts it or the repository already records that authorization.
+
+Do not reinterpret a closed milestone as permission to reopen skipped or conditional phases unless explicitly authorized.
 
 ## Internal review loop
 
@@ -95,7 +129,7 @@ A stable checkpoint is reached when:
 - no known Critical/High correctness blocker remains in the artifact's intended abstraction level;
 - remaining Medium/Low findings are dispositioned;
 - unresolved research, measurement, product, or integration questions are explicitly recorded as gates rather than guessed closed;
-- the artifact is internally consistent enough to proceed to the next appropriate phase.
+- the artifact is internally consistent enough to be considered for the next appropriate phase, subject to transition authorization.
 
 At that point:
 
