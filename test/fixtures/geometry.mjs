@@ -17,6 +17,13 @@ export function box(w, h, d) {
   return new THREE.BoxGeometry(w, h, d);
 }
 
+// Same box extents as box(w, h, d) (so world-diagonal comparisons tie bit-for-bit), but
+// subdivided into many more triangles -- used by tests that need a NATURAL (not rank-1
+// world-diagonal) tie-break in orientForCrossing's total order, e.g. rank 2 (triangle count).
+export function subdividedBox(w, h, d, segments = 2) {
+  return new THREE.BoxGeometry(w, h, d, segments, segments, segments);
+}
+
 export function at(x, y, z) {
   return new THREE.Matrix4().makeTranslation(x, y, z);
 }
@@ -95,11 +102,11 @@ function weldedFromRaw(geometry) {
 export function testInstance(geometry, matrix = new THREE.Matrix4()) {
   const welded = weld(geometry);
   const raw = weldedFromRaw(welded);
-  const { bvh, geometry: builtGeometry, localDiagonal, aspectRatio, aspectRatioExceeded } = buildBvh(raw);
+  const { bvh, geometry: builtGeometry, localDiagonal, aspectRatio, aspectRatioExceeded, geometryDigest } = buildBvh(raw);
   const connectivity = computeGeometryConnectivity(raw);
   return {
     geometry: builtGeometry, bvh, localDiagonal, connectivity,
     closedManifold: connectivity.closedManifold.every(Boolean) && connectivity.componentCount > 0,
-    matrix, aspectRatio, aspectRatioExceeded,
+    matrix, aspectRatio, aspectRatioExceeded, geometryDigest,
   };
 }

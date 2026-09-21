@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { CollisionWorld, normalizeNarrowPhaseHit } from '../collision/CollisionWorld.js';
+import { CollisionWorld, normalizeNarrowPhaseHit, toInstance } from '../collision/CollisionWorld.js';
 import { buildMockModel } from './fixtures/mockInstanceTree.mjs';
 import { mergeGeometries } from './fixtures/geometry.mjs';
 
@@ -266,11 +266,14 @@ test('volume-overlap dispatch: an AABB-overlapping but geometrically disjoint pa
 
 // === canonical operand ordering (fix round 1, Finding 1) =======================================
 //
-// `compareCanonical` decides which operand's localDiagonal becomes L_canonical for
-// ProperCrossingQuery's offset ladder (`{1e-3,1e-4,1e-5} x L_canonical`). VolumeOverlapQuery's own
-// library default treats the PUBLIC source as canonical-first, which makes that scale depend on
-// which side the caller happened to label source -- a public VERDICT difference, not a tolerance
-// nuance, whenever the two operands' local diagonals differ sharply.
+// Historically, VolumeOverlapQuery exposed a `compareCanonical` option that decided which operand's
+// localDiagonal became L_canonical for ProperCrossingQuery's offset ladder
+// (`{1e-3,1e-4,1e-5} x L_canonical`); that option has since been REMOVED in favor of
+// orientForCrossing's total geometric order (see the fail-loud removal guard in
+// VolumeOverlapQuery.js). Before removal, the library's own default treated the PUBLIC source as
+// canonical-first, which made that scale depend on which side the caller happened to label source --
+// a public VERDICT difference, not a tolerance nuance, whenever the two operands' local diagonals
+// differed sharply.
 //
 // The geometry below is that case, measured rather than assumed: a 3000 x 1 x 1 duct
 // (localDiagonal ~3000) crossing a 1 x 1 x 4 beam (localDiagonal ~4.24) at the origin -- a ~707:1
@@ -281,9 +284,13 @@ test('volume-overlap dispatch: an AABB-overlapping but geometrically disjoint pa
 // (1e-3 x 4.24) lands inside the duct's own classifyPoint boundary band, every probe reports
 // 'boundary', and it returns a clean overlap: false.
 //
-// With the identity-based comparator wired in, canonical order is fixed by
-// (loadEpoch, geometryIndex, fragmentId) -- the duct (geometryIndex 0) always sorts first -- so both
-// call directions agree. Without it, this fixture reports 1 pair one way and 0 the other.
+// orientForCrossing orients the duct (world diagonal ~3000) first regardless of caller-supplied
+// operand order or which fragment/geometryIndex the Viewer happened to assign it on this load --
+// world-space diagonal is rank 1 of a total geometric order (design doc
+// docs/superpowers/specs/2026-09-11-canonical-ordering-operand-symmetry-fix-design.md §4.3 C-1), so
+// both call directions agree without reading any identity field. This regression is the repository's
+// strongest evidence for the dead-rung theorem (§4.0): pre-fix, the small-operand orientation made
+// every probe rung classify `boundary` and silently lost this crossing.
 
 const ductThroughBeamFixture = () => makeFixture(
   [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
@@ -558,6 +565,30 @@ test('an extreme-aspect-ratio target under containment emits geometry-aspect-rat
   assert.equal(gated.targetFragment.fragId, 200);
   assert.equal(gated.targetFragment.dbId, 20);
   assert.equal(gated.targetFragment.modelId, 1);
+});
+
+// === geometryDigest forwarding (Task A1.2) =====================================================
+//
+// `toInstance` is exported (like `normalizeNarrowPhaseHit` above) solely so this pure
+// record -> Instance mapping can be unit-tested directly, following this file's existing pattern.
+// `geometryDigest` is not consumed by any production code path yet -- Task A2.1 wires it into
+// `orientForCrossing` -- so there is no observable findClashes-level behavior to assert on the way
+// `aspectRatioExceeded`'s forwarding test above does; this is a direct shape check instead.
+
+test('toInstance forwards record.geometryDigest onto the Instance it builds', () => {
+  const record = {
+    geometry: { index: { count: 36 }, attributes: { position: { count: 8 } } },
+    bvh: {},
+    localDiagonal: 1.7320508075688772,
+    geometryDigest: '082d39a862364291983594df7749a69d', // a real digest, from A1.1's browser-load verification
+    connectivity: null,
+    aspectRatioExceeded: false,
+  };
+  const instance = toInstance(record, new THREE.Matrix4().identity().toArray());
+  assert.equal(typeof instance.geometryDigest, 'string');
+  assert.equal(instance.geometryDigest.length, 32);
+  assert.match(instance.geometryDigest, /^[0-9a-f]{32}$/, 'must be exactly 32 lowercase hex chars');
+  assert.equal(instance.geometryDigest, record.geometryDigest, 'forwarded verbatim, not recomputed');
 });
 
 // === the Task 19 placeholder is gone ===========================================================

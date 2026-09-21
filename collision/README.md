@@ -97,6 +97,62 @@ In practice you never need to pass `options` at all in M1.
 scheduler injection for this library's own unit tests) — not part of the supported developer API,
 even though nothing in JavaScript prevents passing them.
 
+`properCrossingQuery`'s `options.__classifyPoint` is an internal test seam of the same kind, under
+the same declaration: it substitutes the point classifier the probe ladder calls, and exists solely
+so this library's own tests can inject work that runs *inside* the `intersectsTriangles` callback —
+the only way to keep exercising the callback-exception containment protocol that stops a throw from
+poisoning the vendored `bvhcast`'s module-global `_active` flag. The double underscore marks it as
+never-supplied-by-production; no code under `collision/` passes it. See
+`docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md` §13 G.
+
+### Kernel/wrapper layer contract for crossing queries
+
+`properCrossingQuery` (`collision/query/ProperCrossingQuery.js`) and `volumeOverlapQuery`
+(`collision/query/VolumeOverlapQuery.js`) sit in two deliberately different layers, per
+`docs/superpowers/specs/2026-09-11-canonical-ordering-operand-symmetry-fix-design.md` §3.1:
+
+- **`properCrossingQuery` is a directional kernel.** It carries **no** swap-invariance contract of
+  its own: exchanging its first and second operands is expected to change candidate enumeration,
+  `aborted`, `pointClassifications`, the accepted witness, and float rounding. Tests may
+  characterize that directional behavior; nothing in the library depends on it being symmetric.
+- **`volumeOverlapQuery` is the canonical wrapper.** It carries the library's entire symmetry
+  contract for the crossing term, and discharges it by orienting the two operands with
+  `orientForCrossing` (`collision/query/orientForCrossing.js`) — a total geometric order (world
+  diagonal, then triangle count, then vertex count, then world-matrix elements, then a
+  content-derived `geometryDigest`, then, as rank 6, a stable fallback to the caller's public
+  `source` role) — before ever calling the kernel, so the kernel is almost always handed the same
+  physical operand as its first argument regardless of which way the caller labels the pair.
+  `overlap`, `conclusive`, `inconclusiveCauses`, and every crossing-term counter are therefore
+  invariant under a caller-side operand swap **except when the pair ties through rank 5** (this
+  includes byte-identical geometry, not only a digest collision between two distinct meshes) —
+  there, rank 6 falls back to the caller's public `source` role, which is order-dependent by
+  construction, and orientation (and with it the kernel's directional behavior) again depends on
+  which operand the caller happened to label `source`. Outside that residual case, only
+  caller-facing role labels (`source`/`target`, `via`, `witness.point`) are legitimately allowed to
+  move.
+
+`volumeOverlapQuery`'s operand orientation is decided **internally**, not by the caller: an earlier
+`options.compareCanonical` injection point was removed, and `volumeOverlapQuery` now throws a
+`TypeError` if a caller supplies `compareCanonical` at all, rather than silently ignoring it.
+
+### Deterministic crossing budgets
+
+`properCrossingQuery` — the crossing term of `mode: 'volume-overlap'` and of the `mode: 'clearance'`
+Hard-Clash exclusion precheck — terminates on **deterministic operation counts only**:
+`maxCandidatePairsExamined` (50,000), `maxCrossingPairsExamined` (64) and
+`maxCrossingPointClassifications` (1,536 = 64 × 24, the structural maximum its probe ladder can
+already reach). Elapsed wall-clock time is **not** one of them: it cannot set `aborted`, cannot
+produce a `crossing-budget-exhausted` diagnostic, and cannot change an overlap verdict or a
+Hard-Clash exclusion. Identical geometry therefore always produces the identical answer, on any
+machine, under any load. The 8 ms `frameBudgetMs` concept survives for this query only as
+opt-in telemetry on the internal `hard-clash-precheck` diagnostic event, never in a result.
+
+Two other queries are **not** yet covered by that guarantee and are known exceptions:
+`mode: 'surface-intersection'` (`SurfaceIntersectionQuery`) and `mode: 'containment'`'s witness term
+(`SurfaceCrossingWitness`) still let elapsed time set `aborted`, so their results can still depend
+on machine speed. That is a knowingly deferred, tracked follow-up (design §7.3), recorded here
+rather than left to be rediscovered.
+
 `viewer` may be `null` for lifecycle-only use (no narrow-phase query is reachable without one) —
 the only thing ever called on it is `viewer.impl.getRenderProxy(model, fragId)`.
 
@@ -305,7 +361,7 @@ partitioned.
 |---|---|---|
 | `clearance-invalid-transform` | **fragment**, deduped per `(epoch, fragmentId)` | Clearance's own admission validation found a non-finite/singular `worldMatrix`, or non-finite/mis-ordered `worldBounds`, for an extracted instance. Fires **before any pair exists** — it is an admission-time filter, not a pair evaluation. |
 | `clearance-anisotropic-scale-unsupported` | **fragment**, deduped per `(epoch, fragmentId)`, one per offending side — with one rare exception, see the note below the table | An operand's `worldMatrix` failed `validateUniformScale` — anisotropic, sheared, reflected/negative, or otherwise unsupported scale. Diagnosed, never approximated. |
-| `clearance-hard-clash-precheck-inconclusive` | **pair** (`sourceFragment` + `targetFragment`) | The tri-state Hard-Clash exclusion precheck could neither prove nor disprove volume overlap for this fragment pair (e.g. its crossing term hit `frameBudgetMs`), so the pair was dropped rather than assumed non-overlapping. |
+| `clearance-hard-clash-precheck-inconclusive` | **pair** (`sourceFragment` + `targetFragment`) | The tri-state Hard-Clash exclusion precheck could neither prove nor disprove volume overlap for this fragment pair (e.g. its crossing term exhausted one of its deterministic work budgets, or a containment term could not resolve every component), so the pair was dropped rather than assumed non-overlapping. **This is a deterministic property of the geometry, never of machine speed** — see the "Deterministic crossing budgets" note below. |
 | `clearance-distance-unavailable` | **pair** (`sourceFragment` + `targetFragment`) | `clearanceQuery` reached `closestPointToGeometry` but could not produce a trustworthy answer: a non-finite local distance, a failed world-space conversion of a closest point, or the two independently-derived world distances disagreeing beyond the documented cross-check tolerance. |
 
 **Scope caveat on `clearance-anisotropic-scale-unsupported`.** It is fragment-scoped on the ordinary
@@ -402,6 +458,14 @@ lives even for multi-instance/nested elements.
 
 ## Known Milestone-1 limitations
 
+- **Requires a locally-patched `three-mesh-bvh@0.9.14`.** The stock, unpatched npm package has two
+  confirmed correctness defects that produce wrong `mode: 'clearance'` distances (and, more rarely,
+  false `null`/`beyond-threshold` results) — see
+  `docs/research/m4-three-mesh-bvh-patch-provenance.md` for the full defect analysis, the delivery
+  mechanism (`patch-package`, reapplied automatically on every `npm install`/`npm ci`), and the
+  residual failure modes (e.g. `--ignore-scripts`) that leave it unpatched. This repo ships the patch
+  in-tree (`patches/three-mesh-bvh+0.9.14.patch`); a checked-in regression test
+  (`test/vendor/three-mesh-bvh-patch-integrity.test.mjs`) fails loudly if it is ever silently reverted.
 - **Undocumented/internal Viewer surfaces.** Fragment geometry extraction goes through
   `viewer.impl.getRenderProxy(model, fragId)` and reads internal, undocumented buffer-layout shapes
   (`vb`/`vbstride`, legacy interleaved attribute layouts) reverse-engineered from the real
@@ -894,6 +958,14 @@ to Float32 quantization) — a cross-check that uses no part of the collision pi
   "proven no overlap" — and it is correctly surfaced through the incompleteness caveat rather than
   hidden. It is nonetheless a real volume, and the first thing any future clearance-performance or
   clearance-recall work should look at.
+  **Re-measured after the deterministic-budget correctness fix** (see the CHANGELOG entry and
+  "Deterministic crossing budgets" above), since that fix removes *false* inconclusives caused by a
+  wall-clock abort rather than by geometry: on this gate's fixture the figure is **unchanged** —
+  464 of 1,913, all `clearance-hard-clash-precheck-inconclusive`, with `clearanceHardClashExclusions`
+  also unchanged at 1,197 and the same 30 reported pairs on both broad-phase arms. So on *this*
+  fixture the inconclusive volume was already genuine, and the fix moved only timing (worst single
+  `clearanceQuery` span 6.40 ms → 10.80 ms). On the denser M4 `S2[k=100:typical:clearance]` query the
+  fix *does* change the numbers, which is where the nondeterminism was actually observable.
 - **Live acceptance found a real near-miss — and the threshold it was measured with is not an
   independent oracle.** The bounded discovery spike genuinely discovered a near-miss on its second
   call (Structure dbId 3965 → 3976/4135 at ~0.0417 world units), so M3's positive acceptance case ran
@@ -905,6 +977,24 @@ to Float32 quantization) — a cross-check that uses no part of the collision pi
   claims only what it can show (the same source through the same action is threshold-sensitive:
   0 pairs at 0.02, exactly 2 at 0.05). A fully independent Viewer-owned world-bounds oracle would
   close the residual circularity and remains available as future work.
+
+## Reload-stability and order-independence regressions
+
+The canonical-ordering / operand-symmetry fix's standing protection is four live-Playwright
+regression scripts. None of them is a `node --test` file (`npm test` must never require a live dev
+server or Autodesk Platform Services credentials), so each is run directly, **with the dev server
+already running** (`npm start` / `node server.js`, default `PORT` 8080):
+
+| Script | npm script | What it protects |
+|---|---|---|
+| `test/performance/m4/operand-swap-replay.mjs` | `npm run test:regression:swap-replay` | Design doc §11 regression B — operand-swap invariance at the `volumeOverlapQuery` wrapper, over a real fragment-pair replay set |
+| `test/performance/m4/arm-order-independence.mjs` | `npm run test:regression:arm-order` | Design doc §13 B's arm-order axis — identical disposition regardless of which broad-phase arm (`tlas`/`linear`) runs first in a live session |
+| `test/performance/m4/hard-clash-precheck-blocker-reload.mjs` | `npm run test:regression:blocker-reload` | The exact real failing pair (`structure:3547/frag363` → `architecture:3551/frag30`) pinned stable across ≥ 10 genuine `page.reload()` transitions |
+| `test/performance/m4/cross-reload-parity.mjs` | `node test/performance/run-gate-m4.mjs --d3-cross-reload` (already wired into the M4 gate; imports the gate's own unmodified §6.4 comparator rather than duplicating it) | Design doc §11 regression E, regression C's cross-load half, and the two pending §9.2 measurements — parity across independent page loads |
+
+All four retain one per-session JSON report under `test/performance/results/`, which is
+`.gitignore`d — the evidence is local-working-tree-only, never committed to the repo, so re-running
+them is how a future contributor reproduces the proof rather than trusting a stale artifact.
 
 ## Developer entry points
 

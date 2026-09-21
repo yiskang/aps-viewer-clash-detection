@@ -1,5 +1,111 @@
 # Changelog
 
+## Correctness fix — volume-overlap and clearance crossing results no longer depend on operand order or reload identity (not yet tagged)
+
+**What was wrong.** The crossing term shared by `mode: 'volume-overlap'` and `mode: 'clearance'`'s
+Hard-Clash exclusion precheck ordered its two operands by a reload-unstable identity key
+(`(modelId, geometryKey, instanceId)`-derived), not by anything geometric. Two page loads of the
+identical model could assign that identity differently, so the same physical pair of elements could
+canonicalize in the opposite order across loads — and orientation was not merely cosmetic: it
+decided which operand's tolerance scale (`L_canonical`) the crossing kernel used, so a pair whose
+small operand happened to win the identity comparison could silently lose a real crossing the same
+pair would have found under the other order. The library's own declared goal ("a deterministic
+function of the pair, not of argument order") was never actually achieved by this mechanism.
+
+**What changed.** Operand orientation is now decided by `orientForCrossing`
+(`collision/query/orientForCrossing.js`), a total geometric order with **no identity field at any
+rank**: world diagonal (larger operand first), then triangle count, then vertex count, then
+world-matrix elements, then a content-derived `geometryDigest`, then (rank 6) a stable fallback to
+the caller's public `source` role as the tie-break of last resort. `volumeOverlapQuery`
+(`collision/query/VolumeOverlapQuery.js`) is the canonical wrapper that applies this ordering before
+calling the directional `properCrossingQuery` kernel, guaranteeing the same physical pair always
+canonicalizes the same way regardless of load order or which way the caller labels the pair —
+**except at rank 6**, which is order-dependent by construction (it is reached whenever the pair
+ties through rank 5, including byte-identical geometry, not only a digest collision between
+distinct meshes) and remains the one residual place orientation still depends on which operand the
+caller happened to label `source`. `L_canonical` is now well-defined and achievable per pair for
+the first time: it is the canonical-first operand's own local diagonal — the operand chosen because
+it has the larger *world* diagonal, so `L_canonical` corresponds to that larger world diagonal under
+the transform classes this library supports, rather than being that world diagonal itself.
+
+**What consumers will see.** No public *result schema or exported symbol* changed: no field is
+added, removed, renamed or retyped on `findClashes`'s result shape, and neither query is on the
+exported surface (internal diagnostic-event fields and the internal geometry-record shape did
+change — see below). **Observable results will change for borderline pairs, expected primarily in
+the direction of recovering crossings the small-operand orientation previously and silently lost**
+— this is a behavioral change, not preserved for backward compatibility, because backward
+compatibility would mean preserving the defect. A consumer whose baseline was pinned to the old,
+reload-unstable results should expect some borderline pairs to newly report `overlap: true` (or a
+Hard-Clash exclusion that previously came back inconclusive); the fix does not carry a proof that no
+pair moves in the opposite direction (the crossing kernel remains directional and orientation can
+still change candidate enumeration and budget exhaustion), so any such regression should be treated
+as a genuine finding to investigate, not dismissed as expected.
+
+**Internal API migration.** `volumeOverlapQuery`'s `options.compareCanonical` — never re-exported
+from `collision/index.js`, an internal seam used by two call sites inside `collision/` — is
+**removed**. Passing it now throws a `TypeError` at the first call rather than being silently
+ignored, so any missed caller fails loudly instead of quietly losing control of orientation.
+
+## Correctness fix — volume-overlap and clearance results no longer depend on machine speed (not yet tagged)
+
+**What was wrong.** `properCrossingQuery`, the crossing term shared by `mode: 'volume-overlap'` and
+by `mode: 'clearance'`'s Hard-Clash exclusion precheck, let an 8 ms wall-clock deadline set its
+`aborted` flag, and `aborted` forces the geometric verdict to "not a crossing". A genuinely-proven
+overlap was therefore suppressed whenever the machine happened to be slow at that instant, making a
+correctness-bearing verdict a function of machine speed rather than of geometry. The same inputs
+could produce different results on two runs of the same query on the same machine.
+
+**What changed.** Both wall-clock branches are deleted from the semantic path. The traversal now
+terminates only on deterministic operation counts — `maxCandidatePairsExamined` (50,000, unchanged),
+`maxCrossingPairsExamined` (64, unchanged) and the new `maxCrossingPointClassifications` (1,536,
+which is exactly `64 × 24`, the structural maximum the probe ladder can already reach, so it cannot
+censor any traversal the previous code would have completed). **No budget was tightened and no
+geometry the library previously searched is searched less**; the fix is purely the removal of a
+timing dependency. The 8 ms concept survives only as opt-in internal telemetry
+(`elapsedMs` / `timeBudgetExceeded` on the `hard-clash-precheck` diagnostic event), which is never
+emitted in production and can never change a result. `frameBudgetMs` itself is unchanged at 8.
+
+**What consumers will see.** No public schema change: no field is added, removed, renamed or
+retyped, and neither query is on the exported surface. Behavior does change, always in the direction
+of completeness, and a consumer relying on any of the following **will see different output**:
+
+- `mode: 'volume-overlap'` reports overlaps that were previously suppressed by timing — pairs that
+  used to vanish now appear, with a real `surface-crossing` witness.
+- False `crossing-budget-exhausted` entries disappear from `statistics.diagnostics`.
+- On `mode: 'clearance'`, false `clearance-hard-clash-precheck-inconclusive` entries disappear and
+  `statistics.clearanceHardClashExclusions` rises to its true deterministic value; correspondingly,
+  a dbId pair that previously survived into `pairs` by timing luck can now be correctly excluded.
+- Every one of those values was previously nondeterministic run-to-run, which is why the change is
+  sound — but "previously nondeterministic" is not a reason it is invisible. Any baseline pinned to
+  the old numbers must be refreshed.
+
+**Cost, measured not estimated.** Removing the deadline makes the traversal a larger atomic unit.
+Phase B of the fix measured complete end-to-end traversal spans over 21,300 traversals across two
+pre-registered runtime tiers: the **worst single observed synchronous span is 15.5 ms** (on
+pathological synthetic geometry built to saturate the 50,000-candidate scan) and the **worst on real
+model geometry is 10.8 ms**. Both sit inside the 24.8 ms reference-hardware ceiling — the CAUTION
+band — and **zero** traversals exceeded it. Full distributions, per tier and per input class:
+`docs/research/proper-crossing-query-deterministic-budget-calibration.md`. Deleting the in-loop
+clock reads (up to ~51,500 per traversal) is itself a small speedup that partly offsets the growth.
+
+**Known remaining exceptions.** `mode: 'surface-intersection'` and `mode: 'containment'`'s witness
+term carry the same defect class and are **not** fixed here — a knowingly deferred, tracked
+follow-up. Their results can still depend on machine speed. Design, evidence and the deferral's
+reasoning:
+`docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md`.
+
+## Dependency correctness fix — `three-mesh-bvh@0.9.14` local patch (not yet tagged)
+
+The pinned `three-mesh-bvh@0.9.14` dependency had two confirmed correctness defects that could
+produce wrong `mode: 'clearance'` results (v0.3.0, below) — an incorrect distance value, or a false
+`null`/`beyond-threshold` result, depending on traversal order. This is a **correctness fix to
+already-shipped v0.3.0 behavior**, not a new capability or a behavior change users opted into: some
+previously-returned `clearance` distances for affected geometry were simply wrong. The library now
+ships a local `patch-package` patch (`patches/three-mesh-bvh+0.9.14.patch`), reapplied automatically
+on every `npm install`/`npm ci`. `surface-intersection`/`containment`/`volume-overlap` are
+unaffected (they never call the patched functions). Full analysis, delivery mechanism, and
+verification: `docs/research/m4-three-mesh-bvh-patch-provenance.md`.
+
 ## v0.3.0 — Collision Library Milestone 3: Soft Clash / Clearance (recommended tag, not yet created)
 
 Adds near-miss ("Soft Clash") detection to the Viewer-side collision-detection library

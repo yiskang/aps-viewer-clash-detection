@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { volumeOverlapQuery, toFiniteWorldArray } from '../../collision/query/VolumeOverlapQuery.js';
 import { properCrossingQuery } from '../../collision/query/ProperCrossingQuery.js';
-import { box, at, mergeGeometries, testInstance } from '../fixtures/geometry.mjs';
+import { orientForCrossing } from '../../collision/query/orientForCrossing.js';
+import { box, at, mergeGeometries, testInstance, openBottomedBox, subdividedBox } from '../fixtures/geometry.mjs';
 
 test('baseline: small solid fully inside large solid overlaps', async () => {
   const small = testInstance(box(1, 1, 1));
@@ -130,17 +131,80 @@ test('checkpointIfDue is called between composed terms', async () => {
     `checkpointIfDue called between composed terms (called ${checkpointCalls} times, expect >= 2: once before A-in-B, once before B-in-A)`);
 });
 
-test('compareCanonical decouples canonical order from public roles', async () => {
-  // Regression for a Codex spec-review finding: this function's public `source`
-  // parameter must stay the diagnostic-role `source` even when compareCanonical says
-  // TARGET should be canonically-first for properCrossingQuery's own L scaling.
+test('public source/target roles stay stable in diagnostics regardless of which operand orientForCrossing selects as canonical-first', async () => {
+  // Re-expression of a deleted `compareCanonical`-injection test (Task A3.2; the option itself
+  // was removed in Task A2.1). Regression for the same underlying Codex spec-review finding:
+  // this function's public `source`/`target` diagnostic role-naming must stay tied to the
+  // caller's own argument position, never to orientForCrossing's internal canonical order.
+  //
+  // Both fixtures share the EXACT same overall box extents (1x1x1), so their world diagonal
+  // ties bit-for-bit at rank 1 (verified empirically -- permuted, differently-sized box
+  // dimensions can differ by float-rounding noise alone and decide the order at rank 1 by
+  // accident, which is exactly what this test must NOT rely on). The closed, subdivided box has
+  // far more triangles than the open-bottomed one, so orientForCrossing canonicalizes it first
+  // at rank 2 (design doc §9.6: "the orientation outcome is decided by ranks 2-5 and must be
+  // asserted explicitly") regardless of which one the caller labels "source" -- but the
+  // open-bottomed (non-closed-manifold) operand's `unverified-parity-operand` diagnostic must
+  // still carry whichever PUBLIC role the caller actually gave it, not its internal canonical
+  // role.
+  const closedHighTriCount = testInstance(subdividedBox(1, 1, 1, 3));       // closed manifold, 108 triangles
+  const openLowTriCount = testInstance(openBottomedBox(1), at(0.5, 0, 0));  // NOT closed manifold, 10 triangles, straddles closedHighTriCount
+
+  const forward = await volumeOverlapQuery(closedHighTriCount, openLowTriCount);
+  const backward = await volumeOverlapQuery(openLowTriCount, closedHighTriCount);
+
+  assert.equal(forward.overlap, true, 'sanity: the two solids genuinely cross');
+  assert.equal(forward.via, 'crossing');
+  assert.equal(backward.overlap, true, 'sanity: same crossing regardless of argument order');
+  assert.equal(backward.via, 'crossing');
+
+  // Explicit rank assertion (no injected comparator): the higher-triangle-count operand is
+  // ALWAYS canonical-first, regardless of argument order, and this is decided at rank 2, not 1.
+  const orientation = orientForCrossing(closedHighTriCount, openLowTriCount);
+  assert.equal(orientation.rank, 2, 'sanity: canonical order decided by triangle count (rank 2), not world diagonal (rank 1)');
+  assert.equal(orientation.first, closedHighTriCount, 'sanity: higher-triangle-count operand is always canonical-first');
+  assert.equal(
+    orientForCrossing(openLowTriCount, closedHighTriCount).first, closedHighTriCount,
+    'sanity: canonical order is the SAME physical operand regardless of which argument position it is called from'
+  );
+
+  assert.deepEqual(
+    forward.diagnostics.filter((d) => d.reason === 'unverified-parity-operand'),
+    [{ reason: 'unverified-parity-operand', role: 'target' }],
+    'forward call: openLowTriCount is the public TARGET -- its non-manifold diagnostic must say so, even though it is canonicalSecond'
+  );
+  assert.deepEqual(
+    backward.diagnostics.filter((d) => d.reason === 'unverified-parity-operand'),
+    [{ reason: 'unverified-parity-operand', role: 'source' }],
+    'backward call: openLowTriCount is now the public SOURCE -- its non-manifold diagnostic must say so, even though it is STILL canonicalSecond'
+  );
+});
+
+test('volumeOverlapQuery rejects if compareCanonical is supplied (async function -- throw surfaces as rejection, not a sync throw)', async () => {
   const duct = testInstance(box(20, 0.4, 0.4));
   const beam = testInstance(box(0.4, 0.4, 20));
-  // Force target (beam) to sort canonically-first regardless of argument position.
-  const forceTargetFirst = () => 1; // always says target < source
-  const r = await volumeOverlapQuery(duct, beam, { compareCanonical: forceTargetFirst });
-  assert.equal(r.overlap, true,
-    'overlap still detected with target forced canonically-first -- proves properCrossingQuery received correctly-ordered operands even though public source/target did not move');
+  await assert.rejects(
+    () => volumeOverlapQuery(duct, beam, { compareCanonical: () => -1 }),
+    /compareCanonical/
+  );
+});
+
+test('volumeOverlapQuery orients the larger-world-diagonal operand as canonical first, regardless of public source/target role', async () => {
+  const duct = testInstance(box(20, 0.4, 0.4));   // larger
+  const beam = testInstance(box(0.4, 0.4, 2));    // smaller
+  const forward = await volumeOverlapQuery(duct, beam);
+  const backward = await volumeOverlapQuery(beam, duct);
+  // Both calls make the same kernel call internally; wrapper-level crossing-term fields must be
+  // bit-identical regardless of which operand the caller labeled "source". NOTE: `inconclusiveCauses`
+  // exists only on the negative-result shape (VolumeOverlapQuery.js:372) -- these fixtures may take
+  // either the positive or negative path depending on whether they actually cross, so default to an
+  // empty array rather than assuming the field is present.
+  assert.equal(forward.overlap, backward.overlap);
+  assert.equal(forward.conclusive, backward.conclusive);
+  assert.deepEqual(
+    [...(forward.inconclusiveCauses ?? [])].sort(),
+    [...(backward.inconclusiveCauses ?? [])].sort()
+  );
 });
 
 // --- M1 aspect-ratio disposition guard threading (task-11 addition; see
@@ -420,27 +484,65 @@ test('crossing witness uses canonicalFirst\'s real matrix, not the other operand
   assert.ok(Math.abs(r.witness.point[2] - expectedWorld.z) < 1e-9);
 });
 
-test('crossing witness uses canonicalFirst\'s real matrix, not the other operand\'s (forced order: target is canonicalFirst)', async () => {
-  const ductMatrix = at(5, 10, -3);
-  const beamMatrix = at(5, 10, -3).clone().multiply(new THREE.Matrix4().makeRotationX(Math.PI));
-  const duct = testInstance(box(20, 0.4, 0.4), ductMatrix); // source
-  const beam = testInstance(box(0.4, 0.4, 20), beamMatrix); // target
-  const forceTargetFirst = () => 1; // always says target < source
-  const r = await volumeOverlapQuery(duct, beam, { compareCanonical: forceTargetFirst });
+test('crossing witness uses canonicalFirst\'s real matrix, not the other operand\'s (natural rank-2 tie via triangle count, no injected comparator)', async () => {
+  // Re-expression of a deleted `compareCanonical`-injection test (Task A3.2; the option itself
+  // was removed in Task A2.1). Same contract as the "default order" test above -- the witness
+  // must be expressed in the frame of whichever operand ACTUALLY resolves to canonicalFirst --
+  // but proven for a pair whose canonical order is decided at rank 2 (triangle count), not rank
+  // 1 (world diagonal), per design doc §9.6's instruction that this contract must also hold off
+  // the rank-1 path.
+  //
+  // `rotatedBar` shares `bar`'s exact box dimensions (20 x 0.4 x 0.4) -- keeping the world-diagonal
+  // computation bit-for-bit tied at rank 1 -- but is reoriented 90 degrees about Z (so the two
+  // genuinely cross like a plus-sign rather than merely overlap) and subdivided into extra
+  // triangles, so the outcome is genuinely decided at rank 2. Which physical operand wins is
+  // determined here by calling orientForCrossing directly, not assumed.
+  const shift = at(5, 10, -3);
+  const barMatrix = shift.clone();
+  const rotatedBarMatrix = shift.clone().multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
+  const bar = testInstance(box(20, 0.4, 0.4), barMatrix);                            // source, 12 triangles
+  const rotatedBar = testInstance(subdividedBox(20, 0.4, 0.4, 2), rotatedBarMatrix); // target, more triangles
+
+  const orientation = orientForCrossing(bar, rotatedBar);
+  assert.equal(orientation.rank, 2, 'sanity: canonical order decided by triangle count, not world diagonal');
+  // Explicit, independent expectation (not merely "whatever orientForCrossing returns"):
+  // rotatedBar has strictly more triangles (48 vs bar's 12), so per rank 2's own rule
+  // ("higher triangle count sorts first") it MUST be canonicalFirst here -- asserted directly so
+  // a reversed rank-2 comparison that still happened to report rank:2 could not silently pass.
+  assert.equal(orientation.first, rotatedBar, 'sanity: higher-triangle-count operand (rotatedBar) is canonical-first');
+  assert.equal(orientation.second, bar);
+  const canonicalFirst = orientation.first;   // whichever operand orientForCrossing actually picked
+  const canonicalSecond = orientation.second;
+
+  const r = await volumeOverlapQuery(bar, rotatedBar, {});
   assert.equal(r.overlap, true);
   assert.equal(r.via, 'crossing');
   assert.ok(r.witness);
 
-  // Here target (beam) is canonicalFirst -- the local witness is in BEAM's frame,
-  // and beam.matrix (not source/duct.matrix) is the ONLY correct choice.
-  const canonicalSecondToFirst = beam.matrix.clone().invert().multiply(duct.matrix);
-  const expected = properCrossingQuery(beam.bvh, duct.bvh, canonicalSecondToFirst, beam.localDiagonal, duct.localDiagonal, {});
+  // Independently reproduce the local-frame witness the same way volumeOverlapQuery does
+  // internally, using WHICHEVER operand actually resolved to canonicalFirst, then transform it
+  // by that SAME operand's own matrix -- the ONLY correct choice for this ordering.
+  const canonicalSecondToFirst = canonicalFirst.matrix.clone().invert().multiply(canonicalSecond.matrix);
+  const expected = properCrossingQuery(
+    canonicalFirst.bvh, canonicalSecond.bvh, canonicalSecondToFirst,
+    canonicalFirst.localDiagonal, canonicalSecond.localDiagonal, {}
+  );
   assert.equal(expected.crossing, true, 'sanity: direct call reproduces the same crossing verdict');
-  const expectedWorld = expected.witnessPoint.clone().applyMatrix4(beam.matrix);
+  const expectedWorld = expected.witnessPoint.clone().applyMatrix4(canonicalFirst.matrix);
 
   assert.ok(Math.abs(r.witness.point[0] - expectedWorld.x) < 1e-9);
   assert.ok(Math.abs(r.witness.point[1] - expectedWorld.y) < 1e-9);
   assert.ok(Math.abs(r.witness.point[2] - expectedWorld.z) < 1e-9);
+
+  // Teeth: transforming this exact same local witness point by the OTHER operand's matrix must
+  // NOT give the same world point -- otherwise this test could pass even with a swapped-matrix
+  // bug (verified empirically: the wrong choice here shifts the result by ~0.37 units).
+  const wrongMatrix = canonicalFirst === bar ? rotatedBar.matrix : bar.matrix;
+  const wrongWorld = expected.witnessPoint.clone().applyMatrix4(wrongMatrix);
+  const wrongDiff = Math.hypot(
+    r.witness.point[0] - wrongWorld.x, r.witness.point[1] - wrongWorld.y, r.witness.point[2] - wrongWorld.z
+  );
+  assert.ok(wrongDiff > 0.1, `sanity: wrong-matrix distance should be clearly measurable (got ${wrongDiff})`);
 });
 
 test('"A in B" containment overlap returns a witness transformed by the container\'s (target\'s) matrix', async () => {
@@ -505,7 +607,23 @@ test('negative overlap result shape is unchanged by witness support', async () =
 
 test('a non-finite transformed witness degrades to witness:null without affecting the overlap verdict', async () => {
   const duct = testInstance(box(20, 0.4, 0.4));
-  const beam = testInstance(box(0.4, 0.4, 20));
+  const beam = testInstance(box(0.4, 0.4, 10));
+  // Reviewer finding (post-commit review of this task's fix-round): this fixture's
+  // correctness depends on `duct` (source) winning orientForCrossing's rank-1
+  // world-diagonal comparison and becoming `canonicalFirst` -- the witness-transform
+  // step below only reads the WINNING operand's matrix (`canonicalFirstIsSource ?
+  // source.matrix : target.matrix`). The two boxes are therefore deliberately sized so
+  // duct's diagonal (~20.008) is unambiguously, comfortably larger than beam's
+  // (~10.016) -- NOT the original `box(0.4, 0.4, 20)` (mathematically the same
+  // diagonal as duct's, just dimension-permuted), whose rank-1 outcome depended on a
+  // razor-thin ~3.55e-15 floating-point rounding artifact of argument order rather
+  // than a deliberate distinguishing difference. That margin is asserted explicitly
+  // immediately below, rather than left as an implicit, undocumented precondition.
+  const orientation = orientForCrossing(duct, beam);
+  assert.equal(orientation.first, duct,
+    'precondition: duct must win orientForCrossing and become canonicalFirst -- otherwise the witness-transform step below reads beam.matrix instead, and this fixture proves nothing');
+  assert.equal(orientation.rank, 1,
+    'precondition: decided by an unambiguous world-diagonal margin (rank 1), not a floating-point tie-break falling through to a later rank');
   // Inject a degenerate matrix on one operand AFTER the verdict-relevant BVH/
   // localDiagonal are built, so the crossing verdict itself is computed from valid
   // local geometry but the world-space transform step receives a matrix that
@@ -516,7 +634,7 @@ test('a non-finite transformed witness degrades to witness:null without affectin
   // empirically (against the real, unmodified crossing-detection code this task does
   // not touch) that this does NOT produce the scenario the brief describes: `duct` is
   // `source`, which is `canonicalFirst` by default, and `canonicalFirst.matrix` is
-  // read at line ~97 to build `canonicalSecondToFirst` -- the SAME relative transform
+  // read to build `canonicalSecondToFirst` -- the SAME relative transform
   // properCrossingQuery's own bvhcast candidate-pair detection depends on. A NaN
   // entry there poisons the transformed AABB comparisons throughout bvhcast, so
   // candidatePairsExamined comes back 0 and the crossing verdict itself flips to
@@ -525,15 +643,42 @@ test('a non-finite transformed witness degrades to witness:null without affectin
   // repo's real ProperCrossingQuery/ThreeMeshBvhBackend confirms overlap:false.
   // The reason is structural, not a fixture-tuning problem: `worldMatrix` in the
   // crossing branch (collision/query/VolumeOverlapQuery.js, "canonicalFirstIsSource
-  // ? source.matrix : target.matrix") is LITERALLY the same field this task's own
-  // line ~97 already read to compute the crossing verdict -- there is no way to make
-  // one read valid and the other non-finite via a plain field, since both reads
-  // resolve the exact same value. A getter lets the two reads diverge in time
-  // instead: valid on the first read (verdict, unaffected by anything this task
-  // changes), non-finite on the second (this task's own new world-transform step),
-  // which is exactly the "verdict from valid local geometry, non-finite transform"
-  // scenario the brief's comment describes -- just implemented so it actually reaches
-  // that state instead of short-circuiting the verdict to false first.
+  // ? source.matrix : target.matrix") is LITERALLY the same field the crossing kernel
+  // already read to compute the crossing verdict -- there is no way to make one read
+  // valid and the other non-finite via a plain field, since both reads resolve the
+  // exact same value. A getter lets the two reads diverge in time instead: valid on
+  // every read up to and including the crossing kernel's own relative-transform read
+  // (verdict), non-finite on the LATER, separate world-transform read (this module's
+  // witness-transform step) -- exactly the "verdict from valid local geometry,
+  // non-finite transform" scenario the brief's comment describes.
+  //
+  // Task A2.1 fix-round (controller ruling): the ORIGINAL version of this fixture
+  // hardcoded "read #1 is valid, everything else is poisoned" -- true only because the
+  // pre-A2.1 default `compareCanonical` never read `.matrix` at all, so the crossing
+  // kernel's own read WAS read #1. Once volumeOverlapQuery started deciding orientation
+  // via `orientForCrossing` (which itself must read `.matrix` at least once, to compare
+  // world diagonals, before the crossing kernel ever runs), that hardcoded "1" became
+  // wrong for a subtler reason than a simple off-by-one: orientForCrossing's own read
+  // count for a given pair is an internal ranking-algorithm detail (it can tie down
+  // through multiple ranks, each potentially reading `.matrix` again), not something
+  // this test should hardcode either. Instead of a second magic number, this fixture
+  // DERIVES the valid-read count empirically: it runs the real `orientForCrossing`
+  // against a throwaway probe object (same geometry, a plain non-getter matrix) to
+  // count how many times ranking alone reads `.matrix` for this exact pair, then adds
+  // exactly one more for the crossing kernel's own relative-transform read. Every read
+  // up to that derived boundary returns the valid matrix; every read after it returns
+  // the non-finite one. This keeps the fixture correct regardless of how many times
+  // orientation ranking happens to read `.matrix` for this specific fixture, so it is
+  // no longer tied to an undocumented, hand-counted call count.
+  const probeMatrix = new THREE.Matrix4();
+  let probeReads = 0;
+  const probeDuct = {
+    ...duct,
+    get matrix() { probeReads += 1; return probeMatrix; },
+  };
+  orientForCrossing(probeDuct, beam);
+  const validReadsBeforeKernelTransform = probeReads + 1; // +1: the crossing kernel's own relative-transform read
+
   let matrixReads = 0;
   const validMatrix = new THREE.Matrix4();
   const nonFiniteMatrix = new THREE.Matrix4().set(
@@ -546,7 +691,7 @@ test('a non-finite transformed witness degrades to witness:null without affectin
     configurable: true,
     get() {
       matrixReads += 1;
-      return matrixReads === 1 ? validMatrix : nonFiniteMatrix;
+      return matrixReads <= validReadsBeforeKernelTransform ? validMatrix : nonFiniteMatrix;
     },
   });
   const r = await volumeOverlapQuery(duct, beam, {});

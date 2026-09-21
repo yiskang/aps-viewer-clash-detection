@@ -55,7 +55,7 @@ export class GeometryRegistry {
     this._epochs = new Map();
   }
 
-  async getOrBuildGeometry({ loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivity }) {
+  async getOrBuildGeometry({ loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivity, role }) {
     let bucket = this._epochs.get(loadEpoch);
     if (!bucket) {
       bucket = new Map();
@@ -66,8 +66,11 @@ export class GeometryRegistry {
       // "Insert first, then build" (spec :1423-1429): the entry is inserted here,
       // synchronously, before the weld phase's checkpoint ever runs. A concurrent
       // lookup landing after this line -- however soon -- shares this exact entry
-      // rather than starting a duplicate build.
-      entry = this._insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivity);
+      // rather than starting a duplicate build. `role` reaches `buildWeld` only on THIS
+      // triggering call (Task 1.3) -- capture identity stays (loadEpoch, geometryIndex),
+      // never (loadEpoch, geometryIndex, role); a later cache hit under a different role
+      // does not re-trigger a build or carry its own role into buildWeld.
+      entry = this._insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivity, role);
       bucket.set(geometryIndex, entry);
     }
     return this._awaitEntry(loadEpoch, geometryIndex, entry, needsConnectivity);
@@ -97,9 +100,65 @@ export class GeometryRegistry {
     this._epochs.clear();
   }
 
+  // Task 1.6: read-only memory diagnostic accessors. STABLE, exact, exhaustive return shape --
+  // a later phase's Metric M calculator consumes this directly (M4 design spec §15.1). Never
+  // mutates registry/entry state. `getEpochGeometryEntries` returns entries in `Map` insertion
+  // (build) order, not sorted by geometryIndex -- insertion order is itself informative (plan's
+  // Phase 1 preamble, design decision 4). There is no 'released' buildState: a released epoch's
+  // entries are simply absent from the bucket, so an epoch with no bucket returns [].
+  getEpochGeometryEntryCount(loadEpoch) {
+    return this._epochs.get(loadEpoch)?.size ?? 0;
+  }
+
+  getEpochGeometryEntries(loadEpoch) {
+    const bucket = this._epochs.get(loadEpoch);
+    if (!bucket) return [];
+    const summaries = [];
+    for (const [geometryIndex, entry] of bucket) {
+      if (entry.oversized === true) {
+        summaries.push({
+          geometryIndex, buildState: 'oversized',
+          weldedPositionBytes: null, weldedIndexBytes: null, triangleCount: null,
+          bvhRootBytes: null, bvhIndirectBytes: null,
+          connectivityComponentCount: null, connectivityComponentOfBytes: null, connectivityClosedManifoldLength: null,
+          oversizedReason: entry.reason, activeTriangleCount: entry.activeTriangleCount,
+        });
+        continue;
+      }
+      if (entry.buildState === 'ready') {
+        const bvh = entry.accelerationResult ? entry.accelerationResult.bvh : null;
+        const bvhRootBytes = bvh && Array.isArray(bvh._roots)
+          ? bvh._roots.reduce((sum, root) => sum + (root && root.byteLength ? root.byteLength : 0), 0)
+          : null;
+        const bvhIndirectBytes = bvh ? (bvh._indirectBuffer ? bvh._indirectBuffer.byteLength : 0) : null;
+        const connectivity = entry.connectivityResult;
+        summaries.push({
+          geometryIndex, buildState: 'ready',
+          weldedPositionBytes: entry.weldedGeometry.position.byteLength,
+          weldedIndexBytes: entry.weldedGeometry.index.byteLength,
+          triangleCount: entry.weldedGeometry.triangleCount,
+          bvhRootBytes, bvhIndirectBytes,
+          connectivityComponentCount: connectivity ? connectivity.componentCount : null,
+          connectivityComponentOfBytes: connectivity ? connectivity.componentOf.byteLength : null,
+          connectivityClosedManifoldLength: connectivity ? connectivity.closedManifold.length : null,
+          oversizedReason: null, activeTriangleCount: null,
+        });
+        continue;
+      }
+      summaries.push({
+        geometryIndex, buildState: 'building',
+        weldedPositionBytes: null, weldedIndexBytes: null, triangleCount: null,
+        bvhRootBytes: null, bvhIndirectBytes: null,
+        connectivityComponentCount: null, connectivityComponentOfBytes: null, connectivityClosedManifoldLength: null,
+        oversizedReason: null, activeTriangleCount: null,
+      });
+    }
+    return summaries;
+  }
+
   // -- internals --------------------------------------------------------
 
-  _insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivityAtStart) {
+  _insertBuildingEntry(loadEpoch, geometryIndex, ownerModelIdHint, needsConnectivityAtStart, role) {
     const { signal, rejectSignal } = makeCancellationSignal();
     const entry = {
       buildState: 'building',
@@ -111,10 +170,12 @@ export class GeometryRegistry {
       ownerModelIdHint,
       weldedGeometry: null,
       weldWasOversized: false,
+      connectivityResult: null, // Task 1.6 accessor field
+      accelerationResult: null, // Task 1.6 accessor field
     };
 
     entry.weldPromise = this._runPhase(loadEpoch, geometryIndex, entry, () =>
-      this._buildWeld(loadEpoch, geometryIndex, ownerModelIdHint)
+      this._buildWeld(loadEpoch, geometryIndex, ownerModelIdHint, role)
     , 'weld');
 
     // `tail` is reassigned synchronously every time a phase is scheduled below, so
@@ -140,12 +201,21 @@ export class GeometryRegistry {
   }
 
   _chainConnectivity(loadEpoch, geometryIndex, entry, waitFor) {
-    entry.connectivityPromise = waitFor.then(() => {
-      if (entry.weldWasOversized) return null; // never read by any real caller.
-      return this._runPhase(loadEpoch, geometryIndex, entry, () =>
-        this._buildConnectivity(entry.weldedGeometry)
-      , 'connectivity');
-    });
+    entry.connectivityPromise = waitFor
+      .then(() => {
+        if (entry.weldWasOversized) return null; // never read by any real caller.
+        return this._runPhase(loadEpoch, geometryIndex, entry, () =>
+          this._buildConnectivity(entry.weldedGeometry)
+        , 'connectivity');
+      })
+      .then((connectivity) => {
+        // Task 1.6 accessor field: cache the resolved connectivity result on the entry so
+        // getEpochGeometryEntries can report it synchronously. This is a genuine gap in
+        // Task 1.3's own placeholder-only field (entry.connectivityResult was declared but
+        // never assigned) -- fixed here since Task 1.6 is the first caller to read it back.
+        if (!entry.weldWasOversized) entry.connectivityResult = connectivity;
+        return connectivity;
+      });
     // May legitimately go unread (e.g. a surface-intersection caller sharing an
     // entry a containment caller built) -- prevent a spurious unhandledRejection.
     entry.connectivityPromise.catch(() => {});
@@ -163,7 +233,7 @@ export class GeometryRegistry {
       .then((accel) => {
         // 'ready' is record-level and mode-independent: weld+BVH both resolved,
         // regardless of whether connectivity was ever touched (spec :1439-1448).
-        if (!entry.weldWasOversized) entry.buildState = 'ready';
+        if (!entry.weldWasOversized) { entry.buildState = 'ready'; entry.accelerationResult = accel; }
         return accel;
       });
     entry.accelerationPromise.catch(() => {});

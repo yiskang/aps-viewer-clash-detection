@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html><body><script>
+  window.__runS1Worker = function (path) {
+    return new Promise((resolve, reject) => {
+      const w = new Worker(path, { type: 'module' });
+      const timeout = setTimeout(() => { w.terminate(); reject(new Error('S1 worker timed out')); }, 10_000);
+      w.onmessage = (ev) => { clearTimeout(timeout); w.terminate(); resolve(ev.data); };
+      // Real bug found running this task's own manual verification: `err` here is a DOM
+      // `ErrorEvent`, not an `Error` -- rejecting a page.evaluate()-returned promise with it
+      // crosses Playwright's own serialization boundary as an opaque, undiagnosable
+      // "page.evaluate: Event" on the Node side (no message/filename/lineno survive). Rejecting
+      // with a plain, structured-cloneable object instead preserves the actual browser-reported
+      // failure reason (e.g. "Failed to resolve module specifier ..."), which is exactly what
+      // this spike exists to name.
+      w.onerror = (err) => {
+        clearTimeout(timeout); w.terminate();
+        reject(new Error(`S1 worker error: ${err.message || '(no message)'} (${err.filename || 'unknown'}:${err.lineno ?? '?'})`));
+      };
+    });
+  };
+</script></body></html>

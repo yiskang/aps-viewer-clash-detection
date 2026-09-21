@@ -11,10 +11,10 @@
 // symmetry; the containment terms are "any component," not "the whole of A."
 
 import * as THREE from 'three';
-import { properCrossingQuery } from './ProperCrossingQuery.js';
+import { properCrossingQuery, createCrossingStats } from './ProperCrossingQuery.js';
 import { anyComponentInside } from './ContainmentQuery.js';
-
-const defaultCompareCanonical = () => -1; // always treats `source` as canonical-first
+import { reportDiagnosticEvent } from '../scheduler.js';
+import { orientForCrossing, worldDiagonal } from './orientForCrossing.js';
 
 // M2.1 Task 3: transforms a leaf witness (in SOME operand's local frame) into world
 // space via that operand's own world matrix, and validates the result is 3 finite
@@ -42,7 +42,7 @@ export function toFiniteWorldArray(localPoint, worldMatrix) {
  * @typedef {{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix, aspectRatioExceeded?: boolean }} Instance
  * @param {Instance} source - fixed PUBLIC role, used for diagnostic naming; never swapped
  * @param {Instance} target - fixed PUBLIC role, used for diagnostic naming; never swapped
- * @param {{ crossing?: object, containment?: object, scheduler?: object, compareCanonical?: (source: Instance, target: Instance) => number }} [options]
+ * @param {{ crossing?: object, containment?: object, scheduler?: object }} [options]
  */
 export async function volumeOverlapQuery(source, target, options = {}) {
   // Default scheduler's `elapsedMs()` must report REAL, increasing wall-clock time
@@ -54,17 +54,37 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   const t0 = performance.now();
   const defaultScheduler = { elapsedMs: () => performance.now() - t0, checkpointIfDue: async () => {} };
   const scheduler = options.scheduler ?? defaultScheduler;
+  // Fail-loud guard (design doc §4.3 C-3 / §9.6(b)): operand orientation is no longer
+  // caller-injectable. A caller-supplied comparator could put a DIFFERENT operand
+  // canonically-first than orientForCrossing's own total geometric order would, which
+  // would silently break the cross-call consistency (same pair, same canonical order,
+  // regardless of which call site or argument order) that order exists to guarantee.
+  if (options.compareCanonical !== undefined) {
+    throw new TypeError(
+      'volumeOverlapQuery: options.compareCanonical was removed — operand orientation is now decided ' +
+      'internally by orientForCrossing (a total geometric order), and can no longer be supplied by the ' +
+      'caller. Remove this option.'
+    );
+  }
   // Decides ONLY which operand's fields go first into properCrossingQuery, for
   // correct L_canonical scaling (docs/...:1609-1621) -- NEVER which operand this
   // function calls `source`/`target` for diagnostic role-naming, which stay fixed to
   // the caller's own public arguments throughout (the conflict a Codex spec-review of
   // an earlier draft found: swapping operands for canonical order would otherwise
-  // also swap which one gets blamed in a diagnostic). Default: source is always
-  // treated as canonical-first, preserving today's behavior for standalone tests;
-  // CollisionWorld (a later task) supplies a real comparator once it has
-  // (modelId, geometryKey, instanceId) identity.
-  const compareCanonical = options.compareCanonical ?? defaultCompareCanonical;
-  const [canonicalFirst, canonicalSecond] = compareCanonical(source, target) <= 0 ? [source, target] : [target, source];
+  // also swap which one gets blamed in a diagnostic). orientForCrossing (Task A1.2) is
+  // a pure total geometric order over the two operands -- no identity field
+  // participates at any rank -- so the same pair always canonicalizes the same way
+  // regardless of which call site or argument order invoked it.
+  const { first: canonicalFirst, second: canonicalSecond, rank: orientationRank } = orientForCrossing(source, target);
+  // `orientationRank` is consumed below by Task A2.4's recorder-gated telemetry
+  // (the `hard-clash-precheck` / stage:'crossing' event) -- not by the crossing
+  // computation itself, which never reads it.
+  // Derived immediately after orientForCrossing's destructure (brief's Step 3), not only
+  // inside the positive-crossing branch below: Task A2.4's telemetry needs both
+  // `orientationRank` and `canonicalFirstIsSource` available at this point, and this is a
+  // pure identity comparison (no `.matrix` read), so hoisting it earlier changes nothing
+  // about the crossing computation's own timing/read pattern below.
+  const canonicalFirstIsSource = canonicalFirst === source;
 
   const diagnostics = [];
   const addDiagnostic = (reason, role) => {
@@ -82,10 +102,24 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   // plays -- so it needs the identical gate. Checked here against the PUBLIC
   // source/target roles (never canonicalFirst/canonicalSecond: diagnostic
   // role-naming must stay tied to the public roles regardless of canonical order,
-  // per this file's own convention -- see the compareCanonical comment above).
+  // per this file's own convention -- see the "Decides ONLY which operand's fields go first into
+  // properCrossingQuery ... NEVER which operand this function calls source/target for diagnostic
+  // role-naming" comment above orientForCrossing's own call site, a few lines up in this function).
   // When gated, properCrossingQuery is never called at all; a synthetic result is
   // substituted so the rest of this function's control flow is unaffected.
+  // Task 1.4: optional per-pair diagnostic-event context (Task 1.2's reportDiagnosticEvent
+  // mechanism). Additive and gated on options.diagnosticPairContext -- when the caller omits it
+  // (every pre-existing caller/test), no event fires and no covariate object is constructed.
+  const diagnosticPairContext = options.diagnosticPairContext;
+  const triangleCovariates = diagnosticPairContext ? {
+    sourceTriangles: source.geometry.index.count / 3,
+    targetTriangles: target.geometry.index.count / 3,
+    sourceComponents: source.connectivity ? source.connectivity.componentCount : undefined,
+    targetComponents: target.connectivity ? target.connectivity.componentCount : undefined,
+  } : null;
+
   let crossing;
+  const crossingStartedAt = diagnosticPairContext ? performance.now() : 0;
   if (source.aspectRatioExceeded || target.aspectRatioExceeded) {
     const skippedDiagnostics = [];
     if (source.aspectRatioExceeded) {
@@ -100,7 +134,14 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       inconclusive: true,
       skipped: true,
       diagnostics: skippedDiagnostics,
-      stats: { candidatePairsExamined: 0, crossingPairsExamined: 0 },
+      // ONE normalized stats shape on every path, including this one (design Sec 5.2a). Built by
+      // the SAME factory the real traversal uses, so the two can never drift and an instrumented
+      // aspect-ratio-gated pair can never emit undefined fields that downstream aggregation reads
+      // as a missing record, NaN, or schema corruption. The defaults are exactly this path's
+      // specified row -- notably elapsedMs: null, NOT 0: the traversal did not take zero time, it
+      // did not happen. Reads no clock, so the gate still short-circuits BEFORE properCrossingQuery
+      // (which this file's own tests prove by injecting a throwing options.crossing.now).
+      stats: createCrossingStats(),
     };
   } else {
     const canonicalSecondToFirst = canonicalFirst.matrix.clone().invert().multiply(canonicalSecond.matrix);
@@ -108,6 +149,42 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       canonicalFirst.bvh, canonicalSecond.bvh, canonicalSecondToFirst,
       canonicalFirst.localDiagonal, canonicalSecond.localDiagonal, options.crossing
     );
+  }
+  if (diagnosticPairContext) {
+    reportDiagnosticEvent('hard-clash-precheck', {
+      ...diagnosticPairContext, ...triangleCovariates, stage: 'crossing', ms: performance.now() - crossingStartedAt,
+      // Crossing-term telemetry rides THIS already-emitted, already-bounded, opt-in event and
+      // nowhere else (design Sec 5.4). It must NEVER enter crossing.diagnostics / result.diagnostics:
+      // that array is attached verbatim to statistics.diagnostics on the volume-overlap path and is
+      // a Sec 6.4-compared field, so a timing-derived reason there would manufacture a brand-new
+      // nondeterministic PUBLIC diagnostic. Exactly one event per pair, never inside a hot loop,
+      // gated on diagnosticPairContext (itself gated on an installed recorder), so production emits
+      // and costs nothing. `crossingElapsedMs` is null whenever the span was not measurable --
+      // an unmeasured traversal, or one whose clock threw/went backward/returned non-finite.
+      //
+      // candidatePairsExamined/crossingPairsExamined ride here too (Phase C; Phase B's declared
+      // schema deviation #2). Without them this event reported only ONE of the three
+      // deterministic counters, so an `exhaustedBudget: 'candidate-pairs'` or `'crossing-pairs'`
+      // attribution could be SEEN but never sized -- cap usage and cap exhaustion were
+      // indistinguishable from the outside. All three now travel together on the one event, which
+      // is the whole deterministic work-budget state, and travel ONLY here: no new field on the
+      // public result shape (Sec 5.2/5.3) and no new export from collision/index.js.
+      timeBudgetExceeded: crossing.stats.timeBudgetExceeded,
+      crossingElapsedMs: crossing.stats.elapsedMs,
+      candidatePairsExamined: crossing.stats.candidatePairsExamined,
+      crossingPairsExamined: crossing.stats.crossingPairsExamined,
+      pointClassifications: crossing.stats.pointClassifications,
+      exhaustedBudget: crossing.stats.exhaustedBudget,
+      // Task A2.4 (design doc C-4): orientation provenance telemetry. Rides this same
+      // opt-in event and nowhere else -- not a public result field, not a §6.4-compared
+      // field. `canonicalFirstIsSource`/`orientationRank` are already available here from
+      // the orientForCrossing destructure above; `worldDiagonal` is imported directly from
+      // orientForCrossing.js (Task A1.2's named export) rather than recomputed inline.
+      orientedFirstRole: canonicalFirstIsSource ? 'source' : 'target',
+      orientationRank,
+      sourceWorldDiagonal: worldDiagonal(source),
+      targetWorldDiagonal: worldDiagonal(target),
+    });
   }
 
   // NOTE: crossing.diagnostics is deliberately NOT merged here. Per the design spec
@@ -128,8 +205,8 @@ export async function volumeOverlapQuery(source, target, options = {}) {
     if (!target.closedManifold) addDiagnostic('unverified-parity-operand', 'target');
     // crossing.witnessPoint is in canonicalFirst's local frame (Task 1) -- transform
     // it into world space via whichever PHYSICAL operand (source/target) resolved to
-    // canonicalFirst, never the other one (docs spec Sec 0.3).
-    const canonicalFirstIsSource = canonicalFirst === source;
+    // canonicalFirst, never the other one (docs spec Sec 0.3). `canonicalFirstIsSource`
+    // itself is computed earlier, immediately after the orientForCrossing destructure.
     const worldMatrix = canonicalFirstIsSource ? source.matrix : target.matrix;
     const point = toFiniteWorldArray(crossing.witnessPoint, worldMatrix);
     return {
@@ -137,6 +214,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       conclusive: true,
       via: 'crossing',
       diagnostics,
+      // Task 1.5 fix round: neither containment term has run yet on this path -- 0 is the real count,
+      // not a placeholder default.
+      containmentSamplesUsed: 0,
       stats: { crossing: crossing.stats },
       witness: point ? { kind: 'surface-crossing', point } : null,
     };
@@ -150,6 +230,7 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   await scheduler.checkpointIfDue();
 
   const sourceToTargetForAinB = target.matrix.clone().invert().multiply(source.matrix);
+  const aInBStartedAt = diagnosticPairContext ? performance.now() : 0;
   const aInB = await anyComponentInside(
     source.geometry, source.bvh, source.localDiagonal, source.connectivity,
     target.bvh, target.localDiagonal, target.closedManifold,
@@ -167,6 +248,12 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       targetAspectRatioExceeded: target.aspectRatioExceeded,
     }
   );
+  if (diagnosticPairContext) {
+    reportDiagnosticEvent('hard-clash-precheck', {
+      ...diagnosticPairContext, ...triangleCovariates, stage: 'containment-a-in-b', ms: performance.now() - aInBStartedAt,
+      containmentSamplesUsed: aInB.samplesUsed,
+    });
+  }
   // aInB.diagnostics is deliberately NOT merged here either, for the identical reason
   // as crossing.diagnostics above (codex-review finding on this reconciliation pass):
   // if aInB is a NEGATIVE (e.g. gated by target.aspectRatioExceeded, or a truncated
@@ -183,6 +270,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       conclusive: true,
       via: 'containment(A in B)',
       diagnostics,
+      // Task 1.5 fix round: bInA never runs on this path (this return precedes its call below) --
+      // aInB's own real samplesUsed is the whole story, not a placeholder default.
+      containmentSamplesUsed: aInB.samplesUsed,
       stats: { crossing: crossing.stats, aInB },
       witness: point ? { kind: 'containment', point } : null,
     };
@@ -191,6 +281,7 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   await scheduler.checkpointIfDue();
 
   const targetToSource = source.matrix.clone().invert().multiply(target.matrix);
+  const bInAStartedAt = diagnosticPairContext ? performance.now() : 0;
   const bInA = await anyComponentInside(
     target.geometry, target.bvh, target.localDiagonal, target.connectivity,
     source.bvh, source.localDiagonal, source.closedManifold,
@@ -206,6 +297,12 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       targetAspectRatioExceeded: source.aspectRatioExceeded,
     }
   );
+  if (diagnosticPairContext) {
+    reportDiagnosticEvent('hard-clash-precheck', {
+      ...diagnosticPairContext, ...triangleCovariates, stage: 'containment-b-in-a', ms: performance.now() - bInAStartedAt,
+      containmentSamplesUsed: bInA.samplesUsed,
+    });
+  }
   // bInA.diagnostics is likewise deliberately NOT merged here (same reasoning as
   // aInB above, codex-review finding on this reconciliation pass): a bInA NEGATIVE
   // must not taint anything, and there is no later positive term for it to leak into
@@ -222,6 +319,9 @@ export async function volumeOverlapQuery(source, target, options = {}) {
       conclusive: true,
       via: 'containment(B in A)',
       diagnostics,
+      // Task 1.5 fix round: both containment terms have run by this point (aInB returned false above,
+      // bInA just resolved true) -- their combined real samplesUsed, not a placeholder default.
+      containmentSamplesUsed: aInB.samplesUsed + bInA.samplesUsed,
       stats: { crossing: crossing.stats, aInB, bInA },
       witness: point ? { kind: 'containment', point } : null,
     };
@@ -259,10 +359,48 @@ export async function volumeOverlapQuery(source, target, options = {}) {
   );
   const conclusive = crossingConclusive && containmentConclusive && !taintedByNonManifoldOrUnverified;
 
+  // Task 1.5: bounded, additive cause set. `crossing.inconclusive` alone conflates two situations
+  // ProperCrossingQuery.js:166-171 already distinguishes: an ABORTED traversal
+  // ('crossing-budget-exhausted') vs. one that ran to completion but saw an ambiguous boundary
+  // probe ('crossing-tolerance-ambiguous', not a budget problem -- and not the aspect-ratio-exceeded
+  // synthetic skip branch above, which also sets `crossing.inconclusive` but is its own distinct
+  // cause, keyed off `crossing.skipped`). 'unverified-parity-operand' and 'non-manifold-component'
+  // are grouped under 'non-manifold-component' -- the same taint category
+  // `taintedByNonManifoldOrUnverified` above already treats as one condition for `conclusive`.
+  //
+  // `unresolved-containment` deliberately does NOT use a bare `unresolvedComponentCount > 0` check
+  // (codex-advisor-verified fix during this task, over an earlier draft that did): when a term's OWN
+  // `aspectRatioExceeded` gates its containerRole (options.targetAspectRatioExceeded in
+  // ContainmentQuery.js), `anyComponentInside` short-circuits BEFORE its sampling loop and reports
+  // the FULL remaining component count as "unresolved" -- with `budgetExhausted: false` -- even
+  // though nothing was ever sampled. That count is already fully explained by the
+  // 'aspect-ratio-exceeded' cause above; counting it again here would double-report the same root
+  // cause under two names (verified: this early-return and the sampling-budget-exhaustion path are
+  // mutually exclusive within one anyComponentInside call, so a term can be gated XOR genuinely
+  // budget/witness-unresolved, never both). Detected via each term's own reported diagnostics
+  // (`geometry-aspect-ratio-exceeds-tolerance-model`) rather than re-deriving from
+  // source/target.aspectRatioExceeded directly, since aInB and bInA read the OPPOSITE operand's flag
+  // for their own containerRole (aInB's containerRole is target, bInA's is source) -- checking each
+  // term's own diagnostics keeps this local and immune to that reversed mapping.
+  const isAspectGated = (term) => term.diagnostics.some((d) => d.reason === 'geometry-aspect-ratio-exceeds-tolerance-model');
+  const inconclusiveCauses = new Set();
+  if (!conclusive) {
+    if (crossing.aborted) inconclusiveCauses.add('crossing-budget-exhausted');
+    if (crossing.inconclusive && !crossing.aborted && !crossing.skipped) inconclusiveCauses.add('crossing-tolerance-ambiguous');
+    if (source.aspectRatioExceeded || target.aspectRatioExceeded) inconclusiveCauses.add('aspect-ratio-exceeded');
+    if (aInB.budgetExhausted || bInA.budgetExhausted) inconclusiveCauses.add('containment-sample-budget-exhausted');
+    if (taintedByNonManifoldOrUnverified) inconclusiveCauses.add('non-manifold-component');
+    if ((aInB.unresolvedComponentCount > 0 && !isAspectGated(aInB)) || (bInA.unresolvedComponentCount > 0 && !isAspectGated(bInA))) {
+      inconclusiveCauses.add('unresolved-containment');
+    }
+  }
+
   return {
     overlap: false,
     conclusive,
     diagnostics,
+    inconclusiveCauses: [...inconclusiveCauses].sort(),
+    containmentSamplesUsed: aInB.samplesUsed + bInA.samplesUsed,
     stats: { crossing: crossing.stats, aInB, bInA },
   };
 }

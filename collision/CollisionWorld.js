@@ -8,7 +8,10 @@ import {
   WorldDisposedError, ModelEvictedError, RenderProxyUnavailableError, ObjectTreeUnavailableError,
   CapacityExceededError, ModelPlacementChangedError,
 } from './errors.js';
-import { createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan } from './scheduler.js';
+import {
+  createCheckpointPort as createRealCheckpointPort, createFrameBudgetAccumulator, reportSpan,
+  reportSpikeInput, isSpikeInputCaptureActive, reportDiagnosticEvent, isDiagnosticEventRecorderActive,
+} from './scheduler.js';
 import {
   maxBroadPhaseInstancePairs, maxCollisionInstancesPerEpoch, maxTlasCandidatePairs,
   maxClearanceNarrowPhasePairs, weldEpsilonMeters, surfaceEpsilonFactor,
@@ -22,7 +25,7 @@ import { containmentModeQuery } from './query/ContainmentModeQuery.js';
 import { volumeOverlapQuery } from './query/VolumeOverlapQuery.js';
 import { aabbMinDistance } from './geometry/AabbDistance.js';
 import { validateUniformScale, computeToleranceFloor } from './query/ClearanceTransform.js';
-import { clearanceQuery } from './query/ClearanceQuery.js';
+import { clearanceQuery, computeClearanceAnchor } from './query/ClearanceQuery.js';
 import { classifyHardClashPrecheck } from './query/ClearanceHardClashPrecheck.js';
 
 const supportedModes = ['surface-intersection', 'containment', 'volume-overlap', 'clearance'];
@@ -156,38 +159,41 @@ function computeRelativeMatrix(sourceWorldMatrix, targetWorldMatrix) {
   return source.invert().multiply(target);
 }
 
-// The stable, identity-based comparator that decides CANONICAL ORDER for volume-overlap
-// (docs/superpowers/specs/2026-08-06-collision-library-milestone1-design.md:1626-1632; implementation
-// plan :2415-2437, which assigns supplying a real comparator to CollisionWorld). It exists ONLY to
-// pick which operand's `localDiagonal` becomes L_canonical for ProperCrossingQuery's offset ladder
-// (`{1e-3,1e-4,1e-5} x L_canonical`) -- never which operand is publicly named `source`/`target` in a
-// diagnostic, which stays fixed to the caller's own arguments.
+// A dbId-level AGGREGATION tie-break only -- decides which of two equal-quality candidate pairs
+// "wins" when they collapse onto the same dbId aggregation key (compareWitnessCandidates,
+// compareClearanceCandidates below). It is NEVER reachable from a geometric call site: the two
+// former geometric orientation call sites that used to feed a canonical-order comparator into
+// VolumeOverlapQuery's offset ladder were removed (canonical-ordering/operand-symmetry fix, Decision
+// 1/5; `orientForCrossing` now supplies that ranking independently -- see the volumeOverlapQuery call
+// site). This function's only remaining job is the aggregation-loop min-reduction below.
 //
-// Without it VolumeOverlapQuery falls back to its library default ("public source is always
-// canonical-first"), which makes the ladder scale depend on which side the CALLER happened to label
-// source. That is a public verdict bug, not a tolerance nuance: for a pair whose two operands differ
-// sharply in local diagonal (a long duct crossing a short beam, ~700:1), findClashes(A -> B) and
-// findClashes(B -> A) return DIFFERENT pair counts for the identical physical pair.
-//
-// (loadEpoch, geometryIndex, fragmentId) compared lexicographically is total and stable, and is
-// sufficient for Milestone 1: cross-model queries are rejected at entry, so one call's operands
-// always share a model and therefore a loadEpoch, and (loadEpoch, fragmentId) alone already
-// uniquely identifies a CollisionInstance. geometryIndex sits between them so that two fragments
-// sharing one geometry sort together, and all three are included so the order stays total if a
-// later milestone lifts the single-model restriction.
+// (loadEpoch, fragmentId) compared lexicographically is total and stable, and is sufficient for
+// Milestone 1: cross-model queries are rejected at entry, so one call's operands always share a
+// model and therefore a loadEpoch, and (loadEpoch, fragmentId) alone already uniquely identifies a
+// CollisionInstance. `geometryIndex` is deliberately EXCLUDED from this comparator: it is a
+// reload-unstable runtime cache/lookup key, never a correctness-bearing ordering signal, anywhere in
+// this codebase (canonical-ordering/operand-symmetry fix design doc). `loadEpoch` is retained for
+// totality but is provably non-discriminating within any one call, since both candidates under one
+// aggregation key already share both epochs by construction.
 //
 // The two operands compare EQUAL only when they are literally the same fragment (a dbId appearing
-// on both sides of the query), and that case is degenerate in the right way: one geometry, one
-// placement, so L_canonical is the same number whichever operand is picked.
+// on both sides of the query).
 //
 // Compared field by field off the PlacedInstances rather than through a materialized key array:
 // this runs once per composed narrow-phase pair, and the broad phase admits up to
 // maxBroadPhaseInstancePairs of them.
-function comparePlacedCanonically(a, b) {
+//
+// Future work: if `fragmentId`'s empirical-only stability ever needs strengthening, a named fallback
+// chain (witness-point -> world-matrix -> digest -> fragmentId) is documented as a follow-up option
+// in the canonical-ordering/operand-symmetry fix design doc -- not implemented here.
+//
+// Exported (test-only; NOT re-exported from collision/index.js, so the public library surface is
+// unaffected -- same convention as `toInstance`/`normalizeNarrowPhaseHit` above) so the
+// geometryIndex-exclusion contract can be asserted directly.
+export function compareAggregationIdentity(a, b) {
   const idA = a.instance.geometryIdentity;
   const idB = b.instance.geometryIdentity;
   if (idA.loadEpoch !== idB.loadEpoch) return idA.loadEpoch < idB.loadEpoch ? -1 : 1;
-  if (idA.geometryIndex !== idB.geometryIndex) return idA.geometryIndex < idB.geometryIndex ? -1 : 1;
   const fragA = a.instance.fragmentId;
   const fragB = b.instance.fragmentId;
   if (fragA !== fragB) return fragA < fragB ? -1 : 1;
@@ -208,16 +214,16 @@ function comparePlacedCanonically(a, b) {
 //      to lie ON the intersection curve, not interior to either solid -- so a crossing witness is
 //      more directly localized to the actual interference than a point of one solid found somewhere
 //      inside the other).
-//   3. among two real witnesses of the SAME kind, `comparePlacedCanonically` (this file's own
-//      existing (loadEpoch, geometryIndex, fragmentId) total order, reused rather than reimplemented)
-//      breaks the tie off the two candidates' OWN placements, so the winner never depends on which
-//      fragment pair the broad phase happened to visit first.
+//   3. among two real witnesses of the SAME kind, `compareAggregationIdentity` (this file's own
+//      existing (loadEpoch, fragmentId) total order, reused rather than reimplemented) breaks the
+//      tie off the two candidates' OWN placements, so the winner never depends on which fragment
+//      pair the broad phase happened to visit first.
 //
 // A valid total order for a stable min-reduction: reflexive (every branch compares a value against
 // itself as equal), antisymmetric (swapping a/b negates every branch's sign -- the null-vs-real
-// branch swaps -1/1, the kind branch swaps -1/1, and comparePlacedCanonically is itself
+// branch swaps -1/1, the kind branch swaps -1/1, and compareAggregationIdentity is itself
 // antisymmetric), and transitive (the three ranks above are lexicographic: null-ness, then kind,
-// then comparePlacedCanonically's own already-total order) -- so
+// then compareAggregationIdentity's own already-total order) -- so
 // `compareWitnessCandidates(candidate, existing) < 0` inside the aggregation loop below always
 // converges to the SAME winner regardless of arrival order.
 //
@@ -238,8 +244,8 @@ function compareWitnessCandidates(a, b) {
   if (Boolean(aw) !== Boolean(bw)) return aw ? -1 : 1;
   if (aw && bw && aw.kind !== bw.kind) return aw.kind === 'surface-crossing' ? -1 : 1;
   return (
-    comparePlacedCanonically(a.sourcePlaced, b.sourcePlaced) ||
-    comparePlacedCanonically(a.targetPlaced, b.targetPlaced)
+    compareAggregationIdentity(a.sourcePlaced, b.sourcePlaced) ||
+    compareAggregationIdentity(a.targetPlaced, b.targetPlaced)
   );
 }
 
@@ -248,13 +254,13 @@ function compareWitnessCandidates(a, b) {
 // candidates collapse onto one key. Mirrors compareWitnessCandidates's EXACT structure above, minus
 // the witness-kind rank (clearance has exactly one witness kind, so there is nothing to rank there):
 // distance first (the whole point of "minimum clearance distance wins"), then the same
-// comparePlacedCanonically tie-break, applied source-then-target -- so the winner never depends on
+// compareAggregationIdentity tie-break, applied source-then-target -- so the winner never depends on
 // which fragment pair the broad phase happened to visit first (fixtures 10/14, order independence).
 function compareClearanceCandidates(a, b) {
   if (a.distance !== b.distance) return a.distance < b.distance ? -1 : 1;
   return (
-    comparePlacedCanonically(a.sourcePlaced, b.sourcePlaced) ||
-    comparePlacedCanonically(a.targetPlaced, b.targetPlaced)
+    compareAggregationIdentity(a.sourcePlaced, b.sourcePlaced) ||
+    compareAggregationIdentity(a.targetPlaced, b.targetPlaced)
   );
 }
 
@@ -308,12 +314,14 @@ function diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, r
 async function resolveGeometryRecord(registry, placed, role, operand, needsConnectivity, statistics, oversizedDiagnosedFragments) {
   const identity = placed.instance.geometryIdentity;
   let record;
+  const resolveStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
   try {
     record = await registry.getOrBuildGeometry({
       loadEpoch: identity.loadEpoch,
       geometryIndex: identity.geometryIndex,
       ownerModelIdHint: modelIdOf(operand.model),
       needsConnectivity,
+      role,
     });
   } catch (err) {
     // EXACTLY this one class is absorbed; anything else -- a checkpoint's own
@@ -331,6 +339,16 @@ async function resolveGeometryRecord(registry, placed, role, operand, needsConne
     // which fragment id the Viewer had no proxy for -- the error's own `fragId` does that.
     diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, role, 'geometry-not-yet-available', operand);
     return null;
+  }
+  if (isDiagnosticEventRecorderActive()) {
+    const ms = performance.now() - resolveStartedAt;
+    reportDiagnosticEvent('geometry-resolve', {
+      stage: 'geometry-resolve', ms,
+      ...(role === 'source' ? { sourceEpoch: identity.loadEpoch, sourceFragmentId: placed.instance.fragmentId } : {}),
+      ...(role === 'target' ? { targetEpoch: identity.loadEpoch, targetFragmentId: placed.instance.fragmentId } : {}),
+      ...(role === 'source' && !record.oversized ? { sourceTriangles: record.geometry.index.count / 3 } : {}),
+      ...(role === 'target' && !record.oversized ? { targetTriangles: record.geometry.index.count / 3 } : {}),
+    });
   }
   if (record.oversized) {
     // KNOWN TENSION, deliberately not changed here: the spec's dedup guarantee is scoped to the
@@ -367,14 +385,15 @@ async function resolveGeometryRecord(registry, placed, role, operand, needsConne
 // `matrix` must be a real THREE.Matrix4: both consumers call `.clone().invert().multiply(...)` on
 // it. Extraction stores world matrices as plain 16-number arrays, so the conversion happens here.
 //
-// Note what is deliberately NOT here: any identity field. Canonical ordering is decided from the
-// PlacedInstances at the call site (comparePlacedCanonically above), so this object stays exactly
-// the shape both consumers' typedefs declare.
-function toInstance(record, placedWorldMatrix) {
+// Note what is deliberately NOT here: any identity field. Aggregation tie-break ordering is decided
+// from the PlacedInstances at the call site (compareAggregationIdentity above), so this object stays
+// exactly the shape both consumers' typedefs declare.
+export function toInstance(record, placedWorldMatrix) {
   return {
     geometry: record.geometry,
     bvh: record.bvh,
     localDiagonal: record.localDiagonal,
+    geometryDigest: record.geometryDigest,
     connectivity: record.connectivity,
     closedManifold: record.connectivity ? record.connectivity.closedManifold.every(Boolean) : undefined,
     aspectRatioExceeded: record.aspectRatioExceeded,
@@ -770,6 +789,34 @@ export class CollisionWorld {
   getEpochCollisionInstanceCount(epoch) {
     if (this._disposed) throw new WorldDisposedError();
     return this._instanceCache.get(epoch)?.size ?? 0;
+  }
+
+  // Task 1.6: three read-only diagnostic wrapper accessors -- STABLE, exact, exhaustive return
+  // shapes (M4 design spec §15.1's Metric M calculator consumes these directly). Never mutate
+  // any world/registry/cache state. Each throws WorldDisposedError once disposed, matching every
+  // other public method's contract; each returns a safe empty/absent default (never throws) when
+  // the world has no registry/tlas wired yet (e.g. a lifecycle-only world built directly via the
+  // constructor rather than fromViewer).
+  getEpochGeometryDiagnostics(epoch) {
+    if (this._disposed) throw new WorldDisposedError();
+    return this._registry ? this._registry.getEpochGeometryEntries(epoch) : [];
+  }
+
+  getEpochTlasDiagnostics(epoch) {
+    if (this._disposed) throw new WorldDisposedError();
+    return this._tlasCache
+      ? this._tlasCache.getEpochPrimitiveDiagnostics(epoch)
+      : { state: 'absent', primitiveCount: null, primitiveBufferBytes: null, builtAtRevision: null };
+  }
+
+  getEpochPlacementDiagnostics(epoch) {
+    if (this._disposed) throw new WorldDisposedError();
+    return {
+      instanceCount: this._instanceCache.get(epoch)?.size ?? 0,
+      placementCount: this._placementByEpoch.get(epoch)?.size ?? 0,
+      placementRevision: this._placementRevisionByEpoch.get(epoch) ?? 0,
+      invalidatedAtRevision: this._placementInvalidatedAtRevision.get(epoch) ?? null,
+    };
   }
 
   dispose() {
@@ -1699,6 +1746,24 @@ export class CollisionWorld {
 
       this._checkClearanceNarrowPhaseBudget(candidates);
 
+      // S7' precheck vertical, candidate-list capture point (Task 1.3): fires ONCE per query,
+      // after the budget check passes -- a capacity-rejected call throws before this line and
+      // produces no capture, deliberately (there is no valid completed candidate list to replay).
+      if (isSpikeInputCaptureActive()) {
+        reportSpikeInput('precheck-candidate-list', () => ({
+          sourceEpoch: sourceOperand.epoch,
+          candidates: candidates.map(([sourcePlaced, targetPlaced, targetOperand]) => ({
+            sourceLoadEpoch: sourcePlaced.instance.geometryIdentity.loadEpoch,
+            sourceGeometryIndex: sourcePlaced.instance.geometryIdentity.geometryIndex,
+            sourceFragmentId: sourcePlaced.instance.fragmentId,
+            targetLoadEpoch: targetPlaced.instance.geometryIdentity.loadEpoch,
+            targetGeometryIndex: targetPlaced.instance.geometryIdentity.geometryIndex,
+            targetFragmentId: targetPlaced.instance.fragmentId,
+            targetEpoch: targetOperand.epoch,
+          })),
+        }));
+      }
+
       const narrowPhaseStartedAt = this._now();
       // key -> {distance, witness, sourcePlaced, targetPlaced, targetOperand}
       const clearanceCandidateByKey = new Map();
@@ -2162,7 +2227,16 @@ export class CollisionWorld {
       // left alone -- what changes is that the incompleteness is now OBSERVABLE.
       // `result.diagnostics` is [] whenever `aborted` is false, so this is a no-op on every
       // conclusive pair.
+      const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
       const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix);
+      if (isDiagnosticEventRecorderActive()) {
+        reportDiagnosticEvent('narrow-phase-pair', {
+          sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+          targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+          stage: 'surface-intersection', ms: performance.now() - stageStartedAt,
+          sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+        });
+      }
       attach(result.diagnostics);
       return result.intersects;
     }
@@ -2176,25 +2250,36 @@ export class CollisionWorld {
 
     if (mode === 'containment') {
       // Directed, one direction only: "is any of this source surface inside that target solid".
+      const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
       const result = await containmentModeQuery(sourceInstance, targetInstance, { scheduler });
+      if (isDiagnosticEventRecorderActive()) {
+        reportDiagnosticEvent('narrow-phase-pair', {
+          sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+          targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+          stage: 'containment', ms: performance.now() - stageStartedAt,
+          sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+          sourceComponents: sourceRecord.connectivity.componentCount, targetComponents: targetRecord.connectivity.componentCount,
+        });
+      }
       attach(result.diagnostics);
       return result.contained;
     }
     // mode === 'volume-overlap' -- the only remaining member of supportedModes.
-    //
-    // `compareCanonical` is REQUIRED here, not optional polish: VolumeOverlapQuery's own default
-    // ("public source is always canonical-first") would make L_canonical -- and therefore
-    // ProperCrossingQuery's offset ladder -- depend on which side the caller labelled source, so the
-    // same physical pair could clash one way and not the other. See comparePlacedCanonically above.
-    //
-    // The sign is computed once, from the two PlacedInstances, and the comparator merely reports it
-    // for whichever argument order it is handed -- so nothing identity-shaped has to be smuggled
-    // into the `Instance` objects, and the comparison itself allocates nothing per pair.
-    const canonicalOrder = comparePlacedCanonically(sourcePlaced, targetPlaced);
+    // Operand orientation for crossing queries is now decided internally by orientForCrossing
+    // (Task A2.1), which provides a total geometric order independent of caller's source/target labeling.
+    const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
     const result = await volumeOverlapQuery(sourceInstance, targetInstance, {
       scheduler,
-      compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
     });
+    if (isDiagnosticEventRecorderActive()) {
+      reportDiagnosticEvent('narrow-phase-pair', {
+        sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+        targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+        stage: 'volume-overlap', ms: performance.now() - stageStartedAt,
+        sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+        sourceComponents: sourceRecord.connectivity.componentCount, targetComponents: targetRecord.connectivity.componentCount,
+      });
+    }
     attach(result.diagnostics);
     return { hit: result.overlap, witness: result.witness ?? null };
   }
@@ -2263,14 +2348,32 @@ export class CollisionWorld {
     sourcePlaced, targetPlaced, sourceOperand, targetOperand, clearance, statistics, oversizedDiagnosedFragments,
     anisotropicScaleDiagnosedFragments, checkpoint,
   ) {
+    // Task 1.5: both pre-precheck skip points below report their own `'hard-clash-precheck'`
+    // `stage:'not-run'` event BEFORE `classifyHardClashPrecheck` is ever called for this pair --
+    // distinct from (and never duplicating) that function's own internal `'aabb-disjoint'` event,
+    // which fires only once the pair actually reaches it. Gated on isDiagnosticEventRecorderActive()
+    // so neither the event payload object NOR the closure that would build it is constructed when no
+    // recorder is installed (this task's own no-op constraint, matching every other diagnostic-event
+    // call site in this file) -- the check is hoisted OUTSIDE the closure itself (Phase 1 review fix,
+    // Important #1) rather than tested inside its body, so `reportPrecheckNotRun` is `null` and never
+    // allocated at all on the by-far-more-common no-recorder path, once per candidate pair.
+    const recorderActive = isDiagnosticEventRecorderActive();
+    const reportPrecheckNotRun = recorderActive ? (precheckNotRunReason) => {
+      reportDiagnosticEvent('hard-clash-precheck', {
+        sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+        targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+        stage: 'not-run', precheckNotRunReason,
+      });
+    } : null;
+
     const sourceRecord = await resolveGeometryRecord(
       this._registry, sourcePlaced, 'source', sourceOperand, true, statistics, oversizedDiagnosedFragments,
     );
-    if (!sourceRecord) return { outcome: 'geometry-unavailable' };
+    if (!sourceRecord) { reportPrecheckNotRun?.('geometry-unsupported-before-precheck'); return { outcome: 'geometry-unavailable' }; }
     const targetRecord = await resolveGeometryRecord(
       this._registry, targetPlaced, 'target', targetOperand, true, statistics, oversizedDiagnosedFragments,
     );
-    if (!targetRecord) return { outcome: 'geometry-unavailable' };
+    if (!targetRecord) { reportPrecheckNotRun?.('geometry-unsupported-before-precheck'); return { outcome: 'geometry-unavailable' }; }
 
     const sourceInstance = toInstance(sourceRecord, sourcePlaced.worldMatrix);
     const targetInstance = toInstance(targetRecord, targetPlaced.worldMatrix);
@@ -2293,14 +2396,22 @@ export class CollisionWorld {
       if (!targetScale.valid) {
         diagnoseAnisotropicScaleOnce(statistics, anisotropicScaleDiagnosedFragments, targetPlaced, 'target', targetOperand);
       }
+      reportPrecheckNotRun?.('anisotropic-scale-before-precheck');
       return { outcome: 'anisotropic-scale' };
     }
 
     const scheduler = createComposedStageScheduler(checkpoint, this._now);
-    const canonicalOrder = comparePlacedCanonically(sourcePlaced, targetPlaced);
+    // Task 1.4: per-pair diagnostic context for THIS function's own volumeOverlapQuery call
+    // (via classifyHardClashPrecheck) -- distinct from Task 1.3's candidate-list capture point in
+    // the top-level clearance findClashes dispatch, one level up. Gated on
+    // isDiagnosticEventRecorderActive() so no object is constructed when no recorder is installed.
+    const diagnosticPairContext = isDiagnosticEventRecorderActive() ? {
+      sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+      targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+    } : undefined;
     const volumeOverlapOptions = {
       scheduler,
-      compareCanonical: (a, b) => (a === b ? 0 : a === sourceInstance ? canonicalOrder : -canonicalOrder),
+      diagnosticPairContext,
       // Task reviewer fix (Important #1, fix round): without this, ProperCrossingQuery.js's own
       // `options.now ?? (() => performance.now())` default (ProperCrossingQuery.js:40) reads the
       // REAL wall clock inside this precheck's own volumeOverlapQuery call, independent of this
@@ -2347,6 +2458,30 @@ export class CollisionWorld {
     const distanceQueryMs = this._now() - distanceQueryStart;
     statistics.clearanceQueryMs += distanceQueryMs;
     reportSpan('clearance-distance-query', distanceQueryMs); // production instrumentation, consumed by Task 18's gate
+
+    if (isDiagnosticEventRecorderActive()) {
+      // Phase 1 review fix (Important #2): shares its anchor-choice/threshold derivation with
+      // ClearanceQuery.js's own internal anchoring logic via `computeClearanceAnchor`, rather than
+      // re-deriving the formula here -- a duplicated, unpinned copy would silently go stale if
+      // ClearanceQuery.js's anchoring or safety-margin rule is ever retuned, and nothing would catch
+      // the drift since this is only a diagnostic covariate, never a hard-clash decision.
+      const { anchorIsSource: anchoredOnSource, anchorLocalMaxThreshold } = computeClearanceAnchor(
+        sourceScale.scaleFactor, targetScale.scaleFactor, clearance,
+      );
+      const commonCovariates = {
+        sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
+        targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
+        stage: 'clearance-distance-query', ms: distanceQueryMs,
+        sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+        sourceComponents: sourceRecord.connectivity.componentCount, targetComponents: targetRecord.connectivity.componentCount,
+        sourceScaleFactor: sourceScale.scaleFactor, targetScaleFactor: targetScale.scaleFactor, anchoredOnSource,
+        requestedClearance: clearance, anchorLocalMaxThreshold,
+      };
+      const outcome = result.aborted ? 'aborted' : !result.withinClearance ? 'beyond-threshold' : 'hit';
+      reportDiagnosticEvent('clearance-distance-query', {
+        ...commonCovariates, outcome, ...(result.aborted ? {} : { distance: result.distance }),
+      });
+    }
 
     if (result.aborted) {
       statistics.diagnostics.push({

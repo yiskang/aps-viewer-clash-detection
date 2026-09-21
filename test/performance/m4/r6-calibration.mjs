@@ -1,0 +1,62 @@
+// test/performance/m4/r6-calibration.mjs
+//
+// M4 Task 3.5: pure sub-logic for §5.2.1's R6 sequence -- transform comparison and the one-time
+// calibration magnitude/pair-set-diff decisions. The live move->invalidate->refresh->restore
+// sequence itself (setPlacementTransform, invalidateModelPlacement, the try/finally restoration,
+// and the tlasBuilds arm-specific assertion) lives in run-gate-m4.mjs, this task's live half --
+// it requires a real CollisionWorld/Viewer and cannot be unit-tested here.
+
+// §5.2.1: two placement matrices are equal when every one of their 16 elements agrees within an
+// absolute 1e-9 -- used both for the "restored transform verified equal to T0" gate and for the
+// render-stabilisation confirmation.
+//
+// Task review fix (Important #2a): `Math.abs(a[i] - b[i]) > eps` is `false` whenever the
+// subtraction itself is `NaN` (e.g. either operand is `NaN`, or `Infinity - Infinity`) -- `NaN >
+// eps` is always `false`, so a corrupted placement matrix containing a non-finite element would
+// silently pass this "equal" check, defeating the one guarantee this function exists to provide
+// ("restored transform verified equal to T0 ... a restoration that cannot be verified aborts the
+// entire run", §5.2.1). Both operands are now required to be finite before the tolerance check
+// runs at all; a non-finite element on either side is unconditionally NOT equal.
+export function matricesEqual(a, b, eps = 1e-9) {
+  if (a.length !== 16 || b.length !== 16) return false;
+  for (let i = 0; i < 16; i++) {
+    if (!Number.isFinite(a[i]) || !Number.isFinite(b[i])) return false;
+    if (Math.abs(a[i] - b[i]) > eps) return false;
+  }
+  return true;
+}
+
+// §5.2.1's frozen calibration sequence, world units.
+export const R6_CALIBRATION_SEQUENCE = [0.02, 0.04, 0.06, 0.10, 0.20];
+
+// The smallest step at which the R3 pair set FIRST changes -- take the FIRST true, never search
+// for a "best" or largest change. null (NOT EXERCISED) if none of the sequence changes anything.
+export function selectCalibrationMagnitude(changedFlags) {
+  const idx = changedFlags.findIndex(Boolean);
+  return idx === -1 ? null : R6_CALIBRATION_SEQUENCE[idx];
+}
+
+// Order-insensitive pair-set-signature comparison -- used for both the calibration pass's own
+// "did the pair set change" probe and the measured P0/P1 comparison.
+export function pairSetsDiffer(pairSignaturesA, pairSignaturesB) {
+  const a = [...pairSignaturesA].sort();
+  const b = [...pairSignaturesB].sort();
+  return JSON.stringify(a) !== JSON.stringify(b);
+}
+
+// Codex-review fix (Important #1): §5.2.1 requires the calibration pass to freeze the EXACT
+// expected pair delta -- "the resulting expected pair delta -- the exact set of pairs entering and
+// leaving -- recorded verbatim" -- and requires every later measured arm/state/repetition to
+// reproduce that SAME delta, not merely "some" change. `pairSetsDiffer` alone only answers "did
+// anything change", which cannot catch two arms producing genuinely DIFFERENT changes that both
+// happen to be non-empty. `pairSetDelta` computes the exact, order-insensitive entering/leaving
+// sets between a baseline (A, e.g. P0/`warm`) and a comparison (B, e.g. P1/`refresh`) set of
+// pair-signature strings, each returned sorted so two callers computing the same delta always
+// produce byte-identical arrays for a direct equality check.
+export function pairSetDelta(pairSignaturesA, pairSignaturesB) {
+  const a = new Set(pairSignaturesA);
+  const b = new Set(pairSignaturesB);
+  const entering = [...b].filter((sig) => !a.has(sig)).sort();
+  const leaving = [...a].filter((sig) => !b.has(sig)).sort();
+  return { entering, leaving };
+}

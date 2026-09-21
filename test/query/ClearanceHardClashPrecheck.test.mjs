@@ -9,9 +9,11 @@ function worldBoundsOf(instance) {
   return { min: [box3.min.x, box3.min.y, box3.min.z], max: [box3.max.x, box3.max.y, box3.max.z] };
 }
 
-const noOptions = {}; // classifyHardClashPrecheck must default scheduler/compareCanonical itself when
-                        // the caller omits them, exactly as volumeOverlapQuery's own defaults do, so a
-                        // standalone unit test need not construct a real CollisionWorld checkpoint.
+const noOptions = {}; // classifyHardClashPrecheck must default scheduler itself when the caller omits
+                        // it, exactly as volumeOverlapQuery's own default does, so a standalone unit
+                        // test need not construct a real CollisionWorld checkpoint. (compareCanonical
+                        // no longer exists on this path -- removed from volumeOverlapQuery in Task
+                        // A2.1 and from this call site in Task A2.2.)
 
 test('AABBs genuinely disjoint -> skip-precheck (volumeOverlapQuery never called)', async () => {
   const source = testInstance(box(2, 2, 2), at(0, 0, 0));
@@ -22,23 +24,23 @@ test('AABBs genuinely disjoint -> skip-precheck (volumeOverlapQuery never called
 
 // Fixture 5: positive-volume overlap -> proven overlap -> excluded.
 //
-// codex-advisor (medium, pre-commit review) finding: with the shared `noOptions`, this fixture's
-// crossing term is subject to the REAL 8ms wall-clock frameBudgetMs default -- under full-suite CPU
-// contention, a scheduling pause can abort the crossing traversal before it finds the (here, genuine
-// and easy-to-find) positive witness, intermittently flipping this test's result. This is systemic,
-// pre-existing volumeOverlapQuery/ProperCrossingQuery wall-clock-flakiness (the same class as the
-// already-documented "duct through beam" flake and test/CollisionWorld.findClashes.dispatch.test.mjs's
-// own documented wall-clock caveat), not a bug in classifyHardClashPrecheck itself -- but there is no
-// reason for THIS unit test to depend on real wall-clock timing when it is not testing timing at all.
-// Freezing ProperCrossingQuery's own clock seam (`crossing.now`) removes the wall-clock dependency
-// while leaving the (generous, non-limiting) default candidate-count budget in force.
+// HISTORICAL NOTE, kept because it records why this file used to look different. An earlier
+// codex-advisor review found that with the shared `noOptions` this fixture's crossing term was
+// subject to the REAL 8 ms wall-clock `frameBudgetMs` default: under full-suite CPU contention a
+// scheduling pause could abort the crossing traversal before it found the (here genuine and
+// easy-to-find) positive witness, intermittently flipping the result. The workaround was to freeze
+// ProperCrossingQuery's own `crossing.now` seam.
+//
+// THAT EXPOSURE NO LONGER EXISTS, and the workaround is removed with it. Phase C of
+// docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md
+// deleted both of ProperCrossingQuery's wall-clock semantic branches: elapsed time can no longer
+// set `aborted`, so no scheduling pause of any length can turn this proven overlap into a
+// non-overlap. The test runs on the shared `noOptions` again, and its staying green is itself part
+// of the fix's evidence (§13 G's "removing it and staying green is itself a regression signal").
 test('fixture 5: overlapping boxes -> excluded', async () => {
   const source = testInstance(box(2, 2, 2), at(0, 0, 0));
   const target = testInstance(box(2, 2, 2), at(1, 0, 0));
-  const result = await classifyHardClashPrecheck(
-    source, target, worldBoundsOf(source), worldBoundsOf(target),
-    { crossing: { now: () => 0 } },
-  );
+  const result = await classifyHardClashPrecheck(source, target, worldBoundsOf(source), worldBoundsOf(target), noOptions);
   assert.equal(result.status, 'excluded');
 });
 
@@ -70,16 +72,14 @@ test('fixture 6: containment -> excluded', async () => {
 // stable across repeated runs). AABBs overlap (source's max 1.4142 > target's min 1.1 on both x and
 // z), so the precheck still proceeds to volumeOverlapQuery, but the actual solids stay ~0.56 world
 // units apart -- a clean, fully-resolved negative, not a boundary-grazing one.
-// Same wall-clock-determinism fix as fixture 5 above (codex-advisor finding): freeze
-// ProperCrossingQuery's clock seam so this negative resolves on its own geometric merits, not on
-// whether the crossing traversal happened to get scheduled before the real 8ms budget elapsed.
+// This fixture used to carry the same frozen-clock workaround as fixture 5 above, for the same
+// reason, and it is removed for the same reason: after Phase C the crossing term's verdict cannot
+// depend on whether the traversal got scheduled before the real 8 ms budget elapsed, so the
+// negative resolves purely on its own geometric merits with the shared `noOptions`.
 test('AABBs overlap (loose rotated-box AABB), volumeOverlapQuery proves conclusive no-overlap -> proceed', async () => {
   const source = testInstance(box(2, 2, 2), new THREE.Matrix4().makeRotationY(Math.PI / 4));
   const target = testInstance(box(1, 1, 1), at(1.6, 0, 1.6));
-  const result = await classifyHardClashPrecheck(
-    source, target, worldBoundsOf(source), worldBoundsOf(target),
-    { crossing: { now: () => 0 } },
-  );
+  const result = await classifyHardClashPrecheck(source, target, worldBoundsOf(source), worldBoundsOf(target), noOptions);
   assert.equal(result.status, 'proceed');
 });
 
@@ -110,25 +110,20 @@ test('fixture 14: conclusive:false volumeOverlapQuery result -> inconclusive, ne
   assert.equal(result.diagnostic.reason, 'clearance-hard-clash-precheck-inconclusive');
 });
 
-test('threads a caller-supplied scheduler/compareCanonical into volumeOverlapQuery', async () => {
+test('threads a caller-supplied scheduler into volumeOverlapQuery', async () => {
+  // Re-expression of a deleted `compareCanonical`-injection assertion (Task A3.2; the option
+  // itself was removed from volumeOverlapQuery's public API in Task A2.1, and Task A2.2 removed
+  // it from this call site). The `scheduler`-threading half of the original test is untouched --
+  // `scheduler` was never part of this plan's fix -- only the compareCanonical half (and its
+  // `sawCompareCanonical` tracking variable) is dropped, since there is nothing left to thread.
   let sawScheduler = false;
-  let sawCompareCanonical = false;
   const source = testInstance(box(2, 2, 2), at(0, 0, 0));
   const target = testInstance(box(2, 2, 2), at(2, 0, 0));
   const scheduler = { elapsedMs: () => 0, checkpointIfDue: async () => { sawScheduler = true; } };
-  // codex-advisor (medium, pre-commit review) finding: `compareCanonical: () => -1` alone is
-  // indistinguishable from volumeOverlapQuery's own default comparator (also "source always
-  // canonical-first") -- this test would still pass even if classifyHardClashPrecheck silently
-  // dropped the caller's compareCanonical and let volumeOverlapQuery fall back to its default.
-  // Flip a flag from inside the comparator itself so a dropped callback is actually observable.
-  const compareCanonical = (a, b) => { sawCompareCanonical = true; return -1; };
   await classifyHardClashPrecheck(source, target, worldBoundsOf(source), worldBoundsOf(target), {
-    scheduler, compareCanonical,
+    scheduler,
   });
   // At least one between-term checkpoint must have run through the supplied scheduler, proving it was
   // actually passed to volumeOverlapQuery rather than a fresh default being constructed internally.
   assert.equal(sawScheduler, true);
-  // compareCanonical is called unconditionally near the top of volumeOverlapQuery (before the crossing
-  // term even runs) -- proving THIS caller-supplied function, not a fresh default, was invoked.
-  assert.equal(sawCompareCanonical, true);
 });

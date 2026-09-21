@@ -54,6 +54,34 @@ export function reportSpan(label, ms) {
   _spanRecorder?.(label, ms);
 }
 
+// ---- Optional yield-instrumentation hook (Task 1.1) --------------------------------------------
+// Same class of addition as setSpanRecorder above: module-level singleton, zero cost when unset.
+// Generation-isolated exactly like _spanRecorderGeneration (scheduler.js's own existing mechanism)
+// -- a yield whose recorder installation changed (cleared, reinstalled, or replaced) WHILE the
+// yield was in flight reports to nobody, never to whichever recorder happens to be active at
+// resume time. Without this, a yield started under recorder A but resolving after B replaces A
+// would silently report as B's own first yield.
+let _yieldRecorder = null;
+let _yieldCount = 0;
+let _yieldRecorderGeneration = 0;
+export function setYieldRecorder(fn) { _yieldRecorder = fn; _yieldCount = 0; _yieldRecorderGeneration++; }
+export function clearYieldRecorder() { _yieldRecorder = null; _yieldCount = 0; _yieldRecorderGeneration++; }
+export function reportYield(resumeLatencyMs) {
+  _yieldCount++;
+  _yieldRecorder?.(resumeLatencyMs, _yieldCount);
+}
+
+function yieldAndRecordResume(yieldToScheduler) {
+  if (!_yieldRecorder) return yieldToScheduler();
+  const generationAtYieldStart = _yieldRecorderGeneration;
+  const yieldStartedAt = performance.now();
+  return Promise.resolve(yieldToScheduler()).then(() => {
+    if (_yieldRecorder && _yieldRecorderGeneration === generationAtYieldStart) {
+      reportYield(performance.now() - yieldStartedAt);
+    }
+  });
+}
+
 /**
  * A per-SCOPE elapsed-time accumulator, where "scope" is decided by whoever
  * constructs the port (spec:3106: each findClashes call owns its own accumulator;
@@ -173,7 +201,7 @@ export function createCheckpointPort({ isDisposed, isEpochLive, accumulator, yie
           return undefined; // synchronous fast path -- no Promise, no microtask forced
         }
         return (async () => {
-          await yieldToScheduler();
+          await yieldAndRecordResume(yieldToScheduler);
           accumulator.markCheckpointed();
           validate(loadEpoch, modelIdHint);
           // Reset AFTER the real yield completes, not before -- otherwise the next span would
@@ -196,10 +224,40 @@ export function createCheckpointPort({ isDisposed, isEpochLive, accumulator, yie
         return undefined; // synchronous fast path -- no Promise, no microtask forced
       }
       return (async () => {
-        await yieldToScheduler();
+        await yieldAndRecordResume(yieldToScheduler);
         accumulator.markCheckpointed();
         validate(loadEpoch, modelIdHint);
       })();
     },
   };
+}
+
+// ---- Optional structured diagnostic-event recorder (Task 1.2) ----------------------------------
+// MECHANISM ONLY: no production call site reports through this yet (Task 1.4 wires the real call
+// sites). isDiagnosticEventRecorderActive() lets a call site in a DIFFERENT module (none of which
+// can see this module's private state) gate its own payload construction behind one cheap boolean
+// check, so "zero cost when unused" holds at every call site, not only in here.
+let _diagnosticEventRecorder = null;
+export function setDiagnosticEventRecorder(fn) { _diagnosticEventRecorder = fn; }
+export function clearDiagnosticEventRecorder() { _diagnosticEventRecorder = null; }
+export function reportDiagnosticEvent(kind, payload) {
+  _diagnosticEventRecorder?.(kind, payload);
+}
+export function isDiagnosticEventRecorderActive() {
+  return _diagnosticEventRecorder !== null;
+}
+
+// ---- Optional S7' stage-input capture hook (Task 1.3) -------------------------------------------
+// Benchmark-only, disabled by default. `buildPayload` is a THUNK -- a capture payload can require
+// copying a potentially large typed array, so the payload is only ever constructed when a capture
+// fn is installed. isSpikeInputCaptureActive() additionally lets a CALL SITE avoid allocating the
+// thunk closure itself when inactive (not merely avoid invoking it) -- an independent review's
+// finding on an earlier draft, which called reportSpikeInput(kind, () => {...}) unconditionally.
+let _spikeInputCapture = null;
+export function setSpikeInputCapture(fn) { _spikeInputCapture = fn; }
+export function clearSpikeInputCapture() { _spikeInputCapture = null; }
+export function isSpikeInputCaptureActive() { return _spikeInputCapture !== null; }
+export function reportSpikeInput(kind, buildPayload) {
+  if (!_spikeInputCapture) return;
+  _spikeInputCapture(kind, buildPayload());
 }

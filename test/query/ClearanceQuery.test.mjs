@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { clearanceQuery, clearanceCrossCheckAllowedDisagreement } from '../../collision/query/ClearanceQuery.js';
+import { clearanceQuery, clearanceCrossCheckAllowedDisagreement, computeClearanceAnchor } from '../../collision/query/ClearanceQuery.js';
 import {
   clearanceUniformScaleRelativeTolerance,
   surfaceEpsilonFactor,
+  clearanceTraversalThresholdSafetyMargin,
 } from '../../collision/constants.js';
 import { validateUniformScale } from '../../collision/query/ClearanceTransform.js';
 import { box, at, testInstance, mergeGeometries } from '../fixtures/geometry.mjs';
@@ -105,8 +106,8 @@ test('fixture 16b: unequal source/target scale, distance still correct and withi
 // `closestPointToGeometry` is not symmetric in its two operands and its own NESTED target-side
 // shapecast prunes with `score < closestDistance && score < maxThreshold` where `score` is in
 // otherGeometry-local units while both right-hand sides are in bvh-local units (verified directly in
-// node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry_indirect.generated.js:104-112 vs
-// :121-123/:133). When the bvh operand has the LARGER scale that prune over-states distances and
+// node_modules/three-mesh-bvh/src/core/cast/closestPointToGeometry_indirect.generated.js:112-116 vs
+// :125-127/:137). When the bvh operand has the LARGER scale that prune over-states distances and
 // wrongly discards the genuinely-closest nodes -- a false negative. ClearanceQuery therefore always
 // hands the SMALLER-scale operand to the API as the bvh side ("anchor") and maps the roles back.
 //
@@ -255,6 +256,31 @@ test('cross-check tolerance: relative term accommodates two validator-blessed op
   // (c) The floor is proportional to the geometry's world size, not a fixed constant.
   assert.ok(Math.abs(clearanceCrossCheckAllowedDisagreement(0, 1000 * diagonal)
     - 1000 * clearanceCrossCheckAllowedDisagreement(0, diagonal)) < 1e-12);
+});
+
+// Phase 1 whole-phase review fix (Important #2): `computeClearanceAnchor` is the extracted,
+// single-source-of-truth anchor-selection/threshold derivation this function itself uses below
+// (see the "Anchor = the smaller-or-equal-scale operand" call site) -- CollisionWorld.js's own
+// Task 1.5 `clearance-distance-query` diagnostic event now calls this SAME function rather than
+// re-deriving the formula, so this direct unit coverage is what pins both call sites together:
+// a future retune of either the anchor tie-break or the safety-margin rule fails HERE first.
+test('computeClearanceAnchor: anchors on the smaller-scale operand and computes the local threshold', () => {
+  const smaller = computeClearanceAnchor(2, 5, 10);
+  assert.equal(smaller.anchorIsSource, true);
+  assert.equal(smaller.anchorScaleFactor, 2);
+  assert.equal(smaller.anchorLocalMaxThreshold, (10 / 2) * (1 + clearanceTraversalThresholdSafetyMargin));
+
+  const larger = computeClearanceAnchor(5, 2, 10);
+  assert.equal(larger.anchorIsSource, false);
+  assert.equal(larger.anchorScaleFactor, 2);
+  assert.equal(larger.anchorLocalMaxThreshold, (10 / 2) * (1 + clearanceTraversalThresholdSafetyMargin));
+});
+
+test('computeClearanceAnchor: an exact tie anchors on source (<=, not <)', () => {
+  const tie = computeClearanceAnchor(3, 3, 6);
+  assert.equal(tie.anchorIsSource, true);
+  assert.equal(tie.anchorScaleFactor, 3);
+  assert.equal(tie.anchorLocalMaxThreshold, (6 / 3) * (1 + clearanceTraversalThresholdSafetyMargin));
 });
 
 // Fixture 15: anisotropic scale rejection.

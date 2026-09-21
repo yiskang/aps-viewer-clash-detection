@@ -1676,13 +1676,36 @@ problems come from trying to make one scalar serve two frames, so this revision 
   Viewer geometry — and cached with the BLAS. Any tolerance applied against X's BVH is scaled by `L_X`.
   `classifyPoint(point, targetBvh)` therefore uses the *target's* scale — the
   frame it is actually working in — with no conversion anywhere.
-- **Canonical operand order.** `ProperCrossingQuery`'s probes and its `offsetLadder` necessarily live
-  in one shared frame (the one `bvhcast` traverses). Rather than derive a "symmetric" scalar, the
-  pair is **canonically ordered before evaluation** — sorted by `(modelId, geometryKey,
-  instanceId)` — so the classification frame is a deterministic function of the pair, not of
-  argument order. Swapping the caller's arguments now runs the identical computation, making
-  symmetry structural rather than a property to be argued about. `L_canonical` is then simply
-  `L_X` of whichever instance sorts first, and `minPenetrationDepth` is well-defined per pair.
+- **Canonical operand order.** *(Updated by the canonical-ordering/operand-symmetry fix,
+  `docs/superpowers/specs/2026-09-11-canonical-ordering-operand-symmetry-fix-design.md` — this
+  paragraph originally described sorting the pair by `(modelId, geometryKey, instanceId)`, a
+  reload-unstable identity ordering that made `L_canonical` per that formula never actually
+  achievable in practice; see that design doc's §9.6 for why.)* `ProperCrossingQuery`'s probes and
+  its `offsetLadder` necessarily live in one shared frame (the one `bvhcast` traverses). Rather than
+  derive a "symmetric" scalar, the pair is **canonically ordered before evaluation** — by
+  `orientForCrossing` (`collision/query/orientForCrossing.js`), a **total geometric order** with no
+  identity field at any rank: rank 1 world-diagonal (the larger operand ranked first), rank 2
+  triangle count, rank 3 vertex count, rank 4 world-matrix elements (lexicographic), rank 5 a
+  content-derived `geometryDigest` (`collision/geometry/contentDigest.js`), and rank 6 a stable
+  fallback to the caller's public `source` role as the tie-break of last resort (a declared residue
+  — reached whenever the pair ties through rank 5, which includes byte-identical geometry and is
+  not limited to a digest collision between two geometrically distinct meshes). This makes the
+  classification frame a deterministic function of the pair's **geometry** at ranks 1-5, not of the
+  pair's identity or of argument order — and, unlike the identity-based scheme this replaces, is
+  reload-stable at those ranks: the same two meshes canonicalize the same way across page loads, not
+  merely within one. Ranks 1-5 are swap-invariant by construction; **rank 6 is the one declared
+  exception** — it is order-dependent, always resolving to the caller's public `source` role, so a
+  pair that ties through rank 5 can still canonicalize differently depending on which operand the
+  caller happens to label `source`. `volumeOverlapQuery` (`collision/query/VolumeOverlapQuery.js`)
+  is the wrapper that applies this ordering — it orients the two operands via `orientForCrossing`
+  before calling the directional `properCrossingQuery` kernel, which is what makes the crossing
+  term's result order-independent outside the rank-6 residue. `L_canonical` is then the
+  **canonical-first operand's own local diagonal** — the operand `orientForCrossing` chose because
+  it has the larger *world* diagonal (rank 1), so `L_canonical` corresponds to that larger world
+  diagonal under the transform classes this library supports, rather than being that world diagonal
+  itself — and is well-defined and achievable per pair for the first time: the identity-based scheme
+  this replaces never actually guaranteed `L_canonical = D_min` in effect, regardless of what its
+  formula text implied.
 
 | Tolerance | Units | Milestone 1 default | Applied in |
 |---|---|---|---|
@@ -1691,6 +1714,7 @@ problems come from trying to make one scalar serve two frames, so this revision 
 | `mergeDistance` | distance in target frame | `1e-6 × L_target` | Collapsing coincident ray hits |
 | `surfaceEpsilon` | distance in target frame | `1e-6 × L_target` | `boundary` classification |
 | `offsetLadder` | distance in canonical frame | `[1e-3, 1e-4, 1e-5] × L_canonical` | `ProperCrossingQuery` probe steps |
+| Crossing coplanarity epsilon *(canonical-ordering/operand-symmetry fix)* | distance in canonical frame | `surfaceEpsilonFactor (1e-6) × min(L_canonical, L_second expressed in the canonical-first operand's frame)` | `ProperCrossingQuery`'s coplanar-discard gate — reuses the shared `surfaceEpsilonFactor` constant but is a distinct quantity from the `surfaceEpsilon` row above (different frame, different candidate-pair-discard role). Tightened from the pre-fix single-operand `L_canonical` alone to the symmetric `min` of both operands, which can only shrink what gets discarded, never grow it |
 | `witnessLadder` | distance in **source** frame | `[1e-3, 1e-4, 1e-5] × L_source` | Constructed interior witness (`anyComponentInside` stage 3, `volume-overlap` only) |
 | `crossingProbeFractions` | dimensionless (0-1), scaled per-candidate by that triangle's own available in-plane distance | `[0.5, 0.1, 0.01]` | `SurfaceCrossingWitness` in-triangle probe steps (`containment` only) |
 | `minPenetrationDepth` | distance in canonical frame | `1e-5 × L_canonical` | **Declared** detection limit |

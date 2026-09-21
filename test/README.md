@@ -14,6 +14,13 @@ and binding for every later task in this plan):
   source module (e.g. `collision/geometry/GeometryConnectivity.js` ->
   `test/geometry/GeometryConnectivity.test.mjs`). Shared cross-file test-only helpers
   (geometry builders, mocked lifecycle harnesses) belong under `test/fixtures/`.
+  **Exception: `test/vendor/`** holds tests that exercise the vendored `three-mesh-bvh` dependency
+  directly (e.g. `MeshBVH.closestPointToGeometry.*.test.mjs`, `OrientedBox.distanceToBox.test.mjs`,
+  `three-mesh-bvh-patch-integrity.test.mjs`) rather than any module under `collision/` — there is no
+  `collision/` source file for these to mirror, so they get their own directory instead. Its
+  companion non-test fixture module (`three-mesh-bvh-defects.fixtures.mjs`) intentionally lives
+  beside the tests that use it, not under `test/fixtures/`, since it is specific to this vendored
+  library's own defects, not a general cross-file `collision/` test helper.
 - **Running tests**:
   - `npm test` runs the whole suite via `scripts/run-tests.mjs` (Batch-5 final review, finding I-1
     fix round 2): a bare `node --test` (no path argument) sweeps in every `.js`/`.mjs` file under

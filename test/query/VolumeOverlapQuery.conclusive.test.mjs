@@ -65,13 +65,18 @@ test('a negative reached via inconclusive-crossing (boundary-probe grazed, not b
   // VolumeOverlapQuery.test.mjs's own "flush touching (round 3 headline)" fixture
   // (line 22-30): two flush-touching boxes share a coplanar face, so every probe along
   // that face grazes a triangle edge (sawBoundaryProbe:true) without ever resolving a
-  // proper crossing or aborting. A generous frameBudgetMs is required: on a cold
-  // process this fixture can spuriously read aborted:true from JIT/import warmup
-  // eating into the default 8ms wall-clock budget (verified empirically -- a warmed-up
-  // or budget-relaxed call reliably reads inconclusive:true, aborted:false instead).
+  // proper crossing or aborting.
+  //
+  // This call used to require `crossing: { frameBudgetMs: 5000 }`: on a cold process the
+  // fixture could spuriously read aborted:true because JIT/import warmup ate into the
+  // default 8 ms wall-clock budget, which would have made it exercise the aborted branch
+  // instead of the inconclusive one it exists to cover. Phase C of
+  // docs/superpowers/specs/2026-09-11-proper-crossing-query-deterministic-budget-fix-design.md
+  // removed the wall clock from the semantic path entirely, so the override is obsolete and
+  // is dropped (§13 G: dropping it and staying green is itself a regression signal).
   const a = testInstance(box(2, 2, 2));
   const b = testInstance(box(2, 2, 2), at(0, 2, 0));
-  const result = await volumeOverlapQuery(a, b, { crossing: { frameBudgetMs: 5000 } });
+  const result = await volumeOverlapQuery(a, b);
   assert.equal(result.overlap, false);
   assert.equal(result.diagnostics.some((d) => d.reason === 'inconclusive-crossing'), true,
     'sanity: genuinely the inconclusive branch, not the aborted branch');
