@@ -13,7 +13,7 @@
 
 ### Medium — the registry/world assertion accepts an incomplete object as a conforming registry
 
-**Location:** `clashtest/identity/ModelRegistry.js`, `REGISTRY_METHODS` and `assertRegistryBelongsToWorld` (lines 272–287).  
+**Location:** `clashtest/identity/ModelRegistry.js`, `REGISTRY_METHODS` and `assertRegistryBelongsToWorld` (lines 272–287).
 **Contract:** the P1 phase interface says the helper throws unless `registry` is a registry built for exactly `world`; the same phase exposes `keyOf`, `isBindingCurrent`, `invalidateModelPlacement`, `registryRevision`, and the rest of the `ModelRegistry` surface for P6/P7 consumers.
 
 The structural check requires only five methods plus a string session id and matching `world`. It does not require `keyOf`, `isBindingCurrent`, `invalidateModelPlacement`, or a numeric `registryRevision`. A plain object containing only the checked members is accepted even though it cannot satisfy the P1 registry interface. Mechanical reproduction at the checkpoint:
@@ -27,12 +27,12 @@ assertRegistryBelongsToWorld({
 
 **Concrete failure mode:** a later coordinator path that adopts or otherwise trusts an asserted registry can fail only when it reaches an unchecked P6/P7 operation, rather than rejecting the incompatible registry at the boundary with `ModelBindingError('registry-mismatch')`. This is especially relevant because the P1 plan deliberately avoids `instanceof` to support a duplicate module copy.
 
-**Type:** implementation-compatibility issue.  
+**Type:** implementation-compatibility issue.
 **Minimum correction:** keep the structural/duplicate-module approach, but validate the complete registry surface consumed by later phases (including the missing methods and read-only fields), normalize a failed/throwing structural probe to `ModelBindingError('registry-mismatch')`, and add one incomplete-registry regression test. A stronger shared brand is optional, not required for this bounded correction.
 
 ### Low — `bindingsEquivalent` treats malformed nullish or empty values as valid equal bindings
 
-**Location:** `clashtest/identity/ModelRegistry.js`, `bindingsEquivalent` (lines 264–271); the current snapshot test explicitly expects `bindingsEquivalent(undefined, null) === true`.  
+**Location:** `clashtest/identity/ModelRegistry.js`, `bindingsEquivalent` (lines 264–271); the current snapshot test explicitly expects `bindingsEquivalent(undefined, null) === true`.
 **Contract:** the P1 phase interface says bindings are equal iff both are `null`, or both carry equal key, Model object, version and generations.
 
 Current behavior collapses `undefined` into `null`, and two empty objects compare equal because every compared field is `undefined`:
@@ -44,7 +44,7 @@ bindingsEquivalent({}, {}) === true
 
 **Concrete failure mode:** an out-of-range snapshot access or malformed foreign registry result can be classified as an unchanged missing binding instead of failing closed. Valid `Binding|null` callers are unaffected, which limits severity.
 
-**Type:** implementation-compatibility issue / verification gap.  
+**Type:** implementation-compatibility issue / verification gap.
 **Minimum correction:** return true only for `null`/`null`; return false for one null or any malformed binding; compare fields only after both operands satisfy the Binding shape expected by P1. Replace the test that blesses `undefined`/`null` equality with malformed-input rejection/fail-closed cases.
 
 ## Confirmed sound areas

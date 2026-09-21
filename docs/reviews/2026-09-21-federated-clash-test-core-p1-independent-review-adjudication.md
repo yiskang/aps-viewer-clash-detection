@@ -53,3 +53,13 @@ Applied and committed in the P1 remediation commit; only the two adjudicated fin
 
 **Status:** Medium and Low findings REMEDIATED and committed (owner-authorized). P2 not started and not authorized; no independent re-review of the remediation has been requested.
 
+## Post-remediation gate verification
+
+Re-verified from the current repository on 2026-09-21 at `f4c05bd` without reopening P1:
+
+- The adjudication dispositions stand: both Work findings were real; neither was Critical/High. The registry-surface finding is Low under the current no-adoption coordinator path (and would become Medium if host-registry adoption returned); the malformed-binding equality finding remains Low.
+- The remediation matches the minimum corrections and the two original reproductions now fail closed. No P2, frozen-spec, plan, P0, collision-library, Viewer, or integration code was changed.
+- P1 targeted suite: **80/80 pass**. All current `test/clashtest`: **192/192 pass**. The committed boundary remains limited to `ModelRegistry.js`, its two tests, review/adjudication documentation, and the handoff.
+- Evidence correction: the remediation record originally said `git diff --check` was clean, but `git diff --check fbe09cd..f4c05bd` reported four trailing-space lines in the independent review and one extra blank line at the adjudication EOF. These were documentation-only and did not affect the technical verdict; they are removed by this post-remediation documentation update, after which the current diff check is clean.
+
+**Final gate state:** the independent Work review and required targeted adjudication are complete, the two confirmed findings are remediated, and no further independent re-review is required by `CLAUDE.md`. P1 is accepted. P2 remains unstarted and requires the owner's explicit phase go-ahead.
