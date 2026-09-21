@@ -83,3 +83,30 @@ test('no Model / loadEpoch / modelId can enter a durable identity, even from a l
   assert.deepEqual(Object.keys(pair.first), ['modelKey', 'dbId']);
   assert.deepEqual(Object.keys(pair.second), ['modelKey', 'dbId']);
 });
+
+test('assertRegistryBelongsToWorld requires the FULL consumed registry surface, and a throwing probe is a mismatch (P1 review Medium)', () => {
+  const world = makeLeaseWorld();
+  const real = new ModelRegistry({ world });
+  const full = {
+    world, registrySessionId: 'regsess-x', registryRevision: 0,
+    register() {}, unregister() {}, keyOf() {}, bindingFor() {}, snapshotBindings() {}, isBindingCurrent() {},
+    notifyPlacementChanged() {}, invalidateModelPlacement() {},
+  };
+  assert.equal(assertRegistryBelongsToWorld(full, world), full, 'a duck-typed (duplicate-module) registry with the whole surface is accepted');
+  // the original review reproduction: only the five previously checked members
+  const five = { world, registrySessionId: 'x', register() {}, unregister() {}, bindingFor() {}, snapshotBindings() {}, notifyPlacementChanged() {} };
+  assert.throws(() => assertRegistryBelongsToWorld(five, world), mismatch);
+  for (const missing of ['register', 'unregister', 'keyOf', 'bindingFor', 'snapshotBindings', 'isBindingCurrent',
+    'notifyPlacementChanged', 'invalidateModelPlacement']) {
+    const partial = { ...full }; delete partial[missing];
+    assert.throws(() => assertRegistryBelongsToWorld(partial, world), mismatch, `missing ${missing}`);
+    assert.throws(() => assertRegistryBelongsToWorld({ ...full, [missing]: 'not-a-function' }, world), mismatch, `non-function ${missing}`);
+  }
+  for (const patch of [{ registrySessionId: '' }, { registrySessionId: 7 }, { registrySessionId: undefined },
+    { registryRevision: undefined }, { registryRevision: -1 }, { registryRevision: 1.5 }, { registryRevision: '0' }, { world: makeLeaseWorld() }]) {
+    assert.throws(() => assertRegistryBelongsToWorld({ ...full, ...patch }, world), mismatch, JSON.stringify(Object.keys(patch)));
+  }
+  const hostile = new Proxy(full, { get() { throw new Error('probe'); } });
+  assert.throws(() => assertRegistryBelongsToWorld(hostile, world), mismatch);
+  assert.equal(assertRegistryBelongsToWorld(real, real.world), real, 'a real registry still passes');
+});

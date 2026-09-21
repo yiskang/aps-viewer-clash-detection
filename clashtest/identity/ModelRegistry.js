@@ -257,32 +257,59 @@ export function createModelRegistry(options) {
   return new ModelRegistry(options);
 }
 
+const isBindingShaped = (b) => typeof b === 'object' && b !== null
+  && typeof b.modelKey === 'string' && b.modelKey !== ''
+  && typeof b.model === 'object' && b.model !== null
+  && typeof b.modelVersion === 'string' && b.modelVersion !== ''
+  && Number.isSafeInteger(b.bindingGeneration) && b.bindingGeneration >= 0
+  && Number.isSafeInteger(b.placementGeneration) && b.placementGeneration >= 0;
+
 /**
- * Equality used by freshness brackets (spec §16.4): both null, or the same key, the same Model OBJECT,
- * the same version and both generations. The lease is deliberately not compared.
+ * Equality used by freshness brackets (spec §16.4): both `null`, or two well-formed Bindings with the same key, the
+ * same Model OBJECT, the same version and both generations. The lease is deliberately not compared.
+ * FAIL CLOSED: anything that is not `null` or a well-formed Binding (undefined from an out-of-range snapshot index,
+ * `{}`, a throwing Proxy, a foreign registry's malformed value) is never "equivalent" — not even to itself.
  */
 export function bindingsEquivalent(a, b) {
-  if (a === null || a === undefined || b === null || b === undefined) return (a ?? null) === (b ?? null);
-  return a.modelKey === b.modelKey
-    && a.model === b.model
-    && a.modelVersion === b.modelVersion
-    && a.bindingGeneration === b.bindingGeneration
-    && a.placementGeneration === b.placementGeneration;
+  try {
+    if (a === null && b === null) return true;
+    if (!isBindingShaped(a) || !isBindingShaped(b)) return false;
+    return a.modelKey === b.modelKey
+      && a.model === b.model
+      && a.modelVersion === b.modelVersion
+      && a.bindingGeneration === b.bindingGeneration
+      && a.placementGeneration === b.placementGeneration;
+  } catch {
+    return false;
+  }
 }
-const REGISTRY_METHODS = ['register', 'unregister', 'bindingFor', 'snapshotBindings', 'notifyPlacementChanged'];
+
+// The registry surface later phases consume from an asserted registry (P6 coordinator, P7 engine).
+const REGISTRY_METHODS = [
+  'register', 'unregister', 'keyOf', 'bindingFor', 'snapshotBindings', 'isBindingCurrent',
+  'notifyPlacementChanged', 'invalidateModelPlacement',
+];
 
 /**
  * True iff `registry` is a registry built for exactly `world`. Duck-typed on purpose: a duplicate module copy
- * on the same page (spec §7.3) produces registries that fail `instanceof` but must still be recognized.
+ * on the same page (spec §7.3) produces registries that fail `instanceof` but must still be recognized. The whole
+ * consumed surface is checked (methods, a non-empty string `registrySessionId`, a non-negative integer
+ * `registryRevision`, and the identical `world`); read-only-ness cannot be proven by duck typing and stays an
+ * interface obligation. A structural probe that throws (e.g. a hostile Proxy) is a mismatch, never an escape.
  * P6's coordinator owns the world -> registry map and the final `registry !== coordinator.registry` check.
  * @throws {ModelBindingError} reason 'registry-mismatch'
  */
 export function assertRegistryBelongsToWorld(registry, world) {
-  const looksLikeRegistry = typeof registry === 'object' && registry !== null
-    && REGISTRY_METHODS.every((m) => typeof registry[m] === 'function')
-    && typeof registry.registrySessionId === 'string';
-  if (!looksLikeRegistry || registry.world !== world) {
-    throw new ModelBindingError({ reason: BINDING_REASONS.REGISTRY_MISMATCH });
+  let ok = false;
+  try {
+    ok = typeof registry === 'object' && registry !== null
+      && REGISTRY_METHODS.every((m) => typeof registry[m] === 'function')
+      && typeof registry.registrySessionId === 'string' && registry.registrySessionId !== ''
+      && Number.isSafeInteger(registry.registryRevision) && registry.registryRevision >= 0
+      && registry.world === world;
+  } catch {
+    ok = false;
   }
+  if (!ok) throw new ModelBindingError({ reason: BINDING_REASONS.REGISTRY_MISMATCH });
   return registry;
 }

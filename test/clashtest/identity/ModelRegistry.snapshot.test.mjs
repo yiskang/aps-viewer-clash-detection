@@ -136,7 +136,6 @@ test('bindingsEquivalent compares key, model OBJECT, version and both generation
   assert.notEqual(a, b);                                // distinct snapshot objects...
   assert.equal(bindingsEquivalent(a, b), true);         // ...same state
   assert.equal(bindingsEquivalent(null, null), true);
-  assert.equal(bindingsEquivalent(undefined, null), true);
   assert.equal(bindingsEquivalent(a, null), false);
   assert.equal(bindingsEquivalent(null, a), false);
   for (const patch of [{ modelKey: 'x' }, { model: model(1) }, { modelVersion: 'v2' },
@@ -238,4 +237,24 @@ test('duplicate keys plus a mutation from inside the read: each captured binding
   assert.equal(snap.bindings[1].model, m1);
   assert.equal(snap.bindings[0].lease, snap.bindings[1].lease);
   assert.equal(snap.bindings[0].bindingGeneration, snap.bindings[1].bindingGeneration);
+});
+
+test('bindingsEquivalent fails CLOSED on anything that is not null or a well-formed Binding (P1 review Low)', () => {
+  const { registry } = setup();
+  registry.register('k1', model(1), v('v1'));
+  const a = registry.bindingFor('k1');
+  const hostile = new Proxy({}, { get() { throw new Error('probe'); } });
+  for (const bad of [undefined, {}, [], 'x', 0, true, hostile,
+    { ...a, modelKey: '' }, { ...a, modelKey: 5 }, { ...a, model: null }, { ...a, model: 'm' }, { ...a, modelVersion: '' },
+    { ...a, bindingGeneration: -1 }, { ...a, bindingGeneration: 1.5 }, { ...a, placementGeneration: NaN }, { ...a, placementGeneration: undefined }]) {
+    assert.equal(bindingsEquivalent(bad, null), false);
+    assert.equal(bindingsEquivalent(null, bad), false);
+    assert.equal(bindingsEquivalent(bad, a), false);
+    assert.equal(bindingsEquivalent(a, bad), false);
+    assert.equal(bindingsEquivalent(bad, bad), false, 'malformed is never equal to itself');
+  }
+  assert.equal(bindingsEquivalent(undefined, undefined), false);
+  assert.equal(bindingsEquivalent({}, {}), false);
+  assert.equal(bindingsEquivalent(null, null), true);
+  assert.equal(bindingsEquivalent(a, registry.bindingFor('k1')), true);
 });
