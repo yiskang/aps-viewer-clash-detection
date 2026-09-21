@@ -62,12 +62,12 @@ Every exported name this phase produces. Other phases rely on exactly these.
 | `QueueTicket` | `clashtest/run/coordinator.js` | `{ runId, started: Promise<void>, finished: Promise<unknown>, withdraw(): boolean }` | `started` resolves when the job reaches the head; `finished` settles when the job's function settles (or immediately on a successful withdrawal); `withdraw()` removes a still-queued job and returns `true`, or returns `false` once the job has started — the synchronous, single-winner hinge the queued-cancel path (R5) branches on. |
 | `createRun` | `clashtest/run/Run.js` | `(spec: RunSpec) → { handle: RunHandle, controller: RunController, begin(): void }` | Builds a run in state `queued`, its **public** handle and its **engine-only** controller; `begin()` hands the run to the coordinator queue. All three are **synchronous** (R1: only Promise-returning entry points reject; `createRun`/`begin` throw). `createRun` also **validates `spec.derivedFromRunId`** (re-verification I7): absent ⇒ `null`; otherwise `null` or a non-empty string, and anything else is a `TypeError` (a malformed `RunSpec` is an engine bug, not user data — the same class of programmer error as P5's `ERR_RESULT_SET_NOT_DRAFT`). |
 | `RunSpec` | `clashtest/run/Run.js` | `{ runId, engineId, coordinator, world, testIdOfInput, derivedFromRunId, resolveDefinition, modelKeysOf, planningCauseOf, enumerator, executor, validateUnitOutcome, internalErrorOutcome, diagnosticAggregator, statisticsAccumulator, deriveUnitTaints, plannerPort, resultPort, runOptions, limits, provenanceBase, now, yieldToScheduler, scheduleTimeout }` | Every collaborator of a run, all injected (no module-level singletons). **`derivedFromRunId: string\|null`** is the rerun lineage §13.1 requires on the sealed set (`ResultSet.derivedFromRunId`); it is part of the authoritative shape precisely so an implementation that projects only the documented fields cannot legally discard it (re-verification I7). `plannerPort` = `{ planRun, materializeUnit, splitUnit, rootsForRanges, createRecordBudget, createLedger, checkScopeBracket }` (P3, A6/A7/A8/A17 + D1's comparator); `resultPort` = `{ createResultAccumulator, buildResultSet, sealResultSet, deriveRunOutcome, residency }` (P5, A12/A13/A14/A15). **There is no `store` field:** the result store is bound into P5's residency manager at construction (A15), so a run never holds one. |
-| `RunHandle` | `clashtest/run/Run.js` | `{ runId, getSnapshot() → RunProgress, subscribe(listener) → () => void, cancel(reason?) → Promise<RunSummary>, done: Promise<RunSummary>, persisted: Promise<PersistenceOutcome> }` | §18 `RunHandle`, semantics of §9, §10, §13.5.1. **Exactly these five members and nothing else** — no disposal control, enumerable or otherwise (see `RunController`). |
+| `RunHandle` | `clashtest/run/Run.js` | `{ runId, getSnapshot() → RunProgress, subscribe(listener) → () => void, cancel(reason?) → Promise<RunSummary>, done: Promise<RunSummary>, persisted: Promise<PersistenceOutcome> }` | §18 `RunHandle`, semantics of §9, §10, §13.5.1. **Exactly these six members and nothing else** — no disposal control, enumerable or otherwise (see `RunController`); V32's surface check expects six keys. |
 | `RunController` | `clashtest/run/Run.js` | `{ requestDispose() → Promise<RunSummary> }` | **Engine-only** control surface, returned by `createRun` **beside** the handle and never reachable from it (re-verification C3). `requestDispose()` marks `disposeRequested` on committed state, cancels the run at its next boundary, forces the finalize window closed when the run is already past its seal, and resolves with the same `RunSummary` as `done` — it is the one published way `engine.dispose()` can signal a live run. **P7 must call it for every owned run *before* awaiting that run's `done`** (cross-file need C-P7-1 below); a `dispose()` that only awaits `done` leaves the run with no `disposeRequested` fact and no forced close. |
 | `RUN_STATES` / `RUN_PHASES` | `clashtest/run/Run.js` | frozen string arrays | §8.1 states and §9.1 phases, in declaration order. |
 | `isTerminalStatus` | `clashtest/run/Run.js` | `(status: string) → boolean` | `completed \| cancelled \| failed \| invalidated`. |
 | `UNIT_PRECEDENCE` | `clashtest/run/settlement.js` | `ReadonlyArray<{ rank, fact, code, kindByPhase }>` | Table A of §16.7, U1…U9 in precedence order. |
-| `classifyUnitSettlement` | `clashtest/run/settlement.js` | `(facts: Fact[], phase: 'pre'\|'call'\|'post') → { outcome, cause, primaryFact, secondaryCauses: string[], merges: boolean }` | Table A + matrix C merge policy for one attempt; pure, order-independent. |
+| `classifyUnitSettlement` | `clashtest/run/settlement.js` | `(facts: Fact[], phase: 'pre'\|'call'\|'post') → { outcome, cause, primaryFact, secondaryCauses: string[], observedCauses: string[], merges: boolean }` | Table A + matrix C merge policy for one attempt; pure, order-independent. **`secondaryCauses`** is the **first 8 distinct** non-primary causes in canonical order (spec erratum **A7**; the truncation is deterministic and expected). **`observedCauses`** is the same canonical list **uncapped and including the primary** — it is what `applyUnitResult` pushes into `settlementState.unitCauses`, which is what keeps `RunOutcome.reasons` the **complete** record A7 / §22 AC-21 require; it is empty for U9, so I5 holds structurally. |
 | `resolveRunStatus` | `clashtest/run/settlement.js` | `(state: SettlementState) → 'failed'\|'invalidated'\|'cancelled'\|'completed'\|null` | Order B of §16.7; `null` = continue. |
 | `collectReasons` | `clashtest/run/settlement.js` | `(state: SettlementState) → string[]` | Every observed fact, ascending by code-unit order (§16.7 closing paragraph). |
 | `SettlementState` | `clashtest/run/settlement.js` | `{ unitCauses: string[], planningCause: string\|null, planningGapCauses: string[], placementChangedVsSnapshot: boolean, cancelRequested: null\|{reason}, disposeRequested: boolean, allLeafUnitsTerminal: boolean }` | The committed facts a boundary resolves from. **`planningCause`** is the ONE cause order B resolves the status from; **`planningGapCauses`** is *every* §6.6.2 gap P3 reported (and every one P6 detected after `planRun` returned), which is what `collectReasons` turns into `planning:<cause>` entries — re-verification Q2. `unitCauses` carries a cause **only for a unit that has one**: U9 (`evaluated`) has `cause: null` and contributes nothing (re-verification I5). |
@@ -198,6 +198,18 @@ test('secondaryCauses is distinct, ascending, and capped at 8', () => {
   assert.equal(got.secondaryCauses.length, 8);             // 12 others, capped (C3 in the open items)
   assert.deepEqual(got.secondaryCauses, [...got.secondaryCauses].sort());
   assert.equal(new Set(got.secondaryCauses).size, 8);
+  // S-P6-C3 / spec erratum A7 (owner-clarified Option A): the surviving 8 are the FIRST 8 DISTINCT
+  // causes in CANONICAL order — the canonically lowest 8, never an arrival-order sample.
+  assert.deepEqual(got.secondaryCauses,
+    REAL.filter((f) => f !== got.primaryFact).map((f) => rowOf(f).code).sort().slice(0, 8));
+  // ...and the truncated tail is NOT lost: `observedCauses` is uncapped, so `collectReasons` — and
+  // through it `RunOutcome.reasons` — still lists every one of the 13 observed facts (A7, AC-21).
+  assert.deepEqual(got.observedCauses, REAL.map((f) => rowOf(f).code).sort());
+  assert.deepEqual(collectReasons({
+    unitCauses: [...got.observedCauses], planningCause: null, planningGapCauses: [],
+    placementChangedVsSnapshot: false, cancelRequested: null,
+    disposeRequested: false, allLeafUnitsTerminal: true,
+  }), REAL.map((f) => `unit:${rowOf(f).code}`).sort());
 });
 
 test('phase decides failed vs skipped vs discarded for the phase-sensitive causes', () => {
@@ -336,16 +348,22 @@ export function classifyUnitSettlement(facts, phase) {
     // and therefore never equal to a real row's rank, so no null comparison can be reached here.
     if (row.rank === primary.rank && row.code < primary.code) primary = row;
   }
-  const secondaryCauses = [...seen]
-    .filter((f) => f !== primary.fact)
-    .map((f) => ROW_BY_FACT.get(f).code)
-    .sort()
+  // CANONICAL order first, truncation second — so `secondaryCauses` is the FIRST 8 DISTINCT causes
+  // in canonical order, never an arrival-order sample (spec erratum A7 / register S-P6-C3).
+  // `observedCauses` is the same list UNCAPPED and WITH the primary: it is what feeds
+  // `RunOutcome.reasons`, which erratum A7 and §22 AC-21 require to stay the COMPLETE record even
+  // when the unit-level list truncates. It is empty for U9 (`seen` is empty), so I5 still holds
+  // structurally and no `'evaluated'` placeholder is ever invented.
+  const observedCauses = [...seen].map((f) => ROW_BY_FACT.get(f).code).sort();
+  const secondaryCauses = observedCauses
+    .filter((c) => c !== primary.code)
     .slice(0, MAX_SECONDARY);
   return Object.freeze({
     outcome: primary.kindByPhase[phase],
     cause: primary.code,
     primaryFact: primary.fact,
     secondaryCauses: Object.freeze(secondaryCauses),
+    observedCauses: Object.freeze(observedCauses),        // UNCAPPED; reasons-completeness (A7)
     merges: primary.rank === 9,                           // matrix C: only U9 merges
   });
 }
@@ -369,8 +387,12 @@ export function resolveRunStatus(state) {
  *
  * Two rules the re-verification pinned:
  *  - **I5:** `unitCauses` only ever holds a REAL cause. U9 (`evaluated`) has `cause: null` and the
- *    writer (`applyUnitResult`) skips it, so a clean run seals `reasons: []` rather than
- *    `['unit:evaluated']`. Nothing is defended here, because nothing null can arrive here.
+ *    writer (`applyUnitResult`) pushes `settlement.observedCauses`, which is EMPTY for U9, so a
+ *    clean run seals `reasons: []` rather than `['unit:evaluated']`. Nothing is defended here,
+ *    because nothing null can arrive here.
+ *  - **A7:** the writer pushes the whole **uncapped** `observedCauses` set, not just the primary
+ *    cause, so a unit whose `secondaryCauses` truncated at 8 still contributes every observed fact
+ *    to `RunOutcome.reasons` — the completeness §16.7 and §22 AC-21 require.
  *  - **Q2:** every §6.6.2 planning gap contributes, not only the one order B resolved the status
  *    from. `planningCause` decides the STATUS; `planningGapCauses` decides the REASONS. The `Set`
  *    makes a repeated cause idempotent and the sort makes the list order-independent, so a run that
@@ -2281,7 +2303,15 @@ async function applyUnitResult(run, unit, { settlement, outcome, attempt, extra 
   // `cause: null` for it). `?? 'evaluated'` invented one, and `collectReasons` turned it into
   // `unit:evaluated` on every clean run — a fabricated caveat inside `RunOutcome.reasons`, which
   // is digested into the sealed set and read by consumers as "something went wrong here".
-  if (settlement.cause !== null) run.settlementState.unitCauses.push(settlement.cause);
+  // `observedCauses` is EMPTY for U9, so I5 is structural here: no null, no placeholder.
+  //
+  // A7 / §22 AC-21 — push EVERY observed cause, not just the primary. The unit record's
+  // `secondaryCauses` truncates at 8; `RunOutcome.reasons` must not. Pushing the whole set here is
+  // what keeps the run-level record complete, and it provably cannot change `resolveRunStatus`:
+  // the primary always has equal or higher PRECEDENCE (numerically equal or lower rank) than any secondary fact, so an observed failing fact
+  // (rank 1-3) implies a failing primary and an observed invalidating fact (rank 4-5) implies a
+  // primary of rank 1-4 — failing or invalidating either way. Order B's answer is unchanged.
+  for (const c of settlement.observedCauses) run.settlementState.unitCauses.push(c);
 }
 ```
 
@@ -3712,7 +3742,7 @@ C6  node --test test/clashtest/run/freshness.test.mjs
 
 | # | Cmd | Named test | Spec AC / review finding |
 |---|---|---|---|
-| V1 | C1 | dense DISTINCT ranks with six rank-8 rows; every fact pair in both orders; equal-rank tie-break by ascending cause code; the review triple; `secondaryCauses` distinct/ascending/capped | AC-21; **review C3**, ruling R4 |
+| V1 | C1 | dense DISTINCT ranks with six rank-8 rows; every fact pair in both orders; equal-rank tie-break by ascending cause code; the review triple; `secondaryCauses` distinct/ascending/capped — **and, in `::secondaryCauses is distinct, ascending, and capped at 8`, that the surviving 8 are the FIRST 8 DISTINCT causes in CANONICAL order and that the truncated tail still reaches `RunOutcome.reasons` through the uncapped `observedCauses`** (S-P6-C3 / erratum A7) | AC-21; **review C3** (settled, erratum **A7**), ruling R4 |
 | V2 | C1 | order B (`failed > invalidated > cancelled > completed`); `collectReasons` records a cancel that a higher-precedence status beat | AC-21 |
 | V3 | C2 | two engines over one world serialize, share one coordinator and one registry; `createRegistry({world})`; a protocol mismatch throws `ModelBindingError` with **`.reason`** | AC-8 (lifecycle parts); N1, N11 |
 | V4 | C2 | the coordinator enforces **no** queue limit; `queueDepth` counts waiting runs only; `cancelQueued` returns the single-winner boolean | **review I1**, ruling R6; **review C2**, ruling R5 |
@@ -3874,7 +3904,7 @@ findings were **accepted**; none was rejected as factually wrong.
   4. `assessNoClashClaim` / `canClaimNoClashes` accept **either** shape, reading through `freshnessStateOf` exactly once; given the object form they append its `reasons[]` to `qualifiers` so a refusal is explainable.
   Both sections' literal requirements are met simultaneously, so **no spec change is needed and none is proposed**. The observable rule ("not `current` ⇒ not claimable") is unaffected either way.
 - **C2 — the bracket's owner. RESOLVED by reconciliation (duplicate-ownership D1); classification: *implementation-plan requirement*.** §7.1 ("the *executor* … runs the pre/post **scope-digest checks** (§16.3.2) via the `ElementEnumerator`") and §16.3.2 (the same protocol stated in the run's voice, "the engine") describe one mechanism from two sides — a division-of-labor ambiguity, not a semantic conflict. The settled split, which contradicts neither sentence: **P3** owns the *expectation* (`materializeUnit(...).scopeExpect`, incl. R20-1) and the *comparison* (`compareScopeExpectation`, `checkScopeBracket`, both in `planning/scopeDigest.js`); **P4's executor** owns the *per-unit execution* of the bracket (§7.1's "the executor … runs"), because it alone holds the live bindings and the lease state at call time; **P6** owns the *read-time* bracket inside `getFreshness` and the run-level consequences of a drift answer (§16.3.2's "the engine"). One comparison implementation, so the two proofs cannot diverge — which is what O2 was protecting — and **no `execution/` → `run/` import**, which O2's original direction would have required.
-- **C3 — `secondaryCauses` cap vs. the fact set size.** §16.7 caps `secondaryCauses` at 8 "distinct, ascending by code-unit order", but the closed fact set has 13 members, so a settlement observing 9 or more distinct facts silently drops the tail. The cap is honored here (the drop is deterministic because the list is sorted first), and `RunOutcome.reasons` still records *every* fact at run level, so nothing is lost overall — but the spec does not say the unit-level list may be lossy. Worth an errata note; no behavior change made.
+- **C3 — `secondaryCauses` cap vs. the fact set size — SETTLED 2026-09-21 (register S-P6-C3, spec erratum A7, owner-CLARIFIED, Option A).** §16.7 caps `secondaryCauses` at 8 "distinct, ascending by code-unit order", but the closed fact set has 13 members, so a settlement observing 9 or more distinct facts drops the tail. **The owner's clarification, now the authorized reading and reconciled into §16.7 and §22 AC-21: `secondaryCauses` retains the FIRST 8 DISTINCT causes in CANONICAL order; the truncation is deterministic and expected, and `RunOutcome.reasons` remains the complete record.** `classifyUnitSettlement` already implemented the first half — it sorts the distinct codes ascending (canonical) and *then* `slice(0, MAX_SECONDARY)`, so the retained set is the canonically lowest 8, never an arrival-order sample. **The second half needed one fix, applied 2026-09-21:** `applyUnitResult` pushed only `settlement.cause` into `settlementState.unitCauses`, so a fact observed at a unit but not chosen as its primary never reached `RunOutcome.reasons` at all — the run-level record was *not* complete, and the truncation genuinely lost facts. `classifyUnitSettlement` now also returns **`observedCauses`**: the same canonical list, **uncapped and including the primary**, and `applyUnitResult` pushes that whole set. This provably cannot change `resolveRunStatus` (a secondary fact always ranks *higher* than the primary, so an observed failing fact implies a failing primary and an observed invalidating fact implies a rank-1–4 primary), and it is empty for U9, so **I5** stays structural. **Pinned by `test/clashtest/run/settlement.test.mjs::secondaryCauses is distinct, ascending, and capped at 8` (V1), whose final assertions compare the retained list against the first 8 of the fully sorted distinct list and then compare `collectReasons(observedCauses)` against all 13 facts.** No other behavior change.
 - **C4 — `target-too-large` outcome kind.** §8.3's unit-outcome enum lists `not-run:target-too-large` and §17.1 says "A whole-model target above it becomes a `not-run:target-too-large` gap", while §16.7 table A groups `target-too-large` with U8, whose other members are `failed:` gaps. P6 keeps `not-run` for `target-too-large` (the §17.1/§8.3 wording is explicit) and `failed` for the rest of U8. Reported, not redesigned.
 
 ---
@@ -3965,7 +3995,7 @@ where the shape is unambiguous.
 |---|---|---|
 | `facts: ['placement-contention']`, a `placement-contention` fact or unit cause | P4's `failure.code: 'stale-placement'` + `retryable: true`; `placement-contention` only as P5's derived **environmental cause** | C1 |
 | `{ environmentSensitiveCause: … }` passed from P6 | P5's `deriveRunOutcome` derives it from the ledger (A13) | C1 |
-| `unitCauses.push(settlement.cause ?? 'evaluated')` | `if (settlement.cause !== null) unitCauses.push(settlement.cause)` | I5 |
+| `unitCauses.push(settlement.cause ?? 'evaluated')` | `for (const c of settlement.observedCauses) unitCauses.push(c)` — empty for U9, so I5 stays structural, and the uncapped set is what keeps `RunOutcome.reasons` complete (erratum **A7**) | I5 |
 | `unitPlanRank: new Map(run.plan.units…)` | `unitPlanRank: run.unitOrder` (the live oracle) | I6 |
 | `handle.requestDispose`, dispose control on `RunHandle` | `createRun(...).controller.requestDispose()` | C3 |
 | `run.spec.derivedFromRunId ?? null` at the seal | validated once in `createRun`; `run.derivedFromRunId` | I7 |

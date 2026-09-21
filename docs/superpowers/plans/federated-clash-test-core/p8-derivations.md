@@ -1,6 +1,6 @@
 # Derivations (status readers, facets, groupBy, filter, summarize, compare) — Phase P8 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. Commits only on explicit user authorization.
+> **For agentic workers:** Execution workflow (optional recommendation): an agent environment that provides the `superpowers:subagent-driven-development` or `superpowers:executing-plans` skill may use it, but no skill is required. Repository-native fallback (sufficient on its own): execute the tasks in order, run each task's RED then GREEN steps, run the phase verification section, and tick this plan's own checkboxes (`- [ ]`) as you go. Steps use checkbox (`- [ ]`) syntax. Commits only on explicit user authorization.
 
 **Goal:** Give the sealed Result Set an asynchronous, abortable, bounded, deterministic read-side: the built-in facets, `groupBy`, `filter`, `summarize` (§14.1–§14.4, §14.6) and `compareResultSets` (§15.2, §15.4), all exposed only as methods of a per-context `DerivationContext` (`createDerivationContext`, later bound as `engine.derivations`). The pure pair/element status readers (spec §12.5) are **P5's** (`results/status.js`, duplicate-ownership D4); this phase only consumes them and re-exports the two public names. **P8 is DEFERRABLE**: it is not on the critical path, core Definition of Done (master §5) does not require it, and it never blocks P7. The annotation layer (§14.5, `engine.annotate`, snapshot compatibility checks) is **excluded**; attribute facets (`attrFirst|attrSecond|attrEither:<name>`) always report `unavailable` in P8 behind one seam (Task P8.3).
 
@@ -105,7 +105,8 @@ Every row below was checked against the producing phase's `## Phase interface su
 ```text
 ledger.planExists, pairSpaceTotal, emptyOperand, budgetExhausted, firstRefusalUnitId, exclusions[], warnings[], unresolvedSelections[]
 ledger.rootOwners : [{ modelKey, owners: [{ rootDbId, ownerDbIds:number[] /*ascending*/, cls: 'A'|'B'|'C' }] }]
-                    // OPEN-2 ruling (controller, option a): the per-ROOT class marker `cls` is persisted and DIGESTED on the rootOwners rows.
+                    // OPEN-2 ruling (controller, option a) + spec erratum A9 (2026-09-21, §5.6 item 2 / §13.1):
+                    // the per-ROOT class marker `cls` is persisted and DIGESTED on the rootOwners rows (schemaVersion stays 1).
                     // P3 emits it; P5 pins it and digests it; only P5's readLedger reads it. cls === 'C' marks a root in A∩B.
 ledger.units      : [{ unitId, kind:'leaf'|'split', parentUnitId, sourceModelKey, sourceRootDbIds:number[],
                        targets:[{ modelKey, scope:'model'|'roots', rootDbIds? }],
@@ -1692,7 +1693,7 @@ Commands: per file `node --test test/clashtest/derive/<file>.test.mjs`; phase `n
 4. *`changedFields` vocabulary beyond `'mode'`/`'clearance'`* (`distance`, `closestPoints`, `witnessPoint`, `witnessKind`, `flags`): spec gives only `string[]`.
 5. *Tolerance defaults (`1e-6`)* — **RESOLVED (OPEN-4 ruling):** `COMPARE_TOLERANCE_DEFAULTS` lives in P0 `clashtest/options.js`; `derive/compare.js` imports it and tests import it. Nothing in P8 hard-codes `1e-6`.
 6. *In-flight derivations on `engine.dispose()`*: spec is silent; P8 rejects **new** calls with `EngineDisposedError` and lets in-flight ones finish (they hold only their own memory). An abort-on-dispose would need a per-context `AbortController` — deferred.
-7. *Hierarchy-internal detection in element status* — **RESOLVED (OPEN-2 ruling, option a):** the sealed ledger's `rootOwners` rows carry the digested per-root `cls` marker (P3 emits, P5 pins and digests, P8 reads only through P5's reader). The bounded-`examples` fallback and its under-reporting limitation are removed; P8.1's consumer test pins the case that would have under-reported.
+7. *Hierarchy-internal detection in element status* — **RESOLVED (OPEN-2 ruling, option a; CONFIRMED by the milestone owner 2026-09-21 as Option A — master §6 G-PLAN line (c)):** the sealed ledger's `rootOwners` rows carry the digested per-root `cls` marker (P3 emits, P5 pins and digests, P8 reads only through P5's reader). The bounded-`examples` fallback and its under-reporting limitation are removed; P8.1's consumer test pins the case that would have under-reported.
 
 **Plan self-check.** See *Conformance check* below for the mechanical old-name sweep and for the scratch-directory execution of the P8.2–P8.7 code and tests against throwaway stubs of the *reconciled* producer signatures.
 
