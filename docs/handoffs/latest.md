@@ -1,14 +1,16 @@
 # Clash Detection handoff
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
-- **Branch:** `feature/m4-performance-worker-decision-design`
-- **HEAD:** the planning-checkpoint commit `docs: authorize federated clash core implementation` (see `git log -1`), on top of `e29efec23a407b002358f43d35d1a2a2704ab113` (`docs: clarify transition authorization and handoff state`).
-- **Working tree:** clean after the planning-checkpoint commit (spec with owner-authorized errata A1–A9, this handoff, all implementation-plan reviews, and the plan-remediation edits are committed). No production or test implementation exists (`clashtest/` and `test/clashtest/` are absent); P0 has not started.
-- **Milestone context:** M4 — Performance / Worker Decision Gate is closed (Verdict D; Phase 4 unstarted and unauthorized). Current work: **Federated Clash Test & Results** — design frozen, core-engine implementation plan authored.
+- **Branch:** `feature/federated-clash-test-core-engine` (created 2026-09-21 from `main`). Historical branches (`feature/m4-performance-worker-decision-design`, `feature/m3-clearance`, `collision-library-m1-batch2`, `backup/pre-reword-spec-msg`) are untouched.
+- **Baseline / HEAD at branch transition:** `438a832987986ccc5b51f789781948981d227cdb` (`main` = `origin/main`). The planning/authorization baseline (`docs: authorize federated clash core implementation`, merged via `7ee67f5`) is already in `main`.
+- **Working tree:** clean at branch creation (this handoff update is the only change before P0). No production or test implementation exists (`clashtest/` and `test/clashtest/` are absent); P0 is the active task and has not produced code yet.
+- **Verified test baseline (`main` @ `438a832`):** 1,126 tests total, 1,125 pass, 0 fail, 1 todo.
+- **Milestone context:** M4 — Performance / Worker Decision Gate is closed (Verdict D; Phase 4 unstarted and unauthorized). Current work: **Federated Clash Test & Results** — design frozen, core-engine plan authorized, implementation branch open.
+- **Current task: P0 (foundations) — the ONLY active implementation scope.** P1–P7 are authorized overall (core-only) but must not begin until their plan prerequisites (master §3 dependency graph) are satisfied and the P0 phase is complete and verified. P8 and every separately gated scope (Viewer adapter, OQ-4, host integration, remote persistence, annotation, calibration values, M4 Phase 4) remain excluded.
 
 ## Status in one line
 
-**Core engine implementation plan: G-PLAN is complete — all five master §6 lines (a)–(e) are checked. Core-only implementation of P0–P7 is AUTHORIZED (owner Eason, 2026-09-21). P0 has NOT been started; the planning checkpoint is committed as the pre-implementation baseline.** Authorization scope is limited to core-only P0–P7 (see below); everything else remains gated. Spec errata A1–A9 are technically aligned. **Viewer adapter / integration remains gated** (OQ-4 research not done; no adapter plan).
+**Core engine implementation plan: G-PLAN is complete — all five master §6 lines (a)–(e) are checked. Core-only implementation of P0–P7 is AUTHORIZED (owner Eason, 2026-09-21). P0 is now the active task on branch `feature/federated-clash-test-core-engine`; P1–P7 wait on plan prerequisites.** Authorization scope is limited to core-only P0–P7 (see below); everything else remains gated. Spec errata A1–A9 are technically aligned. **Viewer adapter / integration remains gated** (OQ-4 research not done; no adapter plan).
 
 ## Governing documents
 
@@ -88,7 +90,7 @@ Viewer adapter and OQ-4 research; remote-persistence reconciliation/disposal mac
 
 ## Suggested next action
 
-1. Begin P0 (foundations) per `docs/superpowers/plans/federated-clash-test-core/p0-foundations.md` when the owner/session is ready — only P0–P7; no P8, adapter, OQ-4, host, remote-persistence or Phase 4 work.
-2. Commit policy: commits only when explicitly authorized (the baseline planning checkpoint was authorized and committed 2026-09-21; implementation commits need their own authorization).
+1. Execute P0 (foundations) per `docs/superpowers/plans/federated-clash-test-core/p0-foundations.md` — P0 only. Do not start P1 until P0 is verified and recorded here.
+2. Commit policy: the owner authorized the branch-transition commit and the P0 commit (2026-09-21 task); later phases need their own commit authorization.
 
 Viewer-adapter work, OQ-4-dependent integration, remote persistence, annotation, calibrated-default promotion, and M4 Phase 4 must not begin without their applicable gate and explicit owner authorization.
