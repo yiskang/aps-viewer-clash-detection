@@ -67,3 +67,15 @@ Applied and committed in the P0 remediation commit; only the two adjudicated fin
 **Verification (targeted only):** `node --test $(find test/clashtest -name '*.test.mjs')` → 112 tests / 112 pass / 0 fail / 0 todo (all existing golden vectors and pinned digests unchanged); `git diff --check` clean; `grep` for `collision` imports under `clashtest/` empty; only `clashtest/util/{canonical,capture}.js` and their two test files changed in code; nothing outside `clashtest/` imports these modules. The full repository runner was not re-run (no file outside `clashtest/`/`test/clashtest/` changed; the earlier adjudication runs are unaffected).
 
 **Status:** Medium and Low findings REMEDIATED (owner-authorized). Gate: P0.1–P0.7 accepted. Committed with owner authorization. P1 not started and not authorized.
+
+## Adjudication of the follow-up remediation review (2026-09-21)
+
+- **Adjudicated:** [`2026-09-21-federated-clash-test-core-p0-remediation-review.md`](2026-09-21-federated-clash-test-core-p0-remediation-review.md) — verdict `PASS`, no finding remaining, reviewing checkpoint `92fcd20a91a997ce81a38d17fdc7a7e81f5f665b`.
+- **Scope (CLAUDE.md):** only the review's cited claims, commit boundary, test evidence and gate verdict; no new implementation review; no production code modified.
+- **Method:** direct mechanical re-verification plus one `codex-advisor` consult (`20260921-153424-24900-26930`, low) on the code-level claims.
+- **Boundary — CONFIRMED:** `92fcd20` touches 7 files: `clashtest/util/{canonical,capture}.js`, their two test files, the prior review, its adjudication, the handoff. No change to `collision/`, `wwwroot/`, `package.json`, `package-lock.json`, or `docs/superpowers/` (0 files). No P1 files exist. `git diff --check HEAD^ HEAD` clean; no `collision` import under `clashtest/`.
+- **Tests — CONFIRMED:** the review's exact command (`node --test test/clashtest/*.test.mjs test/clashtest/util/*.test.mjs`) → 112 tests / 112 pass / 0 fail / 0 skipped / 0 todo; recursive `find` form also 112/112.
+- **Code claims — CONFIRMED by Codex** ("Agree; no concrete disagreement"): canonical object/array restrictions, unchanged conforming bytes and key order, Proxy tests pin the two bypasses and the sliced path; capture `rootGate` key/callback-result validation with fail-closed `unreadable`, `0`/`Infinity`/fallback tested.
+- **Gate verdict — CONFIRMED:** `P0 remediation checkpoint accepted; no Critical, High, Medium or Low finding remains in the targeted remediation scope.` The Work review and this adjudication **agree**; no disagreement to persist, no owner-decision escalation.
+- **Unchanged:** P0.8 remains G-CAL-blocked; P1 is not started and is **not** authorized by either review or this adjudication.
+
