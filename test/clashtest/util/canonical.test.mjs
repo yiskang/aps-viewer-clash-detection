@@ -107,3 +107,59 @@ test('sliced digest is byte-identical to the synchronous one, and yields on a la
   assert.equal(sliced, nodeSha(canonicalJson(value)));
   assert.ok(clock.yieldCount > 0);
 });
+
+test('own properties outside plain data are a TypeError, never projected away or invoked (symbol key, non-enumerable, accessor)', () => {
+  const sym = Symbol('hidden');
+  const symKeyed = { x: 1, [sym]: 2 };
+  assert.throws(() => canonicalJson(symKeyed), TypeError);
+  assert.throws(() => digestCanonical(symKeyed), TypeError); // no digest collision with { x: 1 }
+  assert.equal(digestCanonical({ x: 1 }), nodeSha('{"x":1}'));
+
+  const hidden = { x: 1 };
+  Object.defineProperty(hidden, 'h', { value: 2, enumerable: false });
+  assert.throws(() => canonicalJson(hidden), TypeError);
+
+  let calls = 0;
+  const withGetter = { x: 1 };
+  Object.defineProperty(withGetter, 'y', { get() { calls++; return 5; }, enumerable: true });
+  assert.throws(() => canonicalJson(withGetter), TypeError);
+  assert.throws(() => digestCanonical({ nested: [withGetter] }), TypeError);
+  assert.equal(calls, 0, 'the getter is never invoked');
+});
+
+test('arrays: symbol keys, named own properties and index accessors / non-enumerable elements are a TypeError; plain arrays are unchanged', () => {
+  const named = [1]; named.foo = 2;
+  assert.throws(() => canonicalJson(named), TypeError);
+  const symArr = [1]; symArr[Symbol('s')] = 2;
+  assert.throws(() => canonicalJson(symArr), TypeError);
+  let calls = 0;
+  const acc = [0];
+  Object.defineProperty(acc, 0, { get() { calls++; return 1; }, enumerable: true });
+  assert.throws(() => canonicalJson(acc), TypeError);
+  assert.equal(calls, 0, 'the index getter is never invoked');
+  const hiddenEl = [0];
+  Object.defineProperty(hiddenEl, 0, { value: 1, enumerable: false });
+  assert.throws(() => canonicalJson(hiddenEl), TypeError);
+  assert.throws(() => canonicalJson(new Array(2)), TypeError); // sparse
+  assert.equal(canonicalJson([]), '[]');
+  assert.equal(canonicalJson([1, [2, { b: 1, a: [3] }]]), '[1,[2,{"a":[3],"b":1}]]');
+  assert.equal(canonicalJson(Object.create(null, { k: { value: 1, enumerable: true } })), '{"k":1}');
+});
+
+test('arrays behind a Proxy cannot smuggle a dropped element or a shifting length past validation', async () => {
+  // ownKeys reports 'extra' in place of index 0: the count matches but the key set is not {length, 0}
+  const swapped = new Proxy([1], { ownKeys: () => ['length', 'extra'] });
+  assert.throws(() => canonicalJson(swapped), TypeError);
+  // length read differently on each `get`: canonicalisation must not consult the get trap for it
+  let reads = 0;
+  const shifting = new Proxy([1], { get(t, k, r) { if (k === 'length') return reads++ === 0 ? 1 : 0; return Reflect.get(t, k, r); } });
+  assert.doesNotThrow(() => canonicalJson(shifting));
+  assert.equal(canonicalJson(shifting), '[1]');
+  assert.equal(reads, 0, 'the array length is read from its descriptor, not through the get trap');
+  assert.throws(() => digestCanonical(swapped), TypeError);
+  const clock = createFakeClock();
+  const slicer = createSlicer({ now: clock.now, yieldToScheduler: clock.yieldToScheduler, sliceBudgetMs: 4, checkEvery: 1 });
+  const sound = await digestCanonicalSliced([1], slicer); // control: the same slicer accepts valid data
+  assert.equal(sound, nodeSha('[1]'));
+  await assert.rejects(() => digestCanonicalSliced(swapped, slicer), TypeError);
+});

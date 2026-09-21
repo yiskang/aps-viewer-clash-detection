@@ -344,6 +344,7 @@ test('malformed limit options throw before the root is read (no fail-open: maxIs
     { maxIssues: 0 }, { maxIssues: NaN }, { maxIssues: 1.5 }, { maxDepth: NaN }, { maxDepth: 0 }, { maxKeyLength: NaN },
     { maxKeyLength: -1 }, { maxStringLength: NaN }, { maxArrayLength: NaN }, { maxStringLength: -1 },
     { stringLimitFor: 3 }, { arrayLimitFor: 'x' }, { rootGate: null }, { rootGate: {} },
+    { rootGate: { check: () => true } }, { rootGate: { key: 42, check: () => true } }, { rootGate: { key: undefined, check: () => true } },
   ];
   for (const extra of bad) {
     assert.throws(() => captureData(root, { maxNodes: 10, ...extra }), TypeError, JSON.stringify(extra));
@@ -362,4 +363,21 @@ test('an over-long or hostile key is never copied whole into a diagnostic path',
   const sym = captureData({ [Symbol('x'.repeat(100_000))]: 1 }, { maxNodes: 10 });
   assert.equal(sym.issues[0].code, 'symbol-key');
   assert.ok(sym.issues[0].path.length <= 1 + 64);
+});
+
+test('per-path limit callbacks: a non-number, NaN or negative result fails CLOSED (ok:false, never silently disables a bound); undefined defers to the fixed cap', () => {
+  const root = { s: 'x'.repeat(50), a: [1, 2, 3] };
+  for (const bad of [NaN, -1, '5', null, {}, true]) {
+    for (const opt of ['stringLimitFor', 'arrayLimitFor']) {
+      const r = cap(root, { [opt]: () => bad });
+      assert.equal(r.ok, false, `${opt} -> ${String(bad)}`);
+      assert.equal(r.issues[0].code, 'unreadable', `${opt} -> ${String(bad)}`);
+    }
+  }
+  // valid results are honoured: 0 rejects, Infinity admits, undefined falls back to maxStringLength / maxArrayLength
+  assert.equal(cap(root, { stringLimitFor: () => 0 }).issues[0].code, 'string-too-long');
+  assert.equal(cap(root, { arrayLimitFor: () => 0 }).issues[0].code, 'array-too-long');
+  assert.equal(cap(root, { stringLimitFor: () => Infinity, arrayLimitFor: () => Infinity }).ok, true);
+  assert.equal(cap(root, { stringLimitFor: () => undefined, maxStringLength: 10 }).issues[0].code, 'string-too-long');
+  assert.equal(cap(root, { arrayLimitFor: () => undefined, maxArrayLength: 2 }).issues[0].code, 'array-too-long');
 });

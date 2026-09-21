@@ -30,23 +30,50 @@ function* chunks(value, path, depth) {
     default: throw new TypeError(`canonical: ${typeof value} is not serialisable at ${path || '/'}`);
   }
   if (Array.isArray(value)) {
+    // Only index elements (+ `length`) are data: a symbol or named own property would be silently dropped, so reject it.
+    // `length` is read ONCE (descriptor, never a get trap) and the own-key set must be exactly {'length', '0'..'length-1'}.
+    const lenDesc = Reflect.getOwnPropertyDescriptor(value, 'length');
+    const length = lenDesc && lenDesc.value;
+    if (!Number.isSafeInteger(length) || length < 0) throw new TypeError(`canonical: unreadable array length at ${path || '/'}`);
+    const arrayKeys = Reflect.ownKeys(value);
+    let indexKeys = 0;
+    for (const k of arrayKeys) {
+      if (k === 'length') continue;
+      if (typeof k !== 'string' || !/^(0|[1-9]\d*)$/.test(k) || Number(k) >= length) {
+        throw new TypeError(`canonical: array with non-index own properties at ${path || '/'}`);
+      }
+      indexKeys++;
+    }
+    if (indexKeys !== length) throw new TypeError(`canonical: sparse array at ${path || '/'}`);
     yield '[';
-    for (let i = 0; i < value.length; i++) {
+    for (let i = 0; i < length; i++) {
       if (i > 0) yield ',';
-      yield* chunks(value[i], `${path}/${i}`, depth + 1);
+      const d = Reflect.getOwnPropertyDescriptor(value, i); // own data element only: never invoke an index accessor
+      if (!d || !('value' in d) || !d.enumerable) throw new TypeError(`canonical: accessor or non-enumerable element at ${path}/${i}`);
+      yield* chunks(d.value, `${path}/${i}`, depth + 1);
     }
     yield ']';
     return;
   }
   const proto = Object.getPrototypeOf(value);
   if (proto !== Object.prototype && proto !== null) throw new TypeError(`canonical: non-plain object at ${path || '/'}`);
-  const keys = Object.keys(value).sort(); // default sort = UTF-16 code-unit order
+  // Own data properties only: a symbol key, a non-enumerable property or an accessor is a TypeError (never projected
+  // away or invoked), so two objects that differ only in such properties can never share a digest.
+  const props = [];
+  for (const k of Reflect.ownKeys(value)) {
+    if (typeof k === 'symbol') throw new TypeError(`canonical: symbol key at ${path || '/'}`);
+    const d = Reflect.getOwnPropertyDescriptor(value, k);
+    if (!('value' in d)) throw new TypeError(`canonical: accessor at ${path}/${k}`);
+    if (!d.enumerable) throw new TypeError(`canonical: non-enumerable property at ${path}/${k}`);
+    props.push([k, d.value]);
+  }
+  props.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0)); // UTF-16 code-unit order (keys are unique)
   yield '{';
-  for (let i = 0; i < keys.length; i++) {
+  for (let i = 0; i < props.length; i++) {
     if (i > 0) yield ',';
-    yield JSON.stringify(keys[i]);
+    yield JSON.stringify(props[i][0]);
     yield ':';
-    yield* chunks(value[keys[i]], `${path}/${keys[i]}`, depth + 1);
+    yield* chunks(props[i][1], `${path}/${props[i][0]}`, depth + 1);
   }
   yield '}';
 }

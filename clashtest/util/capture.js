@@ -102,7 +102,16 @@ export function captureData(root, opts) {
   badLimit('maxArrayLength', opts.maxArrayLength, (v) => typeof v === 'number' && v >= 0);
   badLimit('stringLimitFor', stringLimitFor, (v) => typeof v === 'function');
   badLimit('arrayLimitFor', arrayLimitFor, (v) => typeof v === 'function');
-  badLimit('rootGate', rootGate, (v) => v !== null && typeof v === 'object' && typeof v.check === 'function');
+  badLimit('rootGate', rootGate, (v) => v !== null && typeof v === 'object' && typeof v.key === 'string' && typeof v.check === 'function');
+  // A per-path callback's result is a limit like any other: `undefined` defers to the fixed cap, anything else must be a
+  // number >= 0 (NaN would silently disable the comparison, so it is rejected here rather than compared). The throw is
+  // caught by the traversal's own try, so a malformed callback fails CLOSED as `unreadable`, like a throwing callback.
+  const pathLimit = (k, fn, path, fallback) => {
+    const v = fn ? fn(path) : undefined;
+    if (v === undefined) return fallback;
+    if (typeof v !== 'number' || !(v >= 0)) throw new TypeError(`captureData: opts.${k} returned an invalid limit`);
+    return v;
+  };
   const budgeted = openFieldBudget !== undefined;
   if (budgeted && (openFieldBudget === null || typeof openFieldBudget.isOpenPath !== 'function'
       || !Number.isFinite(openFieldBudget.maxBytes) || openFieldBudget.maxBytes < 0)) {
@@ -160,7 +169,7 @@ export function captureData(root, opts) {
       const lenDesc = Reflect.getOwnPropertyDescriptor(src, 'length');
       const length = lenDesc && lenDesc.value;
       if (!Number.isSafeInteger(length) || length < 0) { report('unreadable', path); return null; }
-      const limit = arrayLimitFor ? (arrayLimitFor(path) ?? maxArrayLength) : maxArrayLength;
+      const limit = pathLimit('arrayLimitFor', arrayLimitFor, path, maxArrayLength);
       if (length > limit) { report('array-too-long', path); return null; }
       if (nodes + 1 + length > maxNodes) { report('too-many-nodes', path); stopped = true; return null; }
       if (open && !chargeBytes(8, path)) return null;
@@ -191,7 +200,7 @@ export function captureData(root, opts) {
 
   const admitPrimitive = (value, path, open) => {
     if (typeof value === 'string') {
-      const limit = stringLimitFor ? (stringLimitFor(path) ?? maxStringLength) : maxStringLength;
+      const limit = pathLimit('stringLimitFor', stringLimitFor, path, maxStringLength);
       if (value.length > limit) { report('string-too-long', path); return false; }
     } else if (typeof value === 'number') {
       if (!Number.isFinite(value)) { report('not-plain', path); return false; }
