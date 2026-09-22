@@ -95,6 +95,17 @@ const FAILURE_KEYS = Object.freeze(['code', 'errorName', 'message', 'capacityKin
 export const CAPACITY_DETAILS_KEYS = Object.freeze(['currentSize', 'missing', 'requested', 'limit']);
 const DIAGNOSTIC_KEYS = new Set(['scope', 'reason', 'completenessAffecting', 'attribution', 'fragment', 'fragments', 'ambiguousModelId']);
 const FRAGMENT_KEYS = Object.freeze(['modelKey', 'dbId', 'fragId', 'role']);
+/**
+ * FIX (independent review, M1, owner-authorized remediation 2026-09-22): a pair-scoped operand
+ * (`ProjectedDiagnostic.fragments.first`/`.second`) was validated through the SAME `FRAGMENT_KEYS`
+ * as a singular fragment-scope operand, so it illegally accepted `role` -- present only on the
+ * singular fragment shape (§11.2/§12.2), never on a pair operand, per the P4 plan's own explicit
+ * statement that pair-scoped `role` is dropped at projection ("the DTO is closed"). Verified: a pair
+ * diagnostic with `role` on both operands returned `{ok: true, issues: []}` and the aggregator then
+ * stored the extra field into `NormalizedDiagnostic` detail. `checkFragment` now takes the operand's
+ * own legal key set instead of assuming `FRAGMENT_KEYS`.
+ */
+const PAIR_FRAGMENT_KEYS = Object.freeze(['modelKey', 'dbId', 'fragId']);
 const FRAGMENTS_PAIR_KEYS = Object.freeze(['first', 'second']);
 const DIAGNOSTIC_ATTRIBUTIONS = Object.freeze(['element', 'target-model', 'unit']);
 const DIAGNOSTIC_SCOPES = Object.freeze(['fragment', 'pair']);
@@ -432,15 +443,17 @@ function checkPair(pair, idx, ctx, add) {
   }
 }
 
-function checkFragment(f, path, participants, add) {
+function checkFragment(f, path, participants, add, allowedKeys = FRAGMENT_KEYS) {
   if (!isPlainObject(f)) { add('fragment-not-plain', path, typeof f); return; }
-  for (const key of Object.keys(f)) if (!FRAGMENT_KEYS.includes(key)) add('fragment-unknown-key', `${path}.${key}`, key);
+  for (const key of Object.keys(f)) if (!allowedKeys.includes(key)) add('fragment-unknown-key', `${path}.${key}`, key);
   if (f.modelKey !== null && (typeof f.modelKey !== 'string' || !participants.has(f.modelKey))) {
     add('fragment-invalid-modelkey', `${path}.modelKey`, f.modelKey);
   }
   if (f.dbId !== null && !isSafeNonNegInt(f.dbId)) add('fragment-invalid-dbid', `${path}.dbId`, f.dbId);
   if (!isSafeNonNegInt(f.fragId)) add('fragment-invalid-fragid', `${path}.fragId`, f.fragId);
-  if (has(f, 'role') && f.role !== 'source' && f.role !== 'target') add('fragment-invalid-role', `${path}.role`, f.role);
+  if (allowedKeys.includes('role') && has(f, 'role') && f.role !== 'source' && f.role !== 'target') {
+    add('fragment-invalid-role', `${path}.role`, f.role);
+  }
 }
 
 /**
@@ -463,7 +476,7 @@ function checkFragmentsPair(fr, path, participants, add) {
   for (const key of Object.keys(fr)) if (!FRAGMENTS_PAIR_KEYS.includes(key)) add('fragments-unknown-key', `${path}.${key}`, key);
   for (const key of FRAGMENTS_PAIR_KEYS) {
     if (!has(fr, key)) add('fragments-missing-key', `${path}.${key}`, 'required');
-    else checkFragment(fr[key], `${path}.${key}`, participants, add);
+    else checkFragment(fr[key], `${path}.${key}`, participants, add, PAIR_FRAGMENT_KEYS);
   }
 }
 

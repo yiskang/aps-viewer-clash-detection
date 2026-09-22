@@ -123,3 +123,20 @@ test('durationMs comes from the injected clock, never wall time', async () => {
   const { outcome } = await run(() => { clock.advance(42); return empty(); }, makeRequest({}), { now: clock.now });
   assert.equal(outcome.durationMs, 42);
 });
+
+// FIX (independent review, M2, owner-authorized remediation 2026-09-22): the projection catch (the
+// defense-in-depth wrapper around pair/diagnostic/statistics projection) read `err.name`/`err.message`
+// directly on an untrusted, resolved-but-malformed library result. A hostile getter there escaped the
+// executor's own returned promise instead of settling `failed:internal-error`.
+test('a hostile getter deep inside a malformed library result never escapes the projection catch', async () => {
+  const hostilePairs = new Proxy([], {
+    get(t, k, r) {
+      if (k === 'length') { const e = {}; Object.defineProperty(e, 'name', { get() { throw new Error('hostile-name-getter'); } }); throw e; }
+      return Reflect.get(t, k, r);
+    },
+  });
+  const { outcome } = await run(() => ({ pairs: hostilePairs, statistics: {} }));
+  assert.equal(outcome.outcome, 'failed');
+  assert.equal(outcome.failure.code, 'internal-error');
+  assert.doesNotThrow(() => structuredClone(outcome.failure));
+});

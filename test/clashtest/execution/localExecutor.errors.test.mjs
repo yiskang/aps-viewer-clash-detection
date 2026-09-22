@@ -64,3 +64,40 @@ test('an over-length library message is TRUNCATED, not rejected — a library me
   const got = classifyLibraryError(named('ObjectTreeUnavailableError', { message: 'x'.repeat(5_000) }), ctx);
   assert.equal(got.failure.message.length, 512);
 });
+
+// FIX (independent review, M2, owner-authorized remediation 2026-09-22): the thrown value is untrusted
+// data (F12/§7.3), same as any library diagnostic, but `classifyLibraryError` read `.name`/`.message`/
+// capacity-detail properties directly. A hostile getter on any of them escaped the executor's own
+// returned promise as a raw rejection instead of producing the documented `failed:internal-error`
+// outcome. Verified for each field independently before the fix; now every one settles cleanly.
+const hostile = (key, extra = {}) => {
+  const err = { ...extra };
+  Object.defineProperty(err, key, { get() { throw new Error(`hostile-${key}-getter`); } });
+  return err;
+};
+
+test('a hostile .name getter never escapes classifyLibraryError — settles failed:internal-error', () => {
+  const got = classifyLibraryError(hostile('name'), ctx);
+  assert.equal(got.outcome, 'failed');
+  assert.equal(got.failure.code, 'internal-error');
+  assert.doesNotThrow(() => structuredClone(got.failure));
+});
+
+test('a hostile .message getter never escapes classifyLibraryError', () => {
+  const got = classifyLibraryError(hostile('message', { name: 'ObjectTreeUnavailableError' }), ctx);
+  assert.equal(got.failure.code, 'object-tree-unavailable');
+  assert.equal(got.failure.message, undefined, 'an unreadable message is simply omitted, never guessed at');
+});
+
+test('a hostile capacity-detail getter never escapes classifyLibraryError', () => {
+  const err = hostile('limit', { name: 'CapacityExceededError', kind: 'bucket-capacity', currentSize: 5 });
+  const got = classifyLibraryError(err, ctx);
+  assert.equal(got.failure.code, 'capacity-exceeded');
+  assert.deepEqual(got.failure.capacityDetails, { currentSize: 5 });
+});
+
+test('a hostile .kind getter never escapes classifyLibraryError — capacityKind simply omitted', () => {
+  const got = classifyLibraryError(hostile('kind', { name: 'CapacityExceededError' }), ctx);
+  assert.equal(got.failure.code, 'capacity-exceeded');
+  assert.equal('capacityKind' in got.failure, false);
+});

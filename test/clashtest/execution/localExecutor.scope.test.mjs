@@ -35,6 +35,24 @@ test('a lease that dies DURING the pre-check bracket (not before it) still skips
   assert.deepEqual(validateUnitOutcome(makeRequest({}), outcome), { ok: true, issues: [] });
 });
 
+test('a lease that dies DURING the post-check bracket settles unverifiable, never equal, and merges nothing (H1.4)', async () => {
+  // The post-check bracket is itself async, so the pre-bracket `bindingsStillHeld` snapshot (taken
+  // synchronously as the bracket's own argument) can go stale while the bracket runs -- the identical
+  // TOCTOU shape the pre-check race fix above closes, but never applied to the post-check side until
+  // this fix (independent-review adjudication, H1.4, owner-authorized remediation 2026-09-22).
+  // Without the fix this settled `evaluated`/`equal` with a pair MERGED from the dead model.
+  const deps = makeExecutorDeps({});
+  let findClashesCalled = false;
+  deps.world.script(() => { findClashesCalled = true; return ok(); });
+  deps.enumerator.onCall(() => { if (findClashesCalled) deps.world.evictModel(deps.models['mk-b']); });
+  const outcome = await exec(deps)(makeRequest({}));
+  assert.deepEqual([outcome.outcome, outcome.failure.code, outcome.scopeProof], ['discarded', 'scope-unverifiable', 'unverifiable']);
+  assert.deepEqual(outcome.failure.modelKeys, ['mk-b']);
+  assert.deepEqual(outcome.pairs, [], 'nothing from the dead model may be merged');
+  assert.equal(deps.world.calls.length, 1, 'the call was already issued before the death -- this is a post-check settlement, not a skip');
+  assert.deepEqual(validateUnitOutcome(makeRequest({}), outcome), { ok: true, issues: [] });
+});
+
 test('a pre-check digest mismatch is skipped:scope-drift and issues no call', async () => {
   const deps = makeExecutorDeps({});
   // P0's fake enumerator: `set(modelKey, patch)` mutates the configured content, which is exactly

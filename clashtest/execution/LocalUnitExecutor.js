@@ -135,6 +135,18 @@ export const LINEAR_CEILING_MESSAGE_PREFIX =
 const trunc = (v, n) => (typeof v === 'string' ? v.slice(0, n) : undefined);
 
 /**
+ * A property read off an UNTRUSTED thrown value that cannot itself throw (independent review, M2,
+ * owner-authorized remediation 2026-09-22). A thrown value's `.name`/`.message`/capacity-detail
+ * fields were read directly (`error.name`, `error.message`, `error[key]`, `error.kind`); a hostile
+ * getter on any of them rejected the executor's own promise instead of producing the documented
+ * `failed:internal-error` outcome -- verified for each field independently. Mirrors `UnitExecutor.js`'s
+ * `safeDetail`/`safeThrownMessage`, applied here to the PRODUCER side of the same untrusted boundary.
+ */
+function safeGet(obj, key) {
+  try { return obj == null ? undefined : obj[key]; } catch { return undefined; }
+}
+
+/**
  * §7.5, matched on `error.name` rather than `instanceof`: §7.3 anticipates duplicate bundles/module
  * copies in one page, under which `instanceof` would silently fail for a genuine library error and
  * turn a splittable capacity signal into `failed:internal-error`, which fails the whole run.
@@ -143,8 +155,9 @@ const trunc = (v, n) => (typeof v === 'string' ? v.slice(0, n) : undefined);
  * @returns {{outcome: 'failed'|'discarded', failure: object}}
  */
 export function classifyLibraryError(error, { participants, deadModelKeys, placementGenerationChanged }) {
-  const name = error && typeof error.name === 'string' ? error.name : 'Error';
-  const message = trunc(error && error.message, MAX_FAILURE_MESSAGE_CODE_UNITS);
+  const rawName = safeGet(error, 'name');
+  const name = typeof rawName === 'string' ? rawName : 'Error';
+  const message = trunc(safeGet(error, 'message'), MAX_FAILURE_MESSAGE_CODE_UNITS);
   // FIX (codex-review finding, accepted): `message` is OMITTED entirely, never assigned an explicit
   // `undefined`, when the thrown value carries no string `.message` (a non-Error throw, or an Error
   // whose `.message` isn't a string). `UnitExecutor.js`'s `checkFailure` gates on `Object.hasOwn`, so
@@ -169,14 +182,16 @@ export function classifyLibraryError(error, { participants, deadModelKeys, place
       // The single shared list imported from `UnitExecutor.js` (this file PRODUCES the field that
       // file's `checkFailure` validates; a second local copy could drift apart from it).
       for (const key of CAPACITY_DETAILS_KEYS) {
-        if (typeof error[key] === 'number' && Number.isFinite(error[key])) capacityDetails[key] = error[key];
+        const v = safeGet(error, key);
+        if (typeof v === 'number' && Number.isFinite(v)) capacityDetails[key] = v;
       }
       // FIX (codex-review finding, accepted): same class of bug as `base.message` above --
       // `capacityKind: undefined` as an explicit own property is "present but invalid" to
       // `checkFailure`'s `Object.hasOwn` gate and rejects the whole outcome (verified against
       // `validateUnitOutcome` for the linear-ceiling default branch below). Omitted entirely when the
       // library's `kind` isn't one of the closed `LIBRARY_CAPACITY_KINDS`.
-      const capacityKind = LIBRARY_CAPACITY_KINDS.includes(error.kind) ? error.kind : undefined;
+      const rawKind = safeGet(error, 'kind');
+      const capacityKind = LIBRARY_CAPACITY_KINDS.includes(rawKind) ? rawKind : undefined;
       return { outcome: 'failed', failure: {
         code: 'capacity-exceeded', ...base,
         ...(capacityKind !== undefined ? { capacityKind } : {}),
@@ -456,7 +471,31 @@ export function createLocalUnitExecutor({ world, registry, enumerator, now, yiel
     // The post-check brackets against the bindings the unit STILL holds, not the ones it started
     // with: a participant evicted or re-registered during the call is `null` here and therefore
     // `unverifiable`, never `equal` (see `bindingsStillHeld`, §16.3 item 1).
-    const post = await bracket(bindingsStillHeld(resolved, registry, world));
+    const preBracketStillHeld = bindingsStillHeld(resolved, registry, world);
+    let post = await bracket(preBracketStillHeld);
+
+    // FIX (H1.4, adjudicated + owner-authorized remediation 2026-09-22, no schema change): the map
+    // above is a SYNCHRONOUS snapshot taken as `bracket(...)`'s argument, but `bracket(...)` is itself
+    // async and yields internally (`ctx.checkpoint` per digest). A participant that dies WHILE the
+    // bracket is still running was handed to `checkScopeBracket` as a live binding for that whole
+    // call, so a coincidentally-unchanged digest still answers `equal` even though the model died
+    // mid-check -- the identical TOCTOU shape the pre-check `unheldNow` re-check (above) closes,
+    // never applied here. Reproduced: with no throw at all, evicting a participant mid-bracket
+    // yielded `evaluated`/`equal` with pairs merged from the dead model.
+    //
+    // Re-validate immediately after the bracket resolves. If a participant died DURING the bracket
+    // (present here, absent from the pre-bracket snapshot) and the bracket nonetheless answered
+    // `equal`, the answer cannot stand: §16.3 item 1 is explicit the post-check "cannot digest a dead
+    // binding", so the true answer is `unverifiable`, never `equal`. A `drift`/`unverifiable` answer
+    // already found during the bracket is untouched -- it was proven by an actual value comparison
+    // (or an already-known-dead participant), and Table A already ranks drift above model-evicted and
+    // scope-unverifiable, so nothing downstream needs it upgraded.
+    const postBracketStillHeld = bindingsStillHeld(resolved, registry, world);
+    const diedDuringPostBracket = [...postBracketStillHeld.keys()]
+      .filter((k) => postBracketStillHeld.get(k) === null && preBracketStillHeld.get(k) !== null);
+    if (diedDuringPostBracket.length > 0 && post.proof === 'equal') {
+      post = { proof: 'unverifiable', modelKeys: [...diedDuringPostBracket].sort() };
+    }
 
     if (thrown === null) {
       // No thrown cause to weigh: the bracket answer IS the settlement. Unchanged behaviour.
@@ -540,8 +579,8 @@ export function createLocalUnitExecutor({ world, registry, enumerator, now, yiel
         statistics: statistics.statistics,
       });
     } catch (err) {
-      if (err && err.name === 'EnumerationCancelledError') throw err;
-      return internalErrorOutcome(request, [{ code: 'projection-threw', path: '', detail: err && err.message }]);
+      if (safeGet(err, 'name') === 'EnumerationCancelledError') throw err;
+      return internalErrorOutcome(request, [{ code: 'projection-threw', path: '', detail: safeGet(err, 'message') }]);
     }
   };
 }

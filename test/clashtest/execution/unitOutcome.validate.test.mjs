@@ -83,6 +83,12 @@ const REJECTIONS = [
   ['a function anywhere', good({ extra: () => {} })],
   ['negative durationMs', good({ durationMs: -1 })],
   ['non-finite durationMs', good({ durationMs: Infinity })],
+  // FIX (independent review, M1, owner-authorized remediation 2026-09-22): `role` is legal only on
+  // the singular fragment-scope operand (§11.2/§12.2); a pair-scoped operand has no home for it and
+  // the P4 plan explicitly drops it at projection. Previously accepted with `{ok: true, issues: []}`.
+  ['pair-scoped operand carrying role (dropped at projection, no home on the closed DTO)',
+    good({ diagnostics: [{ scope: 'pair', reason: 'x', completenessAffecting: true, attribution: 'element',
+      fragments: { first: { modelKey: 'mk-a', dbId: 10, fragId: 0, role: 'source' }, second: { modelKey: 'mk-b', dbId: 20, fragId: 1, role: 'target' } } }] })],
 ];
 
 for (const [label, outcome] of REJECTIONS) {
