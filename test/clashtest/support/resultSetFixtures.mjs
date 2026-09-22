@@ -436,9 +436,16 @@ function positivesParts() {
       mode: 'volume-overlap',
     },
     derivedFromRunId: null,
+    // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
+    // `unit2` below is `failed`/`capacity-exceeded` with `capacityKind: 'bucket-capacity'`, which
+    // `deriveRunOutcome` (resultSet.js) derives as `environmentSensitive: true` /
+    // `environmentSensitiveCauses: ['bucket-capacity']` REGARDLESS of the unit's own outcome/cause.
+    // Before P5-REM's read-time re-derivation existed, nothing checked this axis, so this fixture
+    // hardcoded `false`/`[]` -- self-inconsistent with its own ledger content. Corrected to the true
+    // derived value so it does not trip the new `environment-sensitive-mismatch` check.
     outcome: {
       status: 'completed', coverage: 'partial', integrity: 'clean', freshness: 'current',
-      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+      environmentSensitive: true, environmentSensitiveCauses: ['bucket-capacity'], reasons: [],
     },
     provenance: baseProvenance({
       models: [
@@ -505,9 +512,17 @@ function schemaCorpusParts() {
       mode: 'clearance', clearance: 5,
     },
     derivedFromRunId: null,
+    // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
+    // `unit2` below has no `capacityKind` and no `failed:stale-placement` leaf, and `diagnostics`'s
+    // `geometryReadinessOccurrences`/`unclassifiedOccurrences` are both 0, so `deriveRunOutcome`
+    // (resultSet.js) derives `environmentSensitive: false` / `environmentSensitiveCauses: []` for
+    // this ledger content. Before P5-REM's read-time re-derivation existed, nothing checked this
+    // axis, so this fixture hardcoded `true`/`['bucket-capacity']` -- self-inconsistent with its own
+    // ledger content. Corrected to the true derived value so it does not trip the new
+    // `environment-sensitive-mismatch` check.
     outcome: {
       status: 'failed', coverage: 'partial', integrity: 'caveated', freshness: 'unverifiable',
-      environmentSensitive: true, environmentSensitiveCauses: ['bucket-capacity'],
+      environmentSensitive: false, environmentSensitiveCauses: [],
       reasons: ['schema-corpus-fixture'],
     },
     provenance: baseProvenance({
@@ -596,9 +611,16 @@ function completedWithGapsParts() {
       mode: 'volume-overlap',
     },
     derivedFromRunId: null,
+    // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
+    // `unit2` below is `failed`/`capacity-exceeded` with `capacityKind: 'bucket-capacity'`, which
+    // `deriveRunOutcome` (resultSet.js) derives as `environmentSensitive: true` /
+    // `environmentSensitiveCauses: ['bucket-capacity']` REGARDLESS of the unit's own outcome/cause.
+    // Before P5-REM's read-time re-derivation existed, nothing checked this axis, so this fixture
+    // hardcoded `false`/`[]` -- self-inconsistent with its own ledger content. Corrected to the true
+    // derived value so it does not trip the new `environment-sensitive-mismatch` check.
     outcome: {
       status: 'completed', coverage: 'partial', integrity: 'clean', freshness: 'current',
-      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+      environmentSensitive: true, environmentSensitiveCauses: ['bucket-capacity'], reasons: [],
     },
     provenance: baseProvenance({
       models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],

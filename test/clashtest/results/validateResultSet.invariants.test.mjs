@@ -12,6 +12,8 @@ import { SCHEMA_ROWS, UNKNOWN_FIELD_BYTES } from '../../../clashtest/results/res
 // convention is `../support/...`, one level up, not two).
 import { schemaMutations } from '../support/schemaMutations.mjs';
 import { canClaimNoClashes } from '../../../clashtest/results/claim.js';
+import { deriveRunOutcome } from '../../../clashtest/results/resultSet.js';
+import { makeResultId } from '../../../clashtest/identity/ids.js';
 import { CorruptResultSetError, ResultSetTooLargeError } from '../../../clashtest/errors.js';
 import { ENGINE_LIMIT_DEFAULTS } from '../../../clashtest/options.js';
 import { sealedSet, fakeSlicer, resealed } from '../support/resultSetFixtures.mjs';
@@ -147,6 +149,32 @@ const CORRUPTIONS = [
   // WITHIN one root). Reproduced directly against `validateResultSet` before the fix (silently
   // accepted, `{ok: true, issues: []}`).
   ['duplicate-owner-dbid',    (s) => { s.ledger.rootOwners[0].owners.push({ rootDbId: 999999, ownerDbIds: [100], cls: 'A' }); }],
+  // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
+  // before this fix, altering `outcome.integrity` without changing the diagnostics/results that
+  // determine its true value validated `{ok: true}` -- the false-negative the owner brief
+  // demonstrated. `positives`' baseline `integrity` is correctly `'clean'`
+  // (`completenessAffectingUpperBound: 0`, no `duplicateEvidenceConflict` flag); bumping the upper
+  // bound to a positive number without touching `outcome.integrity` reproduces that exact failure
+  // mode literally.
+  ['integrity-not-derived',  (s) => { s.diagnostics.completenessAffectingUpperBound = 1; }],
+  // Two independent corruptions for the ONE `environment-sensitive-mismatch` code (matching how
+  // `coverage-not-full` is the one code for the whole `coverage` axis): the boolean disagreeing with
+  // the derived causes, and -- separately, with the boolean left alone -- the causes array itself
+  // disagreeing. `positives`' baseline correctly derives `environmentSensitive: true,
+  // environmentSensitiveCauses: ['bucket-capacity']` (unit `u2`'s `capacityKind: 'bucket-capacity'`).
+  ['environment-sensitive-mismatch', (s) => { s.outcome.environmentSensitive = false; }],
+  ['environment-sensitive-mismatch', (s) => { s.outcome.environmentSensitiveCauses = []; }],
+  // P5-REM (Item 2, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
+  // before this fix, flipping a result's stored `pair.first`/`pair.second` and recomputing its
+  // `resultId` to stay self-consistent with the flipped `pair` validated `{ok: true}` -- silently
+  // letting one physical clash be represented under two different (opposite-orientation) identities.
+  // `result-id-mismatch` does not also fire here because the `resultId` is deliberately recomputed
+  // against the flipped pair.
+  ['pair-orientation-invalid', (s) => {
+    const flipped = { first: s.results[0].pair.second, second: s.results[0].pair.first };
+    s.results[0].pair = flipped;
+    s.results[0].resultId = makeResultId(s.testRef.testId, s.testRef.semanticDigest, flipped);
+  }],
 ];
 
 test('each corruption is rejected with its own code, even when digests are recomputed consistently', async () => {
@@ -204,7 +232,25 @@ test('completed-with-gaps keeps its non-fatal causes and reasons on read-back', 
     ['failed', 'stale-placement'], ['failed', 'unit-cap'], ['not-run', 'target-too-large'],
     ['failed', 'model-evicted'], ['skipped', 'model-evicted'], ['discarded', 'scope-unverifiable']];
   for (const [outcome, cause] of GAPS) {
-    const set = await resealed((s) => { s.ledger.units[1] = { ...s.ledger.units[1], outcome, cause, scopeProof: 'not-checked' }; s.outcome.coverage = 'partial'; }, 'completed-with-gaps');
+    const set = await resealed((s) => {
+      s.ledger.units[1] = { ...s.ledger.units[1], outcome, cause, scopeProof: 'not-checked' };
+      s.outcome.coverage = 'partial';
+      // P5-REM (Item 1): `units[1]`'s `capacityKind` (`'bucket-capacity'`, preserved by the spread
+      // above) always contributes an environment-sensitive cause, and the `['failed',
+      // 'stale-placement']` row ALSO contributes `placement-contention` -- so, since P5-REM's
+      // `checkCrossField` now re-derives `environmentSensitive`/`environmentSensitiveCauses` and
+      // rejects a stale recorded value, this fixture's own declared outcome must be refreshed to the
+      // real `deriveRunOutcome` output for the mutated ledger, per row, rather than staying pinned to
+      // whatever the un-mutated base fixture declared. Only the two environment-sensitive fields are
+      // taken from the recompute -- status/coverage/integrity/freshness/reasons stay exactly as this
+      // test already sets/expects them.
+      const derived = deriveRunOutcome({
+        status: s.outcome.status, freshness: s.outcome.freshness,
+        ledger: s.ledger, diagnostics: s.diagnostics, results: s.results, reasons: s.outcome.reasons,
+      });
+      s.outcome.environmentSensitive = derived.environmentSensitive;
+      s.outcome.environmentSensitiveCauses = derived.environmentSensitiveCauses;
+    }, 'completed-with-gaps');
     assert.deepEqual(validateResultSet(set, { limits }), { ok: true, issues: [] }, `${outcome}:${cause}`);
   }
 });

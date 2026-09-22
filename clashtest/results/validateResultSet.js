@@ -12,11 +12,11 @@
 
 import { captureData, deepFreezeSliced } from '../util/capture.js';
 import { digestCanonical, DIGEST_VERSION } from '../util/canonical.js';
-import { makeResultId, comparePairIds } from '../identity/ids.js';
+import { makeResultId, makePairId, comparePairIds } from '../identity/ids.js';
 import { isOpenPath, UNKNOWN_FIELD_BYTES, MAX_UNIT_TAINTS, checkShapeAndUnknownFields } from './resultSetSchema.js';
 import { RUN_OPTION_CEILINGS, ENGINE_LIMIT_CEILINGS, SCHEMA_MAX_NODES } from '../options.js';
 import { CorruptResultSetError, ResultSetTooLargeError, UnsupportedSchemaVersionError } from '../errors.js';
-import { SCHEMA_VERSION, pairSetDigestInput, ledgerDigestInput } from './resultSet.js';
+import { SCHEMA_VERSION, pairSetDigestInput, ledgerDigestInput, ENVIRONMENT_CAUSES } from './resultSet.js';
 
 export { SCHEMA_VERSION };
 // §13.5: the closed `ResultSetSummary` shape for listings, co-located with the generic schema walk
@@ -220,7 +220,7 @@ const leavesOf = (ledger) => ledger.units.filter((u) => u.outcome !== 'split');
  *  predicate (mirroring `deriveRunOutcome` exactly), `status: 'completed'` vs. a fatal/planning-gap
  *  cause, and the ledger's own pair-space arithmetic. None of these need a per-result scan. */
 function checkCrossField(set, add) {
-  const { definition, testRef, outcome, ledger } = set;
+  const { definition, testRef, outcome, ledger, diagnostics, results } = set;
 
   if ((definition === null) !== (testRef.semanticDigest === null)) {
     add('/definition', 'definition-digest-mismatch');
@@ -232,6 +232,42 @@ function checkCrossField(set, add) {
     && leaves.length > 0
     && leaves.every((u) => u.outcome === 'evaluated' && u.scopeProof === 'equal');
   if (outcome.coverage === 'full' && !derivedFull) add('/outcome/coverage', 'coverage-not-full');
+
+  // Owner-authorized P5 remediation (docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-
+  // decision-brief.md, Item 1; owner ruling 2026-09-22: "Read-time validation must fail closed and
+  // must not allow a forged or tampered Result Set to support a false no-clash claim when any
+  // governing outcome axis is inconsistent"). Only `coverage` was re-derived above; `integrity` and
+  // `environmentSensitive`(+Causes) were only shape-checked, so a set whose `outcome.integrity` or
+  // `outcome.environmentSensitive(+Causes)` was altered (producer bug, or tampering) without changing
+  // the diagnostics/results/ledger facts that determine the true value validated `{ok: true}`. This
+  // mirrors `deriveRunOutcome` (resultSet.js) EXACTLY -- this reader's copy of the predicate must
+  // never drift from the writer's, same as the `coverage` re-check above. NOTE (the brief's own
+  // framing correction, carried forward so a future reader does not overclaim this): this closes an
+  // internal self-consistency / accidental-corruption hole, NOT an authenticity/forgery boundary -- a
+  // hostile fabricator who controls the whole set can always make both sides agree.
+  const duplicateConflict = results.some((r) => r.flags?.duplicateEvidenceConflict === true);
+  const derivedIntegrity = diagnostics.completenessAffectingUpperBound > 0 || duplicateConflict
+    ? 'caveated' : 'clean';
+  if (outcome.integrity !== derivedIntegrity) add('/outcome/integrity', 'integrity-not-derived');
+
+  const envCauses = new Set();
+  for (const u of leaves) {
+    if (u.capacityKind === 'bucket-capacity') envCauses.add('bucket-capacity');
+    if (u.outcome === 'failed' && u.cause === 'stale-placement') envCauses.add('placement-contention');
+  }
+  if (diagnostics.geometryReadinessOccurrences > 0 || diagnostics.unclassifiedOccurrences > 0) {
+    envCauses.add('geometry-readiness');
+  }
+  const derivedEnvironmentSensitiveCauses = ENVIRONMENT_CAUSES.filter((c) => envCauses.has(c));
+  const derivedEnvironmentSensitive = derivedEnvironmentSensitiveCauses.length > 0;
+  // `deriveRunOutcome` always emits `environmentSensitiveCauses` in `ENVIRONMENT_CAUSES`'s own fixed
+  // order (it is built via `ENVIRONMENT_CAUSES.filter(...)`), so a straightforward element-by-element
+  // comparison against the recorded array is a valid equality check -- no sorting needed on either side.
+  const causesMatch = outcome.environmentSensitiveCauses.length === derivedEnvironmentSensitiveCauses.length
+    && outcome.environmentSensitiveCauses.every((c, i) => c === derivedEnvironmentSensitiveCauses[i]);
+  if (outcome.environmentSensitive !== derivedEnvironmentSensitive || !causesMatch) {
+    add('/outcome/environmentSensitive', 'environment-sensitive-mismatch');
+  }
 
   const hasFatalOrGapCause = (u) => FATAL_CAUSES.has(u.cause) || INPUT_CHANGE_CAUSES.has(u.cause)
     || u.secondaryCauses.some((c) => FATAL_CAUSES.has(c) || INPUT_CHANGE_CAUSES.has(c));
@@ -373,6 +409,25 @@ function checkResultLinkage(set, add) {
       let expected;
       try { expected = makeResultId(testId, semanticDigest, r.pair); } catch { expected = null; }
       if (expected === null || expected !== r.resultId) add(`${path}/resultId`, 'result-id-mismatch');
+    }
+
+    // Owner-authorized P5 remediation (docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-
+    // decision-brief.md, Item 2; owner ruling 2026-09-22: "Stored pairs must satisfy the existing
+    // canonical orientation invariant so one physical clash cannot be represented under duplicate
+    // flipped identities"). `sameRefSet` (above) only checks that `pair` and `evaluatedAs` name the
+    // same two elements as an unordered SET -- it never checks that `pair`'s own `{first, second}`
+    // assignment is the CANONICAL one `makePairId` would produce. Without this check, a corrupted or
+    // forged set could flip one result's `pair.first`/`pair.second`, recompute that result's
+    // `resultId` to stay self-consistent with the flipped `pair`, and still validate `{ok: true}` --
+    // silently letting one physical clash appear as two distinct results (two different `resultId`s
+    // for the same pair, under opposite orientations). Runs unconditionally for every result (no
+    // `unit` lookup needed), right after the `result-id-mismatch` check above.
+    let expectedPair;
+    try { expectedPair = makePairId(r.mode, r.evaluatedAs.source, r.evaluatedAs.target); } catch { expectedPair = null; }
+    if (expectedPair === null
+        || refKey(expectedPair.first) !== refKey(r.pair.first)
+        || refKey(expectedPair.second) !== refKey(r.pair.second)) {
+      add(`${path}/pair`, 'pair-orientation-invalid');
     }
 
     const unit = unitsById.get(r.unitId);
