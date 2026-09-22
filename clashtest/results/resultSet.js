@@ -10,6 +10,8 @@
 // engine's own owner classification (§6.2), not anything the executor could spoof.
 
 import { comparePairIds, elementRefFrom, makePairId, makeResultId } from '../identity/ids.js';
+import { DIGEST_VERSION, digestCanonical } from '../util/canonical.js';
+import { deepFreezeSliced } from '../util/capture.js';          // P0 owns the one sliced deep freeze (N4)
 
 export const SCHEMA_VERSION = 1;
 const UNRANKED = Number.MAX_SAFE_INTEGER; // an unplanned unit sorts last, deterministically
@@ -189,4 +191,110 @@ export function deriveRunOutcome({ status, freshness, ledger, diagnostics, resul
     environmentSensitiveCauses,
     reasons: [...reasons].sort(),
   };
+}
+
+// P5.3: draft assembly, digests, sealing and deep freeze (spec §13.1, §13.3, §13.4, §16.7, erratum A9).
+const SIZING_OPTION_KEYS = ['broadPhase', 'maxSourceFragmentsPerUnit', 'maxSourceDbIdsPerUnit',
+  'maxTargetModelsPerUnit', 'maxTargetFragmentsPerUnit', 'maxUnitsPerRun', 'maxResultsPerRun',
+  'maxPlacementRetries', 'maxPlanReferences', 'maxLedgerRecords', 'maxPairsPerOutcome',
+  'maxDiagnosticsPerOutcome', 'maxDistinctReasons', 'maxElementTaintsPerUnit'];
+
+// Excludes `attempts` and `durationMs` (§13.1: timings are wall-clock and load-dependent) and
+// `secondaryCauses` (§16.7: "diagnostic and excluded from ledgerDigest" -- which of them a real
+// timing race exposes varies, so including them would break AC-21's digest equality across
+// callback schedulings; the primary `cause` is a pure function of the recorded facts).
+const DIGESTED_UNIT_KEYS = ['unitId', 'kind', 'parentUnitId', 'sourceModelKey', 'sourceRootDbIds',
+  'targets', 'outcome', 'cause', 'capacityKind', 'capDetail', 'scopeProof',
+  'pairSpaceWeight', 'taints'];
+
+const pick = (o, keys) => Object.fromEntries(keys.filter((k) => k in o).map((k) => [k, o[k]]));
+const flagNames = (flags) => Object.keys(flags).filter((k) => flags[k] === true).sort();
+
+/** §13.1: the digested projection of `results[]` -- `(resultId, flags)` only, never evidence. */
+export const pairSetDigestInput = (results) => results.map((r) => [r.resultId, flagNames(r.flags)]);
+
+/** §13.1 / §16.7: the digested projection of the ledger. `rootOwners` (incl. its `cls` marker,
+ *  erratum A9) is digested verbatim; `sizingOptions` pins the run's sizing configuration into the
+ *  digest so a set produced under a different ceiling set cannot silently collide with one that
+ *  used the same facts under a different configuration. */
+export function ledgerDigestInput(ledger, runOptions) {
+  return {
+    planExists: ledger.planExists, pairSpaceTotal: ledger.pairSpaceTotal,
+    emptyOperand: ledger.emptyOperand,
+    units: ledger.units.map((u) => pick(u, DIGESTED_UNIT_KEYS)),
+    rootOwners: ledger.rootOwners, unresolvedSelections: ledger.unresolvedSelections,
+    unreachablePopulation: ledger.unreachablePopulation, hierarchyInternal: ledger.hierarchyInternal,
+    planningGaps: ledger.planningGaps, exclusions: ledger.exclusions, warnings: ledger.warnings,
+    budgetExhausted: ledger.budgetExhausted, firstRefusalUnitId: ledger.firstRefusalUnitId,
+    sizingOptions: pick(runOptions, SIZING_OPTION_KEYS),
+  };
+}
+
+/** Assembles the §13.1 `ResultSet` structure as an unsealed draft: `digests: null`, `sealed:
+ *  false`. Plain data, no validation -- P5.4/P5.5 own capture and schema validation. */
+export function buildResultSet(parts) {
+  const { runId, testRef, definition, derivedFromRunId = null, outcome, provenance, ledger,
+          results, diagnostics, statistics } = parts;
+  return { schemaVersion: SCHEMA_VERSION, runId, testRef, definition, derivedFromRunId,
+           outcome, provenance, ledger, results, diagnostics, statistics,
+           digests: null, sealed: false };
+}
+
+/** §13.3: "sealed exactly once ... enforced, not merely promised". A non-draft is an engine bug,
+ *  not a data error, so it is a plain programmer error with a stable code -- never a §18 class
+ *  (no spec error names this case, and giving it one would invite callers to handle it).
+ *
+ *  Field shape (`sealed`/`digests`) alone cannot detect a draft object being handed to
+ *  `sealResultSet` a SECOND time (concurrently or sequentially): `sealResultSet` never mutates the
+ *  original draft's own `sealed`/`digests` fields -- it builds a new object -- so a reused draft
+ *  looks field-identical to a fresh one. `CONSUMED_DRAFTS` closes that gap by object IDENTITY
+ *  (codex-advisor finding, 2026-09-22): once a draft has been claimed by `sealResultSet`, it can
+ *  never be claimed again, whether or not that first attempt went on to succeed. */
+const NOT_A_DRAFT = 'ERR_RESULT_SET_NOT_DRAFT';
+const CONSUMED_DRAFTS = new WeakSet();
+function assertDraft(draft) {
+  const bad = draft === null || typeof draft !== 'object' ? 'not an object'
+    : draft.sealed !== false ? 'already sealed'
+    : draft.digests !== null ? 'already carries digests'
+    : CONSUMED_DRAFTS.has(draft) ? 'already consumed by a previous seal (same draft object reused)'
+    : null;
+  if (bad === null) return;
+  const err = new TypeError(`sealResultSet: ${bad}; a Result Set is sealed exactly once (spec §13.3)`);
+  err.code = NOT_A_DRAFT;
+  throw err;
+}
+
+/**
+ * Deep-freezes the draft, computes `digests` from the now-frozen content, and returns the sealed,
+ * frozen `ResultSet`. Rejects a value that is not a fresh draft with
+ * `TypeError{code: ERR_RESULT_SET_NOT_DRAFT}` (§13.3).
+ *
+ * Order matters (codex-advisor finding, 2026-09-22): `deepFreezeSliced` yields across ticks, so
+ * digesting the draft BEFORE it is frozen leaves a window in which a mutation to a not-yet-frozen
+ * subtree would reach the final frozen set while the recorded digest still reflected the
+ * pre-mutation content -- a sealed set whose own digest does not match its own content. Freezing
+ * FIRST and digesting the already-frozen draft afterward makes the digest correct by construction:
+ * whatever the draft's content is by the time every node is frozen (raced or not) is exactly what
+ * gets digested, because nothing can change after `deepFreezeSliced` resolves. The two small,
+ * freshly-created objects built after that point (`digests` and the returned `set` itself) need no
+ * slicing -- both are frozen synchronously, since everything they reference is already frozen.
+ *
+ * The draft is claimed (added to `CONSUMED_DRAFTS`) synchronously, before the first `await`, so two
+ * calls issued back-to-back for the SAME draft (e.g. `Promise.all([sealResultSet(d, o), sealResultSet(d,
+ * o)])`) can never both proceed: JS runs each call's synchronous prefix to completion before the next
+ * call starts, so exactly the first-issued call claims the draft and every other rejects immediately
+ * with `ERR_RESULT_SET_NOT_DRAFT`. A draft is claimed even when the seal goes on to fail (e.g. the
+ * slicer rejects mid-freeze): a draft that started sealing and did not finish may be partially frozen
+ * and is never safely resealable -- recovery means building a fresh draft via `buildResultSet`, not
+ * retrying the same object.
+ */
+export async function sealResultSet(draft, { slicer }) {
+  assertDraft(draft);
+  CONSUMED_DRAFTS.add(draft);
+  await deepFreezeSliced(draft, slicer);            // P0's helper; the slicer object, not {slicer}
+  const digests = { digestVersion: DIGEST_VERSION,
+    pairSetDigest: digestCanonical(pairSetDigestInput(draft.results)),
+    ledgerDigest: digestCanonical(ledgerDigestInput(draft.ledger, draft.provenance.runOptions)) };
+  Object.freeze(digests);
+  return Object.freeze({ ...draft, digests, sealed: true });
 }
