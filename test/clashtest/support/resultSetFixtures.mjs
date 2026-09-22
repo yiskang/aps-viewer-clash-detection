@@ -7,6 +7,7 @@
 
 import { DIGEST_VERSION } from '../../../clashtest/util/canonical.js';
 import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
+import { buildResultSet, sealResultSet } from '../../../clashtest/results/resultSet.js';
 
 /** P4's `DiagnosticsSummary` (`snapshot()` shape) with every counter at 0. */
 export function emptyDiagnostics() {
@@ -235,4 +236,15 @@ export function runParts(kind = 'default') {
     }),
     results,
   };
+}
+
+/**
+ * A real, fully sealed, self-consistent `ResultSet` (Task P5.4): `sealResultSet(buildResultSet(
+ * runParts(kind)), ...)` — the exact same production pipeline P5.1-P5.3's own tests already use
+ * (see `resultSet.seal.test.mjs`), not a hand-built/fake object. Every call is freshly built and
+ * unshared (per `runParts`'s own contract), so mutating one call's result never affects another's.
+ * `kind` is `runParts`'s own kind switch ('default' | 'cancelled-pre-resolution' | 'wide').
+ */
+export async function sealedSet(kind = 'default') {
+  return sealResultSet(buildResultSet(runParts(kind)), { slicer: fakeSlicer() });
 }
