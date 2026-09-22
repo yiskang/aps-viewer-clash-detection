@@ -13,7 +13,9 @@
 
 import { DIGEST_VERSION } from '../../../clashtest/util/canonical.js';
 import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
-import { buildResultSet, sealResultSet } from '../../../clashtest/results/resultSet.js';
+import {
+  buildResultSet, sealResultSet, createResultAccumulator, deriveRunOutcome,
+} from '../../../clashtest/results/resultSet.js';
 import { makeResultId, makePairId } from '../../../clashtest/identity/ids.js';
 
 /** P4's `DiagnosticsSummary` (`snapshot()` shape) with every counter at 0. `countsByReason` is an
@@ -918,5 +920,225 @@ export async function sharedRootPlan({ fanOut, unrelatedUnits = 0 }) {
     diagnostics: emptyDiagnostics(),
     statistics: {},
   };
+  return sealResultSet(buildResultSet(parts), { slicer: fakeSlicer() });
+}
+
+// =================================================================================================
+// Task P5.9: `sealFakeRun(kind)` -- the phase's own acceptance harness. Unlike every fixture above
+// (which hand-assembles `results[]` via `makeResultId` directly, bypassing P5.1's projection), this
+// ONE builder drives the real P5.1 stage too: fake `UnitOutcome`s go through
+// `createResultAccumulator` (`projectUnitPairs` + the whole-unit result cap), the accumulated
+// results and a hand-built ledger go through the real `deriveRunOutcome` (P5.2) -- so
+// `outcome.coverage`/`integrity`/`environmentSensitive(+Causes)` are DERIVED, never asserted -- and
+// only then `buildResultSet`/`sealResultSet` (P5.3). This is what makes `roundTrip.test.mjs` a
+// genuine produce -> persist -> evict -> read -> validate proof of P5.1-P5.3 wired together, not
+// just P5.3 sealing whatever it is handed.
+// =================================================================================================
+
+/** A fake `UnitOutcome` (library orientation), the ONLY shape `projectUnitPairs`/
+ *  `createResultAccumulator` read: `{unitId, pairs}`, `pairs[]` = `{source, target, witness}`
+ *  (volume-overlap evidence -- the only mode these fixtures use). */
+const fakeUnitOutcome = (unitId, pairs = []) => ({ unitId, pairs });
+
+/** `createResultAccumulator`'s own `ctx` (P5.1): mode + identity inputs + the whole-run result cap.
+ *  `unreachableOwners`/`mixedOwners` are empty -- none of these fixtures need a spoofed-ownership
+ *  flag -- and `unitPlanRank` is unused (no fixture here produces a duplicate resultId to
+ *  reconcile). */
+function fakeAccumulatorCtx(testId, semanticDigest) {
+  return {
+    mode: 'volume-overlap', testId, semanticDigest,
+    maxResultsPerRun: RUN_OPTION_DEFAULTS.maxResultsPerRun,
+    unitPlanRank: new Map(),
+    unreachableOwners: new Map(),
+    mixedOwners: new Map(),
+  };
+}
+
+/** Runs every fake `UnitOutcome` through the REAL `createResultAccumulator` (P5.1) and returns its
+ *  final, canonically-ordered `results[]`. Throws if a unit is refused (never expected here --
+ *  every fixture below stays far under `maxResultsPerRun`), so a future fixture that DID overflow
+ *  the cap would fail loudly here rather than silently seal an unexpectedly-short `results[]`. */
+function fakeAccumulate(ctx, unitOutcomes) {
+  const acc = createResultAccumulator(ctx);
+  for (const uo of unitOutcomes) {
+    const admitted = acc.addUnit(uo);
+    if (!admitted.accepted) {
+      throw new Error(`resultSetFixtures.sealFakeRun: unit ${uo.unitId} refused (${admitted.reason})`);
+    }
+  }
+  return acc.toArray();
+}
+
+const fakeDefinition = (testId, mode = 'volume-overlap') => ({
+  schemaVersion: 1, testId, revision: 1, name: testId,
+  selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+  selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+  mode,
+});
+
+/** `completed-clean`: 2 evaluated leaves, `pairSpaceTotal: 12`, no gaps/taints, zero results.
+ *  `deriveRunOutcome` derives `coverage: 'full'` / `integrity: 'clean'` from exactly that shape --
+ *  every §8.3 claim conjunct ends up true, so this is the ONE shape `canClaimNoClashes` allows. */
+function fakeCompletedClean() {
+  const testId = 'TF-completed-clean';
+  const semanticDigest = digestOf('1');
+  const ctx = fakeAccumulatorCtx(testId, semanticDigest);
+  const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [10], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 6 });
+  const u2 = unit('u2', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [12], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 6 });
+  const results = fakeAccumulate(ctx, [fakeUnitOutcome('u1'), fakeUnitOutcome('u2')]);
+  const ledger = ledgerWith({
+    pairSpaceTotal: 12, units: [u1, u2],
+    // No result mentions any of these owners (zero clashes), but P7's T3 live acceptance reuses
+    // this fixture (spec AC-15 prerequisite) and `status.js`'s readers index `rootOwners` -- an
+    // empty table would give a degenerate answer to any future consumer of this shape.
+    rootOwners: [
+      { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [], cls: 'A' }, { rootDbId: 12, ownerDbIds: [], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [], cls: 'A' }] },
+    ],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'completed', freshness: 'current', ledger, diagnostics, results });
+  return {
+    runId: 'run-fake-completed-clean', testRef: { testId, revision: 1, semanticDigest },
+    definition: fakeDefinition(testId), derivedFromRunId: null, outcome,
+    provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
+    ledger, results, diagnostics, statistics: {},
+  };
+}
+
+/** `completed-with-gaps`: 1 evaluated leaf (1 positive result) + 1 `failed:capacity-exceeded` leaf
+ *  with no results of its own -- `deriveRunOutcome` derives `coverage: 'partial'` because not every
+ *  leaf is `evaluated`, which is exactly what blocks the claim (the `full` conjunct). `capacity-
+ *  exceeded` is in neither `FATAL_CAUSES` nor `INPUT_CHANGE_CAUSES`, so `status: 'completed'` stays
+ *  admissible (no `completed-with-fatal-cause`). */
+function fakeCompletedWithGaps() {
+  const testId = 'TF-completed-with-gaps';
+  const semanticDigest = digestOf('2');
+  const ctx = fakeAccumulatorCtx(testId, semanticDigest);
+  const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [10], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10 });
+  const u2 = unit('u2', 'failed', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [11], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 5,
+    cause: 'capacity-exceeded', capacityKind: 'bucket-capacity', scopeProof: 'not-checked' });
+  const results = fakeAccumulate(ctx, [
+    fakeUnitOutcome('u1', [{ source: ref(MODEL_A, 100), target: ref(MODEL_B, 200),
+      witness: { kind: 'vertex', point: [0, 0, 0] } }]),
+    fakeUnitOutcome('u2'),
+  ]);
+  const ledger = ledgerWith({
+    pairSpaceTotal: 15, units: [u1, u2],
+    rootOwners: [
+      { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'A' }] },
+    ],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'completed', freshness: 'current', ledger, diagnostics, results });
+  return {
+    runId: 'run-fake-completed-with-gaps', testRef: { testId, revision: 1, semanticDigest },
+    definition: fakeDefinition(testId), derivedFromRunId: null, outcome,
+    provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
+    ledger, results, diagnostics, statistics: {},
+  };
+}
+
+/** `cancelled-pre-resolution`: cancelled before a plan ever existed -- `planExists: false`,
+ *  `units: []`, a `{phase:'queued', cause:'cancelled'}` planning gap, `definition: null` paired
+ *  with a null `testRef.semanticDigest` (the definition/digest null-parity rule). No unit ever ran,
+ *  so `createResultAccumulator` is not exercised here (there is nothing to project). */
+function fakeCancelledPreResolution() {
+  const testId = 'TF-cancelled-pre-resolution';
+  const ledger = ledgerWith({
+    planExists: false, pairSpaceTotal: 0, units: [],
+    planningGaps: [{ phase: 'queued', cause: 'cancelled' }],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'cancelled', freshness: 'unverifiable', ledger, diagnostics, results: [] });
+  return {
+    runId: 'run-fake-cancelled-pre-resolution',
+    testRef: { testId, revision: null, semanticDigest: null },
+    definition: null, derivedFromRunId: null, outcome,
+    provenance: baseProvenance(),
+    ledger, results: [], diagnostics, statistics: {},
+  };
+}
+
+/** `failed`: a `{phase:'planning', cause:'plan-too-large'}` planning gap stopped the run before any
+ *  unit was produced -- structurally the same empty-ledger shape as `cancelled-pre-resolution`,
+ *  distinguished only by `outcome.status`. */
+function fakeFailed() {
+  const testId = 'TF-failed';
+  const ledger = ledgerWith({
+    planExists: false, pairSpaceTotal: 0, units: [],
+    planningGaps: [{ phase: 'planning', cause: 'plan-too-large' }],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'failed', freshness: 'unverifiable', ledger, diagnostics, results: [] });
+  return {
+    runId: 'run-fake-failed',
+    testRef: { testId, revision: null, semanticDigest: null },
+    definition: null, derivedFromRunId: null, outcome,
+    provenance: baseProvenance(),
+    ledger, results: [], diagnostics, statistics: {},
+  };
+}
+
+/** `invalidated`: 1 evaluated leaf retained (1 positive result) + 1 `discarded:scope-drift` leaf --
+ *  `deriveRunOutcome` derives `coverage: 'partial'` (the discarded leaf is not `evaluated`), and
+ *  `freshness: 'stale'` records the invalidation at seal time (irrelevant to the round-trip test's
+ *  own claim check, which always supplies its OWN `currentFreshness: 'current'` -- §8.3's `current`
+ *  conjunct reads the CALLER's freshness, never the sealed set's own `outcome.freshness`). */
+function fakeInvalidated() {
+  const testId = 'TF-invalidated';
+  const semanticDigest = digestOf('3');
+  const ctx = fakeAccumulatorCtx(testId, semanticDigest);
+  const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [15], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10 });
+  const u2 = unit('u2', 'discarded', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [16], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 5,
+    cause: 'scope-drift', scopeProof: 'not-checked' });
+  const results = fakeAccumulate(ctx, [
+    fakeUnitOutcome('u1', [{ source: ref(MODEL_A, 150), target: ref(MODEL_B, 250),
+      witness: { kind: 'vertex', point: [0, 0, 0] } }]),
+    fakeUnitOutcome('u2'),
+  ]);
+  const ledger = ledgerWith({
+    pairSpaceTotal: 15, units: [u1, u2],
+    rootOwners: [
+      { modelKey: MODEL_A, owners: [{ rootDbId: 15, ownerDbIds: [150], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 25, ownerDbIds: [250], cls: 'A' }] },
+    ],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'invalidated', freshness: 'stale', ledger, diagnostics, results });
+  return {
+    runId: 'run-fake-invalidated', testRef: { testId, revision: 1, semanticDigest },
+    definition: fakeDefinition(testId), derivedFromRunId: null, outcome,
+    provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
+    ledger, results, diagnostics, statistics: {},
+  };
+}
+
+const FAKE_RUN_BUILDERS = Object.freeze({
+  'completed-clean': fakeCompletedClean,
+  'completed-with-gaps': fakeCompletedWithGaps,
+  'cancelled-pre-resolution': fakeCancelledPreResolution,
+  failed: fakeFailed,
+  invalidated: fakeInvalidated,
+});
+
+/**
+ * Task P5.9's own acceptance-harness builder, for one of the five terminal shapes
+ * (`completed-clean`, `completed-with-gaps`, `cancelled-pre-resolution`, `failed`, `invalidated`).
+ * Unlike `sealedSet`, this drives P5.1's `createResultAccumulator`/`deriveRunOutcome` too (see the
+ * section header above) -- `roundTrip.test.mjs`'s own acceptance proof that P5.1-P5.3 agree with
+ * each other, not just that P5.3 can seal whatever it is handed.
+ */
+export async function sealFakeRun(kind) {
+  const build = FAKE_RUN_BUILDERS[kind];
+  if (build === undefined) throw new Error(`resultSetFixtures.sealFakeRun: unknown kind ${kind}`);
+  const parts = build();
   return sealResultSet(buildResultSet(parts), { slicer: fakeSlicer() });
 }
