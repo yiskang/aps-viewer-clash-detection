@@ -40,3 +40,5 @@ export * from './fakeRegistry.mjs';
 //   P7  export * from './maximumShape.mjs';          // maximum-shape synthesizer
 export * from './definitions.mjs';
 export * from './syntheticModels.mjs';
+export * from './executionWorld.mjs';
+export * from './executionRequests.mjs';

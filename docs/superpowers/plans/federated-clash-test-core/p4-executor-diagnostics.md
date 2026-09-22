@@ -1565,7 +1565,19 @@ if (post.proof === 'unverifiable') return discarded('scope-unverifiable', { mode
 
 `checkScopeBracket` returns `{proof: 'equal'|'drift'|'unverifiable', modelKeys}`; it re-`digestScope`s every scope the expectation lists and folds P3's `compareScopeExpectation` over the answers (`unverifiable` absorbs `equal`, `drift` wins over both), including the "any throw from `digestScope` ⇒ `unverifiable`" rule. **P4 implements no digest comparison of its own and builds no expectation** — both would be the second copy §16.3.4's invariant I-scope cannot survive (duplicate-ownership D1). Each bracket call is independent and both compare against the **planning-time** expectation, which is what still catches a grow-and-revert between the two checks. P4's own contribution is the mapping below: `skipped`/`discarded` outcomes carry `pairs: []`, `diagnostics: []`, `statistics: {}` — nothing from a drifted call is merged — and `scopeProof` is written from `proof`.
 
-The post-check runs **even when the call threw**, so a unit that failed *and* drifted is recorded as drifted; §7.5's row for the thrown signal still supplies `failure.code` when the post-check is `equal`. Precedence when both are non-`equal`: scope drift wins over the thrown cause, because drift invalidates the run (§16.3 item 3) while most thrown causes only gap it — the fail-closed direction.
+The post-check runs **even when the call threw**, and §7.5's row for the thrown signal supplies `failure.code`.
+
+**CORRECTED (owner-authorized C1 remediation, 2026-09-22, Option B — this supersedes the sketch immediately above, which unconditionally early-returns).** This paragraph previously read: *"Precedence when both are non-`equal`: scope drift wins over the thrown cause, because drift invalidates the run (§16.3 item 3) while most thrown causes only gap it — the fail-closed direction."* That claim and that citation were both wrong. §16.3 item 3 defines what a `scope-drift` **outcome** does to run status; it says nothing about precedence against a thrown failure. And for `world-disposed`/`internal-error`/`result-cap` the argument inverts: those resolve to `failed`, which §16.7 Table A **part B** resolves *before* `invalidated`, so masking them with drift is fail-**open**.
+
+What is implemented is **fact-preserving, and reports both facts**, so nothing is destroyed at the P4 boundary (P6's accepted `factsFromOutcome` resolver reads the two independently):
+
+- `failure.code` is **always** the classified thrown cause (§7.5), whatever the bracket said;
+- `scopeProof` is **always** the true bracket answer (`equal`/`drift`/`unverifiable`), whatever was thrown;
+- only the coarse outcome **kind** is chosen, by comparing **§16.7 Table A part A** ranks — U1 `world-disposed` > U2 `internal-error` > U3 `result-cap` > U4 `input-changed` > U5 `scope-drift` > U6 `model-evicted` > U7 `scope-unverifiable` > U8 everything else. When the bracket answer outranks the thrown cause the kind is `discarded` (the call was issued and its result thrown away); otherwise the thrown cause keeps its own kind.
+
+The same Table A order governs the **pre**-check: a live participant's `scope-drift` (U5) settles ahead of another participant's dead/re-bound lease (U6), which in turn settles ahead of `scope-unverifiable` (U7). The lease gate therefore no longer returns before the bracket runs; it only forces every unheld participant to a `null` binding so the bracket can never digest a re-registered model (§16.1, H5).
+
+Residual, explicitly carried forward and **not** closed by Option B: when U5 drift legitimately beats a U8 cause, Table A would also retain that cause as a *secondary* cause, and `UnitOutcome` has no field for one — the cause stays visible in `failure.code`, but the ordering between the two is P6's to re-derive. Closing it is option (A) in the C1 record and needs an owner-approved schema change.
 
 - [ ] **Step 4: Run it and watch it pass.** `node --test test/clashtest/execution/localExecutor.scope.test.mjs` → 7 passing.
 
