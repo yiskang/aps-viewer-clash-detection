@@ -158,7 +158,10 @@ export function createResultAccumulator(ctx) {
 }
 
 // P5.2: `RunOutcome` derivation (spec §8.3, §12.5, §13.6 R21-2).
-const ENVIRONMENT_CAUSES = ['bucket-capacity', 'geometry-readiness', 'placement-contention'];
+// Exported (P5.5): `resultSetSchema.js`'s `RunOutcome.environmentSensitiveCauses` structural row
+// needs the SAME closed list this predicate derives against -- a second, re-typed copy would be
+// exactly the duplicate-then-drift pattern the rest of this phase avoids.
+export const ENVIRONMENT_CAUSES = ['bucket-capacity', 'geometry-readiness', 'placement-contention'];
 
 /**
  * Derives `coverage`, `integrity` and `environmentSensitive(+Causes)` from a finished run's raw

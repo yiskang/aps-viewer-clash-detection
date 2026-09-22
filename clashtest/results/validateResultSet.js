@@ -1,23 +1,28 @@
 // clashtest/results/validateResultSet.js
 //
-// Task P5.4: capture-first, detached reads of an untrusted Result Set (spec §13.6). This file owns
-// ONLY `captureResultSet`, `nodeCeilingError` and `applyMigration` — the structural walk
-// (`validateResultSetSteps`, `validateResultSet`, `readResultSet`) is Task P5.5's addition to this
-// same file, per the controller's file-ownership ruling
-// (.superpowers/sdd/p5-result-set/progress.md).
+// Task P5.4 authored `captureResultSet`, `nodeCeilingError` and `applyMigration` (spec §13.6,
+// capture-first detached reads). Task P5.5 (this pass) adds the structural/cross-field/linkage/
+// order/digest walk (`validateResultSetSteps`, `validateResultSet`, `readResultSet`), per the
+// controller's file-ownership ruling (.superpowers/sdd/p5-result-set/progress.md).
 //
 // Capture-first: nothing is ever read off the untrusted `raw` argument before the descriptor-based
 // traversal in `util/capture.js` reads it. `runId` is an explicit diagnostic parameter for exactly
 // that reason — never read off `raw` — so a hostile `runId` getter can never fire (see the
 // 'accessors are rejected...' test).
 
-import { captureData } from '../util/capture.js';
-import { isOpenPath, UNKNOWN_FIELD_BYTES, MAX_UNIT_TAINTS } from './resultSetSchema.js';
+import { captureData, deepFreezeSliced } from '../util/capture.js';
+import { digestCanonical, DIGEST_VERSION } from '../util/canonical.js';
+import { makeResultId, comparePairIds } from '../identity/ids.js';
+import { isOpenPath, UNKNOWN_FIELD_BYTES, MAX_UNIT_TAINTS, checkShapeAndUnknownFields } from './resultSetSchema.js';
 import { RUN_OPTION_CEILINGS, ENGINE_LIMIT_CEILINGS, SCHEMA_MAX_NODES } from '../options.js';
 import { CorruptResultSetError, ResultSetTooLargeError, UnsupportedSchemaVersionError } from '../errors.js';
-import { SCHEMA_VERSION } from './resultSet.js';
+import { SCHEMA_VERSION, pairSetDigestInput, ledgerDigestInput } from './resultSet.js';
 
 export { SCHEMA_VERSION };
+// §13.5: the closed `ResultSetSummary` shape for listings, co-located with the generic schema walk
+// it reuses (`resultSetSchema.js`'s `TestRef`/`Digests` rows) but re-exported from here because
+// this is the file the interface table names as its code home.
+export { validateResultSetSummary } from './resultSetSchema.js';
 
 const MAX_ISSUES = 20;               // §13.6: the first 20 {path, code}, never a value
 const MAX_DEPTH = 64;                // §13.6 — a data-format property, not a §17.1 default
@@ -179,5 +184,307 @@ export function applyMigration(captured, migrations, { runId, currentVersion = S
   if (versionDesc === undefined || !('value' in versionDesc) || versionDesc.value !== currentVersion) {
     throw failed('migration-failed');
   }
+  return migrated;
+}
+
+// =================================================================================================
+// Task P5.5: cross-field, linkage, order and digest validation, plus the public entry points.
+// =================================================================================================
+
+const FATAL_CAUSES = new Set(['world-disposed', 'internal-error', 'result-cap']);
+const INPUT_CHANGE_CAUSES = new Set(['input-changed', 'scope-drift', 'cancel-requested']);
+
+/** Review question 1, answered: `validateResultSet` is NOT an untrusted-input boundary. It reads
+ *  properties directly, so a raw hostile object would invoke getters — the exact thing capture
+ *  exists to prevent. `captureResultSet`/`readResultSet` are the one boundary; this is the cheap
+ *  O(1) precondition that makes the rule enforced rather than merely documented. */
+const UNCAPTURED = 'ERR_UNCAPTURED_INPUT';
+function assertCaptured(set) {
+  const ok = set !== null && typeof set === 'object' && !Array.isArray(set)
+    && Object.getPrototypeOf(set) === Object.prototype
+    && Object.values(Object.getOwnPropertyDescriptors(set)).every((d) => 'value' in d);
+  if (ok) return;
+  const err = new TypeError('validateResultSet: argument must be a captured copy (spec §13.6); '
+    + 'call captureResultSet/readResultSet at the untrusted boundary');
+  err.code = UNCAPTURED;
+  throw err;
+}
+
+/** §13.6 R21-2: the leaves of a ledger are every unit that is not itself superseded by a split —
+ *  VERBATIM the same filter `resultSet.js`'s `deriveRunOutcome` applies, because this predicate
+ *  must be the writer's own (a reader that computed "full coverage" differently from the writer
+ *  would reject sets the writer itself considers valid, or accept ones it does not). */
+const leavesOf = (ledger) => ledger.units.filter((u) => u.outcome !== 'split');
+
+/** Global, non-per-result cross-field rules: definition/testRef null-parity, the `coverage: 'full'`
+ *  predicate (mirroring `deriveRunOutcome` exactly), `status: 'completed'` vs. a fatal/planning-gap
+ *  cause, and the ledger's own pair-space arithmetic. None of these need a per-result scan. */
+function checkCrossField(set, add) {
+  const { definition, testRef, outcome, ledger } = set;
+
+  if ((definition === null) !== (testRef.semanticDigest === null)) {
+    add('/definition', 'definition-digest-mismatch');
+  }
+
+  const leaves = leavesOf(ledger);
+  const derivedFull = ledger.planExists === true
+    && ledger.planningGaps.length === 0
+    && leaves.length > 0
+    && leaves.every((u) => u.outcome === 'evaluated' && u.scopeProof === 'equal');
+  if (outcome.coverage === 'full' && !derivedFull) add('/outcome/coverage', 'coverage-not-full');
+
+  const hasFatalOrGapCause = (u) => FATAL_CAUSES.has(u.cause) || INPUT_CHANGE_CAUSES.has(u.cause)
+    || u.secondaryCauses.some((c) => FATAL_CAUSES.has(c) || INPUT_CHANGE_CAUSES.has(c));
+  if (outcome.status === 'completed'
+      && (ledger.planningGaps.length > 0 || ledger.units.some(hasFatalOrGapCause))) {
+    add('/outcome/status', 'completed-with-fatal-cause');
+  }
+
+  if (ledger.emptyOperand === true && ledger.pairSpaceTotal > 0) {
+    add('/ledger/pairSpaceTotal', 'pair-space-inconsistent');
+  }
+  const leafWeightSum = leaves.reduce((n, u) => n + u.pairSpaceWeight, 0);
+  if (ledger.pairSpaceTotal !== leafWeightSum) add('/ledger/pairSpaceTotal', 'pair-space-inconsistent');
+}
+
+/** (modelKey, dbId) as a collision-free string key — local to this file's own linkage bookkeeping
+ *  (never P1's `elementRefKey`, which VALIDATES its input; every ref reaching this function has
+ *  already passed the structural phase, and this key is used only for local Map/Set membership). */
+const refKey = (ref) => `${ref.modelKey}\u0000${ref.dbId}`;
+
+/** True iff `{evaluatedAs.source, evaluatedAs.target}` names exactly the same two refs as
+ *  `{pair.first, pair.second}` (order-independent — the pair's own order is a canonical-order
+ *  artifact, not a claim about which physical element was the library's "source"). */
+function sameRefSet(pair, evaluatedAs) {
+  const pairKeys = new Set([refKey(pair.first), refKey(pair.second)]);
+  const evalKeys = [refKey(evaluatedAs.source), refKey(evaluatedAs.target)];
+  return evalKeys.length === pairKeys.size && evalKeys.every((k) => pairKeys.has(k));
+}
+
+/** Root ownership lookup: for a model, the rootDbId that "owns" a given dbId, per `rootOwners`.
+ *  codex-review finding (2026-09-22, security, confirmed): the structural schema's own uniqueness
+ *  rules (`RootOwners.owners` unique by `rootDbId`; `RootOwnerRow.ownerDbIds` unique WITHIN one
+ *  root) do not stop the SAME ownerDbId from being listed under TWO DIFFERENT roots of the same
+ *  model -- a cross-row inconsistency no single-array `uniqueBy` check can see. Left unchecked,
+ *  `owners.set(...)` would silently keep whichever root happened to be visited last, letting a
+ *  corrupt or forged set claim ambiguous root attribution while passing `owner-not-in-ledger` /
+ *  `result-unit-coverage` -- reproduced by the reviewer directly against `validateResultSet`. */
+function buildOwnerIndex(rootOwners, add) {
+  const byModel = new Map();
+  for (const row of rootOwners) {
+    let owners = byModel.get(row.modelKey);
+    if (owners === undefined) { owners = new Map(); byModel.set(row.modelKey, owners); }
+    for (const owner of row.owners) {
+      for (const ownerDbId of owner.ownerDbIds) {
+        const claimedBy = owners.get(ownerDbId);
+        if (claimedBy !== undefined && claimedBy !== owner.rootDbId) {
+          add('/ledger/rootOwners', 'duplicate-owner-dbid');
+        }
+        owners.set(ownerDbId, owner.rootDbId);
+      }
+    }
+  }
+  return byModel;
+}
+
+/** True iff `ref` is a genuine root owner somewhere in `ownerIndex` (independent of any unit). */
+function isRootOwner(ownerIndex, ref) {
+  return ownerIndex.get(ref.modelKey)?.has(ref.dbId) === true;
+}
+
+/** True iff `ref`'s dbId is covered by `unit`'s declared SOURCE range. When the ref's owning root
+ *  cannot be resolved (it is not a root owner at all), the check trusts `unreachableOwner` rather
+ *  than failing closed a second time — `owner-not-in-ledger` is the check that owns "is this dbId
+ *  known to the ledger at all"; this one asks only "does the covering unit's own declared range
+ *  include it", which is unanswerable once ownership itself could not be resolved. */
+function coveredBySource(unit, ref, ownerIndex, unreachableOwner) {
+  if (ref.modelKey !== unit.sourceModelKey) return false;
+  const rootDbId = ownerIndex.get(ref.modelKey)?.get(ref.dbId);
+  if (rootDbId === undefined) return unreachableOwner === true;
+  return unit.sourceRootDbIds.includes(rootDbId);
+}
+
+/** Same as `coveredBySource`, for the TARGET side: a `scope: 'model'` target covers the whole
+ *  model regardless of root; a `scope: 'roots'` target needs the ref's owning root in its list. */
+function coveredByTarget(unit, ref, ownerIndex, unreachableOwner) {
+  for (const t of unit.targets) {
+    if (t.modelKey !== ref.modelKey) continue;
+    if (t.scope === 'model') return true;
+    const rootDbId = ownerIndex.get(ref.modelKey)?.get(ref.dbId);
+    if (rootDbId === undefined) return unreachableOwner === true;
+    if ((t.rootDbIds ?? []).includes(rootDbId)) return true;
+  }
+  return false;
+}
+
+/** R21-4 linkage, plus the per-result cross-field rules that need the same maps/loop
+ *  (`owner-not-in-ledger`, `unreachable-flag-invalid`, `result-id-mismatch`) and the ledger-mention
+ *  half of `model-not-in-provenance`. One `Map<unitId, UnitRecord>` and one owner index are built
+ *  once; every result is then checked in a single canonical-order pass. */
+function checkResultLinkage(set, add) {
+  const unitsById = new Map(set.ledger.units.map((u) => [u.unitId, u]));
+  const ownerIndex = buildOwnerIndex(set.ledger.rootOwners, add);
+  const unreachableIndex = new Map(
+    set.ledger.unreachablePopulation.map((u) => [u.modelKey, new Set(u.ownerDbIds)]));
+  const provenanceModelKeys = new Set(set.provenance.models.map((m) => m.modelKey));
+  const mentioned = new Set();
+  for (const u of set.ledger.units) {
+    mentioned.add(u.sourceModelKey);
+    for (const t of u.targets) mentioned.add(t.modelKey);
+  }
+  for (const row of set.ledger.rootOwners) mentioned.add(row.modelKey);
+  for (const row of set.ledger.unreachablePopulation) mentioned.add(row.modelKey);
+  for (const row of set.ledger.hierarchyInternal) mentioned.add(row.modelKey);
+
+  const semanticDigest = set.testRef.semanticDigest;
+  const testId = set.testRef.testId;
+  const definitionMode = set.definition !== null ? set.definition.mode : null;
+
+  for (let i = 0; i < set.results.length; i += 1) {
+    const r = set.results[i];
+    const path = `/results/${i}`;
+    mentioned.add(r.pair.first.modelKey);
+    mentioned.add(r.pair.second.modelKey);
+
+    const unreachableOwner = r.flags.unreachableOwner === true;
+    let bothRootOwners = true;
+    for (const ref of [r.pair.first, r.pair.second]) {
+      const ownedByRoot = isRootOwner(ownerIndex, ref);
+      if (!ownedByRoot) bothRootOwners = false;
+      const inUnreachable = unreachableOwner && unreachableIndex.get(ref.modelKey)?.has(ref.dbId) === true;
+      if (!ownedByRoot && !inUnreachable) add(`${path}/pair`, 'owner-not-in-ledger');
+    }
+    if (unreachableOwner && bothRootOwners) add(`${path}/flags/unreachableOwner`, 'unreachable-flag-invalid');
+
+    if (semanticDigest !== null) {
+      let expected;
+      try { expected = makeResultId(testId, semanticDigest, r.pair); } catch { expected = null; }
+      if (expected === null || expected !== r.resultId) add(`${path}/resultId`, 'result-id-mismatch');
+    }
+
+    const unit = unitsById.get(r.unitId);
+    if (unit === undefined || unit.outcome !== 'evaluated' || unit.scopeProof !== 'equal') {
+      add(`${path}/unitId`, 'result-unit-invalid');
+    } else {
+      if (!coveredBySource(unit, r.evaluatedAs.source, ownerIndex, unreachableOwner)
+          || !coveredByTarget(unit, r.evaluatedAs.target, ownerIndex, unreachableOwner)) {
+        add(`${path}/evaluatedAs`, 'result-unit-coverage');
+      }
+      if (r.evaluatedAs.source.modelKey !== unit.sourceModelKey || !sameRefSet(r.pair, r.evaluatedAs)) {
+        add(`${path}/evaluatedAs`, 'evaluated-as-mismatch');
+      }
+    }
+
+    if (definitionMode !== null && r.mode !== definitionMode) add(`${path}/mode`, 'mode-mismatch');
+  }
+
+  for (const modelKey of mentioned) {
+    if (!provenanceModelKeys.has(modelKey)) add('/provenance/models', 'model-not-in-provenance');
+  }
+}
+
+/** Canonical order (§11.3): `results` must be strictly ascending by `PairId`. A duplicate
+ *  `resultId` is already caught structurally (`ResultSet.results`'s own `uniqueBy`); an adjacent
+ *  equal-or-descending pair here is `result-order`. */
+function checkOrderAndUniqueness(set, add) {
+  const { results } = set;
+  for (let i = 1; i < results.length; i += 1) {
+    if (comparePairIds(results[i - 1].pair, results[i].pair) >= 0) {
+      add(`/results/${i}`, 'result-order');
+    }
+  }
+}
+
+/** Recomputed digests must match the recorded ones — UNLESS `digestVersion` is one this reader
+ *  does not know, in which case §13.6 makes the set valid-but-unverifiable and this comparison is
+ *  skipped entirely (never reported as a mismatch; the CLAIM predicate is what refuses it). */
+function checkDigests(set, add) {
+  if (set.digests.digestVersion !== DIGEST_VERSION) return;
+  const expectedPairSet = digestCanonical(pairSetDigestInput(set.results));
+  if (set.digests.pairSetDigest !== expectedPairSet) add('/digests/pairSetDigest', 'digest-mismatch');
+  const expectedLedger = digestCanonical(ledgerDigestInput(set.ledger, set.provenance.runOptions));
+  if (set.digests.ledgerDigest !== expectedLedger) add('/digests/ledgerDigest', 'digest-mismatch');
+}
+
+/**
+ * The sliceable validation pipeline. The structural phase (review Critical 3) runs FIRST and in
+ * full, establishing the shape every later phase assumes. An earlier draft SKIPPED every later
+ * phase outright whenever any structural issue existed, which is simple but wrong: it would also
+ * silently drop a genuinely INDEPENDENT cross-field finding on an otherwise well-shaped part of the
+ * same set (codex-advisor finding, 2026-09-22 — a real, reachable case, not a hypothetical one: the
+ * generated structural-schema suite's `mode` mutation on `ClashResult` produces BOTH a structural
+ * `unknown-field-closed-type` on the now-mismatched `evidence` shape AND the independent cross-field
+ * `mode-mismatch`, and only the second is meaningful to a caller trying to understand what is wrong
+ * with `definition.mode` vs. `result.mode`). Each later phase therefore always RUNS, but is called
+ * DEFENSIVELY (`guarded`, below): an exception it raises while traversing a shape the structural
+ * phase already flagged is swallowed (that structural issue already makes `ok: false`; a phase that
+ * cannot safely proceed given that shape has nothing more useful to add) but never propagates as an
+ * uncaught throw — a validator that can throw on untrusted-shaped-but-captured input is itself a
+ * defect this boundary exists to prevent (e.g. a mutation as simple as `ledger.units = null` would
+ * otherwise crash `checkCrossField`'s own `ledger.units.filter(...)`).
+ */
+export function* validateResultSetSteps(set, { limits }) {
+  assertCaptured(set);                                  // O(1): root descriptors only
+  const issues = [];
+  const add = (path, code) => { if (issues.length < MAX_ISSUES) issues.push({ path, code }); };
+
+  yield; checkShapeAndUnknownFields(set, add, limits);
+  const guarded = (fn) => { try { fn(set, add); } catch { /* the structural phase already covers it */ } };
+  yield; guarded(checkCrossField);
+  yield; guarded(checkResultLinkage);
+  yield; guarded(checkOrderAndUniqueness);
+  yield; guarded(checkDigests);
+  return { ok: issues.length === 0, issues };
+}
+
+export function validateResultSet(set, options) {
+  const it = validateResultSetSteps(set, options);
+  let step = it.next();
+  while (!step.done) step = it.next();
+  return step.value;
+}
+
+/**
+ * Capture -> version -> migrate -> re-validate -> freeze (§13.6). `runId` is the caller's
+ * diagnostic id, never read off `raw`. Everything below is a rejected promise because this
+ * function is async, but the capture/migrate/recapture step below is entirely synchronous, before
+ * the first `await` (§13.6 R19-1).
+ *
+ * Ruling B (carried forward from Task P5.4's report and progress.md, "P5.5 must recapture
+ * migration output before re-validation"): `applyMigration` only shape-checks its OWN return
+ * value's TOP-LEVEL `schemaVersion` (by design — see its doc comment). A migration function's
+ * return value is untrusted output like any other: a hostile accessor NESTED below the top level
+ * would not be caught by `applyMigration`'s own check, nor by `validateResultSetSteps`'s
+ * `assertCaptured` precondition (which only inspects the ROOT's own property descriptors, exactly
+ * enough to make the O(1) "is this a captured copy" check cheap — it was never meant to recursively
+ * prove every nested value is accessor-free). So `migrated` is run back through
+ * `captureResultSet` — the SAME detached, descriptor-based, getter-safe capture used for the
+ * initial raw read — before the structural walk ever touches it. `migrations` is DELIBERATELY
+ * omitted from this second call: migration is single-hop (`applyMigration`'s own contract already
+ * requires `migrated.schemaVersion === SCHEMA_VERSION` exactly), so the recapture's own schema-
+ * version gate must accept ONLY the current version, never re-admit another older, migratable one
+ * — omitting `migrations` here is what enforces that (`captureResultSet`'s default `NO_MIGRATIONS`
+ * makes `migratableFrom` always false, so `v === SCHEMA_VERSION` is the only admissible value).
+ * This also means a migration's return value is fully re-subjected to every OTHER capture-time
+ * bound (node/array/string ceilings, the unknown-field byte budget, depth) a second time — the
+ * cost of "capture twice on the rare migrated-read path" the ruling accepts as cheaper and more
+ * correct than a permanent deferral record. Currently unreachable in practice (`SCHEMA_VERSION` is
+ * 1, so `[1, SCHEMA_VERSION)` is empty and no real migration exists to exploit this today), but
+ * built correctly now per R21-2, before the day a real migration is registered.
+ */
+export async function readResultSet(raw, { limits, migrations = NO_MIGRATIONS, slicer, runId = null }) {
+  const captured = captureResultSet(raw, { limits, runId, migrations });
+  const migrated = captured.schemaVersion === SCHEMA_VERSION
+    ? captured
+    : captureResultSet(applyMigration(captured, migrations, { runId }), { limits, runId });
+  const it = validateResultSetSteps(migrated, { limits });
+  let step = it.next();
+  while (!step.done) {
+    const p = slicer.tick('validate');                   // P0's yield point: undefined unless due
+    if (p !== undefined) await p;
+    step = it.next();
+  }
+  if (!step.value.ok) throw corrupt(runId, step.value.issues);
+  await deepFreezeSliced(migrated, slicer);              // P0's helper; the slicer object itself
   return migrated;
 }
