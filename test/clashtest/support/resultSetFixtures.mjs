@@ -290,6 +290,43 @@ export async function resealed(mutate, kind = 'positives') {
 }
 
 // =================================================================================================
+// Task P5.7: `InMemoryResultStore` fixtures. Both are thin wrappers over `resealed` -- neither
+// touches `results`/`ledger`/`provenance.runOptions` (the only inputs `sealResultSet`'s digests
+// depend on), so overriding `runId` or `provenance.models` is always digest-safe and produces a
+// genuinely fresh, resealed, self-consistent set (never a hand-patched already-sealed object).
+// =================================================================================================
+
+/** A fresh `sealedSet(kind)` with `runId` overridden to the given value; everything else
+ *  (`testRef.testId`, `provenance.models`, `ledger`, `results`) is the named kind's own content
+ *  unchanged, so several calls with the SAME `kind` but DIFFERENT `runId`s share one identity
+ *  (`modelKey -> modelVersion`) and one `testRef.testId`, which is exactly what the store tests
+ *  need to probe the identity index and the tombstone index across many runIds of one test. */
+export async function withRunId(runId, kind = 'positives') {
+  return resealed((draft) => { draft.runId = runId; }, kind);
+}
+
+let withModelsCounter = 0;
+
+/**
+ * A fresh `sealedSet(kind)` with `provenance.models` REPLACED by the given `[modelKey,
+ * modelVersion]` pairs (each built through the same `provenanceModel` helper every other P5.5+
+ * fixture in this file uses, so the row shape never drifts) and a freshly minted, globally unique
+ * `runId` (this file's own counter -- never the kind's default literal `runId`, and never derived
+ * from the model list) so that two `withModels` calls, even with overlapping model pairs, are always
+ * two independent runs the identity index can be probed against one at a time. `kind`'s own
+ * `ledger`/`results` content is otherwise unchanged (the identity-index tests below only ever read
+ * `provenance.models` and `runId`/`testRef.testId` off the returned set).
+ */
+export async function withModels(modelPairs, kind = 'positives') {
+  withModelsCounter += 1;
+  const runId = `run-with-models-${withModelsCounter}`;
+  return resealed((draft) => {
+    draft.runId = runId;
+    draft.provenance.models = modelPairs.map(([modelKey, modelVersion]) => provenanceModel(modelKey, { modelVersion }));
+  }, kind);
+}
+
+// =================================================================================================
 // Task P5.5: full, `validateResultSet`-clean base fixtures.
 //
 // `positives` (volume-overlap) and `schema-corpus` (clearance) TOGETHER reach every declared
