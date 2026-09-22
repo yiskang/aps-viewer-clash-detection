@@ -12,7 +12,6 @@
 // untouched (P5.4 already derived them correctly; Ruling A requires REUSE, never recomputation).
 
 import { RUN_OPTION_CEILINGS, ENGINE_LIMIT_CEILINGS } from '../options.js';
-import { KNOWN_DIAGNOSTIC_REASONS } from '../execution/diagnostics.js';
 import { DIGEST_VERSION } from '../util/canonical.js';
 import { CLASH_MODES } from '../identity/ids.js';                 // P1 is the sole home of the mode list
 import { SCHEMA_VERSION, ENVIRONMENT_CAUSES } from './resultSet.js';
@@ -25,37 +24,32 @@ import { validateTest } from '../definition/validate.js';
 export const UNKNOWN_FIELD_BYTES = 64 * 1024;
 
 /**
- * Controller ruling ("P5.4/P5.5 taints[] ceiling formula", progress.md): the plan's own draft code
- * bounded the WHOLE per-unit `ledger.units[].taints[]` array by
- * `RUN_OPTION_CEILINGS.maxElementTaintsPerUnit` alone. The real, shipped
- * `clashtest/planning/ledger.js` (`addTaint`/`collapse`) only applies that ceiling to
- * **element**-kind taint entries; **target-model**- and **unit**-kind entries are kept EXACT,
- * deduplicated only by `(kind, modelKey, reason)` (`taintKey`), until the run-wide discretionary
- * ledger budget refuses admission, at which point the WHOLE unit collapses to one `taint-overflow`
- * entry. A legitimate, uncollapsed unit can therefore legally hold more than
- * `maxElementTaintsPerUnit` taints, and validating against that ceiling alone would reject a set a
- * conforming engine can legitimately produce (R21-2: "an engine never produces a set it cannot
- * read").
+ * Controller ruling ("P5.4/P5.5 taints[] ceiling formula", progress.md), CORRECTED (2026-09-22,
+ * "Correction to the taints[] ceiling ruling", same progress.md): the plan's own draft code bounded
+ * the WHOLE per-unit `ledger.units[].taints[]` array by `RUN_OPTION_CEILINGS.maxElementTaintsPerUnit`
+ * alone. The real, shipped `clashtest/planning/ledger.js` (`addTaint`/`collapse`) only applies that
+ * ceiling to **element**-kind taint entries; **target-model**- and **unit**-kind entries are kept
+ * EXACT, deduplicated only by `(kind, modelKey, dbId, reason)` (`taintKey`), until the run-wide
+ * discretionary ledger budget refuses admission (`budget.admitRuntime(...)`), at which point the
+ * WHOLE unit collapses to one `taint-overflow` entry.
  *
- * `MAX_UNIT_TAINTS` is the true worst-case bound, derived -- never a bare literal -- as:
- *   - `RUN_OPTION_CEILINGS.maxElementTaintsPerUnit`: the element-kind ceiling, unchanged.
- *   - `+ (RUN_OPTION_CEILINGS.maxTargetModelsPerUnit + 2) * KNOWN_DIAGNOSTIC_REASONS.size`: for a
- *     target-model OR a unit-kind taint the dedup key is `(kind, modelKey, reason)`
- *     (`clashtest/execution/diagnostics.js` `deriveUnitTaints`, `taintKey`), and `modelKey` can be
- *     any one of the unit's target models, the unit's own `sourceModelKey`, or `null` -- the `+ 2`
- *     accounts for the source model and the null case on top of `maxTargetModelsPerUnit` target
- *     models -- times every known diagnostic reason that can attribute to `target-model` or `unit`
- *     (`KNOWN_DIAGNOSTIC_REASONS`; §12.3 calls it "informative, not normative", but it is the one
- *     closed, named table this derivation can read rather than guess a count).
- *   - `+ 1`: defensive slack for the `taint-overflow` sentinel entry itself.
- * Deliberately generous rather than tight -- the ceiling only needs to never reject a legitimate
- * unit, not be minimal. Consumed at BOTH ceiling sites (this export, and this file's own
- * `TYPES.UnitRecord.fields.taints` row below -- Ruling A) so the two cannot drift apart. Reused
- * as-is by P5.5, NOT recomputed (Ruling A, task-P5.5 dispatch).
+ * An earlier version of this constant derived a formula from `KNOWN_DIAGNOSTIC_REASONS.size` (the
+ * closed table of reasons the *collision library* is known to report today), reasoning that a
+ * taint's `reason` could only be one of those. An independent codex-review pass (and the
+ * controller's own direct re-verification) found this false: `clashtest/planning/ledger.js`'s own
+ * `normalizeTaint` accepts ANY non-empty string for `reason` (`nonEmptyString(t.reason, ...)`), with
+ * no membership check against `KNOWN_DIAGNOSTIC_REASONS` or any other closed table -- and that table
+ * is itself documented, in its own file, as "informative, NOT normative" (§12.3). The true per-unit
+ * worst case is therefore bounded ONLY by the run-wide discretionary ledger budget a single unit
+ * could consume via `admitRuntime(...)` before its own admission fails and it collapses -- exactly
+ * the same reasoning the schema's own `TYPES` table already applies to `Ledger.unresolvedSelections`,
+ * `Ledger.planningGaps`, `Ledger.warnings` and `UnitRecord.secondaryCauses`, every one of which is
+ * `max: RUN_OPTION_CEILINGS.maxLedgerRecords` for the identical reason (bounded by the run's own
+ * ledger-record budget, not by any fixed per-item/per-reason combinatorial count). Consumed at BOTH
+ * ceiling sites (this export, and this file's own `TYPES.UnitRecord.fields.taints` row below --
+ * Ruling A) so the two cannot drift apart.
  */
-export const MAX_UNIT_TAINTS = RUN_OPTION_CEILINGS.maxElementTaintsPerUnit
-  + (RUN_OPTION_CEILINGS.maxTargetModelsPerUnit + 2) * KNOWN_DIAGNOSTIC_REASONS.size
-  + 1;
+export const MAX_UNIT_TAINTS = RUN_OPTION_CEILINGS.maxLedgerRecords;
 
 // Per-field string caps (§13.5.2). P0's summary assigns this table to P5 ("there is no
 // schema-wide string-length ceiling in the spec"), so it lives beside the fields it caps.

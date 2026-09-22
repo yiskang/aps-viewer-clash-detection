@@ -329,24 +329,31 @@ test('unknown fields in open types are budgeted together across every open type,
   // table, which is P5.5's responsibility) — see task-P5.4-report.md.
 });
 
-// Controller ruling ("P5.4/P5.5 taints[] ceiling formula"): `MAX_UNIT_TAINTS`, not a bare
-// `RUN_OPTION_CEILINGS.maxElementTaintsPerUnit`, bounds the capture-time array ceiling of
-// `/ledger/units/#/taints` — proven here at THIS task's own `ARRAY_CEILINGS` site: a legitimate,
-// uncollapsed unit at exactly the derived worst case is never rejected as too-long, and one entry
-// past it is.
-test('MAX_UNIT_TAINTS is the capture-time ceiling for ledger.units[].taints: exactly at it is accepted, one past it is not', async () => {
+// Controller ruling ("P5.4/P5.5 taints[] ceiling formula"), CORRECTED (progress.md, "Correction to
+// the taints[] ceiling ruling"): `MAX_UNIT_TAINTS` is now `RUN_OPTION_CEILINGS.maxLedgerRecords`
+// itself — the real, shipped `clashtest/planning/ledger.js` bounds a target-model/unit-kind taint's
+// `reason` to "any non-empty string" (`normalizeTaint`'s `nonEmptyString` check, no membership test
+// against `KNOWN_DIAGNOSTIC_REASONS` or any other closed table), so the only real bound on how many
+// distinct, uncollapsed taints one unit can hold is the run-wide discretionary ledger budget a
+// single unit could consume via `admitRuntime(...)` before its own admission fails and it collapses
+// — not a combinatorial reason/model count. The old exact-boundary test (materialising
+// `MAX_UNIT_TAINTS` and `MAX_UNIT_TAINTS + 1` real objects) no longer makes sense at 20 million
+// entries — it would take tens of seconds and hit `captureResultSet`'s own node ceiling
+// (`maxCapturedNodes`) long before `array-too-long` ever became the limiting factor at that scale.
+// This asserts instead: (1) the ceiling is READ from the real, named run-wide constant, never a
+// re-derived or hard-coded number; (2) a large-but-legitimate taints array well past the OLD
+// (insufficient) bound is still accepted at THIS capture-time `ARRAY_CEILINGS` site.
+test('MAX_UNIT_TAINTS is RUN_OPTION_CEILINGS.maxLedgerRecords, and a large legitimate taints array is accepted', async () => {
+  assert.equal(MAX_UNIT_TAINTS, RUN_OPTION_CEILINGS.maxLedgerRecords);
+
   const taintAt = (i) => ({ kind: 'unit', modelKey: null, dbId: null, reason: `r${i}`, occurrences: 1 });
-
-  const atCeiling = await rawSet();
-  atCeiling.ledger.units[0] = { ...atCeiling.ledger.units[0],
-    taints: Array.from({ length: MAX_UNIT_TAINTS }, (_, i) => taintAt(i)) };
-  const captured = captureResultSet(atCeiling, { limits });
-  assert.equal(captured.ledger.units[0].taints.length, MAX_UNIT_TAINTS);
-
-  const overCeiling = await rawSet();
-  overCeiling.ledger.units[0] = { ...overCeiling.ledger.units[0],
-    taints: Array.from({ length: MAX_UNIT_TAINTS + 1 }, (_, i) => taintAt(i)) };
-  assert.throws(() => captureResultSet(overCeiling, { limits }), corruptWith('array-too-long'));
+  const LARGE_BUT_CHEAP = 50_000;   // well past the old (insufficient) ~101k/3 formula's own inputs; cheap to allocate
+  assert.ok(LARGE_BUT_CHEAP < MAX_UNIT_TAINTS);
+  const set = await rawSet();
+  set.ledger.units[0] = { ...set.ledger.units[0],
+    taints: Array.from({ length: LARGE_BUT_CHEAP }, (_, i) => taintAt(i)) };
+  const captured = captureResultSet(set, { limits });
+  assert.equal(captured.ledger.units[0].taints.length, LARGE_BUT_CHEAP);
 });
 
 test('native structuredClone is never used on external input', async () => {
