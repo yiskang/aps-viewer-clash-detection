@@ -14,7 +14,7 @@
 import { DIGEST_VERSION } from '../../../clashtest/util/canonical.js';
 import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
 import { buildResultSet, sealResultSet } from '../../../clashtest/results/resultSet.js';
-import { makeResultId } from '../../../clashtest/identity/ids.js';
+import { makeResultId, makePairId } from '../../../clashtest/identity/ids.js';
 
 /** P4's `DiagnosticsSummary` (`snapshot()` shape) with every counter at 0. `countsByReason` is an
  *  ARRAY (the real, shipped `execution/diagnostics.js` shape -- see resultSetSchema.js's own note),
@@ -137,8 +137,12 @@ export function fakeSlicer({ yieldEvery = 64 } = {}) {
   };
 }
 
-const MODEL_A = 'urn:adsk.wipprod:fs.file:vf.model-a?version=1';
-const MODEL_B = 'urn:adsk.wipprod:fs.file:vf.model-b?version=1';
+// Exported (Task P5.6): `status.test.mjs` builds its own probe `PairId`s (via `pairOf`) and
+// bespoke fixtures (`widePlan`, `sharedRootPlan`) against these SAME model keys, rather than
+// inventing a second pair of placeholder keys that could silently drift from the ones every other
+// P5.5 fixture in this file already uses.
+export const MODEL_A = 'urn:adsk.wipprod:fs.file:vf.model-a?version=1';
+export const MODEL_B = 'urn:adsk.wipprod:fs.file:vf.model-b?version=1';
 
 /** One `ClashResult` (§11.3 projected shape), deterministic and JSON-plain, for digest fixtures.
  *  Placeholder `resultId` (`r${i}`) -- fine ONLY for the 'wide'/'many-results' kind, which is never
@@ -666,7 +670,63 @@ function unreachablePositiveParts() {
   };
 }
 
-/** Dispatch for every Task P5.5 fixture kind (never called for the original three -- see `sealedSet`). */
+const DIGEST_T6 = digestOf('f');
+
+/** 'hierarchy-internal' (Task P5.6): one normal evaluated pair (MODEL_A/50 <-> MODEL_B/60) for a
+ *  non-trivial baseline, PLUS a SECOND MODEL_A root (100, cls 'C' -- R2's A n B marker) owned by
+ *  TWO owners (101, 102) -- the AC-20(c) fixture: two elements under the SAME root, in the SAME
+ *  model, are never a required pair regardless of taints. `ledger.hierarchyInternal` carries the
+ *  matching (bounded, capped-at-20) examples row so both the `cls`-based and `examples`-based
+ *  reading can be told apart by a test that empties `examples` (R2's own point). */
+function hierarchyInternalParts() {
+  const testId = 'T6';
+  const semanticDigest = DIGEST_T6;
+  const pair0 = { first: ref(MODEL_A, 50), second: ref(MODEL_B, 60) };
+  const unit1 = unit('u1', 'evaluated', {
+    kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10,
+  });
+  return {
+    runId: 'run-hierarchy-internal',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition: {
+      schemaVersion: 1, testId, revision: 1, name: 'hierarchy-internal',
+      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+      mode: 'volume-overlap',
+    },
+    derivedFromRunId: null,
+    outcome: {
+      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: 10,
+      units: [unit1],
+      rootOwners: [
+        { modelKey: MODEL_A, owners: [
+          { rootDbId: 10, ownerDbIds: [50], cls: 'A' },
+          { rootDbId: 100, ownerDbIds: [101, 102], cls: 'C' },
+        ] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [60], cls: 'A' }] },
+      ],
+      hierarchyInternal: [{ modelKey: MODEL_A, rootCount: 1, ownerCount: 2,
+        examples: [{ rootDbId: 100, ownerDbIds: [101, 102] }] }],
+    }),
+    results: [{
+      resultId: makeResultId(testId, semanticDigest, pair0), pair: pair0, mode: 'volume-overlap',
+      evaluatedAs: { source: ref(MODEL_A, 50), target: ref(MODEL_B, 60) },
+      evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {}, unitId: 'u1',
+    }],
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+}
+
+/** Dispatch for every Task P5.5/P5.6 fixture kind (never called for the original three -- see `sealedSet`). */
 function validParts(kind) {
   switch (kind) {
     case 'positives': return positivesParts();
@@ -674,6 +734,152 @@ function validParts(kind) {
     case 'completed-with-gaps': return completedWithGapsParts();
     case 'completed-clean': return completedCleanParts();
     case 'unreachable-positive': return unreachablePositiveParts();
+    case 'hierarchy-internal': return hierarchyInternalParts();
     default: throw new Error(`resultSetFixtures: unknown kind ${kind}`);
   }
+}
+
+// =================================================================================================
+// Task P5.6: `status.js` reader fixtures.
+// =================================================================================================
+
+/** A raw `PairId` `{first, second}` for a `getPairStatus`/`getElementStatus` probe, canonicalized
+ *  through P1's OWN `makePairId` (never a hand-rolled `{first,second}` object) -- `makePairId` owns
+ *  validation, -0/0 normalization and unordered-pair canonical order (row N13); a raw builder could
+ *  silently disagree with a `ClashResult.pair` built the production way and make
+ *  `status.js`'s own order-sensitive `pairKey` look up the wrong (or no) result. */
+export const pairOf = (modelKeyA, dbIdA, modelKeyB, dbIdB) => makePairId(
+  'volume-overlap', { modelKey: modelKeyA, dbId: dbIdA }, { modelKey: modelKeyB, dbId: dbIdB });
+
+/**
+ * Task P5.6's status-reader complexity acceptance fixture: `unitCount` leaf units, each owning a
+ * DISTINCT root pair -- source root `1000+i` in MODEL_A, target root `2000+i` in MODEL_B via
+ * `scope: 'roots'` (an exact cover, one leaf per root pair, per spec 6.3) -- plus exactly `min(50,
+ * unitCount)` results spread across the FIRST units, so a complexity probe run at two different
+ * `unitCount`s issues IDENTICAL lookups while only the build's own input size changes. Built
+ * through the real `buildResultSet`/`sealResultSet` pipeline (never hand-assembled as an
+ * already-sealed object), like every other kind in this file.
+ */
+export async function widePlan(unitCount) {
+  const probeCount = Math.min(50, unitCount);
+  const units = [];
+  const ownersA = [];
+  const ownersB = [];
+  const results = [];
+  for (let i = 0; i < unitCount; i++) {
+    const rootA = 1000 + i;
+    const rootB = 2000 + i;
+    units.push(unit(`u${i}`, 'evaluated', {
+      kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [rootA],
+      targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [rootB] }], pairSpaceWeight: 1,
+    }));
+    ownersA.push({ rootDbId: rootA, ownerDbIds: [rootA], cls: 'A' });
+    ownersB.push({ rootDbId: rootB, ownerDbIds: [rootB], cls: 'B' });
+  }
+  const testId = 'TW';
+  const semanticDigest = digestOf('9');
+  for (let i = 0; i < probeCount; i++) {
+    const pair = { first: ref(MODEL_A, 1000 + i), second: ref(MODEL_B, 2000 + i) };
+    results.push({
+      resultId: makeResultId(testId, semanticDigest, pair), pair, mode: 'volume-overlap',
+      evaluatedAs: { source: ref(MODEL_A, 1000 + i), target: ref(MODEL_B, 2000 + i) },
+      evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {}, unitId: `u${i}`,
+    });
+  }
+  const parts = {
+    runId: 'run-wide-plan',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition: {
+      schemaVersion: 1, testId, revision: 1, name: 'wide-plan',
+      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+      mode: 'volume-overlap',
+    },
+    derivedFromRunId: null,
+    outcome: {
+      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A, { elementCount: unitCount }),
+        provenanceModel(MODEL_B, { elementCount: unitCount })],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: unitCount,
+      units,
+      rootOwners: [{ modelKey: MODEL_A, owners: ownersA }, { modelKey: MODEL_B, owners: ownersB }],
+    }),
+    results,
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+  return sealResultSet(buildResultSet(parts), { slicer: fakeSlicer() });
+}
+
+/**
+ * Task P5.6 (codex-advisor finding, 2026-09-22): `widePlan`'s exact-cover design (one leaf per
+ * root pair) can never exercise `findCoveringUnit`'s OWN worst case -- a source root shared by
+ * MANY leaf units (real split fan-out that keeps the same source root while partitioning only the
+ * target side, per `planning/splitting.test.mjs`), where the candidate list at
+ * `sourceRoots[modelKey][rootDbId]` has more than one entry and a probe landing on the LAST one
+ * scans every entry before it. `sharedRootPlan({fanOut, unrelatedUnits})` isolates exactly that
+ * shape: `fanOut` leaf units all sourcing ONE shared root (5000) in MODEL_A, each targeting its
+ * OWN distinct root in MODEL_B, PLUS `unrelatedUnits` leaf units sourcing their OWN distinct,
+ * unrelated MODEL_A roots (9000+i) that never touch the shared root at all -- so a test can tell
+ * apart "cost grows with `unrelatedUnits`" (would mean the index is not scoped by root -- a real
+ * regression) from "cost grows with `fanOut`" (the known, bounded-by-split-fan-out property this
+ * task's own status-reader contract already names, not a defect introduced here).
+ */
+export async function sharedRootPlan({ fanOut, unrelatedUnits = 0 }) {
+  const SHARED_ROOT = 5000;
+  const units = [];
+  const ownersA = [{ rootDbId: SHARED_ROOT, ownerDbIds: [SHARED_ROOT], cls: 'A' }];
+  const ownersB = [];
+  for (let i = 0; i < fanOut; i++) {
+    const rootB = 6000 + i;
+    units.push(unit(`shared-${i}`, 'evaluated', {
+      kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [SHARED_ROOT],
+      targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [rootB] }], pairSpaceWeight: 1,
+    }));
+    ownersB.push({ rootDbId: rootB, ownerDbIds: [rootB], cls: 'B' });
+  }
+  for (let i = 0; i < unrelatedUnits; i++) {
+    const rootA = 9000 + i;
+    const rootB = 8000 + i;
+    units.push(unit(`unrelated-${i}`, 'evaluated', {
+      kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [rootA],
+      targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [rootB] }], pairSpaceWeight: 1,
+    }));
+    ownersA.push({ rootDbId: rootA, ownerDbIds: [rootA], cls: 'A' });
+    ownersB.push({ rootDbId: rootB, ownerDbIds: [rootB], cls: 'B' });
+  }
+  const testId = 'TSR';
+  const semanticDigest = digestOf('8');
+  const parts = {
+    runId: 'run-shared-root-plan',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition: {
+      schemaVersion: 1, testId, revision: 1, name: 'shared-root-plan',
+      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+      mode: 'volume-overlap',
+    },
+    derivedFromRunId: null,
+    outcome: {
+      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: units.length,
+      units,
+      rootOwners: [{ modelKey: MODEL_A, owners: ownersA }, { modelKey: MODEL_B, owners: ownersB }],
+    }),
+    results: [],
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+  return sealResultSet(buildResultSet(parts), { slicer: fakeSlicer() });
 }
