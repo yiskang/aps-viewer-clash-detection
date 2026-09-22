@@ -42,3 +42,4 @@ export * from './definitions.mjs';
 export * from './syntheticModels.mjs';
 export * from './executionWorld.mjs';
 export * from './executionRequests.mjs';
+export * from './resultSetFixtures.mjs';

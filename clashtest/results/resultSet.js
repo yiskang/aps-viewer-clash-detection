@@ -154,3 +154,39 @@ export function createResultAccumulator(ctx) {
     toArray: () => merged,
   };
 }
+
+// P5.2: `RunOutcome` derivation (spec §8.3, §12.5, §13.6 R21-2).
+const ENVIRONMENT_CAUSES = ['bucket-capacity', 'geometry-readiness', 'placement-contention'];
+
+/**
+ * Derives `coverage`, `integrity` and `environmentSensitive(+Causes)` from a finished run's raw
+ * material; `status`/`freshness`/`reasons` are supplied verbatim by the caller (P6). `coverage:
+ * 'full'` requires a plan to exist, no planning gap, and EVERY leaf (a unit whose `outcome` is not
+ * `'split'` -- a split parent is superseded by its leaves and is never itself checked) to be BOTH
+ * `evaluated` AND `scopeProof: 'equal'`. This is verbatim the predicate `validateResultSet`
+ * re-checks (R21-2: an engine never produces a set it cannot read) -- it must never drift from that
+ * reader's copy.
+ */
+export function deriveRunOutcome({ status, freshness, ledger, diagnostics, results = [], reasons = [] }) {
+  const leaves = ledger.units.filter((u) => u.outcome !== 'split');
+  const coverage = ledger.planExists === true
+    && ledger.planningGaps.length === 0
+    && leaves.length > 0
+    && leaves.every((u) => u.outcome === 'evaluated' && u.scopeProof === 'equal')
+    ? 'full' : 'partial';
+  const duplicateConflict = results.some((r) => r.flags?.duplicateEvidenceConflict === true);
+  const integrity = diagnostics.completenessAffectingUpperBound > 0 || duplicateConflict ? 'caveated' : 'clean';
+  const causes = new Set();
+  for (const u of leaves) {
+    if (u.capacityKind === 'bucket-capacity') causes.add('bucket-capacity');
+    if (u.outcome === 'failed' && u.cause === 'stale-placement') causes.add('placement-contention');
+  }
+  if (diagnostics.geometryReadinessOccurrences > 0 || diagnostics.unclassifiedOccurrences > 0) causes.add('geometry-readiness');
+  const environmentSensitiveCauses = ENVIRONMENT_CAUSES.filter((c) => causes.has(c));
+  return {
+    status, coverage, integrity, freshness,
+    environmentSensitive: environmentSensitiveCauses.length > 0,
+    environmentSensitiveCauses,
+    reasons: [...reasons].sort(),
+  };
+}
