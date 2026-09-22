@@ -480,12 +480,40 @@ const SUMMARY_MODEL_KEYS = Object.freeze(['modelKey', 'modelVersion']);
 const MAX_SUMMARY_ISSUES = 20;
 
 /**
+ * Task-review finding (2026-09-22, Important, confirmed): `validateResultSetSummary` shipped
+ * without the exact precondition `validateResultSet.js`'s own `assertCaptured` was hardened with
+ * in THIS task -- reproduced empirically: `Object.create(validSummary)` (zero own properties, every
+ * field read via the PROTOTYPE chain through a plain `in`/property read) validated `{ok: true,
+ * issues: []}`, and a summary with an accessor-backed own `counts` property validated `{ok: true}`
+ * while invoking the getter. §13.5 says "Listings are untrusted data too" -- the same rule that
+ * motivated this task's own hardening of the main validator applies here. This is a SEPARATE,
+ * local copy of `assertCaptured` (not an import of `validateResultSet.js`'s own), because
+ * `validateResultSet.js` already imports FROM this file (`checkShapeAndUnknownFields`); importing
+ * the other way would be circular. Matches this file's own established precedent for `utf8Length`
+ * (P0's own copy kept local rather than an invented cross-module import).
+ */
+const SUMMARY_UNCAPTURED = 'ERR_UNCAPTURED_INPUT';
+function assertSummaryCaptured(value) {
+  const ok = value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype
+    && Object.values(Object.getOwnPropertyDescriptors(value)).every((d) => 'value' in d);
+  if (ok) return;
+  const err = new TypeError('validateResultSetSummary: argument must be a captured copy (spec '
+    + '§13.5); the caller must capture the whole listing PAGE as one detached copy before '
+    + 'validating its rows');
+  err.code = SUMMARY_UNCAPTURED;
+  throw err;
+}
+
+/**
  * §13.5's closed `ResultSetSummary` shape for one listing-page row. `(summary, {limits}) ->
- * {ok, issues}` per the interface table. Pure: does not itself capture a whole page (a store's
- * `list()` caller is responsible for capturing the PAGE as one detached copy before iterating rows
- * through this function -- see this task's report for the residual page-level atomicity note this
- * implementation surfaced, matching the same "capture before you read" discipline `validateResultSet`
- * itself enforces for a full Result Set).
+ * {ok, issues}` per the interface table. Like `validateResultSet` itself, this is NOT the
+ * untrusted-input boundary (`assertSummaryCaptured` is the same cheap O(1) root-descriptor sanity
+ * check, not a recursive capture) -- the caller is responsible for capturing the whole PAGE as one
+ * detached copy before iterating rows through this function (see this task's report for the
+ * residual page-level atomicity note this implementation surfaced). Every presence check below uses
+ * `Object.hasOwn`, never `in`, so a nested object reached from an already-captured row still cannot
+ * spoof "field present" through the prototype chain.
  */
 export function validateResultSetSummary(summary, { limits } = {}) {   // eslint-disable-line no-unused-vars
   // `limits` is accepted (per the interface table's `(summary, {limits}) => {ok, issues}` and the
@@ -494,19 +522,16 @@ export function validateResultSetSummary(summary, { limits } = {}) {   // eslint
   // (`SUMMARY_MAX_MODELS`, the §13.5.2 string caps) is a fixed structural CEILING, not a
   // reader-configured `limits` value -- the same "never the reading engine's configured options"
   // rule §13.6 applies to the main schema.
+  assertSummaryCaptured(summary);
   const issues = [];
   const add = (path, code) => { if (issues.length < MAX_SUMMARY_ISSUES) issues.push({ path, code }); };
-  if (summary === null || typeof summary !== 'object' || Array.isArray(summary)) {
-    add('', 'container-invalid');
-    return { ok: false, issues };
-  }
   for (const k of Object.keys(summary)) {
     if (!SUMMARY_KEYS.includes(k)) add(`/${k}`, 'unknown-field-closed-type');
   }
   const ctx = { add, openBytes: 0 };   // no open type here; openBytes is unused but required by checkValue
 
   const requireField = (key, spec) => {
-    if (!(key in summary)) { add(`/${key}`, 'missing-field'); return; }
+    if (!Object.hasOwn(summary, key)) { add(`/${key}`, 'missing-field'); return; }
     checkValue(summary[key], spec, `/${key}`, ctx);
   };
   requireField('runId', str('id'));
@@ -520,19 +545,19 @@ export function validateResultSetSummary(summary, { limits } = {}) {   // eslint
   requireField('startedAt', str('timestamp'));
   requireField('finishedAt', str('timestamp'));
 
-  if (!('counts' in summary)) add('/counts', 'missing-field');
+  if (!Object.hasOwn(summary, 'counts')) add('/counts', 'missing-field');
   else if (!isPlain(summary.counts)) add('/counts', 'container-invalid');
   else {
     for (const k of Object.keys(summary.counts)) {
       if (!COUNTS_KEYS.includes(k)) add(`/counts/${k}`, 'unknown-field-closed-type');
     }
     for (const k of COUNTS_KEYS) {
-      if (!(k in summary.counts)) add(`/counts/${k}`, 'missing-field');
+      if (!Object.hasOwn(summary.counts, k)) add(`/counts/${k}`, 'missing-field');
       else checkValue(summary.counts[k], int(), `/counts/${k}`, ctx);
     }
   }
 
-  if (!('models' in summary)) add('/models', 'missing-field');
+  if (!Object.hasOwn(summary, 'models')) add('/models', 'missing-field');
   else if (!Array.isArray(summary.models)) add('/models', 'container-invalid');
   else {
     if (summary.models.length > SUMMARY_MAX_MODELS) add('/models', 'array-too-long');
@@ -544,9 +569,9 @@ export function validateResultSetSummary(summary, { limits } = {}) {   // eslint
       for (const k of Object.keys(row)) {
         if (!SUMMARY_MODEL_KEYS.includes(k)) add(`${at}/${k}`, 'unknown-field-closed-type');
       }
-      if (!('modelKey' in row)) add(`${at}/modelKey`, 'missing-field');
+      if (!Object.hasOwn(row, 'modelKey')) add(`${at}/modelKey`, 'missing-field');
       else checkValue(row.modelKey, str('modelKey'), `${at}/modelKey`, ctx);
-      if (!('modelVersion' in row)) add(`${at}/modelVersion`, 'missing-field');
+      if (!Object.hasOwn(row, 'modelVersion')) add(`${at}/modelVersion`, 'missing-field');
       else checkValue(row.modelVersion, str('modelVersion'), `${at}/modelVersion`, ctx);
       if (isPlain(row) && typeof row.modelKey === 'string') {
         if (seen.has(row.modelKey)) add(`${at}/modelKey`, 'duplicate-model-key'); else seen.add(row.modelKey);

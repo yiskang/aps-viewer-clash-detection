@@ -36,12 +36,39 @@ test('a well-formed summary validates with no issues', () => {
   assert.deepEqual(validateResultSetSummary(validSummary(), {}), { ok: true, issues: [] });
 });
 
-test('a non-object root is container-invalid', () => {
+// Task-review finding (2026-09-22, Important, confirmed): `validateResultSetSummary` shipped
+// without the `assertCaptured` precondition `validateResultSet.js`'s own main validator was
+// hardened with in this same task. Reproduced by the reviewer directly: `Object.create(validSummary
+// ())` (zero own properties, every field reachable only via the PROTOTYPE chain) validated `{ok:
+// true, issues: []}`, and a summary with an accessor-backed own `counts` property validated
+// `{ok: true}` while invoking the getter 8 times. Fixed with a local `assertSummaryCaptured`
+// precondition, matching the main validator's own contract EXACTLY: it throws
+// `TypeError{code: 'ERR_UNCAPTURED_INPUT'}` for ANY non-captured shape -- not just the two attack
+// shapes above, but also a plain non-object root (this is why the OLD, pre-fix behavior below --
+// returning `{ok: false, issues: [{code: 'container-invalid'}]}` for `null`/an array/a primitive --
+// is no longer this function's contract; it now throws for those too, exactly like
+// `validateResultSet` itself already does for the same inputs).
+test('validateResultSetSummary refuses an uncaptured object instead of reading it', () => {
   for (const bad of [null, undefined, 42, 'x', [], true]) {
-    const { ok, issues } = validateResultSetSummary(bad, {});
-    assert.equal(ok, false, String(bad));
-    assert.ok(issues.some((i) => i.code === 'container-invalid'), String(bad));
+    assert.throws(() => validateResultSetSummary(bad, {}),
+      (e) => e instanceof TypeError && e.code === 'ERR_UNCAPTURED_INPUT', String(bad));
   }
+});
+
+test('a summary reached only through the prototype chain (zero own properties) is refused, not silently accepted', () => {
+  const hostile = Object.create(validSummary());
+  assert.throws(() => validateResultSetSummary(hostile, {}),
+    (e) => e instanceof TypeError && e.code === 'ERR_UNCAPTURED_INPUT');
+});
+
+test('an accessor-backed own field is refused before it is ever invoked', () => {
+  let invoked = 0;
+  const hostile = { ...validSummary() };
+  Object.defineProperty(hostile, 'counts', { get() { invoked += 1; return { results: 1, units: 1, pairSpaceTotal: 1 }; }, enumerable: true, configurable: true });
+  assert.throws(() => validateResultSetSummary(hostile, {}),
+    (e) => e instanceof TypeError && e.code === 'ERR_UNCAPTURED_INPUT');
+  assert.equal(invoked, 0, 'the getter was never invoked');
+  assert.equal(validateResultSetSummary(validSummary(), {}).ok, true);   // a captured copy still passes
 });
 
 test('an unknown top-level key is unknown-field-closed-type (the shape is CLOSED)', () => {

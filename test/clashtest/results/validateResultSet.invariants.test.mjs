@@ -126,6 +126,12 @@ const CORRUPTIONS = [
   ['result-unit-coverage',    (s) => { s.ledger.units[0].sourceRootDbIds = [999]; }],     // unit no longer covers its own result
   ['result-unit-coverage',    (s) => { s.ledger.units[0].targets = [{ modelKey: 'MB', scope: 'roots', rootDbIds: [4242] }]; }],
   ['model-not-in-provenance', (s) => { s.provenance.models = s.provenance.models.filter((m) => m.modelKey !== s.provenance.models[1].modelKey); }],
+  // Task-review finding (2026-09-22, Important, confirmed): `model-not-in-provenance`'s model-key
+  // collection was missing two ledger-resident, schema-declared sources -- `unresolvedSelections[].
+  // modelKey` (nullable) and `warnings[].modelKey` (optional). Both validated `{ok: true}` before
+  // the fix, with a phantom modelKey mentioned nowhere in `provenance.models`.
+  ['model-not-in-provenance', (s) => { s.ledger.unresolvedSelections = [{ selectionRole: 'A', modelKey: 'urn:ghost', cause: 'element-unresolvable', dbIds: [1] }]; }],
+  ['model-not-in-provenance', (s) => { s.ledger.warnings = [{ code: 'w', modelKey: 'urn:ghost' }]; }],
   ['coverage-not-full',       (s) => { s.outcome.coverage = 'full'; s.ledger.units = s.ledger.units.filter((u) => u.kind === 'split'); }],
   ['root-cls-invalid',        (s) => { delete s.ledger.rootOwners[0].owners[0].cls; }],
   ['root-cls-invalid',        (s) => { s.ledger.rootOwners[0].owners[0].cls = 'X'; }],

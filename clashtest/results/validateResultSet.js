@@ -335,6 +335,13 @@ function checkResultLinkage(set, add) {
   for (const row of set.ledger.rootOwners) mentioned.add(row.modelKey);
   for (const row of set.ledger.unreachablePopulation) mentioned.add(row.modelKey);
   for (const row of set.ledger.hierarchyInternal) mentioned.add(row.modelKey);
+  // Task-review finding (2026-09-22, Important, confirmed): the rule row is "provenance.models
+  // misses a modelKey the results OR LEDGER mention" -- `unresolvedSelections[].modelKey`
+  // (nullable) and `warnings[].modelKey` (optional) are both ledger-resident, schema-declared
+  // model-key fields this collection was missing. Reproduced by the reviewer: a re-sealed set with
+  // either field set to a phantom modelKey validated `{ok: true}`.
+  for (const row of set.ledger.unresolvedSelections) if (row.modelKey !== null) mentioned.add(row.modelKey);
+  for (const row of set.ledger.warnings) if (Object.hasOwn(row, 'modelKey')) mentioned.add(row.modelKey);
 
   const semanticDigest = set.testRef.semanticDigest;
   const testId = set.testRef.testId;
