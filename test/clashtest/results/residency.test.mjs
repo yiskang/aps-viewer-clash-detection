@@ -375,6 +375,61 @@ test('an acknowledged release during an unresolved write keeps the slot until th
   m.reserveRunSlot('b');                                             // now succeeds
 });
 
+test('reserveRunSlot is a no-op for an id that already holds a slot -- never evicts, never double-counts', async () => {
+  const m = mgr();   // cap 2
+  m.reserveRunSlot('a'); m.admitSealedSet('a', await withRunId('a', 'positives'));
+  await m.beginPersist('a', { persist: true });          // 'a' is now saved + resident + evictable
+  m.reserveRunSlot('b');                                 // 'b' active, occupies the second slot
+  assert.equal(m.retentionReport().slotsInUse, 2);
+
+  m.reserveRunSlot('b');                                 // duplicate reserve on an ACTIVE id
+  assert.equal(m.retentionReport().slotsInUse, 2, 'no new slot consumed');
+  assert.equal(m.getResident('a') !== null, true, "'a' was not evicted for nothing");
+
+  m.reserveRunSlot('a');                                 // duplicate reserve on a RESIDENT id
+  assert.equal(m.retentionReport().slotsInUse, 2, 'no slot double-counted');
+  assert.equal(m.reservationHeld('a'), false, "'a' is still resident, not turned into a phantom reservation");
+});
+
+// --- task-review fix round 1, 2026-09-22 (Critical: reopened both Round-1 High findings) --------
+test('an armed removeOnSettle entry survives an observer-driven retryPersist fired from its own settle callback', async () => {
+  let resolveFirst;
+  let resolveSecond;
+  let callCount = 0;
+  const store = {
+    async put() {
+      callCount += 1;
+      if (callCount === 1) { await new Promise((resolve) => { resolveFirst = resolve; }); throw new Error('boom'); }
+      await new Promise((resolve) => { resolveSecond = resolve; });
+    },
+    async delete() {},
+  };
+  let retried = false;
+  let retryPromise;
+  const m = createResidencyManager({
+    limits: { maxResidentResultSets: 1, maxQueuedRuns: 0, maxConcurrentStoreReads: 1, maxQueuedStoreReads: 1 },
+    resultStore: store, now: () => Date.now(),
+    onPersistence: (e) => {
+      if (e.runId === 'a' && e.state === 'failed' && e.attempt === 1 && !retried) {
+        retried = true;
+        retryPromise = m.retryPersist('a');   // fired synchronously, from inside the settle callback
+      }
+    },
+  });
+  m.reserveRunSlot('a'); m.admitSealedSet('a', await withRunId('a', 'positives'));
+  const first = m.beginPersist('a', { persist: true });      // will fail (attempt 1)
+  m.releaseResultSet('a', { acknowledgeUnsaved: true });     // marks removeOnSettle while attempt 1 is in flight
+  resolveFirst();
+  await first;                                               // attempt 1 settles 'failed'; observer starts attempt 2
+  assert.equal(retried, true, 'the observer really did fire a retry from inside its own settle callback');
+  assert.equal(m.retentionReport().slotsInUse, 1, 'the slot must stay occupied: a SECOND write is now live');
+  assert.throws(() => m.reserveRunSlot('b'), ResultCapacityError,
+    'the cap of 1 is not silently exceeded by the resurrected write');
+  resolveSecond();
+  await retryPromise;
+  assert.equal(m.retentionReport().slotsInUse, 0, 'freed only once the SECOND write actually settled');
+});
+
 test('a re-entrant observer that swaps in a new entry for the same runId survives the deferred-release cleanup', async () => {
   // codex-advisor follow-up finding, 2026-09-22: the first version of the Fix-1 deferred-release
   // (`removeOnSettle`) deleted by `runId` alone once the write settled. `notify()` runs arbitrary
@@ -394,7 +449,12 @@ test('a re-entrant observer that swaps in a new entry for the same runId survive
     onPersistence: (e) => {
       if (e.runId === 'a' && e.state === 'saved' && !reentered) {
         reentered = true;
-        m.reserveRunSlot('a');            // evicts the settling (now-evictable) old entry -- cap is 1
+        // `reserveRunSlot('a')` would now be a no-op here (the runId-already-holds-a-slot guard
+        // added for the Important reserveRunSlot finding, below), so the swap is driven through an
+        // explicit release instead -- the settling entry is already `saved`, so this deletes it
+        // IMMEDIATELY (no `writeInFlight`, so no `removeOnSettle` deferral applies to it).
+        m.releaseResultSet('a', { acknowledgeUnsaved: true });
+        m.reserveRunSlot('a');            // 'a' is free again: a normal, non-no-op reservation
         m.admitSealedSet('a', newSet);    // installs a brand-new entry for the SAME runId
       }
     },

@@ -140,7 +140,19 @@ export function createResidencyManager({ limits, resultStore, now, onPersistence
     // and admits a brand-new one for the SAME `runId` before `notify()` returns. Without the
     // identity check, this line would then delete that brand-new entry by `runId` alone, even
     // though it is a completely different object this attempt never touched.
-    if (entry.removeOnSettle && resident.get(runId) === entry) resident.delete(runId);
+    //
+    // Round-2 finding (task review, 2026-09-22, Critical): the identity check alone is NOT enough
+    // -- it guards "the entry under this runId was swapped for a DIFFERENT one" but not "this SAME
+    // entry now has a NEW write in flight". `notify()` runs after `writeInFlight` is reset to
+    // `false` in the `finally` above, so an observer that synchronously calls `retryPersist(runId)`
+    // from inside this very callback passes ITS `state === 'failed'` guard, starts attempt N+1, and
+    // sets `entry.writeInFlight = true` again -- all before control returns here. Without the
+    // `!entry.writeInFlight` conjunct, this line would then delete an entry whose SECOND write is
+    // still live, exceeding the hard bound and letting a subsequent `discardRun` resurrect it --
+    // reopening both original findings via a different trigger.
+    if (entry.removeOnSettle && !entry.writeInFlight && resident.get(runId) === entry) {
+      resident.delete(runId);
+    }
     return outcome;
   }
 
@@ -148,6 +160,16 @@ export function createResidencyManager({ limits, resultStore, now, onPersistence
   const reservationHeld = (runId) => active.has(runId);      // never throws, incl. for unknown ids
 
   function reserveRunSlot(runId) {
+    // codex-review finding, 2026-09-22, Important: a runId that already holds ANY slot -- an
+    // active reservation or a resident (sealed) entry -- needs no new slot. Without this guard,
+    // `makeRoom()` ran unconditionally: a duplicate reserve on an already-active id could evict an
+    // unrelated saved set for nothing (or throw a spurious `ResultCapacityError` if nothing else
+    // were evictable), and a duplicate reserve on an already-resident id double-counted the slot,
+    // permanently wedging `admitSealedSet` (which refuses a `resident.has(runId)` id) behind a
+    // phantom reservation only `releaseRunSlot` could clear. Idempotent no-op, matching this
+    // module's own convention elsewhere (`releaseResultSet` on a nonresident id, a spent lease
+    // token) rather than a throw, since no `runId` collision error is named for this case.
+    if (active.has(runId) || resident.has(runId)) return;
     makeRoom();                     // evicts an evictable resident set if full, else throws synchronously
     active.set(runId, true);
   }
