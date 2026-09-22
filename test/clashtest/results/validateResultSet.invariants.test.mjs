@@ -132,6 +132,10 @@ const CORRUPTIONS = [
   // the fix, with a phantom modelKey mentioned nowhere in `provenance.models`.
   ['model-not-in-provenance', (s) => { s.ledger.unresolvedSelections = [{ selectionRole: 'A', modelKey: 'urn:ghost', cause: 'element-unresolvable', dbIds: [1] }]; }],
   ['model-not-in-provenance', (s) => { s.ledger.warnings = [{ code: 'w', modelKey: 'urn:ghost' }]; }],
+  // P5 final whole-branch review, CT-1 (fixed): `model-not-in-provenance`'s model-key collection
+  // was also missing `ledger.units[].taints[].modelKey` (nullable) -- a phantom modelKey injected
+  // via a unit's taints[] array validated `{ok: true}` before the fix.
+  ['model-not-in-provenance', (s) => { s.ledger.units[0].taints = [{ kind: 'unit', modelKey: 'urn:ghost', dbId: null, reason: 'r', occurrences: 1 }]; }],
   ['coverage-not-full',       (s) => { s.outcome.coverage = 'full'; s.ledger.units = s.ledger.units.filter((u) => u.kind === 'split'); }],
   ['root-cls-invalid',        (s) => { delete s.ledger.rootOwners[0].owners[0].cls; }],
   ['root-cls-invalid',        (s) => { s.ledger.rootOwners[0].owners[0].cls = 'X'; }],

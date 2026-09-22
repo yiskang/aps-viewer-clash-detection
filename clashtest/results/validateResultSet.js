@@ -331,6 +331,12 @@ function checkResultLinkage(set, add) {
   for (const u of set.ledger.units) {
     mentioned.add(u.sourceModelKey);
     for (const t of u.targets) mentioned.add(t.modelKey);
+    // P5 final whole-branch review, CT-1 (fixed): `taints[].modelKey` (`TYPES.Taint`, nullable --
+    // resultSetSchema.js) is a ledger-resident, schema-declared model-key field this collection was
+    // missing, same pattern as the two P5.5 fix-round additions below. Deliberately NOT
+    // `diagnostics.diagnostics[].fragment(s).modelKey` -- the review flagged that as arguably outside
+    // this rule's literal "results or ledger" wording, and it is left for the milestone owner.
+    for (const t of u.taints) if (t.modelKey !== null) mentioned.add(t.modelKey);
   }
   for (const row of set.ledger.rootOwners) mentioned.add(row.modelKey);
   for (const row of set.ledger.unreachablePopulation) mentioned.add(row.modelKey);

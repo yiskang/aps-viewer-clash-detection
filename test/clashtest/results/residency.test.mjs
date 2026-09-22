@@ -218,7 +218,13 @@ test('admitSealedSet either converts the reservation fully or changes nothing', 
   const m2 = mgr();
   m2.reserveRunSlot('a');
   assert.equal(m2.reservationHeld('a'), true);
-  for (const bad of [null, undefined, {}, { sealed: false }, 'set']) {
+  // P5 final whole-branch review, CT-5 (fixed): `admitSealedSet` validated only `sealed !== true`,
+  // never that the argument is actually frozen -- the phase's own already-authorized interface
+  // summary (p5-result-set.md, ~line 60) documents a non-frozen argument as one of the three
+  // validations that must happen before the first mutation. `{ sealed: true }` here is a plain,
+  // mutable object literal: NOT frozen, so it must be rejected exactly like the other `bad` cases,
+  // with the same before-first-mutation atomicity.
+  for (const bad of [null, undefined, {}, { sealed: false }, { sealed: true }, 'set']) {
     assert.throws(() => m2.admitSealedSet('a', bad),
       (e) => e instanceof TypeError && e.code === 'ERR_RESULT_SET_NOT_SEALED', String(bad));
     assert.equal(m2.reservationHeld('a'), true, `${String(bad)}: reservation still held`);

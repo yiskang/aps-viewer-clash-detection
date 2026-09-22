@@ -186,7 +186,15 @@ export function createResidencyManager({ limits, resultStore, now, onPersistence
     // ---- validation phase: no state has been touched yet ----
     if (!active.has(runId)) throw new ResultNotResidentError({ runId });
     if (resident.has(runId)) throw new ResultNotResidentError({ runId });   // double admission
-    if (resultSet === null || typeof resultSet !== 'object' || resultSet.sealed !== true) {
+    // P5 final whole-branch review, CT-5 (fixed): the phase's own already-authorized interface
+    // summary (p5-result-set.md, ~line 60) documents that `admitSealedSet` validates "a non-sealed
+    // or non-frozen argument" before the first mutation -- `sealed !== true` alone let a plain,
+    // mutable object claiming `sealed: true` through. `Object.isFrozen` is a shallow, O(1) check
+    // (never `isDeepFrozen`, a test/diagnostic helper never intended for this hot path); legitimate
+    // sets reaching here are already deep-frozen by the seal/read paths, so shallow is the exact
+    // missing precondition, checked alongside the existing validations, still before any mutation.
+    if (resultSet === null || typeof resultSet !== 'object' || resultSet.sealed !== true
+        || !Object.isFrozen(resultSet)) {
       const err = new TypeError('admitSealedSet: only a sealed Result Set may become resident');
       err.code = 'ERR_RESULT_SET_NOT_SEALED';
       throw err;
