@@ -1018,10 +1018,14 @@ function* reconcileEvaluatedCoverageSteps({ definition, outcome, ledger }, roots
  * R0 <= sum of target entries <= the captured unit id lists (no separate budget or "unbounded"
  * outcome is needed). Time O(n log n + N + R log R), every loop yielding per item; memory O(n + R)
  * typed arrays (peak inventory in the REM9/REM10 reports, folded into the §17.1 R11-7/G-CAL memory
- * item). P5-REM10 (codex-review "release or scope buffers" item): the proof's working set lives in
- * typed arrays only (no per-list JS `Set`), the one n-sized buffer is reused by every phase (it also
- * holds `ys` and, when it fits, the tree's `cover`), and the segment tree uses the exact 2w-1-node
- * layout. Every buffer is live to the end, so the peak does not depend on garbage collection:
+ * item). P5-REM10 (codex-review "release or scope buffers" item): this sweep phase's own working set
+ * lives in typed arrays only (no per-list JS `Set`), the one n-sized buffer is reused by every phase
+ * (it also holds `ys` and, when it fits, the tree's `cover`), and the segment tree uses the exact
+ * 2w-1-node layout. The byte formula below accounts only for this sweep phase's typed-array backing
+ * storage; it excludes the earlier ranking phase's plain-JS allocations (`mergeSortSteps`'s `dst`, the
+ * per-model `roots[]` array, and one `{rootDbId, rec}` wrapper object per ranked root), so it is NOT a
+ * total proof-memory bound (P5-REM11 G-CAL correction). Every sweep buffer is live to the end, so its
+ * own peak does not depend on garbage collection:
  * 16C + 4(n+2) + 8T + 4(2w-1) x (1, or 2 when `cover` does not fit in the n-buffer's tail), in
  * bytes, C = capacity >= R0, T = rectangles swept (R0, or 2*R0 unordered), m = distinct y endpoints
  * <= min(n+1, 2*R0 [+ 2 x units, unordered]), w = max(m-1, 1).
