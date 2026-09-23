@@ -43,3 +43,4 @@ export * from './fakePlanner.mjs';                    // P6.3: createFakePlan
 export * from './runFixture.mjs';                     // P6.3: createRunFixture
 export * from './scriptedExecutor.mjs';               // P6.4: createScriptedExecutor (P6.5 extends it)
 export * from './placementRegistry.mjs';              // P6.4: createPlacementRegistry
+export * from './sealedSetFixture.mjs';               // P6.7: createSealedSetFixture
