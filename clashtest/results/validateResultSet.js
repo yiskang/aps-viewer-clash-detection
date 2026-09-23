@@ -594,9 +594,14 @@ function* checkCrossFieldSteps(set, add) {
   const leaves = [];
   for (const u of ledger.units) { if (isLeaf(u)) leaves.push(u); yield CROSS_STEP; }
   let allLeavesEvaluatedEqual = true;
+  // P5-REM11 (codex-review finding on the countsByReason fix above, same narrow bug class): `break`
+  // must not skip the triggering item's own `yield` either -- yield for the item BEFORE deciding
+  // whether to stop, so this loop truly yields "one step per unit" (the comment above it) up to and
+  // including the unit that ends the scan, not only for units strictly before it.
   for (const u of leaves) {
-    if (!(u.outcome === 'evaluated' && u.scopeProof === 'equal')) { allLeavesEvaluatedEqual = false; break; }
+    if (!(u.outcome === 'evaluated' && u.scopeProof === 'equal')) allLeavesEvaluatedEqual = false;
     yield CROSS_STEP;
+    if (!allLeavesEvaluatedEqual) break;
   }
   const derivedFull = ledger.planExists === true
     && ledger.planningGaps.length === 0
@@ -655,11 +660,14 @@ function* checkCrossFieldSteps(set, add) {
     let countsSum = 0;
     let countsRowsValid = true;
     for (const c of diagnostics.countsByReason) {
+      // P5-REM11: `yield CROSS_STEP` unconditionally, exactly once per row, on BOTH branches (the
+      // established per-item-yield convention this file uses everywhere else, e.g. the sibling
+      // `retainedAffectingSum` loop just below) -- a `continue` here must never skip the checkpoint.
       if (c === null || typeof c !== 'object' || !Number.isSafeInteger(c.count) || c.count < 0) {
         countsRowsValid = false;
-        continue;
+      } else {
+        countsSum += c.count;
       }
-      countsSum += c.count;
       yield CROSS_STEP;
     }
     const sigmaOk = countsRowsValid
@@ -683,9 +691,12 @@ function* checkCrossFieldSteps(set, add) {
   }
 
   let duplicateConflict = false;
+  // P5-REM11 (codex-review finding, same narrow bug class): yield for the triggering result BEFORE
+  // breaking, not only for results strictly before it.
   for (const r of results) {
-    if (r.flags?.duplicateEvidenceConflict === true) { duplicateConflict = true; break; }
+    if (r.flags?.duplicateEvidenceConflict === true) duplicateConflict = true;
     yield CROSS_STEP;
+    if (duplicateConflict) break;
   }
   const derivedIntegrity = diagnostics.completenessAffectingUpperBound > 0 || duplicateConflict
     ? 'caveated' : 'clean';

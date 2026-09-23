@@ -5,7 +5,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateResultSet, readResultSet, captureResultSet, SCHEMA_VERSION } from '../../../clashtest/results/validateResultSet.js';
+import {
+  validateResultSet, validateResultSetSteps, readResultSet, captureResultSet, SCHEMA_VERSION,
+} from '../../../clashtest/results/validateResultSet.js';
 import { SCHEMA_ROWS, UNKNOWN_FIELD_BYTES } from '../../../clashtest/results/resultSetSchema.js';
 // NOTE: fixed from the plan's own literal `'../../support/schemaMutations.mjs'` (the same
 // known plan-authoring typo pattern already fixed in Task P5.2 -- every sibling test dir's real
@@ -18,7 +20,7 @@ import { computeSemanticDigest, normalizeDefinition } from '../../../clashtest/d
 import { CorruptResultSetError, ResultSetTooLargeError } from '../../../clashtest/errors.js';
 import { ENGINE_LIMIT_DEFAULTS, ENGINE_LIMIT_CEILINGS, resolveEngineLimits } from '../../../clashtest/options.js';
 import { canonicalJson } from '../../../clashtest/util/canonical.js';
-import { sealedSet, fakeSlicer, resealed, sharedRootPlan, MODEL_A, MODEL_B } from '../support/resultSetFixtures.mjs';
+import { sealedSet, fakeSlicer, resealed, sharedRootPlan, widePlan, MODEL_A, MODEL_B } from '../support/resultSetFixtures.mjs';
 import { planSplit } from '../../../clashtest/planning/splitting.js';
 import { makeSplitFixture, makeSyntheticEnumerator, defOf, snapshotOf } from '../support/syntheticModels.mjs';
 import { createPlan } from '../../../clashtest/planning/planner.js';
@@ -1273,4 +1275,131 @@ test('captureResultSet (the recapture readResultSet performs on migration output
   assert.throws(() => captureResultSet(migrationOutputShaped, { limits }),
     (e) => e instanceof CorruptResultSetError && e.issues.some((i) => i.code === 'accessor'));
   assert.equal(invoked, 0, 'the nested getter was never invoked by the recapture');
+});
+
+// P5-REM11 (independent Work review adjudication, docs/reviews/2026-09-23-federated-clash-test-core-
+// p5-remediation-focused-rereview-adjudication.md; confirmed by codex-advisor consult + direct source
+// read): the `diagnostics.countsByReason` reconciliation loop inside `checkCrossField` used to
+// `continue` on a malformed row WITHOUT reaching its own `yield CROSS_STEP` at the end of the loop
+// body -- unlike every sibling loop in this file (e.g. the `retainedAffectingSum` loop a few lines
+// below it, which yields unconditionally on every iteration regardless of branch). `countsByReason`
+// rows are declared `free()` (resultSetSchema.js: no structural inner-shape check), so up to
+// `maxDistinctReasons` (1,024, options.js) malformed rows could be processed by this ONE loop with
+// ZERO slicer checkpoints -- a slicing-granularity defect, not a correctness one: the malformed branch
+// already set `countsRowsValid = false` (and so still fails closed) before the `continue` that skipped
+// the yield.
+// Each call is a FRESH shape (never a shared object reference): `captureResultSet`'s cycle guard
+// tracks visited objects by identity across the whole traversal (`clashtest/util/capture.js`), so
+// repeating the SAME object reference at several array positions is itself rejected as `cyclic` --
+// a distraction from what this test is actually about. Repeated several times over so there are
+// dozens of malformed rows, not just one of each kind -- large enough that a per-item-yield
+// regression is unmissable in the granularity test below.
+const oneOfEachMalformedCountsByReasonRow = () => [
+  null,               // not-an-object (also a structural null-not-allowed on the free() row itself)
+  'not-an-object',    // wrong type entirely (structural container-invalid)
+  42,                 // wrong type entirely (structural container-invalid)
+  {},                 // missing `count`
+  { count: 'x' },     // wrong type for `count`
+  { count: -1 },      // negative
+  { count: 1.5 },     // not a safe integer
+];
+const manyMalformedCountsByReasonRows = () => Array.from({ length: 6 }, oneOfEachMalformedCountsByReasonRow).flat();
+
+// Shared by every P5-REM11 yield-granularity test below: the count of 'validate:cross-field' steps a
+// full `validateResultSetSteps` drain emits for one Result Set.
+const crossFieldStepCount = (set) => {
+  const it = validateResultSetSteps(set, { limits });
+  let step = it.next();
+  let count = 0;
+  while (!step.done) {
+    if (step.value === 'validate:cross-field') count += 1;
+    step = it.next();
+  }
+  return count;
+};
+
+test('P5-REM11: a countsByReason array with dozens of malformed rows is still rejected '
+  + 'diagnostics-counts-inconsistent (fail-closed behavior preserved)', async () => {
+  const manyMalformed = manyMalformedCountsByReasonRows();
+  assert.ok(manyMalformed.length >= 24, `expected dozens of malformed rows, got ${manyMalformed.length}`);
+  const forged = await resealed((s) => { s.diagnostics.countsByReason = manyMalformed; }, 'positives');
+  const { ok, issues } = validateResultSet(forged, { limits });
+  assert.equal(ok, false);
+  assert.ok(issues.some((i) => i.code === 'diagnostics-counts-inconsistent'),
+    `expected diagnostics-counts-inconsistent, got ${JSON.stringify(issues)}`);
+  await assert.rejects(
+    readResultSet(structuredClone(forged), { limits, slicer: fakeSlicer() }),
+    (e) => e instanceof CorruptResultSetError && e.issues.some((i) => i.code === 'diagnostics-counts-inconsistent'),
+  );
+});
+
+test('P5-REM11: the countsByReason cross-field loop checkpoints once per row, including malformed '
+  + 'rows (yield granularity)', async () => {
+  const wellFormed = Array.from({ length: 20 }, (_, i) => ({ scope: 'fragment', reason: `reason-${i}`, count: 1 }));
+  const manyMalformed = manyMalformedCountsByReasonRows();
+  assert.ok(manyMalformed.length >= 24, `expected dozens of malformed rows, got ${manyMalformed.length}`);
+
+  const base = structuredClone(await sealedSet('positives'));
+  base.diagnostics.countsByReason = wellFormed;
+  const variant = structuredClone(base);
+  variant.diagnostics.countsByReason = [...wellFormed, ...manyMalformed];
+
+  // Pre-fix, the malformed rows' `continue` skipped their own `yield`, so appending
+  // `manyMalformed.length` malformed rows to `wellFormed` added ZERO cross-field checkpoints (only
+  // well-formed rows yielded, distinguishing "yields only for well-formed rows" from "yields for every
+  // row"). Post-fix, every appended row -- well-formed or malformed -- yields exactly once, so the
+  // delta equals the count of appended rows exactly.
+  const delta = crossFieldStepCount(variant) - crossFieldStepCount(base);
+  assert.equal(delta, manyMalformed.length, `expected one cross-field checkpoint per appended `
+    + `malformed row (${manyMalformed.length}), got a delta of ${delta}`);
+});
+
+// P5-REM11 follow-up (codex-review finding on the countsByReason fix above, Low severity, same
+// narrow bug class): two OTHER loops in this same cross-field phase used `break` to short-circuit
+// once their answer was already known, but the branch that triggers the `break` skipped that one
+// item's own `yield` -- unlike the item's own `yield` on every other path through the same loop.
+// Both are now fixed to yield the triggering item too, before breaking. Each bypass was bounded to
+// exactly ONE skipped checkpoint (not the up-to-1,024 of the primary countsByReason bug above), so
+// codex-review correctly rated this Low, but it is the identical class of defect and a mechanical,
+// narrow fix, so it is fixed here rather than merely flagged.
+
+test('P5-REM11 follow-up: the allLeavesEvaluatedEqual loop checkpoints for the leaf that ends its '
+  + 'own short-circuit, not only for leaves strictly before it', async () => {
+  const N = 5;
+  const wide = structuredClone(await widePlan(N));
+  // `ledger.planningGaps` is forced non-empty in BOTH variants so `derivedFull` (which this loop's
+  // own outcome feeds into) is `false` in both regardless -- this keeps
+  // `reconcileEvaluatedCoverageSteps`'s large `derivedFull`-gated tail from running in either variant.
+  wide.ledger.planningGaps = [{ phase: 'planning', cause: 'cancelled' }];
+  // The LAST unit's own source/target ranges are emptied in BOTH variants too (codex-review
+  // round-2 finding): `reconcileEvaluatedCoverageSteps` has its OWN separate, already-correct
+  // per-leaf loop that nests extra checkpoints only for a leaf's non-empty sourceRootDbIds/targets --
+  // emptying them makes that loop's contribution for this one unit exactly 0 regardless of the
+  // unit's validity, so it can no longer add an incidental, reconciliation-shape-dependent offset to
+  // the delta this test measures. What remains isolates ONLY the `allLeavesEvaluatedEqual` loop
+  // under test: the breaking unit's own checkpoint is the ONLY thing that can now differ.
+  wide.ledger.units[N - 1].sourceRootDbIds = [];
+  wide.ledger.units[N - 1].targets = [];
+  const allValid = structuredClone(wide);
+  const lastInvalid = structuredClone(wide);
+  lastInvalid.ledger.units[N - 1].scopeProof = 'not-checked';   // the LAST leaf now fails the loop's check
+
+  // Empirically confirmed (temporarily reverting just this loop's fix, then restoring it): delta is
+  // 1 with the bug present (the breaking leaf's own checkpoint never fires) and 0 fixed (it does).
+  const delta = crossFieldStepCount(allValid) - crossFieldStepCount(lastInvalid);
+  assert.equal(delta, 0, `expected the breaking leaf's own checkpoint to still fire (delta 0), got ${delta}`);
+});
+
+test('P5-REM11 follow-up: the duplicateConflict loop checkpoints for the result that ends its own '
+  + 'short-circuit, not only for results strictly before it', async () => {
+  const N = 5;
+  const wide = structuredClone(await widePlan(N));
+  const noConflict = structuredClone(wide);
+  const lastConflict = structuredClone(wide);
+  lastConflict.results[lastConflict.results.length - 1].flags = { duplicateEvidenceConflict: true };
+
+  // No confound here (this loop is independent of `ledger`/`derivedFull`): the delta is exactly the
+  // one checkpoint this fix restores -- empirically 1 with the bug present, 0 fixed.
+  const delta = crossFieldStepCount(noConflict) - crossFieldStepCount(lastConflict);
+  assert.equal(delta, 0, `expected the breaking result's own checkpoint to still fire (delta 0), got ${delta}`);
 });
