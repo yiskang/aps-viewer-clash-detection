@@ -43,6 +43,17 @@ function workUnitOf(u) {
   };
 }
 
+/** A7/N16: `(plan, unit) -> {sourceDbIds, targets, scopeExpect}` -- the same body `plannerPort`'s own
+ *  `materializeUnit` uses (Task P6.5), factored out so `fx.plan.materializeUnit(...)` and
+ *  `fx.plannerPort.materializeUnit(...)` can never silently disagree. */
+export function materializeUnitOf(_plan, unit) {
+  return {
+    sourceDbIds: [],
+    targets: unit.targets.map((t) => ({ modelKey: t.modelKey, scope: 'whole' })),
+    scopeExpect: [],
+  };
+}
+
 export function createFakePlan(units, opts = {}) {
   const list = units.map(workUnitOf);
   const gaps = (opts.gaps ?? []).map((g) => ({ ...g }));
@@ -61,6 +72,7 @@ export function createFakePlan(units, opts = {}) {
     gaps,
     pairSpaceTotal,
     preTerminalGapWeight: gapWeight,
+    materializeUnit: materializeUnitOf,                     // Task P6.5: `fx.plan.materializeUnit(...)`
   };
 }
 
@@ -91,14 +103,38 @@ const ledgerFieldsOf = (u) => ({
   pairSpaceWeight: u.pairSpaceWeight,
 });
 
+/**
+ * Task P6.5 extension: `splits` maps a parent unitId to its two children (`[{unitId, weight}, {unitId,
+ * weight}]`, §6.4 ids `${unitId}.0` / `${unitId}.1`, weights partitioning the parent's). When a parent
+ * has no entry, a splittable unit (`splittable !== false`, `weight >= 2`) is auto-halved
+ * (`Math.ceil(weight/2)` / `Math.floor(weight/2)`) so a capacity-always executor can drive nested
+ * splits to the ledger's real caps without every test having to spell out every generation's weights.
+ * `preExhaustLedger` pre-spends the run's discretionary ledger budget down to 1 remaining record on the
+ * FIRST split attempt (after planning's own `reserveUnitSlots()` already succeeded), so that exact
+ * split is refused on the ledger-records cap rather than the unit-records one (support/runFixture.mjs's
+ * `limits: {maxLedgerRecords: 'exhausted'}` sentinel).
+ */
+function defaultChildrenOf(unit) {
+  const half = Math.floor(unit.weight / 2);
+  return [
+    { unitId: `${unit.unitId}.0`, weight: unit.weight - half },
+    { unitId: `${unit.unitId}.1`, weight: half },
+  ];
+}
+
+const REASON_BY_CAP_DETAIL = Object.freeze({ 'unit-records': 'unit-cap', 'ledger-records': 'ledger-cap' });
+
 export function createFakePlannerPort({
   plan, planningGaps = null, stallAt = null, onPlanRun = () => {},
-  yieldToScheduler = async () => {},
+  yieldToScheduler = async () => {}, splits = {}, preExhaustLedger = false,
 } = {}) {
   const calls = { planRun: 0, materializeUnit: 0, splitUnit: 0 };
+  let capturedLedger = null;                               // set by planRun; splitUnit reaches the
+  let ledgerPreExhausted = false;                           // SAME ledger the same way the real planner does
 
   async function planRun({ checkpoint, ledger }) {
     calls.planRun += 1;
+    capturedLedger = ledger;
     onPlanRun();                                           // the fixture's reached('enumerating')
     if (stallAt === 'enumerating') {
       // A cooperative enumeration that never finishes on its own: only a cancel (the checkpoint
@@ -132,16 +168,35 @@ export function createFakePlannerPort({
   return {
     calls,
     planRun,
-    materializeUnit(_plan, unit) {
+    materializeUnit(plannedPlan, unit) {
       calls.materializeUnit += 1;
-      return {
-        sourceDbIds: [],
-        targets: unit.targets.map((t) => ({ modelKey: t.modelKey, scope: 'whole' })),
-        scopeExpect: [],
-      };
+      return materializeUnitOf(plannedPlan, unit);
     },
-    // P6.5 extends this (`splits` option); until then every unit is indivisible.
-    splitUnit() { calls.splitUnit += 1; return { reason: 'unsplittable' }; },
+    /** A8/N17: `(plan, unit) -> {children: [WorkUnit, WorkUnit]} | {reason: 'unsplittable'|'unit-cap'|
+     *  'ledger-cap', capDetail?}`. Admission goes through THE run's ledger (R8, review C5), captured
+     *  from `planRun`'s own argument — never a `run.plan.units.length` guard, which never changes as
+     *  runtime children are created. */
+    splitUnit(_plan, unit) {
+      calls.splitUnit += 1;
+      if (unit.splittable === false) return { reason: 'unsplittable' };
+      const explicit = splits[unit.unitId];
+      const spec = explicit ?? (unit.weight >= 2 ? defaultChildrenOf(unit) : null);
+      if (spec === null) return { reason: 'unsplittable' };
+      if (preExhaustLedger && !ledgerPreExhausted) {
+        ledgerPreExhausted = true;
+        const remaining = capturedLedger.budget.discretionaryRemaining;
+        if (remaining > 1) capturedLedger.budget.admitRuntime('unit-taint', remaining - 1, null);
+      }
+      const children = spec.map((c) => workUnitOf({ ...unit, unitId: c.unitId, weight: c.weight }));
+      const ledgerChildren = children.map((c) => ({
+        unitId: c.unitId, sourceModelKey: c.sourceModelKey, sourceRootDbIds: [],
+        targets: c.targets.map((t) => ({ modelKey: t.modelKey, scope: 'model' })),
+        pairSpaceWeight: c.pairSpaceWeight, ranges: 0,
+      }));
+      const result = capturedLedger.tryRecordSplit(unit.unitId, ledgerChildren);
+      if (result.ok !== true) return { reason: REASON_BY_CAP_DETAIL[result.capDetail], capDetail: result.capDetail };
+      return { children };
+    },
     rootsForRanges() { return []; },
     createRecordBudget,
     createLedger,

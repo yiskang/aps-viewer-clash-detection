@@ -554,7 +554,28 @@ async function runUnitWithRetries(run, unit) {
     //   (3) nothing else was observed. Any other fact outranks `stale-placement` in table A
     //       (ranks 1-7) or ties at rank 8, and a unit with a second fact must SETTLE, not retry.
     // Retrying anything else would re-issue a unit whose inputs are already known to have moved.
-    if (isRetryablePlacement(run, unit, outcome, facts) && attempt < maxAttempts) continue;
+    //
+    // P6.5 fix (task review): the brief's own pseudocode called `isRetryablePlacement` for the
+    // retry DECISION only and, once it returned false because the generation had moved (as opposed
+    // to false for any of the OTHER three reasons), fell straight into `classifyUnitSettlement(facts,
+    // phase)` with `facts` still `['stale-placement']` — sealing the unit `failed:stale-placement`
+    // and the run merely `completed` with `environmentSensitiveCauses: ['placement-contention']`,
+    // exactly the ENGINE-DETECTED-nothing-else-changed shape (§7.5 row 2 / the "retries exhausted"
+    // test), even when P6's OWN generation comparison is the thing that caught a real placement
+    // change. §7.5 row 3 is unambiguous that a placement change is `input-changed`/`invalidated`
+    // — the executor's own `retryable: true` must never talk P6 into treating a caught change as a
+    // mere capacity-style gap. `isEligibleStalePlacementShape` isolates conditions (1)-(3) so the
+    // generation check (`placementGenerationsSteady`) is computed once and read for BOTH the retry
+    // decision and this reclassification, instead of two call sites risking different answers.
+    if (isEligibleStalePlacementShape(outcome, facts)) {
+      if (placementGenerationsSteady(run, unit, outcome.generations)) {
+        if (attempt < maxAttempts) continue;
+        // exhausted, generation never moved: falls through to the normal `stale-placement` settle.
+      } else {
+        const moved = classifyUnitSettlement(['input-changed'], phase);
+        return run.unitResult(unit, moved, outcome, attempt, { capacityKind: null });
+      }
+    }
     const settlement = classifyUnitSettlement(facts, phase);
 
     // §6.4: a splittable capacity failure is a split DECISION, made by the engine — but the
@@ -584,22 +605,16 @@ async function runUnitWithRetries(run, unit) {
 }
 
 /**
- * C1 — the whole retry-eligibility rule, in one pure-ish predicate so the protocol lives in exactly
- * one place and the tests can state it directly.
- *
- * `outcome.generations` is P4's `{start: [{modelKey, placementGeneration, bindingGeneration}],
- * end: [...]}` — the two reads that bracket the call (P4 Task P4.8). Comparing them catches a
- * placement change that landed DURING the attempt but that P4's own ctx flag did not see; comparing
- * `start` against the run-start snapshot catches one that landed between the snapshot and the
- * attempt. A run whose generation moved is `input-changed` at the unit and `invalidated` at the run
- * (§16.7 order B) — the opposite of a retry.
+ * C1 — the SHAPE half of the retry-eligibility rule (conditions (1)-(3) of the comment above this
+ * call site), split from the generation check so `runUnitWithRetries` can read `placementGenerationsSteady`
+ * once and use it for both the retry decision and the input-changed reclassification (P6.5 fix).
  */
-function isRetryablePlacement(run, unit, outcome, facts) {
+function isEligibleStalePlacementShape(outcome, facts) {
   if (outcome.outcome !== 'failed') return false;
   if (outcome.failure === null || outcome.failure.code !== 'stale-placement') return false;
   if (outcome.failure.retryable !== true) return false;
   if (facts.length !== 1 || facts[0] !== 'stale-placement') return false;   // (3): nothing else
-  return placementGenerationsSteady(run, unit, outcome.generations);
+  return true;
 }
 
 /** (2): the engine's OWN placement generation for this unit's models, across all three reads. */

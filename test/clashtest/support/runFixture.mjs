@@ -36,6 +36,15 @@
 //   executor             a UnitExecutor (default: a scripted executor that evaluates every unit clean).
 //   derivedFromRunId, runId, engineId, runOptions (RunOptions input), limits (engine limits input,
 //   plus any run-option key, routed to runOptions), realSealing, shared, clockOptions, specOverrides.
+//   splits                (Task P6.5) `{parentUnitId: [{unitId, weight}, {unitId, weight}]}`, routed
+//                         to `createFakePlannerPort`'s own `splitUnit` (§6.4 real split admission).
+//   limits.maxLedgerRecords: 'exhausted'  (Task P6.5) a FIXTURE SENTINEL, never a real option value:
+//                         pre-spends the discretionary ledger budget down to 1 record on the first
+//                         split attempt, so that split is refused on the ledger-records cap.
+//   beforeUnit            (Task P6.5) `{unitId: () => void}`, fired at most once per unit, immediately
+//                         before that unit's first attempt — models a one-time host-side mutation
+//                         (e.g. `registry.notifyPlacementChanged(...)`) landing before the engine's
+//                         first call for that unit.
 //
 // `realSealing: true` hands the run P5's bare `buildResultSet`/`sealResultSet`/`deriveRunOutcome`
 // with NO wrapper at all. The default ALSO uses the real functions, wrapped only to record calls, so
@@ -43,6 +52,14 @@
 //
 // `createRunFixture.sharedWorld()` returns `{world, registry, coordinator}` for several fixtures to
 // share (one world => one coordinator => one FIFO queue and one in-flight slot, §7.3).
+//
+// Task P6.5 additionally exposes on the returned fixture: `plannerCalls` (= `plannerPort.calls`),
+// `limits` (the resolved engine limits), `yields.interUnit` (calls through `spec.yieldToScheduler`),
+// `ledger.halfRecordedSplits` (independent atomicity check on a refused split), `substitutedOutcomes`
+// / `lastValidationIssues` (every `internalErrorOutcome` substitution and the issues that drove it).
+// `spec.executor` runs through a live-generations wrapper (`beforeUnit` + real registry-bracketed
+// `outcome.generations`); the returned `executor` field stays the INNER, unwrapped instance so its
+// own tracking (`requests`, `attemptsFor`, `maxConcurrent`, `startedUnits`) is unaffected.
 
 import { createFakeClock } from './fakeClock.mjs';
 import { createFakePlan, createFakePlannerPort, modelKeysOfPlan } from './fakePlanner.mjs';
@@ -128,6 +145,86 @@ function splitLimits(input = {}) {
   return { engine, run };
 }
 
+/**
+ * Task P6.5 (C5 "a ledger-record refusal" test): `limits.maxLedgerRecords: 'exhausted'` is a fixture
+ * SENTINEL, never a real option value (`resolveRunOptions` would reject the string outright) --
+ * pulled out here before the real limits are resolved, so `maxLedgerRecords` itself still resolves to
+ * its ordinary default. `createFakePlannerPort`'s own `preExhaustLedger` flag spends the run's
+ * discretionary ledger budget down to 1 remaining record on the FIRST split attempt (i.e. once
+ * planning's own `reserveUnitSlots()` has already succeeded), so a small, otherwise-unremarkable
+ * split is refused on the ledger-records cap specifically, never the unit-records one.
+ */
+function extractPreExhaustLedger(limits) {
+  if (limits?.maxLedgerRecords !== 'exhausted') return { limits, preExhaustLedger: false };
+  const { maxLedgerRecords: _drop, ...rest } = limits;
+  return { limits: rest, preExhaustLedger: true };
+}
+
+/**
+ * Task P6.5 (C1 "a placement generation that MOVED" test): wraps an executor (default or test-
+ * supplied) so `outcome.generations.start`/`.end` are LIVE registry reads bracketing the call, exactly
+ * as P4's own executor brackets a real library call (Task P4.8) — never the frozen run-start
+ * `request.snapshot` a fake executor would otherwise have no other source for. Without this, a test's
+ * `registry.notifyPlacementChanged(...)` would be invisible to `isRetryablePlacement`'s generation
+ * comparison, because `request.snapshot` never changes once the run has started. `beforeUnit[unitId]`
+ * (a fixture option, not part of the §7.1 executor contract) fires at most ONCE per unit, immediately
+ * before that unit's FIRST attempt is dispatched — modelling a single host-side mutation that lands
+ * before the engine ever calls out for this unit, not a per-attempt hook.
+ */
+function wrapExecutorWithLiveGenerations(innerExecutor, { registry, beforeUnit = {} }) {
+  const fired = new Set();
+  const liveGenerationsFor = (unit) => {
+    const keys = [...new Set([unit.sourceModelKey, ...unit.targets.map((t) => t.modelKey)])];
+    const out = [];
+    for (const modelKey of keys) {
+      const binding = registry.bindingFor(modelKey);
+      if (binding !== null) out.push({ modelKey, bindingGeneration: binding.bindingGeneration, placementGeneration: binding.placementGeneration });
+    }
+    return out;
+  };
+  return async function executorWithLiveGenerations(request) {
+    const { unitId } = request.unit;
+    if (!fired.has(unitId) && typeof beforeUnit[unitId] === 'function') {
+      fired.add(unitId);
+      beforeUnit[unitId]();
+    }
+    const start = liveGenerationsFor(request.unit);
+    const outcome = await innerExecutor(request);
+    const end = liveGenerationsFor(request.unit);
+    if (outcome === null || typeof outcome !== 'object') return outcome;   // let validation reject it
+    return { ...outcome, generations: { start, end } };
+  };
+}
+
+/** Task P6.5: `createLedger` wrapped so a refused `tryRecordSplit` can be independently VERIFIED
+ *  atomic (`fx.ledger.halfRecordedSplits`) -- neither child landed and the record count is unchanged
+ *  -- without duplicating P3's own admission logic. A Proxy (not a spread) so every OTHER member,
+ *  including the live getters (`unitRecordCount`, `budgetExhausted`, ...), stays bound to the real,
+ *  live ledger instead of a value snapshot taken at wrap time. */
+function wrapCreateLedgerForFixture(realCreateLedger, onHalfRecordedSplit) {
+  return (ledgerOpts) => {
+    const target = realCreateLedger(ledgerOpts);
+    return new Proxy(target, {
+      get(t, prop) {
+        if (prop === 'tryRecordSplit') {
+          return (unitId, children) => {
+            const before = t.unitRecordCount;
+            const result = t.tryRecordSplit(unitId, children);
+            if (result.ok === false) {
+              const partial = t.unitRecordCount !== before
+                || children.some((c) => t.unitRecord(c.unitId) !== null);
+              if (partial) onHalfRecordedSplit();
+            }
+            return result;
+          };
+        }
+        const value = Reflect.get(t, prop, t);
+        return typeof value === 'function' ? value.bind(t) : value;
+      },
+    });
+  };
+}
+
 export function createRunFixture(opts = {}) {
   const clock = createFakeClock(opts.clockOptions);
   // `Object.hasOwn` (not `??`) so an explicit `plan: null` (P6.4 models failed/absent planning
@@ -137,9 +234,16 @@ export function createRunFixture(opts = {}) {
   const shared = opts.shared ?? null;
   const milestones = createMilestones();
 
-  const { engine: engineInput, run: runInputFromLimits } = splitLimits(opts.limits);
+  const { limits: limitsInput, preExhaustLedger } = extractPreExhaustLedger(opts.limits);
+  const { engine: engineInput, run: runInputFromLimits } = splitLimits(limitsInput);
   const limits = resolveEngineLimits(engineInput);
   const runOptions = resolveRunOptions({ ...runInputFromLimits, ...opts.runOptions }, limits);
+
+  // Task P6.5: counts every call through `spec.yieldToScheduler` (the ONLY yield source in a plan
+  // with no slicer-triggered yields of its own -- see `wrapExecutorWithLiveGenerations`'s sibling
+  // comment): `run.interUnitYield()` is the sole caller in every one of this task's own fixtures.
+  const yields = { interUnit: 0 };
+  const yieldToScheduler = async () => { yields.interUnit += 1; await clock.yieldToScheduler(); };
 
   // --- world, registry, coordinator ---
   const world = shared?.world ?? createRunWorld();
@@ -263,10 +367,39 @@ export function createRunFixture(opts = {}) {
     stallAt: opts.stallAt ?? null,
     onPlanRun: () => milestones.mark('enumerating'),
     yieldToScheduler: clock.yieldToScheduler,
+    splits: opts.splits ?? {},
+    preExhaustLedger,
   });
+  // Task P6.5 (C5 ledger-record refusal test): wraps the REAL `createLedger` (a Proxy, so every live
+  // getter -- `unitRecordCount`, `budgetExhausted`, ... -- stays bound to the actual instance) so a
+  // refused split can be independently verified atomic.
+  const ledgerState = { halfRecordedSplits: 0 };
+  plannerPort.createLedger = wrapCreateLedgerForFixture(
+    plannerPort.createLedger, () => { ledgerState.halfRecordedSplits += 1; },
+  );
 
   const runId = opts.runId ?? (shared === null ? 'run-1' : shared.nextRunId());
   const executor = opts.executor ?? createScriptedExecutor({}, { unscripted: { facts: [] } });
+  // Task P6.5: `spec.executor` runs THROUGH the live-generations wrapper (`beforeUnit` + real
+  // registry bracketing); `fx.executor` below stays the INNER, unwrapped instance so its own
+  // tracking (`requests`, `attemptsFor`, `maxConcurrent`, `startedUnits`) keeps working unchanged --
+  // the wrapper only ever delegates to it.
+  const specExecutor = wrapExecutorWithLiveGenerations(executor, { registry, beforeUnit: opts.beforeUnit ?? {} });
+
+  // Task P6.5 (the malformed-outcome test): records every substitution and the issues that drove it,
+  // without changing either function's own behaviour or signature.
+  const substitutedOutcomes = [];
+  const lastValidationIssues = [];
+  const wrappedValidateUnitOutcome = (request, outcome) => {
+    const result = validateUnitOutcome(request, outcome);
+    if (result.ok !== true) { lastValidationIssues.length = 0; lastValidationIssues.push(...result.issues); }
+    return result;
+  };
+  const wrappedInternalErrorOutcome = (request, issues) => {
+    const outcome = internalErrorOutcome(request, issues);
+    substitutedOutcomes.push({ source: 'internalErrorOutcome', request, issues, outcome });
+    return outcome;
+  };
 
   const spec = {
     runId,
@@ -281,9 +414,9 @@ export function createRunFixture(opts = {}) {
     modelKeysOf,
     planningCauseOf,
     enumerator: { resolveRoots() { throw new Error('the fake planner never enumerates'); } },
-    executor,
-    validateUnitOutcome,
-    internalErrorOutcome,
+    executor: specExecutor,
+    validateUnitOutcome: wrappedValidateUnitOutcome,
+    internalErrorOutcome: wrappedInternalErrorOutcome,
     diagnosticAggregator,
     statisticsAccumulator,
     deriveUnitTaints,
@@ -304,7 +437,7 @@ export function createRunFixture(opts = {}) {
       finishedAt: '2026-09-23T00:00:01.000Z',
     },
     now: clock.now,
-    yieldToScheduler: clock.yieldToScheduler,
+    yieldToScheduler,
     scheduleTimeout: () => () => {},
     ...opts.specOverrides,
   };
@@ -323,6 +456,7 @@ export function createRunFixture(opts = {}) {
     residency,
     resultPort,
     plannerPort,
+    plannerCalls: plannerPort.calls,
     diagnosticAggregator,
     statisticsAccumulator,
     engineId: spec.engineId,
@@ -330,6 +464,11 @@ export function createRunFixture(opts = {}) {
     testRef,
     definition,
     semanticDigest,
+    limits,
+    yields,
+    ledger: ledgerState,
+    substitutedOutcomes,
+    lastValidationIssues,
     /** Resolves once the run has reached `name`: 'job-started', 'planning' (the run-start
      *  snapshot was taken) or 'enumerating' (planRun was invoked). */
     reached: (name) => milestones.reached(name),

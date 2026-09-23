@@ -13,9 +13,16 @@
 export function createFakeClock({ start = 0, tickMs = 0, yieldAdvanceMs = 0 } = {}) {
   let t = start;
   let yields = 0;
+  let lastYieldMark = start;
+  let longestSyncSpanMs = 0;                                // Task P6.5: main-thread-discipline tests
   const hooks = new Set();
   return {
-    now() { const v = t; t += tickMs; return v; },
+    now() {
+      const v = t;
+      if (v - lastYieldMark > longestSyncSpanMs) longestSyncSpanMs = v - lastYieldMark;
+      t += tickMs;
+      return v;
+    },
     /** Advance time without reading it (simulates a long synchronous span). */
     advance(ms) { t += ms; },
     /** Current time without the per-read tick. */
@@ -23,9 +30,13 @@ export function createFakeClock({ start = 0, tickMs = 0, yieldAdvanceMs = 0 } = 
     async yieldToScheduler() {
       yields += 1;
       t += yieldAdvanceMs;
+      lastYieldMark = t;
       for (const hook of [...hooks]) await hook(yields);
     },
     get yieldCount() { return yields; },
+    /** The largest gap ever observed between a `yieldToScheduler()` and the next `now()` read --
+     *  i.e. the longest span the engine ever ran without yielding back to the scheduler (§7.3). */
+    get longestSyncSpanMs() { return longestSyncSpanMs; },
     onYield(fn) { hooks.add(fn); return () => hooks.delete(fn); },
   };
 }
