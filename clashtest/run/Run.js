@@ -1018,25 +1018,34 @@ function sealAs(run, status) {
     } catch (error) {
       return terminalInternalError(run, error);
     }
-    run.commit('state');                                   // sealed: `finalizing` is now observable
-
-    // Persistence starts AFTER the seal and never alters the outcome (§13.5). A15/N24: driven
-    // through the residency manager, which already holds the store; it is specified never to
-    // reject, and the defensive handler below keeps `done`/`persisted` settling even if it did.
-    const attempt = beginPersistAttempt(run);
-    attempt.then(
-      (snapshot) => {
-        run.resolvePersisted(toPersistenceOutcome(snapshot));
-        run.emit('persistence', { ...snapshot, seq: run.bumpSeq() });
-      },
-      (error) => {
-        run.persistError = error;
-        run.resolvePersisted(Object.freeze({ state: 'failed', error: describePersistError(error) }));
-      },
-    );
-    await openFinalizeWindow(run, attempt, resultSet);
-    return run.summary;
+    return persistAndFinalize(run, resultSet);
   })();
+}
+
+/**
+ * The shared tail of every path that ends with an ADMITTED set — the normal seal, and the R10
+ * fallback when it produced or adopted one: publish `finalizing`, start the one persistence attempt,
+ * and hold the finalize window. `cause` (R10 only) rides on the terminal event.
+ */
+async function persistAndFinalize(run, resultSet, { cause = null } = {}) {
+  run.commit('state');                                     // sealed: `finalizing` is now observable
+
+  // Persistence starts AFTER the seal and never alters the outcome (§13.5). A15/N24: driven
+  // through the residency manager, which already holds the store; it is specified never to
+  // reject, and the defensive handler below keeps `done`/`persisted` settling even if it did.
+  const attempt = beginPersistAttempt(run);
+  attempt.then(
+    (snapshot) => {
+      run.resolvePersisted(toPersistenceOutcome(snapshot));
+      run.emit('persistence', { ...snapshot, seq: run.bumpSeq() });
+    },
+    (error) => {
+      run.persistError = error;
+      run.resolvePersisted(Object.freeze({ state: 'failed', error: describePersistError(error) }));
+    },
+  );
+  await openFinalizeWindow(run, attempt, resultSet, { cause });
+  return run.summary;
 }
 
 /** `residency.beginPersist`, with a synchronous throw turned into the same rejected attempt. */
@@ -1075,6 +1084,15 @@ function toPersistenceOutcome(snapshot) {
  * that also throws, the summary carries `resultSet: null`. That is a deliberate, documented
  * deviation from `RunSummary.resultSet` always being a set (§13.5.1): the only alternative is
  * rejecting `done`, which the same sentence forbids outright. Recorded as open item O7.
+ *
+ * P6.8 self-review deviation from the brief (codex-advisor finding): a set that IS resident — the
+ * fallback set just admitted, or the set adopted through I8 — goes through the SAME persistence
+ * attempt and finalize window as a normal seal (`persistAndFinalize`, status `failed`). The brief
+ * settled it `skipped`/`seal-failed` at once, which left residency reporting that set `pending`
+ * attempt 0 forever (held, never persisted, never evictable), made `done`, `persisted` and
+ * `getPersistenceState` disagree, and put a reason outside §13.5.1's closed
+ * `'no-store' | 'persist-false'` union on `persisted`. Only the no-set case (O7) settles without an
+ * attempt, since there is nothing to persist.
  */
 async function terminalInternalError(run, error) {
   run.sealError = error;                                   // kept for diagnosis
@@ -1088,7 +1106,7 @@ async function terminalInternalError(run, error) {
   if (resident !== null) {
     run.reservationSettled = true;
     run.sealed = true;
-    return finishTerminalInternalError(run, resident);
+    return finishWithResidentSet(run, resident);
   }
   let resultSet = null;
   try {
@@ -1111,11 +1129,19 @@ async function terminalInternalError(run, error) {
   } catch {
     resultSet = releaseIfStillReserved(run);               // I8: never leak, never double-free
   }
-  return finishTerminalInternalError(run, resultSet);
+  return resultSet === null ? finishTerminalInternalError(run, null) : finishWithResidentSet(run, resultSet);
 }
 
-/** The one terminal commit of the fallback path, shared by both ways into it (a fallback set built
- *  here, or an already-resident set adopted through I8). */
+/** R10 with a resident set (built here, or adopted through I8): the normal persistence tail, as
+ *  `failed`. The status is set directly — `transition` refuses once a terminal status was staged. */
+function finishWithResidentSet(run, resultSet) {
+  run.status = 'failed';
+  run.pending.status = 'failed';
+  return persistAndFinalize(run, resultSet, { cause: 'internal-error' });
+}
+
+/** The terminal commit of the fallback when NO set exists (O7): nothing to persist, so `done` and
+ *  `persisted` settle at once, `persisted` with `{state:'skipped', reason:'seal-failed'}`. */
 function finishTerminalInternalError(run, resultSet) {
   run.status = 'failed';
   const persistence = Object.freeze(
@@ -1176,7 +1202,7 @@ const emptyDiagnosticsSummary = () => Object.freeze({
  * whose write has already settled carries that final state with `timedOut: false` (§10.2: "or the
  * final state if the write has already settled").
  */
-function openFinalizeWindow(run, attempt, resultSet) {
+function openFinalizeWindow(run, attempt, resultSet, { cause = null } = {}) {
   return new Promise((resolve) => {
     let closed = false;
     let cancelTimer = () => {};
@@ -1195,7 +1221,8 @@ function openFinalizeWindow(run, attempt, resultSet) {
       // synchronously from the terminal event observes `phase: 'terminal'` and `seq === ev.seq`.
       commitTerminal(run, { status: run.status, persistence });
       run.emit('state', {
-        seq: run.seq(), status: run.status, phase: 'terminal', terminal: true, persistence,
+        seq: run.seq(), status: run.status, phase: 'terminal', terminal: true,
+        ...(cause === null ? {} : { cause }), persistence,
       });
       run.resolveDone(run.summary);                        // AFTER the terminal event, always
       resolve();

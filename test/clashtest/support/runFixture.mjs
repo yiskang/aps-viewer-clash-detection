@@ -265,18 +265,20 @@ function wrapExecutorWithLiveGenerations(innerExecutor, { registry, beforeUnit =
       fired.add(unitId);
       beforeUnit[unitId]();
     }
-    // Task P6.8: the LIVE half of a multi-fact descriptor (`scriptedExecutor` header): the unit's
-    // source model dies before the call (`beforeCall`) or while it is in flight (`duringCall`).
-    const live = innerExecutor.liveFactsFor?.(request) ?? { beforeCall: [], duringCall: [] };
+    // Task P6.8: the LIVE half of a scripted fact list (`scriptedExecutor` header), always while the
+    // call is IN FLIGHT — `early` right after it is issued, `late` as it returns: the unit's source
+    // model dies (`model-evicted`) or its placement moves (`input-changed`).
+    const live = innerExecutor.liveFactsFor?.(request) ?? { early: [], late: [] };
+    const sourceKey = request.unit.sourceModelKey;
     const applyLive = (facts) => {
-      if (facts.includes('model-evicted') && registry.has(request.unit.sourceModelKey)) {
-        registry.unregisterKey(request.unit.sourceModelKey);
-      }
+      if (facts.includes('model-evicted') && registry.has(sourceKey)) registry.unregisterKey(sourceKey);
+      if (facts.includes('input-changed') && registry.has(sourceKey)) registry.notifyPlacementChanged(sourceKey);
     };
-    applyLive(live.beforeCall);
     const start = liveGenerationsFor(request);
-    const outcome = await innerExecutor(request);
-    applyLive(live.duringCall);
+    const call = innerExecutor(request);                   // issued: P4's pre-call gate has passed
+    applyLive(live.early);
+    const outcome = await call;
+    applyLive(live.late);
     const end = liveGenerationsFor(request);
     onReturned(unitId);                                    // Task P6.6: arms `afterUnit(unitId, ...)`
     if (outcome === null || typeof outcome !== 'object') return outcome;   // let validation reject it

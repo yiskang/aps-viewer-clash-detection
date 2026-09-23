@@ -47,9 +47,11 @@
 //   forceScopeProof an otherwise-clean `evaluated` outcome carrying this `scopeProof` instead of
 //                   'equal' -- the I-scope violation P4's `validateUnitOutcome` must reject.
 // Task P6.8 EXTENDS this file (same extension rules):
-//   input-changed   a single `facts: ['input-changed']` expands like any other known failure code
-//                   (`failed`, `retryable: false`) -- it was the one table-A fact the fake could not yet
-//                   produce, and matrix C needs it.
+//   input-changed   a single `facts: ['input-changed']` expands into the shape P4 produces for it: a
+//                   `discarded` outcome with `failure.code: 'input-changed'` (`retryable: false`), AND a
+//                   LIVE placement change of the unit's source model while the call is in flight (the
+//                   run fixture's wrapper calls `registry.notifyPlacementChanged`), because P4 only ever
+//                   reports it after observing a placement-generation move.
 //   several facts   a MULTI-fact list is delivered through every channel a real P4 outcome has, since
 //                   one §11.2 outcome carries only ONE `failure.code`:
 //                     - a scope fact (`scope-drift` / `scope-unverifiable`, at most one) -> `scopeProof`;
@@ -58,10 +60,13 @@
 //                       registry scan, exactly as it observes a real death, P4 H1);
 //                     - every other fact (at most one) -> `failure.code`.
 //                   `executor.liveFactsFor(request)` reports the live half to the fixture wrapper.
-//   shuffleFacts    the descriptor's `facts` ORDER is the DELIVERY order: a live fact listed BEFORE the
-//                   `failure.code` fact lands before the call is issued, one listed after it lands while
-//                   the call is in flight. The same SET in every permutation must seal identically
-//                   (§16.7, AC-21); without the flag a live fact always lands while the call is in flight.
+//   shuffleFacts    the descriptor's `facts` ORDER is the DELIVERY order. Every live fact lands while the
+//                   call is IN FLIGHT (a death before the call would be caught by P4's pre-call binding
+//                   gate, which issues no call at all, so it could not coexist with a thrown fact): one
+//                   listed BEFORE the `failure.code` fact lands `early` (right after the call is issued),
+//                   one listed after it lands `late` (as the call returns). The same SET in every
+//                   permutation must seal identically (§16.7, AC-21); without the flag a live fact
+//                   always lands `late`.
 // `executor.requests` (every request handed to the executor, in call order), `executor.attemptsFor
 // (unitId)` (the attempt numbers issued to one unit, in order) and `executor.maxConcurrent` (the
 // largest number of calls ever in flight at once) are recorded unconditionally.
@@ -88,6 +93,9 @@ const FACT_RETRYABLE = Object.freeze({
   'input-changed': false,                                   // Task P6.8 (matrix C)
 });
 
+// Task P6.8: P4 reports these codes as a `discarded` outcome (the attempt's evidence is void).
+const DISCARDED_CODES = new Set(['input-changed']);
+
 // Task P6.8: facts a multi-fact descriptor delivers through LIVE registry state, not the outcome.
 const LIVE_FACTS = new Set(['model-evicted']);
 
@@ -95,7 +103,10 @@ const LIVE_FACTS = new Set(['model-evicted']);
  *  `{outcomeFacts, live: {beforeCall, duringCall}}`; a single-fact list is untouched. */
 function splitFacts(descriptor) {
   const facts = descriptor.facts ?? [];
-  if (facts.length <= 1) return { outcomeFacts: facts, live: { beforeCall: [], duringCall: [] } };
+  if (facts.length === 1 && DISCARDED_CODES.has(facts[0])) {
+    return { outcomeFacts: facts, live: { early: [], late: [...facts] } };   // the observed move
+  }
+  if (facts.length <= 1) return { outcomeFacts: facts, live: { early: [], late: [] } };
   const scope = facts.filter((f) => f in SCOPE_FACT_PROOF);
   const live = facts.filter((f) => LIVE_FACTS.has(f));
   const codes = facts.filter((f) => !(f in SCOPE_FACT_PROOF) && !LIVE_FACTS.has(f));
@@ -104,9 +115,9 @@ function splitFacts(descriptor) {
   }
   const anchor = codes[0] ?? scope[0] ?? null;
   const at = anchor === null ? facts.length : facts.indexOf(anchor);
-  const beforeCall = descriptor.shuffleFacts === true ? live.filter((f) => facts.indexOf(f) < at) : [];
-  const duringCall = live.filter((f) => !beforeCall.includes(f));
-  return { outcomeFacts: [...codes, ...scope], live: { beforeCall, duringCall } };
+  const early = descriptor.shuffleFacts === true ? live.filter((f) => facts.indexOf(f) < at) : [];
+  const late = live.filter((f) => !early.includes(f));
+  return { outcomeFacts: [...codes, ...scope], live: { early, late } };
 }
 
 const generationsOf = (request) => {
@@ -185,7 +196,7 @@ function failureFromFact(descriptor, facts = descriptor.facts) {
     throw new Error(`scriptedExecutor: facts ${JSON.stringify(facts)} are not supported yet (a single known §16.7 fact only)`);
   }
   return {
-    outcome: 'failed',
+    outcome: DISCARDED_CODES.has(code) ? 'discarded' : 'failed',   // Task P6.8
     scopeProof: descriptor.scopeProof ?? 'not-checked',
     failure: {
       code, retryable: FACT_RETRYABLE[code],
@@ -306,7 +317,7 @@ export function createScriptedExecutor(script = {}, { unscripted = null } = {}) 
   /** Task P6.8: the LIVE half of the attempt's facts (see the header), for the run fixture's wrapper. */
   executor.liveFactsFor = (request) => {
     const list = script[request.unit.unitId] ?? (unscripted === null ? null : [unscripted]);
-    if (!Array.isArray(list) || list.length === 0) return { beforeCall: [], duringCall: [] };
+    if (!Array.isArray(list) || list.length === 0) return { early: [], late: [] };
     return splitFacts(list[Math.min(request.attempt, list.length) - 1]).live;
   };
   executor.startedUnits = startedUnits;
