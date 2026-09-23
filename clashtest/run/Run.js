@@ -4,9 +4,10 @@
 // and queued-withdrawal seals, minimal real cancellation, the permanent seal core
 // (`buildAndAdmitResultSet`) with a TEMPORARY finisher (`finishP64Seal`, replaced by P6.8), and the
 // unit loop pulled forward VERBATIM from the P6.5 brief (P6.5 adds its own coverage against it).
-// Still to come: P6.6 (live boundary scan, seal-time freshness), P6.8 (R10 recovery, finalize
-// window, dispose).
+// P6.6: the live boundary scan, the unit-scoped live-participant scan (P4 H1 carry-forward) and
+// seal-time freshness. Still to come: P6.8 (R10 recovery, finalize window, dispose).
 import { createEmitter } from './emitter.js';
+import { bindingsEquivalent } from '../identity/ModelRegistry.js';
 import {
   UNIT_PRECEDENCE, classifyUnitSettlement, resolveRunStatus, collectReasons,
 } from './settlement.js';
@@ -728,6 +729,25 @@ const UNIT_FACTS = new Set(UNIT_PRECEDENCE.map((row) => row.fact).filter((f) => 
  * P6.4 fix vs. the P6.6 sketch (carry-forward CF4): the outcome KIND is `outcome.outcome` (P4's
  * §11.2 field); the sketch's `outcome.kind` is always `undefined`, so a `skipped` outcome would have
  * been classified in the `call`/`post` column instead of `pre`.
+ *
+ * P6.6 — P4 H1 carry-forward (owner ruling; controller ruling for this task). The executor's own
+ * `failure.code` carries ONE thrown cause and `scopeProof` ONE bracket answer, so a participant that
+ * died during a call which ALSO threw `capacity-exceeded` reaches P6 as capacity + `unverifiable`
+ * and nothing else — and settled U7 `scope-unverifiable` where table A says U6 `model-evicted`.
+ * P6 therefore detects the death ITSELF, with `scanUnitParticipants`, and adds the fact here, before
+ * `classifyUnitSettlement` ever sees the list:
+ *   - `model-evicted` when one of THIS unit's participants is dead / unregistered / lease-invalid
+ *     (`null`, N10) or re-bound (its binding identity moved) since the run-start snapshot;
+ *   - `input-changed` when one of THIS unit's participants' `placementGeneration` moved — this is
+ *     what the P6.4 `placementChangedSince` stand-in stood for — EXCEPT on the §7.5-row-2 retry
+ *     shape (`isEligibleStalePlacementShape`): there the retry protocol already makes the SAME
+ *     generation comparison (`placementGenerationsSteady`) and turns a moved generation into
+ *     `input-changed` itself, and adding the fact here would both duplicate that decision and
+ *     disqualify the shape before the protocol could run it.
+ * Only the COARSE fact enters the list. The model KEY that died goes to `run.deadModelKeys` /
+ * `run.staleReasons` (seal-time freshness only) and never into the fact list, `secondaryCauses` or
+ * `RunOutcome.reasons` — so AC-21's digest still depends only on WHICH coarse facts were observed.
+ * `world-disposed` needs no live read: see the `worldDisposed` comment in `installRunMethods`.
  */
 function factsFromOutcome(run, request, outcome) {
   const facts = [];
@@ -735,9 +755,49 @@ function factsFromOutcome(run, request, outcome) {
   const scopeFact = SCOPE_PROOF_FACT[outcome.scopeProof];
   if (scopeFact !== null) facts.push(scopeFact);
   if (outcome.failure !== null && UNIT_FACTS.has(outcome.failure.code)) facts.push(outcome.failure.code);
-  if (run.placementChangedSince(request.unit)) facts.push('input-changed');
+  const live = scanUnitParticipants(run, request.unit);
+  if (live.evicted && !facts.includes('model-evicted')) facts.push('model-evicted');
+  if (live.placementMoved && !isEligibleStalePlacementShape(outcome, facts)) facts.push('input-changed');
   if (run.worldDisposed) facts.push('world-disposed');
   return { facts, phase };
+}
+
+/**
+ * The UNIT-SCOPED live-participant scan (P6.6, P4 H1). Reads ONLY `unitModelKeys(unit)` — a death
+ * among the run's other models is never this unit's fact — in ONE `snapshotBindings` call, and
+ * compares each current binding with the one the run-start snapshot froze (`bindingInSnapshot`).
+ * N10: there is no `dead` flag; `null` covers dead, unregistered and lease-invalid. Order matters:
+ *   1. `null`                           -> evicted   (dead)          -> run.deadModelKeys
+ *   2. `bindingGeneration` moved        -> evicted   (reload/re-bind) -> run.staleReasons
+ *   3. `placementGeneration` moved      -> placementMoved (input-changed)
+ *   4. otherwise not `bindingsEquivalent` (same generations, different model object/version: never
+ *      produced by a conforming registry) -> evicted, FAIL CLOSED -> run.staleReasons
+ * The per-model detail it records uses the same vocabulary `collectBoundaryFacts` does, so
+ * `sealTimeFreshness` reads one set of reasons whichever of the two observed the change first.
+ */
+function scanUnitParticipants(run, unit) {
+  const keys = unitModelKeys(unit);
+  const now = run.spec.coordinator.registry.snapshotBindings(keys);
+  let evicted = false;
+  let placementMoved = false;
+  keys.forEach((modelKey, i) => {
+    const was = bindingInSnapshot(run, modelKey);
+    const is = now.bindings[i];
+    if (is === null) {
+      evicted = true;
+      run.deadModelKeys.add(modelKey);
+    } else if (is.bindingGeneration !== was.bindingGeneration) {
+      evicted = true;
+      run.staleReasons.add(`model-reloaded:${modelKey}`);
+    } else if (is.placementGeneration !== was.placementGeneration) {
+      placementMoved = true;
+      run.staleReasons.add(`placement-changed:${modelKey}`);
+    } else if (!bindingsEquivalent(is, was)) {
+      evicted = true;
+      run.staleReasons.add(`model-reloaded:${modelKey}`);
+    }
+  });
+  return { evicted, placementMoved };
 }
 
 // ================================================================================================
@@ -745,12 +805,52 @@ function factsFromOutcome(run, request, outcome) {
 // ================================================================================================
 
 /**
- * STAND-IN (controller ruling 4). Task P6.6 replaces the BODY with the live registry comparison
- * (`snapshotBindings(run.snapshotKeys)` vs `run.snapshot`, placement/binding generations, dead
- * models), keeping this exact signature. Until then a boundary reads only the committed facts.
+ * §16.2/§16.3: the run compares the CURRENT binding against the one its run-start snapshot froze,
+ * through P1's `bindingsEquivalent` — there is no `dead` flag to test (N10), and `null` already
+ * covers dead, unregistered and lease-invalid. `placementGeneration` moving is `input-changed`
+ * at the unit level and `placementChangedVsSnapshot` at the run level (§16.7 order B ⇒ invalidated);
+ * `bindingGeneration` moving alone is deliberately NOT an input-change signal (§16.1 vs §16.3,
+ * settled in the spec's own R-list) — it surfaces as a `model-evicted` gap and a `stale` seal.
+ *
+ * This is the RUN-level scan (every snapshot model; order B + freshness). The per-UNIT settlement
+ * fact is `scanUnitParticipants`'s job (P4 H1), which reads only the unit's own participants.
+ * (P6.6: the brief's Step 4 body, verbatim.)
  */
 function collectBoundaryFacts(run, extra = {}) {
+  const now = run.spec.coordinator.registry.snapshotBindings(run.snapshotKeys);
+  run.snapshot.bindings.forEach((was, i) => {
+    const is = now.bindings[i];
+    if (is === null) { run.deadModelKeys.add(was.modelKey); return; }
+    if (is.placementGeneration !== was.placementGeneration) {
+      run.settlementState.placementChangedVsSnapshot = true;
+      run.staleReasons.add(`placement-changed:${was.modelKey}`);
+    } else if (!bindingsEquivalent(is, was)) {
+      run.staleReasons.add(`model-reloaded:${was.modelKey}`);
+    }
+  });
   return { ...run.settlementState, ...extra };
+}
+
+/**
+ * §16.4 bullet 3: at seal, `outcome.freshness = 'stale'` if any binding died, any generation moved,
+ * or any unit ended `scope-drift`; else `'current'`. Computed INDEPENDENTLY of which status won
+ * (§16.7 closing paragraph), from the ledger P3 owns and the reasons the boundaries (and the
+ * unit-scoped scan) already committed. Only `.state` reaches `RunOutcome.freshness` (§8.3, C1);
+ * `.reasons` are per-model, read-time data that must never enter the digested `RunOutcome.reasons`
+ * (brief Step 5, "Where the detailed reasons go"; AC-21). (P6.6: the brief's Step 5 body, verbatim.)
+ */
+function sealTimeFreshness(run) {
+  const reasons = new Set(run.staleReasons);              // committed at each boundary, above
+  for (const record of run.ledger.toLedgerRecord().units) {
+    if (record.cause === 'scope-drift' || record.cause === 'model-evicted') {
+      reasons.add(`${record.cause}:${record.sourceModelKey}`);
+    }
+  }
+  for (const modelKey of run.deadModelKeys) reasons.add(`model-evicted:${modelKey}`);
+  return Object.freeze({
+    state: reasons.size === 0 ? 'current' : 'stale',
+    reasons: Object.freeze([...reasons].sort()),
+  });
 }
 
 /**
@@ -1042,9 +1142,9 @@ function installRunMethods(run) {
     failPlanning: (cause) => settlePlanning(run, cause),
     cancelPlanning: () => settlePlanning(run, 'cancelled'),
     sealAs: (status) => sealAs(run, status),
-    // Task P6.6 replaces this seam with `() => sealTimeFreshness(run).state`. `'current'` is safe
-    // until then: P5 passes freshness through unchanged, and no P6.4 path is freshness-sensitive.
-    sealFreshnessState: () => 'current',
+    // P6.6: the seal-time freshness from committed state. `run.ledger` exists on every seal path
+    // (`settlePlanning` creates one before sealing a run that never planned).
+    sealFreshnessState: () => sealTimeFreshness(run).state,
     slicer: () => createSlicer({
       now: run.spec.now, yieldToScheduler: run.spec.yieldToScheduler, limits: run.limits,
     }),
@@ -1058,9 +1158,16 @@ function installRunMethods(run) {
     factsFromOutcome: (request, outcome) => factsFromOutcome(run, request, outcome),
     snapshotFor: (unit) => snapshotFor(run, unit),
     snapshotGenerationsFor: (unit) => snapshotGenerationsFor(run, unit),
-    // STAND-INS until Task P6.6 wires the live placement observation (`placementChangedSince`) and
-    // the world-disposal fact (`worldDisposed`). Neither is exercised by a P6.4 path.
-    placementChangedSince: () => false,
+    // P6.6: `placementChangedSince` (the P6.4 stand-in) is gone — the live placement observation is
+    // `scanUnitParticipants`, called from `factsFromOutcome`, which also reports participant death.
+    //
+    // DOCUMENTED STAND-IN, deliberately kept `false`: the CollisionWorld surface exposes NO
+    // disposal query (no `isDisposed`, no property, no registry method or event — disposal surfaces
+    // only as a `WorldDisposedError` thrown by a world call, spec M2 §"Throws WorldDisposedError").
+    // P4's executor already classifies that throw as `failure.code: 'world-disposed'`, which
+    // `factsFromOutcome` reads through `UNIT_FACTS`, so a disposed world DOES reach table A (U1) on
+    // the attempt that observed it. A run-level flag would need new world machinery the spec does
+    // not define; P6.8's dispose path (`disposeRequested`) is the engine-side signal.
     worldDisposed: false,
   });
 }
@@ -1084,6 +1191,9 @@ export function createRun(spec) {
       placementChangedVsSnapshot: false, cancelRequested: null,
       disposeRequested: false, allLeafUnitsTerminal: false,
     },
+    // P6.6: per-model freshness detail, read ONLY by `sealTimeFreshness` (never digested).
+    deadModelKeys: new Set(),                              // snapshot models observed `null`
+    staleReasons: new Set(),                               // 'placement-changed:<k>' | 'model-reloaded:<k>'
     emitter: createEmitter({ now: spec.now, progressMinIntervalMs: spec.runOptions.progressMinIntervalMs }),
     // `run.pending` is FLAT on the run object (not nested under `run.progress`) — this is the
     // shape every later task's own pseudocode reads/writes directly (P6.4, P6.5's seven call

@@ -19,6 +19,10 @@
 // `lastSnapshot`, `admittedKeys`, `mutationAttempts`, `notifyPlacementChanged`). Later P6 tasks
 // extend it (`reload`, `setVersion`, `onSnapshot(n, fn)`, `deadFlagReads`, ...) under the extension
 // rules in support/index.mjs.
+//
+// Task P6.6 adds `deadFlagReads`: the binding Proxy's `get` trap counts every read of a `dead`
+// property (N10 — `Binding` has none, so a reader testing `binding.dead` is fail-OPEN). Every other
+// read is forwarded unchanged.
 
 export function createPlacementRegistry({
   registrySessionId = 'registry-session-1', models = [], labelSnapshot = () => null, onSnapshot = () => {},
@@ -29,9 +33,14 @@ export function createPlacementRegistry({
   let registryRevision = 0;
   let leaseSeq = 0;
   let mutationAttempts = 0;
+  let deadFlagReads = 0;                                   // Task P6.6
   let lastSnapshot = null;
 
   const guard = (binding) => new Proxy(binding, {
+    get(target, prop, receiver) {
+      if (prop === 'dead') deadFlagReads += 1;
+      return Reflect.get(target, prop, receiver);
+    },
     set() { mutationAttempts += 1; return false; },        // strict mode => TypeError, like a frozen object
     defineProperty() { mutationAttempts += 1; return false; },
     deleteProperty() { mutationAttempts += 1; return false; },
@@ -60,6 +69,7 @@ export function createPlacementRegistry({
     get snapshotCalls() { return snapshotCalls; },
     get admittedKeys() { return admittedKeys; },
     get mutationAttempts() { return mutationAttempts; },
+    get deadFlagReads() { return deadFlagReads; },
     get lastSnapshot() { return lastSnapshot; },
 
     register(modelKey, model = {}, { modelVersion = 'v1' } = {}) {

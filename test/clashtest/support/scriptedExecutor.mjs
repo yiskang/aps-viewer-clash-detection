@@ -35,6 +35,17 @@
 //                   P5 derives it at seal from a sealed `failed:stale-placement` record).
 //   generations     unchanged (still defaults to an agreeing `{start, end}` read); an outcome-shape
 //                   descriptor may still override it directly to script a moved placement generation.
+// Task P6.6 EXTENDS this file (same extension rules):
+//   scope facts     `facts: ['scope-drift']` / `facts: ['scope-unverifiable']` expand into exactly the
+//                   `discarded` shape P4's LocalUnitExecutor produces for a post-check drift /
+//                   unverifiable answer (`scopeProof` 'drift' / 'unverifiable' unless the descriptor
+//                   says otherwise, `failure.code` = the fact, `retryable: false`). `pairs` /
+//                   `diagnostics` on such a descriptor are carried on the outcome, so a test can prove
+//                   a discarded unit merges NOTHING even though its outcome held evidence.
+//   modelKeys       attached as `failure.modelKeys` on a `facts`-expanded failure (must be the unit's
+//                   own participants: P4's validator rejects any other key).
+//   forceScopeProof an otherwise-clean `evaluated` outcome carrying this `scopeProof` instead of
+//                   'equal' -- the I-scope violation P4's `validateUnitOutcome` must reject.
 // `executor.requests` (every request handed to the executor, in call order), `executor.attemptsFor
 // (unitId)` (the attempt numbers issued to one unit, in order) and `executor.maxConcurrent` (the
 // largest number of calls ever in flight at once) are recorded unconditionally.
@@ -45,7 +56,11 @@
 import { isCompletenessAffecting, attributionOf } from '../../../clashtest/execution/diagnostics.js';
 
 const KNOWN_DESCRIPTOR_KEYS = new Set(['facts', 'hold', 'outcome', 'failure', 'scopeProof', 'pairs',
-  'diagnostics', 'statistics', 'durationMs', 'generations', 'capacityKind', 'malformed']);
+  'diagnostics', 'statistics', 'durationMs', 'generations', 'capacityKind', 'malformed',
+  'modelKeys', 'forceScopeProof']);                        // Task P6.6
+
+// Task P6.6: the post-check bracket answers P4 settles as `discarded`, with the proof they carry.
+const SCOPE_FACT_PROOF = Object.freeze({ 'scope-drift': 'drift', 'scope-unverifiable': 'unverifiable' });
 
 // §16.7 table A's failure codes this fake can expand a bare fact into, with P4's own retry
 // eligibility (`classifyLibraryError`): `stale-placement` is the ONLY code ever `retryable: true`.
@@ -116,6 +131,14 @@ function expandDiagnostics(list, request) {
 function failureFromFact(descriptor) {
   const facts = descriptor.facts;
   const code = facts[0];
+  const modelKeys = descriptor.modelKeys !== undefined ? { modelKeys: [...descriptor.modelKeys] } : {};
+  if (facts.length === 1 && code in SCOPE_FACT_PROOF) {   // Task P6.6
+    return {
+      outcome: 'discarded',
+      scopeProof: descriptor.scopeProof ?? SCOPE_FACT_PROOF[code],
+      failure: { code, ...modelKeys, retryable: false },
+    };
+  }
   if (facts.length !== 1 || !(code in FACT_RETRYABLE)) {
     throw new Error(`scriptedExecutor: facts ${JSON.stringify(facts)} are not supported yet (a single known §16.7 fact only)`);
   }
@@ -125,6 +148,7 @@ function failureFromFact(descriptor) {
     failure: {
       code, retryable: FACT_RETRYABLE[code],
       ...(descriptor.capacityKind !== undefined ? { capacityKind: descriptor.capacityKind } : {}),
+      ...modelKeys,
     },
   };
 }
@@ -164,10 +188,18 @@ function outcomeFrom(descriptor, request) {
   }
   const facts = descriptor.facts ?? [];
   if (facts.length > 0) {
-    return { ...base, ...failureFromFact(descriptor), pairs: [], diagnostics: [], statistics: descriptor.statistics ?? {} };
+    return {
+      ...base, ...failureFromFact(descriptor),
+      // Task P6.6: evidence on a non-merging outcome is carried (default still none).
+      pairs: expandPairs(descriptor.pairs, request),
+      diagnostics: expandDiagnostics(descriptor.diagnostics, request),
+      statistics: descriptor.statistics ?? {},
+    };
   }
   return {
-    ...base, outcome: 'evaluated', scopeProof: descriptor.scopeProof ?? 'equal', failure: null,
+    ...base, outcome: 'evaluated',
+    scopeProof: descriptor.forceScopeProof ?? descriptor.scopeProof ?? 'equal',
+    failure: null,
     pairs: expandPairs(descriptor.pairs, request),
     diagnostics: expandDiagnostics(descriptor.diagnostics, request),
     statistics: descriptor.statistics ?? {},

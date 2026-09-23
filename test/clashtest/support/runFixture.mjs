@@ -46,6 +46,14 @@
 //                         (e.g. `registry.notifyPlacementChanged(...)`) landing before the engine's
 //                         first call for that unit.
 //
+// Task P6.6 additionally exposes: `afterUnit(unitId, fn) -> Promise` — `fn` runs ONCE, synchronously,
+// at the first `spec.yieldToScheduler` call after the executor call for `unitId` returned (i.e. after
+// that unit's attempt settled and committed, and BEFORE the next unit boundary reads the registry —
+// the loop's inter-unit yield is the only such call between two units). The promise resolves with
+// `fn`'s return value once it ran. A unit that is the LAST to settle has no following inter-unit
+// yield, so `afterUnit` must name a unit that is followed by another. `diagnosticAggregator.unitsAdded`
+// is the same list as `addUnitCalls` (the unitIds the run handed the aggregator).
+//
 // `realSealing: true` hands the run P5's bare `buildResultSet`/`sealResultSet`/`deriveRunOutcome`
 // with NO wrapper at all. The default ALSO uses the real functions, wrapped only to record calls, so
 // no P6 test ever seals through a hand-built stand-in of P5's assembly.
@@ -171,26 +179,27 @@ function extractPreExhaustLedger(limits) {
  * before that unit's FIRST attempt is dispatched — modelling a single host-side mutation that lands
  * before the engine ever calls out for this unit, not a per-attempt hook.
  */
-function wrapExecutorWithLiveGenerations(innerExecutor, { registry, beforeUnit = {} }) {
+function wrapExecutorWithLiveGenerations(innerExecutor, { registry, beforeUnit = {}, onReturned = () => {} }) {
   const fired = new Set();
-  const liveGenerationsFor = (unit) => {
-    const keys = [...new Set([unit.sourceModelKey, ...unit.targets.map((t) => t.modelKey)])];
-    const out = [];
-    for (const modelKey of keys) {
-      const binding = registry.bindingFor(modelKey);
-      if (binding !== null) out.push({ modelKey, bindingGeneration: binding.bindingGeneration, placementGeneration: binding.placementGeneration });
-    }
-    return out;
-  };
+  // Task P6.6 fix: one entry per request-snapshot participant, ALWAYS — exactly P4's own
+  // `readGenerations` (LocalUnitExecutor.js), which falls back to the request's snapshot entry when
+  // a participant has no live binding. The P6.5 version DROPPED a dead participant, which P4's
+  // `validateUnitOutcome` rejects (`generations-missing-participant`), so any test whose participant
+  // died during a call was silently turned into `internal-error`.
+  const liveGenerationsFor = (request) => request.snapshot.map((s) => {
+    const source = registry.bindingFor(s.modelKey) ?? s;
+    return { modelKey: s.modelKey, bindingGeneration: source.bindingGeneration, placementGeneration: source.placementGeneration };
+  });
   return async function executorWithLiveGenerations(request) {
     const { unitId } = request.unit;
     if (!fired.has(unitId) && typeof beforeUnit[unitId] === 'function') {
       fired.add(unitId);
       beforeUnit[unitId]();
     }
-    const start = liveGenerationsFor(request.unit);
+    const start = liveGenerationsFor(request);
     const outcome = await innerExecutor(request);
-    const end = liveGenerationsFor(request.unit);
+    const end = liveGenerationsFor(request);
+    onReturned(unitId);                                    // Task P6.6: arms `afterUnit(unitId, ...)`
     if (outcome === null || typeof outcome !== 'object') return outcome;   // let validation reject it
     return { ...outcome, generations: { start, end } };
   };
@@ -243,7 +252,26 @@ export function createRunFixture(opts = {}) {
   // with no slicer-triggered yields of its own -- see `wrapExecutorWithLiveGenerations`'s sibling
   // comment): `run.interUnitYield()` is the sole caller in every one of this task's own fixtures.
   const yields = { interUnit: 0 };
-  const yieldToScheduler = async () => { yields.interUnit += 1; await clock.yieldToScheduler(); };
+  // Task P6.6: `afterUnit` hooks. `returned` is filled by the executor wrapper; a hook fires at the
+  // next yield once its unit has returned — synchronously, before the yield itself is awaited.
+  const afterUnitHooks = new Map();                        // unitId -> {fn, resolve, reject, fired}
+  const returnedUnits = new Set();
+  const fireAfterUnitHooks = () => {
+    for (const [unitId, hook] of afterUnitHooks) {
+      if (hook.fired || !returnedUnits.has(unitId)) continue;
+      hook.fired = true;
+      try { hook.resolve(hook.fn()); } catch (error) { hook.reject(error); }
+    }
+  };
+  const afterUnit = (unitId, fn) => new Promise((resolve, reject) => {
+    if (afterUnitHooks.has(unitId)) throw new Error(`afterUnit: a hook for ${unitId} already exists`);
+    afterUnitHooks.set(unitId, { fn, resolve, reject, fired: false });
+  });
+  const yieldToScheduler = async () => {
+    yields.interUnit += 1;
+    fireAfterUnitHooks();
+    await clock.yieldToScheduler();
+  };
 
   // --- world, registry, coordinator ---
   const world = shared?.world ?? createRunWorld();
@@ -313,6 +341,7 @@ export function createRunFixture(opts = {}) {
   const addUnitCalls = [];
   const diagnosticAggregator = {
     addUnitCalls,
+    get unitsAdded() { return addUnitCalls; },            // Task P6.6: the brief's name for it
     addUnit(unitId, outcome) { addUnitCalls.push(unitId); return realAggregator.addUnit(unitId, outcome); },
     snapshot: () => realAggregator.snapshot(),
   };
@@ -384,7 +413,9 @@ export function createRunFixture(opts = {}) {
   // registry bracketing); `fx.executor` below stays the INNER, unwrapped instance so its own
   // tracking (`requests`, `attemptsFor`, `maxConcurrent`, `startedUnits`) keeps working unchanged --
   // the wrapper only ever delegates to it.
-  const specExecutor = wrapExecutorWithLiveGenerations(executor, { registry, beforeUnit: opts.beforeUnit ?? {} });
+  const specExecutor = wrapExecutorWithLiveGenerations(executor, {
+    registry, beforeUnit: opts.beforeUnit ?? {}, onReturned: (unitId) => returnedUnits.add(unitId),
+  });
 
   // Task P6.5 (the malformed-outcome test): records every substitution and the issues that drove it,
   // without changing either function's own behaviour or signature.
@@ -472,6 +503,7 @@ export function createRunFixture(opts = {}) {
     /** Resolves once the run has reached `name`: 'job-started', 'planning' (the run-start
      *  snapshot was taken) or 'enumerating' (planRun was invoked). */
     reached: (name) => milestones.reached(name),
+    afterUnit,                                             // Task P6.6
   };
 }
 
