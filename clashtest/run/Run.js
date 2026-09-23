@@ -1,12 +1,13 @@
 // clashtest/run/Run.js
 //
 // P6.3: states, handle, snapshot. P6.4: resolution, planning, run-start leases, the pre-resolution
-// and queued-withdrawal seals, minimal real cancellation, the permanent seal core
-// (`buildAndAdmitResultSet`) with a TEMPORARY finisher (`finishP64Seal`, replaced by P6.8), and the
-// unit loop pulled forward VERBATIM from the P6.5 brief (P6.5 adds its own coverage against it).
+// and queued-withdrawal seals, the permanent seal core (`buildAndAdmitResultSet`), and the unit loop
+// pulled forward VERBATIM from the P6.5 brief (P6.5 adds its own coverage against it).
 // P6.6: the live boundary scan, the unit-scoped live-participant scan (P4 H1 carry-forward) and
-// seal-time freshness. Still to come: P6.8 (R10 recovery, finalize window, dispose).
-import { createEmitter } from './emitter.js';
+// seal-time freshness. P6.8: the real persistence attempt and the `finalizing` window (§13.5.1), the
+// R10 terminal internal-error fallback with the I8 double-admission recovery, the cancellation
+// matrix and the engine-only `requestDispose()` (C3).
+import { createEmitter as createDefaultEmitter } from './emitter.js';
 import { bindingsEquivalent } from '../identity/ModelRegistry.js';
 import {
   UNIT_PRECEDENCE, classifyUnitSettlement, resolveRunStatus, collectReasons,
@@ -165,9 +166,9 @@ function normalizeDerivedFromRunId(value) {
  *    listener sees already counts the preplanned gap weight), so the `queued -> planning` and
  *    `binding -> enumerating` changes are staged silently and ride on the adoption commit.
  *
- * Task P6.8 adds the commit points its own observable states need (`cancelling` right after a
- * cancel, `finalizing` during the persistence window) — as explicit commits, not by making these
- * setters publish.
+ * Task P6.8's commit points for its own observable states (`cancelling` right after a cancel of a
+ * running run, `finalizing` once the set is sealed and admitted) are explicit commits too, not
+ * published by these setters.
  *
  * Terminal states are ABSORBING: a `transition()` on an already-terminal run is a NO-OP that
  * returns `false` (it does not throw — a late caller on a settle path must never turn a finished run
@@ -196,13 +197,18 @@ function commitAndEmit(run, type) {
 }
 
 /**
- * The ONE terminal publication (ruling 2, I9): the terminal status and `phase: 'terminal'` are
- * committed into the snapshot FIRST, and only then is the single terminal `state` event emitted —
- * so a listener that reads `getSnapshot()` from inside that event already sees the terminal
- * snapshot, and `ev.seq === getSnapshot().seq`. Called only once `run.summary` exists (it carries
- * the final `persistence`, which rides on the event; §9.1's `RunProgress` has no persistence field).
- * The payload shape `{seq, status, terminal: true, persistence}` (+ `phase`) is the one the P6.8
- * tests read (`ev.type === 'state' && ev.terminal`, `ev.status`, `ev.persistence`, `ev.seq`).
+ * `commitTerminal` — the single terminal commit (I9). It is `commit()` with two differences: it
+ * **never emits** (its caller emits the one terminal `state` event immediately afterwards —
+ * `openFinalizeWindow`'s `close()` and `finishTerminalInternalError`, the two ways a run ends — so
+ * both share this one commit without duplicating the emission, and committing plus emitting in one
+ * call could neither be reordered nor reused by a path that must add `cause` to the payload), and it
+ * is called only once `run.summary` — which carries the final `persistence` — already exists.
+ * §9.1's `RunProgress` is a **closed** shape with no persistence field, so the final persistence
+ * state is committed where the spec puts it: on `RunSummary` (`done`) and on the terminal `state`
+ * event's payload. "The complete terminal snapshot before the event" therefore means: `status` and
+ * `phase` in the committed progress state, `persistence` in the summary and the payload, all of it
+ * established before any listener runs. (P6.8 reconciliation: P6.4's version emitted in here; the
+ * split is the brief's, and `run.seq()` then reads back the seq this commit produced.)
  */
 function commitTerminal(run, { status, persistence }) {
   /* c8 ignore next */ if (run.summary === undefined) throw new Error('commitTerminal: summary must exist first');
@@ -210,10 +216,8 @@ function commitTerminal(run, { status, persistence }) {
   run.pending.status = status;
   setPhase(run, 'terminal');
   run.pending.currentUnitId = null;
-  const committed = commit(run);
-  run.emitter.emit('state', {
-    seq: committed.seq, status, phase: 'terminal', terminal: true, persistence,
-  });
+  commit(run);
+  run.terminalPersistence = persistence;                   // reachable through `done`/the event
 }
 
 // ================================================================================================
@@ -420,8 +424,10 @@ function cancelWhileQueued(run) {
   void settlePlanning(run, 'cancelled');                  // zero units, definition null (§13.1)
 }
 
-/** The `buildResultSet` parts, in the PRE-resolution shape when the run never resolved (§13.1). */
-function resultParts(run, outcome, diagnostics) {
+/** The `buildResultSet` parts, in the PRE-resolution shape when the run never resolved (§13.1).
+ *  `override` (P6.8, the R10 fallback only) supplies the ledger and results so the fallback never
+ *  touches the records whose assembly may just have failed. */
+function resultParts(run, outcome, diagnostics, override = null) {
   const resolved = run.resolution !== undefined;
   return {
     runId: run.runId,
@@ -435,10 +441,10 @@ function resultParts(run, outcome, diagnostics) {
     derivedFromRunId: run.derivedFromRunId,
     outcome,
     provenance: run.provenance(),                         // provenanceBase + models + admissionBaseline
-    ledger: run.ledger.toLedgerRecord(),                  // A17: arrays-only, P5's pinned shape
+    ledger: override?.ledger ?? run.ledger.toLedgerRecord(),   // A17: arrays-only, P5's pinned shape
     // C2: ALWAYS defined — `EMPTY_RESULTS` before planning, P5's accumulator after it. This is the
     // one call every pre-resolution path makes, and the reason the holder exists at all.
-    results: run.results.toArray(),                       // A12: the accumulator
+    results: override?.results ?? run.results.toArray(),       // A12: the accumulator
     diagnostics,                                          // A11: aggregator snapshot()
     statistics: run.spec.statisticsAccumulator.snapshot(),
   };
@@ -950,16 +956,17 @@ function enumerationCheckpoint(run) {
 }
 
 // ================================================================================================
-// Sealing (P6.4 permanent core + TEMPORARY finisher, controller ruling 1)
+// Sealing (P6.4 permanent core; P6.8 finalize window, R10 fallback, I8 recovery)
 // ================================================================================================
 
 /**
- * PERMANENT (P6.8 keeps it): derive the outcome, assemble the draft, seal it, and convert the slot
- * P7 reserved at admission into an ordinary resident set (§13.1). Returns the sealed set; throws on
- * any failure (the caller settles). `run.sealed` is set ONLY once the final set exists (R10).
+ * PERMANENT (P6.4's core, kept as-is by P6.8 — it is exactly the build half of the brief's `sealAs`):
+ * derive the outcome, assemble the draft, seal it, and convert the slot P7 reserved at admission
+ * into an ordinary resident set (§13.1). Returns the sealed set; throws on any failure (the caller
+ * settles through `terminalInternalError`). `run.sealed` is set ONLY once the final set exists (R10).
  */
 async function buildAndAdmitResultSet(run, status) {
-  const freshness = run.sealFreshnessState();
+  const freshness = run.sealFreshnessState();            // computed regardless of which status won
   const diagnostics = run.spec.diagnosticAggregator.snapshot();          // A11
   // A13: P5 derives coverage / integrity / environmentSensitive(+Causes); P6 supplies only the
   // three fields §16.7 and §16.4 make its own, and `freshness` is the BARE state (§8.3, C1).
@@ -975,7 +982,8 @@ async function buildAndAdmitResultSet(run, status) {
   // already inside the draft by construction.
   const draft = run.spec.resultPort.buildResultSet(resultParts(run, outcome, diagnostics));
   const resultSet = await run.spec.resultPort.sealResultSet(draft, { slicer: run.slicer() });
-  // A14/N23 (+ I8: atomic and exception-safe, cross-file need C-P5-1).
+  // A14/N23 (+ I8: atomic and exception-safe, cross-file need C-P5-1; P6's recovery assumes NOTHING
+  // beyond that and re-reads residency rather than guessing).
   run.spec.resultPort.residency.admitSealedSet(run.runId, resultSet);
   run.reservationSettled = true;                           // the reservation is now a resident set
   run.sealed = true;                                       // ONLY now: the final set exists
@@ -983,100 +991,299 @@ async function buildAndAdmitResultSet(run, status) {
 }
 
 /**
- * TEMPORARY — Task P6.8 REPLACES this function entirely with the real run-option-driven persist
- * attempt (`{persist: run.runOptions.persist}`) and the finalize window (`persistTimeoutMs`,
- * `forceFinalize`). Here: one real, state-consistent `beginPersist(runId, {persist: false})` (it
- * settles residency's persistence state as `skipped`, rather than leaving it `pending` forever),
- * which settles `persisted`; then the ONE terminal commit + event; then `done`.
- */
-async function finishP64Seal(run, status, resultSet) {
-  let persistence;
-  try {
-    persistence = Object.freeze({
-      ...(await run.spec.resultPort.residency.beginPersist(run.runId, { persist: false })),
-    });
-  } catch (error) {                                        // beginPersist is specified never to reject
-    run.persistError = error;
-    persistence = Object.freeze({ state: 'skipped', reason: 'persist-unavailable', timedOut: false, attempt: 0 });
-  }
-  run.resolvePersisted(persistence);
-  run.summary = Object.freeze({ runId: run.runId, status, resultSet, persistence });
-  commitTerminal(run, { status, persistence });            // committed BEFORE the event (I9)
-  run.resolveDone(run.summary);                            // AFTER the terminal event, always
-  return run.summary;
-}
-
-/**
- * P6.4's settle for a seal that THREW. NOT the R10 recovery — `terminalInternalError`, the
- * `getResident` double-admission check, the minimal fallback set and the slot release are Task
- * P6.8's. This only guarantees `done`/`persisted` settle exactly once (§13.5.1 item 1) with a
- * loud, unmistakable `resultSet: null` and the error kept on `run.sealError` for diagnosis.
- */
-function settleSealFailure(run, error) {
-  run.sealError = error;
-  const persistence = Object.freeze({ state: 'skipped', reason: 'seal-failed', timedOut: false, attempt: 0 });
-  run.summary = Object.freeze({ runId: run.runId, status: 'failed', resultSet: null, persistence });
-  commitTerminal(run, { status: 'failed', persistence });
-  run.resolvePersisted(persistence);
-  run.resolveDone(run.summary);
-  return run.summary;
-}
-
-/**
- * §8.1: "Terminal states are absorbing; a Result Set is sealed EXACTLY ONCE." `sealStarted` is the
- * re-entrancy guard (a second caller — the queued-withdrawal winner, a boundary, a late cancel — gets
- * the same `done` promise). Status SELECTION happens here (`transition`, silently); status
- * PUBLICATION happens only in `commitTerminal`, after the seal succeeded (ruling 2).
+ * §8.1: "Terminal states are absorbing; a Result Set is sealed EXACTLY ONCE."
+ *
+ * R10 / review I4 — two flags, not one. `sealStarted` is the re-entrancy guard (a second caller —
+ * the queued-withdrawal winner, a boundary, a late cancel — gets the same `done` promise, never a
+ * half-built `run.summary`). `run.sealed` — "this run is finished and immutable" — is set only once
+ * the final immutable set actually exists. Between them lies asynchronous work that CAN throw
+ * (`buildResultSet`, `sealResultSet`, `admitSealedSet`), and §13.5.1 item 1 says `done` "resolves
+ * exactly once and never rejects for any run or persistence outcome" — so every one of those
+ * failures still settles, through `terminalInternalError`.
+ *
+ * Status SELECTION happens here (`transition`, silently); status PUBLICATION happens only once the
+ * set exists (ruling 2): the `finalizing` commit right after admission (§13.5.1 item 6: "from seal
+ * until `done` resolves, `getSnapshot()` reports the terminal status with phase `finalizing`"), then
+ * the one terminal commit when the window closes.
  */
 function sealAs(run, status) {
-  if (run.sealStarted) return run.donePromise;
+  if (run.sealStarted) return run.donePromise;             // terminal is ABSORBING; first seal wins
   run.sealStarted = true;
-  run.transition(status);
+  run.transition(status);                                  // staged: nothing is published yet
   run.setPhase('finalizing');
   return (async () => {
     let resultSet;
     try {
       resultSet = await buildAndAdmitResultSet(run, status);
     } catch (error) {
-      return settleSealFailure(run, error);
+      return terminalInternalError(run, error);
     }
-    return finishP64Seal(run, status, resultSet);
+    run.commit('state');                                   // sealed: `finalizing` is now observable
+
+    // Persistence starts AFTER the seal and never alters the outcome (§13.5). A15/N24: driven
+    // through the residency manager, which already holds the store; it is specified never to
+    // reject, and the defensive handler below keeps `done`/`persisted` settling even if it did.
+    const attempt = beginPersistAttempt(run);
+    attempt.then(
+      (snapshot) => {
+        run.resolvePersisted(toPersistenceOutcome(snapshot));
+        run.emit('persistence', { ...snapshot, seq: run.bumpSeq() });
+      },
+      (error) => {
+        run.persistError = error;
+        run.resolvePersisted(Object.freeze({ state: 'failed', error: describePersistError(error) }));
+      },
+    );
+    await openFinalizeWindow(run, attempt, resultSet);
+    return run.summary;
   })();
 }
 
+/** `residency.beginPersist`, with a synchronous throw turned into the same rejected attempt. */
+function beginPersistAttempt(run) {
+  try {
+    return Promise.resolve(run.spec.resultPort.residency.beginPersist(run.runId, {
+      persist: run.runOptions.persist,
+    }));
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
+const describePersistError = (error) => ({
+  name: String(error?.name ?? 'Error'), message: String(error?.message ?? error),
+});
+
+/**
+ * §13.5.1 item 2: `persisted` resolves a `PersistenceOutcome` — `{state:'saved'}`,
+ * `{state:'failed', error}` or `{state:'skipped', reason}` — never the `PersistenceSnapshot` P5's
+ * `beginPersist` returns (that one, with `timedOut`/`attempt`, is what `done` and the events carry).
+ */
+function toPersistenceOutcome(snapshot) {
+  if (snapshot.state === 'failed') return Object.freeze({ state: 'failed', error: snapshot.error });
+  if (snapshot.state === 'skipped') return Object.freeze({ state: 'skipped', reason: snapshot.reason });
+  return Object.freeze({ state: snapshot.state });
+}
+
+/**
+ * R10 — the terminal fallback. Reached only when sealing itself failed, which means the run has no
+ * trustworthy Result Set. It settles `done` ONCE with `failed` / `internal-error`, releases the
+ * reserved residency slot when nothing was admitted, and emits the terminal event first, exactly
+ * like the normal path.
+ *
+ * It makes ONE attempt at a minimal, unit-free set so callers still get a readable artifact; if
+ * that also throws, the summary carries `resultSet: null`. That is a deliberate, documented
+ * deviation from `RunSummary.resultSet` always being a set (§13.5.1): the only alternative is
+ * rejecting `done`, which the same sentence forbids outright. Recorded as open item O7.
+ */
+async function terminalInternalError(run, error) {
+  run.sealError = error;                                   // kept for diagnosis
+  run.settlementState.unitCauses.push('internal-error');
+  // I8, FIRST: the failure that brought us here may have been `admitSealedSet` itself, and an
+  // admission can still throw AFTER converting the reservation (an observer hook, a report
+  // callback). Building a second set and admitting it under the SAME runId would be a double
+  // admission; releasing the slot would free a live resident set. So ask residency what it holds,
+  // and if it already holds this run's set, adopt it and stop.
+  const resident = run.spec.resultPort.residency.getResident(run.runId);
+  if (resident !== null) {
+    run.reservationSettled = true;
+    run.sealed = true;
+    return finishTerminalInternalError(run, resident);
+  }
+  let resultSet = null;
+  try {
+    const diagnostics = emptyDiagnosticsSummary();
+    const ledger = emptyLedgerRecord(run);
+    const outcome = run.spec.resultPort.deriveRunOutcome({
+      status: 'failed',
+      freshness: 'unverifiable',
+      reasons: collectReasons(run.settlementState),
+      ledger,
+      diagnostics,
+      results: [],
+    });
+    const draft = run.spec.resultPort.buildResultSet(
+      resultParts(run, outcome, diagnostics, { ledger, results: [] }));
+    resultSet = await run.spec.resultPort.sealResultSet(draft, { slicer: run.slicer() });
+    run.spec.resultPort.residency.admitSealedSet(run.runId, resultSet);
+    run.reservationSettled = true;
+    run.sealed = true;
+  } catch {
+    resultSet = releaseIfStillReserved(run);               // I8: never leak, never double-free
+  }
+  return finishTerminalInternalError(run, resultSet);
+}
+
+/** The one terminal commit of the fallback path, shared by both ways into it (a fallback set built
+ *  here, or an already-resident set adopted through I8). */
+function finishTerminalInternalError(run, resultSet) {
+  run.status = 'failed';
+  const persistence = Object.freeze(
+    { state: 'skipped', reason: 'seal-failed', timedOut: false, attempt: 0 });
+  run.summary = Object.freeze({ runId: run.runId, status: 'failed', resultSet, persistence });
+  // I9: the terminal snapshot is COMMITTED before the event that announces it, so a listener that
+  // reads `getSnapshot()` synchronously sees `phase: 'terminal'`, not `'finalizing'`.
+  commitTerminal(run, { status: 'failed', persistence });
+  run.emit('state', {
+    seq: run.seq(), status: 'failed', phase: 'terminal', terminal: true, cause: 'internal-error', persistence,
+  });
+  run.resolvePersisted(Object.freeze({ state: 'skipped', reason: 'seal-failed' }));
+  run.resolveDone(run.summary);                            // AFTER the terminal event, always
+  return run.summary;
+}
+
+/**
+ * I8 — the ONLY assumption P6's recovery makes about a throwing `admitSealedSet` is the one
+ * C-P5-1 requires of P5: the call is atomic, so residency either converted the reservation or did
+ * not. P6 does not guess which; it ASKS, through the query P5 already exports.
+ *
+ * `getResident(runId)` returns the resident set for an admitted run and `null` otherwise (A14). A
+ * non-null answer after a throw means the conversion completed and something *after* it threw;
+ * releasing the slot then would free a live resident set, and re-admitting under the same id would
+ * be a second admission. A `null` answer means the reservation is untouched and must be released
+ * exactly once. `reservationSettled` is the idempotence guard that makes "exactly once" true even
+ * if two paths reach here.
+ */
+function releaseIfStillReserved(run) {
+  if (run.reservationSettled) return run.spec.resultPort.residency.getResident(run.runId);
+  const resident = run.spec.resultPort.residency.getResident(run.runId);
+  run.reservationSettled = true;
+  if (resident !== null) return resident;                  // admitted after all: adopt it, keep it
+  run.spec.resultPort.residency.releaseRunSlot(run.runId); // A14: never leak the reservation
+  return null;
+}
+
+/** The two minimal inputs the fallback needs, built without touching the records that just failed. */
+const emptyLedgerRecord = (run) => Object.freeze({
+  planExists: run.plan !== undefined, pairSpaceTotal: 0, emptyOperand: false, units: [],
+  rootOwners: [], unresolvedSelections: [], unreachablePopulation: [], hierarchyInternal: [],
+  planningGaps: [{ phase: run.phase, cause: 'internal-error' }], exclusions: [], warnings: [],
+  budgetExhausted: false, firstRefusalUnitId: null,
+});
+const emptyDiagnosticsSummary = () => Object.freeze({
+  diagnostics: [], truncated: false, total: 0, completenessAffectingCount: 0,
+  unclassifiedOccurrences: 0, completenessAffectingUpperBound: 0, countsByReason: [],
+  omittedReasonOccurrences: 0, geometryReadinessOccurrences: 0,
+});
+
+/**
+ * §13.5.1 item 1: `done` resolves at the FIRST of (a) the first attempt settling, (b)
+ * `persistTimeoutMs` since seal, (c) a forced close by `engine.dispose()` (C3, through
+ * `requestDispose`) — and in every case only AFTER the terminal `state` event has been emitted.
+ *
+ * `timedOut` is a statement about OUR wait, not about the write (§13.5.1): it is `true` only when
+ * the window closed by (b) or (c) while residency still reports the write `pending`. A forced close
+ * whose write has already settled carries that final state with `timedOut: false` (§10.2: "or the
+ * final state if the write has already settled").
+ */
+function openFinalizeWindow(run, attempt, resultSet) {
+  return new Promise((resolve) => {
+    let closed = false;
+    let cancelTimer = () => {};
+    const close = (why) => {
+      if (closed) return;
+      closed = true;
+      cancelTimer();
+      // A15/N24: the state is read BY ID from the residency manager — there is no `snapshot()`
+      // closure on a returned attempt object.
+      const state = run.spec.resultPort.residency.getPersistenceState(run.runId)
+        ?? { state: 'skipped', timedOut: false, attempt: 0 };
+      const timedOut = why !== 'settled' && state.state === 'pending';
+      const persistence = Object.freeze({ ...state, timedOut });
+      run.summary = Object.freeze({ runId: run.runId, status: run.status, resultSet, persistence });
+      // I9 — COMMIT, then announce (see `commitTerminal`): a listener that calls `getSnapshot()`
+      // synchronously from the terminal event observes `phase: 'terminal'` and `seq === ev.seq`.
+      commitTerminal(run, { status: run.status, persistence });
+      run.emit('state', {
+        seq: run.seq(), status: run.status, phase: 'terminal', terminal: true, persistence,
+      });
+      run.resolveDone(run.summary);                        // AFTER the terminal event, always
+      resolve();
+    };
+    cancelTimer = run.spec.scheduleTimeout(() => close('timeout'), run.limits.persistTimeoutMs);  // (b), O3
+    attempt.then(() => close('settled'), () => close('settled'));                          // (a)
+    run.forceFinalize = () => close('forced');                                             // (c)
+    // C3 — a dispose that arrived BEFORE this window existed must still close it at once:
+    //  - while the set was being BUILT or SEALED, `requestCancel` found no `forceFinalize` and left
+    //    `disposeRequestedDuringSeal`;
+    //  - before the seal began (queued / planning / executing), the dispose is a committed fact
+    //    (`settlementState.disposeRequested`) — the boundary already sealed the run `cancelled` (or
+    //    per §16.7) because of it, and the engine waiting on this run is `dispose()` itself, which
+    //    must not then wait `persistTimeoutMs` (or forever, on a hung store) for the write.
+    if (run.disposeRequestedDuringSeal || run.settlementState.disposeRequested) close('forced');
+  });
+}
+
 // ================================================================================================
-// Cancellation (P6.4 minimal real version, controller ruling 3) and the run driver
+// Cancellation and disposal (P6.8) and the run driver
 // ================================================================================================
 
 /**
- * `cancel(reason)` marks committed state and lets a boundary decide — it never transitions the run
- * itself. First reason wins; a second call changes nothing and returns the same `done` promise. A
- * cancel arriving once the seal has started is ABSORBED (it must not mutate the settlement state the
- * seal is reading, §16.7).
+ * `cancel()` and `dispose()` both mark committed state and let a boundary decide — never a direct
+ * terminal transition. First reason wins; a second call changes nothing and returns the same `done`
+ * promise (§13.5.1 item 5: same value/timing as `done`).
  *
- * Order (P6.8's final `requestCancel` order, deliberately): the flag is set BEFORE the withdrawal is
- * tried, so a queued-withdrawal seal also records `cancel-requested` in its reasons. Exactly one path
- * seals: `cancelWhileQueued` seals only if IT won `withdraw()` (the job's function is then never
- * invoked); otherwise the run is already started and its own boundary — the `resolveStage` race, a
- * `planStage` check, the enumeration checkpoint or the loop boundary — observes `cancelRequested`.
- * Both paths go through `sealAs`'s single-winner guard regardless.
+ * Order, deliberately: the flag is set BEFORE the withdrawal is tried, so a queued-withdrawal seal
+ * also records `cancel-requested` (and `engine-disposed`) in its reasons. Exactly one path seals:
+ * `cancelWhileQueued` seals only if IT won `withdraw()`; otherwise the run is already started and
+ * its own boundary — the `resolveStage` race (woken by the cancellation signal), a `planStage`
+ * check, the enumeration checkpoint or the loop boundary — observes `cancelRequested`. Both go
+ * through `sealAs`'s single-winner guard regardless.
+ *
+ * No explicit loop wake-up is needed (verified, P6.8): `executeStage` re-reads
+ * `collectBoundaryFacts` → `resolveRunStatus` at the top of EVERY iteration, right after
+ * `interUnitYield()`, and that yield always resolves on its own (a macrotask or animation frame,
+ * §7.3); an in-flight unit is drained, never interrupted (§10.1). So the next boundary is reached
+ * within one yield of the request, and a dedicated `wakeBoundary()` signal would change nothing.
  */
-function requestCancel(run, reason) {
-  if (run.sealStarted) return run.donePromise;
-  if (run.cancelRequested === null) {
-    run.cancelRequested = Object.freeze({ reason: reason ?? null });
-    run.settlementState.cancelRequested = run.cancelRequested;   // ONE source of truth for §16.7
-    run.resolveCancellationSignal();
+function requestCancel(run, reason, { dispose = false } = {}) {
+  if (run.sealStarted) {
+    // C3 — "sealing" and "terminal" are not the same state, and a dispose must not be dropped in
+    // between. If the finalize window is open, force it closed now; if the seal is still building
+    // (before `forceFinalize` exists), leave the flag the window checks the moment it opens.
+    // The settlement state is deliberately NOT touched: §16.7 resolves from facts committed
+    // BEFORE the seal began, and mutating it mid-seal would race `collectReasons` inside the seal
+    // and make the sealed reasons depend on timing. A dispose arriving now changes nothing about
+    // the run's status — it only stops the engine waiting on the write.
+    if (dispose) {
+      if (run.forceFinalize !== undefined) run.forceFinalize();
+      else run.disposeRequestedDuringSeal = true;
+    }
+    return run.donePromise;                                // terminal (or sealing): absorbed
   }
+  if (run.cancelRequested === null) {
+    run.cancelRequested = Object.freeze({ reason: dispose ? 'engine-disposed' : (reason ?? null) });
+  }
+  if (dispose) run.settlementState.disposeRequested = true;
+  run.settlementState.cancelRequested = run.cancelRequested;   // ONE source of truth for §16.7
+  if (run.status === 'running') {
+    // An observable state change (§9.2): `cancelling` is committed and announced at once. Only a
+    // RUNNING run has one — a planning run's first event must still be the adoption commit.
+    run.transition('cancelling');
+    run.commit('state');
+  }
+  // R5 / review C2 — a still-QUEUED run has no boundary of its own: withdrawing it means its run
+  // function is never invoked, so whoever wins the withdrawal owes it the seal.
   if (run.status === 'queued') cancelWhileQueued(run);
+  run.resolveCancellationSignal();                         // frees a stalled resolveDefinition race
   return run.donePromise;
 }
 
-// eslint-disable-next-line no-unused-vars
+/**
+ * C3 — the engine-only control surface `createRun` returns beside the handle. This is the ONE
+ * published way `engine.dispose()` reaches a live run, and it is deliberately not on `RunHandle`:
+ * `getRun(runId)` hands that handle to application code, which must never be able to dispose the
+ * engine's runs.
+ *
+ * It is `requestCancel(..., {dispose:true})` — the same committed-fact path as a user cancel, so a
+ * dispose is resolved by §16.7 order B exactly like any other fact (`disposeRequested` ⇒
+ * `cancelled`, unless a failing or invalidating fact outranks it) — plus the force-close of a run
+ * that is already past its seal. Idempotent: a second call returns the same `done` promise.
+ * An in-flight unit is DRAINED first (§10.1, F6), so this is bounded by every wait the engine owns
+ * and unbounded only by an executor that never returns (open item O9, accepted).
+ */
 function requestDispose(run) {
-  // P6.8 fills this in: requestCancel(run, 'engine-disposed', { dispose: true }) plus the
-  // force-finalize behaviour documented in the plan's RunController row. Fail-fast until then.
-  throw new Error('requestDispose is not implemented until Task P6.8');
+  return requestCancel(run, 'engine-disposed', { dispose: true });
 }
 
 /**
@@ -1100,8 +1307,7 @@ async function driveRun(run) {
 }
 
 /**
- * An unexpected throw from a STAGE (not from the seal — that is `settleSealFailure`, and P6.8's
- * R10). The sealed set must still be one `validateResultSet` accepts (R21-2), so the failure is
+ * An unexpected throw from a STAGE (not from the seal — that is P6.8's R10 `terminalInternalError`). The sealed set must still be one `validateResultSet` accepts (R21-2), so the failure is
  * settled in the ledger shape of the stage it interrupted (task review, P6.4):
  *
  *  - BEFORE a plan exists (resolution, snapshot, planRun, accumulator construction): a planning
@@ -1157,9 +1363,22 @@ function installRunMethods(run) {
     // P6.6: the seal-time freshness from committed state. `run.ledger` exists on every seal path
     // (`settlePlanning` creates one before sealing a run that never planned).
     sealFreshnessState: () => sealTimeFreshness(run).state,
-    slicer: () => createSlicer({
-      now: run.spec.now, yieldToScheduler: run.spec.yieldToScheduler, limits: run.limits,
-    }),
+    // ONE slicer per run (A2), shared by the enumeration checkpoint and the seal's sliced freeze, so
+    // the run's slice budget is a single account rather than restarting per consumer.
+    slicer: () => {
+      run.slicerInstance ??= createSlicer({
+        now: run.spec.now, yieldToScheduler: run.spec.yieldToScheduler, limits: run.limits,
+      });
+      return run.slicerInstance;
+    },
+    // P6.8: `emit` is the emitter's own isolated delivery; `seq()` reads the COMMITTED snapshot's
+    // seq without advancing it (the terminal event carries exactly the seq `getSnapshot()` reads
+    // back, I9); `bumpSeq()` advances it through a real commit, so an event that is not a state
+    // change of its own — the late `'persistence'` event — still carries a seq no earlier event or
+    // snapshot had, and `getSnapshot().seq` never lags an emitted event (§9.2 rule 1, monotone).
+    emit: (type, payload) => run.emitter.emit(type, payload),
+    seq: () => run.progress.committed.seq,
+    bumpSeq: () => commit(run).seq,
     provenance: () => provenanceOf(run),
     enumerationCheckpoint: () => enumerationCheckpoint(run),
     interUnitYield: () => run.spec.yieldToScheduler(),
@@ -1206,7 +1425,12 @@ export function createRun(spec) {
     // P6.6: per-model freshness detail, read ONLY by `sealTimeFreshness` (never digested).
     deadModelKeys: new Set(),                              // snapshot models observed `null`
     staleReasons: new Set(),                               // 'placement-changed:<k>' | 'model-reloaded:<k>'
-    emitter: createEmitter({ now: spec.now, progressMinIntervalMs: spec.runOptions.progressMinIntervalMs }),
+    // `spec.createEmitter` is a P6-local TEST seam beside `scheduleTimeout` (O3), not a §18 field: a
+    // fixture wraps the real emitter to observe delivery order (P6.8's dispose test). Absent, the
+    // real one is used.
+    emitter: (spec.createEmitter ?? createDefaultEmitter)({
+      now: spec.now, progressMinIntervalMs: spec.runOptions.progressMinIntervalMs,
+    }),
     // `run.pending` is FLAT on the run object (not nested under `run.progress`) — this is the
     // shape every later task's own pseudocode reads/writes directly (P6.4, P6.5's seven call
     // sites, P6.8's terminal-commit snippet). `run.progress` holds ONLY the committed snapshot.

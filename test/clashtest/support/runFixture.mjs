@@ -46,6 +46,26 @@
 //                         (e.g. `registry.notifyPlacementChanged(...)`) landing before the engine's
 //                         first call for that unit.
 //
+// Task P6.8 options (same extension rules):
+//   resultStore          handed to P5's REAL residency manager (A15: the store is bound there, never
+//                        carried on the RunSpec). Default `null` (a no-store engine: `skipped`/`no-store`).
+//   failSeal             'buildResultSet' | 'sealResultSet' | 'admitSealedSet' — that P5 call throws ONCE
+//                        (the first call), before doing anything; the R10 fallback's own call succeeds.
+//   admitSealedSet       'throws-before' — EVERY admission throws without mutating (getResident stays
+//                        null); 'throws-after' — the FIRST admission converts the reservation for real and
+//                        then throws (an observer callback that threw after the conversion, I8).
+//   holdAt               'sealResultSet' — the first seal parks (after marking `reached('sealing')`)
+//                        until `release('sealResultSet')`.
+// Task P6.8 additionally exposes: `sealed()` (resolves once the run has sealed, admitted its set and
+// started its persistence attempt — i.e. its finalize window is open), `release(step)`,
+// `requestDispose(controller)` — P7's `dispose()` order exactly (C-P7-1): stop admitting, await
+// `controller.requestDispose()` (skipped when no controller is passed, which reproduces the
+// defective order), release the run's listeners, then `residency.drainForDispose()` — and
+// `emitter.listenerReleaseOrder` (the run's emitter, through the `spec.createEmitter` test seam,
+// records `'terminal-event'` and `'listeners-released'` in the order they happened).
+// `clock.drainTimers()` fires every `spec.scheduleTimeout` timer (O3) whose due time `clock.advance`
+// has reached; a timer never fires on its own.
+//
 // Task P6.6 additionally exposes: `afterUnit(unitId, fn) -> Promise` — `fn` runs ONCE, synchronously,
 // at the first `spec.yieldToScheduler` call after the executor call for `unitId` returned (i.e. after
 // that unit's attempt settled and committed, and BEFORE the next unit boundary reads the registry —
@@ -89,6 +109,55 @@ import {
   createResultAccumulator, deriveRunOutcome, buildResultSet, sealResultSet,
 } from '../../../clashtest/results/resultSet.js';
 import { createResidencyManager } from '../../../clashtest/results/residency.js';
+import { createEmitter } from '../../../clashtest/run/emitter.js';
+
+/** Task P6.8: the O3 `scheduleTimeout(fn, ms) -> cancel` seam over the fake clock. Timers are due at
+ *  `clock.peek() + ms` and fire ONLY from `clock.drainTimers()` (installed on the clock instance). */
+function installFakeTimers(clock) {
+  const timers = [];
+  clock.drainTimers = async () => {
+    for (;;) {
+      const due = timers.filter((t) => !t.cancelled && !t.fired && t.dueAt <= clock.peek())
+        .sort((a, b) => a.dueAt - b.dueAt || a.seq - b.seq);
+      if (due.length === 0) break;
+      for (const t of due) { t.fired = true; t.fn(); }
+    }
+    await Promise.resolve();
+  };
+  return (fn, ms) => {
+    const timer = { fn, dueAt: clock.peek() + ms, seq: timers.length, cancelled: false, fired: false };
+    timers.push(timer);
+    return () => { timer.cancelled = true; };
+  };
+}
+
+/** Task P6.8: the run's REAL emitter behind the `spec.createEmitter` test seam, recording when the
+ *  terminal `state` event was delivered and when the (P7-side) listener release happened. */
+function createRecordingEmitterFactory(log) {
+  return (options) => {
+    const real = createEmitter(options);
+    const unsubscribers = new Set();
+    log.releaseListeners = () => {
+      for (const off of unsubscribers) off();
+      unsubscribers.clear();
+      log.listenerReleaseOrder.push('listeners-released');
+    };
+    return {
+      get listenerErrors() { return real.listenerErrors; },
+      get listenerCount() { return real.listenerCount; },
+      subscribe(listener) {
+        const off = real.subscribe(listener);
+        unsubscribers.add(off);
+        return () => { unsubscribers.delete(off); off(); };
+      },
+      emit(type, payload) {
+        const delivered = real.emit(type, payload);
+        if (type === 'state' && payload?.terminal === true) log.listenerReleaseOrder.push('terminal-event');
+        return delivered;
+      },
+    };
+  };
+}
 
 /** A fake CollisionWorld for the run: counts `admitModel` (P6 must never call it, R7). */
 function createRunWorld() {
@@ -196,8 +265,18 @@ function wrapExecutorWithLiveGenerations(innerExecutor, { registry, beforeUnit =
       fired.add(unitId);
       beforeUnit[unitId]();
     }
+    // Task P6.8: the LIVE half of a multi-fact descriptor (`scriptedExecutor` header): the unit's
+    // source model dies before the call (`beforeCall`) or while it is in flight (`duringCall`).
+    const live = innerExecutor.liveFactsFor?.(request) ?? { beforeCall: [], duringCall: [] };
+    const applyLive = (facts) => {
+      if (facts.includes('model-evicted') && registry.has(request.unit.sourceModelKey)) {
+        registry.unregisterKey(request.unit.sourceModelKey);
+      }
+    };
+    applyLive(live.beforeCall);
     const start = liveGenerationsFor(request);
     const outcome = await innerExecutor(request);
+    applyLive(live.duringCall);
     const end = liveGenerationsFor(request);
     onReturned(unitId);                                    // Task P6.6: arms `afterUnit(unitId, ...)`
     if (outcome === null || typeof outcome !== 'object') return outcome;   // let validation reject it
@@ -236,6 +315,7 @@ function wrapCreateLedgerForFixture(realCreateLedger, onHalfRecordedSplit) {
 
 export function createRunFixture(opts = {}) {
   const clock = createFakeClock(opts.clockOptions);
+  const scheduleTimeout = installFakeTimers(clock);         // Task P6.8 (O3)
   // `Object.hasOwn` (not `??`) so an explicit `plan: null` (P6.4 models failed/absent planning
   // with it) is preserved instead of being silently replaced by an empty successful plan
   // (codex-advisor review, P6.3).
@@ -354,18 +434,35 @@ export function createRunFixture(opts = {}) {
   };
 
   // --- P5: residency (recording) and the result port ---
-  const realResidency = createResidencyManager({ limits, resultStore: null, now: clock.now, onPersistence: () => {} });
+  const realResidency = createResidencyManager({
+    limits, resultStore: opts.resultStore ?? null, now: clock.now, onPersistence: () => {},
+  });
   const admitted = [];
   const released = [];
   const beginPersistCalls = [];
+  // Task P6.8: `failSeal` throws from the named P5 call ONCE; `admitSealedSet` scripts the I8 cases.
+  const failedOnce = new Set();
+  const failOnce = (step) => {
+    if (opts.failSeal !== step || failedOnce.has(step)) return false;
+    failedOnce.add(step);
+    return true;
+  };
+  const sealFailure = (step) => new Error(`fixture: ${step} failed (failSeal)`);
+  let threwAfterConverting = false;
   const residency = {
     ...realResidency,
     admitted,
     released,
     beginPersistCalls,
     admitSealedSet(runId, resultSet) {
+      if (opts.admitSealedSet === 'throws-before') throw new Error('fixture: admitSealedSet threw before mutating');
+      if (failOnce('admitSealedSet')) throw sealFailure('admitSealedSet');
       realResidency.admitSealedSet(runId, resultSet);
       admitted.push(runId);
+      if (opts.admitSealedSet === 'throws-after' && !threwAfterConverting) {
+        threwAfterConverting = true;
+        throw new Error('fixture: an observer threw AFTER admitSealedSet converted the reservation');
+      }
     },
     releaseRunSlot(runId) {
       released.push(runId);
@@ -373,18 +470,45 @@ export function createRunFixture(opts = {}) {
     },
     beginPersist(runId, options) {
       beginPersistCalls.push({ runId, persist: options.persist });
-      return realResidency.beginPersist(runId, options);
+      const attempt = realResidency.beginPersist(runId, options);
+      milestones.mark('sealed');                            // Task P6.8: the finalize window opens now
+      return attempt;
     },
   };
+  // Task P6.8: `holdAt` gates (`release(step)` opens one).
+  const gates = new Map();
+  const gateFor = (step) => {
+    if (!gates.has(step)) {
+      let open;
+      const promise = new Promise((r) => { open = r; });
+      gates.set(step, { promise, open });
+    }
+    return gates.get(step);
+  };
+  let heldAtSeal = false;
   const sealCalls = { buildResultSet: 0, sealResultSet: 0, deriveRunOutcome: 0 };
+  const baseBuildResultSet = opts.realSealing ? buildResultSet
+    : (parts) => { sealCalls.buildResultSet += 1; return buildResultSet(parts); };
+  const baseSealResultSet = opts.realSealing ? sealResultSet
+    : (draft, o) => { sealCalls.sealResultSet += 1; return sealResultSet(draft, o); };
   const resultPort = {
     lastAccumulatorCtx: null,
     sealCalls,
     createResultAccumulator(ctx) { resultPort.lastAccumulatorCtx = ctx; return createResultAccumulator(ctx); },
-    buildResultSet: opts.realSealing ? buildResultSet
-      : (parts) => { sealCalls.buildResultSet += 1; return buildResultSet(parts); },
-    sealResultSet: opts.realSealing ? sealResultSet
-      : (draft, o) => { sealCalls.sealResultSet += 1; return sealResultSet(draft, o); },
+    // Task P6.8: the `failSeal`/`holdAt` layer is added only when a test asks for it, so
+    // `realSealing` alone still hands the run P5's bare functions.
+    buildResultSet: opts.failSeal !== 'buildResultSet' ? baseBuildResultSet
+      : (parts) => { if (failOnce('buildResultSet')) throw sealFailure('buildResultSet'); return baseBuildResultSet(parts); },
+    sealResultSet: opts.failSeal !== 'sealResultSet' && opts.holdAt !== 'sealResultSet' ? baseSealResultSet
+      : async (draft, o) => {
+        if (opts.holdAt === 'sealResultSet' && !heldAtSeal) {
+          heldAtSeal = true;
+          milestones.mark('sealing');
+          await gateFor('sealResultSet').promise;
+        }
+        if (failOnce('sealResultSet')) throw sealFailure('sealResultSet');
+        return baseSealResultSet(draft, o);
+      },
     deriveRunOutcome: opts.realSealing ? deriveRunOutcome
       : (input) => { sealCalls.deriveRunOutcome += 1; return deriveRunOutcome(input); },
     residency,
@@ -408,6 +532,7 @@ export function createRunFixture(opts = {}) {
   );
 
   const runId = opts.runId ?? (shared === null ? 'run-1' : shared.nextRunId());
+  const emitterLog = { listenerReleaseOrder: [], releaseListeners: () => {} };   // Task P6.8
   const executor = opts.executor ?? createScriptedExecutor({}, { unscripted: { facts: [] } });
   // Task P6.5: `spec.executor` runs THROUGH the live-generations wrapper (`beforeUnit` + real
   // registry bracketing); `fx.executor` below stays the INNER, unwrapped instance so its own
@@ -469,7 +594,10 @@ export function createRunFixture(opts = {}) {
     },
     now: clock.now,
     yieldToScheduler,
-    scheduleTimeout: () => () => {},
+    scheduleTimeout,                                       // Task P6.8: O3 over the fake clock
+    // Task P6.8: a P6-local TEST seam beside `scheduleTimeout` (not a §18 field): the run builds its
+    // emitter through it, so the fixture can observe when the terminal event was delivered.
+    createEmitter: createRecordingEmitterFactory(emitterLog),
     ...opts.specOverrides,
   };
 
@@ -504,6 +632,18 @@ export function createRunFixture(opts = {}) {
      *  snapshot was taken) or 'enumerating' (planRun was invoked). */
     reached: (name) => milestones.reached(name),
     afterUnit,                                             // Task P6.6
+    // --- Task P6.8 ---
+    emitter: emitterLog,
+    sealed: () => milestones.reached('sealed'),
+    release: (step) => gateFor(step).open(),
+    /** P7's `dispose()` order (C-P7-1), for this one run: stop admitting, signal the run through its
+     *  ENGINE-ONLY controller and wait for its summary, release listeners, then drain residency. */
+    async requestDispose(controller) {
+      coordinator.stopAdmitting(spec.engineId);
+      if (controller !== undefined) await controller.requestDispose();
+      emitterLog.releaseListeners();
+      return residency.drainForDispose();
+    },
   };
 }
 

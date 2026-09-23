@@ -46,6 +46,22 @@
 //                   own participants: P4's validator rejects any other key).
 //   forceScopeProof an otherwise-clean `evaluated` outcome carrying this `scopeProof` instead of
 //                   'equal' -- the I-scope violation P4's `validateUnitOutcome` must reject.
+// Task P6.8 EXTENDS this file (same extension rules):
+//   input-changed   a single `facts: ['input-changed']` expands like any other known failure code
+//                   (`failed`, `retryable: false`) -- it was the one table-A fact the fake could not yet
+//                   produce, and matrix C needs it.
+//   several facts   a MULTI-fact list is delivered through every channel a real P4 outcome has, since
+//                   one §11.2 outcome carries only ONE `failure.code`:
+//                     - a scope fact (`scope-drift` / `scope-unverifiable`, at most one) -> `scopeProof`;
+//                     - `model-evicted` -> a LIVE participant death: the run fixture's executor wrapper
+//                       unregisters the unit's source model (P6 observes it through its own unit-scoped
+//                       registry scan, exactly as it observes a real death, P4 H1);
+//                     - every other fact (at most one) -> `failure.code`.
+//                   `executor.liveFactsFor(request)` reports the live half to the fixture wrapper.
+//   shuffleFacts    the descriptor's `facts` ORDER is the DELIVERY order: a live fact listed BEFORE the
+//                   `failure.code` fact lands before the call is issued, one listed after it lands while
+//                   the call is in flight. The same SET in every permutation must seal identically
+//                   (§16.7, AC-21); without the flag a live fact always lands while the call is in flight.
 // `executor.requests` (every request handed to the executor, in call order), `executor.attemptsFor
 // (unitId)` (the attempt numbers issued to one unit, in order) and `executor.maxConcurrent` (the
 // largest number of calls ever in flight at once) are recorded unconditionally.
@@ -57,7 +73,8 @@ import { isCompletenessAffecting, attributionOf } from '../../../clashtest/execu
 
 const KNOWN_DESCRIPTOR_KEYS = new Set(['facts', 'hold', 'outcome', 'failure', 'scopeProof', 'pairs',
   'diagnostics', 'statistics', 'durationMs', 'generations', 'capacityKind', 'malformed',
-  'modelKeys', 'forceScopeProof']);                        // Task P6.6
+  'modelKeys', 'forceScopeProof',                          // Task P6.6
+  'shuffleFacts']);                                         // Task P6.8
 
 // Task P6.6: the post-check bracket answers P4 settles as `discarded`, with the proof they carry.
 const SCOPE_FACT_PROOF = Object.freeze({ 'scope-drift': 'drift', 'scope-unverifiable': 'unverifiable' });
@@ -68,7 +85,29 @@ const FACT_RETRYABLE = Object.freeze({
   'world-disposed': false, 'internal-error': false, 'result-cap': false, 'model-evicted': false,
   'capacity-exceeded': false, 'extraction-limit': false, 'object-tree-unavailable': false,
   'stale-placement': true, 'unit-cap': false, 'target-too-large': false,
+  'input-changed': false,                                   // Task P6.8 (matrix C)
 });
+
+// Task P6.8: facts a multi-fact descriptor delivers through LIVE registry state, not the outcome.
+const LIVE_FACTS = new Set(['model-evicted']);
+
+/** Task P6.8: splits a multi-fact list over the outcome's channels (see the header). Returns
+ *  `{outcomeFacts, live: {beforeCall, duringCall}}`; a single-fact list is untouched. */
+function splitFacts(descriptor) {
+  const facts = descriptor.facts ?? [];
+  if (facts.length <= 1) return { outcomeFacts: facts, live: { beforeCall: [], duringCall: [] } };
+  const scope = facts.filter((f) => f in SCOPE_FACT_PROOF);
+  const live = facts.filter((f) => LIVE_FACTS.has(f));
+  const codes = facts.filter((f) => !(f in SCOPE_FACT_PROOF) && !LIVE_FACTS.has(f));
+  if (scope.length > 1 || codes.length > 1 || new Set(facts).size !== facts.length) {
+    throw new Error(`scriptedExecutor: facts ${JSON.stringify(facts)} cannot all be carried by one outcome`);
+  }
+  const anchor = codes[0] ?? scope[0] ?? null;
+  const at = anchor === null ? facts.length : facts.indexOf(anchor);
+  const beforeCall = descriptor.shuffleFacts === true ? live.filter((f) => facts.indexOf(f) < at) : [];
+  const duringCall = live.filter((f) => !beforeCall.includes(f));
+  return { outcomeFacts: [...codes, ...scope], live: { beforeCall, duringCall } };
+}
 
 const generationsOf = (request) => {
   const side = () => request.snapshot.map(({ modelKey, bindingGeneration, placementGeneration }) => (
@@ -128,8 +167,11 @@ function expandDiagnostics(list, request) {
 }
 
 /** A single known §16.7 fact -> P4's own `{outcome:'failed', failure:{code, retryable, capacityKind?}}`. */
-function failureFromFact(descriptor) {
-  const facts = descriptor.facts;
+function failureFromFact(descriptor, facts = descriptor.facts) {
+  // Task P6.8: a failure code PLUS a scope fact -- the code is the failure, the scope fact the proof.
+  if (facts.length === 2 && facts[1] in SCOPE_FACT_PROOF && !(facts[0] in SCOPE_FACT_PROOF)) {
+    return failureFromFact({ ...descriptor, scopeProof: SCOPE_FACT_PROOF[facts[1]] }, [facts[0]]);
+  }
   const code = facts[0];
   const modelKeys = descriptor.modelKeys !== undefined ? { modelKeys: [...descriptor.modelKeys] } : {};
   if (facts.length === 1 && code in SCOPE_FACT_PROOF) {   // Task P6.6
@@ -186,10 +228,10 @@ function outcomeFrom(descriptor, request) {
       statistics: descriptor.statistics ?? {},
     };
   }
-  const facts = descriptor.facts ?? [];
+  const { outcomeFacts: facts } = splitFacts(descriptor);   // Task P6.8: multi-fact channels
   if (facts.length > 0) {
     return {
-      ...base, ...failureFromFact(descriptor),
+      ...base, ...failureFromFact(descriptor, facts),
       // Task P6.6: evidence on a non-merging outcome is carried (default still none).
       pairs: expandPairs(descriptor.pairs, request),
       diagnostics: expandDiagnostics(descriptor.diagnostics, request),
@@ -261,6 +303,12 @@ export function createScriptedExecutor(script = {}, { unscripted = null } = {}) 
     }
   }
 
+  /** Task P6.8: the LIVE half of the attempt's facts (see the header), for the run fixture's wrapper. */
+  executor.liveFactsFor = (request) => {
+    const list = script[request.unit.unitId] ?? (unscripted === null ? null : [unscripted]);
+    if (!Array.isArray(list) || list.length === 0) return { beforeCall: [], duringCall: [] };
+    return splitFacts(list[Math.min(request.attempt, list.length) - 1]).live;
+  };
   executor.startedUnits = startedUnits;
   executor.requests = requests;
   executor.attemptsFor = (unitId) => [...(attemptLog.get(unitId) ?? [])];

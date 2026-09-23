@@ -380,3 +380,401 @@ test('an unexpected error MID-EXECUTION leaves no unsettled (null-outcome) unit 
   assert.deepEqual(ledgerShapeIssues(summary.resultSet), []);
   assert.deepEqual(fx.executor.startedUnits, ['1.0'], 'no unit starts after the failure');
 });
+
+// --- Task P6.8: sealing, the done/persisted window, the cancellation matrix and dispose (brief Step 1) ---
+// appended to test/clashtest/run/lifecycle.test.mjs
+test('cancel BETWEEN units: no unit starts after the request; unstarted units are not-run:cancelled', async () => {
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }, { unitId: '1.2', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }], '1.1': [{ facts: [] }], '1.2': [{ facts: [] }] }),
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  await fx.afterUnit('1.0', () => handle.cancel('user'));
+  const summary = await handle.done;
+  assert.equal(summary.status, 'cancelled');
+  assert.deepEqual(fx.executor.startedUnits, ['1.0']);
+  assert.equal(summary.resultSet.ledger.units[0].outcome, 'evaluated');
+  assert.deepEqual(summary.resultSet.ledger.units.slice(1).map((u) => `${u.outcome}:${u.cause}`),
+    ['not-run:cancelled', 'not-run:cancelled']);
+  assert.equal(summary.resultSet.outcome.coverage, 'partial');
+  assert.deepEqual(fx.world.destructiveCalls, [], 'cancel never evicts, disposes or invalidates');
+});
+
+test('cancel DURING an in-flight unit: the unit is DRAINED and merged', async () => {
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [], pairs: 3, hold: true }], '1.1': [{ facts: [] }] }),
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  await fx.executor.inFlight('1.0');
+  const cancelPromise = handle.cancel('user');
+  assert.equal(handle.getSnapshot().status, 'cancelling');
+  fx.executor.release('1.0');
+  const summary = await cancelPromise;
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.resultSet.results.length, 3, 'the drained unit IS merged');
+  assert.deepEqual(fx.executor.startedUnits, ['1.0']);
+});
+
+test('cancel is idempotent, first reason wins, and terminal cancel is a no-op', async () => {
+  const fx = createRunFixture({ plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }) });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const first = handle.cancel('first');
+  const second = handle.cancel('second');
+  const a = await first; const b = await second;
+  assert.equal(a, b, 'the same summary object');
+  assert.ok(a.resultSet.outcome.reasons.includes('cancel-requested'));
+  assert.equal((await handle.cancel('third')), a);
+});
+
+test('matrix C: an in-flight unit settling under a pending cancel follows the fixed order', async () => {
+  const rows = [
+    { facts: [], merges: true, unit: 'evaluated', status: 'cancelled' },
+    { facts: ['capacity-exceeded'], merges: false, unit: 'failed', status: 'cancelled' },
+    { facts: ['scope-unverifiable'], merges: false, unit: 'discarded', status: 'cancelled' },
+    { facts: ['model-evicted'], merges: false, unit: 'failed', status: 'cancelled' },
+    { facts: ['scope-drift'], merges: false, unit: 'discarded', status: 'invalidated' },
+    { facts: ['input-changed'], merges: false, unit: 'discarded', status: 'invalidated' },
+    { facts: ['result-cap'], merges: false, unit: 'failed', status: 'failed' },
+    { facts: ['internal-error'], merges: false, unit: 'failed', status: 'failed' },
+    { facts: ['world-disposed'], merges: false, unit: 'failed', status: 'failed' },
+  ];
+  for (const requester of ['cancel', 'dispose']) {
+    for (const row of rows) {
+      const fx = createRunFixture({
+        plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+        executor: createScriptedExecutor({ '1.0': [{ facts: row.facts, pairs: 2, hold: true }] }),
+      });
+      const { handle, controller, begin } = createRun(fx.spec);
+      begin();
+      await fx.executor.inFlight('1.0');
+      // C3: dispose reaches the run through the ENGINE-ONLY controller, never through the handle.
+      if (requester === 'cancel') handle.cancel('user'); else fx.requestDispose(controller);
+      fx.executor.release('1.0');
+      const summary = await handle.done;
+      const label = `${requester} + ${row.facts.join('+') || 'evaluated'}`;
+      assert.equal(summary.status, row.status, label);
+      assert.equal(summary.resultSet.ledger.units[0].outcome, row.unit, label);
+      assert.equal(summary.resultSet.results.length, row.merges ? 2 : 0, label);
+      assert.ok(summary.resultSet.outcome.reasons.includes(
+        requester === 'cancel' ? 'cancel-requested' : 'engine-disposed'), label);
+    }
+  }
+});
+
+/** Every ordering of a fact list — the fake executor delivers the facts in each of them. */
+function* permutations(items) {
+  if (items.length <= 1) { yield [...items]; return; }
+  for (let i = 0; i < items.length; i += 1) {
+    const rest = [...items.slice(0, i), ...items.slice(i + 1)];
+    for (const tail of permutations(rest)) yield [items[i], ...tail];
+  }
+}
+
+test('the same facts in EVERY delivery order produce a byte-identical sealed set', async () => {
+  const facts = ['model-evicted', 'scope-unverifiable', 'world-disposed'];
+  const seals = [];
+  for (const order of permutations(facts)) {
+    // P6.8 DEVIATION from the brief's literal text (reported): the brief cancelled in the same slice
+    // as `begin()`, which the run observes BEFORE resolution (the `resolveStage` race / its post-race
+    // check) and seals the §13.1 pre-resolution shape with NO unit — `ledger.units[0]` is then
+    // `undefined` and the test cannot assert anything about the unit's facts. The cancel is issued
+    // while the unit is in flight instead, so the unit settles its facts under a pending cancel.
+    const fx = createRunFixture({
+      plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+      executor: createScriptedExecutor({ '1.0': [{ facts: order, shuffleFacts: true, hold: true }] }),
+    });
+    const { handle, begin } = createRun(fx.spec);
+    begin();
+    await fx.executor.inFlight('1.0');
+    handle.cancel('user');
+    fx.executor.release('1.0');
+    seals.push((await handle.done).resultSet);
+  }
+  for (const set of seals) {
+    assert.equal(set.outcome.status, seals[0].outcome.status);
+    assert.equal(set.ledger.units[0].cause, seals[0].ledger.units[0].cause);
+    // R4: the tie-break makes even the secondary list order-independent, so this is a stronger
+    // assertion than "the digest ignores it" — and it is the property AC-21 actually needs.
+    assert.deepEqual(set.ledger.units[0].secondaryCauses, seals[0].ledger.units[0].secondaryCauses);
+    assert.equal(set.digests.ledgerDigest, seals[0].digests.ledgerDigest);
+    assert.equal(set.digests.pairSetDigest, seals[0].digests.pairSetDigest);
+  }
+});
+
+test('done resolves at first persistence settle, exactly once, never rejecting', async () => {
+  const fx = createRunFixture({ plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }),
+    // A15: the store is bound into P5's residency manager, not carried on the RunSpec.
+    resultStore: { put: async () => { throw new Error('backend exploded'); } } });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;                       // resolves, does NOT reject
+  assert.equal(summary.status, 'completed');
+  assert.equal(summary.persistence.state, 'failed');
+  assert.equal(summary.persistence.timedOut, false);
+  assert.deepEqual(await handle.persisted, { state: 'failed', error: summary.persistence.error });
+  assert.equal(await handle.done, summary, 'settles exactly once');
+  assert.deepEqual(fx.residency.beginPersistCalls, [{ runId: handle.runId, persist: true }],
+    'the attempt is driven through residency.beginPersist, never a free startPersistence');
+});
+
+test('R10: a failure while BUILDING or SEALING the set still settles done, exactly once', async () => {
+  for (const failAt of ['buildResultSet', 'sealResultSet', 'admitSealedSet']) {
+    const fx = createRunFixture({
+      plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+      executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }),
+      failSeal: failAt,                                    // the fixture throws from that P5 call
+    });
+    const { handle, begin } = createRun(fx.spec);
+    begin();
+    const summary = await handle.done;                     // must NOT hang and must NOT reject
+    assert.equal(summary.status, 'failed', failAt);
+    assert.ok(summary.resultSet === null || summary.resultSet.outcome.status === 'failed', failAt);
+    assert.ok(summary.resultSet === null
+      || summary.resultSet.outcome.reasons.includes('unit:internal-error'), failAt);
+    assert.equal(await handle.done, summary, 'still exactly once');
+    assert.equal(handle.getSnapshot().status, 'failed');
+    assert.equal(handle.getSnapshot().phase, 'terminal');
+    // R10: the slot is freed on every path that ends without an admitted set.
+    const admitted = fx.residency.admitted.includes(handle.runId);
+    assert.equal(admitted || fx.residency.released.includes(handle.runId), true, failAt);
+  }
+});
+
+test('R10: a build failure does not leave a half-sealed run that a later cancel can re-seal', async () => {
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }),
+    failSeal: 'sealResultSet',
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const first = await handle.done;
+  const second = await handle.cancel('too late');
+  assert.equal(second, first, 'terminal is absorbing even after a seal failure');
+  assert.equal(fx.residency.released.filter((id) => id === handle.runId).length <= 1, true,
+    'the slot is released at most once');
+});
+
+test('a hanging store times out the WAIT, never the write; persisted still settles later', async () => {
+  let settle;
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }),
+    limits: { persistTimeoutMs: 5000 },
+    resultStore: { put: () => new Promise((r) => { settle = r; }) },
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  await fx.sealed();
+  assert.equal(handle.getSnapshot().phase, 'finalizing');
+  assert.equal(handle.getSnapshot().status, 'completed');
+  fx.clock.advance(5000); await fx.clock.drainTimers();
+  const summary = await handle.done;
+  assert.deepEqual(
+    { state: summary.persistence.state, timedOut: summary.persistence.timedOut },
+    { state: 'pending', timedOut: true },
+  );
+  assert.equal(handle.getSnapshot().phase, 'terminal');
+  settle();
+  assert.deepEqual(await handle.persisted, { state: 'saved' });
+});
+
+test('the terminal state event is emitted EXACTLY ONCE, after seal, before done resolves', async () => {
+  const fx = createRunFixture({ plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }) });
+  const { handle, begin } = createRun(fx.spec);
+  const order = [];
+  handle.subscribe((ev) => { if (ev.type === 'state' && ev.terminal) order.push('terminal-event'); });
+  handle.done.then(() => order.push('done'));
+  begin();
+  await handle.done; await Promise.resolve();
+  assert.deepEqual(order, ['terminal-event', 'done']);
+});
+
+test('environmentSensitiveCauses is ascending, exact, and drives the boolean', async () => {
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }]),
+    runOptions: { maxPlacementRetries: 0 },
+    executor: createScriptedExecutor({
+      '1.0': [{ facts: ['capacity-exceeded'], capacityKind: 'bucket-capacity' }],
+      // C1: with `maxPlacementRetries: 0` the first attempt IS the last, so P4's retryable
+      // `stale-placement` outcome settles immediately as the `failed:stale-placement` gap that
+      // P5 derives the environmental cause from. P6 writes no `placement-contention` anywhere.
+      '1.1': [{ outcome: 'failed', failure: { code: 'stale-placement', retryable: true } }],
+    }),
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.deepEqual(summary.resultSet.ledger.units.map((u) => u.cause),
+    ['capacity-exceeded', 'stale-placement'], 'the LEDGER carries the unit causes …');
+  assert.deepEqual(summary.resultSet.outcome.environmentSensitiveCauses,
+    ['bucket-capacity', 'placement-contention'], '… and P5 derives the environmental causes');
+  assert.equal(summary.resultSet.outcome.environmentSensitive, true);
+});
+
+test('dispose forces the finalizing window closed and reports the in-flight write, never dropping the set', async () => {
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [], hold: true }] }),
+    resultStore: { put: () => new Promise(() => {}) },        // never settles
+  });
+  const { handle, controller, begin } = createRun(fx.spec);
+  begin();
+  await fx.executor.inFlight('1.0');
+  const disposeSummary = fx.requestDispose(controller);
+  fx.executor.release('1.0');                                 // drain, then seal
+  const summary = await handle.done;                          // forced closed, NOT after 5s
+  assert.equal(summary.status, 'cancelled');
+  assert.deepEqual(
+    { state: summary.persistence.state, timedOut: summary.persistence.timedOut },
+    { state: 'pending', timedOut: true },
+  );
+  const disposed = await disposeSummary;
+  // P6.8 DEVIATION from the brief's literal text (reported): the brief expected the run in BOTH
+  // `droppedUnsaved` and `persistenceInFlight`. P5's real `drainForDispose` (A14) reports a set
+  // whose write is still in flight in `persistenceInFlight` ONLY — the write continues detached and
+  // may still save it — and §10.2 / AC-16 say the same ("in `droppedUnsaved`, OR in
+  // `persistenceInFlight` if a write is pending"). The set is sealed and accounted for either way.
+  assert.deepEqual(disposed.droppedUnsaved, []);
+  assert.deepEqual(disposed.persistenceInFlight, [handle.runId]);
+  assert.equal(summary.resultSet.sealed, true);
+  assert.equal(fx.emitter.listenerReleaseOrder[0], 'terminal-event',
+    'no listener is released before the terminal event');
+});
+
+test('C3: the dispose control surface is engine-only and NOT reachable from RunHandle', async () => {
+  const fx = createRunFixture({ plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }) });
+  const { handle, controller } = createRun(fx.spec);
+  assert.deepEqual(Object.keys(handle).sort(),
+    ['cancel', 'done', 'getSnapshot', 'persisted', 'runId', 'subscribe'],
+    'exactly the §18 members');
+  assert.equal(Reflect.ownKeys(handle).includes('requestDispose'), false,
+    'not there even as a non-enumerable property');
+  assert.equal(handle.requestDispose, undefined);
+  assert.equal(typeof controller.requestDispose, 'function');
+  assert.equal(Object.isFrozen(handle) && Object.isFrozen(controller), true);
+});
+
+test('C3: requestDispose settles a run whose executor is BLOCKED, once the unit drains', async () => {
+  // The review's scenario: an engine disposing while a unit is in flight and persistence never
+  // settles. Without the controller the run never learns `disposeRequested`, never stops issuing
+  // the remaining units, and `dispose()` waits for `persistTimeoutMs` — or forever, if the store
+  // hangs and nothing forces the window.
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [], hold: true }], '1.1': [{ facts: [] }] }),
+    resultStore: { put: () => new Promise(() => {}) },        // never settles
+  });
+  const { handle, controller, begin } = createRun(fx.spec);
+  begin();
+  await fx.executor.inFlight('1.0');
+  const disposed = controller.requestDispose();
+  assert.equal(await Promise.race([disposed, Promise.resolve('pending')]), 'pending',
+    'an in-flight unit is DRAINED, never abandoned (§10.1, F6)');
+  fx.executor.release('1.0');
+  const summary = await disposed;
+  assert.equal(summary, await handle.done, 'the controller resolves with the run\'s own summary');
+  assert.equal(summary.status, 'cancelled');
+  assert.ok(summary.resultSet.outcome.reasons.includes('engine-disposed'));
+  assert.deepEqual(fx.executor.startedUnits, ['1.0'], 'no unit started after the dispose');
+  assert.deepEqual(
+    { state: summary.persistence.state, timedOut: summary.persistence.timedOut },
+    { state: 'pending', timedOut: true }, 'the window was FORCED, not timed out by the clock');
+  assert.equal(fx.clock.now(), fx.clock.peek(), 'and no timer had to fire to get there');
+  assert.equal(await controller.requestDispose(), summary, 'idempotent');
+});
+
+test('C3: a dispose that lands DURING the seal still closes the window', async () => {
+  // The interval the review names: `sealStarted` is true, `forceFinalize` does not exist yet.
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }),
+    resultStore: { put: () => new Promise(() => {}) },
+    holdAt: 'sealResultSet',                                  // the fixture parks inside the seal
+  });
+  const { handle, controller, begin } = createRun(fx.spec);
+  begin();
+  await fx.reached('sealing');
+  const disposed = controller.requestDispose();
+  fx.release('sealResultSet');
+  const summary = await disposed;
+  assert.equal(summary.status, 'completed', 'the seal had already decided the status');
+  assert.deepEqual(
+    { state: summary.persistence.state, timedOut: summary.persistence.timedOut },
+    { state: 'pending', timedOut: true }, 'the window closed at once, not after persistTimeoutMs');
+  assert.equal(await handle.done, summary);
+  assert.equal(handle.getSnapshot().phase, 'terminal');
+});
+
+test('I8: an admitSealedSet that throws BEFORE mutating releases the slot exactly once', async () => {
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }),
+    admitSealedSet: 'throws-before',        // fake residency: throws, getResident stays null
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.deepEqual(fx.residency.released.filter((id) => id === handle.runId).length, 1,
+    'released once — never leaked, never double-freed');
+  assert.deepEqual(fx.residency.admitted, [], 'nothing was admitted under this id');
+  assert.equal(summary.resultSet, null, 'O7: the fallback could not admit either');
+});
+
+test('I8: an admitSealedSet that throws AFTER converting keeps the resident set and releases nothing', async () => {
+  // Residency converted the reservation and then an observer callback threw. Releasing here would
+  // free a live resident set; re-admitting a fallback set under the same id would be a second
+  // admission. P6 asks `getResident(runId)` and adopts the answer.
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }),
+    admitSealedSet: 'throws-after',        // converts, then throws from an observer
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.deepEqual(fx.residency.released, [], 'the converted slot is NEVER released here');
+  assert.deepEqual(fx.residency.admitted, [handle.runId], 'admitted exactly once');
+  assert.equal(summary.resultSet, fx.residency.getResident(handle.runId),
+    'the summary carries the set residency actually holds');
+  assert.equal(summary.resultSet.sealed, true);
+  assert.equal(await handle.done, summary, 'still settles exactly once');
+});
+
+test('I9: a listener on the terminal event already sees the terminal snapshot', async () => {
+  for (const failSeal of [undefined, 'sealResultSet']) {      // normal close AND the R10 fallback
+    const fx = createRunFixture({
+      plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+      executor: createScriptedExecutor({ '1.0': [{ facts: [] }] }),
+      failSeal,
+    });
+    const { handle, begin } = createRun(fx.spec);
+    const seen = [];
+    handle.subscribe((ev) => {
+      if (ev.type === 'state' && ev.terminal) seen.push({ ev, snap: handle.getSnapshot() });
+    });
+    begin();
+    const summary = await handle.done;
+    assert.equal(seen.length, 1, `${failSeal ?? 'normal'}: exactly one terminal event`);
+    const [{ ev, snap }] = seen;
+    assert.equal(snap.phase, 'terminal',
+      `${failSeal ?? 'normal'}: a UI reading the snapshot from the event must not see 'finalizing'`);
+    assert.equal(snap.status, summary.status);
+    assert.equal(ev.status, snap.status, 'the event and the committed snapshot agree');
+    assert.equal(Object.hasOwn(snap, 'persistence'), false,
+      '§9.1 RunProgress is a closed shape: persistence rides on the event and the summary');
+    assert.deepEqual(ev.persistence, summary.persistence,
+      'the final persistence state is announced with the terminal event');
+    assert.equal(snap.seq, ev.seq, 'the commit IS the state change the event reports');
+  }
+});
