@@ -231,7 +231,18 @@ const CANCELLED = Symbol('cancelled-before-resolution');
  */
 async function resolveStage(run) {
   run.setPhase('binding');
-  const lookup = run.spec.resolveDefinition();            // Promise<{definition, testRef}>
+  // P6.4 fix (task review): the lookup is invoked INSIDE a promise executor, so a host lookup that
+  // throws SYNCHRONOUSLY is the same rejected lookup as an async one — it reaches `planningCauseOf`
+  // and seals the §13.1 pre-resolution shape with its one planning gap, instead of escaping to
+  // `driveRun`'s catch-all. (A try/catch, not `new Promise(r => r(lookup()))`: resolving a promise
+  // with a thenable adds microtask hops, which would let a same-slice cancel overtake an
+  // already-rejected lookup and change which fact order B sees.)
+  let lookup;                                              // Promise<{definition, testRef}>
+  try {
+    lookup = run.spec.resolveDefinition();
+  } catch (error) {
+    lookup = Promise.reject(error);
+  }
   const settled = Promise.resolve(lookup).then(
     (value) => ({ kind: 'resolved', value }),
     (error) => ({ kind: 'rejected', error }),
@@ -942,9 +953,9 @@ function requestDispose(run) {
 }
 
 /**
- * The coordinator job: resolve -> plan -> execute. It NEVER rejects — an unexpected stage error
- * becomes a `failed` seal with an `internal-error` fact (P6.8's R10 path refines this), so the
- * coordinator's `finished` promise cannot reject unobserved while `done` stays pending.
+ * The coordinator job: resolve -> plan -> execute. It NEVER rejects: an unexpected stage error is
+ * settled through `settleStageFailure`, so the coordinator's `finished` promise cannot reject
+ * unobserved while `done` stays pending.
  */
 async function driveRun(run) {
   try {
@@ -956,16 +967,38 @@ async function driveRun(run) {
     return await executeStage(run);
   } catch (error) {
     run.stageError = error;
-    if (!run.sealStarted) {
-      run.settlementState.unitCauses.push('internal-error');
-      run.ledger ??= run.spec.plannerPort.createLedger({
-        limits: run.runOptions,
-        budget: run.spec.plannerPort.createRecordBudget(run.runOptions),
-      });
-      return sealAs(run, 'failed');
-    }
-    return run.donePromise;
+    if (run.sealStarted) return run.donePromise;
+    return settleStageFailure(run);
   }
+}
+
+/**
+ * An unexpected throw from a STAGE (not from the seal — that is `settleSealFailure`, and P6.8's
+ * R10). The sealed set must still be one `validateResultSet` accepts (R21-2), so the failure is
+ * settled in the ledger shape of the stage it interrupted (task review, P6.4):
+ *
+ *  - BEFORE a plan exists (resolution, snapshot, planRun, accumulator construction): a planning
+ *    failure, through `settlePlanning` with cause `internal-error` — ONE `{phase, cause}` planning
+ *    gap and no unit records, the same convention as P6.8's `terminalInternalError`
+ *    (`planningGaps: [{phase, cause: 'internal-error'}]`). A still-unresolved run therefore seals the
+ *    §13.1 pre-resolution shape, which requires exactly one planning gap.
+ *  - DURING execution: a unit-level `internal-error` fact (order B: `failed`), and every unit record
+ *    whose outcome is still unsettled (`null`: the unit being settled when the throw hit, if its
+ *    `recordOutcome` had not run yet, and every unit still queued) is closed as
+ *    `not-run:run-failed` — the same consequence `markRemainingNotRun` records when a boundary stops
+ *    the loop — so no `outcome: null` record reaches the sealed ledger.
+ */
+function settleStageFailure(run) {
+  if (run.plan === undefined) return settlePlanning(run, 'internal-error');
+  run.settlementState.unitCauses.push('internal-error');
+  for (const record of run.ledger.toLedgerRecord().units) {
+    if (record.kind !== 'leaf' || record.outcome !== null) continue;
+    run.ledger.recordOutcome(record.unitId, { outcome: 'not-run', cause: 'run-failed' });
+    run.pending.unitsFailedOrSkipped += 1;
+    run.pending.pairSpaceProcessed += record.pairSpaceWeight;
+  }
+  run.pending.currentUnitId = null;
+  return sealAs(run, 'failed');
 }
 
 function beginRun(run) {

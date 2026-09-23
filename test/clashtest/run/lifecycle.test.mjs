@@ -319,3 +319,64 @@ test('a model registered AFTER the snapshot does not join the run', async () => 
   const summary = await handle.done;
   assert.deepEqual(summary.resultSet.provenance.models.map((m) => m.modelKey), ['mk-a']);
 });
+
+// --- P6.4 task-review fix: an unexpected STAGE failure still seals a set P5's reader accepts ---
+// (not in the brief's Step 1; added for the task review's Important finding). `sealResultSet` does
+// not validate, so a malformed set would be admitted and only rejected later, on read.
+import { validateResultSet } from '../../../clashtest/results/validateResultSet.js';
+import { resolveEngineLimits } from '../../../clashtest/options.js';
+
+const issuesOf = (set) => validateResultSet(set, { limits: resolveEngineLimits() }).issues;
+// The paths the stage-failure fix is about. Other issues on RESOLVED sets are known, separately
+// tracked fixture/provenance artefacts (fake semantic digest, fake unit ranges, the plan-derived
+// provenance.models columns P6.6/P6.7 project) — see the P6.4 report.
+const ledgerShapeIssues = (set) => issuesOf(set)
+  .filter((i) => /^\/ledger\/(planningGaps|units\/\d+\/outcome)/.test(i.path));
+
+test('a SYNCHRONOUSLY throwing definition lookup seals the valid pre-resolution shape', async () => {
+  const fx = createRunFixture({ resolveDefinition: () => { throw new Error('store exploded synchronously'); } });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.equal(summary.resultSet.definition, null, 'pre-resolution');
+  assert.deepEqual(summary.resultSet.ledger.planningGaps.map((g) => g.cause), ['enumeration-failed'],
+    'exactly ONE planning gap (§13.1), mapped like an async rejection');
+  assert.deepEqual(summary.resultSet.ledger.units, []);
+  assert.deepEqual(issuesOf(summary.resultSet), [], 'validateResultSet accepts it outright');
+  assert.equal(fx.residency.admitted.includes(handle.runId), true);
+});
+
+test('an unexpected error BEFORE a plan exists is ONE internal-error planning gap, not a bare unit cause', async () => {
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+    specOverrides: { modelKeysOf: () => { throw new Error('boom'); } },
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.deepEqual(summary.resultSet.ledger.planningGaps.map((g) => g.cause), ['internal-error']);
+  assert.deepEqual(summary.resultSet.ledger.units, []);
+  assert.ok(summary.resultSet.outcome.reasons.includes('planning:internal-error'));
+  assert.ok(!summary.resultSet.outcome.reasons.includes('unit:internal-error'));
+  assert.deepEqual(ledgerShapeIssues(summary.resultSet), []);
+  assert.deepEqual(fx.executor.startedUnits, []);
+});
+
+test('an unexpected error MID-EXECUTION leaves no unsettled (null-outcome) unit in the sealed ledger', async () => {
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }]),
+    specOverrides: { deriveUnitTaints: () => { throw new Error('taint derivation exploded'); } },
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.ok(summary.resultSet.outcome.reasons.includes('unit:internal-error'));
+  assert.deepEqual(summary.resultSet.ledger.units.map((u) => `${u.unitId}:${u.outcome}:${u.cause}`),
+    ['1.0:evaluated:null', '1.1:not-run:run-failed'], 'the queued unit is closed as a run-failed gap');
+  assert.deepEqual(summary.resultSet.ledger.planningGaps, []);
+  assert.deepEqual(ledgerShapeIssues(summary.resultSet), []);
+  assert.deepEqual(fx.executor.startedUnits, ['1.0'], 'no unit starts after the failure');
+});
