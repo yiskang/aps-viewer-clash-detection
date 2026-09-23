@@ -475,7 +475,16 @@ function* permutations(items) {
   }
 }
 
-test('the same facts in EVERY delivery order produce a byte-identical sealed set', async () => {
+test('the same facts, however the fixture scripts their delivery order, still seal a byte-identical Result Set', async () => {
+  // SCOPE (P6.8 task review, Finding 2): this proves the RUN PIPELINE is deterministic end to end
+  // for one fact set — executor, live registry scan, ledger, seal and digests — across every scripted
+  // delivery order. It does NOT by itself prove §16.7 / AC-21 order-independence of the classifier:
+  // `factsFromOutcome` assembles the facts in a FIXED order (scope proof, failure code, live scan,
+  // world), so the scripted order never reaches `classifyUnitSettlement` in a different order (the
+  // six permutations collapse to two distinguishable fixture schedules: model death early or late in
+  // the call). `classifyUnitSettlement`'s order-independence over the raw fact SET is verified in
+  // `settlement.test.mjs` — 'every PAIR resolves order-independently…' and 'secondaryCauses is
+  // distinct, ascending, and capped at 8'.
   const facts = ['model-evicted', 'scope-unverifiable', 'world-disposed'];
   const seals = [];
   for (const order of permutations(facts)) {
@@ -777,4 +786,40 @@ test('I9: a listener on the terminal event already sees the terminal snapshot', 
       'the final persistence state is announced with the terminal event');
     assert.equal(snap.seq, ev.seq, 'the commit IS the state change the event reports');
   }
+});
+
+// --- P6.8 fix (task review, Finding 1 / controller Ruling A after P6.5): `pairs-over-cap` ---
+test('a unit whose outcome exceeds maxPairsPerOutcome seals failed:result-cap, merging nothing (§17.1)', async () => {
+  // P4's `validateUnitOutcome` rejects an outcome with more than `maxPairsPerOutcome` pairs with the
+  // issue code `pairs-over-cap`. That is the per-outcome result cap (§17.1), not an executor defect:
+  // the unit must seal `failed:result-cap` — the same settlement the accumulator's whole-unit
+  // `maxResultsPerRun` refusal produces — and never `failed:internal-error`.
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }]),
+    runOptions: { maxResultsPerRun: 10, maxPairsPerOutcome: 2 },
+    executor: createScriptedExecutor({
+      '1.0': [{ facts: [], pairs: 1 }],                                    // within the cap: merges
+      '1.1': [{ facts: [], pairs: 3,                                       // over it: refused whole
+               diagnostics: [{ reason: 'fragment-not-loaded', dbId: 7 }],
+               statistics: { broadPhasePairs: 40 } }],
+    }),
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  const refused = summary.resultSet.ledger.units.find((u) => u.unitId === '1.1');
+  assert.equal(`${refused.outcome}:${refused.cause}`, 'failed:result-cap');
+  assert.equal(summary.status, 'failed', '§16.7: result-cap is a failing unit cause');
+  assert.ok(summary.resultSet.outcome.reasons.includes('unit:result-cap'));
+  assert.ok(!summary.resultSet.outcome.reasons.includes('unit:internal-error'), 'not an executor defect');
+  // Whole-unit refusal, the same atomicity the accumulator's own result-cap refusal guarantees.
+  assert.equal(summary.resultSet.results.length, 1, 'only the within-cap unit merged');
+  assert.deepEqual(fx.diagnosticAggregator.addUnitCalls, ['1.0'], 'the refused unit\'s diagnostics never merged');
+  assert.equal(fx.statisticsAccumulator.addCalls.length, 1, 'nor its statistics');
+  assert.deepEqual(refused.taints, [], 'nor any taint');
+  const snap = handle.getSnapshot();
+  assert.equal(snap.unitsEvaluated, 1);
+  assert.equal(snap.unitsFailedOrSkipped, 1);
+  assert.equal(snap.resultsFound, 1);
+  assert.equal(snap.pairSpaceProcessed, 2, 'a gap is still processed');
 });

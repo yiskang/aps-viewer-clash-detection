@@ -546,7 +546,18 @@ async function runUnitWithRetries(run, unit) {
     // stringify structured issues into the ledger as "[object Object]".
     const valid = run.spec.validateUnitOutcome(request, outcome);
     if (valid.ok !== true) {
-      return run.unitResult(unit, classifyUnitSettlement(['internal-error'], 'call'),
+      // P6.8 (controller Ruling A, after P6.5): P4's `pairs-over-cap` issue is the per-outcome result
+      // cap of §17.1 (`maxPairsPerOutcome`), not an executor defect, so it is the `result-cap` FACT —
+      // the same fact the accumulator's whole-unit `maxResultsPerRun` refusal in `applyUnitResult`
+      // settles with. Any OTHER issue is still `internal-error`; when both occur, both facts are
+      // observed and table A picks `internal-error` (rank 2 over rank 3), so a genuinely malformed
+      // outcome can never be softened into a cap. The outcome itself is untrusted either way, so the
+      // unit is recorded from P4's canonical substitute (no pairs, no diagnostics, no statistics) and
+      // `merges` is false: the whole unit is refused, exactly as a result-cap refusal is.
+      const overCap = valid.issues.some((i) => i.code === 'pairs-over-cap');
+      const otherIssues = valid.issues.some((i) => i.code !== 'pairs-over-cap');
+      const facts = [...(overCap ? ['result-cap'] : []), ...(otherIssues ? ['internal-error'] : [])];
+      return run.unitResult(unit, classifyUnitSettlement(facts, 'call'),
         run.spec.internalErrorOutcome(request, valid.issues), attempt);
     }
     ({ facts, phase } = run.factsFromOutcome(request, outcome));
