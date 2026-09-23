@@ -14,18 +14,20 @@ export const isTerminalStatus = (status) => TERMINAL.has(status);
 
 /**
  * `committed` is the ONLY state a snapshot is built from (§9.2 rule 4: "never torn, built at unit
- * boundaries and state changes from committed state only"). Mutating counters live in `pending` and
- * are copied into `committed` by `commit()`, which is the single place `seq` advances.
+ * boundaries and state changes from committed state only"). Mutating counters live in `run.pending`
+ * (a FLAT property directly on the run object — not nested under `run.progress`, per the plan-wide
+ * shape every later task's own pseudocode reads/writes: P6.4, P6.5 and P6.8 all address it as
+ * `run.pending.X`) and are copied into `run.progress.committed` by `commit()`, which is the single
+ * place `seq` advances.
  */
-function createProgressState(runId) {
-  const zero = {
+function createInitialPending(runId) {
+  return {
     runId, status: 'queued', phase: 'queued', seq: 0,
     unitsTotal: 0, unitsEvaluated: 0, unitsFailedOrSkipped: 0,
     pairSpaceTotal: 0, pairSpaceEvaluated: 0, pairSpaceProcessed: 0,
     resultsFound: 0, caveatCount: 0, caveatUnclassified: 0,
     currentUnitId: null, startedAtMs: 0,
   };
-  return { pending: { ...zero }, committed: null };
 }
 
 function snapshotOf(committed, now) {
@@ -53,20 +55,21 @@ function snapshotOf(committed, now) {
 }
 
 /**
- * Copies `pending` into a new frozen `committed`, incrementing `seq`. This is the single place a
- * snapshot's `seq` advances (§9.2 rule 4). `pending.seq` is kept IN SYNC with `committed.seq` here
- * (not left stale at 0) so a future caller that reads `run.progress.pending.seq` between commits —
- * or that increments it directly the way the plan's later terminal-commit sketch does — observes
+ * Copies `run.pending` into a new frozen `run.progress.committed`, incrementing `seq`. This is the
+ * single place a snapshot's `seq` advances (§9.2 rule 4). `run.pending.seq` is kept IN SYNC with
+ * `committed.seq` here (not left stale at 0) so a future caller that reads `run.pending.seq`
+ * between commits — or that increments it directly the way P6.8's own terminal-commit snippet does
+ * (`run.pending.seq += 1; run.progress.committed = Object.freeze({ ...run.pending });`) — observes
  * the same number `getSnapshot()` just reported, instead of silently regressing it on the next
  * commit through this function. Nothing calls this again in THIS task's own test — the unit loop
- * that mutates `pending` and commits at boundaries is P6.4/P6.5 — but the seed commit below (so
+ * that mutates `run.pending` and commits at boundaries is P6.4/P6.5 — but the seed commit below (so
  * `getSnapshot()` never reads a `null` committed state) and any future caller both go through this
- * one function.
+ * one function, matching P6.8's own literal snippet shape exactly.
  */
 function commit(run) {
   const nextSeq = (run.progress.committed?.seq ?? -1) + 1;
-  run.progress.pending.seq = nextSeq;
-  run.progress.committed = Object.freeze({ ...run.progress.pending });
+  run.pending.seq = nextSeq;
+  run.progress.committed = Object.freeze({ ...run.pending });
   return run.progress.committed;
 }
 
@@ -176,12 +179,11 @@ export function createRun(spec) {
       disposeRequested: false, allLeafUnitsTerminal: false,
     },
     emitter: createEmitter({ now: spec.now, progressMinIntervalMs: spec.runOptions.progressMinIntervalMs }),
-    // NOTE for P6.4/P6.5/P6.8: this task's brief spelled the field `run.progress = { pending,
-    // committed }`, but later sections of the master plan's own pseudocode read/write `run.pending`
-    // directly (flat, no `.progress`). Reconcile that naming before copying a plan snippet verbatim
-    // — either alias `run.pending = run.progress.pending`, or adjust the snippet to
-    // `run.progress.pending` (codex-advisor review, P6.3).
-    progress: createProgressState(spec.runId),
+    // `run.pending` is FLAT on the run object (not nested under `run.progress`) — this is the
+    // shape every later task's own pseudocode reads/writes directly (P6.4, P6.5's seven call
+    // sites, P6.8's terminal-commit snippet). `run.progress` holds ONLY the committed snapshot.
+    pending: createInitialPending(spec.runId),
+    progress: { committed: null },
     // Flags nothing in THIS task's test exercises yet, but later tasks (P6.4-P6.8) read/set them:
     sealStarted: false,
     sealed: false,
@@ -193,7 +195,7 @@ export function createRun(spec) {
     // `false()`, throwing). Do not initialize this key here.
     disposeRequestedDuringSeal: false,
   };
-  run.progress.pending.startedAtMs = spec.now();
+  run.pending.startedAtMs = spec.now();
   commit(run);                                             // seed `committed` so getSnapshot never reads null
 
   run.donePromise = new Promise((resolve) => { run.resolveDone = resolve; });
