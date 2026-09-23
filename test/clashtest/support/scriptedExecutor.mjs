@@ -67,6 +67,10 @@
 //                   one listed after it lands `late` (as the call returns). The same SET in every
 //                   permutation must seal identically (§16.7, AC-21); without the flag a live fact
 //                   always lands `late`.
+//   pairsOverflowLength  (fix round 2) an `evaluated` outcome in the REAL default executor's over-cap
+//                   MARKER form: `pairs: []` plus `pairsOverflowLength: n` — exactly what P4's
+//                   `LocalUnitExecutor.projectPairs` returns once the raw pairs exceed
+//                   `maxPairsPerOutcome` (it never returns an oversized array).
 // `executor.requests` (every request handed to the executor, in call order), `executor.attemptsFor
 // (unitId)` (the attempt numbers issued to one unit, in order) and `executor.maxConcurrent` (the
 // largest number of calls ever in flight at once) are recorded unconditionally.
@@ -79,7 +83,7 @@ import { isCompletenessAffecting, attributionOf } from '../../../clashtest/execu
 const KNOWN_DESCRIPTOR_KEYS = new Set(['facts', 'hold', 'outcome', 'failure', 'scopeProof', 'pairs',
   'diagnostics', 'statistics', 'durationMs', 'generations', 'capacityKind', 'malformed',
   'modelKeys', 'forceScopeProof',                          // Task P6.6
-  'shuffleFacts']);                                         // Task P6.8
+  'shuffleFacts', 'pairsOverflowLength']);                  // Task P6.8
 
 // Task P6.6: the post-check bracket answers P4 settles as `discarded`, with the proof they carry.
 const SCOPE_FACT_PROOF = Object.freeze({ 'scope-drift': 'drift', 'scope-unverifiable': 'unverifiable' });
@@ -245,6 +249,14 @@ function outcomeFrom(descriptor, request) {
       ...base, ...failureFromFact(descriptor, facts),
       // Task P6.6: evidence on a non-merging outcome is carried (default still none).
       pairs: expandPairs(descriptor.pairs, request),
+      diagnostics: expandDiagnostics(descriptor.diagnostics, request),
+      statistics: descriptor.statistics ?? {},
+    };
+  }
+  if (descriptor.pairsOverflowLength !== undefined) {       // Task P6.8 fix round 2: the marker form
+    return {
+      ...base, outcome: 'evaluated', scopeProof: descriptor.scopeProof ?? 'equal', failure: null,
+      pairs: [], pairsOverflowLength: descriptor.pairsOverflowLength,
       diagnostics: expandDiagnostics(descriptor.diagnostics, request),
       statistics: descriptor.statistics ?? {},
     };

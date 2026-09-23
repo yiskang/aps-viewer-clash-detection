@@ -823,3 +823,55 @@ test('a unit whose outcome exceeds maxPairsPerOutcome seals failed:result-cap, m
   assert.equal(snap.resultsFound, 1);
   assert.equal(snap.pairSpaceProcessed, 2, 'a gap is still processed');
 });
+
+// --- P6.8 fix round 2 (re-review, Critical): the pairsOverflowLength MARKER is the result cap too ---
+test('an evaluated outcome carrying the pairsOverflowLength marker seals failed:result-cap, never a false clean', async () => {
+  // Spec §7.1/§17.1 (design line 470): over-cap is "whether `pairs.length` exceeds it OR the executor
+  // reports `pairsOverflowLength > limits.maxPairsPerOutcome` with `pairs: []`" — a whole-unit
+  // `failed:result-cap`. P4's real `LocalUnitExecutor.projectPairs` ALWAYS uses this marker form
+  // (it never returns an oversized array), and the marker VALIDATES (`valid.ok === true`), so without
+  // this rule every real over-cap unit sealed `evaluated` / `completed` / `reasons: []` — a false
+  // "no clashes here".
+  const fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }]),
+    runOptions: { maxResultsPerRun: 10, maxPairsPerOutcome: 2 },
+    executor: createScriptedExecutor({
+      '1.0': [{ facts: [], pairs: 1 }],                                    // within the cap: merges
+      '1.1': [{ pairsOverflowLength: 500,                                  // the real marker form
+               diagnostics: [{ reason: 'fragment-not-loaded', dbId: 7 }],
+               statistics: { broadPhasePairs: 40 } }],
+    }),
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(fx.substitutedOutcomes.length, 0, 'the marker outcome VALIDATED: this is not the pairs-over-cap issue path');
+  const refused = summary.resultSet.ledger.units.find((u) => u.unitId === '1.1');
+  assert.equal(`${refused.outcome}:${refused.cause}`, 'failed:result-cap');
+  assert.equal(summary.status, 'failed', '§16.7: result-cap is a failing unit cause');
+  assert.ok(summary.resultSet.outcome.reasons.includes('unit:result-cap'));
+  assert.equal(summary.resultSet.outcome.coverage, 'partial');
+  // Whole-unit refusal: nothing of the refused unit merged, on any channel.
+  assert.equal(summary.resultSet.results.length, 1, 'only the within-cap unit merged');
+  assert.deepEqual(fx.diagnosticAggregator.addUnitCalls, ['1.0']);
+  assert.equal(fx.statisticsAccumulator.addCalls.length, 1);
+  assert.deepEqual(refused.taints, []);
+  const snap = handle.getSnapshot();
+  assert.equal(snap.unitsEvaluated, 1);
+  assert.equal(snap.unitsFailedOrSkipped, 1);
+  assert.equal(snap.pairSpaceProcessed, 2);
+
+  // Negative control: the same plan WITHOUT the marker still seals completed / evaluated / clean.
+  const clean = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }]),
+    runOptions: { maxResultsPerRun: 10, maxPairsPerOutcome: 2 },
+    executor: createScriptedExecutor({ '1.0': [{ facts: [], pairs: 1 }], '1.1': [{ facts: [], pairs: 2 }] }),
+  });
+  const run2 = createRun(clean.spec);
+  run2.begin();
+  const ok = await run2.handle.done;
+  assert.equal(ok.status, 'completed');
+  assert.deepEqual(ok.resultSet.ledger.units.map((u) => `${u.outcome}:${u.cause}`), ['evaluated:null', 'evaluated:null']);
+  assert.deepEqual(ok.resultSet.outcome.reasons, []);
+  assert.equal(ok.resultSet.results.length, 3);
+});

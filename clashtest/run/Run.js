@@ -772,6 +772,17 @@ function factsFromOutcome(run, request, outcome) {
   const scopeFact = SCOPE_PROOF_FACT[outcome.scopeProof];
   if (scopeFact !== null) facts.push(scopeFact);
   if (outcome.failure !== null && UNIT_FACTS.has(outcome.failure.code)) facts.push(outcome.failure.code);
+  // P6.8 fix round 2 (re-review, Critical): §7.1/§17.1 — over-cap is "whether `pairs.length` exceeds
+  // it OR the executor reports `pairsOverflowLength > limits.maxPairsPerOutcome` with `pairs: []`".
+  // The oversized-array half is the `pairs-over-cap` validation issue (`runUnitWithRetries`); this
+  // is the marker half, and it is the one P4's real `LocalUnitExecutor.projectPairs` always uses. A
+  // marker only reaches here after `validateUnitOutcome` accepted it (safe integer > the cap, empty
+  // `pairs`, `evaluated` outcome — `checkOverflowMarker`), so it is the same `result-cap` FACT, with
+  // the same whole-unit refusal (`merges: false`) and the same table-A precedence against every
+  // other fact collected here. Without it the unit settled `evaluated` with zero pairs: a false clean.
+  // (`diagnosticOverflowLength` is deliberately NOT read here: bounded diagnostic overflow is H7.2's
+  // accepted, tainted path in the diagnostic aggregator, not a result cap.)
+  if (outcome.pairsOverflowLength !== undefined) facts.push('result-cap');
   const live = scanUnitParticipants(run, request.unit);
   if (live.evicted && !facts.includes('model-evicted')) facts.push('model-evicted');
   if (live.placementMoved && !isEligibleStalePlacementShape(outcome, facts)) facts.push('input-changed');
