@@ -1476,13 +1476,20 @@ Three deliberate non-rows, each with its reason:
 | open/closed | embedded `definition` fails `validateTest` | `definition-invalid` |
 | open/closed | a `ledger.rootOwners[].owners[]` row whose `cls` is absent or not `'A'` / `'B'` / `'C'` (R2 — the marker is schema, and a writer that omits it produces a set no reader accepts) | `root-cls-invalid` |
 | cross-field | `definition === null ⇎ testRef.semanticDigest === null` | `definition-digest-mismatch` |
-| cross-field | `coverage: 'full'` with no plan, a planning gap, **no leaf unit at all**, or a leaf that is not `evaluated` / not `scopeProof: 'equal'` — verbatim the predicate `deriveRunOutcome` applies (R21-2) | `coverage-not-full` |
+| cross-field | **(P5-REM2, H1)** `definition !== null` and (`definition.testId ≠ testRef.testId` or `definition.revision ≠ testRef.revision`) | `definition-identity-mismatch` |
+| cross-field | **(P5-REM2, H1)** `definition !== null` and `computeSemanticDigest(definition) ≠ testRef.semanticDigest` (reuses P2's `computeSemanticDigest`, never reimplemented) | `semantic-digest-mismatch` |
+| cross-field | **(P5-REM2, H2)** `definition === null` and any of: `testRef.revision ≠ null`; `outcome.status` not `failed`/`cancelled`; `outcome.coverage ≠ partial`; `ledger.planExists ≠ false`; `ledger.units` non-empty; `ledger.planningGaps.length ≠ 1`; `ledger.pairSpaceTotal ≠ 0`; `results` non-empty — the unique §13.1 pre-resolution shape (R11-4) | `pre-resolution-shape-invalid` |
+| cross-field | `coverage: 'full' ⇎` the ledger's own facts derive `full` — no plan, a planning gap, **no leaf unit at all**, or a leaf that is not `evaluated` / not `scopeProof: 'equal'` — verbatim the predicate `deriveRunOutcome` applies (R21-2). **(P5-REM2, M1: exact equality in BOTH directions — a recorded `partial` when the facts derive `full` is now also rejected, not only the reverse.)** | `coverage-not-full` |
 | cross-field | `status: 'completed'` carrying a fatal cause (`world-disposed`, `internal-error`, `result-cap`), any planning gap, an input-change cause (`input-changed`, `scope-drift`) or `cancel-requested` | `completed-with-fatal-cause` |
 | cross-field | `status: 'completed'` with a **non-fatal** unit gap (`capacity-exceeded`, `extraction-limit`, `object-tree-unavailable`, `stale-placement`, `unit-cap`, `target-too-large`, `model-evicted`, `skipped:*`, `discarded:scope-unverifiable`) and `coverage: 'partial'` | — (accepted) |
 | cross-field | `emptyOperand: true` with `pairSpaceTotal > 0`, or `pairSpaceTotal ≠ Σ leaf pairSpaceWeight` | `pair-space-inconsistent` |
+| cross-field | (P5-REM Item 1) `outcome.integrity` disagrees with the derived value (`caveated` iff `diagnostics.completenessAffectingUpperBound > 0` or any result's `flags.duplicateEvidenceConflict`, else `clean`) — mirrors `deriveRunOutcome` exactly | `integrity-not-derived` |
+| cross-field | (P5-REM Item 1) `outcome.environmentSensitive`/`environmentSensitiveCauses` disagree with the derived value (`bucket-capacity`/`placement-contention`/`geometry-readiness`, `ENVIRONMENT_CAUSES` order) — mirrors `deriveRunOutcome` exactly | `environment-sensitive-mismatch` |
+| cross-field | (codex-review, security) the same `ownerDbId` claimed by two different roots of the same model in `ledger.rootOwners` | `duplicate-owner-dbid` |
 | cross-field | a result owner in neither `rootOwners` nor (with `flags.unreachableOwner`) that model's `unreachablePopulation.ownerDbIds` | `owner-not-in-ledger` |
 | cross-field | `flags.unreachableOwner` on a pair whose owners are both root owners | `unreachable-flag-invalid` |
 | cross-field | `resultId ≠ makeResultId(testRef.testId, testRef.semanticDigest, pair)` | `result-id-mismatch` |
+| linkage (R21-4) | (P5-REM Item 2) stored `pair.first`/`pair.second` is not the canonical orientation `makePairId(mode, evaluatedAs.source, evaluatedAs.target)` would produce | `pair-orientation-invalid` |
 | linkage (R21-4) | `unitId` names no unit, a `split` parent, or a non-`evaluated` / non-`equal` unit | `result-unit-invalid` |
 | linkage (R21-4) | the unit's source/target ranges do not cover the result's root pair | `result-unit-coverage` |
 | linkage (R21-4) | `evaluatedAs.source.modelKey ≠ unit.sourceModelKey`, or `evaluatedAs` names refs other than the result's two | `evaluated-as-mismatch` |
@@ -3553,7 +3560,15 @@ test('put → evict → read → validate preserves the claim outcome for every 
     assert.equal(canClaimNoClashes(read, 'current'), canClaimNoClashes(sealed, 'current'), kind);
     assert.deepEqual(read.digests, sealed.digests, kind);
     assert.equal(Object.isFrozen(read), true, kind);
-    assert.equal(JSON.stringify(read.results), JSON.stringify(sealed.results), kind);
+    // P5-REM2 (M2, docs/reviews/2026-09-22-federated-clash-test-core-p5-independent-review.md):
+    // corrected from this task's own original `assert.equal(JSON.stringify(read.results),
+    // JSON.stringify(sealed.results), kind)`, which is unconditionally false for any non-empty
+    // `results[]` -- the store persists canonical JSON (sorted keys), while `readResultSet`/
+    // `captureData` deliberately preserve the read-back copy's own key order, so `JSON.stringify`
+    // differs by key order alone. `deepStrictEqual` is the content-preservation assertion this task
+    // intended, without being sensitive to that reordering -- matching what the shipped test
+    // (`test/clashtest/results/roundTrip.test.mjs`) already correctly does.
+    assert.deepStrictEqual(read.results, sealed.results, kind);
   }
 });
 

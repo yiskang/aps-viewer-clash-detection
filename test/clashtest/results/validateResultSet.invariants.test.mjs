@@ -14,9 +14,10 @@ import { schemaMutations } from '../support/schemaMutations.mjs';
 import { canClaimNoClashes } from '../../../clashtest/results/claim.js';
 import { deriveRunOutcome } from '../../../clashtest/results/resultSet.js';
 import { makeResultId } from '../../../clashtest/identity/ids.js';
+import { computeSemanticDigest, normalizeDefinition } from '../../../clashtest/definition/normalize.js';
 import { CorruptResultSetError, ResultSetTooLargeError } from '../../../clashtest/errors.js';
 import { ENGINE_LIMIT_DEFAULTS } from '../../../clashtest/options.js';
-import { sealedSet, fakeSlicer, resealed } from '../support/resultSetFixtures.mjs';
+import { sealedSet, fakeSlicer, resealed, MODEL_A, MODEL_B } from '../support/resultSetFixtures.mjs';
 
 const limits = ENGINE_LIMIT_DEFAULTS;
 
@@ -175,6 +176,62 @@ const CORRUPTIONS = [
     s.results[0].pair = flipped;
     s.results[0].resultId = makeResultId(s.testRef.testId, s.testRef.semanticDigest, flipped);
   }],
+  // P5-REM2 (H1, docs/reviews/2026-09-22-federated-clash-test-core-p5-independent-review.md;
+  // adjudication docs/reviews/2026-09-22-federated-clash-test-core-p5-independent-review-
+  // adjudication.md, CONFIRMED/blocking; owner ruling 2026-09-22): before this fix, mutating only
+  // `definition.mode` -- leaving `testRef` untouched -- validated `{ok: true, issues: []}`,
+  // reproduced by the independent review directly against a sealed `completed-clean` fixture.
+  ['semantic-digest-mismatch', (s) => { s.definition.mode = 'containment'; }],
+  // P5-REM2 (H1, same review/adjudication/authorization): before this fix, mutating only
+  // `definition.testId` -- leaving `testRef` untouched -- validated `{ok: true, issues: []}` too.
+  ['definition-identity-mismatch', (s) => { s.definition.testId = 'OTHER'; }],
+  // P5-REM2 (H2, same review/adjudication/authorization): before this fix, nulling
+  // `definition`/`testRef.revision`/`testRef.semanticDigest` while leaving every OTHER field
+  // (`status`, `coverage`, ledger, `results`) at its ordinary post-resolution ('positives') value
+  // validated `{ok: true, issues: []}` and returned `true` from `canClaimNoClashes` -- reproduced by
+  // the independent review directly. `positives`' own baseline already disagrees with the §13.1
+  // pre-resolution shape on several independent axes at once (status: 'completed' not
+  // failed/cancelled; `ledger.planExists`/`units`/`planningGaps`/`pairSpaceTotal` all non-pre-
+  // resolution; non-empty `results`), so this one mutation alone covers more than the required two
+  // distinct sub-conditions.
+  ['pre-resolution-shape-invalid', (s) => {
+    s.definition = null; s.testRef.revision = null; s.testRef.semanticDigest = null;
+  }],
+  // P5-REM2 (M1, same review/adjudication/authorization): the missing reverse direction --
+  // `outcome.coverage: 'partial'` recorded while the ledger's own facts derive `'full'`. `positives`'
+  // own `u2` is `failed` (so its baseline facts derive `'partial'`, not `'full'`); flipping `u2` to
+  // `evaluated`/`scopeProof: 'equal'` (capacityKind/cause left untouched, so `environmentSensitive`
+  // stays correctly derived) makes every leaf evaluated, so the facts now derive `'full'` while
+  // `coverage` stays the fixture's own already-`'partial'` value -- a real (`!==` reversed)
+  // mismatch, not merely restating an already-true derivation.
+  ['coverage-not-full', (s) => {
+    s.ledger.units[1] = { ...s.ledger.units[1], outcome: 'evaluated', scopeProof: 'equal' };
+    s.outcome.coverage = 'partial';
+  }],
+  // P5-REM3 (owner disposition item 1 of the P5-REM2 follow-up findings; owner ruling 2026-09-22,
+  // verbatim in .superpowers/sdd/p5-result-set/task-P5-REM3-brief.md): `semantic-digest-mismatch`
+  // only proves the recorded digest matches HASHING the embedded `definition` -- it never proves
+  // `definition.selectionA`/`selectionB` is itself in normalized/canonical form. A duplicated `dbIds`
+  // entry within one `selectionA` "elements" entry is exactly the kind of tampering a real
+  // normalization pass would dedupe (`normalizeSelectionSteps`'s `unionInto`); the tampered,
+  // undeduplicated form self-consistently digests to its OWN (different) `semanticDigest`, so
+  // `testRef.semanticDigest` is recomputed from the tampered `definition` here to keep
+  // `semantic-digest-mismatch` from ALSO firing and diluting this test's focus on the new check.
+  ['definition-not-normalized', (s) => {
+    s.definition.selectionA = { entries: [{ kind: 'elements', modelKey: MODEL_A, dbIds: [100, 100, 101] }] };
+    s.testRef.semanticDigest = computeSemanticDigest(s.definition);
+  }],
+  // P5-REM3 (same authorization): two separate `entries` rows for the SAME `modelKey` in one
+  // selection -- a real normalization pass merges same-model "elements" entries into one
+  // (`normalizeSelectionSteps`'s `byModel` map keyed by `modelKey`); the tampered, unmerged form is
+  // not a fixed point of `normalizeDefinition` even though it digests self-consistently.
+  ['definition-not-normalized', (s) => {
+    s.definition.selectionB = { entries: [
+      { kind: 'elements', modelKey: MODEL_B, dbIds: [200] },
+      { kind: 'elements', modelKey: MODEL_B, dbIds: [201] },
+    ] };
+    s.testRef.semanticDigest = computeSemanticDigest(s.definition);
+  }],
 ];
 
 test('each corruption is rejected with its own code, even when digests are recomputed consistently', async () => {
@@ -185,6 +242,45 @@ test('each corruption is rejected with its own code, even when digests are recom
     assert.ok(issues.some((i) => i.code === code), `${code}: got ${JSON.stringify(issues)}`);
     assert.ok(issues.every((i) => !('value' in i)), 'no values in issues');
     assert.ok(issues.length <= 20);
+  }
+});
+
+// P5-REM2 (H1/H2, docs/reviews/2026-09-22-federated-clash-test-core-p5-independent-review.md): the
+// review's own direct probes asserted `canClaimNoClashes(set, 'current') === true` on exactly these
+// two mutations against a sealed `completed-clean` fixture -- a tampered/contradictory Result Set
+// supporting a false clean no-clash claim. This test exercises the TRUSTED-READ boundary
+// (`readResultSet`) rather than `canClaimNoClashes` directly: both mutations are now rejected by
+// `validateResultSet` before a claim would ever be assessed on a trusted read, which is the
+// boundary this repository's read pipeline actually relies on (`canClaimNoClashes` itself is
+// documented as not validating its argument -- the validator is the boundary, not the claim helper).
+test('H1 and H2 mutations that used to let canClaimNoClashes return true are now rejected before any claim is assessed', async () => {
+  const h1 = await resealed((s) => { s.definition.mode = 'containment'; }, 'completed-clean');
+  await assert.rejects(
+    readResultSet(structuredClone(h1), { limits, slicer: fakeSlicer() }),
+    (e) => e instanceof CorruptResultSetError && e.issues.some((i) => i.code === 'semantic-digest-mismatch'),
+  );
+
+  const h2 = await resealed((s) => {
+    s.definition = null; s.testRef.revision = null; s.testRef.semanticDigest = null;
+  }, 'completed-clean');
+  await assert.rejects(
+    readResultSet(structuredClone(h2), { limits, slicer: fakeSlicer() }),
+    (e) => e instanceof CorruptResultSetError && e.issues.some((i) => i.code === 'pre-resolution-shape-invalid'),
+  );
+});
+
+// P5-REM3: a direct sanity check (not a CORRUPTIONS mutation) that every base fixture with a
+// non-null `definition` is itself already a fixed point of `normalizeDefinition` -- i.e. genuinely
+// canonical -- so the new `definition-not-normalized` check never fires on an untampered set. Per
+// the task brief's own instruction, this is a spot-check by construction: if any of these fixtures
+// were not already normalized, this assertion (not a weakening of the production check) is what
+// would need to change.
+test('every base fixture with a non-null definition is already a fixed point of normalizeDefinition', async () => {
+  for (const kind of ['positives', 'schema-corpus', 'completed-with-gaps', 'completed-clean', 'unreachable-positive']) {
+    const set = await sealedSet(kind);
+    const renormalized = normalizeDefinition(set.definition);
+    assert.deepEqual(renormalized, set.definition, `${kind}: definition is not already canonical`);
+    assert.deepEqual(validateResultSet(set, { limits }), { ok: true, issues: [] }, kind);
   }
 });
 
@@ -312,13 +408,23 @@ test('a forged but self-consistent set is accepted (documented limit)', async ()
 // never reaches, and an ARRAY does — worse, `validateTest` would then run on an array too).
 // Reproduced directly before the fix: `set.definition = 42` on an otherwise-valid set validated as
 // `{ok: true, issues: []}`.
+// P5-REM2 (H1) NOTE: `checkCrossField`'s new definition/testRef reconciliation runs unconditionally
+// whenever `definition !== null` (structural validity is not its job -- that is the phase above),
+// so a primitive/array `definition` ALSO legitimately fails `definition-identity-mismatch` (its
+// non-existent `.testId`/`.revision` read `undefined`, which disagrees with `testRef`) and
+// `semantic-digest-mismatch` (`computeSemanticDigest` on such a value never equals the recorded
+// digest) -- deterministically, for every one of the four bad values below. This does not weaken or
+// bypass the container-shape check this test exists to prove (`container-invalid` still fires
+// first, from the structural phase); the assertion below was tightened from an exact single-issue
+// match to `.some(...)` because H1 legitimately adds more true findings on top, not fewer.
 test('a delegated field (definition) still gets a container-shape check before validateTest ever runs', async () => {
   for (const bad of [42, 'x', true, []]) {
     const set = structuredClone(await sealedSet('completed-clean'));
     set.definition = bad;
     const { ok, issues } = validateResultSet(set, { limits });
     assert.equal(ok, false, JSON.stringify(bad));
-    assert.deepEqual(issues, [{ path: '/definition', code: 'container-invalid' }], JSON.stringify(bad));
+    assert.ok(issues.some((i) => i.path === '/definition' && i.code === 'container-invalid'),
+      `${JSON.stringify(bad)}: expected container-invalid, got ${JSON.stringify(issues)}`);
   }
 });
 

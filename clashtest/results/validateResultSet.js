@@ -11,7 +11,8 @@
 // 'accessors are rejected...' test).
 
 import { captureData, deepFreezeSliced } from '../util/capture.js';
-import { digestCanonical, DIGEST_VERSION } from '../util/canonical.js';
+import { digestCanonical, canonicalJson, DIGEST_VERSION } from '../util/canonical.js';
+import { computeSemanticDigest, normalizeDefinition } from '../definition/normalize.js';
 import { makeResultId, makePairId, comparePairIds } from '../identity/ids.js';
 import { isOpenPath, UNKNOWN_FIELD_BYTES, MAX_UNIT_TAINTS, checkShapeAndUnknownFields } from './resultSetSchema.js';
 import { RUN_OPTION_CEILINGS, ENGINE_LIMIT_CEILINGS, SCHEMA_MAX_NODES } from '../options.js';
@@ -216,14 +217,106 @@ function assertCaptured(set) {
  *  would reject sets the writer itself considers valid, or accept ones it does not). */
 const leavesOf = (ledger) => ledger.units.filter((u) => u.outcome !== 'split');
 
-/** Global, non-per-result cross-field rules: definition/testRef null-parity, the `coverage: 'full'`
- *  predicate (mirroring `deriveRunOutcome` exactly), `status: 'completed'` vs. a fatal/planning-gap
- *  cause, and the ledger's own pair-space arithmetic. None of these need a per-result scan. */
+/** Global, non-per-result cross-field rules: definition/testRef null-parity, identity and semantic-
+ *  digest reconciliation (H1) plus the full pre-resolution shape (H2), the bidirectional
+ *  `coverage: 'full'` predicate (M1, mirroring `deriveRunOutcome` exactly), `status: 'completed'` vs.
+ *  a fatal/planning-gap cause, and the ledger's own pair-space arithmetic. None of these need a
+ *  per-result scan. */
 function checkCrossField(set, add) {
   const { definition, testRef, outcome, ledger, diagnostics, results } = set;
 
-  if ((definition === null) !== (testRef.semanticDigest === null)) {
-    add('/definition', 'definition-digest-mismatch');
+  // Owner-authorized P5-REM2 remediation (independent review docs/reviews/2026-09-22-federated-
+  // clash-test-core-p5-independent-review.md, H1 and H2; adjudication docs/reviews/2026-09-22-
+  // federated-clash-test-core-p5-independent-review-adjudication.md, both CONFIRMED/blocking; owner
+  // ruling 2026-09-22, verbatim in .superpowers/sdd/p5-result-set/task-P5-REM2-brief.md). Before
+  // this fix the ONLY check tying `definition` to `testRef` was null-parity -- nothing checked that a
+  // non-null `definition`'s own `testId`/`revision` matched `testRef`, that `testRef.semanticDigest`
+  // was actually the semantic digest of the embedded `definition` (H1), or that a null `definition`
+  // carried the REST of design spec §13.1's unique pre-resolution shape rather than an arbitrary
+  // post-resolution one (H2). Both were reproduced directly by the independent review: mutating only
+  // `definition.mode`/`testId`/`revision` (H1), or nulling `definition`/`testRef.revision`/
+  // `testRef.semanticDigest` while leaving `status: 'completed'`/`coverage: 'full'`/a positive pair
+  // space/an evaluated unit untouched (H2), both validated `{ok: true, issues: []}` and both let
+  // `canClaimNoClashes` return `true` -- a tampered or contradictory Result Set supporting a false
+  // clean no-clash claim.
+  if (definition === null) {
+    if (testRef.semanticDigest !== null) add('/definition', 'definition-digest-mismatch');
+    // H2: design spec §13.1 "Pre-resolution seal (R11-4)" names EXACTLY one shape for a run sealed
+    // before its definition was resolved -- `testRef.revision: null` (the third field of the same
+    // null-parity triad as `semanticDigest`, checked above), a `failed`/`cancelled` terminal status
+    // (never `completed`/`invalidated`), `coverage: 'partial'`, no plan, no unit ledger, exactly one
+    // planning gap, zero pair space, and zero results. Each sub-condition is its own `add()` call at
+    // the specific path that is wrong, all under one `pre-resolution-shape-invalid` code (matching
+    // this file's existing one-code-many-paths convention, e.g. `pair-space-inconsistent`).
+    if (testRef.revision !== null) add('/testRef/revision', 'pre-resolution-shape-invalid');
+    if (outcome.status !== 'failed' && outcome.status !== 'cancelled') {
+      add('/outcome/status', 'pre-resolution-shape-invalid');
+    }
+    if (outcome.coverage !== 'partial') add('/outcome/coverage', 'pre-resolution-shape-invalid');
+    if (ledger.planExists !== false) add('/ledger/planExists', 'pre-resolution-shape-invalid');
+    if (ledger.units.length !== 0) add('/ledger/units', 'pre-resolution-shape-invalid');
+    if (ledger.planningGaps.length !== 1) add('/ledger/planningGaps', 'pre-resolution-shape-invalid');
+    if (ledger.pairSpaceTotal !== 0) add('/ledger/pairSpaceTotal', 'pre-resolution-shape-invalid');
+    if (results.length !== 0) add('/results', 'pre-resolution-shape-invalid');
+  } else {
+    // H1: `definition`'s own identity must agree with `testRef` (one code covers both fields, matching
+    // this file's existing pattern of one code per logical rule).
+    if (definition.testId !== testRef.testId || definition.revision !== testRef.revision) {
+      add('/definition', 'definition-identity-mismatch');
+    }
+    // `computeSemanticDigest` (definition/normalize.js) is the SAME pure function P2 uses to produce
+    // `semanticDigest` in the first place -- reused here, never reimplemented. A malformed embedded
+    // `definition` must not crash the validator (structural phase already ran first; this is a
+    // backstop inside `guarded(...)`), so a throw is treated as "cannot possibly match", following
+    // this file's existing `makeResultId`/`makePairId` try/catch precedent.
+    let expectedSemanticDigest;
+    try { expectedSemanticDigest = computeSemanticDigest(definition); } catch { expectedSemanticDigest = null; }
+    if (expectedSemanticDigest === null || expectedSemanticDigest !== testRef.semanticDigest) {
+      add('/testRef/semanticDigest', 'semantic-digest-mismatch');
+    }
+
+    // Owner-authorized P5-REM3 remediation (owner disposition item 1 of the P5-REM2 follow-up
+    // findings surfaced by that task's own `codex-review` pass; adjudication docs/reviews/2026-09-22-
+    // federated-clash-test-core-p5-independent-review-adjudication.md, "Remediation result" section;
+    // owner ruling 2026-09-22, verbatim in .superpowers/sdd/p5-result-set/task-P5-REM3-brief.md:
+    // "Enforce the existing canonical/normalized definition invariant at the persisted Result Set
+    // validation boundary so a tampered-but-self-consistent non-normalized definition cannot mint a
+    // distinct semantic identity for the same logical definition"). The `semantic-digest-mismatch`
+    // check just above only proves SELF-CONSISTENCY -- that the recorded digest matches hashing the
+    // embedded `definition` -- never that `definition.selectionA`/`selectionB` is itself in
+    // NORMALIZED/canonical form (design spec §5.4: `semanticDigest` is defined as the digest of the
+    // CANONICAL form, and "two revisions with equal semanticDigest ask the same question" assumes
+    // normalization actually ran). A definition with, say, a duplicated `dbIds` entry, or two
+    // separate `selectionA.entries` rows for the same `modelKey` that a real normalization pass would
+    // merge into one, can still self-consistently digest to its OWN (different) `semanticDigest`,
+    // minting a distinct semantic identity for what is logically the same selection.
+    //
+    // The check: a genuinely canonical `definition` is a FIXED POINT of `normalizeDefinition` (the
+    // SAME pure function P2 applies when a definition is first prepared -- reused here, never
+    // reimplemented) -- normalizing it again must reproduce it exactly. Compared via `canonicalJson`
+    // (key-order-insensitive by construction), NEVER `JSON.stringify` -- this session's own
+    // P5-REM2/M2 fix just corrected a plan erratum caused by exactly that mistake (a key-order-
+    // sensitive `JSON.stringify` comparison breaking after a canonical-JSON store round-trip reorders
+    // keys). Narrowly scoped to validation/canonical identity, per the owner's explicit "do not
+    // change claim semantics": `claim.js`'s `assessNoClashClaim`/`canClaimNoClashes` never read
+    // `resultSet.definition` at all, so this gap cannot by itself produce a false no-clash claim --
+    // confirmed by the prior task's own review and not re-litigated here. Wrapped in the same local
+    // try/catch precedent as the `computeSemanticDigest` call above: a malformed embedded `definition`
+    // must not crash the validator (the structural phase already ran first, and this sits inside the
+    // existing `guarded(...)` backstop too).
+    //
+    // Performance note (transparency, not a new decision): this adds one more synchronous, unsliced
+    // computation to `checkCrossField` -- a second full re-run of `normalizeDefinition`'s generator
+    // via `runSync`, on the same call path already flagged and deferred to the G-CAL calibration gate
+    // by the owner's disposition of P5-REM2 follow-up item 3 (the `computeSemanticDigest` span
+    // above). This is not a new problem: it is that same already-acknowledged one growing slightly,
+    // and it falls under item 3's own disposition ("must be resolved before any applicable frame-
+    // budget/responsiveness claim is closed"), not a new gate.
+    let renormalized;
+    try { renormalized = normalizeDefinition(definition); } catch { renormalized = null; }
+    if (renormalized === null || canonicalJson(renormalized) !== canonicalJson(definition)) {
+      add('/definition', 'definition-not-normalized');
+    }
   }
 
   const leaves = leavesOf(ledger);
@@ -231,7 +324,11 @@ function checkCrossField(set, add) {
     && ledger.planningGaps.length === 0
     && leaves.length > 0
     && leaves.every((u) => u.outcome === 'evaluated' && u.scopeProof === 'equal');
-  if (outcome.coverage === 'full' && !derivedFull) add('/outcome/coverage', 'coverage-not-full');
+  // M1 (same independent review/adjudication/authorization as H1/H2 above): previously only a false
+  // recorded `'full'` was rejected; a false recorded `'partial'` (facts derive `'full'`) validated
+  // `{ok: true}` -- fail-safe for a no-clash claim but still a writer/reader self-consistency gap.
+  // Exact equality in both directions closes it, reusing the SAME existing code.
+  if ((outcome.coverage === 'full') !== derivedFull) add('/outcome/coverage', 'coverage-not-full');
 
   // Owner-authorized P5 remediation (docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-
   // decision-brief.md, Item 1; owner ruling 2026-09-22: "Read-time validation must fail closed and

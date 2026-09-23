@@ -17,6 +17,7 @@ import {
   buildResultSet, sealResultSet, createResultAccumulator, deriveRunOutcome,
 } from '../../../clashtest/results/resultSet.js';
 import { makeResultId, makePairId } from '../../../clashtest/identity/ids.js';
+import { computeSemanticDigest } from '../../../clashtest/definition/normalize.js';
 
 /** P4's `DiagnosticsSummary` (`snapshot()` shape) with every counter at 0. `countsByReason` is an
  *  ARRAY (the real, shipped `execution/diagnostics.js` shape -- see resultSetSchema.js's own note),
@@ -76,7 +77,6 @@ export function unit(unitId, outcome, over = {}) {
 }
 
 const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
-const digestOf = (ch) => `sha256:${ch.repeat(64)}`;
 
 /**
  * The empty-results, `completed`/`full`/`clean`/no-caveats shape the §8.3 claim truth table flips
@@ -353,12 +353,6 @@ export async function withModels(modelPairs, kind = 'positives') {
 // from INDEPENDENT (value-equal, reference-distinct) ref objects.
 const ref = (modelKey, dbId) => ({ modelKey, dbId });
 
-const DIGEST_T1 = digestOf('a');
-const DIGEST_T2 = digestOf('b');
-const DIGEST_T3 = digestOf('c');
-const DIGEST_T4 = digestOf('d');
-const DIGEST_T5 = digestOf('e');
-
 function baseProvenance(over = {}) {
   const runOptions = { ...RUN_OPTION_DEFAULTS };
   return {
@@ -400,7 +394,18 @@ function positivesParts() {
   const pair0 = { first: ref(MODEL_A, 100), second: ref(MODEL_B, 200) };
   const pair1 = { first: ref(MODEL_A, 101), second: ref(MODEL_B, 201) };
   const testId = 'T1';
-  const semanticDigest = DIGEST_T1;
+  // P5-REM2 (H1, docs/reviews/2026-09-22-federated-clash-test-core-p5-independent-review.md): the
+  // `definition` binding is built FIRST and `semanticDigest` is the REAL `computeSemanticDigest`
+  // of that same binding (never a placeholder) -- checkCrossField's new H1 check reconciles the
+  // two, so a fixture whose declared `semanticDigest` disagreed with its own `definition` content
+  // would now (correctly) fail validation.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'positives',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
   const unit1 = unit('u1', 'evaluated', {
     kind: 'leaf', parentUnitId: null,
     sourceModelKey: MODEL_A, sourceRootDbIds: [10],
@@ -429,12 +434,7 @@ function positivesParts() {
   return {
     runId: 'run-positives',
     testRef: { testId, revision: 1, semanticDigest },
-    definition: {
-      schemaVersion: 1, testId, revision: 1, name: 'positives',
-      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
-      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
-      mode: 'volume-overlap',
-    },
+    definition,
     derivedFromRunId: null,
     // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
     // `unit2` below is `failed`/`capacity-exceeded` with `capacityKind: 'bucket-capacity'`, which
@@ -479,7 +479,14 @@ function positivesParts() {
  *  admissible here without tripping `completed-with-fatal-cause`. */
 function schemaCorpusParts() {
   const testId = 'T2';
-  const semanticDigest = DIGEST_T2;
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'schema-corpus',
+    selectionA: { entries: [{ kind: 'elements', modelKey: MODEL_A, dbIds: [300, 301, 302, 303] }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'clearance', clearance: 5,
+  };
+  const semanticDigest = computeSemanticDigest(definition);
   const unit2 = unit('u2', 'evaluated', {
     kind: 'leaf', parentUnitId: null,
     sourceModelKey: MODEL_A, sourceRootDbIds: [30],
@@ -505,12 +512,7 @@ function schemaCorpusParts() {
   return {
     runId: 'run-schema-corpus',
     testRef: { testId, revision: 1, semanticDigest },
-    definition: {
-      schemaVersion: 1, testId, revision: 1, name: 'schema-corpus',
-      selectionA: { entries: [{ kind: 'elements', modelKey: MODEL_A, dbIds: [300, 301, 302, 303] }] },
-      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
-      mode: 'clearance', clearance: 5,
-    },
+    definition,
     derivedFromRunId: null,
     // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
     // `unit2` below has no `capacityKind` and no `failed:stale-placement` leaf, and `diagnostics`'s
@@ -590,7 +592,14 @@ function schemaCorpusParts() {
  *  value, and `u2` can be freely re-shaped by the GAPS-list test (`ledger.units[1] = {...}`). */
 function completedWithGapsParts() {
   const testId = 'T3';
-  const semanticDigest = DIGEST_T3;
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'completed-with-gaps',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
   const pair0 = { first: { modelKey: MODEL_A, dbId: 100 }, second: { modelKey: MODEL_B, dbId: 200 } };
   const unit1 = unit('u1', 'evaluated', {
     kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
@@ -604,12 +613,7 @@ function completedWithGapsParts() {
   return {
     runId: 'run-completed-with-gaps',
     testRef: { testId, revision: 1, semanticDigest },
-    definition: {
-      schemaVersion: 1, testId, revision: 1, name: 'completed-with-gaps',
-      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
-      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
-      mode: 'volume-overlap',
-    },
+    definition,
     derivedFromRunId: null,
     // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
     // `unit2` below is `failed`/`capacity-exceeded` with `capacityKind: 'bucket-capacity'`, which
@@ -648,7 +652,14 @@ function completedWithGapsParts() {
  *  put through `buildResultSet`/`sealResultSet`). */
 function completedCleanParts() {
   const testId = 'T4';
-  const semanticDigest = DIGEST_T4;
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'completed-clean',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
   const unit1 = unit('u1', 'evaluated', {
     kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
     targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10,
@@ -656,12 +667,7 @@ function completedCleanParts() {
   return {
     runId: 'run-completed-clean',
     testRef: { testId, revision: 1, semanticDigest },
-    definition: {
-      schemaVersion: 1, testId, revision: 1, name: 'completed-clean',
-      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
-      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
-      mode: 'volume-overlap',
-    },
+    definition,
     derivedFromRunId: null,
     outcome: {
       status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
@@ -690,7 +696,14 @@ function completedCleanParts() {
  *  owner. */
 function unreachablePositiveParts() {
   const testId = 'T5';
-  const semanticDigest = DIGEST_T5;
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'unreachable-positive',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
   const pair0 = { first: { modelKey: MODEL_A, dbId: 100 }, second: { modelKey: MODEL_B, dbId: 999 } };
   const unit1 = unit('u1', 'evaluated', {
     kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
@@ -699,12 +712,7 @@ function unreachablePositiveParts() {
   return {
     runId: 'run-unreachable-positive',
     testRef: { testId, revision: 1, semanticDigest },
-    definition: {
-      schemaVersion: 1, testId, revision: 1, name: 'unreachable-positive',
-      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
-      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
-      mode: 'volume-overlap',
-    },
+    definition,
     derivedFromRunId: null,
     outcome: {
       status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
@@ -731,8 +739,6 @@ function unreachablePositiveParts() {
   };
 }
 
-const DIGEST_T6 = digestOf('f');
-
 /** 'hierarchy-internal' (Task P5.6): one normal evaluated pair (MODEL_A/50 <-> MODEL_B/60) for a
  *  non-trivial baseline, PLUS a SECOND MODEL_A root (100, cls 'C' -- R2's A n B marker) owned by
  *  TWO owners (101, 102) -- the AC-20(c) fixture: two elements under the SAME root, in the SAME
@@ -741,7 +747,14 @@ const DIGEST_T6 = digestOf('f');
  *  reading can be told apart by a test that empties `examples` (R2's own point). */
 function hierarchyInternalParts() {
   const testId = 'T6';
-  const semanticDigest = DIGEST_T6;
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'hierarchy-internal',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
   const pair0 = { first: ref(MODEL_A, 50), second: ref(MODEL_B, 60) };
   const unit1 = unit('u1', 'evaluated', {
     kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
@@ -750,12 +763,7 @@ function hierarchyInternalParts() {
   return {
     runId: 'run-hierarchy-internal',
     testRef: { testId, revision: 1, semanticDigest },
-    definition: {
-      schemaVersion: 1, testId, revision: 1, name: 'hierarchy-internal',
-      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
-      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
-      mode: 'volume-overlap',
-    },
+    definition,
     derivedFromRunId: null,
     outcome: {
       status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
@@ -838,7 +846,14 @@ export async function widePlan(unitCount) {
     ownersB.push({ rootDbId: rootB, ownerDbIds: [rootB], cls: 'B' });
   }
   const testId = 'TW';
-  const semanticDigest = digestOf('9');
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'wide-plan',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
   for (let i = 0; i < probeCount; i++) {
     const pair = { first: ref(MODEL_A, 1000 + i), second: ref(MODEL_B, 2000 + i) };
     results.push({
@@ -850,12 +865,7 @@ export async function widePlan(unitCount) {
   const parts = {
     runId: 'run-wide-plan',
     testRef: { testId, revision: 1, semanticDigest },
-    definition: {
-      schemaVersion: 1, testId, revision: 1, name: 'wide-plan',
-      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
-      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
-      mode: 'volume-overlap',
-    },
+    definition,
     derivedFromRunId: null,
     outcome: {
       status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
@@ -915,16 +925,18 @@ export async function sharedRootPlan({ fanOut, unrelatedUnits = 0 }) {
     ownersB.push({ rootDbId: rootB, ownerDbIds: [rootB], cls: 'B' });
   }
   const testId = 'TSR';
-  const semanticDigest = digestOf('8');
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'shared-root-plan',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
   const parts = {
     runId: 'run-shared-root-plan',
     testRef: { testId, revision: 1, semanticDigest },
-    definition: {
-      schemaVersion: 1, testId, revision: 1, name: 'shared-root-plan',
-      selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
-      selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
-      mode: 'volume-overlap',
-    },
+    definition,
     derivedFromRunId: null,
     outcome: {
       status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
@@ -1003,7 +1015,9 @@ const fakeDefinition = (testId, mode = 'volume-overlap') => ({
  *  every §8.3 claim conjunct ends up true, so this is the ONE shape `canClaimNoClashes` allows. */
 function fakeCompletedClean() {
   const testId = 'TF-completed-clean';
-  const semanticDigest = digestOf('1');
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = fakeDefinition(testId);
+  const semanticDigest = computeSemanticDigest(definition);
   const ctx = fakeAccumulatorCtx(testId, semanticDigest);
   const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
     sourceRootDbIds: [10], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 6 });
@@ -1024,7 +1038,7 @@ function fakeCompletedClean() {
   const outcome = deriveRunOutcome({ status: 'completed', freshness: 'current', ledger, diagnostics, results });
   return {
     runId: 'run-fake-completed-clean', testRef: { testId, revision: 1, semanticDigest },
-    definition: fakeDefinition(testId), derivedFromRunId: null, outcome,
+    definition, derivedFromRunId: null, outcome,
     provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
     ledger, results, diagnostics, statistics: {},
   };
@@ -1037,7 +1051,9 @@ function fakeCompletedClean() {
  *  admissible (no `completed-with-fatal-cause`). */
 function fakeCompletedWithGaps() {
   const testId = 'TF-completed-with-gaps';
-  const semanticDigest = digestOf('2');
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = fakeDefinition(testId);
+  const semanticDigest = computeSemanticDigest(definition);
   const ctx = fakeAccumulatorCtx(testId, semanticDigest);
   const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
     sourceRootDbIds: [10], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10 });
@@ -1060,7 +1076,7 @@ function fakeCompletedWithGaps() {
   const outcome = deriveRunOutcome({ status: 'completed', freshness: 'current', ledger, diagnostics, results });
   return {
     runId: 'run-fake-completed-with-gaps', testRef: { testId, revision: 1, semanticDigest },
-    definition: fakeDefinition(testId), derivedFromRunId: null, outcome,
+    definition, derivedFromRunId: null, outcome,
     provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
     ledger, results, diagnostics, statistics: {},
   };
@@ -1114,7 +1130,9 @@ function fakeFailed() {
  *  conjunct reads the CALLER's freshness, never the sealed set's own `outcome.freshness`). */
 function fakeInvalidated() {
   const testId = 'TF-invalidated';
-  const semanticDigest = digestOf('3');
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = fakeDefinition(testId);
+  const semanticDigest = computeSemanticDigest(definition);
   const ctx = fakeAccumulatorCtx(testId, semanticDigest);
   const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
     sourceRootDbIds: [15], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10 });
@@ -1137,7 +1155,7 @@ function fakeInvalidated() {
   const outcome = deriveRunOutcome({ status: 'invalidated', freshness: 'stale', ledger, diagnostics, results });
   return {
     runId: 'run-fake-invalidated', testRef: { testId, revision: 1, semanticDigest },
-    definition: fakeDefinition(testId), derivedFromRunId: null, outcome,
+    definition, derivedFromRunId: null, outcome,
     provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
     ledger, results, diagnostics, statistics: {},
   };
