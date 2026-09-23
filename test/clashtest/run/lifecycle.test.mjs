@@ -325,13 +325,56 @@ test('a model registered AFTER the snapshot does not join the run', async () => 
 // not validate, so a malformed set would be admitted and only rejected later, on read.
 import { validateResultSet } from '../../../clashtest/results/validateResultSet.js';
 import { resolveEngineLimits } from '../../../clashtest/options.js';
+import { createPlan, materializeUnit, rootsForRanges } from '../../../clashtest/planning/planner.js';
+import { splitUnit } from '../../../clashtest/planning/splitting.js';
+import { createRecordBudget, createLedger } from '../../../clashtest/planning/ledger.js';
+import { computeSemanticDigest } from '../../../clashtest/definition/normalize.js';
+import { getFreshness } from '../../../clashtest/run/freshness.js';
+import { makeSyntheticEnumerator, defOf } from '../support/syntheticModels.mjs';
 
+// P6 whole-branch review (C1 + the filter fix): NO issue-code filtering. The old `ledgerShapeIssues`
+// filter kept only `/ledger/planningGaps` and `/ledger/units/N/outcome` paths and waved everything else
+// through as "separately tracked fixture artefacts" — which is how the missing `provenance.models`
+// columns (C1) survived every task review. A test that needs a set `validateResultSet` accepts now
+// builds a GENUINE one (`realPlannerFixture`, below) and asserts the WHOLE issue list is empty.
 const issuesOf = (set) => validateResultSet(set, { limits: resolveEngineLimits() }).issues;
-// The paths the stage-failure fix is about. Other issues on RESOLVED sets are known, separately
-// tracked fixture/provenance artefacts (fake semantic digest, fake unit ranges, the plan-derived
-// provenance.models columns P6.6/P6.7 project) — see the P6.4 report.
-const ledgerShapeIssues = (set) => issuesOf(set)
-  .filter((i) => /^\/ledger\/(planningGaps|units\/\d+\/outcome)/.test(i.path));
+
+/**
+ * A run over P3's REAL planner (`createPlan`, `materializeUnit`, `splitUnit`, real budget/ledger) and a
+ * synthetic enumerator, with a normalized definition and its REAL `semanticDigest`, sealed through P5's
+ * bare functions (`realSealing`). Everything that made the fake-plan fixture's sets unreadable (fake
+ * digest, empty unit ranges, no `rootOwners`, empty plan-time scope evidence) is real here, so a sealed
+ * set must validate with ZERO issues. Two cross-model models, `mk-a` (roots 1, 2, 3) × `mk-b` (7, 8);
+ * `runOptions.maxSourceDbIdsPerUnit: 1` gives one unit per source root (`1.0`..`1.2`).
+ */
+const synthRoots = (dbIds, fragBase) => dbIds.map((dbId, i) => ({
+  dbId, owners: [dbId], fragments: [{ fragId: fragBase + i, ownerDbId: dbId, geometryId: 1 }],
+}));
+function realPlannerFixture(opts = {}) {
+  const { enumerator } = makeSyntheticEnumerator([
+    { modelKey: 'mk-a', roots: synthRoots([1, 2, 3], 0) },
+    { modelKey: 'mk-b', roots: synthRoots([7, 8], 10) },
+  ]);
+  const definition = defOf({
+    A: [{ kind: 'model', modelKey: 'mk-a' }], B: [{ kind: 'model', modelKey: 'mk-b' }], testId: 'test-1',
+  });
+  const testRef = { testId: 'test-1', revision: definition.revision, semanticDigest: computeSemanticDigest(definition) };
+  const fx = createRunFixture({
+    realSealing: true,
+    models: ['mk-a', 'mk-b'],
+    resolveDefinition: () => Promise.resolve({ definition, testRef }),
+    ...opts,
+    specOverrides: {
+      enumerator,
+      plannerPort: {
+        planRun: createPlan, materializeUnit, splitUnit, rootsForRanges,
+        createRecordBudget, createLedger, checkScopeBracket: null,
+      },
+      ...opts.specOverrides,
+    },
+  });
+  return { ...fx, enumerator };
+}
 
 test('a SYNCHRONOUSLY throwing definition lookup seals the valid pre-resolution shape', async () => {
   const fx = createRunFixture({ resolveDefinition: () => { throw new Error('store exploded synchronously'); } });
@@ -348,8 +391,7 @@ test('a SYNCHRONOUSLY throwing definition lookup seals the valid pre-resolution 
 });
 
 test('an unexpected error BEFORE a plan exists is ONE internal-error planning gap, not a bare unit cause', async () => {
-  const fx = createRunFixture({
-    plan: createFakePlan([{ unitId: '1.0', weight: 1 }]),
+  const fx = realPlannerFixture({
     specOverrides: { modelKeysOf: () => { throw new Error('boom'); } },
   });
   const { handle, begin } = createRun(fx.spec);
@@ -360,13 +402,13 @@ test('an unexpected error BEFORE a plan exists is ONE internal-error planning ga
   assert.deepEqual(summary.resultSet.ledger.units, []);
   assert.ok(summary.resultSet.outcome.reasons.includes('planning:internal-error'));
   assert.ok(!summary.resultSet.outcome.reasons.includes('unit:internal-error'));
-  assert.deepEqual(ledgerShapeIssues(summary.resultSet), []);
+  assert.deepEqual(issuesOf(summary.resultSet), [], 'validateResultSet accepts it outright (no filter)');
   assert.deepEqual(fx.executor.startedUnits, []);
 });
 
 test('an unexpected error MID-EXECUTION leaves no unsettled (null-outcome) unit in the sealed ledger', async () => {
-  const fx = createRunFixture({
-    plan: createFakePlan([{ unitId: '1.0', weight: 1 }, { unitId: '1.1', weight: 1 }]),
+  const fx = realPlannerFixture({
+    runOptions: { maxSourceDbIdsPerUnit: 1 },
     specOverrides: { deriveUnitTaints: () => { throw new Error('taint derivation exploded'); } },
   });
   const { handle, begin } = createRun(fx.spec);
@@ -375,10 +417,193 @@ test('an unexpected error MID-EXECUTION leaves no unsettled (null-outcome) unit 
   assert.equal(summary.status, 'failed');
   assert.ok(summary.resultSet.outcome.reasons.includes('unit:internal-error'));
   assert.deepEqual(summary.resultSet.ledger.units.map((u) => `${u.unitId}:${u.outcome}:${u.cause}`),
-    ['1.0:evaluated:null', '1.1:not-run:run-failed'], 'the queued unit is closed as a run-failed gap');
+    ['1.0:evaluated:null', '1.1:not-run:run-failed', '1.2:not-run:run-failed'],
+    'the queued units are closed as run-failed gaps');
   assert.deepEqual(summary.resultSet.ledger.planningGaps, []);
-  assert.deepEqual(ledgerShapeIssues(summary.resultSet), []);
+  assert.deepEqual(issuesOf(summary.resultSet), [], 'validateResultSet accepts it outright (no filter)');
   assert.deepEqual(fx.executor.startedUnits, ['1.0'], 'no unit starts after the failure');
+});
+
+// --- P6 whole-branch review C1: sealed provenance carries P5's COMPLETE ProvenanceModel ----------
+test('C1: a normal, resolved, engine-sealed run validates with ZERO issues (complete provenance.models)', async () => {
+  const fx = realPlannerFixture();
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'completed');
+  assert.equal(summary.resultSet.outcome.coverage, 'full');
+  assert.deepEqual(issuesOf(summary.resultSet), [], 'no issue of ANY code — nothing is filtered');
+  const [a, b] = summary.resultSet.provenance.models;
+  assert.deepEqual(summary.resultSet.provenance.models.map((m) => m.modelKey), ['mk-a', 'mk-b']);
+  assert.deepEqual(a.scopeKinds, ['model']);
+  assert.equal(a.elementCount, 3, 'mk-a: three fragment-owning elements (one owner per root)');
+  assert.equal(b.elementCount, 2);
+  assert.deepEqual(a.scopeDigests.roots.map((r) => r.dbId), [1, 2, 3], 'the plan-time root digests');
+  assert.equal(a.scopeDigests.population.count, 3, 'whole-model scope: the population digest');
+  for (const m of summary.resultSet.provenance.models) {
+    assert.equal(typeof m.bindingGeneration, 'number');
+    assert.equal(typeof m.placementGeneration, 'number');
+    assert.equal(m.modelVersion, 'v1');
+  }
+});
+
+test('C1: getFreshness runs over an ENGINE-sealed set (not a hand-built one) without throwing', async () => {
+  const fx = realPlannerFixture();
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const { resultSet } = await handle.done;
+  const fresh = await getFreshness(resultSet, { registry: fx.registry, enumerator: fx.enumerator });
+  assert.deepEqual(fresh, { state: 'current', reasons: [] },
+    'nothing moved: the bracket re-digests the sealed scopeDigests and agrees');
+  fx.registry.notifyPlacementChanged('mk-b');
+  const moved = await getFreshness(resultSet, { registry: fx.registry, enumerator: fx.enumerator });
+  assert.equal(moved.state, 'stale');
+  assert.deepEqual(moved.reasons, ['placement-changed:mk-b']);
+
+  // The fake-plan fixture's engine-sealed set (empty plan-time scope evidence) is readable too.
+  const plain = createRunFixture({ plan: createFakePlan([{ unitId: '1.0', weight: 1, models: ['mk-a', 'mk-b'] }]) });
+  const run2 = createRun(plain.spec);
+  run2.begin();
+  const plainSet = (await run2.handle.done).resultSet;
+  const plainFresh = await getFreshness(plainSet, { registry: plain.registry, enumerator: null });
+  assert.equal(plainFresh.state, 'unverifiable');
+  assert.deepEqual(plainFresh.reasons, ['no-enumerator']);
+});
+
+test('C1: a run sealed before a plan exists records no provenance model rows (nothing fabricated)', async () => {
+  // A resolved run whose snapshot exists (mk-a is bound) but whose planning fails (mk-b is not).
+  const fx = realPlannerFixture({ unbindKeys: ['mk-b'] });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.ok(summary.resultSet.outcome.reasons.includes('planning:model-not-bound'));
+  assert.deepEqual(summary.resultSet.provenance.models, [], 'no plan => no plan-time scope evidence');
+  assert.deepEqual(issuesOf(summary.resultSet), []);
+});
+
+test('C1: a plan missing a snapshot model record fails closed into a READABLE R10 fallback set', async () => {
+  // P3 contract violation: the plan holds no record for `mk-b`. The normal seal throws in
+  // `provenanceOf`; the R10 fallback must not re-read the same broken plan and lose its set (O7).
+  let realPlan = null;
+  const fx = realPlannerFixture({
+    specOverrides: {
+      plannerPort: {
+        async planRun(args) {
+          const result = await createPlan(args);
+          realPlan = result.plan;
+          const models = new Map([...result.plan.models].filter(([k]) => k !== 'mk-b'));
+          return { ...result, plan: { ...result.plan, models } };
+        },
+        materializeUnit: (_plan, unit) => materializeUnit(realPlan, unit),
+        splitUnit, rootsForRanges, createRecordBudget, createLedger, checkScopeBracket: null,
+      },
+    },
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.notEqual(summary.resultSet, null, 'the fallback set survives the broken plan');
+  assert.ok(summary.resultSet.outcome.reasons.includes('unit:internal-error'));
+  assert.deepEqual(summary.resultSet.provenance.models, [], 'no fabricated model rows');
+  // EXACT expectation, not a filter. The two issues are a PRE-EXISTING property of the R10 fallback
+  // set, not of this fix: `emptyLedgerRecord` writes `planExists: true` with `rootOwners: []` for any
+  // post-plan seal failure, and P5 checks the definition's models against `rootOwners`. Reported to
+  // the controller as a separate finding (whole-branch-review-fix-report.md, "Concerns"); nothing
+  // provenance-related may appear here.
+  assert.deepEqual(issuesOf(summary.resultSet), [
+    { path: '/ledger/rootOwners', code: 'coverage-model-mismatch' },
+    { path: '/ledger/rootOwners', code: 'coverage-model-mismatch' },
+  ]);
+});
+
+// --- P6 whole-branch review C2: an out-of-vocabulary failure.code must never merge as clean -------
+test('C2: a self-reported non-evaluated outcome whose failure.code is not a table-A fact seals failed:internal-error', async () => {
+  for (const code of ['cancelled', 'run-failed']) {
+    for (const [kind, scopeProof] of [['failed', 'equal'], ['failed', 'not-checked'], ['skipped', 'not-checked'], ['discarded', 'equal']]) {
+      const label = `${kind}/${scopeProof}/${code}`;
+      const fx = realPlannerFixture({
+        executor: createScriptedExecutor({ '1.0': [{
+          outcome: kind, scopeProof, failure: { code, message: 'executor says so', retryable: false },
+          pairs: [{ source: { modelKey: 'mk-a', dbId: 1 }, target: { modelKey: 'mk-b', dbId: 7 },
+            type: 'volume-overlap', witness: null }],
+        }] }),
+      });
+      const { handle, begin } = createRun(fx.spec);
+      begin();
+      const summary = await handle.done;
+      assert.equal(fx.substitutedOutcomes.length, 0, `${label}: the outcome VALIDATED (structurally legal)`);
+      const [unit] = summary.resultSet.ledger.units;
+      assert.equal(`${unit.outcome}:${unit.cause}`, 'failed:internal-error', label);
+      assert.equal(summary.status, 'failed', `${label}: never completed`);
+      assert.ok(summary.resultSet.outcome.reasons.includes('unit:internal-error'), label);
+      assert.deepEqual(summary.resultSet.results, [], `${label}: nothing merged`);
+      assert.equal(summary.resultSet.outcome.coverage, 'partial', label);
+      assert.deepEqual(issuesOf(summary.resultSet), [], label);
+    }
+  }
+});
+
+test('C2 guard does not misfire: every legitimate non-evaluated outcome keeps its own table-A cause', async () => {
+  const rows = [
+    [{ facts: ['capacity-exceeded'], capacityKind: 'bucket-capacity' }, 'failed:capacity-exceeded', 'completed'],
+    [{ facts: ['scope-unverifiable'] }, 'discarded:scope-unverifiable', 'completed'],
+    [{ facts: ['scope-drift'] }, 'discarded:scope-drift', 'invalidated'],
+    // `cancelled` code, but a drift scope proof: the drift fact is collected, so the guard stays out.
+    [{ outcome: 'discarded', scopeProof: 'drift', failure: { code: 'cancelled', message: 'x', retryable: false } },
+      'discarded:scope-drift', 'invalidated'],
+    [{ facts: [] }, 'evaluated:null', 'completed'],
+  ];
+  for (const [descriptor, expected, status] of rows) {
+    const fx = realPlannerFixture({ executor: createScriptedExecutor({ '1.0': [descriptor] }) });
+    const { handle, begin } = createRun(fx.spec);
+    begin();
+    const summary = await handle.done;
+    const [unit] = summary.resultSet.ledger.units;
+    assert.equal(`${unit.outcome}:${unit.cause}`, expected, expected);
+    assert.equal(summary.status, status, expected);
+    assert.ok(!summary.resultSet.outcome.reasons.includes('unit:internal-error'), expected);
+  }
+});
+
+// --- P6 whole-branch review I2: results and the record that justifies them are one commit --------
+test('I2: a diagnostic aggregator or statistics accumulator that throws AFTER the merge still seals a readable set', async () => {
+  const pair = { source: { modelKey: 'mk-a', dbId: 1 }, target: { modelKey: 'mk-b', dbId: 7 },
+    type: 'volume-overlap', witness: null };
+  for (const which of ['diagnosticAggregator', 'diagnosticAggregator-after-mutating', 'statisticsAccumulator']) {
+    const fx = realPlannerFixture({
+      runOptions: { maxSourceDbIdsPerUnit: 1 },
+      executor: createScriptedExecutor({ '1.0': [{ facts: [], pairs: [pair],
+        diagnostics: [{ reason: 'fragment-not-loaded', dbId: 1 }] }] }),
+    });
+    const real = fx.spec.diagnosticAggregator;
+    const spec = which.startsWith('diagnosticAggregator')
+      ? { ...fx.spec, diagnosticAggregator: { ...real,
+          // `-after-mutating`: the aggregator ABSORBS the unit, then throws (the partial-sidecar
+          // residual documented in `applyUnitResult`); the set must still be readable.
+          addUnit: async (unitId, outcome) => {
+            if (which.endsWith('after-mutating')) await real.addUnit(unitId, outcome);
+            throw new Error('aggregator exploded');
+          },
+          snapshot: () => real.snapshot() } }
+      : { ...fx.spec, statisticsAccumulator: { ...fx.spec.statisticsAccumulator,
+          add: () => { throw new Error('statistics exploded'); },
+          snapshot: () => fx.spec.statisticsAccumulator.snapshot() } };
+    const { handle, begin } = createRun(spec);
+    begin();
+    const summary = await handle.done;
+    assert.equal(summary.status, 'failed', which);
+    assert.ok(summary.resultSet.outcome.reasons.includes('unit:internal-error'), which);
+    assert.equal(summary.resultSet.results.length, 1, `${which}: the merged result is kept`);
+    assert.deepEqual(summary.resultSet.ledger.units.map((u) => `${u.unitId}:${u.outcome}:${u.cause}`),
+      ['1.0:evaluated:null', '1.1:not-run:run-failed', '1.2:not-run:run-failed'],
+      `${which}: the merged unit keeps its evaluated record; only never-merged units are swept`);
+    assert.deepEqual(issuesOf(summary.resultSet), [], `${which}: no result-unit-invalid (or any other) issue`);
+    const snap = handle.getSnapshot();
+    assert.equal(snap.unitsEvaluated + snap.unitsFailedOrSkipped, snap.unitsTotal, `${which}: every unit counted once`);
+    assert.equal(snap.pairSpaceProcessed, snap.pairSpaceTotal, `${which}: processed = evaluated + gaps`);
+  }
 });
 
 // --- Task P6.8: sealing, the done/persisted window, the cancellation matrix and dispose (brief Step 1) ---

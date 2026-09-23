@@ -122,7 +122,24 @@ function defaultChildrenOf(unit) {
   ];
 }
 
-const REASON_BY_CAP_DETAIL = Object.freeze({ 'unit-records': 'unit-cap', 'ledger-records': 'ledger-cap' });
+/** P3's per-model plan record shape (`rootResolution.js` step 9) for every model the definition
+ *  names, with no enumeration evidence: `{scopeKinds: {A, B}, scopeDigests: {population: null,
+ *  roots: []}, rootOwners: []}` (whole-branch review C1). */
+function fakeModelsOf(definition) {
+  const models = new Map();
+  const kindsOf = (modelKey) => models.get(modelKey) ?? { scopeKinds: { A: null, B: null },
+    scopeDigests: { population: null, roots: [] }, rootOwners: [] };
+  for (const [role, selection] of [['A', definition.selectionA], ['B', definition.selectionB]]) {
+    for (const entry of selection.entries) {
+      const record = kindsOf(entry.modelKey);
+      record.scopeKinds[role] = entry.kind;
+      models.set(entry.modelKey, record);
+    }
+  }
+  return models;
+}
+
+const REASON_BY_CAP_DETAIL =Object.freeze({ 'unit-records': 'unit-cap', 'ledger-records': 'ledger-cap' });
 
 export function createFakePlannerPort({
   plan, planningGaps = null, stallAt = null, onPlanRun = () => {},
@@ -132,7 +149,7 @@ export function createFakePlannerPort({
   let capturedLedger = null;                               // set by planRun; splitUnit reaches the
   let ledgerPreExhausted = false;                           // SAME ledger the same way the real planner does
 
-  async function planRun({ checkpoint, ledger }) {
+  async function planRun({ definition, checkpoint, ledger }) {
     calls.planRun += 1;
     capturedLedger = ledger;
     onPlanRun();                                           // the fixture's reached('enumerating')
@@ -162,7 +179,13 @@ export function createFakePlannerPort({
     }
     if (!ledger.budget.reserveUnitSlots()) throw new Error('fakePlanner: the overflow reserve does not fit');
     await checkpoint('fake:built');
-    return { status: 'planned', plan, ledger, planningGaps: [], preTerminalGapWeight: plan.preTerminalGapWeight };
+    // P6 whole-branch review C1: P3's real `Plan.models` carries one record per definition model,
+    // and P6 now projects its `scopeKinds` / `scopeDigests` / `rootOwners` into provenance. A fake
+    // plan that does not supply its own `models` gets P3's record SHAPE derived from the definition
+    // it was handed: the selection kinds per role, and empty plan-time scope evidence (this fake
+    // never enumerates, so it has no digests and no root owners to report).
+    const planned = plan.models !== undefined ? plan : { ...plan, models: fakeModelsOf(definition) };
+    return { status: 'planned', plan: planned, ledger, planningGaps: [], preTerminalGapWeight: plan.preTerminalGapWeight };
   }
 
   return {

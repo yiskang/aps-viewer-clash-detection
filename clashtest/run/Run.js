@@ -440,7 +440,8 @@ function resultParts(run, outcome, diagnostics, override = null) {
     // error instead of a silently dropped rerun lineage.
     derivedFromRunId: run.derivedFromRunId,
     outcome,
-    provenance: run.provenance(),                         // provenanceBase + models + admissionBaseline
+    // provenanceBase + models + admissionBaseline (the R10 fallback may supply its own, see there)
+    provenance: override?.provenance ?? run.provenance(),
     ledger: override?.ledger ?? run.ledger.toLedgerRecord(),   // A17: arrays-only, P5's pinned shape
     // C2: ALWAYS defined — `EMPTY_RESULTS` before planning, P5's accumulator after it. This is the
     // one call every pre-resolution path makes, and the reason the holder exists at all.
@@ -674,18 +675,23 @@ async function applyUnitResult(run, unit, { settlement, outcome, attempt, extra 
         settlement: classifyUnitSettlement(['result-cap'], 'post'), outcome, attempt, extra,
       });
     }
-    // (2) committed: from here the unit IS merged, and every remaining step is total.
-    // A11/N20 + D3: ONE stateful aggregator per run, awaited per settled unit; it returns the
-    // extra unit-wide taints this unit earned. There is no `aggregateDiagnostics(...)` pair.
-    ({ unitTaints } = await run.spec.diagnosticAggregator.addUnit(unit.unitId, outcome));
-    run.spec.statisticsAccumulator.add(outcome.statistics, outcome.durationMs);
-    run.pending.unitsEvaluated += 1;
-    run.pending.pairSpaceEvaluated += weight;
-    run.pending.resultsFound = run.results.size();
-  } else {
-    run.pending.unitsFailedOrSkipped += 1;
+    // (2) committed: from here the unit IS merged.
   }
 
+  // P6 whole-branch review I2 — the ledger record is written IMMEDIATELY after the accumulator's
+  // decision, before any other collaborator runs. The results and the record that justifies them are
+  // one commit: `validateResultSet` (R21-4) requires every result's `unitId` to name an `evaluated`
+  // leaf, and the stage-failure handler (`settleStageFailure`) closes every STILL-NULL record as
+  // `not-run:run-failed`. Recording after the diagnostic aggregator / statistics accumulator (the old
+  // order) meant a throw from either left merged results under a `not-run:run-failed` record — a sealed
+  // set its own reader rejects as `result-unit-invalid`. Now a throw there leaves an `evaluated`
+  // record with its results (still sealed `failed:internal-error` by the stage-failure path), and the
+  // null-record sweep only ever closes units that merged nothing.
+  // ACCEPTED RESIDUAL (internal fault only): the SIDECARS are not transactional with the merge. An
+  // aggregator that throws after partly absorbing this unit's diagnostics, or a statistics throw
+  // after the aggregator committed, seals this `evaluated` unit with partial diagnostics / statistics
+  // / taints. That set still validates, and it is `failed` with `unit:internal-error`, so it is never
+  // claimable; a prepare/commit protocol across P4's collaborators is out of P6's scope.
   // A17: the ledger is P3's. `recordOutcome` writes INLINE fixed-size fields only, so it can never
   // be refused by the budget (§6.5.1) — which is what makes a gap recordable when the pool is full.
   run.ledger.recordOutcome(unit.unitId, {
@@ -698,6 +704,23 @@ async function applyUnitResult(run, unit, { settlement, outcome, attempt, extra 
     attempts: attempt,
     durationMs: outcome?.durationMs ?? 0,
   });
+  // The progress counters move with the record (same I2 commit), so a later collaborator throw can
+  // never leave an `evaluated` record whose weight `settleStageFailure` (null records only) never counts.
+  if (settlement.merges) {
+    run.pending.unitsEvaluated += 1;
+    run.pending.pairSpaceEvaluated += weight;
+    run.pending.resultsFound = run.results.size();
+  } else {
+    run.pending.unitsFailedOrSkipped += 1;
+  }
+  run.pending.pairSpaceProcessed += weight;               // evaluated + gaps: always advances
+
+  if (settlement.merges) {
+    // A11/N20 + D3: ONE stateful aggregator per run, awaited per settled unit; it returns the
+    // extra unit-wide taints this unit earned. There is no `aggregateDiagnostics(...)` pair.
+    ({ unitTaints } = await run.spec.diagnosticAggregator.addUnit(unit.unitId, outcome));
+    run.spec.statisticsAccumulator.add(outcome.statistics, outcome.durationMs);
+  }
   // N9: `deriveUnitTaints` gets the NON-charging capacity peek; `ledger.addTaint` does the one
   // real, charging admission and owns the taint-overflow collapse (A11, A17).
   const derived = settlement.merges
@@ -708,7 +731,6 @@ async function applyUnitResult(run, unit, { settlement, outcome, attempt, extra 
     : [];
   for (const taint of [...derived, ...unitTaints]) run.ledger.addTaint(unit.unitId, taint);
 
-  run.pending.pairSpaceProcessed += weight;               // evaluated + gaps: always advances
   const diagnostics = run.spec.diagnosticAggregator.snapshot();
   run.pending.caveatCount = diagnostics.completenessAffectingCount;
   run.pending.caveatUnclassified = diagnostics.unclassifiedOccurrences;
@@ -787,6 +809,19 @@ function factsFromOutcome(run, request, outcome) {
   if (live.evicted && !facts.includes('model-evicted')) facts.push('model-evicted');
   if (live.placementMoved && !isEligibleStalePlacementShape(outcome, facts)) facts.push('input-changed');
   if (run.worldDisposed) facts.push('world-disposed');
+  // P6 whole-branch review C2 — FAIL CLOSED on a self-reported non-evaluated outcome that yielded no
+  // fact. P4's invariant (`validateUnitOutcome` step 3) is `outcome !== 'evaluated' ⇔ failure !== null`,
+  // and every §8.3 cause in `UNIT_CAUSES` IS a table-A fact EXCEPT `cancelled` and `run-failed`: those
+  // two are engine-side ledger CONSEQUENCES (`not-run:cancelled` / `not-run:run-failed`, written by
+  // `markRemainingNotRun` / `settleStageFailure`), never an executor's own cause — P4's reference
+  // executor emits neither. So the ONLY way to reach here with an empty list on a non-evaluated outcome
+  // is `failure.code ∈ {cancelled, run-failed}` with `scopeProof` `equal`/`not-checked` and a clean live
+  // scan — which table A would otherwise classify U9 (`evaluated`, `merges: true`) and MERGE: a unit the
+  // executor itself reported `failed`/`skipped`/`discarded` sealed as a clean result. It is an executor
+  // contract violation, i.e. `internal-error`. Every legitimate non-evaluated outcome already carries at
+  // least one fact (its own table-A `failure.code`, or its drift/unverifiable `scopeProof`), so this
+  // guard cannot fire on one; and an `evaluated` outcome (`failure === null`) is never touched.
+  if (outcome.outcome !== 'evaluated' && facts.length === 0) facts.push('internal-error');
   return { facts, phase };
 }
 
@@ -940,21 +975,43 @@ function snapshotGenerationsFor(run, unit) {
 }
 
 /**
- * §13.2 provenance: `provenanceBase` + the resolved run options + one row per SNAPSHOT binding (a
- * plain copy — a binding itself is never embedded, because the seal deep-freezes the draft) + the
- * admission baseline. Before the snapshot (pre-resolution, or a planning failure before it) both
- * lists are empty. The plan-derived `scopeKinds`/`elementCount`/`scopeDigests` columns of P5's
- * `ProvenanceModel` are NOT projected yet — P6.6/P6.7 own that projection (the read-time freshness
- * bracket runs over it).
+ * §13.2 provenance: `provenanceBase` + the resolved run options + one `ProvenanceModel` row per
+ * PLANNED snapshot model + the admission baseline.
+ *
+ * P6 whole-branch review C1: a row is P5's COMPLETE `ProvenanceModel` (resultSetSchema.js) — the
+ * snapshot half (`modelVersion`, `bindingGeneration`, `placementGeneration`, a plain copy: a binding
+ * itself is never embedded, because the seal deep-freezes the draft) AND the plan half, read off
+ * P3's per-model plan record (`modelOf(plan, modelKey)`, planner.js / rootResolution.js step 9):
+ *   - `scopeKinds`   — the distinct selection kinds the plan recorded for the model's two roles
+ *                      (`{A, B}`, null where a role does not name it), ascending;
+ *   - `scopeDigests` — the plan-time `{population, roots}` evidence, verbatim (§6.2.1): it is exactly
+ *                      what `sealedScopeExpect` projects for read-time freshness (§16.4);
+ *   - `elementCount` — the number of fragment-owning elements in the model's planned scope: the sum
+ *                      of `ownerDbIds` over the model's `rootOwners` rows. Roots are a subtree-disjoint
+ *                      antichain (rootResolution.js step 2's antichain check) and an owner lies in the
+ *                      subtree of the root that holds its fragments, so the per-root lists are disjoint
+ *                      and the sum is a distinct count. No other layer computes a per-model element count
+ *                      (the root count is already `scopeDigests.roots.length`, and `population.count` is a
+ *                      FRAGMENT count that exists for whole-model scopes only), so this is the one
+ *                      non-redundant element count the plan can state. The tree-unreachable population
+ *                      is a declared exclusion (§6.2) and is not in scope, so it is not counted.
+ * Rows exist only once a plan exists: before it (pre-resolution, a planning failure, or a cancel
+ * during enumeration) there is no plan-time scope evidence to record, and inventing an empty digest
+ * set or a zero element count would be a fabricated provenance claim — so `models` is empty, exactly
+ * as it always was before the snapshot. A plan that lacks a record for a snapshot model is a P3
+ * contract violation and THROWS (fail closed), never a partial row: the seal then takes the R10
+ * fallback, which seals its unit-free set with `planRows: false` (no model rows) so the broken plan
+ * cannot also defeat the fallback.
  */
-function provenanceOf(run) {
+function provenanceOf(run, { planRows = true } = {}) {
   const models = [];
-  if (run.snapshot !== undefined) {
+  if (planRows && run.snapshot !== undefined && run.plan !== undefined) {
     run.snapshotKeys.forEach((modelKey, i) => {
       const b = run.snapshot.bindings[i];
       if (b === null) return;
       models.push({
         modelKey, modelVersion: b.modelVersion,
+        ...planProvenanceOf(run.plan, modelKey),
         bindingGeneration: b.bindingGeneration, placementGeneration: b.placementGeneration,
       });
     });
@@ -964,6 +1021,30 @@ function provenanceOf(run) {
     runOptions: run.runOptions,
     models,
     admissionBaseline: run.admissionBaseline ?? [],
+  };
+}
+
+const SCOPE_KIND_ORDER = Object.freeze(['elements', 'model']);   // ascending, P5's enum
+
+/** The plan half of one `ProvenanceModel` row (C1), as plain detached data. P3's `Plan.models` is a
+ *  `Map` (the same `Map`-or-record lookup rule as P3's own `modelOf`, planner.js). */
+function planProvenanceOf(plan, modelKey) {
+  const models = plan.models;
+  const entry = models instanceof Map ? models.get(modelKey)
+    : models !== null && typeof models === 'object' && Object.hasOwn(models, modelKey)
+      ? models[modelKey] : undefined;
+  if (entry === undefined) {
+    throw new Error(`internal-error: the plan holds no model record for snapshot model ${modelKey}`);
+  }
+  const kinds = new Set([entry.scopeKinds.A, entry.scopeKinds.B]);
+  const { population, roots } = entry.scopeDigests;
+  return {
+    scopeKinds: SCOPE_KIND_ORDER.filter((k) => kinds.has(k)),
+    elementCount: entry.rootOwners.reduce((n, row) => n + row.ownerDbIds.length, 0),
+    scopeDigests: {
+      population: population === null ? null : { count: population.count, digest: population.digest },
+      roots: roots.map(({ dbId, subtreeDigest }) => ({ dbId, subtreeDigest })),
+    },
   };
 }
 
@@ -1142,8 +1223,15 @@ async function terminalInternalError(run, error) {
       diagnostics,
       results: [],
     });
+    // Whole-branch review C1 follow-up (codex-advisor): `provenanceOf` THROWS on a plan with no record
+    // for a snapshot model, and that throw is one of the ways a seal reaches this fallback. Re-reading
+    // the same broken plan here would throw again and lose the minimal set (O7). The fallback set is
+    // unit-free and result-free, so it needs no plan-time model rows: it keeps the full provenance when
+    // that can be built and otherwise drops only the `models` rows — never fabricates them.
+    let provenance;
+    try { provenance = run.provenance(); } catch { provenance = provenanceOf(run, { planRows: false }); }
     const draft = run.spec.resultPort.buildResultSet(
-      resultParts(run, outcome, diagnostics, { ledger, results: [] }));
+      resultParts(run, outcome, diagnostics, { ledger, results: [], provenance }));
     resultSet = await run.spec.resultPort.sealResultSet(draft, { slicer: run.slicer() });
     run.spec.resultPort.residency.admitSealedSet(run.runId, resultSet);
     run.reservationSettled = true;
