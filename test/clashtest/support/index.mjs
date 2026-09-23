@@ -30,8 +30,6 @@ export * from './fakeRegistry.mjs';
 //   P4  export * from './realWorldFixture.mjs';      // makeTwoModelFixture / box
 //   P5  export * from './resultSetFixtures.mjs';     // makeFakeRun / sealFakeRun / ledgerWith
 //   P5  export * from './resultStoreConformance.mjs';// runResultStoreConformance
-//   P6  export * from './scriptedExecutor.mjs';      // createScriptedExecutor
-//   P6  export * from './placementRegistry.mjs';     // createPlacementRegistry
 //   P6  export * from './sealedSetFixture.mjs';      // createSealedSetFixture
 //   P7  export * from './realWorld.mjs';             // makeRealWorldFixture
 //   P7  export * from './bruteForce.mjs';            // per-pair differential reference
@@ -43,3 +41,5 @@ export * from './executionRequests.mjs';
 export * from './resultSetFixtures.mjs';
 export * from './fakePlanner.mjs';                    // P6.3: createFakePlan
 export * from './runFixture.mjs';                     // P6.3: createRunFixture
+export * from './scriptedExecutor.mjs';               // P6.4: createScriptedExecutor (P6.5 extends it)
+export * from './placementRegistry.mjs';              // P6.4: createPlacementRegistry
