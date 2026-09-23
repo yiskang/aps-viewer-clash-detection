@@ -286,3 +286,39 @@ test('H1: a placement change among the unit\'s own participants is input-changed
   assert.equal(summary.status, 'invalidated');
   assert.ok(summary.resultSet.outcome.reasons.every((r) => !r.includes('mk-b')));
 });
+
+test('H1 fix: a participant re-bound AND moved in one attempt carries BOTH facts (review finding)', async () => {
+  // P1's registry keeps `placementGeneration` across a re-registration, so a host that reloads a
+  // model and then signals a placement change leaves BOTH generations moved vs the run snapshot.
+  // §16.7: settlement is a function of the whole fact SET. Table A (settlement.js UNIT_PRECEDENCE):
+  // `input-changed` rank 4 outranks `model-evicted` rank 6, so the primary is input-changed, kind
+  // `discarded` at `post` (the executor answered clean), and model-evicted is secondary.
+  let fx = null;
+  const inner = createScriptedExecutor({ '1.0': [{ facts: [], pairs: 2 }] });
+  fx = createRunFixture({
+    plan: createFakePlan([{ unitId: '1.0', weight: 1, models: ['mk-a', 'mk-b'] }]),
+    executor: async (request) => {
+      const outcome = await inner(request);
+      fx.registry.register('mk-b', { reloaded: true }, { modelVersion: 'v1' });   // bindingGeneration++
+      fx.registry.notifyPlacementChanged('mk-b');                                  // placementGeneration++
+      return outcome;
+    },
+  });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  const [unit] = summary.resultSet.ledger.units;
+  assert.equal(unit.cause, 'input-changed', 'rank 4 wins over rank 6');
+  assert.equal(unit.outcome, 'discarded');
+  assert.deepEqual(unit.secondaryCauses, ['model-evicted'], 'the lower-rank fact is not hidden');
+  assert.equal(summary.resultSet.results.length, 0);
+  // The run-level boundary scan and the unit scan agree: both saw the placement move, so the unit's
+  // own invalidating fact and order B's `placementChangedVsSnapshot` name the same observation.
+  assert.equal(summary.status, 'invalidated');
+  const { reasons } = summary.resultSet.outcome;
+  for (const r of ['placement-changed', 'unit:input-changed', 'unit:model-evicted']) {
+    assert.ok(reasons.includes(r), `${r} in ${reasons}`);
+  }
+  assert.ok(reasons.every((r) => !r.includes('mk-b')));
+  assert.equal(summary.resultSet.outcome.freshness, 'stale');
+});

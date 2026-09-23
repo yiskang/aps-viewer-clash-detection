@@ -766,12 +766,17 @@ function factsFromOutcome(run, request, outcome) {
  * The UNIT-SCOPED live-participant scan (P6.6, P4 H1). Reads ONLY `unitModelKeys(unit)` — a death
  * among the run's other models is never this unit's fact — in ONE `snapshotBindings` call, and
  * compares each current binding with the one the run-start snapshot froze (`bindingInSnapshot`).
- * N10: there is no `dead` flag; `null` covers dead, unregistered and lease-invalid. Order matters:
- *   1. `null`                           -> evicted   (dead)          -> run.deadModelKeys
- *   2. `bindingGeneration` moved        -> evicted   (reload/re-bind) -> run.staleReasons
- *   3. `placementGeneration` moved      -> placementMoved (input-changed)
- *   4. otherwise not `bindingsEquivalent` (same generations, different model object/version: never
- *      produced by a conforming registry) -> evicted, FAIL CLOSED -> run.staleReasons
+ * N10: there is no `dead` flag; `null` covers dead, unregistered and lease-invalid.
+ *   - `null`                              -> evicted (dead)            -> run.deadModelKeys
+ * Otherwise the checks are INDEPENDENT, never an if/else-if chain (P6.6 task-review fix): P1's
+ * registry keeps `placementGeneration` across a re-registration, so a reload followed by a placement
+ * change moves BOTH generations, and §16.7 settles on the whole fact SET — an exclusive chain
+ * reported only `model-evicted` (rank 6) and hid `input-changed` (rank 4), getting both the cause
+ * and the outcome kind wrong.
+ *   - `bindingGeneration` moved           -> evicted (reload/re-bind)  -> run.staleReasons
+ *   - `placementGeneration` moved         -> placementMoved (input-changed)
+ *   - neither moved, yet not `bindingsEquivalent` (different model object/version: never produced
+ *     by a conforming registry)           -> evicted, FAIL CLOSED      -> run.staleReasons
  * The per-model detail it records uses the same vocabulary `collectBoundaryFacts` does, so
  * `sealTimeFreshness` reads one set of reasons whichever of the two observed the change first.
  */
@@ -786,13 +791,15 @@ function scanUnitParticipants(run, unit) {
     if (is === null) {
       evicted = true;
       run.deadModelKeys.add(modelKey);
-    } else if (is.bindingGeneration !== was.bindingGeneration) {
-      evicted = true;
-      run.staleReasons.add(`model-reloaded:${modelKey}`);
-    } else if (is.placementGeneration !== was.placementGeneration) {
+      return;
+    }
+    const bindingMoved = is.bindingGeneration !== was.bindingGeneration;
+    const placementMovedHere = is.placementGeneration !== was.placementGeneration;
+    if (placementMovedHere) {
       placementMoved = true;
       run.staleReasons.add(`placement-changed:${modelKey}`);
-    } else if (!bindingsEquivalent(is, was)) {
+    }
+    if (bindingMoved || (!placementMovedHere && !bindingsEquivalent(is, was))) {
       evicted = true;
       run.staleReasons.add(`model-reloaded:${modelKey}`);
     }
@@ -814,17 +821,22 @@ function scanUnitParticipants(run, unit) {
  *
  * This is the RUN-level scan (every snapshot model; order B + freshness). The per-UNIT settlement
  * fact is `scanUnitParticipants`'s job (P4 H1), which reads only the unit's own participants.
- * (P6.6: the brief's Step 4 body, verbatim.)
+ * (P6.6: the brief's Step 4 body, with ONE task-review alignment: the placement check and the
+ * reload check are independent, exactly as in `scanUnitParticipants`, so a participant that was
+ * re-bound AND moved records both freshness reasons. Order B is unchanged — only the placement move
+ * sets `placementChangedVsSnapshot`; `model-reloaded` feeds seal-time freshness alone.)
  */
 function collectBoundaryFacts(run, extra = {}) {
   const now = run.spec.coordinator.registry.snapshotBindings(run.snapshotKeys);
   run.snapshot.bindings.forEach((was, i) => {
     const is = now.bindings[i];
     if (is === null) { run.deadModelKeys.add(was.modelKey); return; }
-    if (is.placementGeneration !== was.placementGeneration) {
+    const placementMoved = is.placementGeneration !== was.placementGeneration;
+    if (placementMoved) {
       run.settlementState.placementChangedVsSnapshot = true;
       run.staleReasons.add(`placement-changed:${was.modelKey}`);
-    } else if (!bindingsEquivalent(is, was)) {
+    }
+    if (is.bindingGeneration !== was.bindingGeneration || (!placementMoved && !bindingsEquivalent(is, was))) {
       run.staleReasons.add(`model-reloaded:${was.modelKey}`);
     }
   });
