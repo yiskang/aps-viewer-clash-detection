@@ -221,7 +221,7 @@ test('reader build is linear in units and lookup cost does not grow with the uni
 test('elementStatus visits only the units that touch the element', async () => {
   const set = await widePlan(2_000);
   const reader = createStatusReader(set);
-  // The fixture puts each root in exactly one unit, so the element's coverage comes from one unit.
+  // The fixture puts each SOURCE root in exactly one unit, so the element's coverage comes from one unit.
   const e = reader.elementStatus({ modelKey: set.ledger.rootOwners[0].modelKey,
     dbId: set.ledger.rootOwners[0].owners[0].rootDbId });
   assert.equal(e.coverage, 'full');

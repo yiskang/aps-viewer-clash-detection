@@ -457,9 +457,12 @@ function positivesParts() {
     ledger: ledgerWith({
       pairSpaceTotal: 15,
       units: [unit1, unit2],
+      // P5-REM5 (Finding B): u2's source root 11 was never listed in rootOwners -- a real planner builds
+      // rootOwners from every resolved root (planner.js rootOwnerRowsOfSliced), so every unit root is owned.
       rootOwners: [
-        { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100, 101], cls: 'A' }] },
-        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200, 201], cls: 'A' }] },
+        { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100, 101], cls: 'A' },
+          { rootDbId: 11, ownerDbIds: [110], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200, 201], cls: 'B' }] },
       ],
     }),
     results,
@@ -551,9 +554,12 @@ function schemaCorpusParts() {
     ledger: ledgerWith({
       pairSpaceTotal: 3,
       units: [unit2],
+      // P5-REM7 (F/G role reconciliation): MODEL_A is named only by selectionA and MODEL_B only by
+      // selectionB, so a real planner labels their roots 'A' and 'B' (`rootResolution.js` step 6) --
+      // formerly 'B' and 'C', labels no planner could produce for this definition.
       rootOwners: [
-        { modelKey: MODEL_A, owners: [{ rootDbId: 30, ownerDbIds: [300, 301, 302, 303], cls: 'B' }] },
-        { modelKey: MODEL_B, owners: [{ rootDbId: 40, ownerDbIds: [400, 401, 402], cls: 'C' }] },   // NOT 499
+        { modelKey: MODEL_A, owners: [{ rootDbId: 30, ownerDbIds: [300, 301, 302, 303], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 40, ownerDbIds: [400, 401, 402], cls: 'B' }] },   // NOT 499
       ],
       unresolvedSelections: [{ selectionRole: 'A', modelKey: MODEL_A, cause: 'element-unresolvable', dbIds: [999] }],
       unreachablePopulation: [{ modelKey: MODEL_B, ownerDbIds: [499], mixedOwnerDbIds: [498],
@@ -632,9 +638,10 @@ function completedWithGapsParts() {
     ledger: ledgerWith({
       pairSpaceTotal: 15,
       units: [unit1, unit2],
+      // P5-REM5 (Finding B): u2's source root 11 added -- every unit root must be owned (see positivesParts).
       rootOwners: [
-        { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }] },
-        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'A' }] },
+        { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }, { rootDbId: 11, ownerDbIds: [110], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'B' }] },
       ],
     }),
     results: [{
@@ -681,7 +688,7 @@ function completedCleanParts() {
       units: [unit1],
       rootOwners: [
         { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [], cls: 'A' }] },
-        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [], cls: 'B' }] },
       ],
     }),
     results: [],
@@ -724,7 +731,13 @@ function unreachablePositiveParts() {
     ledger: ledgerWith({
       pairSpaceTotal: 10,
       units: [unit1],
-      rootOwners: [{ modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }] }],
+      // P5-REM7 (F/G coverage reconciliation): a real planner emits one rootOwners row for EVERY
+      // definition model (`rootResolution.js` + `ledger.js` `rootOwnerRowsOfSteps`), and a whole-model
+      // target (`u1`'s `scope: 'model'` on MODEL_B) is only planned for a model with run-start B'
+      // roots (`sizing.js` `wholeRootCount`). MODEL_B's row was simply missing; 999 stays a
+      // tree-unreachable owner, NOT under this root.
+      rootOwners: [{ modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'B' }] }],
       unreachablePopulation: [{ modelKey: MODEL_B, ownerDbIds: [999], mixedOwnerDbIds: [],
         unattributable: { notLoaded: 0, ownerUnresolvable: 0 } }],
     }),
@@ -750,15 +763,26 @@ function hierarchyInternalParts() {
   // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
   const definition = {
     schemaVersion: 1, testId, revision: 1, name: 'hierarchy-internal',
+    // P5-REM7 (F/G coverage reconciliation): root 100 is labelled `cls: 'C'` (A n B), so MODEL_A must
+    // genuinely be named by BOTH selections -- before this, MODEL_A was selectionA-only, which no real
+    // planner could label 'C' (`rootResolution.js` step 6). selectionB now also names MODEL_A's root
+    // 100 explicitly, which is exactly the A n B root the fixture always meant.
     selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
-    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    selectionB: { entries: [{ kind: 'elements', modelKey: MODEL_A, dbIds: [100] }, { kind: 'model', modelKey: MODEL_B }] },
     mode: 'volume-overlap',
   };
   const semanticDigest = computeSemanticDigest(definition);
   const pair0 = { first: ref(MODEL_A, 50), second: ref(MODEL_B, 60) };
+  // The §6.3 cells for A' = {10}, C = {100}, B' = {20}: cell 1 is A' -> (C u B') -- root 100 as an
+  // explicit target of MODEL_A (A_n is non-empty, so no whole-model sentinel for it) plus MODEL_B
+  // whole -- and cell 2 is C -> B' (u2), so the C root is evaluated in both of its required roles.
   const unit1 = unit('u1', 'evaluated', {
     kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
-    targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10,
+    targets: [{ modelKey: MODEL_A, scope: 'roots', rootDbIds: [100] }, { modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10,
+  });
+  const unit2 = unit('u2', 'evaluated', {
+    kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [100],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 1,
   });
   return {
     runId: 'run-hierarchy-internal',
@@ -773,14 +797,14 @@ function hierarchyInternalParts() {
       models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
     }),
     ledger: ledgerWith({
-      pairSpaceTotal: 10,
-      units: [unit1],
+      pairSpaceTotal: 11,
+      units: [unit1, unit2],
       rootOwners: [
         { modelKey: MODEL_A, owners: [
           { rootDbId: 10, ownerDbIds: [50], cls: 'A' },
           { rootDbId: 100, ownerDbIds: [101, 102], cls: 'C' },
         ] },
-        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [60], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [60], cls: 'B' }] },
       ],
       hierarchyInternal: [{ modelKey: MODEL_A, rootCount: 1, ownerCount: 2,
         examples: [{ rootDbId: 100, ownerDbIds: [101, 102] }] }],
@@ -822,13 +846,22 @@ export const pairOf = (modelKeyA, dbIdA, modelKeyB, dbIdB) => makePairId(
 
 /**
  * Task P5.6's status-reader complexity acceptance fixture: `unitCount` leaf units, each owning a
- * DISTINCT root pair -- source root `1000+i` in MODEL_A, target root `2000+i` in MODEL_B via
- * `scope: 'roots'` (an exact cover, one leaf per root pair, per spec 6.3) -- plus exactly `min(50,
- * unitCount)` results spread across the FIRST units, so a complexity probe run at two different
- * `unitCount`s issues IDENTICAL lookups while only the build's own input size changes. Built
- * through the real `buildResultSet`/`sealResultSet` pipeline (never hand-assembled as an
- * already-sealed object), like every other kind in this file.
+ * DISTINCT root pair -- source root `1000+i` in MODEL_A against the ONE target root `2000` in
+ * MODEL_B via `scope: 'roots'` (an exact cover, one leaf per root pair, per spec 6.3: the cell-1
+ * layout the real sizer emits with one source root per chunk) -- plus exactly `min(50, unitCount)`
+ * results spread across the FIRST units, so a complexity probe run at two different `unitCount`s
+ * issues IDENTICAL lookups while only the build's own input size changes. Built through the real
+ * `buildResultSet`/`sealResultSet` pipeline (never hand-assembled as an already-sealed object),
+ * like every other kind in this file.
+ *
+ * P5-REM9 correction (pair-level exact cover): this fixture used to pair `1000+i` with its OWN
+ * target root `2000+i`, i.e. `unitCount` A roots x `unitCount` B roots evaluated on the diagonal
+ * only -- `unitCount` of the `unitCount^2` required pairs, the exact candidate-finding-I shape --
+ * while recording `coverage: 'full'`. With one shared target root the same `unitCount` one-pair
+ * leaves ARE the whole required pair set, so the fixture now means what its comment always said.
+ * Every source root is still in exactly one unit (what the status-reader probes rely on).
  */
+const WIDE_TARGET_ROOT = 2000;
 export async function widePlan(unitCount) {
   const probeCount = Math.min(50, unitCount);
   const units = [];
@@ -837,14 +870,13 @@ export async function widePlan(unitCount) {
   const results = [];
   for (let i = 0; i < unitCount; i++) {
     const rootA = 1000 + i;
-    const rootB = 2000 + i;
     units.push(unit(`u${i}`, 'evaluated', {
       kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [rootA],
-      targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [rootB] }], pairSpaceWeight: 1,
+      targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [WIDE_TARGET_ROOT] }], pairSpaceWeight: 1,
     }));
     ownersA.push({ rootDbId: rootA, ownerDbIds: [rootA], cls: 'A' });
-    ownersB.push({ rootDbId: rootB, ownerDbIds: [rootB], cls: 'B' });
   }
+  ownersB.push({ rootDbId: WIDE_TARGET_ROOT, ownerDbIds: [WIDE_TARGET_ROOT], cls: 'B' });
   const testId = 'TW';
   // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
   const definition = {
@@ -855,10 +887,10 @@ export async function widePlan(unitCount) {
   };
   const semanticDigest = computeSemanticDigest(definition);
   for (let i = 0; i < probeCount; i++) {
-    const pair = { first: ref(MODEL_A, 1000 + i), second: ref(MODEL_B, 2000 + i) };
+    const pair = { first: ref(MODEL_A, 1000 + i), second: ref(MODEL_B, WIDE_TARGET_ROOT) };
     results.push({
       resultId: makeResultId(testId, semanticDigest, pair), pair, mode: 'volume-overlap',
-      evaluatedAs: { source: ref(MODEL_A, 1000 + i), target: ref(MODEL_B, 2000 + i) },
+      evaluatedAs: { source: ref(MODEL_A, 1000 + i), target: ref(MODEL_B, WIDE_TARGET_ROOT) },
       evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {}, unitId: `u${i}`,
     });
   }
@@ -900,6 +932,37 @@ export async function widePlan(unitCount) {
  * apart "cost grows with `unrelatedUnits`" (would mean the index is not scoped by root -- a real
  * regression) from "cost grows with `fanOut`" (the known, bounded-by-split-fan-out property this
  * task's own status-reader contract already names, not a defect introduced here).
+ *
+ * P5-REM10 correction (pair-level exact cover, same class of defect `widePlan` had): with
+ * `unrelatedUnits > 0` this fixture used to give each unrelated unit its OWN distinct MODEL_B
+ * target root (8000+i) too, recording `coverage: 'full'`. `provePairExactCoverSteps`'s required
+ * count is the GLOBAL cross product of every recorded MODEL_A root x every recorded MODEL_B root
+ * (`nA * nB`) -- not partitioned by "island" -- so with `nA = 1 + unrelatedUnits` and
+ * `nB = fanOut + unrelatedUnits` distinct roots, required = `(1+unrelatedUnits)*(fanOut+unrelatedUnits)`
+ * while only `fanOut + unrelatedUnits` pairs were ever evaluated: a real gap for any
+ * `unrelatedUnits > 0` (confirmed: `sharedRootPlan({fanOut:5, unrelatedUnits:2})` rejected with
+ * `coverage-pair-uncovered`). Unlike `widePlan`, collapsing the FAN-OUT side's targets to one root
+ * is not an option (the status-reader probe needs `fanOut` MUTUALLY DISTINCT MODEL_B roots to force
+ * a worst-case scan), and a true dense full cover would need `nA * nB` evaluated leaves --
+ * quadratic in `fanOut * unrelatedUnits` (this fixture is exercised up to `fanOut:50,
+ * unrelatedUnits:2000`), defeating the fixture's own cheap/scalable purpose. `outcome.coverage:
+ * 'partial'` was considered and rejected (codex-advisor, 2026-09-23): every leaf here really is
+ * `outcome:'evaluated'`/`scopeProof:'equal'`, so `derivedFull` computes `true` regardless, and
+ * recording a compensating non-empty `ledger.planningGaps` entry alongside `status: 'completed'`
+ * is independently rejected by `validateResultSet.js` as `completed-with-fatal-cause` (verified).
+ * The actual fix (codex-advisor, 2026-09-23, verified against `validateResultSet`/`readResultSet`
+ * for `{fanOut:5, unrelatedUnits:2}` and `{fanOut:50, unrelatedUnits:2000}`): each unrelated leaf's
+ * target is now a single `scope: 'model'` (whole-MODEL_B) entry instead of its own distinct root,
+ * with `pairSpaceWeight: fanOut` -- ONE leaf now honestly claims all `fanOut` pairs from its own
+ * source root to every B-role root, without materializing `fanOut` new target root IDs. With no new
+ * MODEL_B roots recorded, `nB` stays exactly `fanOut` and `nA = 1 + unrelatedUnits`, so
+ * `required = nA * nB = (1+unrelatedUnits) * fanOut`, which exactly equals the union of the fanOut
+ * group's `fanOut` pairs plus each of the `unrelatedUnits` leaves' own `fanOut` pairs (all disjoint,
+ * since each unrelated leaf's own MODEL_A source root is unique) -- `required === evaluated` for
+ * any `fanOut`/`unrelatedUnits` combination, remains linear in stored fixture size, and does not
+ * touch the fanOut group's distinct targets or the unrelated units' distinct, shared-root-disjoint
+ * MODEL_A source roots (`findCoveringUnit` indexes purely by `sourceRootDbIds`, so this is
+ * unaffected by the target-side change -- see `status.js`).
  */
 export async function sharedRootPlan({ fanOut, unrelatedUnits = 0 }) {
   const SHARED_ROOT = 5000;
@@ -916,13 +979,11 @@ export async function sharedRootPlan({ fanOut, unrelatedUnits = 0 }) {
   }
   for (let i = 0; i < unrelatedUnits; i++) {
     const rootA = 9000 + i;
-    const rootB = 8000 + i;
     units.push(unit(`unrelated-${i}`, 'evaluated', {
       kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [rootA],
-      targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [rootB] }], pairSpaceWeight: 1,
+      targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: fanOut,
     }));
     ownersA.push({ rootDbId: rootA, ownerDbIds: [rootA], cls: 'A' });
-    ownersB.push({ rootDbId: rootB, ownerDbIds: [rootB], cls: 'B' });
   }
   const testId = 'TSR';
   // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
@@ -946,7 +1007,7 @@ export async function sharedRootPlan({ fanOut, unrelatedUnits = 0 }) {
       models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
     }),
     ledger: ledgerWith({
-      pairSpaceTotal: units.length,
+      pairSpaceTotal: fanOut * (unrelatedUnits + 1),
       units,
       rootOwners: [{ modelKey: MODEL_A, owners: ownersA }, { modelKey: MODEL_B, owners: ownersB }],
     }),
@@ -1031,7 +1092,7 @@ function fakeCompletedClean() {
     // empty table would give a degenerate answer to any future consumer of this shape.
     rootOwners: [
       { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [], cls: 'A' }, { rootDbId: 12, ownerDbIds: [], cls: 'A' }] },
-      { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [], cls: 'B' }] },
     ],
   });
   const diagnostics = emptyDiagnostics();
@@ -1067,9 +1128,10 @@ function fakeCompletedWithGaps() {
   ]);
   const ledger = ledgerWith({
     pairSpaceTotal: 15, units: [u1, u2],
+    // P5-REM5 (Finding B): u2's source root 11 added -- every unit root must be owned (see positivesParts).
     rootOwners: [
-      { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }] },
-      { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'A' }] },
+      { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }, { rootDbId: 11, ownerDbIds: [110], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'B' }] },
     ],
   });
   const diagnostics = emptyDiagnostics();
@@ -1147,8 +1209,9 @@ function fakeInvalidated() {
   const ledger = ledgerWith({
     pairSpaceTotal: 15, units: [u1, u2],
     rootOwners: [
-      { modelKey: MODEL_A, owners: [{ rootDbId: 15, ownerDbIds: [150], cls: 'A' }] },
-      { modelKey: MODEL_B, owners: [{ rootDbId: 25, ownerDbIds: [250], cls: 'A' }] },
+      // P5-REM5 (Finding B): u2's source root 16 added -- every unit root must be owned (see positivesParts).
+      { modelKey: MODEL_A, owners: [{ rootDbId: 15, ownerDbIds: [150], cls: 'A' }, { rootDbId: 16, ownerDbIds: [160], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 25, ownerDbIds: [250], cls: 'B' }] },
     ],
   });
   const diagnostics = emptyDiagnostics();

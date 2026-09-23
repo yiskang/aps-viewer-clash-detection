@@ -308,8 +308,25 @@ export const SCHEMA_ROWS = Object.freeze([...TYPES].flatMap(([type, def]) =>
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const specOf = (of) => (typeof of === 'string' ? { kind: 'object', of } : of);
 
-function checkValue(value, spec, path, ctx) {
-  if (value === null) { if (spec.nullable !== true) ctx.add(path, 'null-not-allowed'); return; }
+// Owner-authorized P5-REM5 remediation (item 5; owner ruling 2026-09-23: "Treat frozen spec §17.3 as
+// governing. Long validation loops in the sliced validateResultSet path must checkpoint at the
+// required bounded granularity rather than only once per phase"). The walk below is written ONCE as
+// step generators (the `planning/steps.js` / `sizing.js` precedent): every array element, every
+// declared field, every own key and every node of an unknown field's value is one `yield SHAPE_STEP`,
+// so `readResultSet`'s driver (one P0 `slicer.tick` per step, clock checked every 64 ticks) meets
+// §17.3's "checks the injected `now` at least every 64 items" inside this phase too -- previously the
+// whole structural walk (up to 1,000,000 results / ~16M nodes) ran as ONE synchronous span between
+// two per-phase yields. `drain` is the synchronous form (labels ignored) for callers that do not
+// slice (`validateResultSetSummary`, `checkShapeAndUnknownFields`), so the two forms share every line
+// of logic and cannot drift. Scalar kinds stay plain synchronous calls: they do O(1) work.
+const SHAPE_STEP = 'validate:shape';
+function drain(steps) {
+  let r = steps.next();
+  while (!r.done) r = steps.next();
+  return r.value;
+}
+
+function checkScalar(value, spec, path, ctx) {
   switch (spec.kind) {
     case 'literal':
       if (value !== spec.value) ctx.add(path, spec.code ?? 'literal-invalid');
@@ -328,21 +345,35 @@ function checkValue(value, spec, path, ctx) {
       if (spec.pattern !== undefined && !spec.pattern.test(value)) { ctx.add(path, spec.code ?? 'digest-syntax-invalid'); return; }
       if (value.length > STRING_CAPS[spec.cap]) ctx.add(path, 'string-too-long');
       return;
+    default:
+      ctx.add(path, 'type-invalid');
+  }
+}
+
+function* checkValueSteps(value, spec, path, ctx) {
+  if (value === null) { if (spec.nullable !== true) ctx.add(path, 'null-not-allowed'); return; }
+  switch (spec.kind) {
     case 'object':
       if (!isPlain(value)) { ctx.add(path, 'container-invalid'); return; }
       if (spec.free === true) return;                   // documented, undeclared-inner-shape field
-      checkObject(value, spec.of, path, ctx);
+      yield* checkObjectSteps(value, spec.of, path, ctx);
       return;
     case 'array': {
       if (!Array.isArray(value)) { ctx.add(path, 'container-invalid'); return; }
       if (spec.exact !== undefined && value.length !== spec.exact) { ctx.add(path, 'array-length-invalid'); return; }
       if (spec.max !== undefined && value.length > spec.max) { ctx.add(path, 'array-too-long'); return; }
       const item = specOf(spec.of);
+      const scalarItem = item.kind !== 'object' && item.kind !== 'array';
       const key = spec.uniqueBy ?? (spec.unique === true ? (v) => v : null);
       const seen = key === null ? null : new Set();
       for (let i = 0; i < value.length; i += 1) {
         const at = `${path}/${i}`;
-        checkValue(value[i], item, at, ctx);
+        if (scalarItem) {
+          if (value[i] === null) { if (item.nullable !== true) ctx.add(at, 'null-not-allowed'); } else checkScalar(value[i], item, at, ctx);
+        } else {
+          yield* checkValueSteps(value[i], item, at, ctx);
+        }
+        yield SHAPE_STEP;
         if (seen === null || value[i] === null || value[i] === undefined) continue;
         const k = key(value[i]);
         if (seen.has(k)) ctx.add(at, spec.uniqueCode ?? 'duplicate-key'); else seen.add(k);
@@ -350,11 +381,11 @@ function checkValue(value, spec, path, ctx) {
       return;
     }
     default:
-      ctx.add(path, 'type-invalid');
+      checkScalar(value, spec, path, ctx);
   }
 }
 
-function checkObject(value, typeName, path, ctx) {
+function* checkObjectSteps(value, typeName, path, ctx) {
   const type = TYPES.get(typeName);
   const fields = type.fields;
   for (const [name, spec] of Object.entries(fields)) {
@@ -375,7 +406,8 @@ function checkObject(value, typeName, path, ctx) {
       if (value[name] !== null && !isPlain(value[name])) ctx.add(at, 'container-invalid');
       continue;
     }
-    checkValue(value[name], spec, at, ctx);
+    yield* checkValueSteps(value[name], spec, at, ctx);
+    yield SHAPE_STEP;
   }
   for (const name of Object.keys(value)) {
     // Same `Object.hasOwn` fix as above, applied to the CLOSED-TYPE unknown-field check: `name in
@@ -383,17 +415,21 @@ function checkObject(value, typeName, path, ctx) {
     // though `fields` (a plain field-name -> spec map) never declares such a field itself -- an
     // attacker-chosen key colliding with a JS built-in would otherwise silently bypass
     // `unknown-field-closed-type` on every closed type in this schema.
+    yield SHAPE_STEP;
     if (Object.hasOwn(fields, name)) continue;
-    if (type.open === true) { ctx.openBytes += unknownFieldBytes(name, value[name]); continue; }
+    if (type.open === true) { ctx.openBytes += yield* unknownFieldBytesSteps(name, value[name]); continue; }
     ctx.add(`${path}/${name}`, 'unknown-field-closed-type');
   }
   if (type.custom === 'evidenceByMode') {
     const evidenceType = EVIDENCE_BY_MODE[value.mode];  // an unknown mode is already `enum-invalid`
     if (evidenceType !== undefined) {
-      checkValue(value.evidence, { kind: 'object', of: evidenceType }, `${path}/evidence`, ctx);
+      yield* checkValueSteps(value.evidence, { kind: 'object', of: evidenceType }, `${path}/evidence`, ctx);
     }
   }
 }
+
+/** Synchronous forms of the two step walks (unsliced callers: `validateResultSetSummary`). */
+const checkValue = (value, spec, path, ctx) => drain(checkValueSteps(value, spec, path, ctx));
 
 /** UTF-8 byte length by code-unit scan -- the same measure P0's capture charges, and deliberately
  *  NOT `Buffer.byteLength` (P5 runs in the browser too; `Buffer` is Node-only). A lone surrogate
@@ -415,42 +451,88 @@ function utf8Length(s) {
 
 /** The SAME accounting P0 applies during capture -- key + container/primitive/string -- so the
  *  defensive re-check and the capture-time charge can never disagree about what a field costs.
- *  (A `canonicalJson`-based sum would have been a different, larger number.) */
-function unknownFieldBytes(key, value) {
+ *  (A `canonicalJson`-based sum would have been a different, larger number.) A step generator
+ *  (P5-REM5 item 5): one `yield` per visited node, like the rest of the structural walk. */
+function* unknownFieldBytesSteps(key, value) {
   let bytes = utf8Length(key);
   const stack = [value];
   while (stack.length > 0) {
     const v = stack.pop();
+    yield SHAPE_STEP;
     if (typeof v === 'string') { bytes += utf8Length(v); continue; }
     if (v === null || typeof v !== 'object') { bytes += 8; continue; }   // number, boolean, null
     bytes += 8;                                                          // the container itself
-    if (Array.isArray(v)) { for (const item of v) stack.push(item); continue; }
-    for (const k of Object.keys(v)) { bytes += utf8Length(k); stack.push(v[k]); }
+    // codex-review (P5-REM5, 2026-09-23): one step per child as it is enqueued too, so a wide
+    // unknown container is never enumerated in one span.
+    if (Array.isArray(v)) { for (const item of v) { stack.push(item); yield SHAPE_STEP; } continue; }
+    for (const k of Object.keys(v)) { bytes += utf8Length(k); stack.push(v[k]); yield SHAPE_STEP; }
   }
   return bytes;
 }
+
+/**
+ * Owner-authorized P5-REM7 remediation (Finding E; P5-REM5's own codex-review, bounded evidence in
+ * docs/reviews/2026-09-23-federated-clash-test-core-p5-remediation-focused-rereview-adjudication.md,
+ * "Finding E"; owner ruling 2026-09-23: "Result Set validity for the embedded resolved definition must
+ * be deterministic for identical persisted bytes and must use the governing fixed schema/spec
+ * ceilings rather than reader-configured limits. Reader-specific limits may still protect resource
+ * usage, but they must not change the normative persisted-data validity result"). P2's `validateTest`
+ * is a FRESH-SUBMISSION validator: at `saveTest`/`startRun` its `limits` are legitimate admission
+ * policy. Re-run here over an already-sealed, persisted definition, the reader's own `limits` used to
+ * flow through `limitsOf` and decide validity -- the same bytes were `definition-invalid` under one
+ * legal configuration and valid under another, contrary to frozen spec §13.6 ("never the reading
+ * engine's configured run options (a valid set produced under a larger configuration must not become
+ * 'corrupt' under a smaller one)"). `validateTest`/`captureAndValidate` read exactly three keys (every
+ * other key of the merged object is ignored), each now pinned here, so the call reads no reader
+ * configuration at all:
+ *  - `maxEntriesPerSelection` / `maxExplicitElementsPerSelection`: the §17.1.1 HARD ceilings -- the
+ *    same values `validateResultSet.js`'s `deriveArrayCeilings()` already charges at capture time for
+ *    the same two definition array paths, so capture and this re-validation agree. They drive P2's
+ *    per-path array ceilings, its node ceiling and its per-selection cumulative dbIds budget
+ *    (`too-many-elements`);
+ *  - `maxValidationIssues`: never affects validity -- only `issues.length > 0` is consumed here, and
+ *    P0's `captureData` rejects `maxIssues < 1` and always records the first issue it meets before
+ *    stopping, as does P2's collector -- so it is pinned to 1 (design-checked with codex-advisor,
+ *    2026-09-23): no reader value is read, and P2 stops at the first finding instead of collecting
+ *    issues nobody reads.
+ * The FRESH-definition path (`saveTest`/`startRun` -> P2) is untouched and keeps the caller's limits.
+ */
+const EMBEDDED_DEFINITION_LIMITS = Object.freeze({
+  maxEntriesPerSelection: ENGINE_LIMIT_CEILINGS.maxEntriesPerSelection,
+  maxExplicitElementsPerSelection: ENGINE_LIMIT_CEILINGS.maxExplicitElementsPerSelection,
+  maxValidationIssues: 1,
+});
 
 /** The FIRST phase of validation (review Critical 3). It establishes the shape every later phase
  *  assumes, so it runs in full before any cross-field check traverses an array or an object.
  *  Also resolves the "open/closed" table row that the generic walk cannot: `definition` is marked
  *  `delegated` above precisely so the walk skips it, and P2's `validateTest` -- the schema of
  *  record for a `ClashTestDefinition` -- is run on it here instead (never re-declared as a second
- *  copy of that closed schema). */
-export function checkShapeAndUnknownFields(set, add, limits) {
+ *  copy of that closed schema). P5-REM5 item 5: a step generator (one `yield` per item, see the walk
+ *  above); `checkShapeAndUnknownFields` below is its synchronous drain. P2's `validateTest` on the
+ *  embedded definition stays one synchronous call: it is spec §17.3 item 1's own synchronous
+ *  validation class (bounded by the definition's selection ceilings), not a loop of this walk. */
+export function* checkShapeAndUnknownFieldsSteps(set, add, limits) {
   const ctx = { add, openBytes: 0 };
-  checkObject(set, 'ResultSet', '', ctx);
+  yield* checkObjectSteps(set, 'ResultSet', '', ctx);
   // `checkObject`'s own delegated-field branch (above) already reports `container-invalid` for a
   // present, non-null, non-plain `definition` (a number, string, boolean or array) and
   // `missing-field` for an absent one -- P2's `validateTest` is only meaningful, and only run, on a
   // genuinely plain-object value here, so a malformed container never gets a confusing SECOND,
   // unrelated `definition-invalid` on top of its real `container-invalid`.
   if (Object.hasOwn(set, 'definition') && set.definition !== null && isPlain(set.definition)) {
-    const { issues } = validateTest(set.definition, { limits });
+    // P5-REM7 (Finding E): FIXED limits, never the reader's `limits` -- see EMBEDDED_DEFINITION_LIMITS.
+    const { issues } = validateTest(set.definition, { limits: EMBEDDED_DEFINITION_LIMITS });
     if (issues.length > 0) add('/definition', 'definition-invalid');
   }
   // DEFENSIVE re-check only: capture already charged this budget mid-traversal and refused before
   // copying the offending value (P5.4). Reaching it here means capture did not run.
   if (ctx.openBytes > (limits.maxUnknownFieldBytes ?? UNKNOWN_FIELD_BYTES)) add('', 'unknown-field-bytes');
+}
+
+/** Synchronous drain of `checkShapeAndUnknownFieldsSteps` (same logic, labels ignored). */
+export function checkShapeAndUnknownFields(set, add, limits) {
+  drain(checkShapeAndUnknownFieldsSteps(set, add, limits));
 }
 
 // --- ResultSetSummary (§13.5): the closed listing-page row shape --------------------------------
