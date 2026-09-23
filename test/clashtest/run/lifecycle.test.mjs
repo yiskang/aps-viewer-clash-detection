@@ -330,6 +330,7 @@ import { splitUnit } from '../../../clashtest/planning/splitting.js';
 import { createRecordBudget, createLedger } from '../../../clashtest/planning/ledger.js';
 import { computeSemanticDigest } from '../../../clashtest/definition/normalize.js';
 import { getFreshness } from '../../../clashtest/run/freshness.js';
+import { assessNoClashClaim, canClaimNoClashes } from '../../../clashtest/results/claim.js';
 import { makeSyntheticEnumerator, defOf } from '../support/syntheticModels.mjs';
 
 // P6 whole-branch review (C1 + the filter fix): NO issue-code filtering. The old `ledgerShapeIssues`
@@ -482,7 +483,7 @@ test('C1: a run sealed before a plan exists records no provenance model rows (no
   assert.deepEqual(issuesOf(summary.resultSet), []);
 });
 
-test('C1: a plan missing a snapshot model record fails closed into a READABLE R10 fallback set', async () => {
+test('C1: a plan missing a snapshot model record fails closed into a READABLE, VALID R10 fallback set', async () => {
   // P3 contract violation: the plan holds no record for `mk-b`. The normal seal throws in
   // `provenanceOf`; the R10 fallback must not re-read the same broken plan and lose its set (O7).
   let realPlan = null;
@@ -507,15 +508,39 @@ test('C1: a plan missing a snapshot model record fails closed into a READABLE R1
   assert.notEqual(summary.resultSet, null, 'the fallback set survives the broken plan');
   assert.ok(summary.resultSet.outcome.reasons.includes('unit:internal-error'));
   assert.deepEqual(summary.resultSet.provenance.models, [], 'no fabricated model rows');
-  // EXACT expectation, not a filter. The two issues are a PRE-EXISTING property of the R10 fallback
-  // set, not of this fix: `emptyLedgerRecord` writes `planExists: true` with `rootOwners: []` for any
-  // post-plan seal failure, and P5 checks the definition's models against `rootOwners`. Reported to
-  // the controller as a separate finding (whole-branch-review-fix-report.md, "Concerns"); nothing
-  // provenance-related may appear here.
-  assert.deepEqual(issuesOf(summary.resultSet), [
-    { path: '/ledger/rootOwners', code: 'coverage-model-mismatch' },
-    { path: '/ledger/rootOwners', code: 'coverage-model-mismatch' },
-  ]);
+  assert.equal(summary.resultSet.ledger.planExists, false,
+    'H1 fix: the fallback ledger never carries real plan facts, so it must not claim a plan exists');
+  // H1 fix (P6 independent review + adjudication, 2026-09-24): this previously validated with exactly
+  // two `coverage-model-mismatch` issues (documented as a known, pre-existing R10 defect) because
+  // `emptyLedgerRecord` wrote `planExists: true` with an empty `rootOwners`, which P5's
+  // `reconcileEvaluatedCoverageSteps` rejects. `planExists` is now unconditionally `false` in that
+  // record, so the whole coverage-reconciliation check is skipped and the fallback validates clean.
+  assert.deepEqual(issuesOf(summary.resultSet), []);
+});
+
+test('H1 fix: a post-plan seal failure over a HEALTHY plan also validates clean and cannot claim clean', async () => {
+  // Distinct from the test above: here the PLAN and SNAPSHOT are entirely healthy (no missing model
+  // record), and `run.provenance()` succeeds with real, non-empty model rows — the seal failure is
+  // injected one level later, in `sealResultSet` itself (the class of failure Run.js's own P6.8
+  // deviation comment documents: "an observer hook, a report callback" throwing after a good plan
+  // exists). `emptyLedgerRecord` is still called unconditionally for the retry inside
+  // `terminalInternalError`, so this reproduces H1 independently of the "broken plan" framing above.
+  const fx = realPlannerFixture({ failSeal: 'sealResultSet' });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.notEqual(summary.resultSet, null, 'the R10 retry still produces a readable set over a healthy plan');
+  assert.ok(summary.resultSet.outcome.reasons.includes('unit:internal-error'));
+  assert.ok(summary.resultSet.provenance.models.length > 0,
+    'unlike the broken-plan scenario, provenance still carries the real, healthy plan-time model rows');
+  assert.equal(summary.resultSet.ledger.planExists, false,
+    'the fallback ledger holds none of those real plan facts, so it must not claim a plan exists');
+  assert.deepEqual(issuesOf(summary.resultSet), [],
+    'validates cleanly — no coverage-model-mismatch, no model-not-in-provenance, no other issue');
+  const claim = assessNoClashClaim(summary.resultSet, { state: 'current', reasons: [] });
+  assert.equal(claim.allowed, false, 'a failed run can never support a no-clash claim');
+  assert.equal(canClaimNoClashes(summary.resultSet, { state: 'current', reasons: [] }), false);
 });
 
 // --- P6 whole-branch review C2: an out-of-vocabulary failure.code must never merge as clean -------

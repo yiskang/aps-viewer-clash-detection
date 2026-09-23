@@ -1289,9 +1289,19 @@ function releaseIfStillReserved(run) {
   return null;
 }
 
-/** The two minimal inputs the fallback needs, built without touching the records that just failed. */
+/**
+ * The two minimal inputs the fallback needs, built without touching the records that just failed.
+ *
+ * H1 fix (P6 independent review + adjudication, 2026-09-24): `planExists` is unconditionally
+ * `false` here, never `run.plan !== undefined`. This record NEVER carries real plan facts --
+ * `rootOwners`/`pairSpaceTotal`/`units` are always empty stand-ins, regardless of whether a real
+ * plan technically exists on `run` -- so it must not claim one does. A `planExists: true` row with
+ * an empty `rootOwners` is durably rejected by `validateResultSet`'s `reconcileEvaluatedCoverageSteps`
+ * (`coverage-model-mismatch`), which gates entirely on `ledger.planExists === true`; `false` here
+ * skips that whole check, exactly matching what this record actually contains.
+ */
 const emptyLedgerRecord = (run) => Object.freeze({
-  planExists: run.plan !== undefined, pairSpaceTotal: 0, emptyOperand: false, units: [],
+  planExists: false, pairSpaceTotal: 0, emptyOperand: false, units: [],
   rootOwners: [], unresolvedSelections: [], unreachablePopulation: [], hierarchyInternal: [],
   planningGaps: [{ phase: run.phase, cause: 'internal-error' }], exclusions: [], warnings: [],
   budgetExhausted: false, firstRefusalUnitId: null,
