@@ -1,13 +1,136 @@
 # P7 core acceptance run (Task P7.11, Steps 1–4): evidence record
 
-- **Date:** 2026-09-24 (original run), rerun the same day after the targeted fixes.
-- **Branch / HEAD:** `feature/federated-clash-test-core-engine`. Original run at `82245b4baa570598269a2c2b6f357a9ebfa77493` (recorded in `ba46e66`). **Rerun at `e0be33aee358719028a0f60d357cecfb4e0c2060`.**
+- **Date:** 2026-09-24 (original run), rerun the same day after the targeted fixes, and rerun #2 the same day after owner rulings #4.
+- **Branch / HEAD:** `feature/federated-clash-test-core-engine`. Original run at `82245b4baa570598269a2c2b6f357a9ebfa77493` (recorded in `ba46e66`). Rerun #1 at `e0be33aee358719028a0f60d357cecfb4e0c2060`. **Rerun #2 at `56d591a4f34402dd0286e4603c85baff82898d84`.**
 - **Governing plan:** `docs/superpowers/plans/federated-clash-test-core/p7-engine-integration.md`, Task P7.11 (Steps 1–4 only; Steps 5–7, meaning the handoff, the ready-for-gate mark and any commit, belong to the controller).
 - **Scope:** evidence only. No production code, test, plan, spec or handoff was edited, and nothing was committed. This file is the only write (updated in place by the rerun).
 - **Environment:** Node `v22.23.1`, darwin. `npm test` is `node scripts/run-tests.mjs` (package.json line 12), so the two are the same command and it was run once per pass.
-- **How to read this file.** The rerun section directly below is the current evidence. The sections after it are the original run at `82245b4`, kept as evidence. Facts there that the rerun supersedes are marked **[SUPERSEDED — see rerun]**.
+- **How to read this file.** The *Rerun #2* section directly below is the current evidence. The rerun #1 section after it (at `e0be33a`) and the original run (at `82245b4`) are kept as evidence. Facts in rerun #1 that rerun #2 changes are marked **[SUPERSEDED — see rerun #2]**; facts in the original run that rerun #1 changed are marked **[SUPERSEDED — see rerun]**.
 
-## Rerun after targeted fixes (D-8/D-A/D-B/D-C/D-D)
+## Rerun #2 after owner rulings #4 (D-8b/D-8c, D-9, PD-1..PD-4)
+
+Scope as before: evidence only. This file is the only write; no production code, test, plan, spec or handoff was edited, and nothing was committed. Only the checks materially affected by the changes below were re-run.
+
+### What changed since rerun #1 (`e0be33a` → `56d591a`)
+
+| Item | Commits | State after rerun #2 |
+|---|---|---|
+| **D-8c** (diagnostic node term) fixed as spec erratum **A13**: the term is now `(24 + maxUnitIdsPerDiagnostic) × maxRetainedDiagnostics` (`clashtest/options.js:43, 75–77, 226`). `SCHEMA_MAX_NODES` = 282,354,376; defaults' worst case = 15,885,536 ≤ 16,000,000; the `maxResultsPerRun` ceiling 956,824 is unchanged. | `a8e684c` (options.js), `1b986d2` (tests), `cc12e58` (spec/plans/evidence §11), `37f0997` (review minors) | **FIXED; task review Approved, with one item needing owner ratification:** A13's form is a closed expression of an existing option, not a fixed constant. The flat alternative (88) would put the defaults at 16,445,536 > 16M, which is a default change. |
+| **D-8b** (ledger term) bounded evidence done: verdict **UNSOUND IN FORM**, not applied (stop rule). A fix needs a form change: charge per expanded id, persist ranges (a schema change), or a new cap option. | `1b986d2`; evidence `docs/reviews/2026-09-24-federated-clash-test-core-p7-d8-node-factor-evidence.md` §10–11 | **OPEN (owner).** Standing `test.todo` in `test/clashtest/integration/nodeFactor.ledgerDiagnostic.test.mjs:246`. At the provisional **defaults**, a 10,000-unit plan admits about 100.2M ledger nodes (evidence §11, l.392–393), so the defaults themselves can produce sets the engine cannot read. |
+| **D-9** clarification erratum **A12** applied to spec AC-18 (d); P7 plan wording updated. Engine behaviour unchanged. | `fdbaf3a` (spec), `bc432b6` (plan) | **FIXED** (clarified). |
+| **PD-1..PD-4** plan reconciliation: AC-6/AC-19 (c) cite the shipped determinism titles; AC-21 and Step 17 cite the two shipped disposal titles; `′` → `'` in the AC-19 b′/d′ titles; P7.11 Step 3(b) command also reads `- Test:` declarations. | `bc432b6` | **FIXED** (re-verified by the walk below). |
+| **D-10** (new, **High**; P3 producer / P5 schema): `provenance.models[].scopeDigests.roots` and `ledger.rootOwners[].owners` are capped at 10,000 by the schema, with no producer guard. Reachable at defaults (whole-model scope over a model with 10,001 roots). | `fd93121`; evidence `docs/reviews/2026-09-24-federated-clash-test-core-p7-d10-root-cap-evidence.md` | **OPEN (owner).** Standing `test.todo` plus passing pins in `test/clashtest/integration/rootCap.producerReader.test.mjs` (todo at l.123). |
+| **D-11** (production, collision library, pre-P7): `CollisionWorld.js:2231` does not pass the injected `now` to `surfaceIntersectionQuery`, so its 8 ms real-clock abort fires under load → load-dependent `caveated` and a dropped pair (flake A). **D-12**: `ContainmentModeQuery` real-clock default scheduler (`duct through beam`, flake B). | `56d591a`; evidence `docs/reviews/2026-09-24-federated-clash-test-core-p7-suite-flake-investigation.md` | **OPEN (owner; collision library, outside the P0–P7 core).** Not fixed. Idle: 0/12 full-suite failures. Under heavy parallel load: differential 4/48, `ContainmentModeQuery` 38/48. This identifies the "unidentified transient suite failure" that rerun #1 kept as an open observation. |
+| **Owner ruling on phase checklists:** P0/P4/P5/P6 acceptance checklists are **not** reopened because later targeted fixes postdate them. | owner rulings #4 | Recorded in Step 4 below; it replaces rerun #1's "checklists predate fixes and were not re-signed" caveat. |
+
+### Rerun #2 Step 1: full suite, three runs, at `56d591a`
+
+Command: `node scripts/run-tests.mjs` (= `npm test`), three times back to back, on a clean working tree.
+
+| Run | exit | tests | pass | fail | cancelled | skipped | todo | duration_ms | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 0 | 2530 | 2527 | 0 | 0 | 0 | 3 | 24621.19 | 24 s |
+| 2 | 0 | 2530 | 2527 | 0 | 0 | 0 | 3 | 25322.11 | 26 s |
+| 3 | 0 | 2530 | 2527 | 0 | 0 | 0 | 3 | 25817.16 | 26 s |
+
+- The TAP plan line is `1..2488`. Each run has exactly three `not ok` lines, all `# TODO`. **There were no failures in any run, so no failing test name to report.** D-11/D-12 did not manifest in these three idle runs; that is consistent with the flake record (0/12 at idle) and is **not** evidence that they are gone.
+- **The three `test.todo`s, as expected:**
+  1. `D-8b R21-2: every ledger-heavy option set resolveRunOptions accepts yields a set the same engine reads back` (`test/clashtest/integration/nodeFactor.ledgerDiagnostic.test.mjs:246`)
+  2. `D-10 R21-2: every set the engine seals over a >10,000-root model scope is read back by the same engine` (`test/clashtest/integration/rootCap.producerReader.test.mjs:123`)
+  3. The pre-existing ContainmentQuery known gap (`test/query/ContainmentQuery.classifyPoint.test.mjs:138`, `{ todo: true }`).
+- **§21.3 caveats.** This time the checkout **was clean** (`git status --short` empty before and during the runs). No credentials were used and no server was started. Network isolation was still not independently enforced.
+
+### Rerun #2 Step 2: named suites, run individually (sequentially, machine otherwise idle)
+
+| Command | Role | tests | pass | fail | todo | duration_ms |
+|---|---|---|---|---|---|---|
+| `node --test test/clashtest/integration/nodeFactor.test.mjs` | D-8 (A11) + A13 regression | 9 | 9 | 0 | 0 | 8570.94 |
+| `node --test test/clashtest/integration/nodeFactor.ledgerDiagnostic.test.mjs` | D-8b evidence + D-8c (A13) | 10 | 9 | 0 | 1 (D-8b) | 1989.01 |
+| `node --test test/clashtest/integration/rootCap.producerReader.test.mjs` | D-10 pins + reproducer | 6 | 5 | 0 | 1 (D-10) | 2912.87 |
+| `node --test test/clashtest/integration/maximumShape.test.mjs` | AC-11/AC-12 R21-2 | 8 | 8 | 0 | 0 | 20882.44 |
+| `CLASHTEST_AC12_TIERS=all node --test test/clashtest/integration/maximumShape.test.mjs` | AC-12 opt-in tiers | 10 | 10 | 0 | 0 | 61634.90 |
+| `node --test test/clashtest/integration/differential.test.mjs` | master DoD 4 | 25 | 25 | 0 | 0 | 379.47 |
+| `node --test test/clashtest/integration/realWorldProvenance.test.mjs test/clashtest/integration/realWorldEnvironment.test.mjs` | T2 evidence (AC-7, 17 b/f, 18 d, 19, 21). **Not DoD 4** | 22 | 22 | 0 | 0 | 556.72 |
+| `node --test test/clashtest/planning/planner.property.test.mjs` | master DoD 5 | 7 | 7 | 0 | 0 | 716.43 |
+| `node --test test/clashtest/options.test.mjs test/clashtest/options.defaults.test.mjs` | §17.1/§17.1.1, §13.6 invariant at defaults | 32 | 32 | 0 | 0 | 45.12 |
+
+All exit 0.
+
+### Rerun #2 Step 3: AC traceability walk, using the corrected Step 3(b) command
+
+| Pass | Rerun #1 (`e0be33a`) | Rerun #2 (`56d591a`) |
+|---|---|---|
+| (a) paths exist | 57 distinct / 94 citations, 0 missing | **57 distinct / 94 citations, 0 missing (no output). Pass.** |
+| (b) owners | Literal command blind to P3/P5 `- Test:` lines (PD-4); extended script 94/94 | **The plan's corrected command (P7.11 Step 3(b), `bc432b6`), run verbatim with `OUT` in the scratchpad: first line `94`, then zero lines — 0 unowned or misattributed of 94. PD-4 gone. Pass.** |
+| (c) titles | 37 `::` citations: 22 verbatim, 7 with tolerance, **8 failing (PD-1 ×2, PD-2 ×1, PD-3 ×5)** | **38 `::` citations** (AC-21 now cites two disposal titles), checked against the file text (with `\'` unescaped) and run 1's `ok` lines: **33 verbatim, 5 with a recorded tolerance, 0 not found.** The tolerances are the same kinds as before: AC-3 `library-call conformance` (substring of the passing title), AC-4 `partition and broad-phase independence (AC-4)` (prefix of two mode-suffixed passing titles), and AC-5, AC-6 and AC-19 (c) (template-literal titles, each exact in the passing output; all four determinism and all four `differential: whole-model target, …` titles are present in run 1). **PD-1, PD-2 and PD-3 are gone.** |
+
+- The one remaining `′` inside the table is prose in the AC-19 row (the "(b′)/(d′)" conjunct labels), not a cited title.
+- Lower-phase verification-row ids and the AC-16 named exception: unchanged since rerun #1 (the table's P0–P6 citations and the AC-16 cell were not edited), and every cited file ran in Step 1 with 0 failures. AC-16 stays **ACCEPTED**.
+
+**AC rows: green vs still owner-dependent at `56d591a`.**
+
+| AC row / conjunct | State | Evidence and honest limit |
+|---|---|---|
+| AC-6, AC-19 (c) | **Green** (citation fixed, PD-1) | The four `determinism: 10 runs on one world and 10 on fresh worlds agree (AC-6), <mode>` titles pass in all 3 runs. Load-dependence caveat: D-11 can make the surface-intersection arm flip under heavy parallel load (flake record: 4/48 differential runs). Not observed in this rerun. |
+| AC-19 (b′), (d′) ×4 | **Green** (citation fixed, PD-3) | All five titles verbatim and passing. |
+| AC-21 | **Green** (citation fixed, PD-2) | Arm (i) and arm (ii) (`D-C (P6): …`) both cited verbatim and passing. |
+| AC-18 (d) | **Green** (D-9 closed by erratum A12) | Spec AC-18 (d) and plan Step 13 / AC-18 row now describe the two-arm control F3 ships; both cited tests pass. |
+| AC-11 / AC-12 R21-2 producer/reader invariant | **Not green as a universal claim. Results-heavy term and diagnostic term now sound; ledger term (D-8b) open; D-10 open.** | Sound: the result term (A11, factor 35) and the diagnostic term (A13, `24 + maxUnitIdsPerDiagnostic`; pending owner ratification of its form). `maximumShape.test.mjs` 8/8 and 10/10 with all tiers; `nodeFactor.test.mjs` 9/9; `nodeFactor.ledgerDiagnostic.test.mjs` 9/9 + 1 todo. **Open:** D-8b — the ledger term is unsound in form, and at the provisional defaults a 10,000-unit plan admits ~100.2M ledger nodes, so **the defaults themselves can produce sets the engine cannot read (an R21-2 gap that remains)**. D-10 — **an engine run at defaults can seal a set its own reader rejects** (`array-too-long` → `CorruptResultSetError` on by-id read after release) for a model with more than 10,000 roots. |
+| AC-7 tail, AC-17 b/f, AC-10 (indirect) | **Green on behaviour, unchanged since rerun #1** | Proposal **P-5 is still open**: the D-D, D-A, D-B and `R21-2 (D-8)` regressions (and `nodeFactor*.test.mjs`, `rootCap.producerReader.test.mjs`) are still not cited in the AC table (grep of the table: 0 hits for each). |
+
+**Plan / doc wording proposals still open (not applied; the plan and spec are read-only here):**
+- **P-5.** Cite the regression tests that now carry fixed conjuncts (AC-7: `D-D (P6): …`; AC-11/AC-12: `R21-2 (D-8): …`, `integration/nodeFactor.test.mjs` and `integration/nodeFactor.ledgerDiagnostic.test.mjs` with an owning phase named; AC-17: `D-A (P5): …`, `D-B (P6): …`), and record D-8b/D-10 in the AC-11/AC-12 *Gated* or *Deferred* cells once the owner disposes of them.
+- **P-7.** `p5-result-set.md` l.85 and l.1444, and `p8-derivations.md` l.116, still list `UnreachablePopulation` without `count`.
+- P-1..P-4 and P-6 are **applied** (`bc432b6`, `fdbaf3a`).
+
+### Rerun #2 Step 4: DoD checklist
+
+| DoD item | Status at `56d591a` | Evidence / honest limit |
+|---|---|---|
+| 1. P0–P7 phase acceptance checklists pass (signed) | **P0–P6: by owner record; P7: not accepted** | **Owner ruling (rulings #4):** the P0/P4/P5/P6 acceptance checklists are **not reopened** because later targeted fixes postdate them. For this P7 closeout, the later regression and review evidence **supersedes those historical checklist snapshots where applicable**: the fix commits (P0 options: `e016796` D-8/A11, `a8e684c` D-8c/A13; P4: `c1ff642` D-4; P5: `7514d54` D-A; P6: `b1da763` D-1, `842c637` D-B, `ba48c7e` D-D, `b2c33b4`/`4d9d307` D-C), their task reviews (all Approved), and the regression tests that pass in Step 1 and Step 2 above. This replaces rerun #1's "checklists predate these fixes and were not re-signed" caveat. The plan checkboxes themselves were not edited. P7 itself has no owner acceptance. |
+| 2. `npm test` green, clean checkout, no credentials/network | **Green** | 3× 2530 / 2527 pass / 0 fail / 3 todo, from a clean tree. Network was not independently isolated. Load-dependent flakes D-11/D-12 exist in the collision library (not observed here). |
+| 3. Every in-scope §22 AC mapped to a passing named test; excluded ACs listed with owner | **Mechanically met; substantively caveated** | Passes (a), (b) and (c) are all clean (PD-1..PD-4 gone). But the AC-11/AC-12 R21-2 conjunct is not proven universally (D-8b, D-10), and P-5 leaves the fixing regressions uncited. The excluded-AC list and owners are unchanged from the original Step 4. |
+| 4. Differential = brute force, 4 modes × 4 selections | **Green** | 25/25 (subject to the D-11 load caveat). |
+| 5. Exact-cover property test | **Green** | 7/7. |
+| 6. Handoff, CHANGELOG, README pointer | **Not verified by this run** | Task P7.10 / controller. |
+
+### Rerun #2: open items
+
+| ID | Status | Detail |
+|---|---|---|
+| D-1, D-4 | **FIXED** (earlier) | `b1da763`, `c1ff642`. |
+| D-8 | **FIXED** as erratum A11 | Unchanged since rerun #1. |
+| D-8c | **FIXED** as erratum A13 (`a8e684c`, `1b986d2`, `cc12e58`, `37f0997`); task review Approved | **A13 form ratification pending (owner).** |
+| D-A, D-B, D-C, D-D | **FIXED** | Unchanged since rerun #1. |
+| D-9 | **FIXED** as clarification erratum A12 (`fdbaf3a`, `bc432b6`) | Engine unchanged. |
+| PD-1..PD-4 | **FIXED** (`bc432b6`) | Re-verified in Step 3. |
+| D-8b (ledger term) | **OPEN (owner): form change needed** | Unsound in form; the defaults can produce unreadable sets. Standing todo `nodeFactor.ledgerDiagnostic.test.mjs:246`. |
+| D-10 (High; P3 producer / P5 schema) | **OPEN (owner)** | Per-model 10,000 root cap in the schema, no producer guard; reachable at defaults. Standing todo `rootCap.producerReader.test.mjs:123`. |
+| D-11 (collision library) | **OPEN (owner)** | `CollisionWorld.js:2231` injected-`now` omission → load-dependent `caveated` + dropped pair. Pre-P7, outside the core. |
+| D-12 (collision library) | **OPEN (owner)** | `ContainmentModeQuery` real-clock default scheduler flake. Pre-P7, outside the core. |
+| A13-form ratification | **OPEN (owner)** | Closed expression of `maxUnitIdsPerDiagnostic` vs a flat constant. |
+| D-2, D-3, D-5, D-6, D-7 | **OPEN, unchanged** | As in the rerun #1 table. |
+| Plan/doc errata | **OPEN** | `p5-result-set.md` l.85/l.1444 and `p8-derivations.md` l.116 omit `count`; stale "1,000,000 results" comments at `clashtest/results/resultSetSchema.js:324` and `clashtest/results/validateResultSet.js:1482`; `task-P7.8-brief` l.258 scratch. P-5 above. |
+| Review minors | **Deferred** | As in rerun #1. |
+| P6 carry-overs | Unchanged | §7.1/H7.2/AC-3 diagnostics-overflow spec gate; `Run.js` perf items. |
+
+**Open gates, unchanged:** G-CAL, G-EC, G-OQ4, G-OQ16, G-REMOTE. The AC-16 (iii)/(iv) `migration-failed` deferral stays owner-accepted and non-blocking.
+
+### Rerun #2: git state
+
+- **Branch:** `feature/federated-clash-test-core-engine`. **HEAD:** `56d591a4f34402dd0286e4603c85baff82898d84`.
+- **`git status --short` at rerun #2 start:** empty (clean).
+- **After rerun #2:** the only change is ` M docs/reviews/2026-09-24-federated-clash-test-core-p7-acceptance-run.md` (this file). Nothing was committed.
+
+### Verdict (rerun #2 at `56d591a`)
+
+P7 implementation complete; owner-ordered fixes applied and reviewed; NOT accepted — open owner decisions: D-8b (ledger form), D-10, D-11/D-12, A13 ratification, deferred notes — and the independent Work review + targeted adjudication is required before P8.
+
+Honest limits of this verdict: D-8b means the provisional **defaults themselves** can produce result sets the engine cannot read (an R21-2 gap that remains), and D-10 means an engine run **at defaults** can seal a set its own reader rejects.
+
+---
+
+## Rerun after targeted fixes (D-8/D-A/D-B/D-C/D-D) — rerun #1, kept as evidence
 
 ### What changed since the original record
 
@@ -26,7 +149,7 @@ The owner authorized these fixes (owner rulings #3, 2026-09-24). Each was landed
 - **D-9.** A targeted adjudication exists: `docs/reviews/2026-09-24-federated-clash-test-core-p7-d9-ac18d-adjudication.md`, verdict **A**. The "single call" is a test mechanism, and F3 satisfies the invariant's intent. Its proposed wording edits were **not applied**, and the owner decision is pending.
 - **Tables and declarations unchanged.** `git diff ba46e66..HEAD` shows that the P7 plan's AC traceability table (l.2000–2033) and every phase's `Create`/`- Test:` declarations are unchanged. The P7 plan changed only at l.1783 and l.2130 (A11 arithmetic).
 
-### Rerun Step 1: full suite, three runs, at `e0be33a`
+### Rerun Step 1: full suite, three runs, at `e0be33a` **[SUPERSEDED — see rerun #2]** (now 2530 / 2527 / 0 fail / 3 todo)
 
 Command: `npm test`, three times back to back.
 
@@ -37,11 +160,11 @@ Command: `npm test`, three times back to back.
 | 3 | 0 | 2514 | 2513 | 0 | 0 | 0 | 1 | 23982.54 |
 
 - The TAP plan line is `1..2472`. Each run has exactly one `not ok`, and it is the `# TODO` below. **There are no failing test names to report.**
-- **Remaining `test.todo`s: 1, as expected.** It is the pre-existing ContainmentQuery known gap, `test/query/ContainmentQuery.classifyPoint.test.mjs:138` (`KNOWN GAP (tracked separately, not fixed by Task 6): extreme single-geometry aspect ratio (max/min local extent = 2,000,000:1) breaks both mergeDistance and surfaceEpsilon`). The five P7 standing todos (D-8, D-A, D-B, D-C, D-D) are gone, and a grep of `test/` confirms that no other `test.todo` or `todo: true` exists.
+- **Remaining `test.todo`s: 1, as expected.** **[SUPERSEDED — see rerun #2]** (3 at `56d591a`: D-8b, D-10 and this one) It is the pre-existing ContainmentQuery known gap, `test/query/ContainmentQuery.classifyPoint.test.mjs:138` (`KNOWN GAP (tracked separately, not fixed by Task 6): extreme single-geometry aspect ratio (max/min local extent = 2,000,000:1) breaks both mergeDistance and surfaceEpsilon`). The five P7 standing todos (D-8, D-A, D-B, D-C, D-D) are gone, and a grep of `test/` confirms that no other `test.todo` or `todo: true` exists.
 - **Duration** rose from about 13.7 s to about 24 s. Most of the increase comes from the promoted `R21-2 (D-8): …` test in `maximumShape.test.mjs`, which took **12.3 s** in run 1. It has no wall-clock assertion (G-CAL). The renamed `nodeFactor.test.mjs` took 8.6 s when run on its own here.
 - **Opt-in tiers.** `CLASHTEST_AC12_TIERS=all node --test test/clashtest/integration/maximumShape.test.mjs` gave exit 0, **10 tests, 10 pass, 0 fail, 0 todo, 61,558.55 ms**. It covered the `scaled`, `ledger` and `results` tiers, plus the R21-2 worst-case test.
 - **§21.3 caveats, unchanged.** The run was not from a clean checkout: `docs/handoffs/latest.md` is modified and `docs/reviews/…-p7-d9-ac18d-adjudication.md` is untracked. Both are docs-only and no test reads them. No credentials were used and no server was started. Network isolation was not independently enforced.
-- **The earlier unidentified transient failure did not recur.** The rerun made 3 full-suite runs and 13 extra runs of the real-world pair (below), and none failed. One Step 2 attempt exited 1 because of a harness artifact, not a test failure. A zsh loop passed the two file paths as a single unsplit argument, so `node --test` reported `Could not find '<a> <b>'`. The artifact was reproduced deliberately, and the correctly split command passed 12 times out of 12. This observation item stays **open and unidentified**.
+- **The earlier unidentified transient failure did not recur.** The rerun made 3 full-suite runs and 13 extra runs of the real-world pair (below), and none failed. One Step 2 attempt exited 1 because of a harness artifact, not a test failure. A zsh loop passed the two file paths as a single unsplit argument, so `node --test` reported `Could not find '<a> <b>'`. The artifact was reproduced deliberately, and the correctly split command passed 12 times out of 12. This observation item stays **open and unidentified**. **[SUPERSEDED — see rerun #2]** (identified as D-11/D-12 in the flake record `56d591a`)
 
 ### Rerun Step 2: named suites, run individually
 
@@ -57,16 +180,16 @@ The real-world pair went from 18 pass / 4 todo to **22 pass / 0 todo**. The D-A,
 ### Rerun Step 3: AC traceability walk, repeated mechanically
 
 - **(a) Paths exist.** The brief's exact command printed nothing. All **57** distinct paths (from **94** citations) resolve. **Pass.**
-- **(b) Owners.** The brief's literal command still sees only the phase `Create` rows that name a file (62 matching lines). It still misses P3's and P5's glob-plus-`- Test:` declarations, so **PD-4 is still open.** The extended walk was re-run by script: for each citation, it took the nearest `\bP[0-7]\b` on the row, then searched that phase file's `Create` and `- Test:` lines. Result: **94/94 attributed correctly, 0 mismatches.**
+- **(b) Owners.** The brief's literal command still sees only the phase `Create` rows that name a file (62 matching lines). It still misses P3's and P5's glob-plus-`- Test:` declarations, so **PD-4 is still open.** **[SUPERSEDED — see rerun #2]** The extended walk was re-run by script: for each citation, it took the nearest `\bP[0-7]\b` on the row, then searched that phase file's `Create` and `- Test:` lines. Result: **94/94 attributed correctly, 0 mismatches.**
 - **(c) Titles.** All 37 `::` citations were re-checked by script against the file text and against run 1's `ok` lines.
   - 22 match verbatim.
   - 7 pass with the same recorded tolerances as before: substring or prefix matches, a template-literal title, and `\'` escapes.
-  - **8 still fail the verbatim rule: PD-1 (×2), PD-2 (×1) and PD-3 (×5).**
+  - **8 still fail the verbatim rule: PD-1 (×2), PD-2 (×1) and PD-3 (×5).** **[SUPERSEDED — see rerun #2]** (0 at `56d591a`)
   - Every lower-phase verification-row id still exists, and every cited file ran in Step 1 with 0 failures.
 - **AC-16.** The named exception is still **ACCEPTED**. Its reachable arms and the reserved-member assertion are in `startRun.test.mjs`, which passes. The walk found no `definitionMigrations` option or sentinel, and no "needs owner confirmation" / "STILL OPEN" wording.
 - **AC-19.** The *Deferred* cell still claims only the `compareResultSets` sub-conjuncts. **Confirmed** (modulo PD-3).
 
-**Plan defects re-verified. All four are still open; the plan is unedited.**
+**Plan defects re-verified. All four are still open; the plan is unedited.** **[SUPERSEDED — see rerun #2]** (all four fixed in `bc432b6`)
 
 | ID | Still open? | Current evidence |
 |---|---|---|
@@ -90,11 +213,11 @@ The real-world pair went from 18 pass / 4 todo to **22 pass / 0 todo**. The D-A,
 
 | AC row | Why | Disposition |
 |---|---|---|
-| AC-18 (d) | **D-9.** The adjudication verdict is A, but the proposed wording edits (plan l.1673/l.2030; spec AC-18(d) l.1495) are not applied, and the owner has not chosen a reading. Both cited tests pass. | **Owner decision pending.** |
-| AC-11 / AC-12 universal ceiling conjunct | **D-8b / D-8c** bounded-evidence gates. The ledger term is unsound in form, and the diagnostic factor is 12 against a measured 20–88. | **Owner decision** (see the assessment below). |
-| AC-6, AC-19 (c), AC-19 (b′)/(d′), AC-21 | PD-1, PD-3 and PD-2 citation defects. The behaviour passes, but the verbatim rule fails. | Plan wording edits proposed (P-1..P-3); **plan not edited**. |
+| AC-18 (d) **[SUPERSEDED — see rerun #2]** | **D-9.** The adjudication verdict is A, but the proposed wording edits (plan l.1673/l.2030; spec AC-18(d) l.1495) are not applied, and the owner has not chosen a reading. Both cited tests pass. | **Owner decision pending.** |
+| AC-11 / AC-12 universal ceiling conjunct **[SUPERSEDED — see rerun #2]** (D-8c fixed by A13; D-8b and D-10 open) | **D-8b / D-8c** bounded-evidence gates. The ledger term is unsound in form, and the diagnostic factor is 12 against a measured 20–88. | **Owner decision** (see the assessment below). |
+| AC-6, AC-19 (c), AC-19 (b′)/(d′), AC-21 **[SUPERSEDED — see rerun #2]** | PD-1, PD-3 and PD-2 citation defects. The behaviour passes, but the verbatim rule fails. | Plan wording edits proposed (P-1..P-3); **plan not edited**. |
 
-**Plan wording edits needed (proposals only; not applied):**
+**Plan wording edits needed (proposals only; not applied):** **[SUPERSEDED — see rerun #2]** (P-1..P-4 and P-6 applied; P-5 and P-7 still open)
 
 - **P-1 (PD-1).** In AC-6 and AC-19 (c), cite ``::determinism: 10 runs on one world and 10 on fresh worlds agree (AC-6), <mode>`` (×4, template title) in place of the description.
 - **P-2 (PD-2).** In AC-21 (and P7.8 Step 17 text, plan l.1705), replace the cited title with the two shipped titles: arm (i) `world disposal mid-run seals failed, and the engine makes no further library call (AC-21 (i))` and arm (ii) `D-C (P6): world disposal with a cancel pending inside a planning slice seals failed, not cancelled (AC-21 (ii))`.
@@ -111,9 +234,9 @@ The real-world pair went from 18 pass / 4 todo to **22 pass / 0 todo**. The D-A,
 
 | DoD item | Status at `e0be33a` | Evidence / honest limit |
 |---|---|---|
-| 1. P0–P7 phase acceptance checklists pass (signed) | **Partly verifiable; not signed by this run** | Unchanged from the original run. In addition, **code changed after phase acceptance**: P0 options (D-8, `e016796`), P4 (D-4, `c1ff642`), P5 (D-A, `7514d54`) and P6 (D-1 `b1da763`, D-B `842c637`, D-D `ba48c7e`, D-C `b2c33b4`/`4d9d307`). So the P0/P4/P5/P6 acceptance checklists **predate these fixes**. Each fix was task-reviewed and Approved, but no phase checklist was re-signed. |
-| 2. `npm test` green, clean checkout, no credentials/network | **Green, with the same caveats** | 3× 2514 tests / 2513 pass / 0 fail / 1 todo. The working tree is not clean (docs-only), and network was not isolated. |
-| 3. Every in-scope §22 AC mapped to a passing named test; excluded ACs listed with owner | **Not met as written** | Passes (a) and (b, extended) are green. Pass (c) still has PD-1..PD-3, and PD-4 is still open. The formerly todo-dependent conjuncts now pass, but the D-D/D-A/D-B/R21-2 regressions are not cited in the table (P-5). AC-18 (d) awaits the owner (D-9). The AC-11/12 universal ceiling conjunct is caveated by D-8b/D-8c. The excluded-AC list and owners are unchanged from the original Step 4. |
+| 1. P0–P7 phase acceptance checklists pass (signed) | **Partly verifiable; not signed by this run** **[SUPERSEDED — see rerun #2]** (caveat replaced by the owner ruling on superseding evidence) | Unchanged from the original run. In addition, **code changed after phase acceptance**: P0 options (D-8, `e016796`), P4 (D-4, `c1ff642`), P5 (D-A, `7514d54`) and P6 (D-1 `b1da763`, D-B `842c637`, D-D `ba48c7e`, D-C `b2c33b4`/`4d9d307`). So the P0/P4/P5/P6 acceptance checklists **predate these fixes**. Each fix was task-reviewed and Approved, but no phase checklist was re-signed. |
+| 2. `npm test` green, clean checkout, no credentials/network | **Green, with the same caveats** **[SUPERSEDED — see rerun #2]** | 3× 2514 tests / 2513 pass / 0 fail / 1 todo. The working tree is not clean (docs-only), and network was not isolated. |
+| 3. Every in-scope §22 AC mapped to a passing named test; excluded ACs listed with owner | **Not met as written** **[SUPERSEDED — see rerun #2]** | Passes (a) and (b, extended) are green. Pass (c) still has PD-1..PD-3, and PD-4 is still open. The formerly todo-dependent conjuncts now pass, but the D-D/D-A/D-B/R21-2 regressions are not cited in the table (P-5). AC-18 (d) awaits the owner (D-9). The AC-11/12 universal ceiling conjunct is caveated by D-8b/D-8c. The excluded-AC list and owners are unchanged from the original Step 4. |
 | 4. Differential = brute force, 4 modes × 4 selections | **Green** | 25/25. |
 | 5. Exact-cover property test | **Green** | 7/7. |
 | 6. Handoff, CHANGELOG, README pointer | **Not verified by this run** | Task P7.10 / controller. |
@@ -128,8 +251,8 @@ The real-world pair went from 18 pass / 4 todo to **22 pass / 0 todo**. The D-A,
 | D-D (P6) | **FIXED** `ba48c7e`, Task Z review Approved | Its regression test passes. |
 | D-8 (P0 / spec §13.6) | **FIXED** as spec erratum A11: `e016796`, `ab01fcd`, `03fdf52`, `e0be33a`. Task X review Approved. | The 956,824 ceiling was independently re-derived. |
 | D-8b (ledger term) | **OPEN: bounded-evidence gate** | See the evidence record §10 and the assessment below. |
-| D-8c (diagnostic factor) | **OPEN: bounded-evidence gate** | Same as D-8b. A fixed factor of 88 would put the defaults at 16,445,536 > 16M. |
-| D-9 (AC-18 d reading) | **OPEN: adjudicated A, wording edits proposed, awaiting owner** | Record `…-p7-d9-ac18d-adjudication.md` (untracked at `e0be33a`). |
+| D-8c (diagnostic factor) | **OPEN: bounded-evidence gate** **[SUPERSEDED — see rerun #2]** (FIXED as A13; form ratification pending) | Same as D-8b. A fixed factor of 88 would put the defaults at 16,445,536 > 16M. |
+| D-9 (AC-18 d reading) | **OPEN: adjudicated A, wording edits proposed, awaiting owner** **[SUPERSEDED — see rerun #2]** (FIXED as A12) | Record `…-p7-d9-ac18d-adjudication.md` (untracked at `e0be33a`). |
 | D-2 | Open, unchanged | `libraryExclusions: []` provenance deviation (R-P7-1). |
 | D-3 | Open, unchanged | The `recordRef` cap is 256 in P5 and 512 in the spec. |
 | D-5 | Open, unchanged (low) | `discardRun` from a synchronous `finalizing` listener reports `done.persistence {skipped, attempt:0}`. |
@@ -138,10 +261,10 @@ The real-world pair went from 18 pass / 4 todo to **22 pass / 0 todo**. The D-A,
 | Plan erratum (Task Y) | Open | P-7 above: `p5-result-set.md` l.85/l.1444 and `p8-derivations.md` l.116 omit `count`. |
 | Stale production comments (Task X M2) | Open, deferred | `clashtest/results/resultSetSchema.js:324` and `clashtest/results/validateResultSet.js:1482` still say "1,000,000 results" (re-verified). |
 | Review minors | Deferred | The "Minors"/"minor (deferred)" entries across `progress.md` (Tasks P7.2–P7.10, P7.8a/b, FIX-D1D4, X, Y, Z). |
-| Unidentified transient suite failure | Open observation | 0 recurrences in this rerun. |
+| Unidentified transient suite failure | Open observation **[SUPERSEDED — see rerun #2]** (identified: D-11/D-12) | 0 recurrences in this rerun. |
 | P6 carry-overs | Unchanged | §7.1/H7.2/AC-3 diagnostics-overflow spec gate; `Run.js` perf items. |
 
-**Assessment of whether D-8b/D-8c block the acceptance run. This is the owner's call.**
+**Assessment of whether D-8b/D-8c block the acceptance run. This is the owner's call.** **[SUPERSEDED — see rerun #2]** (D-8c fixed; D-8b and the new D-10 remain, and the D-8b evidence now shows the defaults themselves can produce unreadable sets)
 - On executable evidence, they do **not** block it. No test fails because of them. The full suite, the opt-in tiers (10/10) and the R21-2 worst-case round trip all read back. The only D-8b/D-8c assertions are the two single-record `OPEN GATE` findings in `nodeFactor.test.mjs`, and those pass by pinning the unsound behaviour.
 - What they leave unproven is the **universal** R21-2 claim and the AC-11/AC-12 conjunct "at each hard ceiling that option validation accepts" for ledger- and diagnostic-heavy option sets. No whole-set contradiction test exists yet in either direction (evidence record §10).
 - This record therefore reads AC-11/AC-12 as satisfied for the results-dominated form and at the defaults and tiers, **with a scoped D-8b/D-8c caveat**. Whether that caveat blocks P7 acceptance is **the owner's decision**, not this run's.
@@ -311,7 +434,7 @@ I signed nothing that I did not verify. The plan checkboxes were left as they ar
 
 ## Open defects and owner decisions
 
-**[SUPERSEDED — see rerun]** for D-A, D-B, D-C, D-D and D-8, which are now FIXED. The other rows still stand. Sources: `.superpowers/sdd/p7-engine-integration/progress.md` and `docs/reviews/2026-09-24-federated-clash-test-core-p7-d8-node-factor-evidence.md`. Line numbers were re-checked at `82245b4` where noted.
+**[SUPERSEDED — see rerun]** for D-A, D-B, D-C, D-D and D-8, which are now FIXED. **[SUPERSEDED — see rerun #2]** for D-8c (FIXED as A13) and D-9 (FIXED as A12). The other rows still stand. Sources: `.superpowers/sdd/p7-engine-integration/progress.md` and `docs/reviews/2026-09-24-federated-clash-test-core-p7-d8-node-factor-evidence.md`. Line numbers were re-checked at `82245b4` where noted.
 
 | ID | Owner phase | Location | One line |
 |---|---|---|---|
@@ -349,6 +472,6 @@ The P6 carry-overs are unchanged: the §7.1/H7.2/AC-3 diagnostics-overflow spec 
 - **`git status --short` when the run started:** ` M docs/handoffs/latest.md`, the controller's uncommitted edit, which this run did not touch.
 - **After this record:** the only addition is the untracked `docs/reviews/2026-09-24-federated-clash-test-core-p7-acceptance-run.md`. Nothing was committed.
 
-## Final verdict (rerun at `e0be33a`)
+## Final verdict (rerun at `e0be33a`) **[SUPERSEDED — see rerun #2]**
 
 P7 implementation complete; targeted fixes applied and reviewed; NOT accepted — owner decisions pending (D-8b/D-8c gates, D-9, deferred notes) and the independent Work review + targeted adjudication is required before P8.
