@@ -289,7 +289,7 @@ async function planStage(run) {
   // §13.2: the admission baseline is read at the moment the leases are held, i.e. now.
   run.admissionBaseline = keys.map((modelKey, i) => ({
     modelKey,
-    epochInstanceCount: run.spec.world.getEpochCollisionInstanceCount(run.snapshot.bindings[i].lease),
+    epochInstanceCount: run.spec.world.getEpochCollisionInstanceCount(run.snapshot.bindings[i].lease.epoch),
   }));
   if (run.cancelRequested !== null) return run.cancelPlanning();
 

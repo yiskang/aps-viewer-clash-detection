@@ -82,7 +82,8 @@ export function createPlacementRegistry(first = {}, second = {}) {
     if (entry === undefined || !entry.alive) return null;
     if (entry.lease === null) {                            // lazy admission, cached (P1 decision 2)
       leaseSeq += 1;
-      entry.lease = Object.freeze({ leaseId: `lease-${leaseSeq}`, modelKey: entry.modelKey });
+      // `epoch`: the real CollisionWorld lease's own field (a NUMBER); FIX-D1 admission-baseline reads it.
+      entry.lease = Object.freeze({ leaseId: `lease-${leaseSeq}`, modelKey: entry.modelKey, epoch: leaseSeq });
       admittedKeys.push(entry.modelKey);
     }
     return guard(Object.freeze({
