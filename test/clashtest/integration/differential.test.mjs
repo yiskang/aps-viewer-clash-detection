@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { createClashTestEngine } from '../../../clashtest/index.js';
 import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
 import { canonicalJson } from '../../../clashtest/util/canonical.js';
-import { makeRealWorldFixture, recordFindClashes } from '../support/realWorld.mjs';
+import { makeRealWorldFixture, recordFindClashes, countWorldLifecycleCalls } from '../support/realWorld.mjs';
 import { bruteForceReference, pairIdKey } from '../support/bruteForce.mjs';
 import { assertPairSets } from '../support/pairSets.mjs';
 import { createFakeClock } from '../support/fakeClock.mjs';
@@ -49,19 +49,6 @@ const ownersOf = (spec, modelKey) => Object.keys(spec[modelKey]).map(Number).sor
 const pairKeysOf = (resultSet) => resultSet.results.map((r) => pairIdKey(r.pair)).sort();
 const macrotask = () => new Promise((resolve) => { setImmediate(resolve); });
 
-/** Counting own-property overrides of the world's lifecycle methods (delegating to the real ones). */
-function countLifecycleCalls(world) {
-  const counts = { evictModel: 0, dispose: 0, invalidateModelPlacement: 0 };
-  for (const name of Object.keys(counts)) {
-    const real = Object.getPrototypeOf(world)[name];
-    Object.defineProperty(world, name, {
-      configurable: true, writable: true, enumerable: false,
-      value(...args) { counts[name] += 1; return real.apply(world, args); },
-    });
-  }
-  return counts;
-}
-
 /**
  * Step 8 (AC-3 tail): the library-call conformance of ONE run's recorded calls. Every call uses the
  * `targets` shape, `groupBy: 'dbId'`, exactly the definition's one `mode`, `clearance` present iff the
@@ -89,7 +76,7 @@ function assertLibraryConformance(calls, { mode, clearance }) {
 async function harness(spec = SPEC) {
   const fx = await makeRealWorldFixture({ models: spec });
   const recorder = recordFindClashes(fx.world);
-  const lifecycle = countLifecycleCalls(fx.world);
+  const lifecycle = countWorldLifecycleCalls(fx.world);
   const clock = createFakeClock({ start: Date.UTC(2026, 8, 24) });
   const engine = createClashTestEngine({
     world: fx.world, enumerator: fx.enumerator,
