@@ -183,3 +183,69 @@ Also add an erratum entry to the spec's errata register and §25 dispositions, f
   - add the missing pinning references;
   - soften the claim that no ledger bound exists.
 - G-CAL: no default is frozen by this evidence. The measured charges are shape facts of the meter, not calibration data.
+
+## 9. Applied (owner-approved erratum A11, 2026-09-24)
+
+The owner approved §7 and directed a reconciliation of the `maxResultsPerRun` hard ceiling (derived maximum 956,824 unless disproved). Both were applied. The erratum is recorded as row **A11** in the spec's §25 errata table.
+
+- **Commits:** `e016796` — `fix(clashtest): D-8 — …` (code and tests). The spec, plan and record edits are in the `docs(spec): D-8 erratum A11 …` commit that follows it.
+- **Final constants** (`clashtest/options.js`):
+  - `SCHEMA_NODE_FACTORS = { result: 35, ledger: 12, diagnostic: 12, slack: 65_536 }` (result was 24).
+  - `RUN_OPTION_SPECS.maxResultsPerRun = int(1, 956_824, 100_000)` (the ceiling was 1,000,000; the default is unchanged).
+  - `SCHEMA_MAX_NODES = 35 × 956,824 + 12 × 20,000,000 + 12 × 100,000 + 65,536 = 274,754,376` (was 265,265,536). It is still the `maxCapturedNodes` ceiling.
+  - Provisional-default worst case: `35 × 100,000 + 12 × 1,000,000 + 12 × 10,000 + 65,536 = 15,685,536 ≤ 16,000,000`. No §17.1 default changes.
+- **Independent re-derivation of the ceiling** (the owner's 956,824 is confirmed, not disproved):
+  1. The byte half of R21-2 gives `maxCapturedNodes × BYTES_PER_NODE ≤ maxStoredResultBytes ≤ 1 GiB`. So every engine has `maxCapturedNodes ≤ ⌊1,073,741,824 / 32⌋ = 33,554,432`. The node ceiling `SCHEMA_MAX_NODES` is far higher and does not bind.
+  2. The node half gives `35R + 12L + 12D + 65,536 ≤ maxCapturedNodes ≤ 33,554,432`.
+  3. To make R as large as possible, take D = 0 (the minimum of `maxRetainedDiagnostics`) and L = 3. L = 3 is the smallest legal `maxLedgerRecords`, since `maxLedgerRecords ≥ maxPlanReferences + 2 × maxUnitsPerRun ≥ 1 + 2`.
+  4. That gives `35R ≤ 33,554,432 − 36 − 65,536 = 33,488,860`, so `R ≤ 956,824.57` and **R_max = 956,824**. Check: 35 × 956,824 = 33,488,840 ≤ 33,488,860, and 35 × 956,825 = 33,488,875 > 33,488,860.
+  5. The ceiling is attained. The options `{maxResultsPerRun: 956,824, maxUnitsPerRun: 1, maxPlanReferences: 1, maxLedgerRecords: 3, maxRetainedDiagnostics: 0}` have a worst case of 33,554,412 nodes. They are accepted by `resolveRunOptions` against `limits {maxCapturedNodes: 33,554,432, maxStoredResultBytes: 1 GiB}`, which is asserted in `nodeFactor.test.mjs`.
+  6. On the brief's "16M reader ceiling" wording: the binding cap for the *ceiling* is the 1 GiB / 32 B = 33,554,432-node byte cap, not the 16,000,000 `maxCapturedNodes` default. The 16M default is the operational limit, and the *defaults* still satisfy it (15,685,536). An option at the ceiling needs a raised reader limit, as every results-heavy configuration always has. The ceiling moves with `BYTES_PER_NODE` (G-CAL).
+- **Tests.**
+  - `test/clashtest/integration/nodeFactor.evidence.test.mjs` is renamed to `nodeFactor.test.mjs`. It is now a permanent regression with 9 tests, about 3.3 s.
+    - Every `// EVIDENCE` assertion is flipped: every producer shape is ≤ 35; the factor equals the attained maximum; the §5 contradiction set (40,000 results) now **reads back**, with 1,043,336 measured nodes against a formula of 1,479,936.
+    - A new test pins the ceiling's reachability and maximality, and shows that 1,000,000 is unreachable.
+    - The two (d) single-record findings remain, re-marked `OPEN GATE D-8b` / `OPEN GATE D-8c`.
+  - The standing `test.todo` in `maximumShape.test.mjs` is promoted to a passing `test`. It runs at the **worst-case** result shape: `maximumShapeSet` gained an opt-in `resultShape: 'worst'`, which gives clearance evidence and all four flags, with mB's pair owners in `unreachablePopulation`. The test runs 50,000 results and 500 units, with `maxPlanReferences` raised to 3,000 so the set's plan tables fit. It measures 1,764,246 nodes against a formula of 1,863,536, and the engine read-back is canonical-equal to the stored set. Under factor 24 the same test failed (1,764,245 measured against 1,313,536; the later D-A `count` field adds one node).
+  - `options.defaults.test.mjs`: the title and the literal changed from 24 to 35.
+  - No test or fixture relied on the old 1,000,000 ceiling. The capture test of ceiling + 1 results derives the new ceiling automatically.
+- **Spec edits** (`docs/superpowers/specs/2026-09-20-federated-clash-test-and-results-design.md`):
+  - §13.6 (the `SCHEMA_MAX_NODES` formula and the closed-shape bound, marked "erratum **A11**");
+  - §13.6 (the producer/reader invariant, marked "(A11)");
+  - §17.1.1 (the `maxResultsPerRun` ceiling cell: "956,824 (was 1,000,000; erratum A11)");
+  - §25 (the new A11 row).
+- **Plan edits** (current-value restatements only, each marked A11):
+  - `p0-foundations.md` l.16 (the quoted §13.6 invariant) and l.69 (the exported `SCHEMA_NODE_FACTORS` value);
+  - `interface-reconciliation.md` l.196 (S-P7-2: 274,754,376 ≈ 8.2 GiB);
+  - `p7-engine-integration.md` l.1783 (15,685,536 comment) and l.2130 (the S-P7-2 arithmetic and the defaults figure).
+- **Deliberately not edited.** These are historical executed-step records:
+  - the P0 plan's code listing (l.1280–1281, l.1294) and its test listing (l.1587, l.1600);
+  - the P0 plan's RED-step notes (l.1741–1749);
+  - the P7 plan's step code at l.1792, where at-ceiling options are still refused.
+
+  `docs/handoffs/latest.md` and the acceptance record are outside this task's scope and were not edited. Their D-8 lines, and the handoff's reference to `nodeFactor.evidence.test.mjs`, are for the controller to update. `clashtest/README.md`, `README.md` and `CHANGELOG.md` have no occurrence.
+
+## 10. Separate bounded-evidence gates (D-8b, D-8c) — gates, not fixes
+
+The erratum above does **not** touch the ledger or diagnostic factor. Each remaining item is a gate. It closes only on the evidence named below, followed by an owner decision on the term's form.
+
+**D-8b — ledger term (unsound in form).** Closing it needs all of the following:
+
+1. **A proven per-record node bound, or a proof that none exists in fixed-factor form.** Take every persisted ledger/plan record kind the writer can emit: unit record, source range, explicit target entry, root-table row, root-owner row, unreachable/mixed owner row, scope-digest row, taint entry, overflow reserve and planning gap. For each, give its meter charge as a function of the expanded id counts, derived from `planning/sizing.js` `unitRecordFields` and the P5 `TYPES`. Measure each on the real P3 writer, as §2 did for results.
+2. **A candidate term that bounds the ledger's captured nodes by run options alone.** For example, `a × maxLedgerRecords + b × (expanded ids ≤ f(maxPlanReferences, maxUnitsPerRun, maxSourceDbIdsPerUnit, maxTargetModelsPerUnit, …))`. It needs a written proof that it covers every set `resolveRunOptions` admits, including target-root ids repeated across units.
+3. **An executable contradiction test and its inversion.** Choose options that minimize ledger allowance per expanded id (for example, few ledger records but units of 500 contiguous source roots each, or many units sharing one wide explicit target). Size `maxCapturedNodes` exactly to today's formula, build a validator-clean set, and show `ResultSetTooLargeError` today. Then show that the candidate term either refuses the options or reads the set back.
+4. **The impact of the candidate term** on `SCHEMA_MAX_NODES`, the provisional defaults (they must still fit 16,000,000, or a default change must be named), and the reachable ceilings. This is the same arithmetic as §9.
+
+**D-8c — diagnostic factor (12 vs a measured 20–88).** Closing it needs:
+
+1. **The exact per-diagnostic maximum** under the schema and `validateResultSet`, as a function of `maxUnitIdsPerDiagnostic`. §6 measured 20 / 27 / 83 for 1 / 8 / 64 unit ids and a schema maximum of 88 with `fragment` and `fragments` both present. It must also say whether the validator admits that last combination, the way §3 settled the 35-versus-34 question for results.
+2. **The owner's choice of form.** Either a run-option-dependent factor (for example `24 + maxUnitIdsPerDiagnostic`, which puts `maxUnitIdsPerDiagnostic` into `worstCaseCapturedNodes`), or a fixed 88. In both cases, show the effect on the defaults (10,000 × 32 = 320,000 or 10,000 × 88 = 880,000 against the current 120,000; the defaults then total 15,885,536 or 16,445,536 — the latter exceeds 16,000,000 and would force a default change) and on `SCHEMA_MAX_NODES`.
+3. **An executable contradiction test and its inversion.** Use diagnostic-heavy options (for example `maxResultsPerRun: 1`, `maxRetainedDiagnostics: 100,000`, `maxUnitIdsPerDiagnostic: 64`) with `maxCapturedNodes` sized to today's formula. Build a validator-clean retained-diagnostic set, show today's `ResultSetTooLargeError`, then show the corrected formula accepting it for read-back or refusing it up front.
+
+**Do D-8b / D-8c independently block the P7 acceptance run?** On executable evidence, **no test fails because of them.**
+
+- After this erratum, the full suite (`node scripts/run-tests.mjs`) passes with 2508 tests: 2505 pass, 0 fail, 3 todo. The 3 todos are D-C, D-D and an unrelated library gap.
+- `maximumShape.test.mjs` with the opt-in tiers (`CLASHTEST_AC12_TIERS=all`: `scaled`, `ledger` = 200,000 ledger records, and `results` = 100,000 results) passes 10/10. So the round trips at the provisional defaults and at the configured tiers read back.
+- The only D-8b/D-8c assertions in the suite are the two single-record `OPEN GATE` findings in `nodeFactor.test.mjs`, and they pass by pinning the unsound behaviour.
+
+What they do block is the **universal** R21-2 claim: "every option set `resolveRunOptions` accepts is readable". This is the AC-11/AC-12 conjunct "at each hard ceiling **that option validation accepts**". §6's single-record counterexamples show that ledger-heavy and diagnostic-heavy option sets, with a reader limit sized exactly to the formula, can still be unreadable. No committed test exercises those forms. So the acceptance record should read AC-11/AC-12 as **satisfied for the results-dominated form and at the defaults and tiers, with a scoped caveat for D-8b/D-8c**. Whether that caveat blocks P7 acceptance is an owner decision; the executable evidence does not force it either way.
