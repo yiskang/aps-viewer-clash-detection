@@ -458,25 +458,17 @@ test('world disposal mid-run seals failed, and the engine makes no further libra
     'the only lifecycle call is the test\'s own disposal');
 });
 
-// D-C -- owner question (P6 vs spec AC-21 / §16.7 B): the AC's planning-slice variant ("world disposal
-// ... together with a cancel seals `failed`, not `cancelled`") is unreachable in the shipped engine.
-// P6 documents why (clashtest/run/Run.js:1541-1549, `worldDisposed: false` "DOCUMENTED STAND-IN"): the
-// CollisionWorld surface has no disposal query, so disposal is observable only as a WorldDisposedError
-// thrown by a world call -- and during planning (with an `ElementEnumerator` that does not call the
-// world, as the test-local one and the P2 contract allow) the only world call,
-// `getEpochCollisionInstanceCount` (Run.js:292), precedes enumeration. A cancel + dispose inside a
-// planning slice therefore seals `cancelled` with reasons ['cancel-requested', 'planning:cancelled']
-// and no `world-disposed` anywhere. The §16.7 precedence itself is correct and T1-tested
-// (test/clashtest/run/settlement.test.mjs: planningCause 'world-disposed' + cancel => failed); the
-// disposal is simply never OBSERVED. The preflight (P7.8 F5(ii) risk) rules a mismatch an OWNER
-// QUESTION, never a test loosening. Two remedies for the owner, neither needing a new library API:
-// (a) amend AC-21 to scope the variant to enumerators that observe the world; or (b) reopen P6 for an
-// observation point -- every public CollisionWorld method throws WorldDisposedError once disposed
-// (collision/CollisionWorld.js:790,801), so a boundary probe (e.g. re-reading
-// `getEpochCollisionInstanceCount` when handling a planning cancel or at the planning -> executing
-// boundary) would surface it. Standing reproducer (R-P7-24): FAILS today on `status: cancelled`.
-// FLIP TO test() WHEN THE OWNER RESOLVES IT.
-test.todo('D-C (owner): world disposal with a cancel pending inside a planning slice seals failed, not cancelled (AC-21 (ii))', async () => {
+// D-C -- owning phase P6 (FIXED; this is its regression). Owner ruling 2026-09-24: PRESERVE AC-21 (ii)
+// ("world disposal ... together with a cancel seals `failed`, not `cancelled`") and fix P6. The
+// CollisionWorld surface has no disposal query -- disposal is observable only as a WorldDisposedError
+// thrown by a world call (collision/CollisionWorld.js) -- and during planning (with an
+// `ElementEnumerator` that does not call the world, as the test-local one and the P2 contract allow)
+// the only world call, `getEpochCollisionInstanceCount` for the admission baseline, precedes
+// enumeration; so before the fix a cancel + dispose inside a planning slice sealed `cancelled` with no
+// `world-disposed` anywhere. P6 now probes the world with that same read-only call when planning
+// observes a cancel, and a WorldDisposedError settles the planning gap `world-disposed` (§16.7 B rule
+// 1: failed > cancelled; T1: test/clashtest/run/lifecycle.test.mjs D-C).
+test('D-C (P6): world disposal with a cancel pending inside a planning slice seals failed, not cancelled (AC-21 (ii))', async () => {
   const fx = await makeRealWorldFixture({ models: FOUR_BY_FOUR });
   const recorder = recordFindClashes(fx.world);
   // The ENGINE's own {now, yieldToScheduler}, paired (P0's slicer yields on its own frame budget, so
@@ -502,6 +494,10 @@ test.todo('D-C (owner): world disposal with a cancel pending inside a planning s
   // "Seals failed" is only meaningful against the outcome it outranks: the cancelled shape is absent.
   assert.notEqual(resultSet.outcome.status, 'cancelled', `sealed cancelled: ${JSON.stringify(resultSet.outcome)}`);
   assert.equal(resultSet.outcome.status, 'failed');
+  assert.ok(resultSet.outcome.reasons.includes('planning:world-disposed'), JSON.stringify(resultSet.outcome.reasons));
+  assert.deepEqual(resultSet.ledger.planningGaps.map((g) => g.cause), ['world-disposed']);
+  assert.deepEqual(resultSet.ledger.units, [], 'planning abandoned: no unit ledger');
+  assert.deepEqual(validateResultSet(resultSet, { limits: ENGINE_LIMIT_DEFAULTS }).issues, []);
 });
 
 // ---- Step 17a: F4c -- equal admissionBaseline, different membership (AC-19 b') --------------------

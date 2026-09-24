@@ -1208,3 +1208,93 @@ test('D-D: a cancel at EVERY planning yield seals a valid, readable set with no 
       `yield ${k}: the stored read-back path accepts it`);
   }
 });
+
+// D-C (owner-authorized P6 fix, 2026-09-24; owner ruling: PRESERVE AC-21 (ii), fix P6). AC-21 (ii) /
+// §16.7 B rule 1: world disposal together with a cancel pending inside a planning slice seals `failed`
+// (disposal wins), not `cancelled`. The CollisionWorld surface has no disposal query -- every public
+// method throws `WorldDisposedError` once disposed -- so when planning observes a cancel, P6 probes the
+// world ONCE with a call it already makes (`getEpochCollisionInstanceCount`, read-only, O(1)) and, on
+// `WorldDisposedError`, settles the planning gap `world-disposed` instead of `cancelled`.
+import { WorldDisposedError } from '../../../collision/errors.js';
+
+async function cancelInsidePlanningSlice(configureWorld) {
+  const fx = createRunFixture({ stallAt: 'enumerating', plan: createFakePlan([{ unitId: '1.0', weight: 5 }]) });
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  await fx.reached('enumerating');                         // parked in planRun's checkpoint loop
+  const probes = { calls: 0 };
+  configureWorld(fx.world, probes);                        // after the admission baseline was read
+  const summary = await handle.cancel('user');
+  return { fx, summary, probes };
+}
+
+test('D-C: a disposed world with a cancel pending inside a planning slice seals failed:world-disposed (AC-21 (ii))', async () => {
+  const { fx, summary, probes } = await cancelInsidePlanningSlice((world, p) => {
+    world.getEpochCollisionInstanceCount = () => { p.calls += 1; throw new WorldDisposedError(); };
+  });
+  assert.equal(probes.calls, 1, 'premise: the boundary probe ran once');
+  assert.equal(summary.status, 'failed', 'disposal outranks the cancel (§16.7 B rule 1)');
+  assert.equal(summary.resultSet.outcome.coverage, 'partial');
+  assert.deepEqual(summary.resultSet.ledger.planningGaps.map((g) => g.cause), ['world-disposed']);
+  assert.deepEqual(summary.resultSet.ledger.units, [], 'planning is abandoned; no unit ledger');
+  assert.ok(summary.resultSet.outcome.reasons.includes('planning:world-disposed'), JSON.stringify(summary.resultSet.outcome.reasons));
+  assert.ok(summary.resultSet.outcome.reasons.includes('cancel-requested'), 'the cancel is still recorded');
+  assert.ok(!summary.resultSet.outcome.reasons.includes('planning:cancelled'));
+  assert.deepEqual(fx.executor.startedUnits, []);
+  assert.deepEqual(fx.world.destructiveCalls, [], 'P6 never evicts, disposes or invalidates');
+});
+
+test('D-C: a LIVE world with a cancel pending inside a planning slice still seals cancelled', async () => {
+  const { summary, probes } = await cancelInsidePlanningSlice((world, p) => {
+    const read = world.getEpochCollisionInstanceCount.bind(world);
+    world.getEpochCollisionInstanceCount = (epoch) => { p.calls += 1; return read(epoch); };
+  });
+  assert.equal(probes.calls, 1, 'premise: the boundary probe ran once');
+  assert.equal(summary.status, 'cancelled');
+  assert.deepEqual(summary.resultSet.ledger.planningGaps.map((g) => g.cause), ['cancelled']);
+  assert.ok(!summary.resultSet.outcome.reasons.includes('planning:world-disposed'));
+});
+
+test('D-C: a probe error OTHER than WorldDisposedError, or a world double without the method, does not misclassify', async () => {
+  for (const [label, configure] of [
+    ['probe throws TypeError', (world, p) => { world.getEpochCollisionInstanceCount = () => { p.calls += 1; throw new TypeError('boom'); }; }],
+    ['probe throws a different named library error', (world, p) => {
+      world.getEpochCollisionInstanceCount = () => { p.calls += 1; throw Object.assign(new Error('x'), { name: 'ModelEvictedError' }); };
+    }],
+    ['method absent on the double', (world) => { delete world.getEpochCollisionInstanceCount; }],
+  ]) {
+    const { summary } = await cancelInsidePlanningSlice(configure);
+    assert.equal(summary.status, 'cancelled', label);
+    assert.deepEqual(summary.resultSet.ledger.planningGaps.map((g) => g.cause), ['cancelled'], label);
+    assert.ok(!summary.resultSet.outcome.reasons.includes('planning:world-disposed'), label);
+  }
+});
+
+test('D-C x D-D: a cancel + disposal at the planner\'s FINAL yield seals failed:world-disposed with no unit ledger, valid and readable', async () => {
+  const limits = resolveEngineLimits();
+  const runAt = async (cancelAtYield, dispose) => {
+    const fx = realPlannerFixture({ runOptions: { maxSourceDbIdsPerUnit: 1 }, limits: { aggregationSliceMaxItems: 1 } });
+    const { handle, begin } = createRun(fx.spec);
+    const box = { yieldsBeforeFirstUnit: null };
+    const inner = fx.spec.executor;
+    fx.spec.executor = (...args) => { box.yieldsBeforeFirstUnit ??= fx.clock.yieldCount; return inner(...args); };
+    fx.clock.onYield((n) => {
+      if (n !== cancelAtYield) return;
+      if (dispose) fx.world.getEpochCollisionInstanceCount = () => { throw new WorldDisposedError(); };
+      void handle.cancel('user');
+    });
+    begin();
+    return { fx, summary: await handle.done, box };
+  };
+  const last = (await runAt(null, false)).box.yieldsBeforeFirstUnit;   // the plan:built yield (the D-D window)
+  const { fx, summary } = await runAt(last, true);
+  assert.deepEqual(fx.executor.startedUnits, []);
+  assert.equal(summary.status, 'failed');
+  assert.deepEqual(summary.resultSet.ledger.planningGaps.map((g) => g.cause), ['world-disposed']);
+  assert.deepEqual(summary.resultSet.ledger.units, [], 'no unit ledger');
+  assert.ok(summary.resultSet.outcome.reasons.includes('cancel-requested'));
+  assert.deepEqual(issuesOf(summary.resultSet), []);
+  await assert.doesNotReject(readResultSet(structuredClone(summary.resultSet), {
+    limits, slicer: createSlicer({ now: () => 0, yieldToScheduler: async () => {}, limits }),
+  }));
+});

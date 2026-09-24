@@ -407,8 +407,34 @@ function adoptPlanIntoProgress(run, planResult) {
   run.commit('state');
 }
 
+/**
+ * D-C (owner-authorized P6 fix, 2026-09-24; owner ruling: PRESERVE AC-21 (ii)). §16.7 B applies at
+ * "every boundary (including planning slices)", and rule 1 makes a disposed world outrank a cancel
+ * requested in the same slice. The CollisionWorld surface has no disposal query — disposal is
+ * observable only as a `WorldDisposedError` thrown by a world call — and an enumerator need not call
+ * the world at all, so a planning cancel could never see a disposal that happened after the admission
+ * baseline was read. This is the NARROW observation point: when planning settles on a cancel after
+ * the run-start snapshot exists (i.e. the run holds epochs to ask about), probe the world ONCE with
+ * the same read-only O(1) call that baseline already makes. ONLY `WorldDisposedError` (by name, as
+ * `planningCauseOf` maps it) counts; any other probe error, or a world double without the method,
+ * leaves the cancel's classification unchanged — the probe can surface disposal, never invent a
+ * failure. A pre-resolution / pre-snapshot cancel has no epoch to probe and is left as it was.
+ */
+function worldDisposedAtPlanningBoundary(run) {
+  const world = run.spec.world;
+  const binding = run.snapshot?.bindings?.find((b) => b !== null);
+  if (binding === undefined || typeof world?.getEpochCollisionInstanceCount !== 'function') return false;
+  try {
+    world.getEpochCollisionInstanceCount(binding.lease.epoch);
+    return false;
+  } catch (err) {
+    return err?.name === 'WorldDisposedError';
+  }
+}
+
 /** `failPlanning(cause)` and `cancelPlanning()` both funnel here so §16.7 order B is applied once. */
 function settlePlanning(run, cause) {
+  if (cause === 'cancelled' && worldDisposedAtPlanningBoundary(run)) cause = 'world-disposed';
   run.settlementState.planningCause = cause;
   // Q2: a cause P6 detected itself (a cancel, a rejected lookup, `model-not-bound`) is a gap too,
   // and `collectReasons` reads the gap list — not `planningCause` alone — for the reasons.
