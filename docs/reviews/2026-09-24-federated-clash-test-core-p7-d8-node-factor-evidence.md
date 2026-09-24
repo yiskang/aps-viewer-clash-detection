@@ -335,6 +335,8 @@ The applied form follows A11's own principle: the count of `unitIds` is a run-op
 
 ### 11.2 D-8b — the ledger factor
 
+> **Update (§12, owner ruling #5, 2026-09-24).** D-8b is **closed** by erratum **A14** ("Proposed forms" #1 below: `unit-range` charged per expanded id). The "OPEN GATE" facts and the standing `test.todo` described in this section were flipped or promoted; see §12.
+
 > Review note (Task A review, minor 6): §11.2(b) bounds unit records by what the *producer* writes (≤ 8 secondary causes, etc.). By the *schema* maximum, `secondaryCauses` can reach 20M and id arrays 10M, so even bound (b) is unsound — this strengthens the D-8b verdict. Review minors 3–5 (old-factor read-back assertion at `maxCapturedNodes` 89,763; the "6,599 refused plan-too-large" claim not asserted; `worstCaseCapturedNodes` (`options.js:226`) yields NaN — failing open — if handed a partial options object lacking `maxUnitIdsPerDiagnostic`, latent only since production passes fully resolved options) are deferred.
 
 **What `maxLedgerRecords` counts** (`planning/ledger.js` `createRecordBudget`; `LEDGER_RECORD_CLASSES`). There is one run-wide counter, `used = planRecords + reserved + discretionary ≤ maxLedgerRecords`, and it has four parts:
@@ -424,3 +426,102 @@ The applied form follows A11's own principle: the count of `unitIds` is a run-op
 - The new file runs in about 2 s: 10 tests, 9 pass, 1 todo. `nodeFactor.test.mjs`, `options.defaults.test.mjs`, `options.test.mjs` and `maximumShape.test.mjs` all pass.
 - `CLASHTEST_AC12_TIERS=all node --test test/clashtest/integration/maximumShape.test.mjs` passes 10/10.
 - The full suite (`node scripts/run-tests.mjs`) gives **2524 total / 2522 pass / 0 fail / 2 todo** (baseline 2514 / 2513 / 0 / 1). The new todo is the D-8b reproducer.
+
+## 12. D-8b applied (owner ruling #5)
+
+**Owner ruling #5 (2026-09-24):** fix the accounting by charging per **expanded** root id ("Proposed forms" #1 of §11.2). No persisted-schema change, no new cap option; the minimum accounting correction so that `plan-too-large` (the existing budget refusal path) fires before the persisted ledger can exceed `SCHEMA_NODE_FACTORS.ledger (12) × maxLedgerRecords`. Recorded as spec erratum **A14**.
+
+- **Base:** HEAD `200f745`. **Commits:** `f3685ab` (`fix(clashtest)`, production), `5855a2b` (`test(clashtest)`), the `docs(spec): erratum A14 …` commit (spec §6.5.1 and §25), and the `docs(reviews): …` commit that carries this section.
+
+### 12.1 The change
+
+`clashtest/planning/sizing.js` `rangeRecordCount(unit)` — the one function that computes the `unit-range` charge — now returns
+
+`|source root ids| + Σ over targets (1 for a whole-model sentinel, |root ids| for an explicit entry)`
+
+instead of `|sourceRanges| + Σ (1 | |target ranges|)`. Every production path supplies a charge derived through it, so nothing else changed:
+
+- initial units and `target-too-large` gaps: `planner.js` `assembleSteps` → `admitPlanBlock([['unit-record', n], ['unit-range', total], …])` (step 4);
+- split children: `splitting.js` `planSplit` → `unitRecordFields(plan, child).ranges` → `ledger.tryRecordSplit` → `admitRuntime('split', 2 + c0.ranges + c1.ranges)`. A child copies its parent's targets (`splitting.js` `child`), and its copied target ids are charged again, exactly as they are persisted again.
+
+`ranges` is a transient field (`normalizeUnitFields` validates and drops it), so no persisted field or serialization changes. A run whose runtime admissions are unaffected seals a byte-identical ledger; only the budget counters (`planRecords`, `used`) differ. A plan that still fits but sits nearer the budget has less discretionary runtime capacity, so it may collapse taints into `taint-overflow`, refuse a split, or set `budgetExhausted` / `firstRefusalUnitId` earlier; those are the §6.5.1 conservative fallbacks. The unit-record and reserved-slot classes are unchanged. `ledger.tryRecordSplit` itself trusts the caller's `children[].ranges`; its only production caller (`planSplit`) derives them through `unitRecordFields`.
+
+### 12.2 Proof: every persisted unit record is ≤ 12 nodes per charged record
+
+Take any unit record the writer persists (initial unit, gap, split parent or child). Let *s* = its source root ids, *m* = its whole-model target entries, and *r* explicit target entries with *n*₁ … *n*ᵣ root ids. By §11.2 (measured on the real writers) its meter charge is
+
+`N = 17 + s + 3m + Σᵢ (4 + nᵢ) + k + 6t`,
+
+with *k* ≤ 8 secondary causes (`MAX_SECONDARY_CAUSES`) and *t* taint entries. The budget charges it
+
+- `1` (`unit-record`, or its share of the split block's `2`) + `R` (`unit-range`) with `R = s + m + Σ nᵢ` (A14);
+- one record per non-overflow taint entry (`admitRuntime`), 6 nodes each;
+- its `taint-overflow` entry, if any (6 nodes), in its reserved slot (one per possible unit record, `maxUnitsPerRun`).
+
+Taints are covered by their own records (6 ≤ 12). For the rest:
+
+`12 (1 + R) − (17 + 8 + s + 3m + Σ (4 + nᵢ)) = 11s + 9m + 11 Σ nᵢ − 4r − 13 ≥ 11s + 9m + 7r − 13` (each *n*ᵢ ≥ 1).
+
+Every writer-produced unit has *s* ≥ 1 (`packSource` chunks and bisected halves are non-empty) and *m* + *r* ≥ 1 (a slice, a gap entry and each half of a target cut hold at least one entry, and each explicit entry at least one root). So the difference is ≥ 11 + min(9, 7) − 13 = **5 > 0**. The tightest shape is one source id against one whole-model sentinel with 8 causes: 29 nodes for 3 records (36). The reserved slot is not needed for the frame, so it remains free for the overflow taint.
+
+- **Scope.** The proof covers the live planner and split writer paths. The low-level exported ledger methods accept empty id arrays and an arbitrary `ranges` from a direct caller; no production code does that.
+- **Split children** are unit records in their own right and are charged the same way, including their copied target ids. The split parent keeps its record, which was charged when it was admitted.
+- **Gap units** (`target-too-large`) carry all oversize roots of one model and are repeated per source chunk; each gap record is charged its own ids, so the repetition is charged too.
+- **Plain per-id charging (one per sentinel) is a simple sufficient rule, as the ruling selected; it is not claimed to be the mathematical minimum.** It closes the proof without the reserved slot and without any extra per-entry frame charge. Some sentinel-sensitive charge is necessary: without it, a unit with several whole-model sentinels would exceed its allowance. A single sentinel would still fit if the reserved slot were counted (36 ≥ 29 + 6).
+
+Together with §11.2's per-kind table (every other charged kind ≤ 11 nodes per record under producer shapes) and the uncharged per-model wrappers and frame in the slack, the persisted ledger is bounded by `12 × used ≤ 12 × maxLedgerRecords` plus slack. The scope is the same as §11.2's: producer shapes. The schema maxima of `secondaryCauses` and of hierarchy-example `ownerDbIds` (Task A review note, §11.2) are not addressed by this ruling.
+
+### 12.3 Before / after
+
+| Case | Before (per range) | After (A14, per id) |
+|---|---|---|
+| One unit, 500 source ids × 2,000 target ids in 2 ranges | `unit-range` 2; planRecords 7,503; 2,521 nodes for 3 records | `unit-range` 2,500; planRecords **10,001** (exact boundary admitted, 10,000 refused `plan-too-large` / `unit-range`, 7,503 refused) |
+| D-8b (c), `RUN_OPTION_DEFAULTS`: 10,000 source chunks × the same 10,000 target ids | `unit-range` 20,000; planRecords 90,001, **admitted**; ledger ≈ 100,220,000 nodes | `unit-range` 100,010,000; **refused** `plan-too-large` (`unit-range`), nothing charged |
+| D-8b (d) options `{maxPlanReferences 6,600, maxLedgerRecords 6,800, maxUnitsPerRun 100, maxSourceDbIdsPerUnit 1}` | admitted; formula 147,171; set measures 221,236 → `ResultSetTooLargeError` | **refused** `plan-too-large`; the plan-less sealed set reads back |
+| Same scenario, re-derived exact boundary | — | cost = 3 × 2,100 + 100 + 100 × (1 + 2,000) = **206,500**; `maxLedgerRecords` 206,700; formula **2,545,971**; the set measures 221,236 and **reads back**. 206,499 is refused `plan-too-large`. |
+| D-8c (d) diagnostic reproducer (1 source id × a whole-model target per unit) | 388 | 388 (ids = ranges; unchanged) |
+
+- **Defaults and ceilings.** No option, default, ceiling or cross-field rule changed, and `worstCaseCapturedNodes` / `SCHEMA_MAX_NODES` are unchanged (15,885,536 and 282,354,376). The `maxLedgerRecords ≥ maxPlanReferences + 2 × maxUnitsPerRun` rule and the reserve proof of §6.5.1 are untouched: they bound record counts, whatever a record stands for.
+- **Cost.** At the defaults a run can now persist about 500,000 unit-record ids (`maxPlanReferences`), minus the table rows. Plans with wide shared targets are refused earlier. This is the ruling's accepted cost.
+
+### 12.4 Tests
+
+`test/clashtest/integration/nodeFactor.ledgerDiagnostic.test.mjs` (12 tests, 0 todo, about 2.5 s):
+
+- (a) the 500 × 2,000 unit's charge is 2,500 (was 2);
+- (b) flipped: five producer shapes (with 8 secondary causes) are each ≤ 12 × (1 + charge), and the charge equals ids + sentinels;
+- (c) flipped: at `RUN_OPTION_DEFAULTS` the real sizer and record budget refuse the plan (`unit-range`, 100,010,000), and `planRecords` is unchanged by the refused block;
+- (e) new: the real `createPlan`, 500 × 2,000 in two ranges, admitted at exactly 10,001, refused at 10,000 and at the old 7,503; the persisted unit is ≤ 12 × its records;
+- (d) flipped: the old 6,600 options are refused `plan-too-large` end to end, and the sealed set reads back;
+- the former `test.todo` "D-8b R21-2 …" is promoted to a passing test at the exact boundary 206,500 (measured 221,236 ≤ 2,545,971; read-back by a fresh engine);
+- new: 206,499 is refused `plan-too-large` end to end.
+
+Expectations changed because they encoded the per-range rule:
+
+- `nodeFactor.test.mjs` D-8 (d): the `OPEN GATE D-8b` assertion (`520 > 12 × 4`) is flipped to `≤ 12 × (1 + 501)`, and pins `rangeRecordCount` = 501.
+- `planning/planner.test.mjs` "unit records and ranges are charged as blocks": 14 → 15 (2 source ids + 1 sentinel = 3, was 2).
+- `planning/sizing.test.mjs` "unitRecordFields is the P5 self-describing form": `ranges` 2 → 4 and 2 → 3.
+- `planning/splitting.test.mjs` "the admission charges 2 + the children's range records": block 6 → 8 (each child: 1 source id + 2 copied target ids).
+- `support/syntheticModels.mjs`: comment only.
+
+No other assertion changed. Small plans whose ranges each hold one root (for example the D-8c reproducer, and every test with single-root sources against whole-model targets) are charged exactly as before. No persisted field changed, so every ledger-digest and sealed-set fixture passes unchanged.
+
+### 12.5 Spec and plans
+
+- Spec §6.5.1: the `maxPlanReferences` class list, the `maxLedgerRecords` class list and the split row of the runtime-class table (each marked A14), plus the §25 row **A14**. Nothing else in the spec was edited.
+- Plans: no plan file restates the per-range rule. `p3-planner.md` says "range records" and `rangeRecordCount` only in historical executed-step listings, which follow the rule of §9 and are not edited. No `p4`/`p6`/`p7` plan or `interface-reconciliation.md` line mentions `unit-range` or range charging.
+- `clashtest/options.js`: its comments do not describe the range charge, so they are not edited.
+
+### 12.6 Internal review
+
+`codex-advisor` (medium, request `20260924-204840-87839-30424`) verified the §12.2 inequality and its premises (*s* ≥ 1, *m* + *r* ≥ 1, *n*ᵢ ≥ 1, *k* ≤ 8, the overflow taint in the reserved slot) on every live writer path, and found no production charge path that bypasses `rangeRecordCount`. It raised three wording corrections, all applied:
+
+- "every charge site" became "every production path", noting that `tryRecordSplit` trusts its caller's `ranges`;
+- "byte-identical for plans that still fit" is now conditioned on unchanged runtime admissions (in the spec's A14 row as well);
+- "per-id is the minimum" became "a simple sufficient rule".
+
+### 12.7 Verification
+
+- `nodeFactor.ledgerDiagnostic.test.mjs` 12/12, `nodeFactor.test.mjs` 9/9; planning, options and node-factor suites together 364/364.
+- `CLASHTEST_AC12_TIERS=all node --test test/clashtest/integration/maximumShape.test.mjs`: 10/10, about 61 s.
+- Full suite (`node scripts/run-tests.mjs`): **2535 total / 2533 pass / 0 fail / 2 todo**. Baseline at `200f745`: 2530 / 2526 / 1 fail / 3 todo. The baseline failure was `test/CollisionWorld.findClashes.test.mjs` "active-range compaction end-to-end", the pre-existing wall-clock flake (see `56d591a`); it did not recur. The removed todo is D-8b's; the remaining two are D-10 and the unrelated library gap.
