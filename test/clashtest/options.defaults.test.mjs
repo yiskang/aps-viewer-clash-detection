@@ -65,7 +65,7 @@ test('maxLedgerRecords default >= maxPlanReferences + 2 x maxUnitsPerRun (reserv
   assert.ok(d.maxLedgerRecords >= d.maxPlanReferences + 2 * d.maxUnitsPerRun);
 });
 
-test('SCHEMA_MAX_NODES is 24 x maxResults + 12 x maxLedger + 12 x maxDiagnostics ceilings + 65,536 (spec 13.6) and bounds maxCapturedNodes', () => {
+test('SCHEMA_MAX_NODES is 35 x maxResults + 12 x maxLedger + 12 x maxDiagnostics ceilings + 65,536 (spec 13.6) and bounds maxCapturedNodes', () => {
   assert.equal(SCHEMA_MAX_NODES,
     SCHEMA_NODE_FACTORS.result * RUN_OPTION_CEILINGS.maxResultsPerRun
     + SCHEMA_NODE_FACTORS.ledger * RUN_OPTION_CEILINGS.maxLedgerRecords
@@ -78,7 +78,7 @@ test('SCHEMA_MAX_NODES is 24 x maxResults + 12 x maxLedger + 12 x maxDiagnostics
 test('PRODUCER/READER INVARIANT at the defaults: an engine never produces a set it cannot read (spec 13.6, R21-2)', () => {
   const worst = worstCaseCapturedNodes(RUN_OPTION_DEFAULTS);
   assert.equal(worst,
-    24 * RUN_OPTION_DEFAULTS.maxResultsPerRun + 12 * RUN_OPTION_DEFAULTS.maxLedgerRecords
+    35 * RUN_OPTION_DEFAULTS.maxResultsPerRun + 12 * RUN_OPTION_DEFAULTS.maxLedgerRecords
     + 12 * RUN_OPTION_DEFAULTS.maxRetainedDiagnostics + 65_536);
   assert.ok(worst <= ENGINE_LIMIT_DEFAULTS.maxCapturedNodes, 'worst-case nodes fit maxCapturedNodes');
   assert.ok(ENGINE_LIMIT_DEFAULTS.maxCapturedNodes * BYTES_PER_NODE <= ENGINE_LIMIT_DEFAULTS.maxStoredResultBytes, 'nodes x bytesPerNode fit maxStoredResultBytes');

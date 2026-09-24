@@ -1,20 +1,19 @@
-// test/clashtest/integration/nodeFactor.evidence.test.mjs
+// test/clashtest/integration/nodeFactor.test.mjs
 //
-// D-8 bounded evidence check (owner instruction 2026-09-24; report:
-// docs/reviews/2026-09-24-federated-clash-test-core-p7-d8-node-factor-evidence.md). READ-ONLY on production and spec:
-// this file only MEASURES what P0's capture meter (`captureData`, clashtest/util/capture.js: every object, array and
-// primitive is ONE node; keys are free) charges for a ClashResult, and shows that the §13.6 producer/reader formula
-// (`worstCaseCapturedNodes`, `SCHEMA_NODE_FACTORS.result = 24`) under-counts it.
+// D-8 permanent regression (erratum A11, spec §13.6 / §17.1.1 / §25; evidence and applied record:
+// docs/reviews/2026-09-24-federated-clash-test-core-p7-d8-node-factor-evidence.md). It MEASURES what P0's capture meter
+// (`captureData`, clashtest/util/capture.js: every object, array and primitive is ONE node; keys are free) charges for a
+// ClashResult and pins that the §13.6 producer/reader formula (`worstCaseCapturedNodes`, `SCHEMA_NODE_FACTORS.result`)
+// covers it: the factor is 35 (was 24), the schema/validator-accepted maximum, and the `maxResultsPerRun` hard ceiling is
+// 956,824 (was 1,000,000), the largest value some engine configuration can accept under the byte half of R21-2.
 //
-// Every assertion below that pins today's contradictory behaviour is marked
-//   // EVIDENCE: documents D-8; flips when the spec erratum lands
-// and is EXPECTED to fail (and be inverted/removed) once the owner-approved erratum changes the factor. Nothing here
-// removes or replaces the standing `test.todo` in maximumShape.test.mjs.
+// The (d) tests are NOT part of the erratum: they pin the still-open D-8b (ledger) and D-8c (diagnostic) findings and are
+// marked `// OPEN GATE D-8b|D-8c: flips only if that gate closes` (see the evidence record's gate definitions).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SCHEMA_NODE_FACTORS, SCHEMA_MAX_NODES, RUN_OPTION_CEILINGS, RUN_OPTION_DEFAULTS, ENGINE_LIMIT_DEFAULTS,
-  worstCaseCapturedNodes, resolveEngineLimits, resolveRunOptions,
+  worstCaseCapturedNodes, resolveEngineLimits, resolveRunOptions, ENGINE_LIMIT_CEILINGS, BYTES_PER_NODE,
 } from '../../../clashtest/options.js';
 import { captureData } from '../../../clashtest/util/capture.js';
 import { projectUnitPairs, createResultAccumulator } from '../../../clashtest/results/resultSet.js';
@@ -27,6 +26,7 @@ import { createEngineWorld } from '../support/engineWorld.mjs';
 import { createFakeClock } from '../support/fakeClock.mjs';
 import { sealedSet, resealed, unit } from '../support/resultSetFixtures.mjs';
 import { maximumShapeSet, ledgerRecordsOf } from '../support/maximumShape.mjs';
+import { canonicalJson } from '../../../clashtest/util/canonical.js';
 
 /** P0's own meter on one value (the same traversal `captureResultSet` charges against `maxCapturedNodes`). */
 const nodesOf = (value) => {
@@ -102,9 +102,8 @@ test('D-8 (a): per-mode producer charge — min 20, producer max 34, shape-depen
     'volume-overlap witness, all producer flags': 29,
     'clearance, all producer flags': 34,
   });
-  // EVIDENCE: documents D-8; flips when the spec erratum lands
-  assert.ok(measured['volume-overlap, witness'] > SCHEMA_NODE_FACTORS.result, 'an ordinary volume result exceeds 24');
-  assert.ok(measured['clearance, no flags'] > SCHEMA_NODE_FACTORS.result, 'every clearance result exceeds 24');
+  // A11: every producer shape is within the corrected factor (it was 24: the ordinary volume result, 26, exceeded it).
+  for (const [shape, nodes] of Object.entries(measured)) assert.ok(nodes <= SCHEMA_NODE_FACTORS.result, `${shape}: ${nodes}`);
 });
 
 test('D-8 (a): schema-legal maximum is 35 (clearance + all four flags) and the ClashResult shape is CLOSED', async () => {
@@ -128,9 +127,9 @@ test('D-8 (a): schema-legal maximum is 35 (clearance + all four flags) and the C
     ['unknown-field-closed-type']);
   assert.deepEqual(structural({ ...legalMax, evidence: { ...legalMax.evidence,
     closestPoints: { first: [0, 0, 0, 0], second: [1, 1, 1] } } }).map((i) => i.code), ['array-length-invalid']);
-  // EVIDENCE: documents D-8; flips when the spec erratum lands
-  assert.equal(SCHEMA_NODE_FACTORS.result, 24);
-  assert.ok(nodesOf(legalMax) - SCHEMA_NODE_FACTORS.result === 11, 'the per-result shortfall at the schema maximum is 11 nodes');
+  // A11: the factor IS the attained schema maximum (tight: no shortfall, no slack).
+  assert.equal(SCHEMA_NODE_FACTORS.result, 35);
+  assert.equal(nodesOf(legalMax), SCHEMA_NODE_FACTORS.result);
 });
 
 test('D-8 (a): a FULL validateResultSet-clean sealed set carries a 35-node ClashResult (reader cannot tell writers apart)', async () => {
@@ -147,39 +146,46 @@ test('D-8 (a): a FULL validateResultSet-clean sealed set carries a 35-node Clash
   assert.deepEqual(validateResultSet(set, { limits: resolveEngineLimits(undefined) }), { ok: true, issues: [] });
   const charges = set.results.map((r) => nodesOf(r));
   assert.equal(Math.max(...charges), 35);
-  // EVIDENCE: documents D-8; flips when the spec erratum lands
-  assert.ok(Math.max(...charges) > SCHEMA_NODE_FACTORS.result);
+  // A11: the reader-side maximum is covered by the factor.
+  assert.ok(Math.max(...charges) <= SCHEMA_NODE_FACTORS.result);
 });
 
-// ---- (b) the worst-case arithmetic at the schema ceilings --------------------------------------------------
+// ---- (b) the worst-case arithmetic at the schema ceilings, and the reconciled maxResultsPerRun ceiling ------------
 
-test('D-8 (b): the result term at the §17.1.1 ceiling is under-counted by 11,000,000 nodes', () => {
+test('D-8 (b): SCHEMA_MAX_NODES and the provisional-default worst case under factor 35', () => {
   const R = RUN_OPTION_CEILINGS.maxResultsPerRun;
-  assert.equal(R, 1_000_000);
-  // EVIDENCE: documents D-8; flips when the spec erratum lands
-  assert.equal(SCHEMA_NODE_FACTORS.result * R, 24_000_000);
-  assert.equal(35 * R, 35_000_000);
-  assert.equal(SCHEMA_MAX_NODES, 265_265_536);
-  // Proposed erratum (result: 35): the schema ceiling and the provisional-default worst case.
-  const proposedSchemaMax = SCHEMA_MAX_NODES + (35 - SCHEMA_NODE_FACTORS.result) * R;
-  assert.equal(proposedSchemaMax, 276_265_536);
+  assert.equal(R, 956_824);
+  assert.equal(SCHEMA_NODE_FACTORS.result * R, 33_488_840);
+  assert.equal(SCHEMA_MAX_NODES, 35 * 956_824 + 12 * 20_000_000 + 12 * 100_000 + 65_536);
+  assert.equal(SCHEMA_MAX_NODES, 274_754_376);
   const defaultsWorst = worstCaseCapturedNodes(RUN_OPTION_DEFAULTS);
-  assert.equal(defaultsWorst, 14_585_536);
-  const proposedDefaultsWorst = defaultsWorst + (35 - SCHEMA_NODE_FACTORS.result) * RUN_OPTION_DEFAULTS.maxResultsPerRun;
-  assert.equal(proposedDefaultsWorst, 15_685_536);
-  assert.ok(proposedDefaultsWorst <= ENGINE_LIMIT_DEFAULTS.maxCapturedNodes, 'defaults still satisfy R21-2 under 35');
-  // Side effect on the reachable region: the byte half of R21-2 caps any engine at
-  // maxCapturedNodes <= floor(maxStoredResultBytes ceiling / BYTES_PER_NODE) = 33,554,432. With the smallest legal
-  // ledger (maxLedgerRecords >= maxPlanReferences + 2 x maxUnitsPerRun = 3) and no diagnostics, the largest
-  // acceptable maxResultsPerRun is 1,395,369 at 24 (the 1,000,000 ceiling is reachable) but 956,824 at 35 (it is not).
-  const byteCap = Math.floor(1_024 * 1024 * 1024 / 32);
-  const maxR = (f) => Math.floor((byteCap - 12 * 3 - SCHEMA_NODE_FACTORS.slack) / f);
-  assert.equal(byteCap, 33_554_432);
-  assert.equal(maxR(24), 1_395_369);
-  assert.equal(maxR(35), 956_824);
+  assert.equal(defaultsWorst, 15_685_536);
+  assert.ok(defaultsWorst <= ENGINE_LIMIT_DEFAULTS.maxCapturedNodes, 'the defaults still satisfy R21-2 under 35');
 });
 
-// ---- (c) the executable contradiction: accepted options, refused read-back ---------------------------------
+test('D-8 (b): the maxResultsPerRun ceiling is exactly the largest value any engine configuration can accept', () => {
+  // The byte half of R21-2 caps every engine at maxCapturedNodes <= floor(maxStoredResultBytes ceiling / BYTES_PER_NODE).
+  const byteCap = Math.floor(ENGINE_LIMIT_CEILINGS.maxStoredResultBytes / BYTES_PER_NODE);
+  assert.equal(byteCap, 33_554_432);
+  // The smallest legal ledger (maxLedgerRecords >= maxPlanReferences + 2 x maxUnitsPerRun = 1 + 2) and no diagnostics.
+  const smallest = { maxUnitsPerRun: 1, maxPlanReferences: 1, maxLedgerRecords: 3, maxRetainedDiagnostics: 0 };
+  const derived = Math.floor((byteCap - SCHEMA_NODE_FACTORS.ledger * 3 - SCHEMA_NODE_FACTORS.slack) / SCHEMA_NODE_FACTORS.result);
+  assert.equal(derived, 956_824);
+  assert.equal(RUN_OPTION_CEILINGS.maxResultsPerRun, derived);
+  // Reachable: options AT the ceiling are accepted by an engine configured at the byte cap.
+  const limits = resolveEngineLimits({ maxCapturedNodes: byteCap, maxStoredResultBytes: ENGINE_LIMIT_CEILINGS.maxStoredResultBytes });
+  const atCeiling = { ...smallest, maxResultsPerRun: RUN_OPTION_CEILINGS.maxResultsPerRun };
+  assert.equal(worstCaseCapturedNodes({ ...RUN_OPTION_DEFAULTS, ...atCeiling }), 33_554_412);
+  assert.equal(resolveRunOptions(atCeiling, limits).maxResultsPerRun, RUN_OPTION_CEILINGS.maxResultsPerRun);
+  // Maximal: one more result could never be readable (and is refused as above-ceiling anyway).
+  assert.ok(worstCaseCapturedNodes({ ...RUN_OPTION_DEFAULTS, ...atCeiling, maxResultsPerRun: derived + 1 }) > byteCap);
+  assert.throws(() => resolveRunOptions({ ...atCeiling, maxResultsPerRun: derived + 1 }, limits),
+    (err) => err.issues?.some((i) => i.path === '/maxResultsPerRun' && i.code === 'above-ceiling'));
+  // The former 1,000,000 ceiling is unreachable under factor 35 by every engine configuration.
+  assert.ok(worstCaseCapturedNodes({ ...RUN_OPTION_DEFAULTS, ...smallest, maxResultsPerRun: 1_000_000 }) > byteCap);
+});
+
+// ---- (c) the former contradiction, now closed: accepted options, readable read-back -------------------------
 
 /** A results-heavy option set sized so the set's plan-table records fit `maxPlanReferences` (100 source roots + 1
  *  target root, 100 + 400 owners, 100 unit records, 200 unit ranges ~= 900 < 1,000). */
@@ -189,9 +195,9 @@ const GAP_OPTIONS = Object.freeze({
   maxLedgerRecords: 1_000 + 2 * GAP.units, maxRetainedDiagnostics: 0,
 });
 
-test('D-8 (c): resolveRunOptions accepts options whose legal set the same engine refuses (R21-2 violated)', async () => {
+test('D-8 (c): options resolveRunOptions accepts yield a legal set the same engine reads back (R21-2 holds)', async () => {
   const worst = worstCaseCapturedNodes({ ...RUN_OPTION_DEFAULTS, ...GAP_OPTIONS });
-  assert.equal(worst, 24 * 40_000 + 12 * 1_200 + 12 * 0 + 65_536);   // 1,039,936
+  assert.equal(worst, 35 * 40_000 + 12 * 1_200 + 12 * 0 + 65_536);   // 1,479,936 (was 1,039,936 under 24)
   const limits = resolveEngineLimits({ maxCapturedNodes: worst });
   const runOptions = resolveRunOptions(GAP_OPTIONS, limits);          // ACCEPTED: the invariant says "readable"
   const set = await maximumShapeSet({ resultCount: GAP.results, ledgerRecordCount: GAP.units, diagnosticCount: 0 },
@@ -205,24 +211,20 @@ test('D-8 (c): resolveRunOptions accepts options whose legal set the same engine
   assert.deepEqual(validateResultSet(set, { limits: resolveEngineLimits(undefined) }), { ok: true, issues: [] });
   const measured = nodesOf(set);
   assert.equal(nodesOf(set.results[0]), 26);                          // the ordinary volume-overlap-with-witness shape
-  // EVIDENCE: documents D-8; flips when the spec erratum lands
-  assert.ok(measured > worst, `measured ${measured} > formula ${worst}`);
-  assert.equal(measured - worst, 3_400);
+  assert.equal(measured, 1_043_336);
+  assert.ok(measured <= worst, `measured ${measured} <= formula ${worst}`);
   // The real reader refuses it: the engine's by-id read path (store get -> P5 captureResultSet -> node ceiling).
   const store = createInMemoryResultStore();
   await store.put(set);
   const engine = createClashTestEngine(createEngineWorld().config({
     now: createFakeClock({ start: Date.UTC(2026, 8, 24) }).now, scheduleTimeout: () => () => {}, resultStore: store, limits,
   }));
-  const outcome = await engine.getResultSet(set.runId).then(() => 'read', (err) => err);
-  // EVIDENCE: documents D-8; flips when the spec erratum lands
-  assert.ok(outcome instanceof ResultSetTooLargeError, String(outcome));
-  // Under the proposed factor 35 the same options would be refused up front (or need a larger reader limit).
-  const proposedWorst = worst + (35 - SCHEMA_NODE_FACTORS.result) * GAP_OPTIONS.maxResultsPerRun;
-  assert.ok(proposedWorst >= measured, `proposed ${proposedWorst} covers measured ${measured}`);
+  const outcome = await engine.getResultSet(set.runId).then((read) => read, (err) => err);
+  assert.ok(!(outcome instanceof ResultSetTooLargeError), String(outcome));
+  assert.equal(canonicalJson(outcome), canonicalJson(set));
 });
 
-// ---- (d) the other two factors: single-record counterexamples (findings, not fixes) -------------------------
+// ---- (d) the other two factors: single-record counterexamples (OPEN gates D-8b / D-8c; findings, not fixes) ---
 
 test('D-8 (d): one retained diagnostic can exceed 12 nodes (diagnostic factor finding)', () => {
   const frag = (fragId, role) => ({ modelKey: A, dbId: 1, fragId, role });
@@ -235,7 +237,7 @@ test('D-8 (d): one retained diagnostic can exceed 12 nodes (diagnostic factor fi
   assert.equal(nodesOf(pairDiag(ids(1))), 20);
   assert.equal(nodesOf(pairDiag(ids(RUN_OPTION_DEFAULTS.maxUnitIdsPerDiagnostic))), 27);
   assert.equal(nodesOf(pairDiag(ids(RUN_OPTION_CEILINGS.maxUnitIdsPerDiagnostic))), 83);
-  // EVIDENCE: documents D-8; flips when the spec erratum lands
+  // OPEN GATE D-8c: flips only if that gate closes (the A11 erratum deliberately left the diagnostic factor at 12).
   assert.ok(nodesOf(pairDiag(ids(1))) > SCHEMA_NODE_FACTORS.diagnostic);
 });
 
@@ -250,6 +252,6 @@ test('D-8 (d): one unit record expands its ranges into ids, so nodes are not bou
   });
   const budgetRecords = 1 /* unit-record */ + 2 /* source range + whole-model target entry */ + 1 /* overflow reserve */;
   assert.equal(nodesOf(rec), 17 + S + 3);
-  // EVIDENCE: documents D-8; flips when the spec erratum lands
+  // OPEN GATE D-8b: flips only if that gate closes (the A11 erratum deliberately left the ledger factor at 12).
   assert.ok(nodesOf(rec) > SCHEMA_NODE_FACTORS.ledger * budgetRecords);
 });

@@ -173,7 +173,7 @@ test('the shipped defaults satisfy the producer/reader invariant (§13.6)', () =
   assert.ok(ENGINE_LIMIT_DEFAULTS.maxCapturedNodes * BYTES_PER_NODE <= ENGINE_LIMIT_DEFAULTS.maxStoredResultBytes);
   assert.ok(ENGINE_LIMIT_DEFAULTS.maxCapturedNodes <= SCHEMA_MAX_NODES);
   assert.deepEqual(producerReaderIssues(RUN_OPTION_DEFAULTS, ENGINE_LIMIT_DEFAULTS), []);
-  // Spec §17.1.1 note / plan: "14,585,536 <= 16,000,000" and "512,000,000 <= 536,870,912" at the
+  // Spec §17.1.1 note / plan: "15,685,536 <= 16,000,000" (erratum A11; was 14,585,536 under factor 24) and "512,000,000 <= 536,870,912" at the
   // provisional values. Pinned through the imports (the numbers are derived, never written as defaults),
   // so a G-CAL change to any factor or default re-derives both sides here.
   assert.equal(RUN_OPTION_DEFAULTS.maxPairsPerOutcome, RUN_OPTION_DEFAULTS.maxResultsPerRun);
@@ -389,38 +389,43 @@ test('every store read is byte-guarded with the engine\'s maxStoredResultBytes',
 });
 
 // ================================================================================================
-// Finding (P7.9, reported to the controller; NOT fixed here — P0/spec §13.6 are accepted/binding):
-// the §13.6 closed-shape bound "one ClashResult <= 24 nodes" (P0 `SCHEMA_NODE_FACTORS.result`,
-// options.js) is below what P0's own capture meter charges for an ordinary result: a volume-overlap
-// result WITH a witness measures 26 nodes (a clearance result with every flag, 35). The worst-case
-// formula therefore under-counts, and `resolveRunOptions` can accept options (results-heavy, tiny
-// ledger) whose sets the SAME engine then refuses as `ResultSetTooLargeError` — an R21-2 violation
-// ("an engine never produces a set it cannot read"). At the provisional defaults the 65,536 slack and
-// the ledger term absorb it (the round trips above pass). Kept as an executable `todo`: it fails today
-// and passes once the owning phase/spec corrects the factor.
+// D-8 regression (erratum A11, spec §13.6/§25): the closed-shape bound is "one ClashResult <= 35 nodes"
+// (P0 `SCHEMA_NODE_FACTORS.result`, options.js). It was 24, below what P0's own capture meter charges
+// (a volume-overlap result WITH a witness measures 26; a clearance result with every flag, 35), so
+// `resolveRunOptions` accepted results-heavy, tiny-ledger options whose sets the SAME engine then
+// refused as `ResultSetTooLargeError` — an R21-2 violation ("an engine never produces a set it cannot
+// read"). Evidence: docs/reviews/2026-09-24-federated-clash-test-core-p7-d8-node-factor-evidence.md.
+// Exercised here at the WORST-case result shape (35 nodes per result), not the ordinary one.
 // ================================================================================================
 
 /** A results-heavy option set: many results, few units, so the per-result factor dominates. */
 const GAP_RESULTS = 50_000;
 const GAP_UNITS = GAP_RESULTS / 100;             // 100 pairs per unit (well inside the per-unit caps)
+/** Sized so the set's plan-table records fit (about 2,700: 501 root-table rows, 501 root owners, 100 unreachable
+ *  owners, 500 unit records, 1,000 unit ranges, 2 scope digests), so the set is plausibly producible under them. */
+const GAP_PLAN_REFERENCES = 3_000;
 
-test.todo('R21-2 gap: options this engine accepts must yield sets it can read back (ClashResult > 24 nodes)', async () => {
+test('R21-2 (D-8): options this engine accepts yield sets it can read back, at the worst-case 35-node ClashResult', async () => {
   const options = {
     maxResultsPerRun: GAP_RESULTS, maxRetainedDiagnostics: NO_DIAGNOSTICS, maxUnitsPerRun: GAP_UNITS,
-    maxPlanReferences: GAP_UNITS, maxLedgerRecords: 3 * GAP_UNITS,
+    maxPlanReferences: GAP_PLAN_REFERENCES, maxLedgerRecords: GAP_PLAN_REFERENCES + 2 * GAP_UNITS,
   };
   const limits = resolveEngineLimits({ maxCapturedNodes: worstCaseCapturedNodes({ ...RUN_OPTION_DEFAULTS, ...options }) });
   const runOptions = resolveRunOptions(options, limits);           // ACCEPTED: the invariant says readable
   const set = await maximumShapeSet({ resultCount: GAP_RESULTS, ledgerRecordCount: GAP_UNITS, diagnosticCount: NO_DIAGNOSTICS },
-    { runId: 'run-ac12-gap', runOptions });
+    { runId: 'run-ac12-gap', runOptions, resultShape: 'worst' });
   assert.equal(set.results.length, GAP_RESULTS);
+  // Every result is the worst-case shape (clearance evidence + all four flags); one of them is metered.
+  assert.ok(set.results.every((r) => r.mode === 'clearance' && Object.keys(r.flags).length === 4), 'worst-case shape throughout');
+  assert.equal(measuredNodes(set.results[0]), 35);
   assert.ok(set.ledger.units.length <= runOptions.maxUnitsPerRun && ledgerRecordsOf(set) <= runOptions.maxLedgerRecords);
   const store = createInMemoryResultStore();
   await store.put(set);
   const engine = createClashTestEngine(createEngineWorld().config({
     now: createFakeClock({ start: EPOCH }).now, scheduleTimeout: () => () => {}, resultStore: store, limits,
   }));
-  // Fails today: measuredNodes(set) exceeds limits.maxCapturedNodes, so the read is ResultSetTooLargeError.
+  const measured = measuredNodes(set);
+  assert.ok(measured <= limits.maxCapturedNodes, `measured ${measured} > formula ${limits.maxCapturedNodes}`);
   assert.equal(canonicalJson(await engine.getResultSet(set.runId)), canonicalJson(set),
-    `measured ${measuredNodes(set)} nodes vs the formula's ${limits.maxCapturedNodes}`);
+    `measured ${measured} nodes vs the formula's ${limits.maxCapturedNodes}`);
 });

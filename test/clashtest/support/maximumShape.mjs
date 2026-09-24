@@ -2,7 +2,7 @@
 //
 // Task P7.9 (AC-12, §13.6 producer/reader invariant): the maximum-shape Result Set and its node meter.
 //
-//   maximumShapeSet({resultCount, ledgerRecordCount, diagnosticCount}, {runId?}) -> Promise<ResultSet>
+//   maximumShapeSet({resultCount, ledgerRecordCount, diagnosticCount}, {runId?, resultShape?}) -> Promise<ResultSet>
 //   measuredNodes(set) -> number      // P0 captureData(set, {maxNodes: SCHEMA_MAX_NODES}).nodes
 //
 // Built through P5's OWN producer pipeline (`buildResultSet` + `sealResultSet`, preflight ruling (b)):
@@ -22,6 +22,12 @@
 //     derived taint set (P7.9 measures size, not taint semantics).
 //   - `resultCount` pairs `(a_i, b_j)`: unit i's first source owner against the mB root's owners,
 //     `ceil(resultCount / U)` of them, filled unit by unit in canonical order.
+//   - `resultShape` (D-8 erratum A11): `'ordinary'` (default) is the volume-overlap-with-witness result
+//     (26 captured nodes); `'worst'` is the §13.6 WORST-CASE ClashResult the schema and validator admit
+//     (35 nodes): a `clearance` definition, `ClearanceEvidence`, and all four flags. `unreachableOwner`
+//     needs a pair owner outside every root's owners, so in that shape mB's pair owners move from its
+//     root's `ownerDbIds` to `ledger.unreachablePopulation` (the mB root then owns only itself), and
+//     `duplicateEvidenceConflict` makes `integrity: 'caveated'` the derived value.
 //   - `diagnosticCount` retained, NON-completeness-affecting `witness-unavailable` fragment
 //     diagnostics (occurrences 1, distinct fragIds), so `integrity: 'clean'` stays the derived value
 //     and the P4 counter invariants (Σ, upper bound, retained sum) hold exactly.
@@ -148,7 +154,10 @@ const count = (name, v, min) => {
  *   digest's sizing projection read it.
  * @returns {Promise<object>} a sealed, deep-frozen, `validateResultSet`-clean ResultSet
  */
-export async function maximumShapeSet({ resultCount, ledgerRecordCount, diagnosticCount }, { runId, testId = 'T-AC12', runOptions: recorded } = {}) {
+export async function maximumShapeSet({ resultCount, ledgerRecordCount, diagnosticCount }, { runId, testId = 'T-AC12', runOptions: recorded, resultShape = 'ordinary' } = {}) {
+  if (resultShape !== 'ordinary' && resultShape !== 'worst') throw new RangeError(`maximumShapeSet: unknown resultShape ${resultShape}`);
+  const worst = resultShape === 'worst';
+  const mode = worst ? 'clearance' : 'volume-overlap';
   count('resultCount', resultCount, 0);
   count('ledgerRecordCount', ledgerRecordCount, 1);
   count('diagnosticCount', diagnosticCount, 0);
@@ -166,7 +175,8 @@ export async function maximumShapeSet({ resultCount, ledgerRecordCount, diagnost
     schemaVersion: 1, testId, revision: 1, name: 'ac-12 maximum shape',
     selectionA: { entries: [{ kind: 'model', modelKey: SHAPE_MODEL_A }] },
     selectionB: { entries: [{ kind: 'model', modelKey: SHAPE_MODEL_B }] },
-    mode: 'volume-overlap',
+    mode,
+    ...(worst ? { clearance: 5 } : {}),
   };
   const semanticDigest = computeSemanticDigest(definition);
 
@@ -203,11 +213,17 @@ export async function maximumShapeSet({ resultCount, ledgerRecordCount, diagnost
       const target = ref(SHAPE_MODEL_B, targetOwners[j]);
       // `pair` and `evaluatedAs` are built from INDEPENDENT ref objects: a shared object would be
       // captured as `cyclic` (see resultSetFixtures.mjs's `ref` note).
-      const pair = makePairId('volume-overlap', ref(SHAPE_MODEL_A, pairOwnerOf[i]), ref(SHAPE_MODEL_B, targetOwners[j]));
+      const pair = makePairId(mode, ref(SHAPE_MODEL_A, pairOwnerOf[i]), ref(SHAPE_MODEL_B, targetOwners[j]));
       results.push({
-        resultId: makeResultId(testId, semanticDigest, pair), pair, mode: 'volume-overlap',
+        resultId: makeResultId(testId, semanticDigest, pair), pair, mode,
         evaluatedAs: { source, target },
-        evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {}, unitId: `u${i}`,
+        ...(worst
+          ? {
+            evidence: { distance: 1.5, clearance: 5, closestPoints: { first: [0, 0, 0], second: [1, 0, 0] } },
+            flags: { witnessUnavailable: true, duplicateEvidenceConflict: true, unreachableOwner: true, mixedOwnerProvenance: true },
+          }
+          : { evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {} }),
+        unitId: `u${i}`,
       });
     }
   }
@@ -232,7 +248,7 @@ export async function maximumShapeSet({ resultCount, ledgerRecordCount, diagnost
     definition,
     derivedFromRunId: null,
     outcome: {
-      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      status: 'completed', coverage: 'full', integrity: worst ? 'caveated' : 'clean', freshness: 'current',
       environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
     },
     provenance: baseProvenance({
@@ -245,8 +261,10 @@ export async function maximumShapeSet({ resultCount, ledgerRecordCount, diagnost
       units,
       rootOwners: [
         { modelKey: SHAPE_MODEL_A, owners: ownersA },
-        { modelKey: SHAPE_MODEL_B, owners: [{ rootDbId: TARGET_ROOT, ownerDbIds: targetOwners, cls: 'B' }] },
+        { modelKey: SHAPE_MODEL_B, owners: [{ rootDbId: TARGET_ROOT, ownerDbIds: worst ? [TARGET_ROOT] : targetOwners, cls: 'B' }] },
       ],
+      ...(worst ? { unreachablePopulation: [{ modelKey: SHAPE_MODEL_B, count: targetOwners.length, ownerDbIds: targetOwners, mixedOwnerDbIds: [],
+        unattributable: { notLoaded: 0, ownerUnresolvable: 0 } }] } : {}),
     }),
     results,
     diagnostics,

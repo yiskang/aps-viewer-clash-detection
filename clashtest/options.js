@@ -35,8 +35,9 @@ export const BYTES_PER_NODE = 32;
  */
 export const COMPARE_TOLERANCE_DEFAULTS = Object.freeze({ distanceTolerance: 1e-6, pointTolerance: 1e-6 });
 
-/** Closed-shape node bounds of spec 13.6 (one ClashResult <= 24 nodes; one ledger/diagnostic record <= 12). */
-export const SCHEMA_NODE_FACTORS = Object.freeze({ result: 24, ledger: 12, diagnostic: 12, slack: 65_536 });
+/** Closed-shape node bounds of spec 13.6 (one ClashResult <= 35 nodes, erratum A11 / D-8: a clearance result with all
+ *  four flags, every object, array and primitive one node; one ledger/diagnostic record <= 12). */
+export const SCHEMA_NODE_FACTORS = Object.freeze({ result: 35, ledger: 12, diagnostic: 12, slack: 65_536 });
 
 const int = (min, ceiling, dflt, extra = {}) => ({ kind: 'int', min, ceiling, default: dflt, ...extra });
 
@@ -49,7 +50,9 @@ export const RUN_OPTION_SPECS = Object.freeze({
   maxTargetModelsPerUnit: int(1, 64, 4),
   maxTargetFragmentsPerUnit: int(1, 100_000, 20_000),
   maxUnitsPerRun: int(1, 100_000, 10_000),
-  maxResultsPerRun: int(1, 1_000_000, 100_000),
+  // Ceiling 956,824 (erratum A11 / D-8; was 1,000,000): the largest value any engine can accept under the byte half of
+  // R21-2, floor((floor(1 GiB / BYTES_PER_NODE) - 12 x 3 - 65,536) / 35) with the smallest legal ledger and no diagnostics.
+  maxResultsPerRun: int(1, 956_824, 100_000),
   maxRetainedDiagnostics: int(0, 100_000, 10_000),
   maxPlacementRetries: int(0, 10, 2),
   progressMinIntervalMs: int(0, 60_000, 100),
