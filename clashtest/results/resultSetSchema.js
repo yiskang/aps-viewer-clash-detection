@@ -203,7 +203,13 @@ export const TYPES = new Map(Object.entries({
   UnresolvedSelection: { fields: { selectionRole: enm(['A', 'B']),
     modelKey: str('modelKey', { nullable: true }),
     cause: str('reason'), dbIds: ids() } },
-  UnreachablePopulation: { fields: { modelKey: str('modelKey'), ownerDbIds: ids(),
+  // D-A (owner-authorized P5 fix, 2026-09-24): spec §6.2's row is `{modelKey, count, ownerDbIds,
+  // mixedOwnerDbIds, unattributable}` and P3 (`planning/rootResolution.js` step 7) always writes
+  // `count` -- the loaded, owner-resolvable fragments in no root subtree (0 is legal when only
+  // `unattributable` is non-zero). Omitting it here rejected every engine-sealed set with a
+  // non-empty population on read-back. `ledgerDigestInput` digests the row verbatim, so the
+  // canonical digest input is unchanged.
+  UnreachablePopulation: { fields: { modelKey: str('modelKey'), count: int(), ownerDbIds: ids(),
     mixedOwnerDbIds: ids(), unattributable: obj('Unattributable') } },
   Unattributable: { fields: { notLoaded: int(), ownerUnresolvable: int() } },
   HierarchyInternal: { fields: { modelKey: str('modelKey'), rootCount: int(), ownerCount: int(),

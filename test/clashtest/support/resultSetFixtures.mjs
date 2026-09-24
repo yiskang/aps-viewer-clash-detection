@@ -564,7 +564,8 @@ function schemaCorpusParts() {
         { modelKey: MODEL_B, owners: [{ rootDbId: 40, ownerDbIds: [400, 401, 402], cls: 'B' }] },   // NOT 499
       ],
       unresolvedSelections: [{ selectionRole: 'A', modelKey: MODEL_A, cause: 'element-unresolvable', dbIds: [999] }],
-      unreachablePopulation: [{ modelKey: MODEL_B, ownerDbIds: [499], mixedOwnerDbIds: [498],
+      // D-A (2026-09-24): `count` added (spec §6.2 row shape, as P3 writes it); additive only.
+      unreachablePopulation: [{ modelKey: MODEL_B, count: 1, ownerDbIds: [499], mixedOwnerDbIds: [498],
         unattributable: { notLoaded: 1, ownerUnresolvable: 0 } }],
       hierarchyInternal: [{ modelKey: MODEL_A, rootCount: 1, ownerCount: 2,
         examples: [{ rootDbId: 30, ownerDbIds: [300, 301] }] }],
@@ -740,7 +741,8 @@ function unreachablePositiveParts() {
       // tree-unreachable owner, NOT under this root.
       rootOwners: [{ modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }] },
         { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'B' }] }],
-      unreachablePopulation: [{ modelKey: MODEL_B, ownerDbIds: [999], mixedOwnerDbIds: [],
+      // D-A (2026-09-24): `count` added (spec §6.2 row shape, as P3 writes it); additive only.
+      unreachablePopulation: [{ modelKey: MODEL_B, count: 1, ownerDbIds: [999], mixedOwnerDbIds: [],
         unattributable: { notLoaded: 0, ownerUnresolvable: 0 } }],
     }),
     results: [{

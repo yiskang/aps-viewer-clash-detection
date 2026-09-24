@@ -317,8 +317,8 @@ async function sealAndReadBack(fx, def) {
 // (`{modelKey, count, ownerDbIds, mixedOwnerDbIds, unattributable}`), so every engine-sealed set with a
 // non-empty `unreachablePopulation` fails §13.6 read-back ('/ledger/unreachablePopulation/0/count
 // unknown-field-closed-type'). Isolated from D-B: 900 is root-only here, so no owner is mixed and the
-// only unreachable owner (950) is genuinely unreachable-only. Flip to test() when P5 is fixed.
-test.todo('D-A (P5): an engine-sealed set with a non-empty unreachablePopulation validates and reads back (spec §6.2, §13.6)', async () => {
+// only unreachable owner (950) is genuinely unreachable-only.
+test('D-A (P5): an engine-sealed set with a non-empty unreachablePopulation validates and reads back (spec §6.2, §13.6)', async () => {
   const fx = await ownerClassFixture({ mixed: false });
   const { selectionA, selectionB } = ORIENTATIONS.find((o) => o.mRole === 'target');
   const { resultSet, readBack, readError } = await sealAndReadBack(fx, definitionOf({ testId: 'd-a', selectionA, selectionB }));

@@ -1062,6 +1062,38 @@ test('unreachableOwner positives stay valid on readback', async () => {
   assert.ok(validateResultSet(broken, { limits }).issues.some((i) => i.code === 'owner-not-in-ledger'));
 });
 
+// D-A (owner-authorized P5 fix, 2026-09-24): spec §6.2 records each `unreachablePopulation` row as
+// `{modelKey, count, ownerDbIds, mixedOwnerDbIds, unattributable}` and P3 always writes `count` (the
+// number of loaded, owner-resolvable fragments in no root subtree; 0 is legal when only
+// `unattributable` is non-zero). The closed persisted type must therefore require it and bound it as a
+// non-negative safe integer -- before the fix it rejected every P3-written row as an unknown field.
+test('D-A: unreachablePopulation[].count is a required non-negative safe integer (spec §6.2)', async () => {
+  const path = '/ledger/unreachablePopulation/0/count';
+  for (const count of [1, 3, Number.MAX_SAFE_INTEGER]) {
+    const set = await resealed((s) => { s.ledger.unreachablePopulation[0].count = count; }, 'unreachable-positive');
+    assert.deepEqual(validateResultSet(set, { limits }), { ok: true, issues: [] }, `count ${count} is accepted`);
+    const read = await readResultSet(structuredClone(set), { limits, slicer: fakeSlicer() });
+    assert.equal(read.ledger.unreachablePopulation[0].count, count, 'and survives read-back verbatim');
+  }
+  const base = await sealedSet('unreachable-positive');
+  const rejections = [
+    ['missing', (row) => { delete row.count; }, 'missing-field'],
+    ['null', (row) => { row.count = null; }, 'null-not-allowed'],
+    ['string', (row) => { row.count = '1'; }, 'type-invalid'],
+    ['NaN', (row) => { row.count = Number.NaN; }, 'type-invalid'],
+    ['negative', (row) => { row.count = -1; }, 'number-out-of-range'],
+    ['fractional', (row) => { row.count = 1.5; }, 'number-out-of-range'],
+    ['unsafe', (row) => { row.count = Number.MAX_SAFE_INTEGER + 2; }, 'number-out-of-range'],
+  ];
+  for (const [name, mutate, code] of rejections) {
+    const broken = structuredClone(base);
+    mutate(broken.ledger.unreachablePopulation[0]);
+    const { ok, issues } = validateResultSet(broken, { limits });
+    assert.equal(ok, false, name);
+    assert.ok(issues.some((i) => i.path === path && i.code === code), `${name}: expected ${code} at ${path}, got ${JSON.stringify(issues)}`);
+  }
+});
+
 test('an open-type unknown field survives verbatim with equal digests', async () => {
   const set = await resealed((s) => { s.ledger.futureField = { a: 1 }; s.vendorNote = 'ok'; }, 'positives');
   assert.equal(validateResultSet(set, { limits }).ok, true);
