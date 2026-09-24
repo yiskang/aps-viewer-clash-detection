@@ -331,6 +331,32 @@ test('discardRun chains the store delete after an in-flight put settles', async 
   assert.equal(cfg.timers.live.length, 0, 'no timer outlives the run');
 });
 
+test('discardRun while the finalize window is still OPEN: done reads saved, then nothing remains', async () => {
+  // Carried from the P7.5 review: the put is pending and `done` has NOT resolved (no timer fired).
+  const gate = deferred();
+  const putCalled = deferred();
+  const inner = createInMemoryResultStore();
+  const resultStore = { ...inner, put: async (s, o) => { putCalled.resolve(); await gate.promise; return inner.put(s, o); } };
+  const cfg = base({ resultStore });
+  const core = createEngineCore(cfg);
+  const { engine } = core;
+  const h = engine.startRun(validDef());
+  let doneSettled = false;
+  h.done.then(() => { doneSettled = true; });
+  await putCalled.promise;
+  await settle();
+  assert.equal(doneSettled, false, 'the finalize window is open');
+  const discarding = engine.discardRun(h.runId);
+  gate.resolve();                                           // the write settles inside the window
+  const done = await h.done;
+  await discarding;
+  assert.equal(done.persistence.state, 'saved');
+  assert.equal(core.internals.ownRuns.has(h.runId), false, 'discardRun itself pruned ownRuns');   // before getRun, which prunes too
+  assert.equal(engine.getRun(h.runId), null);
+  assert.equal(await inner.get(h.runId), null, 'no store copy remains');
+  assert.equal(engine.retentionReport().slotsInUse, 0);
+});
+
 test('discardRun deletes the durable copy of a saved set, and of a nonresident id too', async () => {
   const resultStore = createInMemoryResultStore();
   const core = createEngineCore(base({ resultStore }));

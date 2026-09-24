@@ -27,6 +27,7 @@
 import {
   EngineDisposedError, InvalidOptionsError, ModelBindingError, RunQueueFullError,
   StoreNotConfiguredError, CorruptListingError, InvalidTestDefinitionError, UnsupportedSchemaVersionError,
+  ResultNotResidentError,
 } from './errors.js';
 import { resolveEngineLimits, resolveRunOptions, ENGINE_LIMIT_CEILINGS } from './options.js';
 import { assertRegistryBelongsToWorld } from './identity/ModelRegistry.js';
@@ -52,7 +53,10 @@ import {
   validateReference, toDefinitionError, LIST_LIMIT, captureAndValidate, classifyStartRunArgument,
 } from './definition/validate.js';
 import { prepareDefinition } from './definition/normalize.js';
-import { validateResultSetSummary, readResultSet } from './results/validateResultSet.js';
+import { validateResultSetSummary, readResultSet, captureResultSet } from './results/validateResultSet.js';
+import { assessNoClashClaim as assessClaim, canClaimNoClashes as canClaim } from './results/claim.js';
+// P6's read-time freshness, aliased so it cannot shadow the engine method of the same name.
+import { getFreshness as readTimeFreshness } from './run/freshness.js';
 import { planRun, materializeUnit, rootsForRanges } from './planning/planner.js';
 import { splitUnit } from './planning/splitting.js';
 import { createRecordBudget, createLedger } from './planning/ledger.js';
@@ -481,11 +485,24 @@ export function createEngineCore(config) {
   const plannerPort = Object.freeze({
     planRun, materializeUnit, splitUnit, rootsForRanges, createRecordBudget, createLedger, checkScopeBracket,
   });
+  const ownRuns = new Map();     // runId -> {handle, controller, sealedSet?}: THIS engine's runs only (dispose walks it)
+
+  // The residency port P6 drives, with ONE addition: the sealed set a run admits is also recorded on
+  // that run's own `ownRuns` entry, so a claim/freshness read can reach a resident set WITHOUT
+  // refreshing its LRU position (P5's `getResident` touches; see `peekResident`). No extra memory:
+  // the entry's `handle.done` already resolves with (and so holds) this very set.
+  const runResidency = Object.freeze({
+    ...residency,
+    admitSealedSet(runId, resultSet) {
+      residency.admitSealedSet(runId, resultSet);      // P5's rules; a throw records nothing
+      const own = ownRuns.get(runId);
+      if (own !== undefined) own.sealedSet = resultSet;
+    },
+  });
   const resultPort = Object.freeze({
-    createResultAccumulator, buildResultSet, sealResultSet, deriveRunOutcome, residency,
+    createResultAccumulator, buildResultSet, sealResultSet, deriveRunOutcome, residency: runResidency,
   });
 
-  const ownRuns = new Map();     // runId -> {handle, controller}: THIS engine's runs only (dispose walks it)
   let disposed = false;
   let disposePromise = null;
   const alive = () => { if (disposed) throw new EngineDisposedError(); };
@@ -785,13 +802,19 @@ export function createEngineCore(config) {
   async function readSetById(runId) {
     const resident = residency.getResident(runId);
     if (resident !== null) return resident;
-    const resultStore = stores.result;
-    if (!resultStore) return null;
-    return withReadSlot(async () => {
-      const raw = await resultStore.get(runId, { maxBytes: effectiveLimits.maxStoredResultBytes });
-      if (raw === null || raw === undefined) return null;
-      return readResultSet(raw, { limits: effectiveLimits, slicer: newSlicer(), runId });
-    });
+    if (!stores.result) return null;
+    return withReadSlot(() => readStoredSet(runId));
+  }
+
+  /**
+   * One store read-through, for a caller that ALREADY holds a read slot: `get` under the byte guard,
+   * then P5's `readResultSet` (capture → version → migrate → validate → freeze). `null` when the store
+   * holds no such set. `runId` is the diagnostic id only, never read off the untrusted value.
+   */
+  async function readStoredSet(runId) {
+    const raw = await stores.result.get(runId, { maxBytes: effectiveLimits.maxStoredResultBytes });
+    if (raw === null || raw === undefined) return null;
+    return readResultSet(raw, { limits: effectiveLimits, slicer: newSlicer(), runId });
   }
 
   defineSync('startRun', startRun);
@@ -879,7 +902,106 @@ export function createEngineCore(config) {
   }
 
   // ==============================================================================================
-  // Result-read methods (P7.6) and rerun / listResults (P7.7)
+  // Result-read methods (P7.6): freshness, the two claim methods, the placement call
+  // ==============================================================================================
+  //
+  // P6's `getFreshness` owns §16.4 and P5's `claim.js` owns §8.3 (including the digest-version
+  // conjunct); these methods own only the ENTRY rules (`withReadSet`) and the binding to this
+  // engine's registry and enumerator. They add no claim rule of their own.
+
+  /**
+   * The resident set for `runId`, WITHOUT refreshing its LRU position, else `null`. §13.5.2 names
+   * `getResultSet` as the one read that refreshes a set ("LRU by seal time, refreshed by
+   * getResultSet"); a claim or freshness read is a check, not a use, and a host that polls it (a
+   * staleness badge) must not pin whatever it looked at last — the reason P5's `retentionReport`
+   * never touches either. `getPersistenceState` is P5's non-touching residency test; a resident set
+   * always has its `ownRuns` entry (pruning requires the slot to be gone), which `runResidency`
+   * filled at admission. The `getResident` fallback (it touches) is unreachable by that invariant.
+   */
+  function peekResident(runId) {
+    if (residency.getPersistenceState(runId) === null) return null;
+    return ownRuns.get(runId)?.sealedSet ?? residency.getResident(runId);
+  }
+
+  /**
+   * The ONE entry path of every `runIdOrResultSet` read (§18): `getFreshness`, `canClaimNoClashes`,
+   * `assessNoClashClaim`, and (P7.7) `rerun`. Returns a Promise that NEVER throws synchronously:
+   * everything that can refuse in the synchronous prefix becomes a rejection. `fn(set)` receives a
+   * validated, deep-frozen set, or `null` for a by-id miss (the caller decides what a miss means).
+   *
+   *   by id (a string) — resident FIRST (non-touching, `peekResident`; no store and no slot needed),
+   *     else a store read-through under a read slot taken from the FIFO (`acquire` is called in this
+   *     turn, so queue order is call order; `ReadCapacityError` beyond `maxQueuedStoreReads`), else
+   *     `fn(null)` (no store, or the store holds none).
+   *   raw set (anything else) — §13.6 capture first: a read slot is RESERVED synchronously (raw sets
+   *     are never queued: `ReadCapacityError` at once), then P5's `captureResultSet` takes the one
+   *     detached copy in this same turn, before the returned Promise's first `await`, so a caller's
+   *     later mutation cannot reach it. `readResultSet` then validates and freezes that copy.
+   *
+   * A slot, once held, is kept until `fn` settles (its freshness passes included) and released on
+   * every exit.
+   */
+  function withReadSet(input, fn) {
+    try {
+      alive();
+      if (typeof input === 'string') return readByIdFor(input, fn);
+      const slot = reads.reserveSync();
+      let detached;
+      try {
+        detached = captureResultSet(input, { limits: effectiveLimits });
+      } catch (err) {
+        slot.release();
+        throw err;
+      }
+      return (async () => {
+        try {
+          return await fn(await readResultSet(detached, { limits: effectiveLimits, slicer: newSlicer() }));
+        } finally {
+          slot.release();
+        }
+      })();
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+
+  /** `withReadSet`'s by-id half. Runs synchronously up to `reads.acquire()` inside `withReadSlot`. */
+  async function readByIdFor(runId, fn) {
+    const resident = peekResident(runId);
+    if (resident !== null) return fn(resident);
+    if (!stores.result) return fn(null);
+    return withReadSlot(async () => fn(await readStoredSet(runId)));
+  }
+
+  /** A by-id miss has no freshness to compute and no claim to judge (§13.5.2 nonresident table): a
+   *  `false`/`unverifiable` answer would be indistinguishable from a real negative. */
+  const requireSet = (input, set) => {
+    if (set === null) throw new ResultNotResidentError({ runId: input });
+    return set;
+  };
+
+  /** §16.4, against the live registry of this world and this engine's enumerator: P6's frozen
+   *  `Freshness` object `{state, reasons}`, never reduced to its state (R3, N19). */
+  const liveFreshness = (set) => readTimeFreshness(set, { registry: coordinator.registry, enumerator });
+
+  defineAsync('getFreshness', (input) => withReadSet(input, (set) => liveFreshness(requireSet(input, set))));
+  // Both claim methods recompute freshness and hand P5 the Freshness OBJECT straight through, so a
+  // `stale`/`unverifiable` refusal carries §16.4's reasons as qualifiers. `canClaimNoClashes` is true
+  // only when the assessment is `unqualified` (P5).
+  defineAsync('canClaimNoClashes', (input) => withReadSet(input, async (set) => {
+    const checked = requireSet(input, set);
+    return canClaim(checked, await liveFreshness(checked));
+  }));
+  defineAsync('assessNoClashClaim', (input) => withReadSet(input, async (set) => {
+    const checked = requireSet(input, set);
+    return assessClaim(checked, await liveFreshness(checked));
+  }));
+
+  /** §16.2's recommended single call: P1 bumps `placementGeneration`, then invalidates the world's placement. */
+  defineSync('invalidateModelPlacement', (modelKey) => { coordinator.registry.invalidateModelPlacement(modelKey); });
+
+  // ==============================================================================================
+  // rerun / listResults (P7.7)
   // ==============================================================================================
 
   // Every §18 name a later task has not implemented yet is a gated stub: it honours the R1 disposal
@@ -891,10 +1013,12 @@ export function createEngineCore(config) {
 
   return {
     engine,
+    // `residency` is the port the runs seal into (`runResidency`: P5's manager plus the `sealedSet`
+    // record); every P5 method on it is P5's own function.
     internals: {
       engineId, effectiveLimits, hierarchyInternalAcceptance: acceptance, libraryVersion,
-      stores, executor, definitions, coordinator, residency, reads, ownRuns, newSlicer,
-      buildRunSpec, admitAndBegin, runResolver, readSetById,
+      stores, executor, definitions, coordinator, residency: runResidency, reads, ownRuns, newSlicer,
+      buildRunSpec, admitAndBegin, runResolver, readSetById, withReadSet,
     },
   };
 }
