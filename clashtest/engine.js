@@ -326,17 +326,24 @@ export function createEngineCore(config) {
   }
 
   /**
-   * §18 / R6: `maxQueuedRuns` is an ENGINE limit (the coordinator enforces none), measured over runs
-   * WAITING — the in-flight run is not in `queueDepth`. A run that would start at once (nothing in
-   * flight) does not wait, so it is never refused: `maxQueuedRuns: 0` (which is also the derived
-   * default of a one-slot engine) must still admit the first run.
+   * §18 / R6 / R-P7-13: `maxQueuedRuns` is an ENGINE limit (the coordinator enforces none) that can
+   * only LOWER the bound slot accounting already imposes (§7.3, §18: "RunQueueFullError only when a
+   * configured maxQueuedRuns lower than slot capacity is reached; otherwise ResultCapacityError").
+   * `RunQueueFullError` is therefore thrown iff ALL of:
+   *   (a) `maxQueuedRuns` is below the slot-implied bound `maxResidentResultSets - 1` — at or above it
+   *       this check is a no-op and `reserveRunSlot` alone governs;
+   *   (b) the run would actually have to WAIT: something is in flight in the world coordinator (this
+   *       engine's run or ANOTHER engine's), otherwise it starts at once — so `maxQueuedRuns: 0`, also
+   *       the derived default of a one-slot engine, still admits the first run;
+   *   (c) THIS engine's waiting-run count (`queueDepth(engineId)`, in-flight not counted) has reached
+   *       `maxQueuedRuns`.
    */
   function admitToQueue() {
-    if (coordinator.inFlightRunId() === null) return;
+    const { maxQueuedRuns, maxResidentResultSets } = effectiveLimits;
+    if (maxQueuedRuns >= maxResidentResultSets - 1) return;              // (a)
+    if (coordinator.inFlightRunId() === null) return;                    // (b)
     const queued = coordinator.queueDepth(engineId);
-    if (queued >= effectiveLimits.maxQueuedRuns) {
-      throw new RunQueueFullError({ limit: effectiveLimits.maxQueuedRuns, queued });
-    }
+    if (queued >= maxQueuedRuns) throw new RunQueueFullError({ limit: maxQueuedRuns, queued });   // (c)
   }
 
   /**

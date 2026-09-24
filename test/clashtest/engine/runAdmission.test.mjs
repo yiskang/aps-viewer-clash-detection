@@ -300,6 +300,71 @@ test('maxQueuedRuns: 0 still admits a run that starts at once (the queue bounds 
   await t.engine.dispose();
 });
 
+// ---- queue admission across engines on one world (R-P7-13) --------------------------------------------
+
+/** Two engines over ONE world, sharing its coordinator queue and single in-flight slot. */
+function twoEngines(limitsA, limitsB) {
+  const world = createEngineWorld();
+  const a = createEngineCore(world.config(limitsA === undefined ? {} : { limits: limitsA }));
+  const b = createEngineCore(world.config(limitsB === undefined ? {} : { limits: limitsB }));
+  const opts = (core) => resolveRunOptions(undefined, core.internals.effectiveLimits);
+  const spec = (core) => ({
+    source: { kind: 'definition', value: world.definition() }, options: opts(core), resolver: createHungResolver(),
+  });
+  return { world, a, b, spec, dispose: () => Promise.all([a.engine.dispose(), b.engine.dispose()]) };
+}
+
+test('at DEFAULT limits another engine\'s in-flight run never makes a queue refusal: slots alone govern', async () => {
+  const t = twoEngines(undefined, { maxResidentResultSets: 2 });     // B: default maxQueuedRuns = 1
+  t.a.internals.admitAndBegin(t.spec(t.a));                            // A holds the world's in-flight slot
+  assert.equal(t.b.internals.effectiveLimits.maxQueuedRuns, 1);
+  t.b.internals.admitAndBegin(t.spec(t.b));                            // waits behind A
+  t.b.internals.admitAndBegin(t.spec(t.b));                            // 1 of 2 used before this: admitted
+  assert.equal(t.b.engine.retentionReport().slotsInUse, 2);
+  // Only when the slots are exhausted is there a refusal, and it is ResultCapacityError.
+  assert.throws(() => t.b.internals.admitAndBegin(t.spec(t.b)), ResultCapacityError);
+  assert.equal(t.b.engine.retentionReport().slotsInUse, 2, 'the refusal leaked nothing');
+  await t.dispose();
+});
+
+test('an explicitly lower maxQueuedRuns refuses across engines, counting THIS engine\'s waiting runs only', async () => {
+  const t = twoEngines(undefined, { maxResidentResultSets: 4, maxQueuedRuns: 1 });
+  t.a.internals.admitAndBegin(t.spec(t.a));                            // another engine's run is in flight
+  t.a.internals.admitAndBegin(t.spec(t.a));                            // A's waiting run is NOT B's budget
+  t.b.internals.admitAndBegin(t.spec(t.b));                            // B's first waiting run: 0 < 1
+  let refusal;
+  assert.throws(() => t.b.internals.admitAndBegin(t.spec(t.b)), (e) => { refusal = e; return e instanceof RunQueueFullError; });
+  assert.deepEqual([refusal.limit, refusal.queued], [1, 1]);
+  assert.equal(t.b.engine.retentionReport().slotsInUse, 1, 'the refused admission rolled its slot back exactly');
+  assert.equal(t.b.internals.ownRuns.size, 1);
+  await t.dispose();
+});
+
+test('maxQueuedRuns: 0 refuses when ANOTHER engine holds the in-flight slot, and admits when nothing is in flight', async () => {
+  const t = twoEngines(undefined, { maxResidentResultSets: 2, maxQueuedRuns: 0 });
+  const quiet = twoEngines(undefined, { maxResidentResultSets: 2, maxQueuedRuns: 0 });
+  quiet.b.internals.admitAndBegin(quiet.spec(quiet.b));                // nothing in flight: starts at once
+  await quiet.dispose();
+
+  t.a.internals.admitAndBegin(t.spec(t.a));
+  let refusal;
+  assert.throws(() => t.b.internals.admitAndBegin(t.spec(t.b)), (e) => { refusal = e; return e instanceof RunQueueFullError; });
+  assert.deepEqual([refusal.limit, refusal.queued], [0, 0]);
+  assert.equal(t.b.engine.retentionReport().slotsInUse, 0);
+  await t.dispose();
+});
+
+test('a maxQueuedRuns at the slot-implied bound is a no-op check, in flight or not', async () => {
+  const t = twoEngines(undefined, { maxResidentResultSets: 3, maxQueuedRuns: 2 });
+  t.a.internals.admitAndBegin(t.spec(t.a));
+  t.b.internals.admitAndBegin(t.spec(t.b));
+  t.b.internals.admitAndBegin(t.spec(t.b));
+  t.b.internals.admitAndBegin(t.spec(t.b));
+  assert.equal(t.b.internals.coordinator.queueDepth(t.b.internals.engineId), 3, 'deeper than maxQueuedRuns: slots govern');
+  assert.throws(() => t.b.internals.admitAndBegin(t.spec(t.b)), ResultCapacityError);
+  await t.dispose();
+});
+
 test('a spec that createRun rejects rolls the reservation and the map entry back', () => {
   const t = setup();
   // `derivedFromRunId` is validated by createRun (I7): a non-string is an engine bug, a TypeError.

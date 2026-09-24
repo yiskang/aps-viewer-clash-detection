@@ -330,9 +330,27 @@ test('dispose signals EVERY owned run before it waits, then hands back the unsav
   assert.equal(internals.coordinator.queueDepth(internals.engineId), 1);
   assert.equal(internals.ownRuns.size, 2);
 
+  // Spy on each run's engine-only controller (the frozen controller object cannot be patched, so the
+  // map entry is replaced by a wrapper that records the call and delegates).
+  const signalled = [];
+  for (const [runId, { handle, controller }] of [...internals.ownRuns]) {
+    internals.ownRuns.set(runId, {
+      handle,
+      controller: { requestDispose: () => { signalled.push(runId); return controller.requestDispose(); } },
+    });
+  }
+  let settledBeforeReturn = 0;
+  first.done.then(() => { settledBeforeReturn += 1; });
+  second.done.then(() => { settledBeforeReturn += 1; });
+
   const pending = engine.dispose();
-  // Signal-then-wait: neither run can settle unless dispose asked both to stop, because the
-  // in-flight one is parked on a lookup that never settles and the other is queued behind it.
+  // SIGNAL-THEN-WAIT, pinned: the instant dispose() returns, BEFORE any promise can have settled,
+  // BOTH runs have already been signalled. A signal-and-await-each-in-turn variant signals only the
+  // first here (its `done` cannot settle before the second is signalled, and vice versa).
+  assert.deepEqual(signalled.sort(), [first.runId, second.runId].sort(), 'every owned run is signalled synchronously');
+  assert.equal(settledBeforeReturn, 0);
+  // And neither run can settle unless dispose asked both to stop, because the in-flight one is
+  // parked on a lookup that never settles and the other is queued behind it.
   const [doneA, doneB] = await Promise.all([first.done, second.done]);
   assert.equal(doneA.status, 'cancelled');
   assert.equal(doneB.status, 'cancelled');
