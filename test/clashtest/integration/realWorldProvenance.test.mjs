@@ -17,6 +17,8 @@ import { createClashTestEngine, getPairStatus } from '../../../clashtest/index.j
 import { RUN_OPTION_DEFAULTS, RUN_OPTION_CEILINGS } from '../../../clashtest/options.js';
 import { makePairId, makeElementRef } from '../../../clashtest/identity/ids.js';
 import { ledgerDigestInput } from '../../../clashtest/results/resultSet.js';
+import { validateResultSet } from '../../../clashtest/results/validateResultSet.js';
+import { ENGINE_LIMIT_DEFAULTS } from '../../../clashtest/options.js';
 import { digestCanonical } from '../../../clashtest/util/canonical.js';
 import { makeRealWorldFixture, recordFindClashes, countWorldLifecycleCalls, createRecordingUnitExecutor } from '../support/realWorld.mjs';
 import { pairIdKey } from '../support/bruteForce.mjs';
@@ -150,7 +152,8 @@ test('mixed-owner orientations over a real CollisionWorld (AC-17 b)', async () =
       // result should not carry it; at HEAD it does (clashtest/run/Run.js builds the accumulator's
       // `unreachableOwners` from the ledger's full `ownerDbIds`, mixed owners included), and P5's
       // own validateResultSet then rejects the sealed set on read-back ('unreachable-flag-invalid').
-      // See .superpowers/sdd/p7-engine-integration/task-P7.8b1-report.md, defect D-B.
+      // Tracked in docs/handoffs/latest.md (owner items D-A, D-B); standing reproducers: the two
+      // `test.todo` arms at the end of the F2 section of this file.
       assert.ok(r950, `${name}: 950's clash is reported`);
       assert.equal(r950.flags.unreachableOwner, true, `${name}: ${JSON.stringify(r950.flags)}`);
     } else {
@@ -288,6 +291,61 @@ test('a mixed owner\'s library result is identical whichever of its fragments pr
   // That is a SPEC consequence (§12.5 rule 6's taint could become precise), not a test to loosen.
   assert.deepEqual(a, b);
   for (const key of keysDeep(a)) assert.ok(!/frag/i.test(key), `the pair record carries no fragment key (${key})`);
+});
+
+// ---- standing reproducers of two owner-phase defects the real stack surfaced (R-P7-24) ------------
+//
+// Precedent: the D-8 standing `test.todo` in maximumShape.test.mjs (R-P7-22). Each body FAILS today for
+// exactly the stated reason (verified by running it once as a plain `test`), and is kept executable
+// so the fix is observable. Tracked in docs/handoffs/latest.md (owner items D-A, D-B). Production code
+// is not patched from P7 (Task P7.11's reopen rule). FLIP EACH TO `test()` WHEN THE OWNING PHASE IS FIXED.
+
+/** Seal one run over the fixture, then read the persisted set back after releasing the resident copy. */
+async function sealAndReadBack(fx, def) {
+  const { engine, run } = engineOver(fx);
+  const { resultSet, runId } = await run(def);
+  assert.equal(resultSet.outcome.status, 'completed', JSON.stringify(resultSet.outcome));
+  engine.releaseResultSet(runId);
+  let readBack = null;
+  let readError = null;
+  try { readBack = await engine.getResultSet(runId); } catch (error) { readError = error; }
+  return { resultSet, readBack, readError };
+}
+
+// D-A -- owning phase P5: clashtest/results/resultSetSchema.js:206 (closed `UnreachablePopulation` type
+// lacks `count`). P3 writes `count` (clashtest/planning/rootResolution.js:234-235), as spec §6.2 requires
+// (`{modelKey, count, ownerDbIds, mixedOwnerDbIds, unattributable}`), so every engine-sealed set with a
+// non-empty `unreachablePopulation` fails §13.6 read-back ('/ledger/unreachablePopulation/0/count
+// unknown-field-closed-type'). Isolated from D-B: 900 is root-only here, so no owner is mixed and the
+// only unreachable owner (950) is genuinely unreachable-only. Flip to test() when P5 is fixed.
+test.todo('D-A (P5): an engine-sealed set with a non-empty unreachablePopulation validates and reads back (spec §6.2, §13.6)', async () => {
+  const fx = await ownerClassFixture({ mixed: false });
+  const { selectionA, selectionB } = ORIENTATIONS.find((o) => o.mRole === 'target');
+  const { resultSet, readBack, readError } = await sealAndReadBack(fx, definitionOf({ testId: 'd-a', selectionA, selectionB }));
+  assert.deepEqual(unreachableRowOf(resultSet, 'm').ownerDbIds, [950], 'premise: a non-empty unreachable population');
+  assert.deepEqual(unreachableRowOf(resultSet, 'm').mixedOwnerDbIds, [], 'premise: no mixed owner (D-B out of play)');
+  assert.deepEqual(validateResultSet(resultSet, { limits: ENGINE_LIMIT_DEFAULTS }).issues, []);
+  assert.equal(readError, null, `read-back rejected: ${readError?.name} ${JSON.stringify(readError?.issues)}`);
+  assert.equal(readBack.digests.pairSetDigest, resultSet.digests.pairSetDigest);
+  assert.equal(readBack.digests.ledgerDigest, resultSet.digests.ledgerDigest);
+});
+
+// D-B -- owning phase P6: clashtest/run/Run.js:355 passes the ledger row's FULL `ownerDbIds` (mixed owners
+// included) as the accumulator's `unreachableOwners`, so clashtest/results/resultSet.js:64 flags a MIXED
+// owner's result `unreachableOwner`. Spec §11.1 (flags: "`unreachableOwner`: an owner of the pair is
+// *unreachable-only*") and §6.2 owner classes; P5's validateResultSet.js:1398 then rejects the set
+// ('unreachable-flag-invalid'). Only that issue code is checked here, so D-A cannot mask or fake it.
+// Flip to test() when P6 is fixed.
+test.todo('D-B (P6): a mixed owner\'s result carries mixedOwnerProvenance but NOT unreachableOwner (spec §11.1, §6.2)', async () => {
+  const fx = await ownerClassFixture();
+  const { selectionA, selectionB } = ORIENTATIONS.find((o) => o.mRole === 'target');
+  const { resultSet } = await sealAndReadBack(fx, definitionOf({ testId: 'd-b', selectionA, selectionB }));
+  const r900 = resultFor(resultSet, PAIR_900);
+  assert.ok(r900, 'premise: the mixed owner\'s 900<->700 result is retained');
+  assert.equal(r900.flags.mixedOwnerProvenance, true, 'premise');
+  assert.equal(r900.flags.unreachableOwner, undefined, `a mixed owner is not unreachable-only: ${JSON.stringify(r900.flags)}`);
+  const issues = validateResultSet(resultSet, { limits: ENGINE_LIMIT_DEFAULTS }).issues;
+  assert.deepEqual(issues.filter((i) => i.code === 'unreachable-flag-invalid'), []);
 });
 
 // ---- Step 13: F3 -- diagnostic stress and the un-sliced negative control (AC-18 d) --------------

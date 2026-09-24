@@ -249,7 +249,8 @@ export async function makeRealWorldFixture({
   };
   const setRenderProxyAvailable = (modelKey, fragId, available) => {
     modelFor(modelKey);
-    proxyOverrides.set(gateKey(modelKey, fragId), available === true);
+    if (typeof available !== 'boolean') throw new TypeError('setRenderProxyAvailable: `available` must be a boolean');
+    proxyOverrides.set(gateKey(modelKey, fragId), available);
   };
   return { world, viewer, models: modelMap, modelFor, enumerator, registry, setRenderProxyAvailable };
 }

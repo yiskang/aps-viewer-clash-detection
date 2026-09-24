@@ -80,6 +80,7 @@ test('seam: `renderProxy` / `setRenderProxyAvailable` gate one fragment; the REA
   fx.setRenderProxyAvailable('b', 0, false);
   assert.deepEqual((await fx.world.findClashes(query)).pairs.length, 1, 'a settled BVH is not re-read through the proxy');
   assert.throws(() => fx.setRenderProxyAvailable('zz', 0, true), /unknown modelKey/);
+  assert.throws(() => fx.setRenderProxyAvailable('b', 0, 1), /must be a boolean/, 'no silent coercion (review M-6)');
 });
 
 test('seam: `worldOptions` injects a counted fake clock -- every library checkpoint yields', async () => {
