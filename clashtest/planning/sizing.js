@@ -91,11 +91,15 @@ export const pairSpaceWeightOf = (plan, sourceRanges, targets) =>
 export const targetWeightOf = (plan, targets) => targets.reduce((n, t) => n + targetEntryWeight(plan, t), 0);
 
 /**
- * How many range records a unit costs the record budget (spec 6.5.1, class `unit-range`): one per source range, one
- * per explicit target range, and one per whole-model sentinel entry (it is still a stored scope entry).
+ * How many range records a unit costs the record budget (spec 6.5.1, class `unit-range`, erratum A14): one per
+ * EXPANDED root id the unit record persists -- every source root id and every explicit target root id -- and one per
+ * whole-model sentinel entry (persisted as `{modelKey, scope: 'model'}`). The charge follows the persisted form (the
+ * sealed `UnitRecord` stores expanded ids, `unitRecordFields`), never the number of `{table, start, end}` ranges, so
+ * a unit record costs at most `SCHEMA_NODE_FACTORS.ledger` nodes per charged record (D-8b). The same count is charged
+ * for initial units, `target-too-large` gaps and split children (whose copied targets are charged again).
  */
-export const rangeRecordCount = (unit) => unit.sourceRanges.length
-  + unit.targets.reduce((n, t) => n + (t.scope === 'whole' ? 1 : t.scope.ranges.length), 0);
+export const rangeRecordCount = (unit) => sourceRootCount(unit.sourceRanges)
+  + unit.targets.reduce((n, t) => n + (t.scope === 'whole' ? 1 : sourceRootCount(t.scope.ranges)), 0);
 
 /**
  * A unit in the ledger's self-describing form (P5's `UnitRecord` fields: the sealed ledger is read without a plan, so
