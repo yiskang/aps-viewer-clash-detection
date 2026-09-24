@@ -129,20 +129,19 @@ test('a real-world run cancelled mid-plan has an evaluated subset identical to t
   }
 });
 
-// D-D -- owning phase P6: clashtest/run/Run.js:334 (`if (run.cancelRequested !== null) return
-// run.cancelPlanning();` AFTER `planRun` resolved `planned`). The planner's last cancellation check
-// (Run.js:1056, `enumerationCheckpoint`) runs BEFORE its slicer tick yields at `plan:built`
-// (clashtest/planning/planner.js:424), and `commitPlanned` then writes the plan's unit records into the
-// ledger. A cancel landing during that final yield is seen only at Run.js:334, whose `settlePlanning`
-// seals the ALREADY-COMMITTED ledger: unit records with `outcome: null`, and no provenance model rows
-// (`run.plan` was never adopted). The sealed set fails `validateResultSet` (`/ledger/units/N/outcome
-// null-not-allowed`, `/provenance/models model-not-in-provenance`), so a STORED read-back
-// (`readResultSet`, the by-id store path) rejects `CorruptResultSetError`; `engine.getResultSet` on the
-// RESIDENT copy returns it unvalidated. Violates R21-2 ("an engine never produces a set it cannot
-// read") and AC-7 ("a cancel during enumeration seals with planning gap `cancelled` and no unit
-// ledger"). Surfaced while calibrating this file's F5 (ii) planning-slice hook (P7.8b-2). Standing
-// reproducer per R-P7-24: FAILS today on exactly those validation issues. FLIP TO test() WHEN P6 IS FIXED.
-test.todo('D-D (P6): a cancel landing in the final planning slice seals a valid set with no unit ledger (AC-7, R21-2)', async () => {
+// D-D -- owning phase P6 (FIXED; this is its regression). The planner's last cancellation check
+// (`enumerationCheckpoint`) runs BEFORE its slicer tick yields at `plan:built`
+// (clashtest/planning/planner.js), and `commitPlanned` then writes the plan's unit records into the
+// ledger. A cancel landing during that final yield is first seen by `planStage` AFTER `planRun`
+// resolved `planned`; before the fix its `settlePlanning` sealed the ALREADY-COMMITTED ledger: unit
+// records with `outcome: null`, and no provenance model rows (`run.plan` was never adopted), which
+// failed `validateResultSet` (`/ledger/units/N/outcome null-not-allowed`, `/provenance/models
+// model-not-in-provenance`) -- so a STORED read-back rejected `CorruptResultSetError`. That violated
+// R21-2 ("an engine never produces a set it cannot read") and AC-7 ("a cancel during enumeration
+// seals with planning gap `cancelled` and no unit ledger"). Surfaced while calibrating this file's
+// F5 (ii) planning-slice hook (P7.8b-2). The whole timing class (a cancel at EVERY planning yield) is
+// pinned at T1 in test/clashtest/run/lifecycle.test.mjs (D-D).
+test('D-D (P6): a cancel landing in the final planning slice seals a valid set with no unit ledger (AC-7, R21-2)', async () => {
   const def = fourByFourDef('d-d');
   // Calibrate: the engine yields this many times before its first executor call, on this fixture.
   const planningYields = async (cancelAtYield) => {

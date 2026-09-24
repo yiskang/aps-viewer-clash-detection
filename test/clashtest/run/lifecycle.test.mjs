@@ -1154,3 +1154,57 @@ test('D-B: the accumulator ctx classifies owners from plan data: unreachable-onl
   assert.deepEqual(plain(ctx.unreachableOwners), { 'mk-a': [950] }, 'unreachable-only owners: mixed 900 and 700 are excluded');
   assert.deepEqual(plain(ctx.mixedOwners), { 'mk-a': [900], 'mk-b': [700] }, 'mixed owners, unchanged');
 });
+
+// D-D (owner-authorized P6 fix, 2026-09-24). AC-7: "a cancel during enumeration seals with planning gap
+// `cancelled` and no unit ledger ... and the set passes the §13.1/§13.4 schema"; R21-2: the engine never
+// seals a set it cannot read. P3's planner checks for cancellation in `checkpoint('plan:built')` BEFORE
+// that checkpoint's slicer tick yields, then `commitPlanned`s its unit records into the ledger. A cancel
+// landing DURING that final yield was first seen by `planStage` after `planRun` resolved `planned`, and
+// sealed the already-committed ledger (units with `outcome: null`, no provenance models) -- a set
+// `validateResultSet` rejects. This closes the whole TIMING CLASS, not one index: calibrate how many
+// times the run yields before its first unit starts, then cancel at EVERY one of those yields and
+// require each sealed set to be the no-unit-ledger `cancelled` shape, validate with ZERO issues, and
+// read back through P5's stored-read path (`readResultSet`).
+import { readResultSet } from '../../../clashtest/results/validateResultSet.js';
+import { createSlicer } from '../../../clashtest/util/slicer.js';
+
+test('D-D: a cancel at EVERY planning yield seals a valid, readable set with no unit ledger (AC-7, R21-2)', async () => {
+  const limits = resolveEngineLimits();
+  const runWithCancelAt = async (cancelAtYield) => {
+    // `aggregationSliceMaxItems: 1` makes EVERY slicer tick a yield (the item ceiling, not the clock),
+    // so the loop below visits every point planning can yield at: counted events, never a race.
+    const fx = realPlannerFixture({ runOptions: { maxSourceDbIdsPerUnit: 1 }, limits: { aggregationSliceMaxItems: 1 } });
+    const { handle, begin } = createRun(fx.spec);
+    const box = { yieldsBeforeFirstUnit: null, fired: false };
+    const inner = fx.spec.executor;
+    fx.spec.executor = (...args) => { box.yieldsBeforeFirstUnit ??= fx.clock.yieldCount; return inner(...args); };
+    fx.clock.onYield((n) => {
+      if (n !== cancelAtYield) return;
+      box.fired = true;
+      void handle.cancel('user');                          // never awaited inside the yield
+    });
+    begin();
+    const summary = await handle.done;
+    return { fx, summary, box };
+  };
+  const calibration = await runWithCancelAt(null);
+  assert.equal(calibration.summary.status, 'completed', 'premise: the uncancelled run completes');
+  const planningYields = calibration.box.yieldsBeforeFirstUnit;
+  assert.ok(planningYields >= 3, `premise: planning yields several times (${planningYields})`);
+
+  const readSlicer = () => createSlicer({ now: () => 0, yieldToScheduler: async () => {}, limits });
+  for (let k = 1; k <= planningYields; k++) {
+    const { fx, summary, box } = await runWithCancelAt(k);
+    const set = summary.resultSet;
+    assert.ok(box.fired, `yield ${k}: premise: the cancel hook fired`);
+    assert.deepEqual(fx.executor.startedUnits, [], `yield ${k}: no unit started`);
+    assert.equal(summary.status, 'cancelled', `yield ${k}`);
+    assert.equal(set.outcome.coverage, 'partial', `yield ${k}`);
+    assert.deepEqual(set.ledger.planningGaps.map((g) => g.cause), ['cancelled'], `yield ${k}`);
+    assert.deepEqual(set.ledger.units, [], `yield ${k}: AC-7: no unit ledger`);
+    assert.deepEqual(set.results, [], `yield ${k}`);
+    assert.deepEqual(issuesOf(set), [], `yield ${k}: validateResultSet accepts it outright`);
+    await assert.doesNotReject(readResultSet(structuredClone(set), { limits, slicer: readSlicer() }),
+      `yield ${k}: the stored read-back path accepts it`);
+  }
+});

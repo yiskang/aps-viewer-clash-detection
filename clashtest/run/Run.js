@@ -339,7 +339,18 @@ async function planStage(run) {
     const primary = causes.find((c) => c !== 'cancelled') ?? causes[0] ?? 'enumeration-failed';
     return primary === 'cancelled' ? run.cancelPlanning() : run.failPlanning(primary);
   }
-  if (run.cancelRequested !== null) return run.cancelPlanning();
+  if (run.cancelRequested !== null) {
+    // D-D (owner-authorized P6 fix, 2026-09-24). A cancel that landed during the planner's FINAL
+    // yield (its `plan:built` checkpoint checks for cancellation before its slicer tick yields) is
+    // first seen here, AFTER `commitPlanned` wrote the plan's unit records (all `outcome: null`) into
+    // the ledger. The plan is never adopted, so it is a cancel during enumeration/planning and AC-7 /
+    // §13.1 give it ONE shape: planning gap `cancelled` and NO unit ledger. Seal it from a fresh
+    // ledger over the same budget -- exactly the ledger `planRun` would have left had its checkpoint
+    // thrown `EnumerationCancelledError` (P3: "fully planned or exactly as the caller handed it
+    // over") -- never from the committed one, whose null-outcome units no reader accepts (R21-2).
+    run.ledger = run.spec.plannerPort.createLedger({ limits: run.runOptions, budget: run.budget });
+    return run.cancelPlanning();
+  }
 
   run.plan = result.plan;
   // I6: seed the plan-order oracle with the INITIAL units. Runtime split children are added to it
