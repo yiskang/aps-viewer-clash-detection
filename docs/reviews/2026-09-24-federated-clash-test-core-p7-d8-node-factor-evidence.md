@@ -233,6 +233,8 @@ The owner approved §7 and directed a reconciliation of the `maxResultsPerRun` h
 
 The erratum above does **not** touch the ledger or diagnostic factor. Each remaining item is a gate. It closes only on the evidence named below, followed by an owner decision on the term's form.
 
+> **Update (§11, owner ruling D-8b/D-8c, 2026-09-24).** Both gates' evidence items were produced. **D-8c is closed** by erratum **A13** (diagnostic term `(24 + maxUnitIdsPerDiagnostic) × maxRetainedDiagnostics`). Items 1 and 3 below are done, and the evidence decided item 2's choice of form: the option-dependent term, because the flat 88 would push the defaults over 16,000,000. **D-8b stays open** as an owner decision on the term's *form*. Items 1 and 3 are done, with an end-to-end reproducer kept as a standing `test.todo`. Item 2 is answered in the negative: no fixed or options-only term keeps the defaults within 16,000,000. Item 4 shows that the provisional defaults themselves admit ledgers of about 100M nodes. Neither gate is a G-CAL item. See §11.
+
 **D-8b — ledger term (unsound in form).** Closing it needs all of the following:
 
 1. **A proven per-record node bound, or a proof that none exists in fixed-factor form.** Take every persisted ledger/plan record kind the writer can emit: unit record, source range, explicit target entry, root-table row, root-owner row, unreachable/mixed owner row, scope-digest row, taint entry, overflow reserve and planning gap. For each, give its meter charge as a function of the expanded id counts, derived from `planning/sizing.js` `unitRecordFields` and the P5 `TYPES`. Measure each on the real P3 writer, as §2 did for results.
@@ -253,3 +255,170 @@ The erratum above does **not** touch the ledger or diagnostic factor. Each remai
 - The only D-8b/D-8c assertions in the suite are the two single-record `OPEN GATE` findings in `nodeFactor.test.mjs`, and they pass by pinning the unsound behaviour.
 
 What they do leave unproven is the **universal** R21-2 claim ("every option set `resolveRunOptions` accepts is readable"), the AC-11/AC-12 conjunct "at each hard ceiling **that option validation accepts**", and the claim that the fixed `SCHEMA_MAX_NODES` bound covers every legal set. §6's single-record counterexamples indicate that ledger-heavy and diagnostic-heavy option sets, with a reader limit sized exactly to the formula, may be unreadable. No committed whole-set contradiction test proves this yet; producing one is part of each gate above. So the acceptance record should read AC-11/AC-12 as **satisfied for the results-dominated form and at the defaults and tiers, with a scoped caveat for D-8b/D-8c**. Whether that caveat blocks P7 acceptance is an owner decision; the executable evidence does not force it either way.
+
+## 11. D-8b/D-8c bounded evidence
+
+**Owner ruling (2026-09-24, verbatim):** "D-8b / D-8c: do not defer yet. Perform bounded evidence checks now. For both the ledger node factor and diagnostic node factor: derive the capture-meter charge field-by-field; identify the legal minimum and proven worst-case maximum; identify whether the charge is shape-dependent; determine whether the current factor can admit any legal option set whose persisted result later exceeds the reader bound; add a targeted reproducer if such a contradiction exists. If the current factor is unsound and the evidence yields a single conservative fixed replacement without schema/interface changes, apply the same class of bounded erratum used for D-8 and add targeted worst-case tests. Only defer to G-CAL if the remaining uncertainty is genuinely calibration-dependent rather than a deterministic accounting defect."
+
+- **Base:** HEAD `bc432b6`. **Commits:** `a8e684c` (`fix(clashtest)`: the A13 diagnostic term), `1b986d2` (`test(clashtest)`: the evidence tests), and the `docs(spec): erratum A13 …` commit that carries this section.
+- **Evidence tests:** `test/clashtest/integration/nodeFactor.ledgerDiagnostic.test.mjs`, 10 tests (9 pass, 1 standing `test.todo`), about 2 s. Every charge is measured with the capture meter on records built by the real writers. Both contradictions are reproduced **end to end**: the real engine plans, executes (the scripted executor), seals and persists; then a fresh engine reads by id.
+- **Standard applied (the A11 precedent).** Record *counts* are bounded by the run's options: results by `maxResultsPerRun`, `unitIds` by `maxUnitIdsPerDiagnostic`. Per-record *shapes* are taken at the schema/`validateResultSet` maximum, because the reader cannot tell writers apart (35, not the producer's 34).
+- **Verdicts:** **D-8c: UNSOUND, single fixed fix → applied (erratum A13).** **D-8b: UNSOUND, needs a form change → not applied; owner decision.** Neither verdict is calibration-dependent. Both are deterministic accounting facts of the meter, the schema and the budget code.
+
+### 11.1 D-8c — the diagnostic factor
+
+**Derivation.** Sources: `TYPES.NormalizedDiagnostic` / `DiagFragment` / `DiagFragmentPair` (`clashtest/results/resultSetSchema.js:255-266`), the P4 projection and aggregator (`execution/diagnostics.js:195-225, 390-495`), and the P4 boundary validator (`execution/UnitExecutor.js:495-515`).
+
+| Field | Shape | Nodes | Required? | Producer: fragment scope | Producer: pair scope | Schema/validator |
+|---|---|---|---|---|---|---|
+| (object) | `{}` | 1 | yes | 1 | 1 | 1 |
+| `scope`, `reason`, `completenessAffecting`, `attribution` | primitives | 4 | yes | 4 | 4 | 4 |
+| `fragment` | `{modelKey, dbId, fragId, role?}` | 4, or 5 with `role` | optional | 4–5 | absent (the P4 validator rejects it) | 5 |
+| `fragments` | `{first, second}`, each a `DiagFragment` | 9, or 11 with `role` on both | optional | absent (rejected) | 9 (`role` on pair operands is rejected) | 11 |
+| `ambiguousModelId` | `true` | 1 | optional | when an operand's `modelId` is ambiguous | same | 1 |
+| `occurrences` | integer | 1 | yes | 1 | 1 | 1 |
+| `unitIds` | `string[]`, *u* entries | 1 + *u* | yes | *u* ≤ `maxUnitIdsPerDiagnostic` (run option; aggregator `diagnostics.js:453`) | same | *u* ≤ 64 (schema ceiling) |
+
+**Measured on the real P4 projection and aggregator** (test D-8c (a)):
+
+- fragment scope: 11 + *u* without `role`, 12 + *u* with it;
+- a diagnostic with an ambiguous operand (its `modelKey` is `null`): the §12.4 de-duplication key then carries the unit id, so it is never merged across units and *u* = 1 always. A fragment one costs 14, a pair one 18;
+- pair scope: 16 + *u*. That is 17 at *u* = 1, 24 at the default 8, and **80** at the ceiling 64, which is the **producer maximum**.
+
+**Schema/validator maximum: 24 + *u*.** It is attained by `fragment` + `fragments`, with `role` on all three operands, plus `ambiguousModelId`. That gives 25, 32 and **88** at *u* = 1, 8 and 64 (test D-8c (b)).
+
+- A sealed set carrying the 88-node diagnostic passes the full `validateResultSet` with `{ok: true, issues: []}`. No cross-field check relates `scope`, `fragment` and `fragments`; it checks only the counters (`validateResultSet.js:620-690`).
+- The type is closed: an extra key at the top level or inside `fragment` is `unknown-field-closed-type`. A 65th unit id is `array-too-long`. So 24 + *u* is the maximum.
+
+**Minimum:** 12 for the producer (a fragment-scope diagnostic without `role`, *u* = 1). The schema-only minimum is 7 (no fragments and an empty `unitIds`).
+
+**Shape-dependent: yes.** The charge depends on scope, `role`, ambiguity and *u*. The *u* part is bounded by a **run option**, not by the schema alone.
+
+**Contradiction (test D-8c (d), a real-engine run).**
+
+- *Setup.* 64 units (`maxSourceDbIdsPerUnit: 1`, 64 roots in mA, a whole mB target) each report the same 1,500 pair diagnostics. So all 1,500 are retained, and each carries 64 unit ids, costing 80 nodes.
+- *Options.* `{maxUnitsPerRun: 64, maxPlanReferences: 388 (the exact plan-record count), maxLedgerRecords: 516, maxResultsPerRun: 1, maxRetainedDiagnostics: 1,500, maxUnitIdsPerDiagnostic: 64}`.
+- *Before A13.* The formula gave 89,763 nodes, so the options were accepted by an engine with `maxCapturedNodes` = 89,763. The run completes and the set is `validateResultSet`-clean, but it measures **122,645** nodes, 32,882 over. Before the fix, the fresh engine's read threw `ResultSetTooLargeError` (observed while developing the test; the exploratory run used `maxPlanReferences` 1,000 and measured 122,837 against a formula of 97,107).
+- *After A13.* The formula gives `35 + 12 × 516 + 88 × 1,500 + 65,536 = 203,763`, and the same run reads back.
+
+**Candidates and the choice.** Both candidates are closed expressions over the existing option table, with no schema or interface change.
+
+| Candidate | Per diagnostic | `SCHEMA_MAX_NODES` | Defaults worst case | Verdict |
+|---|---|---|---|---|
+| (current) flat 12 | 12 | 274,754,376 | 15,685,536 | unsound (above) |
+| flat 88 (the ceiling folded in) | 88 | 282,354,376 | **16,445,536 > 16,000,000** | sound, but the defaults would violate R21-2, and it is looser for every *u* < 64 |
+| **24 + `maxUnitIdsPerDiagnostic`** | 24 + *u* | 282,354,376 (at *u* = 64) | **15,885,536 ≤ 16,000,000** | sound and tight (attained for every *u*); **applied** |
+
+The applied form follows A11's own principle: the count of `unitIds` is a run-option bound, exactly like the results count. It is the unique tight conservative bound under that standard.
+
+- It changes no schema or type, no option, default or ceiling, no error code, and no export. `SCHEMA_NODE_FACTORS` keeps its four keys; `diagnostic` is now the 24-node per-diagnostic frame.
+- The `maxResultsPerRun` ceiling (956,824, derived with no retained diagnostics) is unchanged.
+- `maxRetainedDiagnostics` and `maxUnitIdsPerDiagnostic` at their ceilings remain acceptable by an engine at the byte cap (test D-8c (c)).
+- An independent `codex-advisor` pass (medium, request `20260924-192203-91138-16893`) agreed on both points: the 24 + *u* bound (no validator check lowers it) and the preference over the flat 88.
+
+**Applied (erratum A13).**
+
+- Code, `clashtest/options.js`:
+  - `SCHEMA_NODE_FACTORS.diagnostic` 12 → 24 (the frame);
+  - `worstCaseCapturedNodes` diagnostic term → `(24 + maxUnitIdsPerDiagnostic) × maxRetainedDiagnostics`;
+  - `SCHEMA_MAX_NODES` diagnostic term → `(24 + 64) × 100,000`.
+- Spec: §13.6 (the `SCHEMA_MAX_NODES` formula, the closed-shape bound and the invariant, marked A13), and §25 row **A13**.
+- Plan current-value restatements:
+  - `p0-foundations.md` l.16, l.69 and l.73;
+  - `interface-reconciliation.md` l.196 (282,354,376 ≈ 8.4 GiB);
+  - `p7-engine-integration.md` l.1783 and l.2143.
+  Historical executed-step listings are not edited (the same rule as §9).
+- Tests pinning the old values:
+  - `options.defaults.test.mjs`: title and literal;
+  - `nodeFactor.test.mjs`: (b) now pins 282,354,376 and 15,885,536, and the (d) diagnostic test is flipped to "CLOSED by A13";
+  - `maximumShape.test.mjs`: comment only.
+
+### 11.2 D-8b — the ledger factor
+
+**What `maxLedgerRecords` counts** (`planning/ledger.js` `createRecordBudget`; `LEDGER_RECORD_CLASSES`). There is one run-wide counter, `used = planRecords + reserved + discretionary ≤ maxLedgerRecords`, and it has four parts:
+
+- **Planning records** (also ≤ `maxPlanReferences`):
+  - `rootResolution.js:258`: `scope-digest` (1 per root + 1 per population), `unresolved-selection` (1 per row + 1 per dbId), `unreachable-population` (1 + |owners| + |mixed|), `hierarchy-internal` (1 per row + 1 per example);
+  - `planTables.js:66`: `root-table` (1 per root), `root-owner` (1 per owner id);
+  - `planner.js:360`: `unit-record` (1 per unit), `unit-range` (1 per **range**: `sizing.js:97` `rangeRecordCount`), `planning-gap` (1 per warning).
+- **Reserve:** `maxUnitsPerRun` overflow slots.
+- **Runtime records:** `split` (2 + the children's range count), and one per taint entry (element, target-model or unit).
+- **Not charged at all:** the ledger frame, per-model wrapper rows, `secondaryCauses` (≤ 8 per unit), `ledger.planningGaps` (closed-enum pairs, de-duplicated), `exclusions`, and `outcome.reasons`.
+
+**Charge per record kind** (test D-8b (a), measured on the real writers):
+
+| Persisted form | Nodes | Budget records charged | Nodes per record |
+|---|---|---|---|
+| `rootOwners[m]` wrapper `{modelKey, owners}` | 3 per model | 0 | slack (≤ 20,000 models) |
+| `RootOwnerRow {rootDbId, ownerDbIds, cls}` | 4 + *o* | 1 root-table + *o* root-owner | ≤ 2.5 |
+| provenance `RootDigest` / `population` | 3 / 3 | 1 scope-digest | 3 |
+| `UnresolvedSelection` | 5 + *n* | 1 + *n* | ≤ 3 |
+| `UnreachablePopulation` | 8 + *o* + *m* | 1 + *o* + *m* | ≤ 8 |
+| `HierarchyInternal` row / example | 5 / 3 + *k* (*k* ≤ 8 by the producer, `MAX_EXAMPLE_OWNERS`) | 1 / 1 | ≤ 11 (see note) |
+| `Warning` / `ledger.planningGaps` row | 2 / 3 | 1 planning-gap / 0 | ≤ 2 / slack |
+| `Taint` (incl. `taint-overflow` in its reserved slot) | 6 | 1 | 6 |
+| **`UnitRecord`** | **17 + \|sourceRootDbIds\| + Σ targets (3 for `model`, 4 + *n* for `roots`) + \|secondaryCauses\| (≤ 8) + 6 × taints** | 1 unit-record + *r* unit-range + 1 reserved slot, where *r* = source ranges + explicit target ranges + whole sentinels | **unbounded** |
+| split children | two full `UnitRecord`s, each copying the parent's targets (`splitting.js:45`) | 2 + children's ranges | **unbounded** |
+
+- *Measured unit records:* 21 (1 source id, a model-scope target), 23 (1 source id, 1 target root), and 2,521 (500 source ids × 2,000 target ids, **2 ranges**). Adding 8 secondary causes gives +8; each taint gives +6.
+- *Note on hierarchy examples.* The schema and validator admit any `ownerDbIds` length up to 10,000,000 on a hierarchy example; only the producer caps it at 8. That is the same form gap in a planning row, but no fix is proposed for it independently.
+
+**Minimum and maximum; shape-dependence.**
+
+- *Minimum.* The smallest producer unit record is 21 nodes for 3 records.
+- *Maximum per unit.* It is a function of **expanded ids**, not of records:
+  - an issued unit carries ≤ `maxSourceDbIdsPerUnit` source ids (`packSource`), ≤ `maxTargetModelsPerUnit` entries, and ≤ `maxTargetFragmentsPerUnit` explicit target ids (each root has ≥ 1 fragment);
+  - a `target-too-large` gap unit carries **all** oversize roots of one model, bounded only by the plan size (`sizing.js:238`), and that gap is repeated for every source chunk;
+  - split children copy the targets.
+- *Why the ratio is unbounded.* The ids live in shared ranges, while the charge is per range. **Many units carry the same target root ids**: cell 1 gives every source chunk the same target slices. So persisted nodes grow as roughly *units × target ids*, while budget records grow as *units + target ids*. `maxUnitsPerRun` caps the unit count; nothing caps the product (`codex-advisor` confirmed there is no hidden cap).
+- **Shape-dependent: yes, and not bounded by any per-record constant.**
+
+**Contradiction, end to end (test D-8b (d); standing `test.todo`).**
+
+- *Setup.* mA has 100 one-fragment roots and mB has 2,000. Selection A is the explicit list of the mA roots; selection B is the explicit list of the mB roots.
+- *Options.* `{maxSourceDbIdsPerUnit: 1, maxUnitsPerRun: 100, maxPlanReferences: 6,600, maxLedgerRecords: 6,800, maxResultsPerRun: 1, maxRetainedDiagnostics: 0}`.
+  - 6,600 is the **exact** plan-record count: 3 × 2,100 roots + 100 unit records + 200 ranges. 6,599 is refused as `plan-too-large`.
+  - 6,800 is the cross-field minimum.
+- *Result.* The options are accepted with `maxCapturedNodes` = formula = **147,171**. The run completes. The set passes `validateResultSet` with `{ok: true}`. Every unit record costs 2,022 nodes against 4 charged records (48 nodes of allowance), and the set measures **221,236** nodes.
+- *Read-back.* The fresh engine's by-id read throws **`ResultSetTooLargeError`**. R21-2 is violated.
+- *How it is kept in the suite.* The facts are pinned in a passing test marked `OPEN GATE D-8b`. The invariant itself is a standing `test.todo` whose real body fails today with `measured 221236 <= formula 147171` (the R-P7-24 precedent).
+
+**The provisional defaults are themselves unsound** (test D-8b (c), computed with the real sizer and the real record budget at `RUN_OPTION_DEFAULTS`).
+
+- *Scenario.* Selection A is 10,000 whole-model roots of 101 fragments each. Each root exceeds half of `maxSourceFragmentsPerUnit` (200), so it forms a source chunk alone. Selection B is 10,000 explicit one-fragment roots, the default `maxExplicitElementsPerSelection`.
+- *Sizing and admission.* The plan sizes to 10,000 units, exactly `maxUnitsPerRun`. The real budget admits it with `planRecords` = 90,001 ≤ 500,000, and the reserve fits.
+- *Node count.* Every unit persists 1 + 10,000 ids, which is **10,022 nodes** (two units measured in full, the rest counted by ranges). The unit records alone total **100,220,000 nodes**.
+- *Against the limits.* That is more than six times both the defaults' formula (15,885,536) and the default reader limit (16,000,000). It also exceeds the byte cap: 33,554,432 nodes at 1 GiB / 32 B.
+- *Consequence.* A run at **default options** can therefore seal a set that no engine configuration can read or store within the byte ceiling. Lighter inputs reach 16,000,000 too: for example, 1,600 source chunks against 10,000 target roots.
+- *At the ceilings.* The same product (≤ 100,000 units × up to 100,000 target ids) far exceeds `SCHEMA_MAX_NODES`. So a legal set can also be misclassified as **corrupt**, contrary to §13.6's "every set any conforming writer may legally produce is within it".
+
+**Is there a single fixed replacement? No.**
+
+- *(a) A fixed per-record factor.* It cannot exist, because nodes per charged record are unbounded (above).
+- *(b) An options-only closed expression.* A sound one exists, for example `12 × maxLedgerRecords + maxUnitsPerRun × (maxSourceDbIdsPerUnit + 4 × maxTargetModelsPerUnit + max(maxTargetFragmentsPerUnit, maxPlanReferences) + 8)`. The last term is needed for gap units. As `codex-advisor` noted, the non-unit sections still need their own proof on top. At the defaults this term is about 10,000 × 500,524 ≈ **5.0 × 10⁹ nodes**, some 300 times the 16,000,000 reader default. Even the tighter unit-only product 10,000 × 20,524 ≈ 2.1 × 10⁸ is 13 times over. By the owner's defaults rule this is an owner-decision fact, so it was **not applied**.
+- *(c) Classification.* The defect is an accounting mismatch between the budget unit (a range) and the persisted unit (an expanded id). It is deterministic and has nothing to do with calibration: no G-CAL measurement can change it.
+
+**Proposed forms (owner decision needed, D-8b):**
+
+1. **Charge expanded ids.** The planner charges `unit-range` by id count rather than range count, and `split` likewise. `12 × maxLedgerRecords` then covers unit records, after a small frame adjustment: the 17 + 8 + 3 frame needs ≥ 3 records per unit, and 2 are charged today plus the reserve.
+   - *Cost:* `plan-too-large` arrives much earlier. At the defaults, 1,000,000 records would cover about 1,000,000 persisted ids.
+   - *Scope:* no schema change; the §6.5.1 accounting rule changes.
+2. **Persist ranges, not expanded ids.** The sealed ledger carries the root tables plus `{table, start, end}` ranges.
+   - *Cost:* a schema change, plus changes to `ledgerDigest` and every sealed-ledger consumer (P5 validator, P8 derivations).
+3. **A new RunOption cap** on total persisted ledger ids (for example `maxLedgerIds`), with its own formula term and a producer-side `plan-too-large` / split refusal.
+   - *Cost:* an interface change (a new option).
+4. **Accept a huge sound term, per (b).** This forces far larger reader defaults, beyond the byte ceiling, so it is not viable.
+
+**Owner decision needed.** Choose the D-8b form (1, 2 or 3 above, or another). Until then:
+
+- R21-2's universal claim is **false for ledger-heavy option sets, including the provisional defaults**;
+- AC-11/AC-12's conjunct "at each hard ceiling that option validation accepts" holds only for the results-dominated and diagnostic-dominated forms and for the measured tiers;
+- the D-8b `test.todo` stands.
+
+**Incidental finding (not investigated further).** The schema caps `rootOwners[].owners` and `provenance.models[].scopeDigests.roots` at 10,000 per model, which is the `maxEntriesPerSelection` ceiling. No producer-side guard limits the roots of a *whole-model* selection to that number. A whole-model scope with more than 10,000 roots would therefore seal a set whose own reader rejects it as `array-too-long` (corrupt): a producer/reader mismatch of the same R21-2 class. It was found by reading the code and not reproduced. It should be triaged separately.
+
+### 11.3 Verification
+
+- The new file runs in about 2 s: 10 tests, 9 pass, 1 todo. `nodeFactor.test.mjs`, `options.defaults.test.mjs`, `options.test.mjs` and `maximumShape.test.mjs` all pass.
+- `CLASHTEST_AC12_TIERS=all node --test test/clashtest/integration/maximumShape.test.mjs` passes 10/10.
+- The full suite (`node scripts/run-tests.mjs`) gives **2524 total / 2522 pass / 0 fail / 2 todo** (baseline 2514 / 2513 / 0 / 1). The new todo is the D-8b reproducer.
