@@ -17,17 +17,18 @@
 //        rerun + listResults  — (P7.7)
 //   3. `createClashTestEngine` — the public factory: `createEngineCore(config).engine`.
 //
-// `createEngineCore` and `ENGINE_METHODS` are INTERNAL named exports (tests use `internals`); they are
-// not re-exported from `clashtest/index.js`, so §18's public surface is unchanged.
+// `createEngineCore`, `ENGINE_METHODS`, `createStoredDefinitionResolver` and `withStoredDefinitionValidator`
+// are INTERNAL named exports (tests use them and `internals`); none is re-exported from `clashtest/index.js`,
+// so §18's public surface is unchanged.
 //
 // Controller ruling R1 is enforced ONCE, here: a synchronous method THROWS `EngineDisposedError`
 // after `dispose()`, a Promise-returning one REJECTS with it. Method groups register through
 // `defineSync(name, fn)` / `defineAsync(name, fn)`, which add that gate, so no group can forget it.
 import {
   EngineDisposedError, InvalidOptionsError, ModelBindingError, RunQueueFullError,
-  StoreNotConfiguredError, CorruptListingError,
+  StoreNotConfiguredError, CorruptListingError, InvalidTestDefinitionError, UnsupportedSchemaVersionError,
 } from './errors.js';
-import { resolveEngineLimits, ENGINE_LIMIT_CEILINGS } from './options.js';
+import { resolveEngineLimits, resolveRunOptions, ENGINE_LIMIT_CEILINGS } from './options.js';
 import { assertRegistryBelongsToWorld } from './identity/ModelRegistry.js';
 import { compareModelKeys } from './identity/ids.js';
 import { DIGEST_VERSION } from './util/canonical.js';
@@ -46,9 +47,12 @@ import { validateUnitOutcome, internalErrorOutcome } from './execution/UnitExecu
 import {
   createDiagnosticAggregator, createStatisticsAccumulator, deriveUnitTaints,
 } from './execution/diagnostics.js';
-import { createDefinitionOperations } from './definition/operations.js';
-import { validateReference, toDefinitionError, LIST_LIMIT } from './definition/validate.js';
-import { validateResultSetSummary } from './results/validateResultSet.js';
+import { createDefinitionOperations, RESOLVE_STATUS_TO_PLANNING_CAUSE } from './definition/operations.js';
+import {
+  validateReference, toDefinitionError, LIST_LIMIT, captureAndValidate, classifyStartRunArgument,
+} from './definition/validate.js';
+import { prepareDefinition } from './definition/normalize.js';
+import { validateResultSetSummary, readResultSet } from './results/validateResultSet.js';
 import { planRun, materializeUnit, rootsForRanges } from './planning/planner.js';
 import { splitUnit } from './planning/splitting.js';
 import { createRecordBudget, createLedger } from './planning/ledger.js';
@@ -256,6 +260,148 @@ function validatedResultPage(page, limits) {
 
 const notImplemented = (name) => new Error(`ClashTestEngine.${name} is not implemented in this build yet`);
 
+// ---- the per-engine stored-definition resolver (P7.4 Step 3a; spec §5.5) ----------------------------
+
+/**
+ * A lookup that cannot produce a usable test (§5.5: `test-not-found` / `test-archived` / `test-deleted`
+ * / `test-lookup-failed`) is tagged with this module-private symbol, so `planningCauseOf` maps it to
+ * the ONE sealed cause `test-unavailable` (R-P7-4) without a new error class or new vocabulary. The
+ * detail rides only on the in-memory error; the sealed `PlanningGap` is the closed `{phase, cause}` (A1).
+ */
+const TEST_UNAVAILABLE = Symbol('clashtest.engine.testUnavailable');
+
+function testUnavailable(detail, cause) {
+  const err = new Error(`stored test unavailable (${detail})`, cause === undefined ? undefined : { cause });
+  err[TEST_UNAVAILABLE] = detail;
+  return err;
+}
+
+/** A status other than `live`, through P2's §5.5 status table (used ONLY to pick the detail). */
+const unavailableDetailOf = (status) => (
+  typeof status === 'string' && status !== 'live' && Object.hasOwn(RESOLVE_STATUS_TO_PLANNING_CAUSE, status)
+    ? RESOLVE_STATUS_TO_PLANNING_CAUSE[status]
+    : 'test-lookup-failed');
+
+/** The test-only validator override of `withStoredDefinitionValidator` (null = P2's `captureAndValidate`). */
+let storedDefinitionValidatorOverride = null;
+
+/**
+ * INTERNAL (never re-exported from `clashtest/index.js`). Test-only construction seam: engines built
+ * SYNCHRONOUSLY inside `fn` get `validate` as their stored-definition validator, captured at
+ * construction (the engine never re-reads this slot at run time). The previous value is restored in a
+ * `finally`, so a throw inside `fn` cannot leak the override. Not a host option; not a migration seam.
+ */
+export function withStoredDefinitionValidator(validate, fn) {
+  if (typeof validate !== 'function' || typeof fn !== 'function') {
+    throw new TypeError('withStoredDefinitionValidator(validate, fn): both must be functions');
+  }
+  const previous = storedDefinitionValidatorOverride;
+  storedDefinitionValidatorOverride = validate;
+  try {
+    return fn();
+  } finally {
+    storedDefinitionValidatorOverride = previous;
+  }
+}
+
+/**
+ * INTERNAL (never re-exported from `clashtest/index.js`). The per-engine factory of the two closures
+ * P6's `RunSpec` needs over `stores.test` (P7.4 Step 3a, support obligation 3):
+ *
+ *   resolveDefinition(input, {kind = 'reference', persist = true})
+ *        → Promise<{definition (prepared, deep-frozen), testRef: {testId, revision, semanticDigest}}>
+ *     In order, every step before any planning:
+ *     1. §5.5 layer 2 — for a run with `persist !== false` when a testStore is configured, whatever
+ *        the overload: `testStore.isTombstoned(testId)`. Only a literal `false` passes; `true` is
+ *        `test-deleted`, a rejection or any other answer is `test-lookup-failed` (FAIL CLOSED).
+ *     2. `kind: 'definition'` — `input` is the CAPTURED, already-validated direct definition (the
+ *        synchronous prefix of `startRun` validated it): it is only prepared.
+ *     3. `kind: 'reference'` — `testStore.resolveForRun(testId, revision?)`; any status but `live`, a
+ *        rejection or an unreadable answer is `test-unavailable`. The returned definition is
+ *        UNTRUSTED (§5.3 (iv)): it is captured and validated by `validate` AT THE RESOLVED ENGINE
+ *        LIMITS (which bound the issue list), a non-empty result becomes P2's `toDefinitionError`
+ *        (`InvalidTestDefinitionError` / `UnsupportedSchemaVersionError`), and a definition for a
+ *        different test or revision than the one asked for is unusable (`test-lookup-failed`) —
+ *        `ResultId` is derived from `testRef.testId`, so it must be the caller's.
+ *     4. P2's `prepareDefinition` (normalize → `semanticDigest` → deep freeze, sliced).
+ *
+ *   planningCauseOf(err) → a `PLANNING_CAUSES` member. P6 also hands it planner/enumeration throws, so
+ *     it maps, in order: test-unavailable tag → `test-unavailable`; `InvalidTestDefinitionError` →
+ *     `definition-invalid`; `UnsupportedSchemaVersionError{type:'ClashTestDefinition'}` →
+ *     `schema-unsupported`; `WorldDisposedError` → `world-disposed`; `ModelEvictedError` →
+ *     `model-not-bound`; anything else (and an error it cannot even read) → `enumeration-failed`
+ *     (fail closed). Only the bare string crosses into P6, so no issue detail can reach the seal (A1).
+ *     `migration-failed` stays a reserved cause with no producer (DEFINITION_SCHEMA_VERSION is 1).
+ *
+ * `validate` is a TEST-ONLY default-argument seam (default: the `withStoredDefinitionValidator`
+ * override if one is active at this call, else P2's `captureAndValidate`).
+ */
+export function createStoredDefinitionResolver({
+  testStore = null, limits, validate = storedDefinitionValidatorOverride ?? captureAndValidate,
+  now, yieldToScheduler, spanRecorder,
+} = {}) {
+  if (typeof validate !== 'function') throw new TypeError('createStoredDefinitionResolver: `validate` must be a function');
+  const slice = { now, yieldToScheduler, limits, spanRecorder };
+
+  async function assertNotTombstoned(testId) {
+    let answer;
+    try {
+      answer = await testStore.isTombstoned(testId);
+    } catch (err) {
+      throw testUnavailable('test-lookup-failed', err);
+    }
+    if (answer !== false) throw testUnavailable(answer === true ? 'test-deleted' : 'test-lookup-failed');
+  }
+
+  async function prepared(captured) {
+    const { definition, semanticDigest } = await prepareDefinition(captured, slice);
+    return { definition, testRef: { testId: definition.testId, revision: definition.revision, semanticDigest } };
+  }
+
+  async function lookUp(testId, revision) {
+    try {
+      const found = await testStore.resolveForRun(testId, revision ?? undefined);   // absent revision = latest
+      return { status: found.status, stored: found.definition };
+    } catch (err) {
+      throw testUnavailable('test-lookup-failed', err);
+    }
+  }
+
+  async function resolveDefinition(input, { kind = 'reference', persist = true } = {}) {
+    const { testId } = input;
+    if (persist !== false && testStore) await assertNotTombstoned(testId);
+    if (kind === 'definition') return prepared(input);
+    if (!testStore) throw testUnavailable('test-lookup-failed');   // startRun refuses this synchronously
+    const { status, stored } = await lookUp(testId, input.revision);
+    if (status !== 'live') throw testUnavailable(unavailableDetailOf(status));
+    const checked = validate(stored, { limits });
+    if (checked.issues.length > 0) throw toDefinitionError(checked);
+    const captured = checked.captured;
+    const wantedRevision = input.revision ?? null;
+    if (captured.testId !== testId || (wantedRevision !== null && captured.revision !== wantedRevision)) {
+      throw testUnavailable('test-lookup-failed');
+    }
+    return prepared(captured);
+  }
+
+  function planningCauseOf(err) {
+    try {
+      if (err !== null && typeof err === 'object') {
+        if (err[TEST_UNAVAILABLE] !== undefined) return 'test-unavailable';
+        if (err instanceof InvalidTestDefinitionError) return 'definition-invalid';
+        if (err instanceof UnsupportedSchemaVersionError && err.type === 'ClashTestDefinition') return 'schema-unsupported';
+        if (err.name === 'WorldDisposedError') return 'world-disposed';
+        if (err.name === 'ModelEvictedError') return 'model-not-bound';
+      }
+    } catch {
+      // an error object with throwing accessors / traps: fail closed below
+    }
+    return 'enumeration-failed';
+  }
+
+  return { resolveDefinition, planningCauseOf };
+}
+
 // ================================================================================================
 // 2. The engine core
 // ================================================================================================
@@ -319,6 +465,18 @@ export function createEngineCore(config) {
   const definitions = createDefinitionOperations({                       // P2 owns §5.5; P7 delegates (N28)
     testStore: stores.test, limits: effectiveLimits, yieldToScheduler: engineYield, now, spanRecorder,
   });
+  // P7.4 Step 3a: the ONE stored-definition resolver of this engine, built with the RESOLVED engine
+  // limits (the observable `maxValidationIssues` hand-down). Its `validate` default is read HERE, once,
+  // so a `withStoredDefinitionValidator` override is captured at construction time.
+  const storedResolver = createStoredDefinitionResolver({
+    testStore: stores.test, limits: effectiveLimits, now, yieldToScheduler: engineYield, spanRecorder,
+  });
+  // The shape `buildRunSpec` consumes (`resolveDefinition(source, {persist})`), over that resolver;
+  // shared by `startRun` and (P7.7) `rerun`.
+  const runResolver = Object.freeze({
+    resolveDefinition: (source, { persist } = {}) => storedResolver.resolveDefinition(source.value, { kind: source.kind, persist }),
+    planningCauseOf: storedResolver.planningCauseOf,
+  });
 
   const plannerPort = Object.freeze({
     planRun, materializeUnit, splitUnit, rootsForRanges, createRecordBudget, createLedger, checkScopeBracket,
@@ -351,6 +509,22 @@ export function createEngineCore(config) {
   // ==============================================================================================
   // Run admission — shared by `startRun` (P7.4) and `rerun` (P7.7)
   // ==============================================================================================
+
+  /** A run's slot is live while it holds a reservation (not yet sealed) or its sealed set is resident.
+   *  Both reads are NON-touching (they never change the LRU order). */
+  const holdsSlot = (runId) => residency.reservationHeld(runId) || residency.getPersistenceState(runId) !== null;
+
+  /**
+   * Drops every `ownRuns` entry whose run is TERMINAL and no longer holds a slot (released, evicted or
+   * discarded): the engine keeps no run history (§13.5.2, no history cache). A non-terminal entry is
+   * always kept, so `dispose()` can still signal it. After a prune the map holds at most the slot cap
+   * of entries plus any still-settling run, so it is bounded by the resident bound.
+   */
+  function pruneOwnRuns() {
+    for (const [runId, { handle }] of ownRuns) {
+      if (!holdsSlot(runId) && handle.getSnapshot().phase === 'terminal') ownRuns.delete(runId);
+    }
+  }
 
   /**
    * P7's one `RunSpec` constructor, so P6's required fields are written in exactly one place.
@@ -393,7 +567,9 @@ export function createEngineCore(config) {
       world,
       testIdOfInput,
       derivedFromRunId: derivedFromRunId ?? null,
-      resolveDefinition: () => Promise.resolve(resolver.resolveDefinition(source)).then((resolved) => {
+      // `persist` rides along because §5.5 layer 2 (the tombstone admission check) applies only to a
+      // run whose set may be persisted.
+      resolveDefinition: () => Promise.resolve(resolver.resolveDefinition(source, { persist: options.persist })).then((resolved) => {
         resolvedMode = resolved?.definition?.mode ?? null;
         return resolved;
       }),
@@ -453,6 +629,7 @@ export function createEngineCore(config) {
    */
   function admitAndBegin({ source, options, derivedFromRunId = null, resolver }) {
     alive();
+    pruneOwnRuns();                                    // keeps `ownRuns` bounded by the slot cap
     const runId = newRunId();
     residency.reserveRunSlot(runId);                   // ResultCapacityError
     try {
@@ -548,6 +725,79 @@ export function createEngineCore(config) {
   // Run methods (P7.4)
   // ==============================================================================================
 
+  /**
+   * §18 `startRun(defOrRef, runOptions?) → RunHandle`. SYNCHRONOUS and throwing (R1): every refusal —
+   * `InvalidTestDefinitionError{issues}` / `UnsupportedSchemaVersionError`, `StoreNotConfiguredError`
+   * (a reference with no testStore, §5.5), `InvalidOptionsError{issues}`, `ResultCapacityError`,
+   * `RunQueueFullError`, `EngineDisposedError` — is thrown before a handle exists, and none leaves a
+   * slot or a map entry behind (validation and options come BEFORE the reservation; `admitAndBegin`
+   * rolls its own reservation back). Once admitted, a handle is always returned; a stored reference
+   * can then only fail asynchronously, sealed by P6 with one planning gap (§5.5).
+   */
+  function startRun(input, runOptions) {
+    // (1) Discriminate through P2 (§5.3 scope rule (ii), R21-I3), then capture-and-validate the argument
+    //     in THIS turn. A non-reference goes through P2's full pass, which also reports an uncapturable
+    //     argument (and the schemaVersion gate) with the complete, bounded issue list.
+    const kind = classifyStartRunArgument(input, { limits: effectiveLimits }).kind;
+    const checked = kind === 'reference'
+      ? validateReference(input, { limits: effectiveLimits })
+      : captureAndValidate(input, { limits: effectiveLimits });
+    if (checked.issues.length > 0) throw toDefinitionError(checked);
+    if (checked.captured === null) throw new TypeError('startRun: validation produced no captured value');   // engine bug guard
+    if (kind === 'reference') requireStore('testStore');   // §5.5 "Missing stores": thrown, before slot admission
+
+    // (2) Resolve the options against the RESOLVED engine limits (N31). The frozen result is itself the
+    //     detached copy of the caller's options object (§13.6).
+    const options = resolveRunOptions(runOptions, effectiveLimits);
+
+    // (3) Admission (reserve → queue limit → createRun → ownRuns → begin, with exact rollback).
+    return admitAndBegin({
+      source: { kind: kind === 'reference' ? 'reference' : 'definition', value: checked.captured },
+      options,
+      resolver: runResolver,
+      // no `derivedFromRunId`: buildRunSpec writes `null`. Only `rerun` passes one (P7.7).
+    });
+  }
+
+  /**
+   * §18 `getRun(runId) → RunHandle | null`: this engine's run while it holds a slot — queued, active, or
+   * terminal with its set still resident — else `null` (never throws for an unknown id, §13.5.2). A
+   * terminal entry that no longer holds a slot is pruned here too.
+   */
+  function getRun(runId) {
+    if (typeof runId !== 'string') return null;
+    const own = ownRuns.get(runId);
+    if (own === undefined) return null;
+    if (holdsSlot(runId)) return own.handle;
+    if (own.handle.getSnapshot().phase === 'terminal') ownRuns.delete(runId);
+    return null;
+  }
+
+  /**
+   * The by-id read path (§13.5.2), resident FIRST (R-P7-9): the resident set if there is one (and the
+   * read refreshes its LRU position, "refreshed by getResultSet"); otherwise a read-through of the
+   * result store under a read slot, WITHOUT making the set resident. A stored set is untrusted
+   * (§13.6 R12-3): it is fetched under the byte guard, then captured, validated and deep-frozen by
+   * P5's `readResultSet` (`CorruptResultSetError` / `ResultSetTooLargeError` reject). Resolves `null`
+   * when neither holds it (or there is no store). `runId` is passed as the diagnostic id only; it is
+   * never read off the untrusted value. P7.6/P7.7 build their by-id reads on this helper.
+   */
+  async function readSetById(runId) {
+    const resident = residency.getResident(runId);
+    if (resident !== null) return resident;
+    const resultStore = stores.result;
+    if (!resultStore) return null;
+    return withReadSlot(async () => {
+      const raw = await resultStore.get(runId, { maxBytes: effectiveLimits.maxStoredResultBytes });
+      if (raw === null || raw === undefined) return null;
+      return readResultSet(raw, { limits: effectiveLimits, slicer: newSlicer(), runId });
+    });
+  }
+
+  defineSync('startRun', startRun);
+  defineSync('getRun', getRun);
+  defineAsync('getResultSet', (runId) => (typeof runId === 'string' ? readSetById(runId) : null));
+
   // ==============================================================================================
   // Residency, retention and lifecycle (P7.5; retentionReport and dispose are P7.2's)
   // ==============================================================================================
@@ -595,7 +845,7 @@ export function createEngineCore(config) {
     internals: {
       engineId, effectiveLimits, hierarchyInternalAcceptance: acceptance, libraryVersion,
       stores, executor, definitions, coordinator, residency, reads, ownRuns, newSlicer,
-      buildRunSpec, admitAndBegin,
+      buildRunSpec, admitAndBegin, runResolver, readSetById,
     },
   };
 }

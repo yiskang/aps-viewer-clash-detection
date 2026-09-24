@@ -7,7 +7,8 @@
 //   => the promise rejects, the reservation STAYS, a retry completes; the reverse order is never used;
 //   `StoreNotConfiguredError` only when NEITHER store is configured.
 //
-// DEFERRED TO P7.4 (they need the run-resolution path, whose resolver P7.4 owns; controller ruling R-P7-14):
+// The run-resolution arms below were DEFERRED from P7.3 to P7.4 (ruling R-P7-14) and are now covered at
+// the end of this file (Task P7.4, R-P7-15):
 //   - a persisting direct-definition run after `deleteTest` seals `failed` / `test-unavailable`, no
 //     `findClashes` call, `definition: null`, `testRef.semanticDigest: null` (§5.5 layer 2);
 //   - the same run with `persist: false` completes and skips the check;
@@ -18,7 +19,7 @@
 // (`rerun` from an embedded definition is P7.7's; `retryPersist` of a failed set is P7.5's.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createClashTestEngine } from '../../../clashtest/engine.js';
+import { createClashTestEngine, createEngineCore } from '../../../clashtest/engine.js';
 import {
   StoreNotConfiguredError, TestDeletedError, InvalidTestDefinitionError, EngineDisposedError,
 } from '../../../clashtest/errors.js';
@@ -27,6 +28,8 @@ import { createInMemoryResultStore } from '../../../clashtest/results/InMemoryRe
 import { createEngineWorld } from '../support/engineWorld.mjs';
 import { makeDefinition } from '../support/definitions.mjs';
 import { withRunId } from '../support/resultSetFixtures.mjs';
+import { createScriptedExecutor } from '../support/scriptedExecutor.mjs';
+import { createFakeClock } from '../support/fakeClock.mjs';
 
 // `withRunId` builds its sets for this test id (the shared P5 fixture's own).
 const TEST_ID = 'T1';
@@ -224,4 +227,151 @@ test('deleteTest after dispose rejects EngineDisposedError and touches neither s
   await engine.dispose();
   await assert.rejects(() => engine.deleteTest('T'), EngineDisposedError);
   assert.deepEqual(order, []);
+});
+
+// ================================================================================================
+// Task P7.4: the run-path arms deferred from P7.3 (R-P7-14 / R-P7-15). §5.5 layer 2 is the ENGINE's
+// admission check in the first resolution step: `testStore.isTombstoned(testId)` (the TEST store —
+// spec §5.5 item 2, R-P7-5 — not the result store), for every run with `persist !== false` when a
+// testStore is configured, whatever the overload. Layer 1 (`ResultStore.put` refusing a new insertion)
+// still guards everything the admission check lets through.
+// ================================================================================================
+
+/** The phase P6 records on a gap sealed during resolution (Run.js resolveStage stages 'binding'). */
+const RESOLUTION_PHASE = 'binding';
+const UNAVAILABLE_GAP = [{ phase: RESOLUTION_PHASE, cause: 'test-unavailable' }];
+
+/** A recording executor (every unit clean); an optional `gate` parks each unit until it resolves. */
+function recordingExecutor(gate = null) {
+  const inner = createScriptedExecutor({}, { unscripted: { facts: [] } });
+  const calls = [];
+  let markStarted;
+  const started = new Promise((r) => { markStarted = r; });
+  const executor = async (request) => {
+    calls.push(request.unit.unitId);
+    markStarted();
+    if (gate) await gate;
+    return inner(request);
+  };
+  return Object.assign(executor, { calls, started });
+}
+
+/** Engine config for a RUN test: fake clock, microtask yields, a timer seam that never fires. */
+function runBase(extra = {}) {
+  const clock = createFakeClock({ start: Date.UTC(2026, 8, 24) });
+  return base({
+    unitExecutor: recordingExecutor(), now: clock.now, yieldToScheduler: clock.yieldToScheduler,
+    scheduleTimeout: () => () => {}, ...extra,
+  });
+}
+
+/** The fail-closed pre-resolution seal of §5.5 layer 2: nothing planned, nothing executed. */
+function assertRefusedBeforeWork(cfg, summary, label) {
+  assert.equal(summary.status, 'failed', label);
+  assert.deepEqual(summary.resultSet.ledger.planningGaps, UNAVAILABLE_GAP, label);
+  assert.equal(summary.resultSet.definition, null, label);
+  assert.deepEqual(summary.resultSet.testRef, { testId: TEST_ID, revision: null, semanticDigest: null }, label);
+  assert.deepEqual(summary.resultSet.ledger.units, [], label);
+  assert.equal(cfg.enumerator.calls.length, 0, `${label}: no planning`);
+  assert.equal(cfg.unitExecutor.calls.length, 0, `${label}: no unit executed`);
+  assert.equal(cfg.world.calls.length, 0, `${label}: no findClashes call`);
+}
+
+test('control: a persisting direct run on a NON-deleted test plans and executes', async () => {
+  const cfg = runBase();
+  const summary = await createClashTestEngine(cfg).startRun(validDef({ testId: TEST_ID })).done;
+  assert.equal(summary.status, 'completed');
+  assert.ok(cfg.enumerator.calls.length > 0 && cfg.unitExecutor.calls.length > 0);
+});
+
+test('a persisting DIRECT run after deleteTest seals failed / test-unavailable and does no work', async () => {
+  const cfg = runBase();
+  const engine = createClashTestEngine(cfg);
+  await engine.deleteTest(TEST_ID);
+  const summary = await engine.startRun(validDef({ testId: TEST_ID })).done;
+  assertRefusedBeforeWork(cfg, summary, 'direct after delete');
+});
+
+test('the same direct run with persist:false skips the check and completes (it creates no durable identity)', async () => {
+  const asked = [];
+  const testStore = createInMemoryClashTestStore();
+  const original = testStore.isTombstoned;
+  testStore.isTombstoned = (id) => { asked.push(id); return original(id); };
+  const cfg = runBase({ testStore });
+  const engine = createClashTestEngine(cfg);
+  await engine.deleteTest(TEST_ID);
+  const summary = await engine.startRun(validDef({ testId: TEST_ID }), { persist: false }).done;
+  assert.equal(summary.status, 'completed');
+  assert.deepEqual(asked, [], 'isTombstoned was never consulted');
+  assert.equal(summary.persistence.state, 'skipped');
+  // ...and layer 1 still refuses it if a host later persists the sealed set itself.
+  const resultStore = createInMemoryResultStore();
+  await resultStore.tombstoneTest(TEST_ID);
+  await assert.rejects(() => resultStore.put(summary.resultSet), TestDeletedError);
+});
+
+test('a REJECTING, or non-boolean, isTombstoned fails closed as test-unavailable', async () => {
+  for (const [label, isTombstoned] of [
+    ['rejects', async () => { throw new Error('store unreachable'); }],
+    ['throws synchronously', () => { throw new Error('store unreachable'); }],
+    ['answers a non-boolean', async () => 'no'],
+    ['answers undefined', async () => undefined],
+  ]) {
+    const testStore = { ...createInMemoryClashTestStore(), isTombstoned };
+    const cfg = runBase({ testStore });
+    const summary = await createClashTestEngine(cfg).startRun(validDef({ testId: TEST_ID })).done;
+    assertRefusedBeforeWork(cfg, summary, label);
+  }
+});
+
+test('stored-reference runs against a deleted, archived or missing test seal failed / test-unavailable', async () => {
+  const arms = [
+    ['deleted', async (engine) => { await engine.saveTest(validDef({ testId: TEST_ID })); await engine.deleteTest(TEST_ID); }, { testId: TEST_ID }],
+    ['archived', async (engine) => { await engine.saveTest(validDef({ testId: TEST_ID })); await engine.archiveTest(TEST_ID); }, { testId: TEST_ID }],
+    ['missing', async () => {}, { testId: TEST_ID }],
+    ['missing revision', async (engine) => { await engine.saveTest(validDef({ testId: TEST_ID })); }, { testId: TEST_ID, revision: 2 }],
+    // persist:false skips the tombstone check, but the store's own `deleted` status still refuses it.
+    ['deleted, persist:false', async (engine) => { await engine.saveTest(validDef({ testId: TEST_ID })); await engine.deleteTest(TEST_ID); }, { testId: TEST_ID }, { persist: false }],
+  ];
+  for (const [label, arrange, reference, runOptions] of arms) {
+    const cfg = runBase();
+    const engine = createClashTestEngine(cfg);
+    await arrange(engine);
+    const summary = await engine.startRun(reference, runOptions).done;
+    assertRefusedBeforeWork(cfg, summary, label);
+  }
+});
+
+test('a persisting run admitted BEFORE the delete and finishing after it: outcome unchanged, persistence failed, set held', async () => {
+  let open;
+  const gate = new Promise((r) => { open = r; });
+  const unitExecutor = recordingExecutor(gate);
+  const core = createEngineCore(runBase({ unitExecutor }));
+  const { engine } = core;
+  const handle = engine.startRun(validDef({ testId: TEST_ID }));
+  await unitExecutor.started;                            // resolved and executing: the admission check passed
+  await engine.deleteTest(TEST_ID);
+  open();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'completed', 'the run outcome is unchanged by the later delete');
+  assert.notEqual(summary.resultSet.definition, null, 'resolved before the delete');
+  const persisted = await handle.persisted;
+  assert.equal(persisted.state, 'failed');
+  assert.equal(persisted.error.name, 'TestDeletedError');
+  const row = engine.retentionReport().sets.find((s) => s.runId === handle.runId);
+  assert.equal(row.class, 'held', 'a failed write keeps the set resident and unevictable');
+  assert.equal(engine.getRun(handle.runId), handle);
+  assert.equal(await core.internals.stores.result.get(handle.runId), null, 'nothing was inserted');
+});
+
+test('with only a resultStore configured, the admission check is skipped but layer 1 still refuses the write', async () => {
+  const cfg = runBase({ testStore: null });
+  const engine = createClashTestEngine(cfg);
+  await engine.deleteTest(TEST_ID);                      // tombstones the result store only
+  const handle = engine.startRun(validDef({ testId: TEST_ID }));
+  const summary = await handle.done;
+  assert.equal(summary.status, 'completed', 'no testStore: no admission check (§5.5 residual boundary)');
+  const persisted = await handle.persisted;
+  assert.equal(persisted.state, 'failed');
+  assert.equal(persisted.error.name, 'TestDeletedError');
 });
