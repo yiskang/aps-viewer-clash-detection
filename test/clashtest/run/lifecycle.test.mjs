@@ -1125,3 +1125,32 @@ test('an evaluated outcome carrying the pairsOverflowLength marker seals failed:
   assert.deepEqual(ok.resultSet.outcome.reasons, []);
   assert.equal(ok.resultSet.results.length, 3);
 });
+
+// D-B (owner-authorized P6 fix, 2026-09-24). Spec §6.2 owner classes and §11.1 (`flags.unreachableOwner`:
+// "an owner of the pair is *unreachable-only*"): P3's `unreachablePopulation[].ownerDbIds` lists EVERY
+// owner with a tree-unreachable fragment, MIXED owners included (`mixedOwnerDbIds` is its subset that
+// some root also owns). The accumulator's `unreachableOwners` must therefore be ownerDbIds MINUS
+// mixedOwnerDbIds -- before the fix a mixed owner's result was flagged `unreachableOwner`, which P5's
+// validateResultSet rejects ('unreachable-flag-invalid') and which feeds pairSetDigest.
+test('D-B: the accumulator ctx classifies owners from plan data: unreachable-only excludes mixed owners (spec §6.2, §11.1)', async () => {
+  const fx = createRunFixture({ plan: createFakePlan([{ unitId: '1.0', weight: 1 }]) });
+  const planRun = fx.spec.plannerPort.planRun;
+  fx.spec.plannerPort.planRun = async (args) => {
+    args.ledger.recordPlanning({ unreachablePopulation: [
+      // 900 mixed, 950 unreachable-only
+      { modelKey: 'mk-a', count: 3, ownerDbIds: [900, 950], mixedOwnerDbIds: [900], unattributable: { notLoaded: 0, ownerUnresolvable: 0 } },
+      // every unreachable owner is mixed: no unreachable-only owner at all for this model
+      { modelKey: 'mk-b', count: 1, ownerDbIds: [700], mixedOwnerDbIds: [700], unattributable: { notLoaded: 0, ownerUnresolvable: 0 } },
+      // unattributable only: no owners of either class
+      { modelKey: 'mk-c', count: 0, ownerDbIds: [], mixedOwnerDbIds: [], unattributable: { notLoaded: 2, ownerUnresolvable: 0 } },
+    ] });
+    return planRun(args);
+  };
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  await handle.done;
+  const ctx = fx.resultPort.lastAccumulatorCtx;
+  const plain = (m) => Object.fromEntries([...m].map(([k, s]) => [k, [...s].sort((a, b) => a - b)]));
+  assert.deepEqual(plain(ctx.unreachableOwners), { 'mk-a': [950] }, 'unreachable-only owners: mixed 900 and 700 are excluded');
+  assert.deepEqual(plain(ctx.mixedOwners), { 'mk-a': [900], 'mk-b': [700] }, 'mixed owners, unchanged');
+});

@@ -266,11 +266,19 @@ async function resolveStage(run) {
 }
 
 /** P5's accumulator ctx takes `Map<modelKey, Set<dbId>>` built from PLAN data. The ledger's
- *  `unreachablePopulation` rows are that plan data in their persisted shape. */
-function ownerSetsFromLedger(ledger, field) {
+ *  `unreachablePopulation` rows are that plan data in their persisted shape.
+ *
+ *  D-B (owner-authorized P6 fix, 2026-09-24): a row's `ownerDbIds` lists EVERY owner with a
+ *  tree-unreachable fragment, MIXED owners included (§6.2: mixed = in `unreachable.ownerDbIds` AND
+ *  some root's `ownerDbIds`, recorded as `mixedOwnerDbIds`). `flags.unreachableOwner` is reserved for
+ *  *unreachable-only* owners (§11.1), so `'unreachable-only'` is `ownerDbIds` minus
+ *  `mixedOwnerDbIds`; `'mixed'` is `mixedOwnerDbIds` as recorded. */
+function ownerSetsFromLedger(ledger, ownerClass) {
   const out = new Map();
   for (const row of ledger.toLedgerRecord().unreachablePopulation) {
-    if (row[field].length > 0) out.set(row.modelKey, new Set(row[field]));
+    const mixed = new Set(row.mixedOwnerDbIds);
+    const owners = ownerClass === 'mixed' ? mixed : new Set(row.ownerDbIds.filter((dbId) => !mixed.has(dbId)));
+    if (owners.size > 0) out.set(row.modelKey, owners);
   }
   return out;
 }
@@ -352,8 +360,8 @@ async function planStage(run) {
     // existed and rank every one of them `Number.MAX_SAFE_INTEGER` (I6).
     unitPlanRank: run.unitOrder,
     // Built from PLAN data, never from a unit (P5's rule): Map<modelKey, Set<dbId>>.
-    unreachableOwners: ownerSetsFromLedger(run.ledger, 'ownerDbIds'),
-    mixedOwners: ownerSetsFromLedger(run.ledger, 'mixedOwnerDbIds'),
+    unreachableOwners: ownerSetsFromLedger(run.ledger, 'unreachable-only'),
+    mixedOwners: ownerSetsFromLedger(run.ledger, 'mixed'),
   });
   adoptPlanIntoProgress(run, result);
   run.transition('running');
