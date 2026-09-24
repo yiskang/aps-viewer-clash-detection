@@ -188,7 +188,7 @@ Also add an erratum entry to the spec's errata register and §25 dispositions, f
 
 The owner approved §7 and directed a reconciliation of the `maxResultsPerRun` hard ceiling (derived maximum 956,824 unless disproved). Both were applied. The erratum is recorded as row **A11** in the spec's §25 errata table.
 
-- **Commits:** `e016796` — `fix(clashtest): D-8 — …` (code and tests). The spec, plan and record edits are in the `docs(spec): D-8 erratum A11 …` commit that follows it.
+- **Commits:** `e016796` — `fix(clashtest): D-8 — …` (code and tests). The spec, plan and record edits are in the `docs(spec): D-8 erratum A11 …` commit `ab01fcd`, with a docs follow-up `03fdf52` (missed `p0` l.73 formula; softened §10 wording).
 - **Final constants** (`clashtest/options.js`):
   - `SCHEMA_NODE_FACTORS = { result: 35, ledger: 12, diagnostic: 12, slack: 65_536 }` (result was 24).
   - `RUN_OPTION_SPECS.maxResultsPerRun = int(1, 956_824, 100_000)` (the ceiling was 1,000,000; the default is unchanged).
