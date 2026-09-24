@@ -78,3 +78,62 @@ When the fix lands, the `test.todo` in the evidence test should be changed to `t
   - The other was not captured.
 - **The same kind of flakiness exists without this file.** With the file moved aside, 1 of 6 baseline runs failed once, in "duct through beam, no vertex inside either (round 7 regression)".
 - **The differential file on its own did not flake.** It passed 36 of 36 runs under 6-way parallel load.
+
+## 6. Applied (owner ruling #5)
+
+The owner chose **Option 2**: a producer-side `plan-too-large` guard, with the Result Set schema ceilings left unchanged. Base HEAD `c4177b1`, after D-8b and D-11/D-12 had landed.
+
+### 6.1 Guard
+
+- **Location:** `clashtest/planning/rootResolution.js`, at the start of step 6. By this point step 5 (F16) has already proven that RU = RA ∪ RB, so the union answer's root count is the model's real union. The guard therefore runs before any `classes` / `rootOwners` / `scopeRoots` row is built, before the step 9 budget charge, and before `buildRootTables`. All earlier planning causes keep their precedence: `enumeration-failed`, `owner-mapping-mismatch`, `element-unresolvable` and `hierarchy-overlap`.
+- **Rule:** `answerU.roots.length > MAX_ROOTS_PER_MODEL` ⇒ `{ok: false, cause: 'plan-too-large', overflowClass: 'root-table'}`.
+  - The refusal charges nothing: `planRecords` is unchanged.
+  - It fails closed whether or not a budget is supplied.
+  - The planner maps it to the planning gap `plan-too-large` with detail `{overflowClass: 'root-table'}`, through the same path as every other root-resolution refusal (`planner.js` ~l.316-320). The run then seals `failed`.
+- **Cap constant:** `export const MAX_ROOTS_PER_MODEL = ENGINE_LIMIT_CEILINGS.maxEntriesPerSelection`, imported from `options.js`. This is the same constant `resultSetSchema.js` uses for `ScopeDigests.roots.max` and `RootOwners.owners.max`, and no literal is restated. A test pins `TYPES.get('ScopeDigests').fields.roots.max` and `TYPES.get('RootOwners').fields.owners.max` to `MAX_ROOTS_PER_MODEL`. It fails if either side drifts.
+- **Closed-enum check:** the spec names no `overflowClass` values. The code's closed set is `PLAN_RECORD_CLASSES` in `ledger.js`, and no member was added. The guard reuses `root-table`, which §6.5.1 names as "root-table entries" (one per root in the model's `A'`/`C`/`B'` tables). Its meaning fits: the model's root-table entries, which number |RU|, exceed the representable per-model count. The planning gap schema (`PlanningGap {phase, cause}`) does not persist `detail`, so no persisted value changed.
+
+### 6.2 Audit: the sealed arrays per model and per root, with their schema caps and producer bounds
+
+| Array (sealed set) | Schema cap (`resultSetSchema.js`) | Producer bound | Status |
+| --- | --- | --- | --- |
+| `provenance.models[].scopeDigests.roots` | `maxEntriesPerSelection` ceiling (10,000) | one row per union root of the model | **covered by the D-10 guard** |
+| `ledger.rootOwners[].owners` | `maxEntriesPerSelection` ceiling (10,000) | one row per union root of the model | **covered by the D-10 guard** |
+| `provenance.models` | 2 × `maxEntriesPerSelection` ceiling | one per model key in the union of both selections' entries; each selection has ≤ `maxEntriesPerSelection` entries (V4, `definition/validate.js`; engine limit ≤ its ceiling), one per model after normalization | bounded (definition validator) |
+| `provenance.admissionBaseline` | 2 × `maxEntriesPerSelection` ceiling | one per run model key (`Run.js` ~l.298) | bounded (same) |
+| `ledger.rootOwners` (per-model rows) | 2 × `maxEntriesPerSelection` ceiling | one per planned model | bounded (same) |
+| `ledger.unreachablePopulation` | 2 × `maxEntriesPerSelection` ceiling | ≤ one per model (whole-scope union only) | bounded (same) |
+| `ledger.hierarchyInternal` | 2 × `maxEntriesPerSelection` ceiling | ≤ one per model | bounded (same) |
+| `RootOwnerRow.ownerDbIds`, `UnreachablePopulation.ownerDbIds` / `mixedOwnerDbIds`, `UnresolvedSelection.dbIds` | `ids()` = `maxPlanReferences` ceiling | every id is charged to the record budget (`root-owner`, `unreachable-population`, `unresolved-selection`) ⇒ ≤ `maxPlanReferences` ≤ its ceiling | bounded (record budget) |
+| `ledger.unresolvedSelections` | `maxLedgerRecords` ceiling | each row is charged (1 + ids) ⇒ ≤ `maxPlanReferences` | bounded (record budget) |
+| `HierarchyInternal.examples` / `HierarchyExample.ownerDbIds` | 20 / `ids()` | sliced to `MAX_OFFENDERS` = 20 / `MAX_EXAMPLE_OWNERS` = 8 (`rootResolution.js` step 8) | bounded (producer slice) |
+| `UnitRecord.sourceRootDbIds`, `UnitTarget.rootDbIds` | `ids()` = `maxPlanReferences` ceiling | charged per expanded id (A14) ⇒ ≤ `maxLedgerRecords` run budget; a unit's own ids ≤ `maxSourceDbIdsPerUnit` / the target caps | bounded (record budget, A14) |
+
+Only the two arrays capped at 1 × `maxEntriesPerSelection` could be reached past their cap. Every array capped at 2 × `maxEntriesPerSelection` is indexed per model, and the definition validator bounds it. No fix needed a schema or closed-enum change.
+
+### 6.3 Before and after (real engine, default run options, read back by id after `releaseResultSet`)
+
+| Case | Before (`c4177b1`) | After |
+| --- | --- | --- |
+| (a) whole-model scope, 10,001 roots | `completed`; read back fails with `CorruptResultSetError` `array-too-long` | `failed`, planning gap `plan-too-large`, no units; the stored set validates and reads back |
+| (b) explicit 10,000 + 1 on one model | same as (a) | same as (a) |
+| (c) 10,001 dbIds, `maxExplicitElementsPerSelection` raised to 10,001 | same as (a) | same as (a) |
+| (c) at default limits | `InvalidTestDefinitionError` `too-many-elements` | unchanged |
+| whole-model, exactly 10,000 roots | (not tested) | `completed`; the set validates and reads back after release |
+| explicit union 9,999 + 1 = 10,000 | (not tested) | `completed`; the set validates and reads back after release |
+
+The failed seal records `plan-too-large` twice in `ledger.planningGaps`: once from the planner's ledger and once from `Run.js`'s seal. This is the engine's existing failed-planning behavior, and the D-8b reproducer in `nodeFactor.ledgerDiagnostic.test.mjs` asserts it the same way. D-10 does not change it.
+
+### 6.4 Tests and verification
+
+- `test/clashtest/integration/rootCap.producerReader.test.mjs` now has 10 tests, all passing, and runs in about 5.3 s:
+  - the three `OPEN GATE D-10` pin tests were converted to refusal tests for (a), (b) and (c-raised);
+  - two boundary tests were added;
+  - a stage-level test checks that the refusal is `root-table`, charges nothing, and fails closed with no budget, and that exactly 10,000 roots resolve;
+  - a cap-drift test was added;
+  - the standing `test.todo` (R21-2) was flipped to `test()`.
+- **TDD:** with only the constant exported and no guard, 5 of the 10 tests failed for the stated reason (`status` was `completed`, not `failed`; the stage returned `ok: true`; `validateResultSet` reported `array-too-long`). All 10 pass with the guard.
+- **Full suite (`node scripts/run-tests.mjs`):**
+  - baseline at `c4177b1`: 2535 tests / 2533 pass / 0 fail / 2 todo;
+  - after: 2539 tests / 2538 pass / 0 fail / 1 todo.
+- **Spec:** erratum **A15** in §25, plus one sentence in §6.5.1.
