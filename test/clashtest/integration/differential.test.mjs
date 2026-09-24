@@ -7,14 +7,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createClashTestEngine } from '../../../clashtest/index.js';
-// `createStatusReader` is not on the §18 public surface (index.js re-exports only the one-shot
-// `getPairStatus`/`getElementStatus`), so the suite imports P5's module directly -- still P5's
-// reader, never a P7-local one (duplicate-ownership D4).
-import { createStatusReader } from '../../../clashtest/results/status.js';
 import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
 import { canonicalJson } from '../../../clashtest/util/canonical.js';
 import { makeRealWorldFixture, recordFindClashes } from '../support/realWorld.mjs';
 import { bruteForceReference, pairIdKey } from '../support/bruteForce.mjs';
+import { assertPairSets } from '../support/pairSets.mjs';
 import { createFakeClock } from '../support/fakeClock.mjs';
 
 // Two models, deliberately overlapping across and within a model (unit cubes; positions are centres).
@@ -30,7 +27,7 @@ const SPEC = {
   b: { 100: [[0.25, 0, 0]], 200: [[9.75, 0, 0], [-1.03, 0, 0]] },
 };
 
-// `expect` is the arm's ORACLE STRENGTH, not the mode's: see assertPairSets. Every fixture in this
+// `expect` is the arm's ORACLE STRENGTH, not the mode's: see support/pairSets.mjs. Every fixture in this
 // file is built to run clean, so every arm here is 'exact' -- 'correlated' and
 // 'characterization-only' exist for the deliberately caveated arms of Steps 11-19 (P7.8b).
 const MODES = [
@@ -39,48 +36,6 @@ const MODES = [
   { mode: 'surface-intersection', expect: 'exact' },
   { mode: 'containment', expect: 'exact' },
 ];
-
-// The differential oracle. Review finding M2: EXACT by default, and a difference is admissible only on
-// an arm that declares why (see the brief's oracle-strength table).
-function assertPairSets(actual, reference, { mode, resultSet, expect, caveatReasons = [], record }) {
-  const { outcome, diagnostics } = resultSet;
-  // A CLEAN run: nothing the engine recorded can license a difference. §15.1 scopes its
-  // no-repeatability licence to caveated runs, never to a mode.
-  const clean = outcome.environmentSensitive === false
-    && diagnostics.completenessAffectingUpperBound === 0
-    && diagnostics.unclassifiedOccurrences === 0;
-  if (expect === 'exact' || clean) {
-    assert.deepEqual(actual, reference, `${mode}: a clean run must equal the brute-force reference `
-      + `(environmentSensitive=${outcome.environmentSensitive}, `
-      + `completenessAffectingUpperBound=${diagnostics.completenessAffectingUpperBound}, `
-      + `unclassifiedOccurrences=${diagnostics.unclassifiedOccurrences})`);
-    return;
-  }
-  const symmetricDifference = [
-    ...actual.filter((p) => !reference.includes(p)),
-    ...reference.filter((p) => !actual.includes(p)),
-  ];
-  if (symmetricDifference.length === 0) return;          // equality is always acceptable
-  if (expect === 'correlated') {
-    // A deliberately caveated fixture: EACH differing pair must be inside the run's own caveated
-    // scope, read from the sealed set through P5's status reader.
-    const reader = createStatusReader(resultSet);
-    for (const key of symmetricDifference) {
-      const status = reader.pairStatus(JSON.parse(key));  // pairIdKey is canonicalJson(pairId)
-      assert.notEqual(status.verdict, 'covered-clean',
-        `${mode}: ${key} differs from the reference yet the sealed set calls it covered-clean`);
-      assert.ok(status.caveats.some((c) => caveatReasons.includes(c.reason)),
-        `${mode}: ${key} differs with no caveat drawn from ${JSON.stringify(caveatReasons)} `
-        + `(caveats: ${JSON.stringify(status.caveats)})`);
-    }
-    return;
-  }
-  // A MEASUREMENT, not a proof: only an arm that says so in its own name may use it.
-  assert.equal(expect, 'characterization-only');
-  record(`${mode}: CHARACTERIZATION ONLY -- ${symmetricDifference.length} pair(s) differ under `
-    + `${JSON.stringify(outcome.environmentSensitiveCauses)}; this arm does NOT prove decomposition `
-    + `equivalence: ${JSON.stringify(symmetricDifference)}`);
-}
 
 // ---- harness -----------------------------------------------------------------------------------
 
@@ -219,27 +174,35 @@ test('negative control: a naive whole-set-vs-itself findClashes finds no same-mo
 
 // ---- Step 5: partition and broad-phase independence (AC-4) ---------------------------------------
 
-// Two more target models so `maxTargetModelsPerUnit` genuinely slices (the SPEC shapes have ONE
-// target model, where that cap cannot change anything). `a` and `b` are SPEC's own.
+// Two more target models, and selection B as EXPLICIT `elements` entries across b, c and d, so
+// `maxTargetModelsPerUnit` genuinely slices. (Review I1: whole-model `kind:'model'` target entries are
+// the whole-model sentinel, which sizing.js treats as non-partitionable -- alone in a slice -- so the
+// target cap is inert over them; measured: defaults/2/1 all plan the same units.) The lists cover
+// every owner of b, c and d, so the pair space equals the whole-model one. `a` and `b` are SPEC's own;
+// the whole-model TARGET form stays covered by the shape arms above.
 const INVARIANCE_SPEC = {
   ...SPEC,
   c: { 100: [[0.75, 0, 0]], 200: [[10.25, 0, 0]] },
   d: { 100: [[20, 0, 0]], 300: [[0.1, 0, 0]] },
 };
+const INVARIANCE_TARGETS = ['b', 'c', 'd'].map((modelKey) => [modelKey, ownersOf(INVARIANCE_SPEC, modelKey)]);
 const invarianceDef = (mode, clearance) => definitionOf({
   testId: `invariance-${mode}`, mode, clearance,
   selectionA: [{ kind: 'model', modelKey: 'a' }],
-  selectionB: [{ kind: 'model', modelKey: 'b' }, { kind: 'model', modelKey: 'c' }, { kind: 'model', modelKey: 'd' }],
+  selectionB: INVARIANCE_TARGETS.map(([modelKey, dbIds]) => ({ kind: 'elements', modelKey, dbIds })),
 });
-// Sizing arms. The third is NON-default on both caps (the brief's 500/4 equals RUN_OPTION_DEFAULTS
-// and would duplicate the `{}` arm); the premise assertion below pins that.
+// Sizing arms. SLICED is NON-default on both caps (the brief's 500/4 equals RUN_OPTION_DEFAULTS and
+// would duplicate the defaults arm); the two TARGET-ONLY arms vary nothing but maxTargetModelsPerUnit.
+// The premise assertions below pin all of that.
 const SLICED = { maxSourceDbIdsPerUnit: 2, maxTargetModelsPerUnit: 2 };
 const INVARIANCE_ARMS = [
-  { maxSourceDbIdsPerUnit: 1, maxTargetModelsPerUnit: 1, broadPhase: 'tlas' },
-  { broadPhase: 'tlas' },                                                 // defaults
-  { ...SLICED, broadPhase: 'tlas' },
-  { maxSourceDbIdsPerUnit: 1, broadPhase: 'linear' },
-  { broadPhase: 'linear' },
+  { name: 'defaults', runOptions: { broadPhase: 'tlas' } },
+  { name: 'source1-target1', runOptions: { maxSourceDbIdsPerUnit: 1, maxTargetModelsPerUnit: 1, broadPhase: 'tlas' } },
+  { name: 'sliced', runOptions: { ...SLICED, broadPhase: 'tlas' } },
+  { name: 'target-only-2', runOptions: { maxTargetModelsPerUnit: 2, broadPhase: 'tlas' } },
+  { name: 'target-only-1', runOptions: { maxTargetModelsPerUnit: 1, broadPhase: 'tlas' } },
+  { name: 'source1-linear', runOptions: { maxSourceDbIdsPerUnit: 1, broadPhase: 'linear' } },
+  { name: 'linear', runOptions: { broadPhase: 'linear' } },
 ];
 
 for (const { mode, clearance } of MODES.filter((m) => m.mode === 'volume-overlap' || m.mode === 'clearance')) {
@@ -247,25 +210,34 @@ for (const { mode, clearance } of MODES.filter((m) => m.mode === 'volume-overlap
     assert.notEqual(SLICED.maxSourceDbIdsPerUnit, RUN_OPTION_DEFAULTS.maxSourceDbIdsPerUnit);
     assert.notEqual(SLICED.maxTargetModelsPerUnit, RUN_OPTION_DEFAULTS.maxTargetModelsPerUnit);
     const digests = [];
-    const unitCounts = [];
+    const units = new Map();
     let reference = null;
-    for (const runOptions of INVARIANCE_ARMS) {
+    for (const { name, runOptions } of INVARIANCE_ARMS) {
       const h = await harness(INVARIANCE_SPEC);
+      const before = h.recorder.calls.length;
       const resultSet = await h.run(invarianceDef(mode, clearance), runOptions);
       assertCleanFull(resultSet);
       assert.equal(resultSet.provenance.broadPhase, runOptions.broadPhase);
+      // Review M1: the library calls themselves carried the arm's broad phase (not just provenance).
+      for (const { query } of h.recorder.calls.slice(before)) assert.equal(query.broadPhase, runOptions.broadPhase, name);
+      const cap = runOptions.maxTargetModelsPerUnit ?? RUN_OPTION_DEFAULTS.maxTargetModelsPerUnit;
+      for (const u of resultSet.ledger.units) assert.ok(u.targets.length <= cap, `${name}: unit ${u.unitId} exceeds the target cap`);
       digests.push(resultSet.digests.pairSetDigest);
-      unitCounts.push(resultSet.ledger.units.length);
+      units.set(name, resultSet.ledger.units.length);
       reference ??= await bruteForceReference(h.fx, { mode, clearance,
-        sources: ownersOf(INVARIANCE_SPEC, 'a').map((d) => ['a', d]), targets: [['b', null], ['c', null], ['d', null]] });
+        sources: ownersOf(INVARIANCE_SPEC, 'a').map((d) => ['a', d]), targets: INVARIANCE_TARGETS });
       assert.ok(reference.pairIds.length > 0, 'premise: a non-empty reference');
       assertPairSets(pairKeysOf(resultSet), reference.pairIds, { mode, resultSet, expect: 'exact' });
     }
     assert.equal(new Set(digests).size, 1, 'pairSetDigest must not depend on chunking or broad phase');
-    // Premise: the three tlas sizing arms really decompose differently (4 source owners x 3 target
-    // models; measured at c1ff642: 1/1 -> 12 units, 2/2 -> 6, defaults -> 3), so the digest equality
-    // is not vacuous. Only distinctness is asserted -- the exact counts are the planner's (P3) business.
-    assert.equal(new Set(unitCounts.slice(0, 3)).size, 3, `distinct plans per sizing arm: ${unitCounts}`);
+    // Premises, so the digest equality is not vacuous. Only DISTINCTNESS is asserted -- exact unit
+    // counts are the planner's (P3) business. (Measured at 4c5476f: defaults 1, 1/1 12, 2/2 4,
+    // target-only-2 2, target-only-1 3.)
+    const count = (name) => units.get(name);
+    assert.equal(new Set(['defaults', 'source1-target1', 'sliced'].map(count)).size, 3,
+      `the tlas sizing arms plan distinctly: ${JSON.stringify([...units])}`);
+    assert.equal(new Set(['defaults', 'target-only-2', 'target-only-1'].map(count)).size, 3,
+      `maxTargetModelsPerUnit ALONE changes the plan: ${JSON.stringify([...units])}`);
   });
 }
 
@@ -281,6 +253,7 @@ const wholeSourceDef = (mode, clearance) => definitionOf({ testId: `determinism-
 function determinismFingerprint(resultSet) {
   // The promise is scoped to environmentSensitive === false (§15.1, AC-19(c)): asserted FIRST.
   assert.equal(resultSet.outcome.environmentSensitive, false);
+  assert.ok(resultSet.results.length > 0, 'premise: the run has results (review M2: not a vacuous empty fingerprint)');
   return canonicalJson({
     pairSetDigest: resultSet.digests.pairSetDigest,
     ledgerDigest: resultSet.digests.ledgerDigest,
@@ -325,4 +298,26 @@ test('library-call conformance: no findClashes call after a cancel', async () =>
   assertLibraryConformance(h.recorder.calls, def);
   assert.equal(h.recorder.peakInFlight, 1);
   assert.deepEqual(h.lifecycle, { evictModel: 0, dispose: 0, invalidateModelPlacement: 0 });
+});
+
+// ---- the recording seam's own contract (review M5) ----------------------------------------------
+
+test('recordFindClashes: restore() removes the override and the prototype method is used again', async () => {
+  const fx = await makeRealWorldFixture({ models: SPEC });
+  const proto = Object.getPrototypeOf(fx.world).findClashes;
+  const recorder = recordFindClashes(fx.world);
+  assert.equal(Object.hasOwn(fx.world, 'findClashes'), true, 'premise: an own-property override is installed');
+  assert.notEqual(fx.world.findClashes, proto);
+  const query = { source: { model: fx.modelFor('a'), dbIds: [100] },
+    target: { targets: [{ model: fx.modelFor('b') }] }, mode: 'volume-overlap', groupBy: 'dbId' };
+  const recorded = await fx.world.findClashes(query);
+  assert.equal(recorder.calls.length, 1);
+  assert.deepEqual(recorder.calls[0].pairs, recorded.pairs);
+  recorder.restore();
+  assert.equal(Object.hasOwn(fx.world, 'findClashes'), false, 'no own property left behind');
+  assert.equal(fx.world.findClashes, proto, 'the prototype method is back');
+  const plain = await fx.world.findClashes(query);
+  assert.equal(recorder.calls.length, 1, 'a call after restore() is not recorded');
+  assert.equal(plain.pairs.length, recorded.pairs.length);
+  assert.doesNotThrow(() => recordFindClashes(fx.world).restore(), 'the world can be recorded again');
 });
