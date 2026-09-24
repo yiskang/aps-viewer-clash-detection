@@ -15,6 +15,7 @@
 import { ENUMERATION_SCOPE_WHOLE, validateResolveRootsResult } from './ElementEnumerator.js';
 import { classifyOwners } from './owners.js';
 import { ROOT_CLASS } from './ledger.js';
+import { ENGINE_LIMIT_CEILINGS } from '../options.js';
 import {
   assertRootAntichainSliced, checkCrossRoleNestingSliced, hierarchyInternalCandidatesSliced,
 } from '../definition/normalize.js';
@@ -25,6 +26,14 @@ const MAX_OFFENDERS = 20;
 const MAX_EXAMPLE_OWNERS = 8;
 // Spec 17.3: a checkpoint at least every 64 items of an engine-controlled span (the slicer's own cadence).
 const CHECK_EVERY = 64;
+
+/**
+ * D-10 (owner ruling #5): the most union roots RU = RA u RB one model may have. Each union root becomes exactly one
+ * row of the sealed `provenance.models[].scopeDigests.roots` and one of `ledger.rootOwners[].owners`, and the Result
+ * Set schema caps both arrays at this SAME constant (`resultSetSchema.js`); a model past it would seal a set the
+ * reader rejects as corrupt (`array-too-long`), so planning refuses it `plan-too-large` (overflow class `root-table`).
+ */
+export const MAX_ROOTS_PER_MODEL = ENGINE_LIMIT_CEILINGS.maxEntriesPerSelection;
 
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const ascending = (a, b) => a - b;
@@ -207,6 +216,11 @@ export async function resolveSelectionRoots({ definition, snapshot, enumerator, 
       }
       return fail('hierarchy-overlap', { modelKey, offenders });
     }
+
+    // D-10 (owner ruling #5): RU is now proven to be RA u RB; past MAX_ROOTS_PER_MODEL it cannot be sealed within the
+    // schema's per-model `scopeDigests.roots` / `rootOwners[].owners` caps. Refuse before building any per-root row,
+    // whether or not a budget is supplied (fail closed); nothing is charged for the refused model.
+    if (answerU.roots.length > MAX_ROOTS_PER_MODEL) return { ok: false, cause: 'plan-too-large', overflowClass: 'root-table' };
 
     // 6. Classes, from the RU answer's row objects so every class shares one digest/owner source. `cls` is assigned here, once.
     const idsA = new Set(rootsA.map((r) => r.dbId));
