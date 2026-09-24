@@ -12,13 +12,14 @@
 // world coordinator's own registry for the model bindings (the one registry the engine accepts).
 //
 // EXECUTOR. `config()` injects P6's scripted executor (every unit evaluates clean) as `unitExecutor`
-// rather than the engine's default `createLocalUnitExecutor`. Reason (Task P7.2 finding, reported to
-// the controller): the REAL planner's work units carry a non-durable `targetWeight` (sizing.js), the
-// real run hands them to the executor unfiltered (Run.js `request.unit`), and P4's closed unit schema
-// rejects it (`request-unit-unknown-key:unit.targetWeight`), so through the real stack every unit fails
-// `internal-error`. Engine T1 tests are about the ENGINE's wiring, so they use a deterministic
-// executor; a test that wants the real one passes `unitExecutor: undefined` (and will see that
-// defect until it is fixed in the owning phase).
+// rather than the engine's default `createLocalUnitExecutor`. History: Task P7.2 found that the REAL
+// planner's work units carry a non-durable `targetWeight` (sizing.js), the real run hands them to the
+// executor unfiltered (Run.js `request.unit`), and P4's closed unit schema rejected it
+// (`request-unit-unknown-key:unit.targetWeight`). That seam was FIXED in FIX-D4 (P4's unit key set now
+// accepts `targetWeight`; see test/clashtest/execution/plannedUnits.request.test.mjs and
+// test/clashtest/engine/realExecutor.plannedUnits.test.mjs). The scripted executor is retained only for
+// determinism: engine T1 tests are about the ENGINE's wiring, so they use a deterministic executor; a
+// test that wants the real one passes `unitExecutor: undefined`.
 import { createExecutionWorld } from './executionWorld.mjs';
 import { makeSyntheticEnumerator } from './syntheticModels.mjs';
 import { makeDefinition } from './definitions.mjs';

@@ -64,7 +64,16 @@ export const EVIDENCE_KEYS_BY_MODE = Object.freeze({
 const REQUEST_KEYS = new Set(['unit', 'materialized', 'runId', 'attempt', 'mode', 'clearance', 'broadPhase', 'snapshot', 'limits']);
 const LIMITS_KEYS = Object.freeze(['maxPairsPerOutcome', 'maxDiagnosticsPerOutcome', 'maxDistinctReasons']);
 const BROAD_PHASE_VALUES = Object.freeze(['tlas', 'linear']);
-const UNIT_KEYS = Object.freeze(['unitId', 'cell', 'sourceModelKey', 'sourceRanges', 'targets', 'orientationRole', 'pairSpaceWeight']);
+/**
+ * FIX-D4 (owner-authorized cross-phase remediation): P3's planned WorkUnit carries a NON-DURABLE
+ * `targetWeight` (its target fragment weight, shared by sizing and splitting; sizing.js). The engine
+ * hands the planned unit to the executor unfiltered (Run.js `request.unit`), so the closed unit key
+ * set has to accept it or every real planned unit fails `request-unit-unknown-key:unit.targetWeight`.
+ * It is OPTIONAL here (hand-built units omit it) and, when present, a non-negative safe integer. It
+ * is never read by the executor and never reaches an outcome or the ledger (`unitRecordFields` copies
+ * an explicit field list).
+ */
+const UNIT_KEYS = Object.freeze(['unitId', 'cell', 'sourceModelKey', 'sourceRanges', 'targets', 'orientationRole', 'pairSpaceWeight', 'targetWeight']);
 const ORIENTATION_ROLES = Object.freeze(['A->B', 'B->A', 'canonical']);
 const MATERIALIZED_KEYS = Object.freeze(['sourceDbIds', 'targets', 'scopeExpect']);
 const MATERIALIZED_TARGET_KEYS = Object.freeze(['modelKey', 'scope', 'dbIds']);
@@ -164,6 +173,9 @@ function checkUnit(unit, add) {
   if (!ORIENTATION_ROLES.includes(unit.orientationRole)) add('request-unit-invalid-orientationrole', 'unit.orientationRole', unit.orientationRole);
   if (!Number.isInteger(unit.pairSpaceWeight) || unit.pairSpaceWeight < 0) {
     add('request-unit-invalid-pairspaceweight', 'unit.pairSpaceWeight', unit.pairSpaceWeight);
+  }
+  if (has(unit, 'targetWeight') && !isSafeNonNegInt(unit.targetWeight)) {
+    add('request-unit-invalid-targetweight', 'unit.targetWeight', unit.targetWeight);
   }
 }
 

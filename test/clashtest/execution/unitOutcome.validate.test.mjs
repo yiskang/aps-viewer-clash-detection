@@ -113,3 +113,18 @@ test('the documented limit of validation: a semantically false but structurally 
   // engine does NOT pretend to detect it.
   assert.equal(validateUnitOutcome(request, good()).ok, true);
 });
+
+// FIX-D4: P3's planned WorkUnit carries a non-durable `targetWeight`; the closed unit key set accepts it.
+const withUnit = (over) => ({ ...request, unit: { ...request.unit, ...over } });
+const unitIssueCodes = (over) => validateExecutionRequest(withUnit(over)).issues.map((i) => i.code);
+
+test('a planned unit\'s non-durable targetWeight is accepted, optional, and range-checked (FIX-D4)', () => {
+  assert.deepEqual(validateExecutionRequest(withUnit({ targetWeight: 7 })).issues, [], 'a valid targetWeight is accepted');
+  assert.deepEqual(validateExecutionRequest(withUnit({ targetWeight: 0 })).issues, [], 'zero is a legal weight');
+  assert.deepEqual(validateExecutionRequest(request).issues, [], 'absent still accepted (hand-built units omit it)');
+  for (const bad of [-1, 1.5, '7', null, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.deepEqual(unitIssueCodes({ targetWeight: bad }), ['request-unit-invalid-targetweight'], `rejected: ${String(bad)}`);
+  }
+  assert.deepEqual(unitIssueCodes({ surprise: 1 }), ['request-unit-unknown-key'], 'the unit key set is still closed');
+  assert.deepEqual(unitIssueCodes({ targetWeight: 3, surprise: 1 }), ['request-unit-unknown-key']);
+});
