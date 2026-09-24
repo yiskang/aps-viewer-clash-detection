@@ -212,9 +212,9 @@ test('unitRecordFields is the P5 self-describing form of a unit: ids expanded fr
   const { units } = sizeUnits({ cells, plan, options: opts({ maxSourceDbIdsPerUnit: 2 }) });
   const f = unitRecordFields(plan, units[0]);
   assert.deepEqual(f, { unitId: '1.0', sourceModelKey: 'src', sourceRootDbIds: [1, 2],
-    targets: [{ modelKey: 'a', scope: 'roots', rootDbIds: [1, 2] }], pairSpaceWeight: 4, ranges: 2 });
+    targets: [{ modelKey: 'a', scope: 'roots', rootDbIds: [1, 2] }], pairSpaceWeight: 4, ranges: 4 });   // A14: 2 + 2 ids
   assert.deepEqual(unitRecordFields(plan, units[1]).targets, [{ modelKey: 'b', scope: 'model' }]);
-  assert.equal(unitRecordFields(plan, units[1]).ranges, 2);          // one source range + the sentinel entry
+  assert.equal(unitRecordFields(plan, units[1]).ranges, 3);          // A14: two source ids + the sentinel entry
 });
 
 // ---- through decomposeCells, on real class tables (C then B' ranges; cell 3b multi-range sources) ------------------

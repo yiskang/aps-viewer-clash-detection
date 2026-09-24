@@ -166,8 +166,9 @@ test('the admission charges 2 + the children\'s range records to the live budget
   const { plan, unit, budget } = makeSplitFixture({ sourceRoots: [1, 2], targets: [{ modelKey: 'a', roots: [5, 6] }] });
   const before = budget.discretionaryRemaining;
   planSplit(plan, unit);
-  // Each child: 1 source range + 1 target range = 2 range records. Block = 2 + 2 + 2.
-  assert.equal(before - budget.discretionaryRemaining, 2 + 2 + 2);
+  // Each child (erratum A14, charged per expanded id): 1 source id + its 2 COPIED target ids = 3 range records.
+  // Block = 2 + 3 + 3 (it was 2 + 2 + 2 -- one source range + one target range per child -- before A14).
+  assert.equal(before - budget.discretionaryRemaining, 2 + 3 + 3);
 });
 
 test('a nested split is refused unit-cap when the run is one unit record short (children count)', () => {

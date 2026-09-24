@@ -11,11 +11,13 @@
 //         24 + maxUnitIdsPerDiagnostic nodes (the schema/validator maximum); `worstCaseCapturedNodes` now charges
 //         (SCHEMA_NODE_FACTORS.diagnostic + maxUnitIdsPerDiagnostic) per retained diagnostic, diagnostic factor 24
 //         (was a flat 12). The reproducer below is a passing worst-case regression.
-//   D-8b (ledger): NOT applied (UNSOUND in FORM). Unit records persist EXPANDED root ids while the record budget
-//         charges one record per RANGE, so ledger nodes grow as units x shared target roots. No fixed factor, and no
-//         options-only closed expression that keeps the provisional defaults within 16,000,000 nodes, is sound. The
-//         whole-set reproducer is a standing `test.todo` (precedent R-P7-24) that fails today for exactly that reason;
-//         the `// OPEN GATE D-8b` tests pin the measured facts and flip when the owner's form decision lands.
+//   D-8b (ledger): APPLIED as spec erratum A14 (owner ruling #5, "Proposed form" 1 of the evidence record §11.2). Unit
+//         records persist EXPANDED root ids, so the record budget now charges class `unit-range` one record per
+//         expanded id (every source root id, every explicit target root id) plus one per whole-model target sentinel,
+//         for initial units, target-too-large gaps and split children alike (`sizing.js` `rangeRecordCount`). One unit
+//         record then costs at most 12 nodes per charged record, and `plan-too-large` refuses a plan BEFORE its
+//         persisted ledger could outgrow 12 x maxLedgerRecords. The former whole-set reproducer is now a passing R21-2
+//         regression: its old options are refused at plan time, and the re-derived exact-boundary options read back.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -38,7 +40,8 @@ import { createEngineWorld } from '../support/engineWorld.mjs';
 import { createFakeClock } from '../support/fakeClock.mjs';
 import { makeDefinition } from '../support/definitions.mjs';
 import { createScriptedExecutor } from '../support/scriptedExecutor.mjs';
-import { makeSizingFixture } from '../support/syntheticModels.mjs';
+import { makeSizingFixture, makeSyntheticEnumerator, defOf, snapshotOf } from '../support/syntheticModels.mjs';
+import { createPlan } from '../../../clashtest/planning/planner.js';
 import { resealed, fakeSlicer } from '../support/resultSetFixtures.mjs';
 
 /** P0's own meter on one value (the same traversal `captureResultSet` charges against `maxCapturedNodes`). */
@@ -104,10 +107,11 @@ test('D-8b (a): a persisted UnitRecord costs 17 + expanded source ids + per targ
   assert.equal(at({ sourceWeights: [1], targets: [{ modelKey: 'mB', whole: true, roots: 1 }] }), 17 + 1 + 3);   // 21
   // explicit target with one root: {modelKey, scope:'roots', rootDbIds:[id]} (4 + 1)
   assert.equal(at({ sourceWeights: [1], targets: [{ modelKey: 'mB', roots: 1 }] }), 17 + 1 + 5);                  // 23
-  // 500 contiguous source roots (ONE range) x 2,000 contiguous target roots (ONE range): ranges 2, nodes 2,521
+  // 500 contiguous source roots (ONE range) x 2,000 contiguous target roots (ONE range): nodes 2,521, and (A14) the
+  // unit-range charge is the 2,500 expanded ids, not the 2 ranges
   const wide = persistedUnit({ sourceWeights: Array(500).fill(1), options: { ...RUN_OPTION_DEFAULTS, maxSourceFragmentsPerUnit: 500 },
     targets: [{ modelKey: 'mB', roots: 2_000 }] });
-  assert.equal(wide.ranges, 2);
+  assert.equal(wide.ranges, 500 + 2_000);
   assert.equal(nodesOf(wide.record), 17 + 500 + 4 + 2_000);
   // inline fields the budget never charges: up to 8 secondary causes; each taint entry is 6 nodes for 1 record
   const causes = range(MAX_SECONDARY_CAUSES + 3).map((i) => `c${String(i).padStart(2, '0')}`);
@@ -145,20 +149,29 @@ test('D-8b (a): the other ledger/plan record kinds are within 12 nodes per charg
   assert.equal(nodesOf({ count: 1, digest: `sha256:${'a'.repeat(64)}` }), 3);
 });
 
-test('D-8b (b): unit-record nodes are NOT proportional to charged records: they grow with expanded ids per range (OPEN GATE D-8b)', () => {
-  // One unit record is charged 1 (unit-record) + ranges (unit-range) + 1 reserved overflow slot, whatever its id counts.
-  for (const [S, T] of [[1, 1], [1, 2_000], [500, 2_000]]) {
+test('D-8b (b): under A14 a unit record costs <= 12 nodes per charged record (1 unit-record + 1 per expanded id / sentinel)', () => {
+  // Charged WITHOUT the reserved overflow slot (that slot is kept for the unit's taint-overflow entry, 6 nodes), and
+  // with the producer's maximum 8 secondary causes: 17 + 8 + s + sum(3 | 4 + n) <= 12 x (1 + s + m + sum n).
+  const causes = range(MAX_SECONDARY_CAUSES).map((i) => `c${String(i).padStart(2, '0')}`);
+  for (const [S, targets] of [
+    [1, [{ modelKey: 'mB', whole: true, roots: 1 }]],                             // the tightest shape: 29 <= 36
+    [1, [{ modelKey: 'mB', roots: 1 }]],
+    [1, [{ modelKey: 'mB', roots: 2_000 }]],
+    [500, [{ modelKey: 'mB', roots: 2_000 }]],                                    // the former 2-range, 2,521-node unit
+    [3, [{ modelKey: 'mB', roots: 2 }, { modelKey: 'mC', roots: 1 }]],             // two explicit target entries, one unit
+  ]) {
     const { record, ranges } = persistedUnit({ sourceWeights: Array(S).fill(1), options: { ...RUN_OPTION_DEFAULTS, maxSourceFragmentsPerUnit: S },
-      targets: [{ modelKey: 'mB', roots: T }] });
-    const charged = 1 + ranges + 1;
-    assert.equal(ranges, 2);
-    assert.equal(nodesOf(record), 21 + S + T);
-    // OPEN GATE D-8b: flips only if the owner's form decision lands (the ratio is unbounded by any fixed factor).
-    if (S + T > 2) assert.ok(nodesOf(record) > SCHEMA_NODE_FACTORS.ledger * charged, `${S}x${T}`);
+      targets, patch: { secondaryCauses: causes } });
+    const explicitIds = targets.reduce((n, t) => n + (t.whole ? 0 : t.roots), 0);
+    const sentinels = targets.filter((t) => t.whole).length;
+    assert.equal(ranges, S + explicitIds + sentinels);                              // per expanded id, not per range
+    const nodes = nodesOf(record);
+    assert.equal(nodes, 17 + MAX_SECONDARY_CAUSES + S + 3 * sentinels + targets.filter((t) => !t.whole).reduce((n, t) => n + 4 + t.roots, 0));
+    assert.ok(nodes <= SCHEMA_NODE_FACTORS.ledger * (1 + ranges), `${S} x ${JSON.stringify(targets)}: ${nodes} <= 12 x ${1 + ranges}`);
   }
 });
 
-test('D-8b (c): at the PROVISIONAL DEFAULTS the real sizer and record budget admit a plan whose ledger alone is ~100M nodes (OPEN GATE D-8b)', () => {
+test('D-8b (c): at the PROVISIONAL DEFAULTS the real sizer and record budget now REFUSE (plan-too-large) the plan whose ledger alone would be ~100M nodes (A14)', () => {
   // Selection A: 10,000 whole-model roots of 101 fragments (each exceeds half of maxSourceFragmentsPerUnit = 200, so
   // each root is a source chunk of its own); selection B: 10,000 explicit one-fragment roots (= the default
   // maxExplicitElementsPerSelection, <= the schema's 10,000 roots per model). Every value is a §17.1 default.
@@ -180,13 +193,18 @@ test('D-8b (c): at the PROVISIONAL DEFAULTS the real sizer and record budget adm
   assert.equal(sized.exceeded, false);
   assert.equal(sized.units.length, O.maxUnitsPerRun);                         // 10,000 units: one per source root
   const rangeTotal = sized.units.reduce((n, u) => n + rangeRecordCount(u), 0);
-  assert.equal(rangeTotal, 2 * N);
-  // the planner's admission (planner.js step 4) and reserve (step 5) both succeed under the DEFAULT budget
-  assert.ok(budget.admitPlanBlock([['unit-record', sized.units.length], ['unit-range', rangeTotal], ['planning-gap', 0]]));
-  assert.ok(budget.reserveUnitSlots());
-  assert.equal(budget.planRecords, 90_001);
-  assert.ok(budget.planRecords <= O.maxPlanReferences && budget.used <= O.maxLedgerRecords);
-  // every unit carries 1 source id and the SAME 10,000 target ids; measure two in full, count the rest by ranges
+  // A14: one unit-range record per expanded id (1 source + 10,000 target ids per unit), not the 2 ranges per unit
+  // (2 x N = 20,000 in total) the budget charged before
+  assert.equal(rangeTotal, N * (1 + N));
+  // the planner's admission (planner.js step 4) is refused under the DEFAULT budget: plan-too-large on `unit-range`,
+  // and nothing is charged for the refused block
+  const before = budget.planRecords;
+  assert.equal(before, 3 * 2 * N + 1);                                          // scope digests, root tables, root owners
+  assert.equal(budget.admitPlanBlock([['unit-record', sized.units.length], ['unit-range', rangeTotal], ['planning-gap', 0]]), false);
+  assert.equal(budget.planOverflowClass, 'unit-range');
+  assert.equal(budget.planRecords, before);
+  // the refused ledger would have been over 6 x the defaults' formula and the byte cap: every unit carries 1 source id
+  // and the SAME 10,000 target ids; measure two in full, count the rest by ids
   for (const u of sized.units) assert.equal(sourceRootCount(u.sourceRanges) + targetEntryRootCount(plan, u.targets[0]), 1 + N);
   const ledger = createLedger({ limits: O, budget: createRecordBudget(O) });
   const perUnit = [sized.units[0], sized.units[N - 1]].map((u) => {
@@ -198,55 +216,113 @@ test('D-8b (c): at the PROVISIONAL DEFAULTS the real sizer and record budget adm
   const unitNodes = N * perUnit[0];
   assert.equal(unitNodes, 100_220_000);
   assert.equal(worstCaseCapturedNodes(O), 15_885_536);                         // the defaults' formula value (A13)
-  // OPEN GATE D-8b: the defaults' own reader limit (16,000,000) and formula are exceeded more than six-fold.
   assert.ok(unitNodes > ENGINE_LIMIT_DEFAULTS.maxCapturedNodes);
   assert.ok(unitNodes > worstCaseCapturedNodes(O));
-  // and the whole set could not even be STORED within the byte ceiling (1 GiB / 32 B per node)
   assert.ok(unitNodes > Math.floor(ENGINE_LIMIT_CEILINGS.maxStoredResultBytes / BYTES_PER_NODE));
+  // ... while what A14 lets the defaults admit is bounded by the formula's own ledger term
+  assert.ok(unitNodes > SCHEMA_NODE_FACTORS.ledger * O.maxLedgerRecords);
+});
+
+test('D-8b (e): 500 source ids x 2,000 target ids in TWO input ranges: the real planner charges 2,500 unit-range records, exact boundary admitted, one below refused (A14)', async () => {
+  const S = 500;
+  const T = 2_000;
+  const modelSpecs = flatModels(S, T);
+  const definition = defOf({
+    A: [{ kind: 'elements', modelKey: 'mA', dbIds: modelSpecs[0].roots.map((r) => r.dbId) }],
+    B: [{ kind: 'elements', modelKey: 'mB', dbIds: modelSpecs[1].roots.map((r) => r.dbId) }],
+  });
+  // one unit: the 500 sources pack into one chunk (maxSourceDbIdsPerUnit 500, fragments 500), the 2,000 targets one slice
+  const base = { ...RUN_OPTION_DEFAULTS, maxSourceFragmentsPerUnit: S, maxUnitsPerRun: 1 };
+  const planWith = async (maxPlanReferences) => {
+    const { enumerator, binding } = makeSyntheticEnumerator(modelSpecs);
+    return createPlan({ definition, snapshot: snapshotOf(binding, ['mA', 'mB']), enumerator, checkpoint: () => {},
+      options: { ...base, maxPlanReferences, maxLedgerRecords: maxPlanReferences + 2 } });
+  };
+  // Exact plan cost: scope-digest + root-table + root-owner 1 per root each (3 x 2,500), unit-record 1, unit-range
+  // 500 + 2,000 = 2,500 (A14; it was 2 -- one source range + one target range -- so the old total was 7,503).
+  const cost = 3 * (S + T) + 1 + (S + T);
+  assert.equal(cost, 10_001);
+  const exact = await planWith(cost);
+  assert.equal(exact.status, 'planned');
+  assert.equal(exact.plan.units.length, 1);
+  assert.equal(exact.plan.units[0].sourceRanges.length, 1);
+  assert.equal(exact.plan.units[0].targets[0].scope.ranges.length, 1);         // 2 input ranges hold 2,500 ids
+  assert.equal(exact.plan.planRecords, cost);
+  assert.equal(exact.ledger.budget.used, cost + 1);                             // + the 1 reserved overflow slot
+  // the persisted unit record is within 12 nodes per charged record
+  const [unit] = exact.ledger.toLedgerRecord().units;
+  assert.equal(nodesOf(unit), 17 + S + 4 + T);
+  assert.ok(nodesOf(unit) <= SCHEMA_NODE_FACTORS.ledger * (1 + S + T));
+  // one record short: plan-too-large on the unit-range block, and nothing recorded
+  const over = await planWith(cost - 1);
+  assert.equal(over.status, 'failed');
+  assert.deepEqual(over.planningGaps.map((g) => [g.cause, g.detail?.overflowClass]), [['plan-too-large', 'unit-range']]);
+  assert.equal(over.ledger.unitRecordCount, 0);
+  // the old range-count total (7,503) is now refused as well
+  assert.equal((await planWith(3 * (S + T) + 1 + 2)).status, 'failed');
 });
 
 /** The D-8b whole-set reproducer: 100 units (maxSourceDbIdsPerUnit 1) all targeting the same 2,000 explicit roots. */
 const LEDGER_HEAVY = Object.freeze({ units: 100, targets: 2_000 });
-// Plan records the planner charges: scope-digest, root-table and root-owner 1 per root each (3 x 2,100), unit-record
-// 100, unit-range 200 (one source range + one explicit target range per unit) = 6,600 -- the exact minimum (6,599 is
-// refused plan-too-large). maxLedgerRecords is the cross-field minimum maxPlanReferences + 2 x maxUnitsPerRun.
-const LEDGER_HEAVY_OPTIONS = Object.freeze({
-  maxSourceDbIdsPerUnit: 1, maxUnitsPerRun: LEDGER_HEAVY.units, maxPlanReferences: 6_600,
-  maxLedgerRecords: 6_600 + 2 * LEDGER_HEAVY.units, maxResultsPerRun: 1, maxRetainedDiagnostics: 0,
+// Plan records the planner charges under A14: scope-digest, root-table and root-owner 1 per root each (3 x 2,100 =
+// 6,300), unit-record 100, unit-range 100 x (1 source id + 2,000 target ids) = 200,100 -- 206,500 in total, the exact
+// minimum. Before A14 unit-range was 200 (one source range + one explicit target range per unit), total 6,600, and the
+// options below (6,600) were ACCEPTED with a formula of 147,171 while the set measured 221,236 (ResultSetTooLargeError).
+const LEDGER_HEAVY_COST = 3 * (LEDGER_HEAVY.units + LEDGER_HEAVY.targets) + LEDGER_HEAVY.units
+  + LEDGER_HEAVY.units * (1 + LEDGER_HEAVY.targets);
+/** maxLedgerRecords is the cross-field minimum maxPlanReferences + 2 x maxUnitsPerRun. */
+const ledgerHeavyOptions = (maxPlanReferences) => Object.freeze({
+  maxSourceDbIdsPerUnit: 1, maxUnitsPerRun: LEDGER_HEAVY.units, maxPlanReferences,
+  maxLedgerRecords: maxPlanReferences + 2 * LEDGER_HEAVY.units, maxResultsPerRun: 1, maxRetainedDiagnostics: 0,
 });
-let ledgerHeavyRun = null;
-const ledgerHeavy = () => (ledgerHeavyRun ??= (() => {
+const ledgerHeavy = (maxPlanReferences) => {
   const modelSpecs = flatModels(LEDGER_HEAVY.units, LEDGER_HEAVY.targets);
-  return runAtFormula({ modelSpecs, options: LEDGER_HEAVY_OPTIONS, definition: makeDefinition({
+  return runAtFormula({ modelSpecs, options: ledgerHeavyOptions(maxPlanReferences), definition: makeDefinition({
     testId: 'T-D8b',
     selectionA: { entries: [{ kind: 'elements', modelKey: 'mA', dbIds: modelSpecs[0].roots.map((r) => r.dbId) }] },
     selectionB: { entries: [{ kind: 'elements', modelKey: 'mB', dbIds: modelSpecs[1].roots.map((r) => r.dbId) }] },
   }) });
-})());
+};
 
-test('D-8b (d): accepted ledger-heavy options yield a VALID, persisted set the same engine refuses to read (OPEN GATE D-8b)', async () => {
-  const { worst, summary, set, read } = await ledgerHeavy();
-  assert.equal(worst, 35 * 1 + 12 * 6_800 + (SCHEMA_NODE_FACTORS.diagnostic + RUN_OPTION_DEFAULTS.maxUnitIdsPerDiagnostic) * 0 + 65_536);
-  assert.equal(worst, 147_171);
+/** A refused plan: the run seals a plan-less set carrying the plan-too-large planning gap, and it reads back. */
+async function assertRefusedPlanTooLarge(maxPlanReferences) {
+  const { worst, summary, set, read } = await ledgerHeavy(maxPlanReferences);
+  assert.notEqual(summary.status, 'completed');
+  assert.ok(set.ledger.planningGaps.length > 0 && set.ledger.planningGaps.every((g) => g.cause === 'plan-too-large'));
+  assert.ok(set.ledger.planningGaps.some((g) => g.phase === 'planning'));
+  assert.equal(set.ledger.planExists, false);
+  assert.equal(set.ledger.units.length, 0);
+  assert.ok(nodesOf(set) <= worst, `measured ${nodesOf(set)} <= formula ${worst}`);
+  assert.ok(!(read instanceof Error), String(read));
+}
+
+test('D-8b (d): the former reproducer options (maxPlanReferences 6,600) are now refused plan-too-large (A14)', async () => {
+  assert.equal(LEDGER_HEAVY_COST, 206_500);
+  await assertRefusedPlanTooLarge(6_600);
+});
+
+// The former standing R21-2 `test.todo` (precedent R-P7-24), promoted: at the exact A14 boundary the options are
+// accepted, the run completes, and the sealed set is within the formula and read back by the same engine.
+test('D-8b R21-2: ledger-heavy options at the exact A14 plan-cost boundary yield a set the same engine reads back', async () => {
+  const { worst, runOptions, summary, set, read } = await ledgerHeavy(LEDGER_HEAVY_COST);
+  assert.equal(runOptions.maxPlanReferences, 206_500);
+  assert.equal(runOptions.maxLedgerRecords, 206_700);
+  assert.equal(worst, 35 * 1 + 12 * 206_700 + (SCHEMA_NODE_FACTORS.diagnostic + RUN_OPTION_DEFAULTS.maxUnitIdsPerDiagnostic) * 0 + 65_536);
+  assert.equal(worst, 2_545_971);
   assert.equal(summary.status, 'completed');
-  assert.ok(set, 'the run persisted its sealed set');
   assert.equal(set.ledger.units.length, LEDGER_HEAVY.units);
+  assert.equal(set.ledger.planningGaps.length, 0);
   assert.deepEqual(validateResultSet(structuredClone(set), { limits: readerLimits() }), { ok: true, issues: [] });
   for (const u of set.ledger.units) assert.equal(nodesOf(u), 17 + 1 + 4 + LEDGER_HEAVY.targets);   // 2,022 each
   const measured = nodesOf(set);
-  assert.equal(measured, 221_236);
-  // OPEN GATE D-8b: measured > formula, and the fresh engine's by-id read refuses the set its own options produced.
-  assert.ok(measured > worst, `measured ${measured} > formula ${worst}`);
-  assert.ok(read instanceof ResultSetTooLargeError, String(read));
+  assert.equal(measured, 221_236);                                                // the same set as before A14
+  assert.ok(measured <= worst, `measured ${measured} <= formula ${worst}`);
+  assert.ok(!(read instanceof Error), String(read));
+  assert.equal(read.runId, set.runId);
 });
 
-// The standing R21-2 reproducer (precedent R-P7-24): it asserts the invariant and FAILS today, because the ledger term
-// charges 12 nodes per budget record while each unit record persists 2,022 nodes for 4 records. It passes only once
-// the owner's D-8b form decision makes the formula cover expanded ids (or the budget refuse these options).
-test.todo('D-8b R21-2: every ledger-heavy option set resolveRunOptions accepts yields a set the same engine reads back', async () => {
-  const { worst, set, read } = await ledgerHeavy();
-  assert.ok(nodesOf(set) <= worst, `measured ${nodesOf(set)} <= formula ${worst}`);
-  assert.ok(!(read instanceof Error), String(read));
+test('D-8b (d): one record below the exact A14 plan cost (maxPlanReferences 206,499) is refused plan-too-large', async () => {
+  await assertRefusedPlanTooLarge(LEDGER_HEAVY_COST - 1);
 });
 
 // ================================================================================================================

@@ -514,8 +514,9 @@ test('a budget that cannot hold the overflow reserve is an internal error (rejec
 test('unit records and ranges are charged as blocks: planRecords covers tables, rows, and every unit and range record', async () => {
   const res = await plan2({ A: [{ kind: 'model', modelKey: 'arch' }], B: [{ kind: 'model', modelKey: 'struct' }] });
   // arch: 2 roots (A'), 2 owners; struct: 1 root (B'), 1 owner; scope-digest: 2 populations + 3 root rows;
-  // units: 1 unit record + (1 source range + 1 whole target entry) ranges.
-  const expected = 3 + 3 + (2 + 3) + 1 + 2;
+  // units: 1 unit record + unit-range records charged per expanded id (erratum A14): 2 source ids + 1 whole-model
+  // target sentinel = 3 (it was 2 -- one source range + one whole target entry -- before A14).
+  const expected = 3 + 3 + (2 + 3) + 1 + 3;
   assert.equal(res.plan.planRecords, expected);
 });
 

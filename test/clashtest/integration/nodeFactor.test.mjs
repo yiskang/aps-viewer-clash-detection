@@ -8,8 +8,9 @@
 // 956,824 (was 1,000,000), the largest value some engine configuration can accept under the byte half of R21-2.
 //
 // The (d) tests are NOT part of the A11 erratum. The D-8c (diagnostic) finding is closed by erratum A13 and its (d) test
-// now pins the corrected bound; the D-8b (ledger) finding stays marked `// OPEN GATE D-8b` (evidence record §10-§11;
-// the full D-8b/D-8c evidence tests are nodeFactor.ledgerDiagnostic.test.mjs).
+// now pins the corrected bound; the D-8b (ledger) finding is closed by erratum A14 (unit-range charged per expanded id)
+// and its (d) test pins that bound (evidence record §10-§12; the full D-8b/D-8c tests are
+// nodeFactor.ledgerDiagnostic.test.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -28,6 +29,8 @@ import { createFakeClock } from '../support/fakeClock.mjs';
 import { sealedSet, resealed, unit } from '../support/resultSetFixtures.mjs';
 import { maximumShapeSet, ledgerRecordsOf } from '../support/maximumShape.mjs';
 import { canonicalJson } from '../../../clashtest/util/canonical.js';
+import { sizeUnits, rangeRecordCount } from '../../../clashtest/planning/sizing.js';
+import { makeSizingFixture } from '../support/syntheticModels.mjs';
 
 /** P0's own meter on one value (the same traversal `captureResultSet` charges against `maxCapturedNodes`). */
 const nodesOf = (value) => {
@@ -227,7 +230,7 @@ test('D-8 (c): options resolveRunOptions accepts yield a legal set the same engi
   assert.equal(canonicalJson(outcome), canonicalJson(set));
 });
 
-// ---- (d) the other two factors: single-record counterexamples (D-8b OPEN; D-8c closed by erratum A13) ----------
+// ---- (d) the other two factors: single-record counterexamples (D-8c closed by erratum A13; D-8b by A14) --------
 
 test('D-8 (d): one retained diagnostic exceeded the former flat 12 nodes (diagnostic finding, CLOSED by erratum A13 / D-8c)', () => {
   const frag = (fragId, role) => ({ modelKey: A, dbId: 1, fragId, role });
@@ -247,17 +250,21 @@ test('D-8 (d): one retained diagnostic exceeded the former flat 12 nodes (diagno
   }
 });
 
-test('D-8 (d): one unit record expands its ranges into ids, so nodes are not bounded by 12 x records (ledger finding)', () => {
-  // planning/sizing.js `unitRecordFields`: sourceRootDbIds / targets[].rootDbIds are EXPANDED from range records, and
-  // the budget charges `unit-record` 1 + `unit-range` (one per range), not one per id.
+test('D-8 (d): one unit record expands its ranges into ids, and (A14) the budget charges it per expanded id, so nodes <= 12 x records', () => {
+  // planning/sizing.js `unitRecordFields`: sourceRootDbIds / targets[].rootDbIds are EXPANDED from range records. Since
+  // erratum A14 (D-8b) the budget charges `unit-record` 1 + `unit-range` one per expanded id / whole-model sentinel
+  // (`rangeRecordCount`), not one per range as before (which charged this unit 1 + 2 + 1 = 4 records for 520 nodes).
   const S = RUN_OPTION_DEFAULTS.maxSourceDbIdsPerUnit;               // 500 contiguous roots = ONE source range
   const rec = unit('u0', 'evaluated', {
     kind: 'leaf', parentUnitId: null, sourceModelKey: A,
     sourceRootDbIds: Array.from({ length: S }, (_, i) => i + 1),
     targets: [{ modelKey: B, scope: 'model' }],
   });
-  const budgetRecords = 1 /* unit-record */ + 2 /* source range + whole-model target entry */ + 1 /* overflow reserve */;
+  const budgetRecords = 1 /* unit-record */ + (S + 1) /* 500 source ids + the whole-model target sentinel */;
   assert.equal(nodesOf(rec), 17 + S + 3);
-  // OPEN GATE D-8b: flips only if that gate closes (the A11 erratum deliberately left the ledger factor at 12).
-  assert.ok(nodesOf(rec) > SCHEMA_NODE_FACTORS.ledger * budgetRecords);
+  // GATE D-8b CLOSED (erratum A14): within the ledger factor even without the unit's reserved overflow slot.
+  assert.ok(nodesOf(rec) <= SCHEMA_NODE_FACTORS.ledger * budgetRecords);
+  const { plan, cells } = makeSizingFixture({ sourceWeights: Array(S).fill(1), targets: [{ modelKey: B, whole: true, roots: 1 }] });
+  const [sized] = sizeUnits({ cells, plan, options: { ...RUN_OPTION_DEFAULTS, maxSourceFragmentsPerUnit: S } }).units;
+  assert.equal(rangeRecordCount(sized), S + 1);
 });

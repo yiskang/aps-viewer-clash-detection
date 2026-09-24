@@ -316,7 +316,7 @@ import { rangeRecordCount, unitRecordFields, pairSpaceWeightOf, targetWeightOf }
  *   exhaustLedgerRecords  true = drain `budget.discretionaryRemaining` and trip the exhaustion flag with one refused record
  *                         (so a before/after snapshot isolates what a split itself writes); 'silent' = drain only
  * Every root weighs 1 fragment; the source model is `src`. Unit records are charged to the budget as P3.9 does
- * (`unit-record` 1, `unit-range` per range) and the overflow slots are reserved, as at the end of planning.
+ * (`unit-record` 1, `unit-range` per expanded id, erratum A14) and the overflow slots are reserved, as at the end of planning.
  */
 export function makeSplitFixture({ sourceRoots, targets, limits = {}, liveUnitRecords = 1, exhaustLedgerRecords = false }) {
   const lim = { ...RUN_OPTION_DEFAULTS, ...limits };
