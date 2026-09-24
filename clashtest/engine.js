@@ -14,7 +14,7 @@
 //        residency methods    — retain / release / discard / retryPersist / persistence state /
 //                               retentionReport / dispose (P7.5; retentionReport and dispose land here, P7.2)
 //        result-read methods  — freshness and the two no-clash-claim methods (P7.6)
-//        rerun + listResults  — (P7.7)
+//        rerun                — `withReadSet` + `admitAndBegin` (P7.7)
 //   3. `createClashTestEngine` — the public factory: `createEngineCore(config).engine`.
 //
 // `createEngineCore`, `ENGINE_METHODS`, `createStoredDefinitionResolver` and `withStoredDefinitionValidator`
@@ -27,7 +27,7 @@
 import {
   EngineDisposedError, InvalidOptionsError, ModelBindingError, RunQueueFullError,
   StoreNotConfiguredError, CorruptListingError, InvalidTestDefinitionError, UnsupportedSchemaVersionError,
-  ResultNotResidentError,
+  ResultNotResidentError, ResultSetTooLargeError,
 } from './errors.js';
 import { resolveEngineLimits, resolveRunOptions, ENGINE_LIMIT_CEILINGS } from './options.js';
 import { assertRegistryBelongsToWorld } from './identity/ModelRegistry.js';
@@ -797,7 +797,9 @@ export function createEngineCore(config) {
    * (§13.6 R12-3): it is fetched under the byte guard, then captured, validated and deep-frozen by
    * P5's `readResultSet` (`CorruptResultSetError` / `ResultSetTooLargeError` reject). Resolves `null`
    * when neither holds it (or there is no store). `runId` is passed as the diagnostic id only; it is
-   * never read off the untrusted value. P7.6/P7.7 build their by-id reads on this helper.
+   * never read off the untrusted value. This is `getResultSet`'s TOUCHING read only: the
+   * `runIdOrResultSet` reads (freshness, claims, `rerun`) go through `withReadSet` → `readByIdFor` →
+   * `readStoredSet`, which never refresh the LRU.
    */
   async function readSetById(runId) {
     const resident = residency.getResident(runId);
@@ -940,11 +942,20 @@ export function createEngineCore(config) {
    *
    * A slot, once held, is kept until `fn` settles (its freshness passes included) and released on
    * every exit.
+   *
+   * `checkById(set, runId)` (optional) runs on a set obtained BY ID — resident or read through — after
+   * it validated and before `fn` sees it; a throw rejects. It is the one hook for a rule that §13.6
+   * scopes to by-id reads only (`rerun`'s predicate (ii), R-P7-21); a raw set never reaches it.
    */
-  function withReadSet(input, fn) {
+  function withReadSet(input, fn, { checkById = null } = {}) {
     try {
       alive();
-      if (typeof input === 'string') return readByIdFor(input, fn);
+      if (typeof input === 'string') {
+        return readByIdFor(input, checkById === null ? fn : (set) => {
+          if (set !== null) checkById(set, input);
+          return fn(set);
+        });
+      }
       const slot = reads.reserveSync();
       let detached;
       try {
@@ -1001,8 +1012,137 @@ export function createEngineCore(config) {
   defineSync('invalidateModelPlacement', (modelKey) => { coordinator.registry.invalidateModelPlacement(modelKey); });
 
   // ==============================================================================================
-  // rerun / listResults (P7.7)
+  // rerun (P7.7; §15.3, §13.6, §18 R21-1)
   // ==============================================================================================
+  //
+  // `rerun` = `withReadSet(input, fn)` + `admitAndBegin` (scan rows P7.4⇄P7.7, P7.6⇄P7.7): the ONE
+  // read prefix of every `runIdOrResultSet` method, then the ONE admission sequence of `startRun`.
+  // Only the option bag, the `no-embedded-definition` rule and predicate (ii) are rerun's own.
+
+  const RERUN_OPTION_KEYS = Object.freeze(['definitionRevision', 'runOptions']);
+
+  /**
+   * `rerun`'s option bag, read ONCE in the caller's turn: `undefined`, or a plain object whose own keys
+   * are among `definitionRevision` / `runOptions`, each a DATA property (a getter is refused, never
+   * invoked). `definitionRevision` is absent or a §5.3 revision (a safe integer >= 1). The returned
+   * `runOptions` is still the caller's object: `resolveRunOptions` takes its detached copy next, in the
+   * same synchronous step.
+   * @throws {InvalidOptionsError}
+   */
+  function readRerunOptions(opts) {
+    if (opts === undefined) return { definitionRevision: undefined, runOptions: undefined };
+    const refuse = (issues) => { throw new InvalidOptionsError({ issues }); };
+    if (!isPlainRecord(opts)) return refuse([issue('', 'bad-shape', 'rerun options must be a plain object')]);
+    let own;
+    try {
+      const proto = Object.getPrototypeOf(opts);
+      if (proto !== Object.prototype && proto !== null) return refuse([issue('', 'bad-shape', 'rerun options must be a plain object')]);
+      own = Object.getOwnPropertyDescriptors(opts);
+    } catch {
+      return refuse([issue('', 'bad-shape', 'rerun options are unreadable')]);   // a throwing Proxy trap
+    }
+    const issues = [];
+    const values = {};
+    for (const key of Reflect.ownKeys(own)) {
+      const path = typeof key === 'string' ? `/${key.slice(0, 64).replace(/~/g, '~0').replace(/\//g, '~1')}` : '';
+      if (typeof key !== 'string' || !RERUN_OPTION_KEYS.includes(key)) {
+        issues.push(issue(path, 'unknown-key', 'unknown rerun option'));
+      } else if (!('value' in own[key])) {
+        issues.push(issue(path, 'bad-shape', `${key} must be a data property`));
+      } else {
+        values[key] = own[key].value;
+      }
+    }
+    const { definitionRevision, runOptions } = values;
+    if (definitionRevision !== undefined) {
+      if (!Number.isSafeInteger(definitionRevision)) {
+        issues.push(issue('/definitionRevision', 'not-an-integer', 'definitionRevision must be a finite integer'));
+      } else if (definitionRevision < 1) {
+        issues.push(issue('/definitionRevision', 'below-minimum', 'definitionRevision must be >= 1'));
+      }
+    }
+    if (issues.length > 0) return refuse(issues);
+    return { definitionRevision, runOptions };
+  }
+
+  /** `resolveRunOptions` against the RESOLVED engine limits (N31), with its issues re-rooted under
+   *  `/runOptions` — the bag has two members, so a bare `/zzz` would not say which one was wrong. */
+  function resolveRerunRunOptions(runOptions) {
+    try {
+      return resolveRunOptions(runOptions, effectiveLimits);
+    } catch (err) {
+      if (!(err instanceof InvalidOptionsError)) throw err;
+      throw new InvalidOptionsError({
+        issues: err.issues.map(({ path, code, message }) => ({ path: `/runOptions${path}`, code, message })),
+        reason: err.reason,
+      });
+    }
+  }
+
+  /**
+   * Spec §13.6 "Exact `ResultSetTooLargeError` predicate", clause (ii) (R-P7-21, AC-11): a VALID set
+   * read by id for `rerun` whose result count, ledger-record count or retained-diagnostic count
+   * exceeds the reading engine's effective `maxResultsPerRun` / `maxLedgerRecords` /
+   * `maxRetainedDiagnostics` is `ResultSetTooLargeError{runId}` — never a corruption finding. These
+   * three are RunOptions (§17.1.1 ownership), so "effective" is THIS rerun's resolved options (the
+   * caller's `runOptions` over the §17.1 defaults), not the base set's recorded ones.
+   *
+   * The ledger-record count is a SOUND LOWER BOUND of the §6.5.1 budget count: unit records plus
+   * per-unit taint entries, each of which the producing run charged exactly 1 against its own
+   * `maxLedgerRecords` (a `taint-overflow` entry consumes a reserved slot that was itself charged).
+   * The remaining record classes (root-table rows, owner/digest rows, range records) are not
+   * persisted one-to-one and cannot be recounted exactly from a sealed ledger; an exact-or-lower count
+   * keeps the producer/reader invariant (R21-2): a set produced under the same options is never refused.
+   */
+  function assertRerunReadable(set, runId, options) {
+    let ledgerRecords = set.ledger.units.length;
+    for (const unit of set.ledger.units) ledgerRecords += unit.taints.length;
+    if (set.results.length > options.maxResultsPerRun
+      || ledgerRecords > options.maxLedgerRecords
+      || set.diagnostics.diagnostics.length > options.maxRetainedDiagnostics) {
+      throw new ResultSetTooLargeError({ runId });
+    }
+  }
+
+  /**
+   * §18 `rerun(runIdOrResultSet, {definitionRevision?, runOptions?}) → Promise<RunHandle>`: `startRun`
+   * with the base set's embedded definition (or, with `definitionRevision`, the base test's stored
+   * revision) and `derivedFromRunId` = the BASE set's `runId` (N33). ASYNCHRONOUS (R21-1): every
+   * option, capture, read, validation and admission failure REJECTS; nothing throws synchronously.
+   *
+   * Synchronous prefix (the caller's turn, before the first `await`, §13.6): the option bag is read,
+   * `resolveRunOptions` takes the detached copy of `runOptions` (N31), a `definitionRevision` without
+   * a testStore is `StoreNotConfiguredError` (§5.5, before any read slot), and `withReadSet` reserves
+   * the read slot and captures a raw set. Then, once the set is read and validated: predicate (ii) for
+   * a by-id set; `InvalidOptionsError('no-embedded-definition')` at `/definitionRevision` for a
+   * pre-resolution base without one (§15.3, A8: a rejection); and `admitAndBegin`, whose
+   * `ResultCapacityError` / `RunQueueFullError` roll the reservation back and reject too. The read
+   * slot is released on every exit. The base set is only read (it is deep-frozen), never mutated, and
+   * the rerun re-plans and re-executes everything (no incremental rerun, §23). Comparability with the
+   * base (§15.2) is not asserted here: it is reported by the comparison layer.
+   */
+  function rerun(input, opts) {
+    const { definitionRevision, runOptions } = readRerunOptions(opts);
+    const options = resolveRerunRunOptions(runOptions);
+    if (definitionRevision !== undefined) requireStore('testStore');
+    return withReadSet(input, (set) => {
+      const baseSet = requireSet(input, set);
+      if (definitionRevision === undefined && baseSet.definition === null) {
+        throw new InvalidOptionsError({
+          issues: [issue('/definitionRevision', 'no-embedded-definition',
+            'the base set was sealed before its definition resolved; pass definitionRevision')],
+          reason: 'no-embedded-definition',
+        });
+      }
+      // C-P7-3: both sources carry the base's testId as a plain string (a pre-resolution set has it).
+      const source = definitionRevision === undefined
+        ? { kind: 'definition', value: baseSet.definition }
+        : { kind: 'reference', value: { testId: baseSet.testRef.testId, revision: definitionRevision } };
+      return admitAndBegin({ source, options, derivedFromRunId: baseSet.runId, resolver: runResolver });
+    }, { checkById: (set, runId) => assertRerunReadable(set, runId, options) });
+  }
+
+  defineAsync('rerun', rerun);
 
   // Every §18 name a later task has not implemented yet is a gated stub: it honours the R1 disposal
   // contract today and fails loudly, rather than silently doing nothing, until its task lands.
