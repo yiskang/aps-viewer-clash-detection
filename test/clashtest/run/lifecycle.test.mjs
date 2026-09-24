@@ -1298,3 +1298,21 @@ test('D-C x D-D: a cancel + disposal at the planner\'s FINAL yield seals failed:
     limits, slicer: createSlicer({ now: () => 0, yieldToScheduler: async () => {}, limits }),
   }));
 });
+
+test('D-C: a planner-REPORTED `cancelled` gap over a disposed world also seals failed; P3\'s own gap stays recorded (Q2)', async () => {
+  // Only a planner port can reach this branch (P3's real planner THROWS EnumerationCancelledError);
+  // the gap P3 recorded is kept, like every other gap P3 reports (Q2), and the disposal P6 observed
+  // is added and decides the status (§16.7 B rule 1).
+  const fx = createRunFixture({ plan: null, planningGaps: [{ phase: 'enumerating', cause: 'cancelled' }] });
+  fx.world.getEpochCollisionInstanceCount = (() => {
+    let reads = 0;                                         // the 1st read is the admission baseline
+    return () => { reads += 1; if (reads > 1) throw new WorldDisposedError(); return 1; };
+  })();
+  const { handle, begin } = createRun(fx.spec);
+  begin();
+  const summary = await handle.done;
+  assert.equal(summary.status, 'failed');
+  assert.deepEqual(summary.resultSet.ledger.planningGaps.map((g) => g.cause), ['cancelled', 'world-disposed']);
+  assert.ok(summary.resultSet.outcome.reasons.includes('planning:world-disposed'));
+  assert.ok(summary.resultSet.outcome.reasons.includes('planning:cancelled'));
+});
