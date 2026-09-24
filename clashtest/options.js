@@ -36,8 +36,11 @@ export const BYTES_PER_NODE = 32;
 export const COMPARE_TOLERANCE_DEFAULTS = Object.freeze({ distanceTolerance: 1e-6, pointTolerance: 1e-6 });
 
 /** Closed-shape node bounds of spec 13.6 (one ClashResult <= 35 nodes, erratum A11 / D-8: a clearance result with all
- *  four flags, every object, array and primitive one node; one ledger/diagnostic record <= 12). */
-export const SCHEMA_NODE_FACTORS = Object.freeze({ result: 35, ledger: 12, diagnostic: 12, slack: 65_536 });
+ *  four flags, every object, array and primitive one node; one ledger record <= 12). `diagnostic` is the per-diagnostic
+ *  FRAME (erratum A13 / D-8c): one retained NormalizedDiagnostic costs <= 24 + maxUnitIdsPerDiagnostic nodes (`fragment`
+ *  and `fragments` with `role` on all three operands, `ambiguousModelId`, plus one node per kept unit id), so the
+ *  diagnostic term is (diagnostic + maxUnitIdsPerDiagnostic) x maxRetainedDiagnostics (was a flat 12). */
+export const SCHEMA_NODE_FACTORS = Object.freeze({ result: 35, ledger: 12, diagnostic: 24, slack: 65_536 });
 
 const int = (min, ceiling, dflt, extra = {}) => ({ kind: 'int', min, ceiling, default: dflt, ...extra });
 
@@ -71,7 +74,7 @@ export const RUN_OPTION_SPECS = Object.freeze({
 // SCHEMA_MAX_NODES is a data-format property (spec 13.6): every `_ceiling` below is a 17.1.1 hard maximum.
 export const SCHEMA_MAX_NODES = SCHEMA_NODE_FACTORS.result * RUN_OPTION_SPECS.maxResultsPerRun.ceiling
   + SCHEMA_NODE_FACTORS.ledger * RUN_OPTION_SPECS.maxLedgerRecords.ceiling
-  + SCHEMA_NODE_FACTORS.diagnostic * RUN_OPTION_SPECS.maxRetainedDiagnostics.ceiling
+  + (SCHEMA_NODE_FACTORS.diagnostic + RUN_OPTION_SPECS.maxUnitIdsPerDiagnostic.ceiling) * RUN_OPTION_SPECS.maxRetainedDiagnostics.ceiling
   + SCHEMA_NODE_FACTORS.slack;
 
 export const ENGINE_LIMIT_SPECS = Object.freeze({
@@ -220,7 +223,7 @@ export function resolveEngineLimits(input) {
 export function worstCaseCapturedNodes(runOptions) {
   return SCHEMA_NODE_FACTORS.result * runOptions.maxResultsPerRun
     + SCHEMA_NODE_FACTORS.ledger * runOptions.maxLedgerRecords
-    + SCHEMA_NODE_FACTORS.diagnostic * runOptions.maxRetainedDiagnostics
+    + (SCHEMA_NODE_FACTORS.diagnostic + runOptions.maxUnitIdsPerDiagnostic) * runOptions.maxRetainedDiagnostics
     + SCHEMA_NODE_FACTORS.slack;
 }
 

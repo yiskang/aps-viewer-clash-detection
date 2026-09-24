@@ -7,8 +7,9 @@
 // covers it: the factor is 35 (was 24), the schema/validator-accepted maximum, and the `maxResultsPerRun` hard ceiling is
 // 956,824 (was 1,000,000), the largest value some engine configuration can accept under the byte half of R21-2.
 //
-// The (d) tests are NOT part of the erratum: they pin the still-open D-8b (ledger) and D-8c (diagnostic) findings and are
-// marked `// OPEN GATE D-8b|D-8c: flips only if that gate closes` (see the evidence record's gate definitions).
+// The (d) tests are NOT part of the A11 erratum. The D-8c (diagnostic) finding is closed by erratum A13 and its (d) test
+// now pins the corrected bound; the D-8b (ledger) finding stays marked `// OPEN GATE D-8b` (evidence record §10-§11;
+// the full D-8b/D-8c evidence tests are nodeFactor.ledgerDiagnostic.test.mjs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -156,10 +157,12 @@ test('D-8 (b): SCHEMA_MAX_NODES and the provisional-default worst case under fac
   const R = RUN_OPTION_CEILINGS.maxResultsPerRun;
   assert.equal(R, 956_824);
   assert.equal(SCHEMA_NODE_FACTORS.result * R, 33_488_840);
-  assert.equal(SCHEMA_MAX_NODES, 35 * 956_824 + 12 * 20_000_000 + 12 * 100_000 + 65_536);
-  assert.equal(SCHEMA_MAX_NODES, 274_754_376);
+  // Erratum A13 (D-8c) replaced the flat diagnostic 12 by 24 + maxUnitIdsPerDiagnostic (88 at its ceiling 64):
+  // under A11 alone these were 274,754,376 and 15,685,536 (nodeFactor.ledgerDiagnostic.test.mjs pins the A13 values).
+  assert.equal(SCHEMA_MAX_NODES, 35 * 956_824 + 12 * 20_000_000 + (24 + 64) * 100_000 + 65_536);
+  assert.equal(SCHEMA_MAX_NODES, 282_354_376);
   const defaultsWorst = worstCaseCapturedNodes(RUN_OPTION_DEFAULTS);
-  assert.equal(defaultsWorst, 15_685_536);
+  assert.equal(defaultsWorst, 15_885_536);
   assert.ok(defaultsWorst <= ENGINE_LIMIT_DEFAULTS.maxCapturedNodes, 'the defaults still satisfy R21-2 under 35');
 });
 
@@ -197,7 +200,7 @@ const GAP_OPTIONS = Object.freeze({
 
 test('D-8 (c): options resolveRunOptions accepts yield a legal set the same engine reads back (R21-2 holds)', async () => {
   const worst = worstCaseCapturedNodes({ ...RUN_OPTION_DEFAULTS, ...GAP_OPTIONS });
-  assert.equal(worst, 35 * 40_000 + 12 * 1_200 + 12 * 0 + 65_536);   // 1,479,936 (was 1,039,936 under 24)
+  assert.equal(worst, 35 * 40_000 + 12 * 1_200 + (24 + 8) * 0 + 65_536);   // 1,479,936 (was 1,039,936 under 24)
   const limits = resolveEngineLimits({ maxCapturedNodes: worst });
   const runOptions = resolveRunOptions(GAP_OPTIONS, limits);          // ACCEPTED: the invariant says "readable"
   const set = await maximumShapeSet({ resultCount: GAP.results, ledgerRecordCount: GAP.units, diagnosticCount: 0 },
@@ -224,9 +227,9 @@ test('D-8 (c): options resolveRunOptions accepts yield a legal set the same engi
   assert.equal(canonicalJson(outcome), canonicalJson(set));
 });
 
-// ---- (d) the other two factors: single-record counterexamples (OPEN gates D-8b / D-8c; findings, not fixes) ---
+// ---- (d) the other two factors: single-record counterexamples (D-8b OPEN; D-8c closed by erratum A13) ----------
 
-test('D-8 (d): one retained diagnostic can exceed 12 nodes (diagnostic factor finding)', () => {
+test('D-8 (d): one retained diagnostic exceeded the former flat 12 nodes (diagnostic finding, CLOSED by erratum A13 / D-8c)', () => {
   const frag = (fragId, role) => ({ modelKey: A, dbId: 1, fragId, role });
   const pairDiag = (unitIds) => ({
     scope: 'pair', reason: 'r', completenessAffecting: true, attribution: 'element',
@@ -237,8 +240,11 @@ test('D-8 (d): one retained diagnostic can exceed 12 nodes (diagnostic factor fi
   assert.equal(nodesOf(pairDiag(ids(1))), 20);
   assert.equal(nodesOf(pairDiag(ids(RUN_OPTION_DEFAULTS.maxUnitIdsPerDiagnostic))), 27);
   assert.equal(nodesOf(pairDiag(ids(RUN_OPTION_CEILINGS.maxUnitIdsPerDiagnostic))), 83);
-  // OPEN GATE D-8c: flips only if that gate closes (the A11 erratum deliberately left the diagnostic factor at 12).
-  assert.ok(nodesOf(pairDiag(ids(1))) > SCHEMA_NODE_FACTORS.diagnostic);
+  // GATE D-8c CLOSED (erratum A13): each shape is within the per-diagnostic bound diagnostic + |unitIds| (24 + u); the
+  // exhaustive derivation and the end-to-end reproducer are in nodeFactor.ledgerDiagnostic.test.mjs.
+  for (const n of [1, RUN_OPTION_DEFAULTS.maxUnitIdsPerDiagnostic, RUN_OPTION_CEILINGS.maxUnitIdsPerDiagnostic]) {
+    assert.ok(nodesOf(pairDiag(ids(n))) <= SCHEMA_NODE_FACTORS.diagnostic + n);
+  }
 });
 
 test('D-8 (d): one unit record expands its ranges into ids, so nodes are not bounded by 12 x records (ledger finding)', () => {

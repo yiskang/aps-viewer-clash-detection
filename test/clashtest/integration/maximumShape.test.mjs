@@ -173,7 +173,7 @@ test('the shipped defaults satisfy the producer/reader invariant (§13.6)', () =
   assert.ok(ENGINE_LIMIT_DEFAULTS.maxCapturedNodes * BYTES_PER_NODE <= ENGINE_LIMIT_DEFAULTS.maxStoredResultBytes);
   assert.ok(ENGINE_LIMIT_DEFAULTS.maxCapturedNodes <= SCHEMA_MAX_NODES);
   assert.deepEqual(producerReaderIssues(RUN_OPTION_DEFAULTS, ENGINE_LIMIT_DEFAULTS), []);
-  // Spec §17.1.1 note / plan: "15,685,536 <= 16,000,000" (erratum A11; was 14,585,536 under factor 24) and "512,000,000 <= 536,870,912" at the
+  // Spec §17.1.1 note / plan: "15,885,536 <= 16,000,000" (erratum A13; 15,685,536 under A11's flat diagnostic 12, 14,585,536 under result factor 24) and "512,000,000 <= 536,870,912" at the
   // provisional values. Pinned through the imports (the numbers are derived, never written as defaults),
   // so a G-CAL change to any factor or default re-derives both sides here.
   assert.equal(RUN_OPTION_DEFAULTS.maxPairsPerOutcome, RUN_OPTION_DEFAULTS.maxResultsPerRun);
