@@ -335,6 +335,8 @@ The applied form follows A11's own principle: the count of `unitIds` is a run-op
 
 ### 11.2 D-8b — the ledger factor
 
+> Review note (Task A review, minor 6): §11.2(b) bounds unit records by what the *producer* writes (≤ 8 secondary causes, etc.). By the *schema* maximum, `secondaryCauses` can reach 20M and id arrays 10M, so even bound (b) is unsound — this strengthens the D-8b verdict. Review minors 3–5 (old-factor read-back assertion at `maxCapturedNodes` 89,763; the "6,599 refused plan-too-large" claim not asserted; `worstCaseCapturedNodes` (`options.js:226`) yields NaN — failing open — if handed a partial options object lacking `maxUnitIdsPerDiagnostic`, latent only since production passes fully resolved options) are deferred.
+
 **What `maxLedgerRecords` counts** (`planning/ledger.js` `createRecordBudget`; `LEDGER_RECORD_CLASSES`). There is one run-wide counter, `used = planRecords + reserved + discretionary ≤ maxLedgerRecords`, and it has four parts:
 
 - **Planning records** (also ≤ `maxPlanReferences`):
