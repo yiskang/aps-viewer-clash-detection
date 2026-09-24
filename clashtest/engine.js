@@ -799,8 +799,57 @@ export function createEngineCore(config) {
   defineAsync('getResultSet', (runId) => (typeof runId === 'string' ? readSetById(runId) : null));
 
   // ==============================================================================================
-  // Residency, retention and lifecycle (P7.5; retentionReport and dispose are P7.2's)
+  // Residency, retention and lifecycle (P7.5; §13.5.1, §13.5.2)
   // ==============================================================================================
+  //
+  // P5's residency manager owns every rule (classes, LRU, one-shot leases, the persistence attempt
+  // machine, "a set whose put is in flight keeps its slot until that write settles"); these methods
+  // add only the R1 gate, the §13.5.2 "the engine drops its own references on release" (every path
+  // that can drop a resident set prunes `ownRuns`), and the argument checks of the two DESTRUCTIVE
+  // calls. Sync vs async follows §18/A8: retain/release/getPersistenceState/retentionReport throw,
+  // discardRun/retryPersist reject.
+
+  /**
+   * `releaseResultSet`'s options, read ONCE (a getter cannot answer the check and the release
+   * differently): `undefined`, or a plain object whose only key is `acknowledgeUnsaved`, a boolean.
+   * Only a literal `true` acknowledges — dropping a `held` set may drop the only copy (§13.5.2), so a
+   * truthy non-boolean is refused rather than read as consent.
+   * @throws {InvalidOptionsError}
+   */
+  function readReleaseOptions(options) {
+    if (options === undefined) return { acknowledgeUnsaved: false };
+    if (!isPlainRecord(options)) {
+      throw new InvalidOptionsError({ issues: [issue('/', 'bad-shape', 'options must be an object')] });
+    }
+    const issues = [];
+    for (const key of Object.keys(options)) {
+      if (key !== 'acknowledgeUnsaved') {
+        issues.push(issue(`/${key.slice(0, 64).replace(/~/g, '~0').replace(/\//g, '~1')}`, 'unknown-key', 'unknown key'));
+      }
+    }
+    const acknowledgeUnsaved = options.acknowledgeUnsaved;
+    if (acknowledgeUnsaved !== undefined && typeof acknowledgeUnsaved !== 'boolean') {
+      issues.push(issue('/acknowledgeUnsaved', 'bad-shape', 'acknowledgeUnsaved must be a boolean'));
+    }
+    if (issues.length > 0) throw new InvalidOptionsError({ issues });
+    return { acknowledgeUnsaved: acknowledgeUnsaved === true };
+  }
+
+  defineSync('getPersistenceState', (runId) => residency.getPersistenceState(runId));   // null when nonresident
+  defineSync('retainResultSet', (runId) => residency.retainResultSet(runId));
+  defineSync('releaseResultSet', (runId, options) => {
+    residency.releaseResultSet(runId, readReleaseOptions(options));
+    pruneOwnRuns();
+  });
+  defineAsync('retryPersist', (runId) => residency.retryPersist(runId));
+  /** A non-string id is never a runId, so it never reaches `resultStore.delete` (it rejects instead). */
+  defineAsync('discardRun', async (runId) => {
+    if (typeof runId !== 'string') {
+      throw new InvalidOptionsError({ issues: [issue('runId', 'bad-shape', 'runId must be a string')] });
+    }
+    await residency.discardRun(runId);
+    pruneOwnRuns();
+  });
 
   defineSync('retentionReport', () => ({ ...residency.retentionReport(), readSlotsInUse: reads.inUse() }));
 

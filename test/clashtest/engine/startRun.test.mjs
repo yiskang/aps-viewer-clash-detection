@@ -11,8 +11,9 @@
 //     `resolveDefinition()` (clashtest/run/Run.js, resolveStage), and `settlePlanning` writes
 //     `{phase: run.phase, cause}`. The brief wrote `'queued'` (the run STATUS the spec's §8.2 row
 //     names); the spec fixes no gap-phase value, so the shipped P6 value wins (scan general rule).
-//   - `releaseResultSet` / `getPersistenceState` are P7.5's public methods; these tests reach the
-//     residency manager through `createEngineCore(...).internals` instead.
+//   - The two pruning tests release through `createEngineCore(...).internals.residency` ON PURPOSE:
+//     the public `releaseResultSet` (P7.5) prunes `ownRuns` itself, which would hide whether
+//     `getRun` / admission prune on their own.
 //   - The options test uses capturable bad values (scan A2 P7.4(a)); the non-finite variant is kept
 //     separately with the two `bad-shape` paths P0's capture actually reports.
 //   - `findClashes` is never called by the scripted executor these tests use (engineWorld.mjs), so
@@ -243,7 +244,7 @@ test('admission refusal is synchronous and never queues', async () => {
   assert.equal(err.cap, SINGLE_SLOT);
   assert.deepEqual(err.held.map((h) => h.runId), [first.runId]);
   assert.equal(core.internals.ownRuns.size, 1, 'the refused call left no run behind');
-  core.internals.residency.releaseResultSet(first.runId, { acknowledgeUnsaved: true });   // P7.5's method
+  engine.releaseResultSet(first.runId, { acknowledgeUnsaved: true });
   assert.ok(engine.startRun(validDef()));                 // slot freed
 });
 
@@ -519,10 +520,11 @@ test('getRun returns the handle while active and while terminal-but-resident, an
   assert.equal(engine.getRun(runId), h, 'active: the very handle startRun returned');
   await h.done;
   assert.equal(engine.getRun(runId), h, 'terminal and resident');
-  core.internals.residency.releaseResultSet(runId);        // saved ⇒ releasable (P7.5 owns the public method)
+  core.internals.residency.releaseResultSet(runId);        // the RESIDENCY-level release: getRun must prune by itself
+  assert.equal(core.internals.ownRuns.has(runId), true, 'no engine path has pruned it yet');
   assert.equal(engine.getRun(runId), null);
   assert.equal(core.internals.ownRuns.has(runId), false, 'the nonresident entry was pruned');
-  assert.equal(core.internals.residency.getPersistenceState(runId), null);
+  assert.equal(engine.getPersistenceState(runId), null);
 });
 
 test('getRun is null for an unknown or non-string id, and never throws', () => {
@@ -545,7 +547,7 @@ test('admission prunes terminal, nonresident runs, so the engine keeps no unboun
   const { engine } = core;
   const first = engine.startRun(validDef());
   await first.done;
-  core.internals.residency.releaseResultSet(first.runId);
+  core.internals.residency.releaseResultSet(first.runId);   // residency-level: only admission can prune it
   const second = engine.startRun(validDef());                // no getRun call in between
   assert.deepEqual([...core.internals.ownRuns.keys()], [second.runId]);
   await second.done;
@@ -572,7 +574,7 @@ test('getResultSet reads through without making the set resident', async () => {
   const { runId } = h;
   const summary = await h.done;
   await h.persisted;
-  core.internals.residency.releaseResultSet(runId);
+  engine.releaseResultSet(runId);
   assert.equal(engine.retentionReport().slotsInUse, 0);
   const set = await engine.getResultSet(runId);
   assert.equal(set.runId, runId);

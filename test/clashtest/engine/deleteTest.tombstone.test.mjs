@@ -13,7 +13,8 @@
 //     `findClashes` call, `definition: null`, `testRef.semanticDigest: null` (§5.5 layer 2);
 //   - the same run with `persist: false` completes and skips the check;
 //   - a REJECTING `testStore.isTombstoned` seals `failed` / `test-unavailable` (fail closed);
-//   - a stored-reference run against a deleted / archived / missing test;
+//   - a stored-reference run against a deleted / archived / missing test, and (Task P7.5) one whose
+//     `isTombstoned` says deleted while `resolveForRun` still answers `live`;
 //   - a persisting run admitted BEFORE the delete and finishing after it (persistence ends `failed`,
 //     `error.name === 'TestDeletedError'`, run outcome unchanged, set `held`).
 // (`rerun` from an embedded definition is P7.7's; `retryPersist` of a failed set is P7.5's.)
@@ -340,6 +341,24 @@ test('stored-reference runs against a deleted, archived or missing test seal fai
     const summary = await engine.startRun(reference, runOptions).done;
     assertRefusedBeforeWork(cfg, summary, label);
   }
+});
+
+test('a stored REFERENCE is checked against the tombstone even when resolveForRun still answers live', async () => {
+  // Task P7.5 (carried from the P7.4 review): the in-memory store answers `deleted` from
+  // `resolveForRun` too, which hides a resolver that skips `isTombstoned` for references. Here the
+  // two disagree, so ONLY the tombstone check can refuse the run (§5.5 layer 2, "whatever the overload").
+  const storeAnswering = (tombstoned) => ({
+    ...createInMemoryClashTestStore(),
+    isTombstoned: async () => tombstoned,
+    resolveForRun: async () => ({ status: 'live', definition: validDef({ testId: TEST_ID }), latestRevision: 1 }),
+  });
+  const control = runBase({ testStore: storeAnswering(false) });
+  const ran = await createClashTestEngine(control).startRun({ testId: TEST_ID }).done;
+  assert.equal(ran.status, 'completed', 'control: the live answer alone is a usable test');
+  assert.ok(control.enumerator.calls.length > 0);
+  const cfg = runBase({ testStore: storeAnswering(true) });
+  const summary = await createClashTestEngine(cfg).startRun({ testId: TEST_ID }).done;
+  assertRefusedBeforeWork(cfg, summary, 'reference, tombstoned but resolving live');
 });
 
 test('a persisting run admitted BEFORE the delete and finishing after it: outcome unchanged, persistence failed, set held', async () => {
