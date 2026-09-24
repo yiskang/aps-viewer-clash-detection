@@ -353,7 +353,9 @@ export async function withModels(modelPairs, kind = 'positives') {
 // from INDEPENDENT (value-equal, reference-distinct) ref objects.
 const ref = (modelKey, dbId) => ({ modelKey, dbId });
 
-function baseProvenance(over = {}) {
+// Exported (Task P7.9): `maximumShape.mjs` builds its sets on the SAME provenance rows, so the two
+// fixture families cannot drift apart.
+export function baseProvenance(over = {}) {
   const runOptions = { ...RUN_OPTION_DEFAULTS };
   return {
     registrySessionId: 'session-p5.5',
@@ -373,7 +375,7 @@ function baseProvenance(over = {}) {
   };
 }
 
-function provenanceModel(modelKey, over = {}) {
+export function provenanceModel(modelKey, over = {}) {
   return {
     modelKey, modelVersion: 'v1',
     scopeKinds: ['model'],
