@@ -215,7 +215,7 @@ The owner approved §7 and directed a reconciliation of the `maxResultsPerRun` h
   - §17.1.1 (the `maxResultsPerRun` ceiling cell: "956,824 (was 1,000,000; erratum A11)");
   - §25 (the new A11 row).
 - **Plan edits** (current-value restatements only, each marked A11):
-  - `p0-foundations.md` l.16 (the quoted §13.6 invariant) and l.69 (the exported `SCHEMA_NODE_FACTORS` value);
+  - `p0-foundations.md` l.16 (the quoted §13.6 invariant), l.69 (the exported `SCHEMA_NODE_FACTORS` value) and l.73 (the `worstCaseCapturedNodes` formula);
   - `interface-reconciliation.md` l.196 (S-P7-2: 274,754,376 ≈ 8.2 GiB);
   - `p7-engine-integration.md` l.1783 (15,685,536 comment) and l.2130 (the S-P7-2 arithmetic and the defaults figure).
 - **Deliberately not edited.** These are historical executed-step records:
@@ -224,6 +224,10 @@ The owner approved §7 and directed a reconciliation of the `maxResultsPerRun` h
   - the P7 plan's step code at l.1792, where at-ceiling options are still refused.
 
   `docs/handoffs/latest.md` and the acceptance record are outside this task's scope and were not edited. Their D-8 lines, and the handoff's reference to `nodeFactor.evidence.test.mjs`, are for the controller to update. `clashtest/README.md`, `README.md` and `CHANGELOG.md` have no occurrence.
+
+- **Internal review.** `codex-advisor` (medium, request `20260924-183147-34301-30850`) confirmed that the 956,824 derivation is correct and tight: it leaves 20 nodes of room, and 956,825 exceeds the cap by 15. It also confirmed that the promoted R21-2 test is non-vacuous and that no normative edit exceeds the erratum. It raised two findings, both applied:
+  - the missed live formula at `p0-foundations.md` l.73;
+  - §10's "only" wording, qualified to include the fixed `SCHEMA_MAX_NODES` bound and the absence of whole-set contradiction tests.
 
 ## 10. Separate bounded-evidence gates (D-8b, D-8c) — gates, not fixes
 
@@ -248,4 +252,4 @@ The erratum above does **not** touch the ledger or diagnostic factor. Each remai
 - `maximumShape.test.mjs` with the opt-in tiers (`CLASHTEST_AC12_TIERS=all`: `scaled`, `ledger` = 200,000 ledger records, and `results` = 100,000 results) passes 10/10. So the round trips at the provisional defaults and at the configured tiers read back.
 - The only D-8b/D-8c assertions in the suite are the two single-record `OPEN GATE` findings in `nodeFactor.test.mjs`, and they pass by pinning the unsound behaviour.
 
-What they do block is the **universal** R21-2 claim: "every option set `resolveRunOptions` accepts is readable". This is the AC-11/AC-12 conjunct "at each hard ceiling **that option validation accepts**". §6's single-record counterexamples show that ledger-heavy and diagnostic-heavy option sets, with a reader limit sized exactly to the formula, can still be unreadable. No committed test exercises those forms. So the acceptance record should read AC-11/AC-12 as **satisfied for the results-dominated form and at the defaults and tiers, with a scoped caveat for D-8b/D-8c**. Whether that caveat blocks P7 acceptance is an owner decision; the executable evidence does not force it either way.
+What they do leave unproven is the **universal** R21-2 claim ("every option set `resolveRunOptions` accepts is readable"), the AC-11/AC-12 conjunct "at each hard ceiling **that option validation accepts**", and the claim that the fixed `SCHEMA_MAX_NODES` bound covers every legal set. §6's single-record counterexamples indicate that ledger-heavy and diagnostic-heavy option sets, with a reader limit sized exactly to the formula, may be unreadable. No committed whole-set contradiction test proves this yet; producing one is part of each gate above. So the acceptance record should read AC-11/AC-12 as **satisfied for the results-dominated form and at the defaults and tiers, with a scoped caveat for D-8b/D-8c**. Whether that caveat blocks P7 acceptance is an owner decision; the executable evidence does not force it either way.
