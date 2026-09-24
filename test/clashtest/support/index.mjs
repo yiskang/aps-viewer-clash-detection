@@ -45,3 +45,4 @@ export * from './scriptedExecutor.mjs';               // P6.4: createScriptedExe
 export * from './placementRegistry.mjs';              // P6.4: createPlacementRegistry
 export * from './sealedSetFixture.mjs';               // P6.7: createSealedSetFixture
 export * from './engineWorld.mjs';                   // P7.2: createEngineWorld (engine unit-test world, R-P7-2)
+export * from './maximumShape.mjs';                  // P7.9: maximumShapeSet / measuredNodes (AC-12 maximum-shape synthesizer)

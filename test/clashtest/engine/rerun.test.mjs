@@ -104,7 +104,7 @@ function base(extra = {}, worldOptions = {}) {
 
 const cleanDef = (over = {}) => makeDefinition({ testId: 'T', ...over });
 
-/** A deep-frozen snapshot of a set's observable content, to prove it was never mutated. */
+/** The canonical-JSON STRING of a set's content: equal before and after proves the set was never mutated. */
 const fingerprint = (set) => JSON.stringify(set);
 
 /** A pre-resolution sealed set (`definition: null`): a queued run cancelled before it resolves. */
@@ -373,12 +373,31 @@ test('definitionRevision reruns the base test at THAT stored revision (a newer d
 });
 
 test('§5.5 NH3: an embedded-definition rerun of a DELETED test seals test-unavailable without planning', async () => {
-  const cfg = base();
+  const unitExecutor = clean();
+  const cfg = base({ unitExecutor });
+  // Spies on every path by which a run could reach the library: the executor (the effective
+  // findClashes-call proxy here, since a scripted executor never touches the world), the world's own
+  // recorded `findClashes` calls (zero by construction under a scripted executor; kept as the literal
+  // AC-11(a) wording and live if the executor is ever swapped), and the planner's enumerator.
+  const enumeratorCalls = [];
+  for (const method of ['resolveRoots', 'digestScope']) {
+    const inner = cfg.enumerator[method].bind(cfg.enumerator);
+    cfg.enumerator[method] = (...args) => { enumeratorCalls.push(method); return inner(...args); };
+  }
   const engine = createClashTestEngine(cfg);
   await engine.saveTest(cleanDef());
   const first = await engine.startRun(cleanDef()).done;
+  assert.ok(unitExecutor.requests.length > 0, 'the base run did execute units (the spy is live)');
+  assert.ok(enumeratorCalls.length > 0, 'the base run did enumerate (the spy is live)');
+  const executed = unitExecutor.requests.length;
+  const findClashesCalls = cfg.world.calls.length;
+  const enumerated = enumeratorCalls.length;
   await engine.deleteTest('T');
   const s = await (await engine.rerun(first.resultSet, {})).done;
+  // AC-11(a): zero `findClashes` calls, and no planning, for a rerun that seals test-unavailable.
+  assert.equal(unitExecutor.requests.length, executed, 'the rerun issued no unit to the executor');
+  assert.equal(cfg.world.calls.length, findClashesCalls, 'the rerun made zero findClashes calls');
+  assert.equal(enumeratorCalls.length, enumerated, 'the rerun did not plan (no enumeration)');
   assert.equal(s.status, 'failed');
   assert.deepEqual(s.resultSet.ledger.planningGaps.map((g) => g.cause), ['test-unavailable']);
   assert.equal(s.resultSet.derivedFromRunId, first.runId);

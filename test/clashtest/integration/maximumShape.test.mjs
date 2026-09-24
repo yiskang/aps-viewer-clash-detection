@@ -1,8 +1,9 @@
 // test/clashtest/integration/maximumShape.test.mjs
 //
 // Task P7.9 — AC-12 MAXIMUM-SHAPE round trip (produce → persist → evict → read → validate → rerun) at
-// CONFIGURABLE ceilings, the §13.6 producer/reader arithmetic, the reader-limit boundaries, and the
-// AC-12(a) slicing STRUCTURE of every engine-observable sliced span.
+// CONFIGURABLE ceilings, the §13.6 producer/reader arithmetic, and the reader-limit boundaries. The
+// AC-12(a) slicing STRUCTURE of every engine-observable sliced span lives in the sibling
+// maximumShape.slicing.test.mjs (split out only so the two halves run in parallel under `npm test`).
 //
 // Deviations from the brief's excerpt (preflight scan rows for P7.9; controller rulings):
 //   - (a) "evict" is never vacuous. The brief's `resultStore.put` + `releaseResultSet` evicts nothing
