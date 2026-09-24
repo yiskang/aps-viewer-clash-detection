@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { createClashTestEngine, getPairStatus, getElementStatus } from '../../../clashtest/index.js';
 import { ENGINE_LIMIT_DEFAULTS, RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
 import { makePairId, makeElementRef } from '../../../clashtest/identity/ids.js';
-import { canonicalJson } from '../../../clashtest/util/canonical.js';
+import { canonicalJson, DIGEST_VERSION } from '../../../clashtest/util/canonical.js';
 import { validateResultSet } from '../../../clashtest/results/validateResultSet.js';
 import { frameBudgetMs, maxCollisionInstancesPerEpoch } from '../../../collision/constants.js';
 import {
@@ -135,11 +135,13 @@ test('a real-world run cancelled mid-plan has an evaluated subset identical to t
 // (clashtest/planning/planner.js:424), and `commitPlanned` then writes the plan's unit records into the
 // ledger. A cancel landing during that final yield is seen only at Run.js:334, whose `settlePlanning`
 // seals the ALREADY-COMMITTED ledger: unit records with `outcome: null`, and no provenance model rows
-// (`run.plan` was never adopted). The sealed set fails §13.6 (`/ledger/units/N/outcome
-// null-not-allowed`, `/provenance/models model-not-in-provenance`) -- R21-2 ("an engine never produces a
-// set it cannot read") and AC-7 ("a cancel during enumeration seals with planning gap `cancelled` and no
-// unit ledger"). Surfaced by this file's F1/F5 calibration probes (P7.8b-2). Standing reproducer per
-// R-P7-24: FAILS today for exactly that reason. FLIP TO test() WHEN P6 IS FIXED.
+// (`run.plan` was never adopted). The sealed set fails `validateResultSet` (`/ledger/units/N/outcome
+// null-not-allowed`, `/provenance/models model-not-in-provenance`), so a STORED read-back
+// (`readResultSet`, the by-id store path) rejects `CorruptResultSetError`; `engine.getResultSet` on the
+// RESIDENT copy returns it unvalidated. Violates R21-2 ("an engine never produces a set it cannot
+// read") and AC-7 ("a cancel during enumeration seals with planning gap `cancelled` and no unit
+// ledger"). Surfaced while calibrating this file's F5 (ii) planning-slice hook (P7.8b-2). Standing
+// reproducer per R-P7-24: FAILS today on exactly those validation issues. FLIP TO test() WHEN P6 IS FIXED.
 test.todo('D-D (P6): a cancel landing in the final planning slice seals a valid set with no unit ledger (AC-7, R21-2)', async () => {
   const def = fourByFourDef('d-d');
   // Calibrate: the engine yields this many times before its first executor call, on this fixture.
@@ -297,19 +299,60 @@ test('geometry readiness: an unavailable render proxy is caveated, never silentl
   assert.equal(run3.outcome.integrity, 'clean');
   assert.equal(getPairStatus(run3, GATED_PAIR).verdict, 'covered-clean');
   assertPairSets(pairKeysOf(run3), reference.pairIds, { mode: MODE, resultSet: run3, expect: 'exact' });
-  // DEVIATION (reported): the brief's `canClaimNoClashes(run3) === true` is unreachable on ANY fixture
-  // in which the gated fragment is narrow-phased: over this fixture's axis-aligned cubes every
-  // broad-phase candidate is a clash (measured for all four modes, incl. diagonal clearance near
-  // misses), and a clash blocks the claim (§8.3 `noResults`, R19-2). So the claim half is asserted as
-  // the contrast that IS observable: run 3 is claim-blocked ONLY by its results, while every
-  // readiness-sensitive conjunct (completed, full, clean, current) holds -- the ones run 1 fails.
-  assert.equal(run3.outcome.status, 'completed');
-  assert.equal(run3.outcome.coverage, 'full');
-  assert.equal((await openEngine.getFreshness(h3.runId)).state, 'current');
+  // The brief's `canClaimNoClashes === true` conjunct cannot hold on THIS fixture: run 3 retains the
+  // a:100<->b:100 clash, and a clash blocks the claim (§8.3 `noResults`, R19-2). It is asserted by the
+  // claim-level control test below instead (a one-variable gate flip over a fixture with no clash).
   assert.ok(run3.results.length > 0);
-  assert.equal(await openEngine.canClaimNoClashes(h3.runId), false, 'blocked by its results alone');
   // The comparison surface is P8's: AC-19(e)'s `compareResultSets` conjunct is deferred -> P8.
   assert.equal(engine.compareResultSets, undefined);
+});
+
+// The claim half of F4b's negative control (reported deviation: split out, like F2's control (ii)),
+// because the brief's run 3 reuses a CLASHING fixture on which the claim can never be true. A gated
+// fragment that is narrow-phased yet yields NO clash when its proxy is available: `clearance` mode
+// over two OVERLAPPING cubes (an overlap is not a clearance pair -- measured: 0 pairs, 0 diagnostics
+// with the gate open; `geometry-not-yet-available` with it closed). The two runs differ ONLY in the
+// gate, and every §8.3 claim conjunct (clashtest/results/claim.js) other than `clean` is asserted to
+// hold in BOTH, so the gated run's false claim is shown to be BECAUSE of readiness.
+test('geometry readiness, claim control: the gate alone decides canClaimNoClashes on a no-clash fixture (AC-19 e)', async () => {
+  const models = { a: { 100: [[0, 0, 0]] }, b: { 100: [[0.25, 0, 0]] } };
+  const def = { ...definitionOf({ testId: 'f4b-claim', selectionA: [elements('a', [100])], selectionB: [elements('b', [100])] }),
+    mode: 'clearance', clearance: 0.05 };
+  const claimRun = async (gated) => {
+    const fx = await makeRealWorldFixture({ models, renderProxy: (modelKey) => !(gated && modelKey === 'b') });
+    const { engine } = engineOver(fx);
+    const handle = engine.startRun(def);
+    const { resultSet } = await handle.done;
+    return { resultSet, claim: await engine.canClaimNoClashes(handle.runId), freshness: (await engine.getFreshness(handle.runId)).state };
+  };
+  const gated = await claimRun(true);
+  const open = await claimRun(false);
+  // Every §8.3 conjunct EXCEPT `clean` holds in both runs (claim.js:51-63), so `clean` -- driven here by
+  // the readiness diagnostic alone -- is the only one that can decide the claim.
+  for (const [name, { resultSet, freshness }] of [['gated', gated], ['open', open]]) {
+    const { outcome, ledger, provenance } = resultSet;
+    assert.equal(outcome.status, 'completed', name);
+    assert.equal(outcome.coverage, 'full', name);
+    assert.equal(freshness, 'current', name);
+    assert.equal(resultSet.digests.digestVersion, DIGEST_VERSION, name);
+    assert.ok(ledger.pairSpaceTotal > 0, name);
+    assert.equal(ledger.emptyOperand, false, name);
+    assert.deepEqual(ledger.unresolvedSelections, [], name);
+    assert.deepEqual(ledger.unreachablePopulation, [], name);
+    assert.deepEqual(ledger.hierarchyInternal, [], name);
+    assert.equal(provenance.hierarchyInternalAcceptance, null, name);
+    assert.deepEqual(resultSet.results, [], `${name}: no clash either way`);
+  }
+  // Gated: the pair was narrow-phased and its proxy was unavailable -> caveated -> no claim.
+  assert.ok(gated.resultSet.diagnostics.geometryReadinessOccurrences >= 1, 'premise: the pair was narrow-phased and gated');
+  assert.ok(gated.resultSet.outcome.environmentSensitiveCauses.includes('geometry-readiness'));
+  assert.equal(gated.resultSet.outcome.integrity, 'caveated', 'the ONE failing conjunct, from readiness alone');
+  assert.equal(gated.claim, false, 'a readiness-caveated empty result is never a no-clash claim');
+  // Open: nothing caveats it -> the claim is allowed. A build whose claim is always false fails here.
+  assert.equal(open.resultSet.diagnostics.geometryReadinessOccurrences, 0);
+  assert.deepEqual(open.resultSet.outcome.environmentSensitiveCauses, []);
+  assert.equal(open.resultSet.outcome.integrity, 'clean');
+  assert.equal(open.claim, true);
 });
 
 // ---- Step 17: F5 -- model eviction and world disposal mid-run (AC-21) -----------------------------
@@ -335,6 +378,17 @@ async function midCallFixture({ callIndex, action }) {
   return { fx, recorder, lifecycle, hook, clock };
 }
 
+/** The unit whose call was in flight when the hook fired. `units[callsAtFire - 1]` is that unit only
+ *  while every earlier unit made exactly ONE call (no retry); pinned here, call by call, rather than
+ *  assumed (review M-3): with one source owner per unit, call i's source is unit i's source root. */
+function unitInFlightAtFire(resultSet, { recorder, hook }) {
+  for (let i = 0; i < hook.callsAtFire; i++) {
+    assert.deepEqual(recorder.calls[i].query.source.dbIds, resultSet.ledger.units[i].sourceRootDbIds,
+      `call ${i + 1} belongs to unit ${resultSet.ledger.units[i].unitId}`);
+  }
+  return resultSet.ledger.units[hook.callsAtFire - 1];
+}
+
 test('model eviction mid-run settles the unit model-evicted and the engine never evicts or disposes (AC-21)', async () => {
   const def = fourByFourDef('f5-evict');
   const quiet = await midCallFixture({ callIndex: 2, action: null });
@@ -351,13 +405,15 @@ test('model eviction mid-run settles the unit model-evicted and the engine never
   assert.ok(m.clock.yieldCount > 0);
 
   assert.deepEqual(unitIdsOf(resultSet), unitIdsOf(quietSet), 'invariant P1: the plans agree on unit ids');
-  const affected = resultSet.ledger.units[m.hook.callsAtFire - 1];     // the unit whose call was in flight
+  const affected = unitInFlightAtFire(resultSet, m);
   // Table A row U6 (the matrix's prediction for this row): `failed:model-evicted` for the in-flight unit.
   assert.equal(affected.outcome, 'failed', JSON.stringify(affected));
   assert.equal(affected.cause, 'model-evicted');
   assert.equal(m.recorder.calls[m.hook.callsAtFire - 1].error?.name, 'ModelEvictedError', 'the REAL world raised it');
-  // Every other observed fact is kept as a secondary cause: each `unit:*` reason of the run is some
-  // unit's primary cause or one of the affected unit's secondary causes.
+  // Every other observed fact is kept as a secondary cause. The matrix's prediction for this row: the
+  // eviction also left the post-check scope digest uncomputable (U7), recorded as secondary (review M-1).
+  assert.deepEqual(affected.secondaryCauses, ['scope-unverifiable']);
+  // And each `unit:*` reason of the run is some unit's primary cause or one of those secondary causes.
   const primaries = new Set(resultSet.ledger.units.map((u) => u.cause).filter((c) => c !== null));
   for (const reason of resultSet.outcome.reasons.filter((r) => r.startsWith('unit:'))) {
     const fact = reason.slice('unit:'.length);
@@ -392,7 +448,7 @@ test('world disposal mid-run seals failed, and the engine makes no further libra
   assert.notEqual(d.hook.firedAtYield, null, 'premise: the counted yield hook fired (mid-call disposal)');
   const { resultSet } = summary;
   assert.equal(summary.status, 'failed', 'done resolves WITH the failed summary');
-  const affected = resultSet.ledger.units[d.hook.callsAtFire - 1];
+  const affected = unitInFlightAtFire(resultSet, d);
   assert.equal(affected.outcome, 'failed', JSON.stringify(affected));
   assert.equal(affected.cause, 'world-disposed');
   assert.equal(d.recorder.calls[d.hook.callsAtFire - 1].error?.name, 'WorldDisposedError', 'the REAL world raised it');
@@ -411,9 +467,16 @@ test('world disposal mid-run seals failed, and the engine makes no further libra
 // world, as the test-local one and the P2 contract allow) the only world call,
 // `getEpochCollisionInstanceCount` (Run.js:292), precedes enumeration. A cancel + dispose inside a
 // planning slice therefore seals `cancelled` with reasons ['cancel-requested', 'planning:cancelled']
-// and no `world-disposed` anywhere. The preflight (P7.8 F5(ii) risk) rules a mismatch an OWNER
-// QUESTION, never a test loosening. Standing reproducer (R-P7-24): FAILS today on `status: cancelled`.
-// FLIP TO test() WHEN THE OWNER RESOLVES IT (spec amendment or a P6 observation point).
+// and no `world-disposed` anywhere. The §16.7 precedence itself is correct and T1-tested
+// (test/clashtest/run/settlement.test.mjs: planningCause 'world-disposed' + cancel => failed); the
+// disposal is simply never OBSERVED. The preflight (P7.8 F5(ii) risk) rules a mismatch an OWNER
+// QUESTION, never a test loosening. Two remedies for the owner, neither needing a new library API:
+// (a) amend AC-21 to scope the variant to enumerators that observe the world; or (b) reopen P6 for an
+// observation point -- every public CollisionWorld method throws WorldDisposedError once disposed
+// (collision/CollisionWorld.js:790,801), so a boundary probe (e.g. re-reading
+// `getEpochCollisionInstanceCount` when handling a planning cancel or at the planning -> executing
+// boundary) would surface it. Standing reproducer (R-P7-24): FAILS today on `status: cancelled`.
+// FLIP TO test() WHEN THE OWNER RESOLVES IT.
 test.todo('D-C (owner): world disposal with a cancel pending inside a planning slice seals failed, not cancelled (AC-21 (ii))', async () => {
   const fx = await makeRealWorldFixture({ models: FOUR_BY_FOUR });
   const recorder = recordFindClashes(fx.world);
@@ -593,7 +656,9 @@ async function contentionFixture({ spares, foreign }) {
   const box = { engine: null, armed: foreign !== null, growths: 0, acts: 0, pool: [...spares], actedOn: new Set() };
   clock.onYield(async () => {
     if (!box.armed || recorder.inFlight === 0) return;
-    const token = recorder.calls.length - 1;           // the in-flight outer call
+    // The in-flight outer call. Valid only while engine calls are SERIAL (one in flight at a time, the
+    // Step 8 conformance fact); each arm asserts `peakInFlight === 1` (review M-2).
+    const token = recorder.calls.length - 1;
     if (box.actedOn.has(token)) return;
     if (foreign === 'growth') {
       if (box.pool.length === 0) return;
@@ -629,6 +694,7 @@ async function runContention(fixture, targets) {
   const handle = fixture.engine.startRun(contentionDef(targets), CONTENTION_OPTIONS);
   const { resultSet } = await handle.done;
   await settle();
+  assert.equal(fixture.recorder.peakInFlight, 1, 'serial engine calls (the growth token relies on it)');
   return { resultSet, runId: handle.runId, generationBefore, generationAfter: fixture.fx.registry.bindingFor('c').placementGeneration };
 }
 
@@ -665,6 +731,9 @@ test('foreign placement contention: a direct-caller growth bump on every attempt
   assert.equal(unitC.outcome, 'failed', JSON.stringify(unitC));
   assert.equal(unitC.cause, 'stale-placement');
   assert.equal(unitC.attempts, attemptsAllowed);
+  assert.equal(contended.recorder.calls.length, 1 + attemptsAllowed, 'one call for b, one per attempt of c');
+  assert.equal(contended.recorder.peakInFlight, 1, 'serial calls: the per-call growth token is sound');
+  assert.equal(contended.recorder.calls[0].error, null, 'b\'s call was not aborted by the growth in c\'s epoch');
   assert.ok(contended.recorder.calls.slice(1).every((c) => c.error?.name === 'ModelPlacementChangedError'),
     'the REAL world raised ModelPlacementChangedError on every attempt of c');
   assert.ok(set.outcome.environmentSensitiveCauses.includes('placement-contention'));
