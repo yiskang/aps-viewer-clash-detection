@@ -25,11 +25,13 @@
 // `defineSync(name, fn)` / `defineAsync(name, fn)`, which add that gate, so no group can forget it.
 import {
   EngineDisposedError, InvalidOptionsError, ModelBindingError, RunQueueFullError,
+  StoreNotConfiguredError, CorruptListingError,
 } from './errors.js';
-import { resolveEngineLimits } from './options.js';
+import { resolveEngineLimits, ENGINE_LIMIT_CEILINGS } from './options.js';
 import { assertRegistryBelongsToWorld } from './identity/ModelRegistry.js';
 import { compareModelKeys } from './identity/ids.js';
 import { DIGEST_VERSION } from './util/canonical.js';
+import { captureData, deepFreeze } from './util/capture.js';
 import { createSlicer, makeYieldToScheduler } from './util/slicer.js';
 import { COORDINATOR_PROTOCOL_VERSION, getWorldCoordinator } from './run/coordinator.js';
 import { createRun } from './run/Run.js';
@@ -45,6 +47,8 @@ import {
   createDiagnosticAggregator, createStatisticsAccumulator, deriveUnitTaints,
 } from './execution/diagnostics.js';
 import { createDefinitionOperations } from './definition/operations.js';
+import { validateReference, toDefinitionError, LIST_LIMIT } from './definition/validate.js';
+import { validateResultSetSummary } from './results/validateResultSet.js';
 import { planRun, materializeUnit, rootsForRanges } from './planning/planner.js';
 import { splitUnit } from './planning/splitting.js';
 import { createRecordBudget, createLedger } from './planning/ledger.js';
@@ -154,6 +158,100 @@ function modelKeysOf(definition) {
     for (const entry of selection.entries) keys.add(entry.modelKey);
   }
   return [...keys].sort(compareModelKeys);
+}
+
+// ---- §13.5 listing calls: option capture (caller side) and page validation (store side) -------------
+
+const MAX_LISTING_ISSUES = 20;               // §13.5 R15-6: CorruptListingError carries the first 20 {path, code}
+const MAX_LISTING_STRING_UNITS = 1024;       // §13.5.2 string caps (modelKey/modelVersion 1,024; cursor 1,024)
+const MAX_TEST_ID_UNITS = 256;               // §5.3 R2
+// `models` of a ResultSetSummary: 2 x the maxEntriesPerSelection ceiling (§13.5), the same rule the P5 row validator applies.
+const SUMMARY_MAX_MODELS = 2 * ENGINE_LIMIT_CEILINGS.maxEntriesPerSelection;
+
+const isPlainRecord = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const bareIssue = ({ path, code }) => ({ path, code });      // no message, never a value (§16)
+
+/**
+ * The options of a listing call, captured in the caller's turn as one detached plain copy (so a getter is
+ * never invoked and a later mutation changes nothing), then checked against the §13.5 listing contract:
+ * `limit` an integer 1..1,000; `cursor` is OPAQUE and versioned, so its content is the STORE's to judge
+ * (`bad-cursor`), the engine only bounds its size; `testId` (listResults only) a §5.3 R2 id.
+ * @throws {InvalidOptionsError}
+ */
+function captureListOptions(page, allowedKeys) {
+  const fail = (issues) => { throw new InvalidOptionsError({ issues: issues.slice(0, MAX_LISTING_ISSUES).map(bareIssue) }); };
+  // `{limit: undefined}` is how a host says "no limit"; it is not plain DATA to `captureData`, so an
+  // undefined-valued own key is dropped first, reading each descriptor exactly once (a getter is never invoked).
+  let input = page;
+  if (isPlainRecord(page)) {
+    try {
+      const proto = Object.getPrototypeOf(page);
+      if (proto === Object.prototype || proto === null) {                  // any other prototype: `captureData` refuses it
+        const own = Object.getOwnPropertyDescriptors(page);
+        input = {};
+        for (const key of Reflect.ownKeys(own)) {
+          const d = own[key];
+          if (!('value' in d) || d.value !== undefined) Object.defineProperty(input, key, d);
+        }
+      }
+    } catch {
+      return fail([{ path: '/', code: 'unreadable' }]);                    // a throwing Proxy trap
+    }
+  }
+  const cap = captureData(input, { maxNodes: 16, maxIssues: MAX_LISTING_ISSUES, maxStringLength: MAX_LISTING_STRING_UNITS });
+  if (!cap.ok) return fail(cap.issues);
+  const copy = cap.value;
+  if (!isPlainRecord(copy)) return fail([{ path: '/', code: 'not-an-object' }]);
+  const issues = [];
+  for (const key of Object.keys(copy)) {
+    if (!allowedKeys.includes(key)) issues.push({ path: `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`, code: 'unknown-property' });
+  }
+  const { limit, testId } = copy;
+  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1 && limit <= LIST_LIMIT.max)) {
+    issues.push({ path: '/limit', code: 'out-of-range' });
+  }
+  if (testId !== undefined && !(typeof testId === 'string' && testId.length >= 1 && testId.length <= MAX_TEST_ID_UNITS)) {
+    issues.push({ path: '/testId', code: 'bad-test-id' });
+  }
+  if (issues.length > 0) return fail(issues);
+  return copy;
+}
+
+/**
+ * §13.5 R15-6: a `ResultStore.list` page is untrusted data. It is captured as ONE detached copy (no getter
+ * is invoked), the copy is validated -- page shape, then every row through P5's closed `ResultSetSummary`
+ * validator -- and THAT copy is what the caller receives, deep-frozen. One bad row rejects the whole page:
+ * `CorruptListingError` with the first 20 `{path, code}` and never a value.
+ * @throws {CorruptListingError}
+ */
+function validatedResultPage(page, limits) {
+  const corrupt = (issues) => { throw new CorruptListingError({ issues: issues.slice(0, MAX_LISTING_ISSUES).map(bareIssue) }); };
+  const cap = captureData(page, {
+    maxNodes: limits.maxCapturedNodes, maxIssues: MAX_LISTING_ISSUES, maxStringLength: MAX_LISTING_STRING_UNITS,
+    maxArrayLength: LIST_LIMIT.max,
+    arrayLimitFor: (pointer) => (/^\/summaries\/\d+\/models$/.test(pointer) ? SUMMARY_MAX_MODELS : undefined),
+  });
+  if (!cap.ok) return corrupt(cap.issues);
+  const copy = cap.value;
+  if (!isPlainRecord(copy)) return corrupt([{ path: '/', code: 'not-an-object' }]);
+  const issues = [];
+  for (const key of Object.keys(copy)) {
+    if (key !== 'summaries' && key !== 'next') issues.push({ path: `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`, code: 'unknown-property' });
+  }
+  if (Object.hasOwn(copy, 'next') && typeof copy.next !== 'string') issues.push({ path: '/next', code: 'not-a-string' });
+  if (!Object.hasOwn(copy, 'summaries')) issues.push({ path: '/summaries', code: 'missing-required' });
+  else if (!Array.isArray(copy.summaries)) issues.push({ path: '/summaries', code: 'not-an-array' });
+  else {
+    for (let i = 0; i < copy.summaries.length && issues.length < MAX_LISTING_ISSUES; i += 1) {
+      const row = copy.summaries[i];
+      if (!isPlainRecord(row)) { issues.push({ path: `/summaries/${i}`, code: 'not-an-object' }); continue; }
+      for (const found of validateResultSetSummary(row, {}).issues) {
+        issues.push({ path: `/summaries/${i}${found.path}`, code: found.code });
+      }
+    }
+  }
+  if (issues.length > 0) return corrupt(issues);
+  return deepFreeze(copy);
 }
 
 const notImplemented = (name) => new Error(`ClashTestEngine.${name} is not implemented in this build yet`);
@@ -375,6 +473,76 @@ export function createEngineCore(config) {
   // ==============================================================================================
   // Definition methods (P7.3)
   // ==============================================================================================
+  //
+  // P2's `createDefinitionOperations` owns §5.3 / §5.5 for validate / save / get / list / archive (capture in
+  // the caller's turn, untrusted store reads, the `put` refusal precedence); these methods add only what P7
+  // alone owns: the R1 gate (via `defineSync`/`defineAsync`), the §13.5.2 read slots, the `ResultStore`
+  // listing, and `deleteTest` (only P7 holds both stores and so the two-layer order).
+
+  /** `StoreNotConfiguredError{store}` for the named store, else the store. */
+  const requireStore = (name) => {
+    const store = name === 'testStore' ? stores.test : stores.result;
+    if (!store) throw new StoreNotConfiguredError({ store: name });
+    return store;
+  };
+
+  /** Runs `fn` holding one read slot (§13.5.2, FIFO, `ReadCapacityError` beyond the queue); released on every exit. */
+  async function withReadSlot(fn) {
+    const slot = await reads.acquire();
+    try {
+      return await fn();
+    } finally {
+      slot.release();
+    }
+  }
+
+  /**
+   * Archive and delete are irreversible, so their argument is checked before ANY store sees it: a `testId`
+   * is the §5.3 R2 id (a string of 1-256 code units), else `InvalidTestDefinitionError` (the error a
+   * malformed reference raises everywhere else). Returns the captured plain string.
+   */
+  function captureTestId(testId) {
+    const checked = validateReference({ testId }, { limits: effectiveLimits });
+    if (checked.issues.length > 0) {
+      throw toDefinitionError({ issues: checked.issues, issuesTruncated: checked.issuesTruncated });
+    }
+    return checked.captured.testId;
+  }
+
+  defineSync('validateTest', (def) => definitions.validateTest(def));
+  defineAsync('saveTest', (def) => definitions.saveTest(def));               // captures before it returns its promise
+  defineAsync('getTest', (testId, revision) => definitions.getTest(testId, revision));
+
+  defineAsync('listTests', (page = {}) => {
+    requireStore('testStore');
+    const options = captureListOptions(page, ['limit', 'cursor']);
+    return withReadSlot(() => definitions.listTests(options));
+  });
+
+  defineAsync('listResults', (page = {}) => {
+    const resultStore = requireStore('resultStore');
+    const options = captureListOptions(page, ['testId', 'limit', 'cursor']);
+    return withReadSlot(async () => validatedResultPage(await resultStore.list(options), effectiveLimits));
+  });
+
+  defineAsync('archiveTest', async (testId) => {
+    requireStore('testStore');
+    const id = captureTestId(testId);
+    await definitions.archiveTest(id);
+  });
+
+  /**
+   * §5.5: the only supported delete, fail-closed. (i) `resultStore.tombstoneTest` FIRST (the durable
+   * `ResultId` guarantee), THEN (ii) `testStore.delete`. Both are idempotent; if (i) succeeds and (ii)
+   * fails the promise rejects, the reservation STAYS and a retry completes. Each configured step is
+   * performed; only "neither store" is `StoreNotConfiguredError` (§5.5, R15 Q3).
+   */
+  defineAsync('deleteTest', async (testId) => {
+    if (!stores.test && !stores.result) throw new StoreNotConfiguredError({ store: 'testStore' });
+    const id = captureTestId(testId);
+    if (stores.result) await stores.result.tombstoneTest(id);
+    if (stores.test) await stores.test.delete(id);
+  });
 
   // ==============================================================================================
   // Run methods (P7.4)
