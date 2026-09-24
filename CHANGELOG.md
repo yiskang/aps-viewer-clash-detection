@@ -1,5 +1,27 @@
 # Changelog
 
+## Federated clash-test core engine — new `clashtest/` layer, additive (not yet tagged)
+
+**What was added.** `clashtest/` is a Viewer-independent core engine for saved clash tests and their
+sealed, reproducible Result Sets: definition validation and stores, a planner, a run lifecycle, an
+executor over an injected `CollisionWorld`, result-set persistence/residency, freshness, and the
+no-clash claim predicates. Its single public entry point is `clashtest/index.js` (a pure re-export);
+see `clashtest/README.md` for the surface, the six ports and which have reference implementations, and
+what is deliberately absent (annotation, derivations/`compareResultSets`, the Viewer adapter, remote
+persistence). The design is `docs/superpowers/specs/2026-09-20-federated-clash-test-and-results-design.md`.
+
+**What did not change.** `collision/` is unchanged: no field, symbol or behavior of the collision
+library is added, removed or altered, and existing consumers are unaffected.
+
+**Tests.** `npm test` gains the `test/clashtest/` suites and stays credential-free. The engine is
+verified at the T1 level (fakes, a scripted executor, synthesized Result Sets); the `LocalUnitExecutor`
+alone additionally has tests over a real `CollisionWorld` with mock models. **The engine as a whole has
+not been verified end-to-end over the real `CollisionWorld` and `LocalUnitExecutor`**: that suite is
+pending open owner decisions (see `docs/handoffs/latest.md`).
+
+**Provisional defaults.** Every default and ceiling in `clashtest/options.js` is provisional pending
+the AC-12 calibration gate (G-CAL) and is an overridable default, not a frozen constant.
+
 ## Correctness fix — volume-overlap and clearance crossing results no longer depend on operand order or reload identity (not yet tagged)
 
 **What was wrong.** The crossing term shared by `mode: 'volume-overlap'` and `mode: 'clearance'`'s
