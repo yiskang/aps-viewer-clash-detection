@@ -525,3 +525,7 @@ No other assertion changed. Small plans whose ranges each hold one root (for exa
 - `nodeFactor.ledgerDiagnostic.test.mjs` 12/12, `nodeFactor.test.mjs` 9/9; planning, options and node-factor suites together 364/364.
 - `CLASHTEST_AC12_TIERS=all node --test test/clashtest/integration/maximumShape.test.mjs`: 10/10, about 61 s.
 - Full suite (`node scripts/run-tests.mjs`): **2535 total / 2533 pass / 0 fail / 2 todo**. Baseline at `200f745`: 2530 / 2526 / 1 fail / 3 todo. The baseline failure was `test/CollisionWorld.findClashes.test.mjs` "active-range compaction end-to-end", the pre-existing wall-clock flake (see `56d591a`); it did not recur. The removed todo is D-8b's; the remaining two are D-10 and the unrelated library gap.
+
+## 13. A13 form ratified (owner ruling #5, 2026-09-24)
+
+The owner ratified erratum A13 as the closed expression `(24 + maxUnitIdsPerDiagnostic) × maxRetainedDiagnostics` and directed that it not be replaced by the fixed constant 88 (defaults would be 16,445,536 > 16,000,000). The option-sensitive accounting and the demonstrated default fit (15,885,536) are preserved. No code change. Recorded in the spec §25 A13 row.
