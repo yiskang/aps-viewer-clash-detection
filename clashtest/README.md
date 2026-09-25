@@ -69,7 +69,7 @@ span durations are recorded, not gated.
 | --- | --- |
 | Annotation (`annotate`) | A follow-up to the derivations phase. Absent from the engine object, not stubbed. |
 | Free-standing derivations (`summarize`, `groupBy`, `filter`, `compareResultSets`) | Phase P8: reached only through `createDerivationContext` or `engine.derivations` (bound in P8.8), never as barrel exports. |
-| Viewer adapter (`ElementEnumerator` over a live model tree) | Proposed `clashtest/viewer/`; open question OQ-4. |
+| Viewer adapter (`ElementEnumerator` over a live model tree) | Now exists at `clashtest/viewer/` (own entry point, not exported here); implementation complete, live acceptance pending. Evidenced envelope (OQ-4): Audubon / SVF non-OTG / Viewer 7.124.2 / Chromium 151. See [`viewer/README.md`](viewer/README.md). |
 | Remote persistence and the ambiguous-commit reconciliation loop | Gate G-REMOTE. The `ResultStore` port here is local and transactional, so a rejected `put` ends the attempt. The typed `PersistenceOutcomeUnknownError` stays in `errors.js`. |
 | The `migration-failed` planning cause | Reserved with no producer: the definition `schemaVersion` is 1, so it is unreachable. |
 
