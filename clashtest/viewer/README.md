@@ -19,7 +19,7 @@ exactly the two `ElementEnumerator` port methods, `resolveRoots(binding, scope, 
 - **Never cached.** The enumerator is stateless. Every call re-reads the live model (spec 6.2); a failed call
   leaves nothing behind, and there is no module-level state.
 - **Checkpoint cadence.** Each method calls `ctx.checkpoint()` once before it reads the model, in the same tick
-  when the checkpoint returns `undefined` (conditionally synchronous, like `collision/scheduler.js`). Loops
+  when the checkpoint returns `undefined` (conditionally synchronous, like `collision/scheduler.js`). Later reads after internal asynchronous boundaries are covered by the periodic checkpoints, not a same-tick guarantee. Loops
   checkpoint at least once per `CHECK_EVERY = 64` node visits, fragment scans or records (provisional, G-CAL,
   overridable, never asserted against elapsed time). `EnumerationCancelledError` propagates unwrapped. Items
   delivered inside one synchronous Viewer callback burst (`enumNodeFragments`, `enumNodeChildren` on one node)
@@ -38,7 +38,7 @@ exactly the two `ElementEnumerator` port methods, `resolveRoots(binding, scope, 
 Source: `docs/research/2026-09-26-federated-clash-test-oq4-live-evidence-check.md`. This README does not claim
 more than that envelope.
 
-Not evidenced (OQ-4 section 7), each fail-closed in code and characterized, not asserted, by the T3 script:
+Not evidenced (OQ-4 §7); per-case behavior below. The planned T3 script (Task 13, not yet executed) is to characterize them.
 
 | Not evidenced | Behavior in this adapter |
 | --- | --- |
