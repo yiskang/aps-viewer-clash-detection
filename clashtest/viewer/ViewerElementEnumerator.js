@@ -103,7 +103,20 @@ export function createViewerElementEnumerator({ scheduleTimeout, clearScheduled,
     return { kind: 'roots', roots };
   }
 
-  async function resolveRoots() { throw new Error('resolveRoots: implemented in Task 7/8'); }
+  async function resolveExplicit(binding, scope, ctx) {
+    const { tree, fragList } = await awaitObjectTree(binding.model, ctx, readiness);
+    const { roots: normalized, unresolved } = await normalizeExplicit(tree, scope.dbIds, ctx);
+    const roots = [];
+    for (const { dbId, owners } of normalized) roots.push(await rootRecord(dbId, owners, fragList, ctx));
+    return { roots, population: null, ownerMismatch: null, unreachable: null, unresolved };
+  }
+
+  async function resolveRoots(binding, scope, ctx) {
+    requireCall(binding, ctx);
+    { const p = checkpointNow(ctx); if (p) await p; }
+    return scope === 'whole' ? resolveWhole(binding, ctx) : resolveExplicit(binding, scope, ctx);
+  }
+  async function resolveWhole() { throw new Error('resolveWhole: implemented in Task 8'); }
 
   return Object.freeze({ resolveRoots, digestScope });
 }
