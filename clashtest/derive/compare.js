@@ -54,23 +54,49 @@ function comparabilityOf(base, next, conflictKeys) {
 }
 
 /**
- * `covered-clean` as proof of a CLEAN (absent) pair. P5's reader looks the covering unit up in both orientations, which is
- * right for unordered modes but not for ordered (containment) ones: a unit source=y -> target=x answers only "y in x",
- * never "x in y". For ordered sets the covering unit's SOURCE side must therefore hold the pair's FIRST element (the
- * contained one); otherwise the absence proves nothing (fail-closed -> the unverified class). O(1) per pair: one Map
- * lookup plus one Set test; each unit's source-root Set is built at most once per side (bounded by the ledger size).
+ * `covered-clean` as proof of a CLEAN (absent) pair. P5's reader looks the covering unit up in both orientations and only
+ * checks that each root sits on SOME side of it, so the verdict is not by itself proof that the unit EVALUATED the pair.
+ * A unit evaluates (x, y) -- x as source, y as target -- only when all three hold:
+ *   (i)   x's root is in the unit's source domain (unit.sourceModelKey === x.modelKey and sourceRootDbIds holds it);
+ *   (ii)  y's root is in its target domain (a target entry for y.modelKey that is whole-model or lists the root);
+ *   (iii) on the source model, y's root is NOT also a source root: the library drops target fragments that are also
+ *         source fragments (validateResultSet's `coverage-root-role-invalid` rule), so such a pair is never asked.
+ * Ordered (containment) sets need the DIRECT orientation (the pair's first element as source: "first inside second");
+ * unordered sets accept either orientation. Anything else is fail-closed -> the matching unverified class.
+ * Planner-produced leaves never violate (iii) (disjoint same-model roles), so this only bites forged/raw sets.
+ * O(1) per pair: one Map lookup for the unit, then Set/Map tests on its scope, built at most once per unit per side.
+ * Exported for unit tests only (like `changedFieldsOf`); not part of the public surface.
  */
-function cleanProof(reader, ordered) {
-  if (!ordered) return (pair) => reader.pairStatus(pair).verdict === 'covered-clean';
-  const sourceRoots = new Map();   // unitId -> Set(sourceRootDbIds), lazily, once per unit
+export function cleanProof(reader, ordered) {
+  const scopes = new Map();   // unitId -> { source: Set(root), targets: Map(modelKey -> { whole, roots: Set(root) }) }, lazily
+  const scopeOf = (unit) => {
+    let s = scopes.get(unit.unitId);
+    if (s === undefined) {
+      const targets = new Map();
+      for (const t of unit.targets) {
+        const e = targets.get(t.modelKey) ?? { whole: false, roots: new Set() };   // repeated model entries: their union
+        if (t.scope === 'model') e.whole = true; else for (const r of t.rootDbIds ?? []) e.roots.add(r);
+        targets.set(t.modelKey, e);
+      }
+      s = { source: new Set(unit.sourceRootDbIds), targets };
+      scopes.set(unit.unitId, s);
+    }
+    return s;
+  };
+  const evaluates = (unit, s, xModel, xRoot, yModel, yRoot) => {
+    if (unit.sourceModelKey !== xModel || !s.source.has(xRoot)) return false;                  // (i)
+    const t = s.targets.get(yModel);
+    if (t === undefined || !(t.whole || t.roots.has(yRoot))) return false;                     // (ii)
+    return !(yModel === unit.sourceModelKey && s.source.has(yRoot));                          // (iii)
+  };
   return (pair) => {
     const st = reader.pairStatus(pair);
     if (st.verdict !== 'covered-clean') return false;
     const unit = reader.ledger.unitsById.get(st.coveringUnitId);
-    if (unit === undefined || unit.sourceModelKey !== pair.first.modelKey) return false;
-    let roots = sourceRoots.get(unit.unitId);
-    if (roots === undefined) { roots = new Set(unit.sourceRootDbIds); sourceRoots.set(unit.unitId, roots); }
-    return roots.has(st.roots.first);   // `roots.first` is the first element's ROOT dbId (P5 PairStatus)
+    if (unit === undefined) return false;
+    const s = scopeOf(unit);
+    const [fm, fr, sm, sr] = [pair.first.modelKey, st.roots.first, pair.second.modelKey, st.roots.second];   // P5 `roots.*` = ROOT dbIds
+    return evaluates(unit, s, fm, fr, sm, sr) || (!ordered && evaluates(unit, s, sm, sr, fm, fr));
   };
 }
 

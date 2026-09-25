@@ -1,7 +1,7 @@
 // clashtest/derive/facets.js
-import { FacetRangeError } from '../errors.js';
+import { FacetRangeError, InvalidOptionsError } from '../errors.js';
 import { compareElementRefs } from '../identity/ids.js';
-import { assertClosed, invalid, isPlainObject } from './validate.js';
+import { captureClosed, invalid, keyPath } from './validate.js';
 
 function safeBucket(x, size, facetId) {
   const q = Math.floor(x / size);
@@ -31,6 +31,8 @@ const PARAM = {
   distanceBucket: { key: 'width', make: (width) => single('distanceBucket', (r) => (r.mode === 'clearance' ? safeBucket(r.evidence.distance, width, 'distanceBucket') : null), { params: { width }, numeric: true }) },
 };
 
+const PARAM_BAG_KEYS = Object.freeze(['facet', ...Object.values(PARAM).map((p) => p.key)]);
+
 function attrFacet(which, name, path) {
   if (name.length === 0 || name.length > 128) throw invalid('bad-attribute-name', path);
   const facetId = `attr${which[0].toUpperCase()}${which.slice(1)}:${name}`;
@@ -47,11 +49,14 @@ export function parseFacetSpec(spec, path = 'facet') {
     if (Object.hasOwn(BUILTIN, spec)) return BUILTIN[spec]();
     throw invalid(Object.hasOwn(PARAM, spec) ? 'missing-param' : 'unknown-facet', path);
   }
-  if (!isPlainObject(spec) || typeof spec.facet !== 'string') throw invalid('bad-facet', path);
-  const p = Object.hasOwn(PARAM, spec.facet) ? PARAM[spec.facet] : undefined;   // own names only: {facet:'constructor'} is unknown-facet, as in string form
-  if (p) { assertClosed(spec, ['facet', p.key], path); if (!pos(spec[p.key])) throw invalid('bad-param', `${path}.${p.key}`); return p.make(spec[p.key]); }
-  assertClosed(spec, ['facet'], path);
-  return parseFacetSpec(spec.facet, path);
+  // M1: one guarded capture against every key ANY object form may carry; the per-facet closure is then checked on the COPY.
+  const own = captureClosed(spec, PARAM_BAG_KEYS, path, 'bad-facet');
+  if (typeof own.facet !== 'string') throw invalid('bad-facet', path);
+  const p = Object.hasOwn(PARAM, own.facet) ? PARAM[own.facet] : undefined;   // own names only: {facet:'constructor'} is unknown-facet, as in string form
+  const extra = Object.keys(own).filter((k) => k !== 'facet' && k !== p?.key);
+  if (extra.length) throw new InvalidOptionsError({ issues: extra.map((k) => ({ path: keyPath(path, k), code: 'unknown-key', message: 'unknown-key' })) });
+  if (p) { if (!pos(own[p.key])) throw invalid('bad-param', `${path}.${p.key}`); return p.make(own[p.key]); }
+  return parseFacetSpec(own.facet, path);
 }
 
 export function compareFacetValues(a, b) {

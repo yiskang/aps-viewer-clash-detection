@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createContextInternal } from '../../../clashtest/derive/context.js';
-import { changedFieldsOf } from '../../../clashtest/derive/compare.js';
+import { changedFieldsOf, cleanProof } from '../../../clashtest/derive/compare.js';
+import { comparePairIds } from '../../../clashtest/identity/ids.js';
 import { getPairStatus } from '../../../clashtest/results/status.js';     // P5's (D4) — the reference implementation below classifies through it
 import { COMPARE_TOLERANCE_DEFAULTS } from '../../../clashtest/options.js';   // P0's; the test never restates 1e-6
 import { InvalidOptionsError, ComparisonTooLargeError, DerivationAbortedError, DerivationBusyError, CorruptResultSetError } from '../../../clashtest/errors.js';
@@ -269,4 +270,178 @@ test('pointTolerance boundary: |Δ| == tolerance is unchanged, just above is cha
   assert.deepEqual((await cmp(at(0), at(tol * 1.01))).changed.map((e) => e.changedFields), [['witnessPoint']]);
   assert.equal((await cmp(at(1), at(1.5), { pointTolerance: 0.5 })).unchanged.length, 1);          // override: |Δ| == tol
   assert.deepEqual((await cmp(at(1), at(1.5), { pointTolerance: 0.4999 })).changed.map((e) => e.changedFields), [['witnessPoint']]);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// H1 (owner-authorized P8 remediation): a `covered-clean` verdict proves an absent pair only if its covering unit
+// actually evaluated that pair: first root in the unit's SOURCE domain, second root in its TARGET domain, and -- on
+// the source model -- the second root NOT also a source root (the library self-excludes target fragments that are
+// also source). Ordered (containment) sets require that direct orientation; unordered sets accept either one.
+// ---------------------------------------------------------------------------------------------------------------
+const H1_MODES = [['containment', true], ['volume-overlap', false]];
+const h1Pairs = (list) => list.map((e) => `${e.pairId.first.modelKey}:${e.pairId.first.dbId}->${e.pairId.second.modelKey}:${e.pairId.second.dbId}`);
+const h1Set = (mode, ordered, over) => makeResultSet({ models, mode, keepPairOrder: ordered, ...over });
+const h1Unit = (src, target, srcModel = 'M') => ({ unitId: '1.0', source: { modelKey: srcModel, roots: src }, targets: [target] });
+const h1Result = (ordered, a, b) => ({ pair: [a, b], ...(ordered ? { evidence: {} } : {}) });
+/** Base holds result `pair`; `probe` holds none and only `unit`. Returns [resolve-path compare, added-path compare]. */
+async function h1Both(mode, ordered, unit, pair, extra = {}) {
+  const found = h1Set(mode, ordered, { semanticDigest: 'sha256:f', units: [unit], results: [h1Result(ordered, ...pair)], ...extra });
+  const probe = h1Set(mode, ordered, { semanticDigest: 'sha256:p', units: [unit], results: [], ...extra });
+  return [await cmp(found, probe), await cmp(probe, found)];
+}
+
+for (const [mode, ordered] of H1_MODES) {
+  for (const [label, unit] of [
+    ['source [100,200] target [100]', h1Unit([100, 200], { modelKey: 'M', roots: [100] })],
+    ['source [100,200] target [200]', h1Unit([100, 200], { modelKey: 'M', roots: [200] })],
+    ['source [100,200] target [100,200]', h1Unit([100, 200], { modelKey: 'M', roots: [100, 200] })],
+    ['source [100,200] target whole model M', h1Unit([100, 200], { modelKey: 'M', whole: true })],
+  ]) {
+    test(`H1 ${mode}: forged overlapping unit (${label}) never proves (100,200) resolved/added -- fail-closed to the unverified class`, async () => {
+      const [r, a] = await h1Both(mode, ordered, unit, [['M', 100], ['M', 200]]);
+      assert.deepEqual([h1Pairs(r.resolved), h1Pairs(r.removedUnverifiedNext)], [[], ['M:100->M:200']], 'base-only pair');
+      assert.deepEqual([h1Pairs(a.added), h1Pairs(a.addedUnverifiedBase)], [[], ['M:100->M:200']], 'next-only pair');
+    });
+  }
+
+  test(`H1 ${mode}: positive controls stay resolved/added (disjoint single-root, whole-model target, multi-root disjoint, cross-model)`, async () => {
+    const N = { modelKey: 'N', modelVersion: 'v1', roots };
+    for (const [label, unit, pair, extra] of [
+      ['source [100] target [200]', h1Unit([100], { modelKey: 'M', roots: [200] }), [['M', 100], ['M', 200]]],
+      ['source [100] target whole model M', h1Unit([100], { modelKey: 'M', whole: true }), [['M', 100], ['M', 200]]],
+      ['multi-root disjoint source [100,300] target [200,400]', h1Unit([100, 300], { modelKey: 'M', roots: [200, 400] }), [['M', 300], ['M', 400]]],
+      ['cross-model source M:100 -> target N:200', h1Unit([100], { modelKey: 'N', roots: [200] }), [['M', 100], ['N', 200]], { models: [models[0], N] }],
+      ['cross-model same dbId source M:100 -> target N:100', h1Unit([100], { modelKey: 'N', roots: [100] }), [['M', 100], ['N', 100]], { models: [models[0], N] }],
+      ['cross-model whole target source M:100 -> whole N', h1Unit([100], { modelKey: 'N', whole: true }), [['M', 100], ['N', 300]], { models: [models[0], N] }],
+    ]) {
+      const [r, a] = await h1Both(mode, ordered, unit, pair, extra);
+      const id = `${pair[0][0]}:${pair[0][1]}->${pair[1][0]}:${pair[1][1]}`;
+      assert.deepEqual([h1Pairs(r.resolved), r.removedUnverifiedNext], [[id], []], `${label}: resolved`);
+      assert.deepEqual([h1Pairs(a.added), a.addedUnverifiedBase], [[id], []], `${label}: added`);
+    }
+  });
+}
+
+test('H1 unordered: a legitimately converse-oriented unit still proves the pair (either orientation); ordered: it never does', async () => {
+  const N = { modelKey: 'N', modelVersion: 'v1', roots };
+  // multi-root disjoint unit source [100,300] -> target [200,400]: the ascending pair (200,300) is evaluated as 300 x 200
+  const multi = h1Unit([100, 300], { modelKey: 'M', roots: [200, 400] });
+  // cross-model unit source N:200 -> target M:100: the ascending pair (M:100, N:200) is evaluated as N:200 x M:100
+  const cross = h1Unit([200], { modelKey: 'M', roots: [100] }, 'N');
+  for (const [unit, pair, extra] of [[multi, [['M', 200], ['M', 300]]], [cross, [['M', 100], ['N', 200]], { models: [models[0], N] }]]) {
+    const id = `${pair[0][0]}:${pair[0][1]}->${pair[1][0]}:${pair[1][1]}`;
+    const [r, a] = await h1Both('volume-overlap', false, unit, pair, extra);
+    assert.deepEqual([h1Pairs(r.resolved), h1Pairs(a.added)], [[id], [id]], `unordered ${id}`);
+    const [ro, ao] = await h1Both('containment', true, unit, pair, extra);
+    assert.deepEqual([ro.resolved, h1Pairs(ro.removedUnverifiedNext)], [[], [id]], `ordered converse ${id}: resolve path`);
+    assert.deepEqual([ao.added, h1Pairs(ao.addedUnverifiedBase)], [[], [id]], `ordered converse ${id}: added path`);
+  }
+});
+
+test('H1: valid planner-produced layouts are unchanged -- real createPlan/planSplit ledgers (class-C roots in both selections) prove exactly the selection-required pairs', async () => {
+  const { createPlan } = await import('../../../clashtest/planning/planner.js');
+  const { planSplit } = await import('../../../clashtest/planning/splitting.js');
+  const { RUN_OPTION_DEFAULTS } = await import('../../../clashtest/options.js');
+  const { makeSyntheticEnumerator, defOf, snapshotOf } = await import('../support/syntheticModels.mjs');
+  const synth = (dbIds, fragBase) => dbIds.map((dbId, i) => ({ dbId, owners: [dbId], fragments: [{ fragId: fragBase + i, ownerDbId: dbId, geometryId: 1 }] }));
+  const model = (modelKey) => ({ kind: 'model', modelKey });
+  const SCENARIOS = [
+    ['same model, A = B (all class C)', [{ modelKey: 'arch', roots: synth([1, 2, 3, 4, 5], 0) }], { A: [model('arch')], B: [model('arch')] }],
+    ['partial overlap on one model + whole B-only model', [{ modelKey: 'arch', roots: synth([1, 2, 3, 4, 5], 0) }, { modelKey: 'struct', roots: synth([7, 8], 10) }],
+      { A: [{ kind: 'elements', modelKey: 'arch', dbIds: [1, 2, 3] }], B: [{ kind: 'elements', modelKey: 'arch', dbIds: [2, 3, 4, 5] }, model('struct')] }],
+    ['A whole model, B elements of the same model', [{ modelKey: 'arch', roots: synth([1, 2, 3, 4], 0) }], { A: [model('arch')], B: [{ kind: 'elements', modelKey: 'arch', dbIds: [2, 3] }] }],
+    ['mixed roles across three models', [{ modelKey: 'arch', roots: synth([1, 2, 3], 0) }, { modelKey: 'mep', roots: synth([4, 5], 10) }, { modelKey: 'struct', roots: synth([7, 8], 20) }],
+      { A: [model('arch'), model('mep')], B: [model('arch'), model('struct')] }],
+  ];
+  const SMALL = { ...RUN_OPTION_DEFAULTS, maxSourceDbIdsPerUnit: 1, maxTargetModelsPerUnit: 1, maxTargetFragmentsPerUnit: 2 };
+  let leavesChecked = 0;
+  for (const [name, synthModels, { A, B }] of SCENARIOS) {
+    const members = (entries) => new Set(entries.flatMap((e) => (e.kind === 'model' ? synthModels.find((m) => m.modelKey === e.modelKey).roots.map((r) => r.dbId) : e.dbIds)
+      .map((d) => `${e.modelKey}:${d}`)));
+    const inA = members(A); const inB = members(B);
+    const elems = synthModels.flatMap((m) => m.roots.map((r) => [m.modelKey, r.dbId]));
+    for (const [mode, ordered] of H1_MODES) {
+      // independent oracle: the definition's pair space (spec: ordered = A x B oriented; unordered = either role assignment), never the ledger
+      const key = ([mk, d]) => `${mk}:${d}`;
+      const required = (p, q) => (ordered ? inA.has(key(p)) && inB.has(key(q)) : (inA.has(key(p)) && inB.has(key(q))) || (inA.has(key(q)) && inB.has(key(p))));
+      const candidates = [];
+      for (const p of elems) for (const q of elems) {
+        if (key(p) === key(q)) continue;
+        if (!ordered && comparePairIds({ first: { modelKey: p[0], dbId: p[1] }, second: { modelKey: q[0], dbId: q[1] } }, { first: { modelKey: q[0], dbId: q[1] }, second: { modelKey: p[0], dbId: p[1] } }) > 0) continue;
+        candidates.push([p, q]);
+      }
+      for (const [splitAll, options] of [[false, RUN_OPTION_DEFAULTS], [true, RUN_OPTION_DEFAULTS], [false, SMALL], [true, SMALL]]) {
+        const { enumerator, binding } = makeSyntheticEnumerator(synthModels);
+        const keys = [...new Set([...A, ...B].map((e) => e.modelKey))].sort();
+        const definition = defOf({ A, B, mode, testId: 'T4', name: 'completed-clean' });
+        const { plan, ledger } = await createPlan({ definition, snapshot: snapshotOf(binding, keys), enumerator, options, checkpoint: () => {} });
+        const leaves = [];
+        const walk = (u) => { const r = splitAll ? planSplit(plan, u) : { reason: 'unsplittable' }; if (r.reason === 'unsplittable') leaves.push(u); else r.children.forEach(walk); };
+        plan.units.forEach(walk);
+        for (const l of leaves) ledger.recordOutcome(l.unitId, { outcome: 'evaluated', scopeProof: 'equal' });
+        const rec = ledger.toLedgerRecord();
+        const label = `${name} / ${mode} / split=${splitAll} / ${options === SMALL ? 'small caps' : 'default caps'}`;
+        for (const u of rec.units.filter((x) => x.kind === 'leaf')) {   // the planner never emits the forged H1 shape
+          leavesChecked += 1;
+          const src = new Set(u.sourceRootDbIds);
+          for (const t of u.targets) if (t.modelKey === u.sourceModelKey) {
+            assert.notEqual(t.scope, 'model', `${label}: whole-model target on the source model (unit ${u.unitId})`);
+            assert.ok(!t.rootDbIds.some((id) => src.has(id)), `${label}: same-model source/target overlap (unit ${u.unitId})`);
+          }
+        }
+        const setOf = (dg, results) => {
+          const s = makeResultSet({ models: synthModels.map((m) => ({ modelKey: m.modelKey, modelVersion: 'v1', roots: m.roots.map((r) => ({ dbId: r.dbId, ownerDbIds: [r.dbId] })) })),
+            mode, keepPairOrder: ordered, semanticDigest: dg, results: results.map(([p, q]) => h1Result(ordered, p, q)) });
+          s.definition = structuredClone(definition); s.ledger = structuredClone(rec);
+          return s;
+        };
+        const all = setOf('sha256:all', candidates); const none = setOf('sha256:none', []);
+        const expected = candidates.filter(([p, q]) => required(p, q)).map(([p, q]) => `${p[0]}:${p[1]}->${q[0]}:${q[1]}`).sort();
+        const unproven = candidates.filter(([p, q]) => !required(p, q)).map(([p, q]) => `${p[0]}:${p[1]}->${q[0]}:${q[1]}`).sort();
+        const r = await cmp(all, none); const a = await cmp(none, all);
+        assert.ok(expected.length > 0, `${label}: scenario has required pairs`);
+        assert.deepEqual([h1Pairs(r.resolved).sort(), h1Pairs(r.removedUnverifiedNext).sort()], [expected, unproven], `${label}: resolve path`);
+        assert.deepEqual([h1Pairs(a.added).sort(), h1Pairs(a.addedUnverifiedBase).sort()], [expected, unproven], `${label}: added path`);
+      }
+    }
+  }
+  assert.ok(leavesChecked > 100, `planner leaves checked: ${leavesChecked}`);
+});
+
+test('H1 cleanProof unit level: every clause is checked against the covering unit itself, not inferred from the reader verdict', () => {
+  // A stub reader that answers `covered-clean` for any pair with the given covering unit: the proof must still test the
+  // unit's own scope (defense-in-depth against a reader whose unit lookup disagrees with the pair).
+  const readerOf = (unit, verdict = 'covered-clean') => ({
+    pairStatus: (p) => ({ verdict, coveringUnitId: unit.unitId, roots: { first: p.first.dbId, second: p.second.dbId } }),
+    ledger: { unitsById: new Map([[unit.unitId, unit]]) } });
+  const leaf = (sourceModelKey, sourceRootDbIds, targets) => ({ unitId: 'u', sourceModelKey, sourceRootDbIds, targets });
+  const P = (fm, f, sm, sd) => ({ first: { modelKey: fm, dbId: f }, second: { modelKey: sm, dbId: sd } });
+  const roots = (modelKey, rootDbIds) => ({ modelKey, scope: 'roots', rootDbIds });
+  const whole = (modelKey) => ({ modelKey, scope: 'model' });
+  const cases = [   // [label, unit, pair, ordered-expected, unordered-expected]
+    ['direct disjoint', leaf('M', [100], [roots('M', [200])]), P('M', 100, 'M', 200), true, true],
+    ['(i) first root not in source', leaf('M', [300], [roots('M', [200])]), P('M', 100, 'M', 200), false, false],
+    ['(i) source on another model', leaf('N', [100], [roots('M', [200])]), P('M', 100, 'M', 200), false, false],
+    ['(ii) second root not in target', leaf('M', [100], [roots('M', [300])]), P('M', 100, 'M', 200), false, false],
+    ['(ii) no target entry for that model', leaf('M', [100], [roots('N', [200])]), P('M', 100, 'M', 200), false, false],
+    ['(ii) whole-model target', leaf('M', [100], [whole('M')]), P('M', 100, 'M', 200), true, true],
+    ['(iii) second root also source (same model)', leaf('M', [100, 200], [roots('M', [200])]), P('M', 100, 'M', 200), false, false],
+    ['(iii) whole-model target, second root is source', leaf('M', [100, 200], [whole('M')]), P('M', 100, 'M', 200), false, false],
+    ['(iii) not applied across models', leaf('M', [100], [roots('N', [100])]), P('M', 100, 'N', 100), true, true],
+    ['converse orientation', leaf('M', [200], [roots('M', [100])]), P('M', 100, 'M', 200), false, true],
+    ['converse, (iii) on the converse', leaf('M', [100, 200], [roots('M', [100])]), P('M', 100, 'M', 200), false, false],
+    ['repeated target entries for one model are a union', leaf('M', [100], [roots('M', [300]), roots('M', [200])]), P('M', 100, 'M', 200), true, true],
+  ];
+  for (const [label, unit, pair, ord, unord] of cases) {
+    assert.equal(cleanProof(readerOf(unit), true)(pair), ord, `ordered: ${label}`);
+    assert.equal(cleanProof(readerOf(unit), false)(pair), unord, `unordered: ${label}`);
+  }
+  const ok = leaf('M', [100], [roots('M', [200])]);
+  assert.equal(cleanProof(readerOf(ok, 'covered-caveated'), false)(P('M', 100, 'M', 200)), false, 'non-clean verdict unchanged');
+  assert.equal(cleanProof({ ...readerOf(ok), ledger: { unitsById: new Map() } }, false)(P('M', 100, 'M', 200)), false, 'unknown covering unit');
+  // the unit's scope is materialized once per unit, not per pair
+  let reads = 0; const counted = { ...ok, get sourceRootDbIds() { reads += 1; return [100]; } };
+  const proof = cleanProof(readerOf(counted), true);
+  for (let i = 0; i < 5; i++) proof(P('M', 100, 'M', 200));
+  assert.equal(reads, 1);
 });

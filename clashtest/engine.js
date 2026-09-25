@@ -1354,7 +1354,7 @@ export function createEngineCore(config) {
   // limits object so the engine's own `maxCapturedNodes` applies.
   const derivations = createContextInternal(
     { limits: Object.fromEntries(DERIVATION_LIMIT_KEYS.map((k) => [k, effectiveLimits[k]])), now, yieldToScheduler: engineYield },
-    { assertOpen: alive, capture: (raw) => captureResultSet(raw, { limits: effectiveLimits }) });
+    { assertOpen: alive, capture: (raw) => captureResultSet(raw, { limits: effectiveLimits }), maxCapturedNodes: effectiveLimits.maxCapturedNodes });
 
   const engine = Object.freeze({ registry: coordinator.registry, ...methods, dispose, derivations });
 

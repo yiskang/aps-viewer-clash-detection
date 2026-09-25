@@ -3,7 +3,7 @@ import { DerivationBusyError, DerivationAbortedError, CorruptResultSetError } fr
 import { resolveEngineLimits } from '../options.js';
 import { captureResultSet } from '../results/validateResultSet.js';   // P5's (N29), not a P0 util
 import { createSlicer } from '../util/slicer.js';
-import { assertClosed, invalid, isAbortSignal } from './validate.js';
+import { captureClosed, invalid, isAbortSignal } from './validate.js';
 import { DEFAULT_RUNNERS } from './runners.js';
 
 export const DERIVATION_LIMIT_KEYS = Object.freeze(['maxConcurrentDerivations', 'maxFacetsPerGroupBy', 'maxFilterClauses',
@@ -32,12 +32,15 @@ function createGate(slicer, signal) {
 export function createDerivationContext(options = {}) { return createContextInternal(options, {}); }
 
 export function createContextInternal(options = {}, hooks = {}) {
-  assertClosed(options, ['limits', 'yieldToScheduler', 'now'], 'options');
-  const rawLimits = options.limits ?? {};
-  assertClosed(rawLimits, DERIVATION_LIMIT_KEYS, 'options.limits');
-  const all = resolveEngineLimits(rawLimits); // §17.1.1 defaults + validation live in P0, not here
+  // Closed bags captured ONCE (M1): only the detached copies are used below; the caller's objects are never re-read.
+  const opts = captureClosed(options, ['limits', 'yieldToScheduler', 'now'], 'options');
+  const ownLimits = captureClosed(opts.limits ?? {}, DERIVATION_LIMIT_KEYS, 'options.limits');
+  const all = resolveEngineLimits(ownLimits); // §17.1.1 defaults + validation live in P0, not here
   const limits = Object.freeze(Object.fromEntries(DERIVATION_LIMIT_KEYS.map((k) => [k, all[k]])));
-  const { now, yieldToScheduler } = options;                       // possibly undefined: createSlicer defaults them (P0 exports no defaults)
+  // Internal (§13.6 capture budget for filter operands; NOT a derivation limit key): the engine-bound context passes the engine's
+  // resolved `maxCapturedNodes` as a hook; a standalone context uses its own resolved default.
+  const bounds = Object.freeze({ maxCapturedNodes: hooks.maxCapturedNodes ?? all.maxCapturedNodes });
+  const { now, yieldToScheduler } = opts;                          // possibly undefined: createSlicer defaults them (P0 exports no defaults)
   if (now !== undefined && typeof now !== 'function') throw invalid('not-a-function', 'options.now');
   if (yieldToScheduler !== undefined && typeof yieldToScheduler !== 'function') throw invalid('not-a-function', 'options.yieldToScheduler');
   const hostNow = wrapNow(now); const hostYield = wrapYield(yieldToScheduler);   // wrapped once, at construction
@@ -49,11 +52,10 @@ export function createContextInternal(options = {}, hooks = {}) {
     // Everything up to the first `await` runs synchronously: validation, slot, capture (R19-1, R21-3).
     hooks.assertOpen?.();
     const runner = runners[name];
-    const opts = callOptions ?? {};
-    assertClosed(opts, runner.optionKeys, `${name}.options`);
+    const opts = captureClosed(callOptions ?? {}, runner.optionKeys, `${name}.options`);   // detached copy (M1): runners see only this
     const { signal } = opts;
     if (signal !== undefined && !isAbortSignal(signal)) throw invalid('bad-signal', `${name}.options.signal`);
-    const plan = runner.prepare(args, opts, limits);                // sync closed-schema/bounds validation
+    const plan = runner.prepare(args, opts, limits, bounds);                // sync closed-schema/bounds validation
     if (signal?.aborted) throw new DerivationAbortedError({});
     if (active >= limits.maxConcurrentDerivations) throw new DerivationBusyError({ limit: limits.maxConcurrentDerivations });
     active += 1;                                                    // slot BEFORE capture

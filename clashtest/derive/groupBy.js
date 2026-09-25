@@ -5,7 +5,7 @@ import { parseFacetSpec, compareFacetValues } from './facets.js';
 import { resolveAttributes } from './attributeSeam.js';
 import { buildStatusReaderSteps } from '../results/status.js';   // P5 (D4)
 import { drive, assertCanonicalResultOrder } from './steps.js';
-import { invalid } from './validate.js';
+import { captureArray, invalid } from './validate.js';
 
 const uniqueValues = (list) => { const seen = new Map(); for (const v of list) { const key = canonicalJson(v); if (!seen.has(key)) seen.set(key, { key, value: v }); } return [...seen.values()]; };
 
@@ -53,9 +53,11 @@ export async function runGroupBy({ set, parsed, attrs, env, probe = null }) {
 export const attrNames = (parsed) => parsed.filter((f) => f.attr).map((f) => f.attr.name);
 export const groupByRunner = {
   optionKeys: ['annotations', 'signal'],
-  prepare({ facets }, _opts, limits) {
-    if (!Array.isArray(facets) || facets.length < 1) throw invalid('facets-required', 'facets');
-    if (facets.length > limits.maxFacetsPerGroupBy) throw invalid('too-many-facets', 'facets');
+  prepare({ facets: raw }, _opts, limits) {
+    const facets = captureArray(raw, 'facets', 'facets-required', (n) => {   // M1: guarded, once; bounds checked before any element is read
+      if (n < 1) throw invalid('facets-required', 'facets');
+      if (n > limits.maxFacetsPerGroupBy) throw invalid('too-many-facets', 'facets');
+    });
     const parsed = facets.map((f, i) => parseFacetSpec(f, `facets[${i}]`));
     const seen = new Set();
     for (const p of parsed) { const k = canonicalJson([p.facetId, p.params]); if (seen.has(k)) throw invalid('redundant-facet', 'facets'); seen.add(k); }
