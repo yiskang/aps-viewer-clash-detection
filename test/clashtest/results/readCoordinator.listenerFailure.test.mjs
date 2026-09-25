@@ -11,6 +11,12 @@
 //     rejection, and nothing was queued (no ghost waiter, no slot, no queue depth consumed).
 // Genuine `AbortSignal` behaviour (already-aborted, abort-while-queued, FIFO, one-shot release,
 // ReadCapacityError) is unchanged — pinned by readCoordinator.abort.test.mjs and residency.test.mjs.
+//
+// Owner ruling #10 (2026-09-25, adjudication finding R-1 = B): the waiter's state must be established
+// BEFORE the caller-controlled `addEventListener` runs, so synchronous reentrancy from it (releasing
+// the holder, starting a nested acquire, aborting, throwing after a reentrant grant) cannot strand a
+// waiter, leak or double-count a slot, overshoot `maxQueuedStoreReads`, or reorder the FIFO. See the
+// "R-1" tests at the end of this file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createReadCoordinator } from '../../../clashtest/results/residency.js';
@@ -142,5 +148,141 @@ test('an abort of a queued waiter whose removeEventListener throws still removes
   const q1 = c.acquire(); const q2 = c.acquire();
   await assert.rejects(c.acquire(), ReadCapacityError, 'the aborted waiter left the FIFO');
   held.release(); (await q1).release(); (await q2).release();
+  assert.equal(c.inUse(), 0);
+});
+
+// ================================================================================================
+// R-1 (owner ruling #10): synchronous reentrancy from a caller-controlled addEventListener
+// ================================================================================================
+
+/** A signal-like object whose `addEventListener` runs `hook(handler)` synchronously. */
+const reentrantSignal = (hook, { throwAfter = false } = {}) => {
+  const listeners = [];
+  return {
+    listeners,
+    signal: {
+      aborted: false,
+      addEventListener(type, fn) {
+        listeners.push(fn);
+        hook(fn);
+        if (throwAfter) throw new Error('add-boom-after-hook');
+      },
+      removeEventListener(type, fn) { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); },
+    },
+  };
+};
+
+test('R-1a: addEventListener synchronously releases the holder: the waiter is NOT stranded (granted, inUse consistent)', async () => {
+  const c = createReadCoordinator({ limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: 1 } });
+  const held = await c.acquire();
+  const { signal } = reentrantSignal(() => held.release());
+  const b = c.acquire({ signal });
+  const slot = await Promise.race([b, new Promise((resolve) => setTimeout(() => resolve(null), 20))]);
+  assert.ok(slot, 'B was granted the slot released during its own registration');
+  assert.equal(c.inUse(), ONE_READ, 'the slot is counted exactly once');
+  slot.release();
+  assert.equal(c.inUse(), 0, 'no slot leaked');
+  const later = await c.acquire();
+  later.release();
+  assert.equal(c.inUse(), 0);
+});
+
+test('R-1b: addEventListener synchronously starts a nested acquire: no queue overshoot (depth 1), FIFO well-defined', async () => {
+  const c = createReadCoordinator({ limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: 1 } });
+  const held = await c.acquire();
+  let nested;
+  const { signal } = reentrantSignal(() => { nested = c.acquire(); });
+  const b = c.acquire({ signal });
+  await assert.rejects(nested, ReadCapacityError, 'B already occupies the only queue place when the nested call is decided');
+  await assert.rejects(c.acquire(), ReadCapacityError, 'still exactly maxQueuedStoreReads waiters');
+  held.release();
+  (await b).release();
+  assert.equal(c.inUse(), 0);
+});
+
+test('R-1b: with depth 2 the nested acquire queues AFTER the outer waiter and is granted after it (FIFO)', async () => {
+  const c = createReadCoordinator({ limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: QUEUE_DEPTH } });
+  const held = await c.acquire();
+  const order = [];
+  let nested;
+  const { signal } = reentrantSignal(() => { nested = c.acquire().then((s) => { order.push('nested'); return s; }); });
+  const b = c.acquire({ signal }).then((s) => { order.push('outer'); return s; });
+  await assert.rejects(c.acquire(), ReadCapacityError, 'outer + nested fill the queue');
+  held.release();
+  (await b).release();
+  (await nested).release();
+  assert.deepEqual(order, ['outer', 'nested']);
+  assert.equal(c.inUse(), 0);
+});
+
+test('R-1c: addEventListener releases the holder and THEN throws: fail closed, the granted slot is handed on, nothing leaks', async () => {
+  const c = createReadCoordinator({ limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: QUEUE_DEPTH } });
+  const held = await c.acquire();
+  let nested;
+  const { signal } = reentrantSignal(() => { nested = c.acquire(); held.release(); }, { throwAfter: true });
+  const b = c.acquire({ signal });
+  await assert.rejects(b, (e) => e instanceof Error && e.message === 'add-boom-after-hook', 'B fails closed');
+  // The slot B was granted during registration was released again and handed to the nested waiter.
+  const slot = await Promise.race([nested, new Promise((resolve) => setTimeout(() => resolve(null), 20))]);
+  assert.ok(slot, 'the nested waiter (queued behind B) received the slot');
+  assert.equal(c.inUse(), ONE_READ, 'exactly one holder');
+  slot.release();
+  assert.equal(c.inUse(), 0, 'no slot leaked');
+  const later = await c.acquire();
+  later.release();
+  assert.equal(c.inUse(), 0);
+});
+
+test('R-1c: the same with no nested waiter: the granted-then-thrown slot is released, not leaked', async () => {
+  const c = createReadCoordinator({ limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: 1 } });
+  const held = await c.acquire();
+  const { signal } = reentrantSignal(() => held.release(), { throwAfter: true });
+  await assert.rejects(c.acquire({ signal }), (e) => e.message === 'add-boom-after-hook');
+  assert.equal(c.inUse(), 0, 'no slot leaked');
+  const later = await c.acquire();
+  assert.equal(c.inUse(), ONE_READ);
+  later.release();
+});
+
+test('R-1d: addEventListener starts a nested acquire and THEN throws: only the failed waiter leaves; the nested one is unaffected', async () => {
+  const c = createReadCoordinator({ limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: QUEUE_DEPTH } });
+  const held = await c.acquire();
+  let nested;
+  const { signal } = reentrantSignal(() => { nested = c.acquire(); }, { throwAfter: true });
+  await assert.rejects(c.acquire({ signal }), (e) => e.message === 'add-boom-after-hook');
+  const spare = c.acquire();
+  await assert.rejects(c.acquire(), ReadCapacityError, 'queue holds exactly the nested waiter and the spare');
+  held.release();
+  (await nested).release();
+  (await spare).release();
+  assert.equal(c.inUse(), 0);
+});
+
+test('R-1e: addEventListener aborts the signal synchronously: rejects ReadAbortedError, the waiter leaves the FIFO, nothing leaks', async () => {
+  const c = createReadCoordinator({ limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: 1 } });
+  const held = await c.acquire();
+  const { signal } = reentrantSignal((handler) => handler({ type: 'abort' }));
+  await assert.rejects(c.acquire({ signal }), ReadAbortedError);
+  const q = c.acquire();                                     // the freed queue place is usable
+  await assert.rejects(c.acquire(), ReadCapacityError);
+  held.release();
+  (await q).release();
+  assert.equal(c.inUse(), 0);
+});
+
+test('R-1f: a genuine AbortSignal still registers, cancels a queued waiter and is detached on grant (behaviour unchanged)', async () => {
+  const c = createReadCoordinator({ limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: QUEUE_DEPTH } });
+  const held = await c.acquire();
+  const ac1 = new AbortController();
+  const ac2 = new AbortController();
+  const aborted = c.acquire({ signal: ac1.signal });
+  const granted = c.acquire({ signal: ac2.signal });
+  ac1.abort();
+  await assert.rejects(aborted, ReadAbortedError);
+  held.release();
+  const slot = await granted;
+  ac2.abort();                                               // after the grant: not ours to undo
+  assert.equal(c.inUse(), ONE_READ);
+  slot.release();
   assert.equal(c.inUse(), 0);
 });

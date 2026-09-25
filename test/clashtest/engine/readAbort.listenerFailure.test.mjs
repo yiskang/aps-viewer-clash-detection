@@ -11,6 +11,10 @@
 //
 // Slot limit 1 throughout, so the failing signal's read is always a QUEUED hand-off.
 //
+// Owner ruling #10 (R-1 = B): the same holds when the signal's `addEventListener` re-enters the engine
+// synchronously (a nested read started from inside the registration): the queue never exceeds
+// `maxQueuedStoreReads`, FIFO stays well-defined, and no slot leaks (last tests of this file).
+//
 // G-CAL: limits are named, non-default test constants; time is a fake clock; no wall-clock assertion.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -207,6 +211,80 @@ test('M-1: a signal with throwing listener methods is harmless when a slot is fr
   const { signal, calls } = faultySignal({ throwOnAdd: true, throwOnRemove: true });
   assert.deepEqual(await engine.getFreshness(runId, { signal }), { state: 'current', reasons: [] });
   assert.equal(calls.add + calls.remove, 0, 'no listener traffic on the immediate path');
+  assert.equal(engine.retentionReport().readSlotsInUse, 0);
+});
+
+// ================================================================================================
+// R-1 (owner ruling #10): a nested read started synchronously from addEventListener
+// ================================================================================================
+
+test('R-1: a nested read started from addEventListener (all public reads + rerun): no queue overshoot, FIFO kept, no leak, later reads progress', async () => {
+  for (const [name, call] of Object.entries(CALLS)) {
+    const { engine, probe } = setup();
+    const runId = await savedRun(engine);
+    const gate = deferred();
+    probe.gate = gate.promise;
+    probe.entered = deferred();
+    const holder = engine.getFreshness(runId).then((v) => ({ ok: v }), (err) => ({ err }));
+    await probe.entered.promise;
+
+    const order = [];
+    let nested = null;
+    const signal = {
+      aborted: false,
+      addEventListener() {
+        nested = engine.getResultSet(runId).then((v) => { order.push('nested'); return { ok: v }; }, (err) => ({ err }));
+      },
+      removeEventListener() {},
+    };
+    const outer = call(engine, runId, { signal }).then((v) => { order.push('outer'); return { ok: v }; }, (err) => ({ err }));
+    assert.ok(nested, `${name}: the registration ran synchronously`);
+    // Depth 2: outer + nested fill the queue; a further read is over capacity.
+    await assert.rejects(engine.getResultSet(runId), ReadCapacityError, `${name}: exactly QUEUE_DEPTH waiters`);
+    probe.gate = null;
+    gate.resolve();
+    assert.ok((await holder).ok, `${name}: holder unaffected`);
+    const o = await outer;
+    const n = await nested;
+    assert.ok(!o.err, `${name}: outer read completed (${o.err?.message})`);
+    assert.ok(!n.err, `${name}: nested read completed (${n.err?.message})`);
+    if (name.startsWith('rerun') && o.ok?.done) await o.ok.done;
+    assert.deepEqual(order, ['outer', 'nested'], `${name}: FIFO — the outer call was queued first`);
+    assert.equal(engine.retentionReport().readSlotsInUse, 0, `${name}: no slot leaked`);
+    assert.deepEqual(await engine.getFreshness(runId), { state: 'current', reasons: [] }, `${name}: later read progresses`);
+  }
+});
+
+test('R-1: with queue depth 1 a nested read from addEventListener is rejected ReadCapacityError, never overshooting the queue', async () => {
+  const world = createEngineWorld();
+  const clock = createFakeClock({ start: Date.UTC(2026, 8, 25) });
+  const probe = { gate: null, entered: null };
+  const inner = createInMemoryResultStore();
+  const resultStore = {
+    ...inner,
+    async get(...args) { probe.entered?.resolve(); if (probe.gate) await probe.gate; return inner.get(...args); },
+  };
+  const engine = createClashTestEngine(world.config({
+    resultStore, now: clock.now, yieldToScheduler: clock.yieldToScheduler,
+    limits: { maxConcurrentStoreReads: ONE_READ, maxQueuedStoreReads: 1 },
+  }));
+  const runId = await savedRun(engine);
+  const gate = deferred();
+  probe.gate = gate.promise;
+  probe.entered = deferred();
+  const holder = engine.getFreshness(runId);
+  await probe.entered.promise;
+  let nested = null;
+  const signal = {
+    aborted: false,
+    addEventListener() { nested = engine.getResultSet(runId).then((v) => ({ ok: v }), (err) => ({ err })); },
+    removeEventListener() {},
+  };
+  const outer = engine.getFreshness(runId, { signal });
+  assert.ok((await nested).err instanceof ReadCapacityError, 'the nested read found the queue already full');
+  probe.gate = null;
+  gate.resolve();
+  await Promise.all([holder, outer]);
   assert.equal(engine.retentionReport().readSlotsInUse, 0);
 });
 

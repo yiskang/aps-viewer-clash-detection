@@ -403,7 +403,9 @@ export function createResidencyManager({ limits, resultStore, now, onPersistence
  * counting against `maxQueuedStoreReads` and never receives a slot) and rejects `ReadAbortedError`.
  * Once granted, the listener is removed and a later abort is the caller's business (the slot is
  * held until `release()`). Listener cleanup is best-effort (owner ruling #9, M-1): a `removeEventListener`
- * that throws cannot lose the waiter, leak the slot or fail the holder's `release()`.
+ * that throws cannot lose the waiter, leak the slot or fail the holder's `release()`. The waiter is queued
+ * BEFORE the caller's `addEventListener` runs (owner ruling #10, R-1): synchronous reentrancy from it
+ * (release, nested acquire, abort, throw) cannot strand a waiter, leak a slot or overshoot the queue.
  */
 export function createReadCoordinator({ limits }) {
   let count = 0;
@@ -448,18 +450,46 @@ export function createReadCoordinator({ limits }) {
         return Promise.reject(new ReadCapacityError({ limit: limits.maxQueuedStoreReads }));
       }
       return new Promise((resolve, reject) => {
-        const waiter = { resolve, detach: () => {} };
-        if (signal) {
-          const onAbort = () => {
-            const at = queue.indexOf(waiter);
-            if (at === -1) return;                           // already granted: not ours to undo
-            queue.splice(at, 1);
-            reject(new ReadAbortedError());
-          };
-          signal.addEventListener('abort', onAbort, { once: true });
-          waiter.detach = () => signal.removeEventListener('abort', onAbort);
-        }
+        // Owner ruling #10 (R-1 = B): the waiter is QUEUED before any caller-controlled code runs
+        // (`signal.addEventListener` may re-enter the coordinator synchronously: release the holder,
+        // start a nested acquire, abort, or throw). The capacity decision above therefore covers this
+        // waiter, a nested acquire sees it, and FIFO order is fixed at this point.
+        let granted = null;                                   // slot handed over DURING registration
+        let registering = signal !== undefined && signal !== null;
+        const waiter = {
+          resolve(slot) {
+            if (registering) granted = slot;                  // hold it until registration has settled
+            else resolve(slot);
+          },
+          detach: () => {},
+        };
         queue.push(waiter);
+        if (!registering) return;
+        const onAbort = () => {
+          const at = queue.indexOf(waiter);
+          if (at === -1) return;                             // already granted: not ours to undo
+          queue.splice(at, 1);
+          reject(new ReadAbortedError());
+        };
+        try {
+          signal.addEventListener('abort', onAbort, { once: true });
+        } catch (err) {
+          // Fail closed. Either the waiter is still queued (remove it), or a reentrant release already
+          // handed it a slot (give that slot back so it is passed on or uncounted), or a synchronous
+          // abort already settled it (nothing to undo).
+          registering = false;
+          const at = queue.indexOf(waiter);
+          if (at !== -1) queue.splice(at, 1);
+          if (granted !== null) granted.release();
+          reject(err);
+          return;
+        }
+        registering = false;
+        waiter.detach = () => signal.removeEventListener('abort', onAbort);
+        if (granted !== null) {                              // granted while registering: settle it now
+          try { waiter.detach(); } catch { /* best-effort cleanup (owner ruling #9) */ }
+          resolve(granted);
+        }
       });
     },
     inUse() { return count; },
