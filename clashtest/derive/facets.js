@@ -48,7 +48,7 @@ export function parseFacetSpec(spec, path = 'facet') {
     throw invalid(Object.hasOwn(PARAM, spec) ? 'missing-param' : 'unknown-facet', path);
   }
   if (!isPlainObject(spec) || typeof spec.facet !== 'string') throw invalid('bad-facet', path);
-  const p = PARAM[spec.facet];
+  const p = Object.hasOwn(PARAM, spec.facet) ? PARAM[spec.facet] : undefined;   // own names only: {facet:'constructor'} is unknown-facet, as in string form
   if (p) { assertClosed(spec, ['facet', p.key], path); if (!pos(spec[p.key])) throw invalid('bad-param', `${path}.${p.key}`); return p.make(spec[p.key]); }
   assertClosed(spec, ['facet'], path);
   return parseFacetSpec(spec.facet, path);

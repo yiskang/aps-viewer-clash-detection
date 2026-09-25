@@ -78,3 +78,11 @@ test('attribute facets: unavailable (not an error) with no snapshot; the seam is
   assert.deepEqual(f.values(R(), { attrs }), ['L-level']);
   assert.deepEqual(parseFacetSpec('attrEither:level').values(R(), { attrs }), ['L-level', null]);
 });
+
+test('object-form facet names are own-property lookups: inherited names are unknown-facet, same as the string form', () => {
+  const codeOf = (spec) => { try { parseFacetSpec(spec); } catch (e) { assert.ok(e instanceof InvalidOptionsError); return e.issues.map((i) => [i.code, i.path]); } assert.fail('no throw'); };
+  for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+    assert.deepEqual(codeOf({ facet: name }), [['unknown-facet', 'facet']], name);
+    assert.deepEqual(codeOf({ facet: name }), codeOf(name), `${name}: object form == string form`);
+  }
+});

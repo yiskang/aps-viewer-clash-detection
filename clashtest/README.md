@@ -73,6 +73,11 @@ span durations are recorded, not gated.
 | Remote persistence and the ambiguous-commit reconciliation loop | Gate G-REMOTE. The `ResultStore` port here is local and transactional, so a rejected `put` ends the attempt. The typed `PersistenceOutcomeUnknownError` stays in `errors.js`. |
 | The `migration-failed` planning cause | Reserved with no producer: the definition `schemaVersion` is 1, so it is unreachable. |
 
+**Derivation value order (P8, plan item 3).** Spec §14.3 orders only numbers, strings, arrays and `null`. For the
+facet values it leaves open, `derive/facets.js` `compareFacetValues` chooses: booleans `false < true`; element-ref
+values by element order (`compareElementRefs`: `modelKey`, then `dbId`); `null` sorts last. Arrays compare
+element-wise, then by length.
+
 ## Design and plan
 
 - Spec: `docs/superpowers/specs/2026-09-20-federated-clash-test-and-results-design.md`
