@@ -182,7 +182,7 @@ test('bounds: ComparisonTooLargeError from the incremental count, no partial out
   await assert.rejects(cmp(bad, big(4)), CorruptResultSetError);
 });
 
-test('matches a synchronous reference implementation on randomized set pairs (seeded), and is index-only (no per-pair ledger scan)', async () => {
+test('matches a synchronous reference implementation on randomized set pairs (seeded)', async () => {
   let seed = 7; const rnd = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
   for (let round = 0; round < 25; round++) {
     const pick = () => [200, 300, 400, 500].filter(() => rnd() < 0.5);
@@ -216,4 +216,57 @@ test('scope digests are compared independently of modelVersion: version mismatch
   assert.equal(ctl.comparability.sameEnumeration, true);
   assert.equal(ctl.comparability.sameModelVersions, false);
   assert.ok(!ctl.comparability.notes.some((n) => n.startsWith('scope-digest-mismatch')));
+});
+
+test('AC-13 R15-4: O(n + m + ledger) operation count — ledger reads and scheduler yields grow linearly, never per pair x ledger', async () => {
+  // Every ledger property read (either side) is counted through a Proxy installed by the capture hook; aggregationSliceMaxItems: 1
+  // makes every gate tick a yield. Every pair is base-only or next-only, so each one is classified through the status reader.
+  const instrument = (obj, counter, cache) => {
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (cache.has(obj)) return cache.get(obj);
+    const px = new Proxy(obj, { get(t, k, r) { counter.n += 1; return instrument(Reflect.get(t, k, r), counter, cache); } });
+    cache.set(obj, px); return px;
+  };
+  const build = (mode, k, L, parity, dg) => makeResultSet({ mode, keepPairOrder: mode === 'containment', semanticDigest: dg,
+    models: [{ modelKey: 'M', modelVersion: 'v1', roots: [100, ...Array.from({ length: 2 * k }, (_, i) => 1000 + i)].map((d) => ({ dbId: d, ownerDbIds: [d] })) }],
+    units: [{ unitId: '1.0', source: { modelKey: 'M', roots: [100] }, targets: [{ modelKey: 'M', whole: true }] },
+      ...Array.from({ length: L }, (_, i) => ({ unitId: `x.${i}`, source: { modelKey: 'M', roots: [5000 + i] }, targets: [{ modelKey: 'M', roots: [6000 + i] }] }))],
+    results: Array.from({ length: k }, (_, i) => ({ pair: [['M', 100], ['M', 1000 + 2 * i + parity]], ...(mode === 'containment' ? { evidence: {} } : {}) })) });
+  const measure = async (mode, k, L) => {
+    const counter = { n: 0 }; const cache = new WeakMap(); const h = makeHarness();
+    const c = createContextInternal({ limits: { aggregationSliceMaxItems: 1 }, now: h.now, yieldToScheduler: () => h.yieldToScheduler() },
+      { capture: (raw) => { const s = structuredClone(raw); s.ledger = instrument(s.ledger, counter, cache); return s; } });
+    const out = await c.compareResultSets(build(mode, k, L, 0, 'sha256:a'), build(mode, k, L, 1, 'sha256:b'));
+    assert.deepEqual([out.resolved.length, out.added.length], [k, k], `${mode} k=${k} L=${L}: every pair classified clean`);
+    // work units: n + m results, plus each side's ledger records (rootOwners rows 2k+1, units L+1)
+    return { reads: counter.n, yields: h.yields, work: 2 * k + 2 * ((2 * k + 1) + (L + 1)) };
+  };
+  for (const mode of ['volume-overlap', 'containment']) {   // unordered, and ordered (exercises the orientation guard)
+    const K = 50; const L = 50;
+    const base = await measure(mode, K, L);
+    for (const [k, l, what] of [[2 * K, L, 'results doubled'], [K, 2 * L, 'ledger units doubled, results fixed'], [2 * K, 2 * L, 'both doubled']]) {
+      const m = await measure(mode, k, l);
+      for (const metric of ['reads', 'yields']) {
+        assert.ok(m[metric] <= 32 * m.work, `${mode} ${what}: ${metric}=${m[metric]} exceeds 32 x work=${m.work}`);
+        assert.ok(m[metric] / base[metric] <= 2.2, `${mode} ${what}: ${metric} grew ${(m[metric] / base[metric]).toFixed(2)}x for a 2x input (quadratic would be ~4x)`);
+      }
+    }
+  }
+});
+
+test('identical sets (a set vs a structuredClone of itself): every pair unchanged, every other class empty', async () => {
+  const set = mk({ units: [cover([200, 300, 400])], results: [pr(200), pr(300), pr(400)] });
+  const c = await cmp(set, structuredClone(set));
+  assert.deepEqual(ids(c.unchanged), [200, 300, 400]);
+  for (const k of ['changed', 'added', 'addedUnverifiedBase', 'resolved', 'removedUnverifiedNext', 'identityConflicts']) assert.deepEqual(c[k], [], k);
+  assert.equal(c.incomparable, null);
+});
+
+test('pointTolerance boundary: |Δ| == tolerance is unchanged, just above is changed (default and override)', async () => {
+  const at = (x) => mk({ units: [cover([200])], results: [pr(200, { evidence: { witness: { kind: 'surface-crossing', point: [x, 0, 0] } } })] });
+  const tol = COMPARE_TOLERANCE_DEFAULTS.pointTolerance;
+  assert.equal((await cmp(at(0), at(tol))).unchanged.length, 1);                                  // default: |Δ| == tol
+  assert.deepEqual((await cmp(at(0), at(tol * 1.01))).changed.map((e) => e.changedFields), [['witnessPoint']]);
+  assert.equal((await cmp(at(1), at(1.5), { pointTolerance: 0.5 })).unchanged.length, 1);          // override: |Δ| == tol
+  assert.deepEqual((await cmp(at(1), at(1.5), { pointTolerance: 0.4999 })).changed.map((e) => e.changedFields), [['witnessPoint']]);
 });
