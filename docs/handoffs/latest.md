@@ -2,7 +2,17 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## CURRENT STATE — P8 H1/M1/M2 REMEDIATION FOCUSED INDEPENDENT RE-REVIEW PASSED; awaiting targeted adjudication (2026-09-26)
+## CURRENT STATE — P8 ACCEPTED by the owner at production checkpoint `acf3475` (2026-09-26); no further phase authorized
+
+- **Branch / HEAD:** `feature/federated-clash-test-core-engine`. **Accepted production checkpoint: `acf347573fcb353bc0197b1e6e46c123fd4e44d6`** (P8 implementation `9747e03..395d56e` + consolidated H1/M1/M2 remediation `acf3475`). Documentation commits after it: `ad771b4` (focused independent re-review record), `01afad2` (handoff refresh) and this acceptance-closeout commit (the branch HEAD is this closeout commit; `git log -1` is authoritative). Nothing is pushed.
+- **Working tree:** clean after the acceptance-closeout commit, which contains only `docs/reviews/2026-09-26-federated-clash-test-core-p8-remediation-focused-rereview-adjudication.md` and this handoff; no production, test, spec, plan or schema file is modified.
+- **Milestone/task status:** **P8: ACCEPTED — owner decision (2026-09-26): accept P8 at production checkpoint `acf3475`.** The targeted adjudication agrees with the independent Work re-review (0 Critical / 0 High / 0 Medium / 0 Low). The [focused independent remediation re-review](../reviews/2026-09-26-federated-clash-test-core-p8-remediation-focused-rereview.md) reports PASS with **0 Critical / 0 High / 0 Medium / 0 Low**; the [targeted adjudication](../reviews/2026-09-26-federated-clash-test-core-p8-remediation-focused-rereview-adjudication.md) **AGREES** on the boundary, all three remediation results, counts and gate verdict.
+- **Verified remediation result:** H1's per-pair clean proof, M1's guarded detached capture and M2's owned/depth-bounded/expanded-node-budgeted operands are resolved under the owner rulings. Accepted P5 behavior and the frozen design remain unchanged. No blocking P8 remediation finding remains.
+- **Accepted verification (reproduced during adjudication):** focused H1/M1/M2 plus engine-binding files **188/188 passed**; full `node scripts/run-tests.mjs` **2,848 total / 2,847 passed / 0 failed / 1 pre-existing todo**. Current graph coverage records no gaps for the changed production and focused test files.
+- **Deferred / unresolved (non-blocking and unchanged):** the P5 ordered-pair public status-reader decision; `groupBy` finalization/sort under AC-12/G-CAL; the generous 16M default and host string-size edge as calibration/resource notes; standalone contexts' recorded default; live `signal`; annotation capture/facets; Viewer/OQ-4, remote persistence and other recorded product/integration gates.
+- **Next authorized action:** none — **awaiting explicit owner authorization** for anything further. **Must not begin without explicit owner authorization:** any new milestone or post-P8 work, changing accepted P5 behavior (the P5 ordered-pair status-reader follow-up needs its own targeted authorization), pushing, Viewer/OQ-4 integration, remote persistence, annotation work, new/tighter public resource limits, or M4 Phase 4.
+
+## SUPERSEDED STATE — focused independent re-review passed; before targeted adjudication and acceptance
 
 - **Branch / HEAD:** `feature/federated-clash-test-core-engine`. **P8 remediation checkpoint (code + tests): committed at `acf347573fcb353bc0197b1e6e46c123fd4e44d6`.** Documentation commits on top of it: `ad771b4` (focused independent re-review record + handoff) and this documentation-only handoff refresh (the branch HEAD is this refresh commit; `git log -1` is authoritative). Nothing is pushed.
 - **Working tree:** clean after this refresh commit. The re-review record `docs/reviews/2026-09-26-federated-clash-test-core-p8-remediation-focused-rereview.md` and the handoff are committed (`ad771b4` and this refresh); no production, test, spec, plan or schema file is modified by either documentation commit.
@@ -121,7 +131,7 @@ All findings/corrections independently reproduced or verified before being recor
 
 ## Status in one line
 
-**Core engine implementation plan: G-PLAN complete; core-only P0–P7 umbrella scope authorized. P0–P7 are accepted (P7 accepted 2026-09-25 by owner ruling #11 at `22ff778`; R-2 recorded as Low / deferred).** P8 was implemented and internally converged 2026-09-26 (`395d56e`) but is NOT accepted — awaiting independent Work review. Phases beyond P8 are not authorized. Viewer adapter/integration remains gated by OQ-4.
+**Core engine implementation plan: G-PLAN complete; core-only P0–P7 umbrella scope authorized. P0–P7 are accepted (P7 accepted 2026-09-25 by owner ruling #11 at `22ff778`; R-2 recorded as Low / deferred).** **P8 ACCEPTED by the owner 2026-09-26 at production checkpoint `acf3475`** (implemented and internally converged 2026-09-26 at `395d56e`; H1/M1/M2 remediated; focused independent re-review PASS and targeted adjudication AGREE). Phases beyond P8 are not authorized. Viewer adapter/integration remains gated by OQ-4.
 
 ## Governing documents
 
@@ -202,7 +212,7 @@ Viewer adapter and OQ-4 research; remote-persistence reconciliation/disposal mac
 - **Owner:** Eason (milestone owner) · **Date:** 2026-09-21 · **Location:** the owner's message in this session ("I authorize core-only implementation for P0–P7 under master §6(b)") + master §6(b) line + this entry.
 - **Authorized scope:** Federated Clash Test & Results **core-only implementation, P0–P7**.
 - **NOT authorized (still gated or separately authorizable):** P8 (deferrable; outside the core-only gate); Viewer-adapter planning or implementation; OQ-4-dependent work (G-OQ4); host integration gated by OQ-1 / OQ-17; remote persistence unless separately authorized (G-REMOTE); hierarchy-qualified claim enablement before OQ-16; freezing deployment caps before G-CAL; responsiveness claims before G-RESP; M4 Phase 4 / worker work; reopening the frozen core design except under the project `CLAUDE.md` freeze exceptions (a genuine correctness contradiction, an architectural impossibility exposed by the plan, or explicit owner authorization).
-- **State:** core-only authorization is active. **P0–P7 are accepted (P7 accepted 2026-09-25, owner ruling #11).** The frozen exact-cover design and frozen core design remain frozen. **P8 was authorized 2026-09-26 and is implemented but NOT accepted (see the CURRENT STATE block at the top); phases beyond P8 remain unauthorized.**
+- **State:** core-only authorization is active. **P0–P7 are accepted (P7 accepted 2026-09-25, owner ruling #11).** The frozen exact-cover design and frozen core design remain frozen. **P8 was authorized 2026-09-26 and ACCEPTED 2026-09-26 at production checkpoint `acf3475` (see the CURRENT STATE block at the top); phases beyond P8 remain unauthorized.**
 
 ## Suggested next action — current
 
