@@ -17,6 +17,13 @@ export function assertDerivable(set) {
   if (!Array.isArray(set.ledger.units)) bad('ledger');   // top-level container only; every other ledger field is P5's reader's business (a malformed one surfaces as CorruptResultSetError via invoke's TypeError/RangeError mapping)
 }
 
+/** Carries a failure of a HOST-supplied callback (`now` / `yieldToScheduler`) through the runner, so `invoke` can rethrow the
+ *  original error object unchanged instead of mistaking a host TypeError/RangeError for a malformed ledger. Not an Error
+ *  subclass, so it can never match the TypeError/RangeError mapping; it never escapes `invoke`. */
+class HostCallbackFailure { constructor(error) { this.error = error; } }
+const wrapNow = (f) => (f === undefined ? undefined : () => { try { return f(); } catch (e) { throw new HostCallbackFailure(e); } });
+const wrapYield = (f) => (f === undefined ? undefined : async () => { try { return await f(); } catch (e) { throw new HostCallbackFailure(e); } });
+
 function createGate(slicer, signal) {
   const check = () => { if (signal && signal.aborted) throw new DerivationAbortedError({}); };
   return { check, tick() { check(); const p = slicer.tick(); return p === undefined ? undefined : p.then(check); } };
@@ -33,6 +40,7 @@ export function createContextInternal(options = {}, hooks = {}) {
   const { now, yieldToScheduler } = options;                       // possibly undefined: createSlicer defaults them (P0 exports no defaults)
   if (now !== undefined && typeof now !== 'function') throw invalid('not-a-function', 'options.now');
   if (yieldToScheduler !== undefined && typeof yieldToScheduler !== 'function') throw invalid('not-a-function', 'options.yieldToScheduler');
+  const hostNow = wrapNow(now); const hostYield = wrapYield(yieldToScheduler);   // wrapped once, at construction
   const capture = hooks.capture ?? ((raw) => captureResultSet(raw, { limits: all }));   // P5: {limits} = the resolved engine limits
   const runners = hooks.runners ?? DEFAULT_RUNNERS;
   let active = 0; // per context; never module-global
@@ -51,14 +59,16 @@ export function createContextInternal(options = {}, hooks = {}) {
     active += 1;                                                    // slot BEFORE capture
     try {
       const sets = rawSets.map((raw) => { const s = capture(raw); assertDerivable(s); return s; });
-      const slicer = createSlicer({ now, yieldToScheduler, sliceBudgetMs: limits.sliceBudgetMs, maxItemsPerSlice: limits.aggregationSliceMaxItems });
+      const slicer = createSlicer({ now: hostNow, yieldToScheduler: hostYield, sliceBudgetMs: limits.sliceBudgetMs, maxItemsPerSlice: limits.aggregationSliceMaxItems });
       const env = { limits, gate: createGate(slicer, signal), annotations: opts.annotations };
       try { return await runner.run(plan, sets, env); }
       catch (e) { // a captured-but-unvalidated set with a malformed ledger surfaces as TypeError/RangeError: refuse, do not guess
+        if (e instanceof HostCallbackFailure) throw e;   // a host callback failed: not a ledger problem (unwrapped below)
         if (e instanceof TypeError || e instanceof RangeError) throw new CorruptResultSetError({ runId: sets[0]?.runId ?? null, issues: [{ path: 'ledger', code: 'malformed' }] });
         throw e;
       }
-    } finally { active -= 1; }
+    } catch (e) { throw e instanceof HostCallbackFailure ? e.error : e; }   // the host's ORIGINAL error object, unchanged (incl. `now` at slicer construction)
+    finally { active -= 1; }
   }
 
   return Object.freeze({

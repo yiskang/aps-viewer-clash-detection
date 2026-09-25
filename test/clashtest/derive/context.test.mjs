@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createDerivationContext, createContextInternal } from '../../../clashtest/derive/context.js';
 import { drive } from '../../../clashtest/derive/steps.js';
 import { isAbortSignal } from '../../../clashtest/derive/validate.js';
-import { InvalidOptionsError, DerivationBusyError, DerivationAbortedError, EngineDisposedError } from '../../../clashtest/errors.js';
+import { InvalidOptionsError, DerivationBusyError, DerivationAbortedError, EngineDisposedError, CorruptResultSetError } from '../../../clashtest/errors.js';
 import { makeResultSet, U1 } from './support/makeResultSet.mjs';
 import { makeHarness } from './support/harness.mjs';
 
@@ -103,4 +103,31 @@ test('isAbortSignal is fail-closed: a hostile getter is not a signal, and the op
   assert.equal(isAbortSignal(new Proxy({}, { get() { throw new Error('trap'); } })), false);
   assert.equal(isAbortSignal(new AbortController().signal), true);
   await assert.rejects(ctxWith({}, makeHarness()).summarize(many(1), { signal: hostile }), InvalidOptionsError);
+});
+
+test('host callback failures propagate UNCHANGED (never remapped to CorruptResultSetError); the slot is released', async () => {
+  const boom = new TypeError('scheduler failed');
+  const mkCtx = (o) => createContextInternal({ limits: { aggregationSliceMaxItems: 1, maxConcurrentDerivations: 1 }, ...o });
+  // a rejecting yieldToScheduler (aggregationSliceMaxItems: 1 forces a yield), through a real runner (compare)
+  const rej = mkCtx({ now: () => 0, yieldToScheduler: () => Promise.reject(boom) });
+  await assert.rejects(rej.compareResultSets(many(3), many(3)), (e) => e === boom);
+  // a synchronously throwing yieldToScheduler
+  const thr = mkCtx({ now: () => 0, yieldToScheduler: () => { throw boom; } });
+  await assert.rejects(thr.summarize(many(3)), (e) => e === boom);
+  // a `now` that throws mid-run (after the slicer is built) and one that throws from the very first read
+  const clockErr = new RangeError('clock failed'); let reads = 0;
+  const late = mkCtx({ now: () => { reads += 1; if (reads > 2) throw clockErr; return 0; }, yieldToScheduler: () => Promise.resolve() });
+  await assert.rejects(late.summarize(many(3)), (e) => e === clockErr);
+  const early = mkCtx({ now: () => { throw clockErr; }, yieldToScheduler: () => Promise.resolve() });
+  await assert.rejects(early.summarize(many(3)), (e) => e === clockErr);
+  // maxConcurrentDerivations is 1: a second call failing with the host error again (not DerivationBusyError) proves the slot was released
+  await assert.rejects(rej.summarize(many(3)), (e) => e === boom);
+  await assert.rejects(early.summarize(many(3)), (e) => e === clockErr);
+});
+
+test('a genuinely malformed ledger (TypeError/RangeError inside the runner) still maps to CorruptResultSetError', async () => {
+  const h = makeHarness();
+  const ctx = createContextInternal({ limits: { aggregationSliceMaxItems: 1 }, now: h.now, yieldToScheduler: () => h.yieldToScheduler() }, {});
+  const bad = many(2); bad.ledger.units = [{ unitId: 'x', sourceRootDbIds: 5, targets: [] }];   // not iterable: TypeError in P5's indexer
+  await assert.rejects(ctx.compareResultSets(bad, many(2)), CorruptResultSetError);
 });

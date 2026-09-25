@@ -33,9 +33,9 @@ const modelMap = (s) => new Map(s.provenance.models.map((m) => [m.modelKey, m]))
 
 function comparabilityOf(base, next, conflictKeys) {
   const notes = []; const bm = modelMap(base); const nm = modelMap(next);
-  let sameEnumeration = bm.size === nm.size; let sameVersions = bm.size === nm.size; let sameGen = base.provenance.registrySessionId === next.provenance.registrySessionId;
+  let sameEnumeration = bm.size === nm.size; let sameVersions = bm.size === nm.size; let sameGen = bm.size === nm.size && base.provenance.registrySessionId === next.provenance.registrySessionId;   // differing model-key sets => placement unverifiable
   for (const [k, m] of bm) {
-    const n = nm.get(k); if (!n) { sameEnumeration = false; sameVersions = false; continue; }
+    const n = nm.get(k); if (!n) { sameEnumeration = false; sameVersions = false; sameGen = false; continue; }
     if (m.modelVersion !== n.modelVersion) sameVersions = false;
     if (canonicalJson(m.scopeDigests) !== canonicalJson(n.scopeDigests)) { sameEnumeration = false; notes.push(`scope-digest-mismatch:${k}`); }   // 15.2: independent of modelVersion
     if (m.placementGeneration !== n.placementGeneration) sameGen = false;

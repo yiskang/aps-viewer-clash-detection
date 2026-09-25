@@ -159,6 +159,17 @@ test('comparability: sameDefinition/ModelVersions/Enumeration/LibraryVersion, pl
   const moved = await cmp(mk({ placementGeneration: 0 }), mk({ placementGeneration: 1 })); assert.equal(moved.comparability.placement, 'unverifiable');
 });
 
+test('placement is unverifiable whenever the model-key sets differ (disjoint, next-only key, base-only key)', async () => {
+  const M = { modelKey: 'M', modelVersion: 'v1', roots };
+  const N = { modelKey: 'N', modelVersion: 'v1', roots };
+  const set = (ms) => makeResultSet({ models: ms });
+  for (const [b, n, label] of [[[M], [N], 'disjoint'], [[M], [M, N], 'next-only key'], [[M, N], [M], 'base-only key']]) {
+    assert.equal((await cmp(set(b), set(n))).comparability.placement, 'unverifiable', label);
+  }
+  // control: identical keys and generations stay 'same-generation'
+  assert.equal((await cmp(set([M, N]), set([M, N]))).comparability.placement, 'same-generation');
+});
+
 test('bounds: ComparisonTooLargeError from the incremental count, no partial output; shared slots; abort; slicing; a raw unordered set is corrupt', async () => {
   const big = (n) => mk({ units: [cover([200, 300, 400, 500])], results: [200, 300, 400, 500].slice(0, n).map((b) => pr(b)) });
   await assert.rejects(ctx({ maxComparisonEntries: 3 }).compareResultSets(big(4), big(4)), (e) => e instanceof ComparisonTooLargeError && e.limit === 3 && e.observed === 4);
