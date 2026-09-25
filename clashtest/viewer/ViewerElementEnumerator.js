@@ -6,7 +6,7 @@ import { createSlicer } from '../util/slicer.js';
 import { CHECK_EVERY, checkpointNow } from './checkpoint.js';
 import { EnumerationInconsistencyError } from './errors.js';
 import { awaitObjectTree } from './readiness.js';
-import { indexNodeParents, walkSubtree, hasListedAncestor } from './treeWalk.js';
+import { indexNodeParents, indexInstanceTree, walkSubtree, hasListedAncestor, topmostFragmentOwningRoots } from './treeWalk.js';
 import { scanPopulation } from './populationScan.js';
 
 const asc = (a, b) => a - b;
@@ -116,7 +116,65 @@ export function createViewerElementEnumerator({ scheduleTimeout, clearScheduled,
     { const p = checkpointNow(ctx); if (p) await p; }
     return scope === 'whole' ? resolveWhole(binding, ctx) : resolveExplicit(binding, scope, ctx);
   }
-  async function resolveWhole() { throw new Error('resolveWhole: implemented in Task 8'); }
+  /**
+   * Whole-model scope. D-V9 order (exact): (1) readiness; (2) bounded population/count validation FIRST (the O(1)
+   * getCount() gate, then <= maxCollisionInstancesPerEpoch records) BEFORE any tree traversal; (3) the retained
+   * whole-model index, ONE budgeted pass aborting at the first excess; (4) a bounded walk per topmost root (D-V3);
+   * (5) D-V6 reconciliation (owner-approved fail-closed). Every structure is a local: a throw retains nothing.
+   */
+  async function resolveWhole(binding, ctx) {
+    const { tree, fragList } = await awaitObjectTree(binding.model, ctx, readiness);
+    const loadEpoch = binding.lease?.epoch;
+    // Global Constraint 5: the `await` above is an asynchronous boundary and scanPopulation reads getCount() on entry
+    // (it has no entry checkpoint of its own), so liveness is re-validated here, same tick as that first read.
+    { const p = checkpointNow(ctx); if (p) await p; }
+    // D-V9 order: (2) bounded population/count validation FIRST (O(1) count gate, then <= 20,000 records) ...
+    const { count, records } = await scanPopulation(fragList, ctx, { loadEpoch });
+    // ... (3) THEN the retained whole-model index, built by one budgeted pass (aborts at the first excess) ...
+    const index = await indexInstanceTree(tree, ctx, { loadEpoch });
+    const rootIds = await topmostFragmentOwningRoots(index, ctx);
+
+    const roots = [];
+    const claimed = new Map();
+    const mismatches = [];
+    const reachable = new Uint8Array(count);
+    for (const dbId of rootIds) {
+      const owners = await walkSubtree(tree, dbId, ctx);   // (4) bounded per root (maxFragmentsPerDbId / maxChildrenPerNode)
+      claimFragments(claimed, owners, dbId);
+      for (const [fragId, treeOwner] of owners) {
+        const rec = records[fragId];
+        if (rec === undefined) throw new EnumerationInconsistencyError('fragment-outside-population', { fragId, count });
+        // (5) D-V6 (OWNER-APPROVED fail-closed policy): a tree-reachable fragment the library would drop as a target.
+        if (rec.cls !== 'L') throw new EnumerationInconsistencyError('tree-reachable-fragment-unattributable', { fragId, cls: rec.cls });
+        if (rec.ownerDbId !== treeOwner) mismatches.push({ fragId, treeOwner, fragListOwner: rec.ownerDbId });
+        reachable[fragId] = 1;
+      }
+      roots.push(await rootRecord(dbId, owners, fragList, ctx));
+    }
+    mismatches.sort((a, b) => a.fragId - b.fragId);
+
+    const unreachableOwners = new Set();
+    let unreachableCount = 0;
+    let notLoaded = 0;
+    let ownerUnresolvable = 0;
+    for (let fragId = 0; fragId < count; fragId++) {
+      if (reachable[fragId] === 0) {
+        const rec = records[fragId];
+        if (rec.cls === 'L') { unreachableCount += 1; unreachableOwners.add(rec.ownerDbId); }
+        else if (rec.cls === 'N') notLoaded += 1;
+        else ownerUnresolvable += 1;
+      }
+      if ((fragId + 1) % CHECK_EVERY === 0) { const p = checkpointNow(ctx); if (p) await p; }
+    }
+    const pop = await digestPopulation({ count, records }, { slicer: digestSlicer(ctx) });
+    return {
+      roots,
+      population: { count, digest: pop.digest },
+      ownerMismatch: { count: mismatches.length, first20: mismatches.slice(0, 20) },
+      unreachable: { count: unreachableCount, ownerDbIds: [...unreachableOwners].sort(asc), unattributable: { notLoaded, ownerUnresolvable } },
+      unresolved: [],
+    };
+  }
 
   return Object.freeze({ resolveRoots, digestScope });
 }
