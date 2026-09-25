@@ -179,8 +179,24 @@ const SUMMARY_MAX_MODELS = 2 * ENGINE_LIMIT_CEILINGS.maxEntriesPerSelection;
 const isPlainRecord = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const bareIssue = ({ path, code }) => ({ path, code });      // no message, never a value (§16)
 
-/** Owner ruling M3 / D-7 (§18, §25 A17): a read `signal` is an AbortSignal of this realm, nothing else. */
-const isAbortSignal = (v) => typeof AbortSignal === 'function' && v instanceof AbortSignal;
+/**
+ * Owner rulings M3 / D-7 (§18, §25 A17) and #8 (cross-realm signals are supported): a read `signal` is
+ * a standards-compatible AbortSignal, possibly from ANOTHER realm (a same-origin iframe / window), so
+ * there is no `instanceof AbortSignal`. Only the surface this engine and the P5 read coordinator
+ * actually use is checked: a boolean `aborted` and the `addEventListener` / `removeEventListener`
+ * functions. Fail-closed: a value that throws while probed (a hostile getter or Proxy trap) is
+ * simply not a signal. No member is ever invoked here.
+ */
+function isAbortSignal(v) {
+  if (v === null || typeof v !== 'object') return false;
+  try {
+    return typeof v.aborted === 'boolean'
+      && typeof v.addEventListener === 'function'
+      && typeof v.removeEventListener === 'function';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The ONE closed read-options shape `{signal?}` (owner ruling M3 / D-7, §18, §25 A17): the trailing
@@ -1147,7 +1163,10 @@ export function createEngineCore(config) {
     try {
       freshness = await readTimeFreshness(set, { registry: coordinator.registry, enumerator, ctx });
     } catch (err) {
-      if (signal.aborted && err?.name === 'EnumerationCancelledError') throw new ReadAbortedError();
+      // Owner ruling #8 (N1): an abort observed here wins over ANY underlying failure (a cancellation
+      // the bracket propagated, or an error raised outside its enumerator catch); with no abort the
+      // original error is preserved.
+      if (signal.aborted) throw new ReadAbortedError();
       throw err;
     }
     throwIfReadAborted(signal);
