@@ -402,7 +402,8 @@ export function createResidencyManager({ limits, resultStore, now, onPersistence
  * slot and no queue entry. Aborted while QUEUED -> that waiter is removed from the FIFO (it stops
  * counting against `maxQueuedStoreReads` and never receives a slot) and rejects `ReadAbortedError`.
  * Once granted, the listener is removed and a later abort is the caller's business (the slot is
- * held until `release()`).
+ * held until `release()`). Listener cleanup is best-effort (owner ruling #9, M-1): a `removeEventListener`
+ * that throws cannot lose the waiter, leak the slot or fail the holder's `release()`.
  */
 export function createReadCoordinator({ limits }) {
   let count = 0;
@@ -416,7 +417,11 @@ export function createReadCoordinator({ limits }) {
         released = true;
         if (queue.length > 0) {
           const { resolve, detach } = queue.shift();         // hand the slot straight to the next waiter
-          detach();
+          // Owner ruling #9 (M-1): listener cleanup is best-effort. The waiter has already left the
+          // FIFO, so a `removeEventListener` that throws (a malformed signal-like object the façade
+          // accepted structurally) must not lose the waiter, leak the slot, or poison this holder's
+          // `release()`. A stale abort listener is inert: `onAbort` finds the waiter gone and returns.
+          try { detach(); } catch { /* cleanup failure is not a slot failure */ }
           resolve(makeSlot());
         } else {
           count -= 1;
