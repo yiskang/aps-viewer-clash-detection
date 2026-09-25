@@ -71,6 +71,10 @@
 //   - Listener-removal postconditions use `viewer.hasEventListener(type, fn)` (declared by @types/forge-viewer, not an
 //     official-docs claim); its presence is checked live and, if absent, the postcondition is recorded as
 //     unverifiable (a failing link), never assumed.
+//   - Recorded deviation (ctrl-no-wiring): with the wiring never installed, the step-1 PROBE assertions
+//     (probeSawX / probeSawBindingPresent) must still PASS -- without the wiring the binding is present at dispatch
+//     anyway. That control's detectable failures are the unregister/evict/binding-null assertions (evictCalledForX,
+//     evictSawBindingNull, bindingNullAfterUnload, xNotLiveAfterUnload).
 //
 // --- Serving /clashtest to the page --------------------------------------------------------------------------
 //
@@ -548,8 +552,10 @@ const H_SETUP = async ({ K, urn, noWiring, clashFinderId, label }) => {
     h.phase = 'setup:CollisionWorld.fromViewer (as ClashFinderExtension.load)';
     const ext = viewer.getExtension(clashFinderId);
     info.clashFinderExtensionLoaded = !!ext;
-    info.worldOptionsSource = ext ? 'ClashFinderExtension instance options' : 'extension absent: fromViewer default options';
-    r.world = await collision.CollisionWorld.fromViewer(viewer, ext ? ext.options : undefined);
+    // Falling back to default options would NOT be "exactly as the extension constructs it": a failing link.
+    if (!ext) throw new Error(`ClashFinderExtension (${clashFinderId}) is not loaded: the world cannot be built exactly as the extension builds its own`);
+    info.worldOptionsSource = 'ClashFinderExtension instance options';
+    r.world = await collision.CollisionWorld.fromViewer(viewer, ext.options);
 
     h.phase = 'setup:createClashTestEngine';
     h.enumerator = adapter.createViewerElementEnumerator();
@@ -1176,11 +1182,19 @@ async function main() {
     results.h.runs.main = rep;
     for (const a of rep.assertions) check(`[h] ${a.step}: ${a.description}`, a.ok, true);
     if (!check('[h] main run completed with no primary failure and no cleanup failure', mainError === null ? null : describeError(mainError), null)) {
-      hFailingLinks.push({ run: 'main', link: rep.failingLink ?? 'cleanup', error: describeError(mainError), cleanupFailures: rep.cleanupFailures });
+      hFailingLinks.push({ run: 'main', link: (mainError && mainError.link) || rep.failingLink || 'cleanup', error: describeError(mainError), cleanupFailures: rep.cleanupFailures });
     }
     const post = rep.cleanup && rep.cleanup.post;
-    check('[h] main run: cleanup postcondition (c) holds (no listener, evictModel original, binding null, disposed, models == expected siblings)',
-      post && post.ok === true ? true : (post || null), true);
+    if (!check('[h] main run: cleanup postcondition (c) holds (no listener, evictModel original, binding null, disposed, models == expected siblings)',
+      post && post.ok === true ? true : (post || null), true)) {
+      hFailingLinks.push({
+        run: 'main',
+        link: post && post.hasEventListenerAvailable === false
+          ? 'cleanup:postcondition(c): viewer.hasEventListener unavailable (listener removal unverifiable)'
+          : 'cleanup:postcondition(c)',
+        post: post || null,
+      });
+    }
     check('[h] main run: every step (1)-(4) executed', Object.keys(rep.steps), ['step1', 'step2', 'step3', 'step4']);
   }
 
@@ -1273,10 +1287,16 @@ async function main() {
   // ---- gates
   const hChecks = results.checks.filter((c) => c.name.startsWith('[h'));
   const hOk = hChecks.length > 0 && hChecks.every((c) => c.ok);
+  // The envelope label may be claimed only when the run is provably inside the envelope: every [env] and [load]
+  // check must pass too. A failing one is recorded as the failing link, and the result stays UNVERIFIED.
+  const envelopeChecks = results.checks.filter((c) => c.name.startsWith('[env]') || c.name.startsWith('[load]'));
+  const envelopeOk = envelopeChecks.length > 0 && envelopeChecks.every((c) => c.ok);
+  for (const c of envelopeChecks.filter((x) => !x.ok)) hFailingLinks.push({ run: 'envelope', link: c.name, actual: c.actual, expected: c.expected });
+  if (envelopeChecks.length === 0) hFailingLinks.push({ run: 'envelope', link: 'no [env]/[load] check was recorded' });
   const failed = results.checks.filter((c) => !c.ok).length;
   results.gates = {
     T3: failed === 0 ? 'PASS (inside the accepted envelope only)' : 'FAIL',
-    liveUnloadIntegration: hOk ? 'VERIFIED_IN_ACCEPTED_ENVELOPE' : 'LIVE_UNLOAD_INTEGRATION_UNVERIFIED',
+    liveUnloadIntegration: hOk && envelopeOk ? 'VERIFIED_IN_ACCEPTED_ENVELOPE' : 'LIVE_UNLOAD_INTEGRATION_UNVERIFIED',
     failingLinks: hFailingLinks,
     notCovered: results.notCovered,
     durationMs: Date.now() - t0,
