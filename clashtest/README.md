@@ -68,7 +68,7 @@ span durations are recorded, not gated.
 | Not in the core | Where it lives |
 | --- | --- |
 | Annotation (`annotate`) | A follow-up to the derivations phase. Absent from the engine object, not stubbed. |
-| Derivations and comparison (`derivations`, `createDerivationContext`, `compareResultSets`) | Phase P8 (`docs/superpowers/plans/federated-clash-test-core/p8-derivations.md`). |
+| Free-standing derivations (`summarize`, `groupBy`, `filter`, `compareResultSets`) | Phase P8: reached only through `createDerivationContext` or `engine.derivations` (bound in P8.8), never as barrel exports. |
 | Viewer adapter (`ElementEnumerator` over a live model tree) | Proposed `clashtest/viewer/`; open question OQ-4. |
 | Remote persistence and the ambiguous-commit reconciliation loop | Gate G-REMOTE. The `ResultStore` port here is local and transactional, so a rejected `put` ends the attempt. The typed `PersistenceOutcomeUnknownError` stays in `errors.js`. |
 | The `migration-failed` planning cause | Reserved with no producer: the definition `schemaVersion` is 1, so it is unreachable. |

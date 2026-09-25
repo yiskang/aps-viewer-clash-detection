@@ -9,8 +9,9 @@
 // withStoredDefinitionValidator) that must not reach consumers; test/clashtest/engine/exports.test.mjs
 // pins their absence by name and by comparison with engine.js's own export list.
 //
-// Deliberately NOT exported (P8 / follow-ups, see clashtest/README.md): createDerivationContext,
-// compareResultSets, annotate, derivations. getPairStatus / getElementStatus come from P5
+// Deliberately NOT exported (see clashtest/README.md): compareResultSets, annotate, derivations
+// (the derivation functions are reached only through a context / `engine.derivations`).
+// createDerivationContext is exported from P8.8. getPairStatus / getElementStatus come from P5
 // results/status.js, never from P8.
 
 export { createClashTestEngine } from './engine.js';
@@ -18,6 +19,7 @@ export { validateTest } from './definition/validate.js';
 export { assessNoClashClaim, canClaimNoClashes } from './results/claim.js';
 export { getPairStatus, getElementStatus } from './results/status.js';
 export { getFreshness } from './run/freshness.js';
+export { createDerivationContext } from './derive/index.js';
 export { createInMemoryClashTestStore } from './stores/InMemoryClashTestStore.js';
 export { createInMemoryResultStore } from './results/InMemoryResultStore.js';
 export { createLocalUnitExecutor } from './execution/LocalUnitExecutor.js';

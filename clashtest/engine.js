@@ -54,6 +54,7 @@ import {
 } from './definition/validate.js';
 import { prepareDefinition } from './definition/normalize.js';
 import { validateResultSetSummary, readResultSet, captureResultSet } from './results/validateResultSet.js';
+import { createContextInternal, DERIVATION_LIMIT_KEYS } from './derive/context.js';
 import { assessNoClashClaim as assessClaim, canClaimNoClashes as canClaim } from './results/claim.js';
 // P6's read-time freshness, aliased so it cannot shadow the engine method of the same name.
 import { getFreshness as readTimeFreshness } from './run/freshness.js';
@@ -68,8 +69,9 @@ import { checkScopeBracket } from './planning/scopeDigest.js';
 
 /**
  * The §18 method surface, split by how a disposed engine reports it (R1). `dispose` is neither: it is
- * idempotent and non-throwing. `annotate` and `derivations` are deliberately absent (excluded from
- * this build). Each name is implemented by exactly one task; until then it is a gated stub.
+ * idempotent and non-throwing. `annotate` is deliberately absent (excluded from this build);
+ * `derivations` is a separate object bound by P8.8, not a method in either list. Each name is
+ * implemented by exactly one task; until then it is a gated stub.
  */
 export const ENGINE_METHODS = Object.freeze({
   sync: Object.freeze([
@@ -1347,7 +1349,14 @@ export function createEngineCore(config) {
   for (const name of ENGINE_METHODS.sync) if (!(name in methods)) defineSync(name, () => { throw notImplemented(name); });
   for (const name of ENGINE_METHODS.async) if (!(name in methods)) defineAsync(name, () => { throw notImplemented(name); });
 
-  const engine = Object.freeze({ registry: coordinator.registry, ...methods, dispose });
+  // P8.8: the engine-bound derivation context. It shares the engine's resolved limits (picked by the
+  // derivation key list), clock and scheduler, its dispose guard, and captures with the engine's whole
+  // limits object so the engine's own `maxCapturedNodes` applies.
+  const derivations = createContextInternal(
+    { limits: Object.fromEntries(DERIVATION_LIMIT_KEYS.map((k) => [k, effectiveLimits[k]])), now, yieldToScheduler: engineYield },
+    { assertOpen: alive, capture: (raw) => captureResultSet(raw, { limits: effectiveLimits }) });
+
+  const engine = Object.freeze({ registry: coordinator.registry, ...methods, dispose, derivations });
 
   return {
     engine,

@@ -240,17 +240,17 @@ test('a residency slot is the engine\'s own: two engines over one world do not s
 
 // ---- the method surface ------------------------------------------------------------------------------
 
-test('the engine exposes exactly the §18 surface this build ships (no annotate, no derivations)', () => {
+test('the engine exposes exactly the §18 surface this build ships (no annotate; derivations bound by P8.8)', () => {
   const engine = createClashTestEngine(base());
   const methods = [...ENGINE_METHODS.sync, ...ENGINE_METHODS.async];
-  assert.deepEqual(Object.keys(engine).sort(), ['registry', 'dispose', ...methods].sort());
+  assert.deepEqual(Object.keys(engine).sort(), ['registry', 'dispose', 'derivations', ...methods].sort());
   assert.deepEqual(methods.sort(), [
     'archiveTest', 'assessNoClashClaim', 'canClaimNoClashes', 'deleteTest', 'discardRun', 'getFreshness',
     'getPersistenceState', 'getResultSet', 'getRun', 'getTest', 'invalidateModelPlacement', 'listResults',
     'listTests', 'releaseResultSet', 'rerun', 'retainResultSet', 'retentionReport', 'retryPersist',
     'saveTest', 'startRun', 'validateTest',
   ].sort());
-  for (const excluded of ['annotate', 'derivations', 'compareResultSets']) {
+  for (const excluded of ['annotate', 'compareResultSets']) {
     assert.equal(excluded in engine, false, excluded);
   }
   assert.ok(Object.isFrozen(engine));

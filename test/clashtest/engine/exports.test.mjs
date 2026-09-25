@@ -11,10 +11,11 @@
 //   - the deferred surfaces are pinned on BOTH the barrel and the engine object (`compareResultSets`
 //     is asserted here, scan row "P7.6 <-> P7.8 Step 16").
 //
-// OPEN-3 (controller ruling): the core engine ships WITHOUT `derivations` and WITHOUT `annotate`. The
-// absence assertions below are CORE-SCOPED, not permanent: Task P8.8 legitimately edits this file when
-// it adds `derivations` / `createDerivationContext`, and the annotation follow-up does the same for
-// `annotate`. Nothing else in this file may be relaxed by a later phase.
+// OPEN-3 (controller ruling): the core engine shipped WITHOUT `derivations` and WITHOUT `annotate`.
+// Task P8.8 legitimately edited this file when it landed `engine.derivations` (a presence check below)
+// and the public `createDerivationContext`; the barrel still does not export `derivations` itself, nor
+// `compareResultSets`. The annotation follow-up will do the same for `annotate`. Nothing else in this
+// file may be relaxed by a later phase.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -66,7 +67,7 @@ const MUST_NOT_BE_PUBLIC = [
 ];
 
 /** Deferred surfaces: ABSENT, not stubbed (P8 / the annotation follow-up own them). */
-const DEFERRED = ['annotate', 'derivations', 'createDerivationContext', 'compareResultSets'];
+const DEFERRED = ['annotate', 'derivations', 'compareResultSets'];
 
 test('every §18 function is present and is the owning module\'s own binding', () => {
   for (const [name, owned] of Object.entries(OWNED_FUNCTIONS)) {
@@ -76,6 +77,10 @@ test('every §18 function is present and is the owning module\'s own binding', (
   assert.equal(api.RUN_OPTION_DEFAULTS, RUN_OPTION_DEFAULTS);
   assert.equal(api.ENGINE_LIMIT_DEFAULTS, ENGINE_LIMIT_DEFAULTS);
   assert.ok(api.RUN_OPTION_DEFAULTS && api.ENGINE_LIMIT_DEFAULTS);
+});
+
+test('createDerivationContext is public on the barrel (P8.8)', () => {
+  assert.equal(typeof api.createDerivationContext, 'function');
 });
 
 test('the deferred surfaces are absent from the barrel, not stubbed', () => {
@@ -115,9 +120,10 @@ test('every error class of §18 that the core raises is exported from the entry 
   assert.equal(api.ClashTestError, errors.ClashTestError, 'the base class is exported too');
 });
 
-test('the core engine object has no annotate, no derivations and no compareResultSets', () => {
+test('the engine object has no annotate and no compareResultSets; derivations is bound by P8.8', () => {
   const engine = api.createClashTestEngine(base());
-  for (const name of ['annotate', 'derivations', 'compareResultSets']) {
+  assert.equal(typeof engine.derivations.summarize, 'function');
+  for (const name of ['annotate', 'compareResultSets']) {
     assert.equal(engine[name], undefined, name);
     assert.equal(name in engine, false, `${name} in engine`);
     assert.equal(Object.hasOwn(engine, name), false, `${name} own property`);
