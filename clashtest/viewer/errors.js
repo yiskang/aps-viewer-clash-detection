@@ -10,3 +10,14 @@ export class EnumerationInconsistencyError extends Error {
     this.detail = detail;
   }
 }
+
+// D-V9: a planning traversal crossed an EXISTING collision extraction limit (never a new one). Adapter-local
+// like D-V7; the planner maps any unrecognized throw to `enumeration-failed` by name (engine.js planningCauseOf).
+export class EnumerationBoundExceededError extends Error {
+  constructor(bound, detail = {}) {
+    super(`Viewer enumeration exceeds ${bound}`);
+    this.name = 'EnumerationBoundExceededError';
+    this.bound = bound;      // 'maxFragmentsPerDbId' | 'maxChildrenPerNode'
+    this.detail = detail;
+  }
+}
