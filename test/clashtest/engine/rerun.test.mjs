@@ -14,7 +14,7 @@
 //     ledger-record or retained-diagnostic count exceeds the rerun's effective `maxResultsPerRun` /
 //     `maxLedgerRecords` / `maxRetainedDiagnostics` rejects `ResultSetTooLargeError` (never
 //     `CorruptResultSetError`); a RAW set is not covered by the predicate ("read by-id"), and neither is
-//     `getFreshness` (owner note D-6).
+//     `getFreshness` (spec erratum A16: predicate (ii) is a `rerun`-only admission check).
 //   - `runOptions` issues are reported under `/runOptions/...`, because `rerun`'s option bag has two
 //     members and `/zzz` would not say which one was wrong.
 //
@@ -493,7 +493,7 @@ test('predicate (ii) is by-id only: a RAW set over the same counts is admitted (
   const h = await engine.rerun(structuredClone(set), { runOptions: { maxResultsPerRun: FEW_RESULTS } });
   const s = await h.done;
   assert.equal(s.resultSet.derivedFromRunId, set.runId);
-  // …and getFreshness by id is not governed by it either (owner note D-6).
+  // …and getFreshness by id is not governed by it either (spec erratum A16: (ii) is a `rerun`-only admission check; see sizePredicate.contract.test.mjs).
   assert.equal((await engine.getFreshness(set.runId)).state, 'current');
 });
 

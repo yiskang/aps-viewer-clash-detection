@@ -21,6 +21,7 @@
 import {
   ResultCapacityError, ResultSetRetainedError, UnsavedResultSetError, ResultNotResidentError,
   ReadCapacityError, RunNotTerminalError, PersistenceOutcomeUnknownError, InvalidOptionsError,
+  ReadAbortedError,
 } from '../errors.js';
 
 const classOf = (entry) => (entry.leases > 0 ? 'retained'
@@ -393,12 +394,19 @@ export function createResidencyManager({ limits, resultStore, now, onPersistence
 /**
  * `createReadCoordinator({limits}) -> {reserveSync, acquire, inUse}`. Read slots for the two
  * read paths S13.5 distinguishes: `reserveSync()` is the synchronous reserve-or-reject a raw-set
- * read uses (never queues); `acquire()` is the FIFO-queued form a by-id read uses, queuing up to
- * `maxQueuedStoreReads` deep before it too rejects.
+ * read uses (never queues); `acquire({signal}?)` is the FIFO-queued form a by-id read uses, queuing
+ * up to `maxQueuedStoreReads` deep before it too rejects.
+ *
+ * Owner ruling M3 / D-7 (spec §25 A17, additive): `acquire` accepts an optional `signal`
+ * (an AbortSignal; the P7 façade validates its type). Already aborted -> `ReadAbortedError` with no
+ * slot and no queue entry. Aborted while QUEUED -> that waiter is removed from the FIFO (it stops
+ * counting against `maxQueuedStoreReads` and never receives a slot) and rejects `ReadAbortedError`.
+ * Once granted, the listener is removed and a later abort is the caller's business (the slot is
+ * held until `release()`).
  */
 export function createReadCoordinator({ limits }) {
   let count = 0;
-  const queue = [];          // FIFO of {resolve}
+  const queue = [];          // FIFO of {resolve, detach}
 
   function makeSlot() {
     let released = false;
@@ -407,7 +415,8 @@ export function createReadCoordinator({ limits }) {
         if (released) return;                              // one-shot, same discipline as a lease
         released = true;
         if (queue.length > 0) {
-          const { resolve } = queue.shift();                 // hand the slot straight to the next waiter
+          const { resolve, detach } = queue.shift();         // hand the slot straight to the next waiter
+          detach();
           resolve(makeSlot());
         } else {
           count -= 1;
@@ -424,7 +433,8 @@ export function createReadCoordinator({ limits }) {
       count += 1;
       return makeSlot();
     },
-    acquire() {
+    acquire({ signal } = {}) {
+      if (signal?.aborted) return Promise.reject(new ReadAbortedError());
       if (count < limits.maxConcurrentStoreReads) {
         count += 1;
         return Promise.resolve(makeSlot());
@@ -432,7 +442,20 @@ export function createReadCoordinator({ limits }) {
       if (queue.length >= limits.maxQueuedStoreReads) {
         return Promise.reject(new ReadCapacityError({ limit: limits.maxQueuedStoreReads }));
       }
-      return new Promise((resolve) => { queue.push({ resolve }); });
+      return new Promise((resolve, reject) => {
+        const waiter = { resolve, detach: () => {} };
+        if (signal) {
+          const onAbort = () => {
+            const at = queue.indexOf(waiter);
+            if (at === -1) return;                           // already granted: not ours to undo
+            queue.splice(at, 1);
+            reject(new ReadAbortedError());
+          };
+          signal.addEventListener('abort', onAbort, { once: true });
+          waiter.detach = () => signal.removeEventListener('abort', onAbort);
+        }
+        queue.push(waiter);
+      });
     },
     inUse() { return count; },
   };

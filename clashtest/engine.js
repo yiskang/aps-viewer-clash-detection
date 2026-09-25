@@ -27,7 +27,7 @@
 import {
   EngineDisposedError, InvalidOptionsError, ModelBindingError, RunQueueFullError,
   StoreNotConfiguredError, CorruptListingError, InvalidTestDefinitionError, UnsupportedSchemaVersionError,
-  ResultNotResidentError, ResultSetTooLargeError,
+  ResultNotResidentError, ResultSetTooLargeError, ReadAbortedError, EnumerationCancelledError,
 } from './errors.js';
 import { resolveEngineLimits, resolveRunOptions, ENGINE_LIMIT_CEILINGS } from './options.js';
 import { assertRegistryBelongsToWorld } from './identity/ModelRegistry.js';
@@ -178,6 +178,46 @@ const SUMMARY_MAX_MODELS = 2 * ENGINE_LIMIT_CEILINGS.maxEntriesPerSelection;
 
 const isPlainRecord = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const bareIssue = ({ path, code }) => ({ path, code });      // no message, never a value (§16)
+
+/** Owner ruling M3 / D-7 (§18, §25 A17): a read `signal` is an AbortSignal of this realm, nothing else. */
+const isAbortSignal = (v) => typeof AbortSignal === 'function' && v instanceof AbortSignal;
+
+/**
+ * The ONE closed read-options shape `{signal?}` (owner ruling M3 / D-7, §18, §25 A17): the trailing
+ * argument of every public read that can wait on a read slot or a store read-through (`getResultSet`,
+ * `getFreshness`, `canClaimNoClashes`, `assessNoClashClaim`, `listTests`, `listResults`). Read ONCE in
+ * the caller's turn, in `rerun`'s option-bag style: `undefined`, or a plain object whose only own key
+ * is `signal`, a DATA property (a getter is refused, never invoked) holding `undefined` or an
+ * AbortSignal. Returns the signal, or `null` when none was given.
+ * @throws {InvalidOptionsError}
+ */
+function readReadOptions(opts) {
+  if (opts === undefined) return null;
+  const refuse = (issues) => { throw new InvalidOptionsError({ issues }); };
+  if (!isPlainRecord(opts)) return refuse([issue('', 'bad-shape', 'read options must be a plain object')]);
+  let own;
+  try {
+    const proto = Object.getPrototypeOf(opts);
+    if (proto !== Object.prototype && proto !== null) return refuse([issue('', 'bad-shape', 'read options must be a plain object')]);
+    own = Object.getOwnPropertyDescriptors(opts);
+  } catch {
+    return refuse([issue('', 'bad-shape', 'read options are unreadable')]);     // a throwing Proxy trap
+  }
+  const issues = [];
+  let signal;
+  for (const key of Reflect.ownKeys(own)) {
+    const path = typeof key === 'string' ? `/${key.slice(0, 64).replace(/~/g, '~0').replace(/\//g, '~1')}` : '';
+    if (key !== 'signal') issues.push(issue(path, 'unknown-key', 'unknown read option'));
+    else if (!('value' in own[key])) issues.push(issue(path, 'bad-shape', 'signal must be a data property'));
+    else signal = own[key].value;
+  }
+  if (signal !== undefined && !isAbortSignal(signal)) issues.push(issue('/signal', 'bad-shape', 'signal must be an AbortSignal'));
+  if (issues.length > 0) return refuse(issues);
+  return signal ?? null;
+}
+
+/** §13.5.2 / AC-13: an aborted read rejects `ReadAbortedError` (thrown here; every caller is async). */
+const throwIfReadAborted = (signal) => { if (signal?.aborted) throw new ReadAbortedError(); };
 
 /**
  * The options of a listing call, captured in the caller's turn as one detached plain copy (so a getter is
@@ -462,6 +502,13 @@ export function createEngineCore(config) {
   });
   // One slicer per sliced operation (P0); the label is per call (`tick(label)`), so no argument here.
   const newSlicer = () => createSlicer({ now, yieldToScheduler: engineYield, limits: effectiveLimits, spanRecorder });
+  // Owner ruling M3 / D-7: the slicer a SIGNALLED read hands P5's `readResultSet`. Validation and freeze
+  // are synchronous between yields, so an abort can only land during a yield; `afterYield` rejects
+  // `ReadAbortedError` at that slice boundary. Without a signal it is exactly `newSlicer()`.
+  const newReadSlicer = (signal) => (signal === null ? newSlicer() : createSlicer({
+    now, yieldToScheduler: engineYield, limits: effectiveLimits, spanRecorder,
+    afterYield: () => throwIfReadAborted(signal),
+  }));
   const residency = createResidencyManager({
     limits: effectiveLimits, resultStore: stores.result, now, onPersistence: ignorePersistenceEvent,
   });
@@ -569,7 +616,9 @@ export function createEngineCore(config) {
       broadPhase: options.broadPhase,
       scopeProof: { method: 'bracketed-digest', digestVersion: DIGEST_VERSION },
       hierarchyInternalAcceptance: acceptance,
-      // PROVISIONAL (owner item D-2): informational only — the claim gates read the ledger, not this.
+      // Owner ruling M1: a placeholder that is ALWAYS overridden. `Run.provenanceOf` sets
+      // `libraryExclusions` from the sealed ledger's `exclusions` (the planner's derived declared
+      // exclusions, §6.6 item 3 / §13.2) on every seal path; the claim gates read the ledger, not this.
       libraryExclusions: [],
       placementVerified: false,
       startedAt: toIso(now()),
@@ -681,8 +730,10 @@ export function createEngineCore(config) {
   };
 
   /** Runs `fn` holding one read slot (§13.5.2, FIFO, `ReadCapacityError` beyond the queue); released on every exit. */
-  async function withReadSlot(fn) {
-    const slot = await reads.acquire();
+  async function withReadSlot(fn, signal = null) {
+    // M3 / D-7: a signalled waiter aborted while QUEUED leaves P5's FIFO and rejects `ReadAbortedError`
+    // (an already-aborted one never queues). Once granted, `fn` checks the signal itself.
+    const slot = await reads.acquire({ signal: signal ?? undefined });
     try {
       return await fn();
     } finally {
@@ -707,16 +758,31 @@ export function createEngineCore(config) {
   defineAsync('saveTest', (def) => definitions.saveTest(def));               // captures before it returns its promise
   defineAsync('getTest', (testId, revision) => definitions.getTest(testId, revision));
 
-  defineAsync('listTests', (page = {}) => {
+  // Both listings take a queued read slot, so both take the closed `{signal?}` read options (M3 / D-7):
+  // already aborted -> `ReadAbortedError` before the slot and the store call; an in-flight `list` is not
+  // abandoned (the port has no signal), the slot is held until it settles, then the read rejects.
+  defineAsync('listTests', (page = {}, readOptions = undefined) => {
     requireStore('testStore');
+    const signal = readReadOptions(readOptions);
+    throwIfReadAborted(signal);                              // before any capture of `page` (A17)
     const options = captureListOptions(page, ['limit', 'cursor']);
-    return withReadSlot(() => definitions.listTests(options));
+    return withReadSlot(async () => {
+      const listed = await definitions.listTests(options);
+      throwIfReadAborted(signal);
+      return listed;
+    }, signal);
   });
 
-  defineAsync('listResults', (page = {}) => {
+  defineAsync('listResults', (page = {}, readOptions = undefined) => {
     const resultStore = requireStore('resultStore');
+    const signal = readReadOptions(readOptions);
+    throwIfReadAborted(signal);                              // before any capture of `page` (A17)
     const options = captureListOptions(page, ['testId', 'limit', 'cursor']);
-    return withReadSlot(async () => validatedResultPage(await resultStore.list(options), effectiveLimits));
+    return withReadSlot(async () => {
+      const listed = await resultStore.list(options);
+      throwIfReadAborted(signal);
+      return validatedResultPage(listed, effectiveLimits);
+    }, signal);
   });
 
   defineAsync('archiveTest', async (testId) => {
@@ -801,27 +867,40 @@ export function createEngineCore(config) {
    * `runIdOrResultSet` reads (freshness, claims, `rerun`) go through `withReadSet` → `readByIdFor` →
    * `readStoredSet`, which never refresh the LRU.
    */
-  async function readSetById(runId) {
+  async function readSetById(runId, signal = null) {
     const resident = residency.getResident(runId);
     if (resident !== null) return resident;
     if (!stores.result) return null;
-    return withReadSlot(() => readStoredSet(runId));
+    return withReadSlot(() => readStoredSet(runId, signal), signal);
   }
 
   /**
    * One store read-through, for a caller that ALREADY holds a read slot: `get` under the byte guard,
    * then P5's `readResultSet` (capture → version → migrate → validate → freeze). `null` when the store
    * holds no such set. `runId` is the diagnostic id only, never read off the untrusted value.
+   *
+   * M3 / D-7: the in-flight `get` cannot be aborted (the port has no signal), so the caller's slot stays
+   * held until it settles; the signal is checked right after it, at every validation/freeze slice
+   * boundary (`newReadSlicer`), and once more when the set is ready.
    */
-  async function readStoredSet(runId) {
+  async function readStoredSet(runId, signal = null) {
     const raw = await stores.result.get(runId, { maxBytes: effectiveLimits.maxStoredResultBytes });
+    throwIfReadAborted(signal);
     if (raw === null || raw === undefined) return null;
-    return readResultSet(raw, { limits: effectiveLimits, slicer: newSlicer(), runId });
+    const set = await readResultSet(raw, { limits: effectiveLimits, slicer: newReadSlicer(signal), runId });
+    throwIfReadAborted(signal);
+    return set;
   }
 
   defineSync('startRun', startRun);
   defineSync('getRun', getRun);
-  defineAsync('getResultSet', (runId) => (typeof runId === 'string' ? readSetById(runId) : null));
+  // M3 / D-7: `{signal?}` (closed); an already-aborted signal rejects before the resident lookup (so
+  // it does not refresh the LRU either), the slot and the store call.
+  defineAsync('getResultSet', (runId, readOptions = undefined) => {
+    const signal = readReadOptions(readOptions);
+    throwIfReadAborted(signal);
+    return typeof runId === 'string' ? readSetById(runId, signal) : null;
+  });
 
   // ==============================================================================================
   // Residency, retention and lifecycle (P7.5; §13.5.1, §13.5.2)
@@ -867,13 +946,65 @@ export function createEngineCore(config) {
     pruneOwnRuns();
   });
   defineAsync('retryPersist', (runId) => residency.retryPersist(runId));
+  /** runId -> the ONE shared promise of a discard deferred until that run's `done` (owner ruling L1/D-5). */
+  const deferredDiscards = new Map();
+
+  /** P5's discard (§13.5.2: chained after any in-flight put; `RunNotTerminalError` for a reservation). */
+  async function discardNow(runId) {
+    await residency.discardRun(runId);
+    pruneOwnRuns();
+  }
+
+  /**
+   * Owner ruling L1 / D-5 (Option B, P7 independent-review adjudication): `finalizing` is terminal for
+   * `discardRun`, but a discard must not RACE the seal. For an OWNED run whose sealed set is already
+   * admitted (it no longer holds a reservation) while its terminal commit has not happened yet — phase
+   * `finalizing`, or the gap between `admitSealedSet` and the `finalizing` commit (V9) — the discard is
+   * DEFERRED until the run's `done` settles: the first persistence attempt then runs truthfully and
+   * `done.persistence`, `persisted`, `getPersistenceState`, the `'persistence'` event and the terminal
+   * event all agree (§13.5.1 items 2, 3, 6), and only then does P5's discard run (put, then delete).
+   * Nothing waits synchronously: a call from a `finalizing` or `'persistence'` listener returns a pending
+   * promise at once and the run proceeds independently of the listener. `phase === 'terminal'` (not the
+   * `done` promise) is the cut-off because Run.js commits it synchronously, after the summary exists and
+   * right before `done` resolves — so a discard from the terminal `state` listener acts at once, as before.
+   *
+   * A second discard of the same run while one is deferred shares its promise (one delete). A run
+   * still holding its reservation (queued / planning / executing) is not deferred: P5 rejects it
+   * `RunNotTerminalError` (AC-16). Terminal runs and ids this engine does not own are unchanged.
+   *
+   * Dispose intervening (§10.2: once `dispose()` marks the engine disposing, "every other method now
+   * fails with EngineDisposedError … delivered as a rejection from the Promise-returning ones", and
+   * dispose "does not touch persisted results"): if the engine is disposed by the time the deferred
+   * discard would start, it REJECTS `EngineDisposedError` and performs nothing — no resident release,
+   * no store delete — so the set is accounted for by the `DisposeSummary` (`droppedUnsaved` /
+   * `persistenceInFlight`) rather than silently destroyed or falsely reported as discarded.
+   */
+  function discardRun(runId) {
+    const shared = deferredDiscards.get(runId);
+    if (shared !== undefined) return shared;
+    const own = ownRuns.get(runId);
+    const sealedNotTerminal = own !== undefined
+      && !residency.reservationHeld(runId)
+      && own.handle.getSnapshot().phase !== 'terminal';
+    if (!sealedNotTerminal) return discardNow(runId);
+    const afterDone = () => {
+      if (disposed) throw new EngineDisposedError();
+      return discardNow(runId);
+    };
+    // `done` never rejects (§13.5.1 item 1); a rejection is handled like a resolution all the same.
+    const waiting = own.handle.done.then(afterDone, afterDone);
+    const forget = () => { if (deferredDiscards.get(runId) === waiting) deferredDiscards.delete(runId); };
+    waiting.then(forget, forget);                      // observes the rejection too: never unhandled here
+    deferredDiscards.set(runId, waiting);
+    return waiting;
+  }
+
   /** A non-string id is never a runId, so it never reaches `resultStore.delete` (it rejects instead). */
-  defineAsync('discardRun', async (runId) => {
+  defineAsync('discardRun', (runId) => {
     if (typeof runId !== 'string') {
       throw new InvalidOptionsError({ issues: [issue('runId', 'bad-shape', 'runId must be a string')] });
     }
-    await residency.discardRun(runId);
-    pruneOwnRuns();
+    return discardRun(runId);
   });
 
   defineSync('retentionReport', () => ({ ...residency.retentionReport(), readSlotsInUse: reads.inUse() }));
@@ -947,14 +1078,15 @@ export function createEngineCore(config) {
    * it validated and before `fn` sees it; a throw rejects. It is the one hook for a rule that §13.6
    * scopes to by-id reads only (`rerun`'s predicate (ii), R-P7-21); a raw set never reaches it.
    */
-  function withReadSet(input, fn, { checkById = null } = {}) {
+  function withReadSet(input, fn, { checkById = null, signal = null } = {}) {
     try {
       alive();
+      throwIfReadAborted(signal);                      // M3 / D-7: before any slot, capture or store call
       if (typeof input === 'string') {
         return readByIdFor(input, checkById === null ? fn : (set) => {
           if (set !== null) checkById(set, input);
           return fn(set);
-        });
+        }, signal);
       }
       const slot = reads.reserveSync();
       let detached;
@@ -966,7 +1098,9 @@ export function createEngineCore(config) {
       }
       return (async () => {
         try {
-          return await fn(await readResultSet(detached, { limits: effectiveLimits, slicer: newSlicer() }));
+          const set = await readResultSet(detached, { limits: effectiveLimits, slicer: newReadSlicer(signal) });
+          throwIfReadAborted(signal);
+          return await fn(set);
         } finally {
           slot.release();
         }
@@ -976,12 +1110,14 @@ export function createEngineCore(config) {
     }
   }
 
-  /** `withReadSet`'s by-id half. Runs synchronously up to `reads.acquire()` inside `withReadSlot`. */
-  async function readByIdFor(runId, fn) {
+  /** `withReadSet`'s by-id half. Runs synchronously up to `reads.acquire()` inside `withReadSlot`. A
+   *  resident set takes no slot (R-P7-20); the caller's pre-check and `fn`'s own freshness checkpoint
+   *  still honour its signal. */
+  async function readByIdFor(runId, fn, signal = null) {
     const resident = peekResident(runId);
     if (resident !== null) return fn(resident);
     if (!stores.result) return fn(null);
-    return withReadSlot(async () => fn(await readStoredSet(runId)));
+    return withReadSlot(async () => fn(await readStoredSet(runId, signal)), signal);
   }
 
   /** A by-id miss has no freshness to compute and no claim to judge (§13.5.2 nonresident table): a
@@ -993,20 +1129,53 @@ export function createEngineCore(config) {
 
   /** §16.4, against the live registry of this world and this engine's enumerator: P6's frozen
    *  `Freshness` object `{state, reasons}`, never reduced to its state (R3, N19). */
-  const liveFreshness = (set) => readTimeFreshness(set, { registry: coordinator.registry, enumerator });
+  /**
+   * M3 / D-7 — a SIGNALLED freshness pass. The engine supplies the enumeration context: its
+   * `checkpoint()` throws `EnumerationCancelledError` once the signal is aborted, which
+   * `checkScopeBracket` propagates unwrapped (it swallows every OTHER enumerator error into
+   * `unverifiable`), and the engine maps it to `ReadAbortedError`. The signal is checked once more
+   * when the pass settles, so an abort that a non-cooperating enumerator never observed, or that it
+   * turned into another error, still REJECTS: an aborted read is never a resolved
+   * `{state: 'unverifiable'}`. Without a signal it is exactly the unsignalled call.
+   */
+  async function liveFreshness(set, signal = null) {
+    if (signal === null) return readTimeFreshness(set, { registry: coordinator.registry, enumerator });
+    const ctx = {
+      checkpoint() { if (signal.aborted) throw new EnumerationCancelledError({ reason: 'read-aborted' }); },
+    };
+    let freshness;
+    try {
+      freshness = await readTimeFreshness(set, { registry: coordinator.registry, enumerator, ctx });
+    } catch (err) {
+      if (signal.aborted && err?.name === 'EnumerationCancelledError') throw new ReadAbortedError();
+      throw err;
+    }
+    throwIfReadAborted(signal);
+    return freshness;
+  }
 
-  defineAsync('getFreshness', (input) => withReadSet(input, (set) => liveFreshness(requireSet(input, set))));
+  defineAsync('getFreshness', (input, readOptions = undefined) => {
+    const signal = readReadOptions(readOptions);
+    return withReadSet(input, (set) => liveFreshness(requireSet(input, set), signal), { signal });
+  });
   // Both claim methods recompute freshness and hand P5 the Freshness OBJECT straight through, so a
   // `stale`/`unverifiable` refusal carries §16.4's reasons as qualifiers. `canClaimNoClashes` is true
-  // only when the assessment is `unqualified` (P5).
-  defineAsync('canClaimNoClashes', (input) => withReadSet(input, async (set) => {
-    const checked = requireSet(input, set);
-    return canClaim(checked, await liveFreshness(checked));
-  }));
-  defineAsync('assessNoClashClaim', (input) => withReadSet(input, async (set) => {
-    const checked = requireSet(input, set);
-    return assessClaim(checked, await liveFreshness(checked));
-  }));
+  // only when the assessment is `unqualified` (P5). P5's pure claim helpers wait on nothing and take no
+  // signal; these engine methods read (and may wait on a slot), so they take `{signal?}` (M3 / D-7).
+  defineAsync('canClaimNoClashes', (input, readOptions = undefined) => {
+    const signal = readReadOptions(readOptions);
+    return withReadSet(input, async (set) => {
+      const checked = requireSet(input, set);
+      return canClaim(checked, await liveFreshness(checked, signal));
+    }, { signal });
+  });
+  defineAsync('assessNoClashClaim', (input, readOptions = undefined) => {
+    const signal = readReadOptions(readOptions);
+    return withReadSet(input, async (set) => {
+      const checked = requireSet(input, set);
+      return assessClaim(checked, await liveFreshness(checked, signal));
+    }, { signal });
+  });
 
   /** §16.2's recommended single call: P1 bumps `placementGeneration`, then invalidates the world's placement. */
   defineSync('invalidateModelPlacement', (modelKey) => { coordinator.registry.invalidateModelPlacement(modelKey); });
@@ -1019,18 +1188,19 @@ export function createEngineCore(config) {
   // read prefix of every `runIdOrResultSet` method, then the ONE admission sequence of `startRun`.
   // Only the option bag, the `no-embedded-definition` rule and predicate (ii) are rerun's own.
 
-  const RERUN_OPTION_KEYS = Object.freeze(['definitionRevision', 'runOptions']);
+  const RERUN_OPTION_KEYS = Object.freeze(['definitionRevision', 'runOptions', 'signal']);
 
   /**
    * `rerun`'s option bag, read ONCE in the caller's turn: `undefined`, or a plain object whose own keys
-   * are among `definitionRevision` / `runOptions`, each a DATA property (a getter is refused, never
-   * invoked). `definitionRevision` is absent or a §5.3 revision (a safe integer >= 1). The returned
+   * are among `definitionRevision` / `runOptions` / `signal`, each a DATA property (a getter is refused,
+   * never invoked). `definitionRevision` is absent or a §5.3 revision (a safe integer >= 1); `signal`
+   * is absent or an AbortSignal (owner ruling M3 / D-7: it covers the READ phase only). The returned
    * `runOptions` is still the caller's object: `resolveRunOptions` takes its detached copy next, in the
    * same synchronous step.
    * @throws {InvalidOptionsError}
    */
   function readRerunOptions(opts) {
-    if (opts === undefined) return { definitionRevision: undefined, runOptions: undefined };
+    if (opts === undefined) return { definitionRevision: undefined, runOptions: undefined, signal: null };
     const refuse = (issues) => { throw new InvalidOptionsError({ issues }); };
     if (!isPlainRecord(opts)) return refuse([issue('', 'bad-shape', 'rerun options must be a plain object')]);
     let own;
@@ -1053,7 +1223,10 @@ export function createEngineCore(config) {
         values[key] = own[key].value;
       }
     }
-    const { definitionRevision, runOptions } = values;
+    const { definitionRevision, runOptions, signal } = values;
+    if (signal !== undefined && !isAbortSignal(signal)) {
+      issues.push(issue('/signal', 'bad-shape', 'signal must be an AbortSignal'));
+    }
     if (definitionRevision !== undefined) {
       if (!Number.isSafeInteger(definitionRevision)) {
         issues.push(issue('/definitionRevision', 'not-an-integer', 'definitionRevision must be a finite integer'));
@@ -1062,7 +1235,7 @@ export function createEngineCore(config) {
       }
     }
     if (issues.length > 0) return refuse(issues);
-    return { definitionRevision, runOptions };
+    return { definitionRevision, runOptions, signal: signal ?? null };
   }
 
   /** `resolveRunOptions` against the RESOLVED engine limits (N31), with its issues re-rooted under
@@ -1080,8 +1253,9 @@ export function createEngineCore(config) {
   }
 
   /**
-   * Spec §13.6 "Exact `ResultSetTooLargeError` predicate", clause (ii) (R-P7-21, AC-11): a VALID set
-   * read by id for `rerun` whose result count, ledger-record count or retained-diagnostic count
+   * Spec §13.6 "Exact `ResultSetTooLargeError` predicate", clause (ii) (R-P7-21, AC-11; erratum A16 —
+   * a `rerun` admission check ONLY: `getResultSet`, `getFreshness` and the claim methods never apply it,
+   * and a raw-set base is exempt): a VALID set read by id as the base of a `rerun` whose result count, ledger-record count or retained-diagnostic count
    * exceeds the reading engine's effective `maxResultsPerRun` / `maxLedgerRecords` /
    * `maxRetainedDiagnostics` is `ResultSetTooLargeError{runId}` — never a corruption finding. These
    * three are RunOptions (§17.1.1 ownership), so "effective" is THIS rerun's resolved options (the
@@ -1120,9 +1294,13 @@ export function createEngineCore(config) {
    * slot is released on every exit. The base set is only read (it is deep-frozen), never mutated, and
    * the rerun re-plans and re-executes everything (no incremental rerun, §23). Comparability with the
    * base (§15.2) is not asserted here: it is reported by the comparison layer.
+   *
+   * `signal` (owner ruling M3 / D-7) covers the READ phase only, like every other read: an abort
+   * before admission rejects `ReadAbortedError`, starts no run and holds no run slot (it is checked
+   * once more right before `admitAndBegin`). After admission it is ignored; cancel with `handle.cancel`.
    */
   function rerun(input, opts) {
-    const { definitionRevision, runOptions } = readRerunOptions(opts);
+    const { definitionRevision, runOptions, signal } = readRerunOptions(opts);
     const options = resolveRerunRunOptions(runOptions);
     if (definitionRevision !== undefined) requireStore('testStore');
     return withReadSet(input, (set) => {
@@ -1138,8 +1316,9 @@ export function createEngineCore(config) {
       const source = definitionRevision === undefined
         ? { kind: 'definition', value: baseSet.definition }
         : { kind: 'reference', value: { testId: baseSet.testRef.testId, revision: definitionRevision } };
+      throwIfReadAborted(signal);                      // the last point the read phase can be aborted
       return admitAndBegin({ source, options, derivedFromRunId: baseSet.runId, resolver: runResolver });
-    }, { checkById: (set, runId) => assertRerunReadable(set, runId, options) });
+    }, { checkById: (set, runId) => assertRerunReadable(set, runId, options), signal });
   }
 
   defineAsync('rerun', rerun);

@@ -1479,7 +1479,7 @@ function* checkOrderAndUniquenessSteps(set, add) {
 
 /**
  * P5-REM5 item 5: the canonical-JSON SHA-256 of `value`, as a step generator -- one `yield` per array
- * element / object property, so a 1,000,000-result projection is hashed in §17.3-bounded steps.
+ * element / object property, so a projection of up to 956,824 results (the maxResultsPerRun ceiling, erratum A11) is hashed in §17.3-bounded steps.
  * Byte-identical to P0's `digestCanonical` (asserted in validateResultSet.slicing.test.mjs, and by
  * every sealed fixture's recorded digest still matching): primitives and keys are serialised by P0's
  * own `canonicalJson`, keys are sorted in the same UTF-16 code-unit order, and text is hashed in

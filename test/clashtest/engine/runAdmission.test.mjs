@@ -182,7 +182,7 @@ test('provenanceBase carries the engine-level facts and the closed static fields
   assert.deepEqual(provenance.scopeProof, { method: 'bracketed-digest', digestVersion: DIGEST_VERSION });
   assert.deepEqual(provenance.hierarchyInternalAcceptance, { recordRef: 'docs/acceptance.md' });
   assert.equal(provenance.placementVerified, false);
-  assert.deepEqual(provenance.libraryExclusions, [], 'provisional (owner item D-2): informational only');
+  assert.deepEqual(provenance.libraryExclusions, [], 'placeholder base: Run.provenanceOf always overrides libraryExclusions from the sealed ledger (owner ruling M1)');
   assert.deepEqual(Object.keys(provenance).sort(), [
     'broadPhase', 'determinismClass', 'finishedAt', 'hierarchyInternalAcceptance', 'libraryExclusions',
     'libraryVersion', 'placementVerified', 'registrySessionId', 'scopeProof', 'startedAt',

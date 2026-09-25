@@ -57,6 +57,10 @@ export const MAX_UNIT_TAINTS = RUN_OPTION_CEILINGS.maxLedgerRecords;
 export const STRING_CAPS = Object.freeze({
   modelKey: 1024, modelVersion: 1024, libraryVersion: 256, environmentField: 512,
   id: 256, reason: 256, timestamp: 64, digest: 128, default: 1024,
+  // `hierarchyInternalAcceptance.recordRef` is a caller-supplied acceptance-record reference, capped at 512 code
+  // units by the frozen spec (§8.3, §18, AC-20(d)) and by the engine's construction check. It must NOT share the
+  // generic `id` cap (256): a 257..512-unit ref would seal and persist, then fail every read-back (P7 review H1).
+  recordRef: 512,
 });
 export const HIERARCHY_EXAMPLES_CAP = 20;                          // §13.1: the bounded examples list
 
@@ -146,7 +150,7 @@ export const TYPES = new Map(Object.entries({
   RootDigest: { fields: { dbId: dbId(), subtreeDigest: digest() } },
   ScopeProof: { fields: { method: lit('bracketed-digest'), digestVersion: lit(DIGEST_VERSION) } },
   AdmissionBaseline: { fields: { modelKey: str('modelKey'), epochInstanceCount: int() } },
-  Acceptance: { fields: { recordRef: str('id') } },
+  Acceptance: { fields: { recordRef: str('recordRef') } },
   Environment: { fields: { viewerVersion: str('environmentField', { optional: true }),
     userAgent: str('environmentField', { optional: true }) } },
   Ledger: { open: true, fields: {
@@ -321,7 +325,7 @@ const specOf = (of) => (typeof of === 'string' ? { kind: 'object', of } : of);
 // declared field, every own key and every node of an unknown field's value is one `yield SHAPE_STEP`,
 // so `readResultSet`'s driver (one P0 `slicer.tick` per step, clock checked every 64 ticks) meets
 // §17.3's "checks the injected `now` at least every 64 items" inside this phase too -- previously the
-// whole structural walk (up to 1,000,000 results / ~16M nodes) ran as ONE synchronous span between
+// whole structural walk (up to 956,824 results, the maxResultsPerRun ceiling (erratum A11) / ~16M nodes) ran as ONE synchronous span between
 // two per-phase yields. `drain` is the synchronous form (labels ignored) for callers that do not
 // slice (`validateResultSetSummary`, `checkShapeAndUnknownFields`), so the two forms share every line
 // of logic and cannot drift. Scalar kinds stay plain synchronous calls: they do O(1) work.

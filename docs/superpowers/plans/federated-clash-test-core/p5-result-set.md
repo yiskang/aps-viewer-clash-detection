@@ -53,7 +53,7 @@ Every export of P5. Later phases consume these names and must not re-implement t
 | `validateResultSetSummary` | `clashtest/results/validateResultSet.js` | `(summary, {limits}) → {ok, issues}` | Closed `ResultSetSummary` shape for listings (§13.5). |
 | `createInMemoryResultStore` | `clashtest/results/InMemoryResultStore.js` | `({now?}) → ResultStore` | Reference `put`/`get`/`list`/`delete`/`tombstoneTest`/`isTombstoned`. |
 | `createResidencyManager` | `clashtest/results/residency.js` | `({limits, resultStore, now, onPersistence}) → ResidencyManager` | Slot accounting, classes, retain/release/discard, persistence attempts. |
-| `createReadCoordinator` | `clashtest/results/residency.js` | `({limits}) → {reserveSync() → slot, acquire() → Promise<slot>, inUse() → number}` | Read slots: synchronous reserve-or-reject for raw sets, FIFO for by-id reads. |
+| `createReadCoordinator` | `clashtest/results/residency.js` | `({limits}) → {reserveSync() → slot, acquire({signal}?) → Promise<slot>, inUse() → number}` | Read slots: synchronous reserve-or-reject for raw sets, FIFO for by-id reads. **Delta (2026-09-25, owner ruling M3 / D-7, spec A17 — additive, owner-authorized change to accepted P5 code):** `acquire` takes an optional `signal`; already aborted ⇒ `ReadAbortedError` with no slot and no queue entry; aborted while queued ⇒ the waiter is removed from the FIFO (no longer counts against `maxQueuedStoreReads`, never granted) and rejects `ReadAbortedError`; the listener is removed on grant. FIFO order, one-shot release and `ReadCapacityError` unchanged. Tests: `test/clashtest/results/readCoordinator.abort.test.mjs`. |
 
 `ResidencyManager` surface (all synchronous unless stated): `reserveRunSlot(runId)`, `releaseRunSlot(runId)`, `reservationHeld(runId) → boolean`, `admitSealedSet(runId, resultSet)`, `beginPersist(runId, {persist}) → Promise<PersistenceOutcome>`, `getPersistenceState(runId) → PersistenceSnapshot|null`, `retryPersist(runId) → Promise<PersistenceOutcome>`, `retainResultSet(runId) → {release()}`, `releaseResultSet(runId, {acknowledgeUnsaved})`, `discardRun(runId) → Promise<void>`, `getResident(runId) → ResultSet|null`, `touch(runId)`, `retentionReport() → object`, `drainForDispose() → {droppedUnsaved, persistenceInFlight}`.
 
@@ -81,7 +81,7 @@ The spec fixes the *meaning* of the ledger but never its exact JSON; `validateRe
  *                                                                         `ROOT_CLASS = {A_ONLY:'A', B_ONLY:'B', BOTH:'C'}`);
  *                                                                         'C' = the root is in A ∩ B. Persisted AND digested.
  *  @property {Array<{selectionRole: 'A'|'B', modelKey: string|null, cause: string, dbIds: number[]}>} unresolvedSelections
- *  @property {Array<{modelKey: string, ownerDbIds: number[], mixedOwnerDbIds: number[],
+ *  @property {Array<{modelKey: string, count: number, ownerDbIds: number[], mixedOwnerDbIds: number[],
  *                    unattributable: {notLoaded: number, ownerUnresolvable: number}}>} unreachablePopulation
  *  @property {Array<{modelKey: string, rootCount: number, ownerCount: number,
  *                    examples: Array<{rootDbId: number, ownerDbIds: number[]}>}>} hierarchyInternal
@@ -1432,7 +1432,7 @@ So P5 pins a **closed structural schema** — every durable type, every field �
 | `ScopeDigests` | `population` `{count: int ≥ 0, digest}`\|null · `roots` `{dbId, subtreeDigest: digest}[]` unique by `dbId` |
 | `ScopeProof` | `method` = literal `'bracketed-digest'` · `digestVersion` = literal `DIGEST_VERSION` |
 | `AdmissionBaseline` | `modelKey` string(modelKey) · `epochInstanceCount` int ≥ 0 |
-| `Acceptance` | `recordRef` string(id) |
+| `Acceptance` | `recordRef` string(recordRef) — cap 512 (erratum 2026-09-25) |
 | `Environment` | `viewerVersion`/`userAgent` string(environmentField), both optional |
 | `Ledger` † | `planExists` bool · `pairSpaceTotal` int ≥ 0 · `emptyOperand` bool · `units` `UnitRecord[]` ≤ `RUN_OPTION_CEILINGS.maxUnitsPerRun`, unique by `unitId` · `rootOwners` `RootOwners[]` unique by `modelKey` · `unresolvedSelections` `UnresolvedSelection[]` · `unreachablePopulation` `UnreachablePopulation[]` unique by `modelKey` · `hierarchyInternal` `HierarchyInternal[]` unique by `modelKey` · `planningGaps` `PlanningGap[]` · `exclusions` string(reason)[] unique · `warnings` `Warning[]` · `budgetExhausted` bool · `firstRefusalUnitId` string(id)\|null |
 | `UnitRecord` | `unitId` string(id) · `kind` enum(`leaf`,`split`) · `parentUnitId` string(id)\|null · `sourceModelKey` string(modelKey) · `sourceRootDbIds` dbId[] unique · `targets` `UnitTarget[]` unique by `modelKey` · `outcome` enum(`evaluated`,`failed`,`skipped`,`discarded`,`not-run`,`split`) · `cause` string(reason)\|null · `secondaryCauses` string(reason)[] unique · `capacityKind` string(reason)\|null · `capDetail` enum(`ledger-records`,`unit-records`)\|null · `scopeProof` enum(`equal`,`drift`,`unverifiable`,`not-checked`) · `pairSpaceWeight` int ≥ 0 · `taints` `Taint[]` ≤ `RUN_OPTION_CEILINGS.maxElementTaintsPerUnit` · `attempts` int ≥ 0 · `durationMs` int ≥ 0 |
@@ -1441,7 +1441,7 @@ So P5 pins a **closed structural schema** — every durable type, every field �
 | `RootOwners` | `modelKey` string(modelKey) · `owners` `RootOwnerRow[]` **unique by `rootDbId`** |
 | `RootOwnerRow` | `rootDbId` dbId · `ownerDbIds` dbId[] unique · `cls` enum(`A`,`B`,`C`) → **`root-cls-invalid`** |
 | `UnresolvedSelection` | `selectionRole` enum(`A`,`B`) · `modelKey` string(modelKey)\|null · `cause` string(reason) · `dbIds` dbId[] unique |
-| `UnreachablePopulation` | `modelKey` string(modelKey) · `ownerDbIds` dbId[] unique · `mixedOwnerDbIds` dbId[] unique · `unattributable` `{notLoaded: int ≥ 0, ownerUnresolvable: int ≥ 0}` |
+| `UnreachablePopulation` | `modelKey` string(modelKey) · `count` int ≥ 0 (loaded, owner-resolvable fragments in no root subtree; spec §6.2; added by D-A, `7514d54`) · `ownerDbIds` dbId[] unique · `mixedOwnerDbIds` dbId[] unique · `unattributable` `{notLoaded: int ≥ 0, ownerUnresolvable: int ≥ 0}` |
 | `HierarchyInternal` | `modelKey` string(modelKey) · `rootCount`/`ownerCount` int ≥ 0 · `examples` `{rootDbId, ownerDbIds: dbId[]}[]` ≤ `HIERARCHY_EXAMPLES_CAP` |
 | `PlanningGap` | `phase` string(reason) · `cause` string(reason) |
 | `Warning` | `code` string(reason) · `modelKey` string(modelKey) (optional) |
@@ -1463,7 +1463,7 @@ Three deliberate non-rows, each with its reason:
 2. **`statistics`, `provenance.runOptions` and `diagnostics.countsByReason`** are *documented* fields with undocumented (or open-ended) contents: §12.6 calls `statistics` "aggregated, informational". They are checked as plain objects (`countsByReason` additionally as a bounded count-map) and their contents are bounded by the capture node ceiling — **not** by the unknown-field budget, because they are documented fields, not unknown ones. `isOpenPath` returns `false` inside them, which is what makes that statement true rather than merely intended.
 3. **Digest strings** are `/^sha256:[0-9a-f]{64}$/` (§5.4's format), not merely "a string" — the syntax check is what stops a malformed digest reaching `checkDigests` and being reported as a content mismatch.
 
-**Where the numbers come from.** Array ceilings are read from P0's `RUN_OPTION_CEILINGS` / `ENGINE_LIMIT_CEILINGS` (§17.1.1) and **never** from the reading engine's configured run options (§13.6: "a valid set produced under a larger configuration must not become corrupt under a smaller one"). The **per-field string caps** are a P5-owned, spec-derived table by P0's own ruling ("there is no schema-wide string-length ceiling in the spec; a per-path `stringLimitFor` is P5's own table" — P0 *Not exported from `options.js`*), so `STRING_CAPS` lives in `resultSetSchema.js` beside the fields it caps, sourced from §13.5.2: `modelKey`/`modelVersion` 1,024, `libraryVersion` 256, `environmentField` 512, plus P5's own `id`/`reason`/`timestamp`/`default` caps. Like `MAX_DEPTH = 64` and `MAX_ISSUES = 20`, these are **data-format** constants, not G-CAL-gated §17.1 defaults, which is why they are not in `options.js`. `HIERARCHY_EXAMPLES_CAP = 20` is the same kind of constant (§13.1's bounded `examples`).
+**Where the numbers come from.** Array ceilings are read from P0's `RUN_OPTION_CEILINGS` / `ENGINE_LIMIT_CEILINGS` (§17.1.1) and **never** from the reading engine's configured run options (§13.6: "a valid set produced under a larger configuration must not become corrupt under a smaller one"). The **per-field string caps** are a P5-owned, spec-derived table by P0's own ruling ("there is no schema-wide string-length ceiling in the spec; a per-path `stringLimitFor` is P5's own table" — P0 *Not exported from `options.js`*), so `STRING_CAPS` lives in `resultSetSchema.js` beside the fields it caps, sourced from §13.5.2: `modelKey`/`modelVersion` 1,024, `libraryVersion` 256, `environmentField` 512, `recordRef` 512, plus P5's own `id`/`reason`/`timestamp`/`default` caps. **Erratum (2026-09-25, owner ruling H1 of the P7 independent-review adjudication):** this plan originally typed `Acceptance.recordRef` as `str('id')` (256), which contradicted the frozen spec's 512-code-unit `recordRef` limit (§8.3, §18, AC-20(d)) and enforced by the engine — a 257–512-unit ref sealed and persisted, then failed every read-back. `STRING_CAPS.recordRef = 512` is the dedicated cap and `Acceptance.recordRef` is `str('recordRef')`; the generic `id` cap stays 256. Boundary tests: `test/clashtest/integration/recordRef.producerReader.test.mjs`. Like `MAX_DEPTH = 64` and `MAX_ISSUES = 20`, these are **data-format** constants, not G-CAL-gated §17.1 defaults, which is why they are not in `options.js`. `HIERARCHY_EXAMPLES_CAP = 20` is the same kind of constant (§13.1's bounded `examples`).
 
 **Validation rule table** (each row is one `{path, code}` issue; the first 20 are reported, never a value). The **structural** phase above runs **first and in full**; the rows below are the cross-field, linkage, order and digest phases that may then assume a well-shaped set:
 
@@ -1845,6 +1845,7 @@ import { SCHEMA_VERSION, ENVIRONMENT_CAUSES } from './resultSet.js';
 export const STRING_CAPS = Object.freeze({
   modelKey: 1024, modelVersion: 1024, libraryVersion: 256, environmentField: 512,
   id: 256, reason: 256, timestamp: 64, digest: 128, default: 1024,
+  recordRef: 512,                                                  // erratum 2026-09-25 (H1): the spec's §8.3 cap, NOT `id`
 });
 export const HIERARCHY_EXAMPLES_CAP = 20;                          // §13.1: the bounded examples list
 export const UNKNOWN_FIELD_BYTES = 64 * 1024;                      // §13.6's budget — a DATA-FORMAT
@@ -1939,7 +1940,7 @@ export const TYPES = new Map(Object.entries({
   RootDigest: { fields: { dbId: dbId(), subtreeDigest: digest() } },
   ScopeProof: { fields: { method: lit('bracketed-digest'), digestVersion: lit(DIGEST_VERSION) } },
   AdmissionBaseline: { fields: { modelKey: str('modelKey'), epochInstanceCount: int() } },
-  Acceptance: { fields: { recordRef: str('id') } },
+  Acceptance: { fields: { recordRef: str('recordRef') } },
   Environment: { fields: { viewerVersion: str('environmentField', { optional: true }),
                            userAgent: str('environmentField', { optional: true }) } },
   Ledger: { open: true, fields: {
@@ -1992,7 +1993,7 @@ export const TYPES = new Map(Object.entries({
   UnresolvedSelection: { fields: { selectionRole: enm(['A', 'B']),
                                    modelKey: str('modelKey', { nullable: true }),
                                    cause: str('reason'), dbIds: ids() } },
-  UnreachablePopulation: { fields: { modelKey: str('modelKey'), ownerDbIds: ids(),
+  UnreachablePopulation: { fields: { modelKey: str('modelKey'), count: int(), ownerDbIds: ids(),   // `count`: D-A (`7514d54`), spec §6.2
                                      mixedOwnerDbIds: ids(), unattributable: obj('Unattributable') } },
   Unattributable: { fields: { notLoaded: int(), ownerUnresolvable: int() } },
   HierarchyInternal: { fields: { modelKey: str('modelKey'), rootCount: int(), ownerCount: int(),

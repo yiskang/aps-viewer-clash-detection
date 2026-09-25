@@ -17,7 +17,8 @@
 //     getResultSet"), and the same reasoning P5 records for `retentionReport` applies — a panel that
 //     polls freshness must not pin whatever it looked at last. Pinned below.
 //   - `maxQueuedStoreReads: 8` (the §17.1 default) is the named, non-default `QUEUE_DEPTH` (G-CAL).
-//   - `recordRef` values stay within 256 code units (owner item D-3, R-P7-7).
+//   - `recordRef` values are short here; the owner item D-3 256-unit constraint no longer applies (H1: the schema now caps
+//     recordRef at the spec's 512, see integration/recordRef.producerReader.test.mjs).
 //
 // C-P7-3 / G-EC: nothing here reads `testIdOfInput` or `provenance.models[].elementCount`. G-CAL: no
 // §17.1 default is written as a literal; time is a fake clock; no wall-clock assertion.

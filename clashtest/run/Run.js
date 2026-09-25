@@ -474,6 +474,7 @@ function cancelWhileQueued(run) {
  *  touches the records whose assembly may just have failed. */
 function resultParts(run, outcome, diagnostics, override = null) {
   const resolved = run.resolution !== undefined;
+  const ledger = override?.ledger ?? run.ledger.toLedgerRecord();
   return {
     runId: run.runId,
     testRef: resolved
@@ -485,9 +486,10 @@ function resultParts(run, outcome, diagnostics, override = null) {
     // error instead of a silently dropped rerun lineage.
     derivedFromRunId: run.derivedFromRunId,
     outcome,
-    // provenanceBase + models + admissionBaseline (the R10 fallback may supply its own, see there)
-    provenance: override?.provenance ?? run.provenance(),
-    ledger: override?.ledger ?? run.ledger.toLedgerRecord(),   // A17: arrays-only, P5's pinned shape
+    // provenanceBase + models + admissionBaseline (the R10 fallback may supply its own, see there).
+    // M1: `libraryExclusions` comes from THIS set's ledger, so both are read from the one record.
+    provenance: override?.provenance ?? run.provenance({ ledger }),
+    ledger,                                               // A17: arrays-only, P5's pinned shape
     // C2: ALWAYS defined — `EMPTY_RESULTS` before planning, P5's accumulator after it. This is the
     // one call every pre-resolution path makes, and the reason the holder exists at all.
     results: override?.results ?? run.results.toArray(),       // A12: the accumulator
@@ -1048,7 +1050,7 @@ function snapshotGenerationsFor(run, unit) {
  * fallback, which seals its unit-free set with `planRows: false` (no model rows) so the broken plan
  * cannot also defeat the fallback.
  */
-function provenanceOf(run, { planRows = true } = {}) {
+function provenanceOf(run, { planRows = true, ledger = undefined } = {}) {
   const models = [];
   if (planRows && run.snapshot !== undefined && run.plan !== undefined) {
     run.snapshotKeys.forEach((modelKey, i) => {
@@ -1061,8 +1063,16 @@ function provenanceOf(run, { planRows = true } = {}) {
       });
     });
   }
+  // Owner ruling M1 (P7 independent-review adjudication): `libraryExclusions` is carried from the ledger
+  // the set actually SEALS — the single source of truth — never recomputed and never the engine's static
+  // placeholder. The caller passes the very ledger record it is about to seal (`resultParts`; the R10
+  // fallback passes `emptyLedgerRecord`, whose exclusions are `[]`); only a caller that has none falls
+  // back to the run's own ledger, which exists on every seal path. Order is the ledger's (code-unit
+  // sorted, ledger.js); the copy keeps the sealed provenance from aliasing the ledger's array.
+  const sealedLedger = ledger ?? run.ledger?.toLedgerRecord();
   return {
     ...run.spec.provenanceBase,
+    libraryExclusions: [...(sealedLedger?.exclusions ?? [])],
     runOptions: run.runOptions,
     models,
     admissionBaseline: run.admissionBaseline ?? [],
@@ -1274,7 +1284,9 @@ async function terminalInternalError(run, error) {
     // unit-free and result-free, so it needs no plan-time model rows: it keeps the full provenance when
     // that can be built and otherwise drops only the `models` rows — never fabricates them.
     let provenance;
-    try { provenance = run.provenance(); } catch { provenance = provenanceOf(run, { planRows: false }); }
+    // M1: the fallback set seals `ledger` (exclusions `[]`), so its provenance states the same, not the
+    // live run ledger's exclusions.
+    try { provenance = provenanceOf(run, { ledger }); } catch { provenance = provenanceOf(run, { planRows: false, ledger }); }
     const draft = run.spec.resultPort.buildResultSet(
       resultParts(run, outcome, diagnostics, { ledger, results: [], provenance }));
     resultSet = await run.spec.resultPort.sealResultSet(draft, { slicer: run.slicer() });
@@ -1571,7 +1583,7 @@ function installRunMethods(run) {
     emit: (type, payload) => run.emitter.emit(type, payload),
     seq: () => run.progress.committed.seq,
     bumpSeq: () => commit(run).seq,
-    provenance: () => provenanceOf(run),
+    provenance: (options) => provenanceOf(run, options),
     enumerationCheckpoint: () => enumerationCheckpoint(run),
     interUnitYield: () => run.spec.yieldToScheduler(),
     collectBoundaryFacts: (extra) => collectBoundaryFacts(run, extra),
