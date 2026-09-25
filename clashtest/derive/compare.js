@@ -37,7 +37,7 @@ function comparabilityOf(base, next, conflictKeys) {
   for (const [k, m] of bm) {
     const n = nm.get(k); if (!n) { sameEnumeration = false; sameVersions = false; continue; }
     if (m.modelVersion !== n.modelVersion) sameVersions = false;
-    else if (canonicalJson(m.scopeDigests) !== canonicalJson(n.scopeDigests)) { sameEnumeration = false; notes.push(`scope-digest-mismatch:${k}`); }
+    if (canonicalJson(m.scopeDigests) !== canonicalJson(n.scopeDigests)) { sameEnumeration = false; notes.push(`scope-digest-mismatch:${k}`); }   // 15.2: independent of modelVersion
     if (m.placementGeneration !== n.placementGeneration) sameGen = false;
   }
   const bc = cls(base); const nc = cls(next); const dc = weaker(bc, nc);

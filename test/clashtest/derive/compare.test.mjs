@@ -164,3 +164,20 @@ test('matches a synchronous reference implementation on randomized set pairs (se
     for (const k of Object.keys(exp)) assert.deepEqual(ids(got[k]), exp[k], `${k} round ${round}`);
   }
 });
+
+test('scope digests are compared independently of modelVersion: version mismatch + digest mismatch => sameEnumeration false, note present, identityConflicts populated', async () => {
+  const dg = (digest) => ({ M: { population: { count: 1, digest }, roots: [] } });
+  const v2 = { models: [{ ...models[0], modelVersion: 'v2' }] };
+  const base = mk({ scopeDigests: dg('x'), units: [cover([200])], results: [pr(200)] });
+  const next = makeResultSet({ ...v2, scopeDigests: dg('y'), units: [cover([200])], results: [pr(200)] });
+  const c = await cmp(base, next);
+  assert.equal(c.comparability.sameEnumeration, false);
+  assert.equal(c.comparability.sameModelVersions, false);
+  assert.deepEqual(ids(c.identityConflicts), [200]);
+  assert.ok(c.comparability.notes.includes('scope-digest-mismatch:M'));
+  // control: versions differ but digests are equal => enumeration still the same, no scope note
+  const ctl = await cmp(mk({ scopeDigests: dg('x'), units: [cover([200])], results: [pr(200)] }), makeResultSet({ ...v2, scopeDigests: dg('x'), units: [cover([200])], results: [pr(200)] }));
+  assert.equal(ctl.comparability.sameEnumeration, true);
+  assert.equal(ctl.comparability.sameModelVersions, false);
+  assert.ok(!ctl.comparability.notes.some((n) => n.startsWith('scope-digest-mismatch')));
+});
