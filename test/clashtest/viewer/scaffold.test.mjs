@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DIR = fileURLToPath(new URL('../../../clashtest/viewer/', import.meta.url));
-const EXPECTED_MODULES = ['errors.js', 'checkpoint.js', 'readiness.js', 'treeWalk.js', 'populationScan.js', 'ViewerElementEnumerator.js'];
+const EXPECTED_MODULES = ['errors.js', 'checkpoint.js', 'readiness.js', 'treeWalk.js', 'populationScan.js', 'ViewerElementEnumerator.js', 'unloadWiring.js'];
 
 test('scaffold: every production module created so far exists', () => {
   for (const name of EXPECTED_MODULES) assert.ok(existsSync(join(DIR, name)), `clashtest/viewer/${name} is missing`);
