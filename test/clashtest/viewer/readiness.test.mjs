@@ -16,7 +16,7 @@ test('ready fast path: returns the tree, calls no getObjectTree callback wait', 
   assert.ok(calls.n >= 1, 'a checkpoint runs BEFORE the model is read');
 });
 
-test('checkpoint runs before the first model read (liveness discipline)', async () => {
+test('checkpoint runs before the first model read (cancellation / engine checkpoint discipline)', async () => {
   const { model } = rootedModel([]);
   const order = [];
   const probe = { ...model, isObjectTreeCreated() { order.push('read'); return true; } };

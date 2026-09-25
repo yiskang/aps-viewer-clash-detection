@@ -52,14 +52,14 @@ function waitForTree(model, ctx, { scheduleTimeout, clearScheduled, pollMs }) {
 export async function awaitObjectTree(model, ctx, {
   scheduleTimeout = (fn, ms) => setTimeout(fn, ms), clearScheduled = (t) => clearTimeout(t), pollMs = DEFAULT_READINESS_POLL_MS,
 } = {}) {
-  { const p = checkpointNow(ctx); if (p) await p; } // liveness BEFORE the first model read, same tick when sync ("Item D")
+  { const p = checkpointNow(ctx); if (p) await p; } // cancellation / engine checkpoint BEFORE the first model read, same tick when sync ("Item D")
   const ready = typeof model?.isObjectTreeCreated === 'function' && model.isObjectTreeCreated() === true;
   if (!ready) {
     if (typeof model?.getObjectTree !== 'function') {
       throw new ObjectTreeUnavailableError(modelIdOf(model), new Error('model exposes no object-tree accessor'));
     }
     await waitForTree(model, ctx, { scheduleTimeout, clearScheduled, pollMs });
-    // The wait is an asynchronous boundary (an unload can land during it): re-validate liveness before the final read.
+    // The wait is an asynchronous boundary (an unload can land during it): run the cancellation / engine checkpoint again before the final read.
     { const p = checkpointNow(ctx); if (p) await p; }
   }
   const tree = model.getObjectTree();

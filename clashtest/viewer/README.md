@@ -83,6 +83,7 @@ children, or a population over 20,000 fails the whole run at planning.
 whole-model index and the per-root visited sets are O(nodes), the same order as the Viewer's own resident tree.
 T3 measures their size and time under G-CAL; nothing is capped or asserted here, and a node ceiling would be a new
 public limit this milestone is not authorized to add.
+The same class of residual applies to explicit scopes: retention across the requested roots is charged per root (≤ maxFragmentsPerDbId each) but not against a whole-population ceiling; it is bounded by the number of requested roots and, because a fragment shared by two roots is a defect, by the model's own fragment count.
 
 ## Registration recipe
 

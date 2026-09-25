@@ -12,7 +12,7 @@ import { scanPopulation } from './populationScan.js';
 const asc = (a, b) => a - b;
 const uniqueAscending = (ids) => [...new Set(ids)].sort(asc);
 
-/** A P0 slicer whose yield IS the engine's checkpoint: every CHECK_EVERY items the engine validates liveness/cancellation. */
+/** A P0 slicer whose yield IS the engine's checkpoint: every CHECK_EVERY items the engine runs its cancellation / engine checkpoint. */
 const digestSlicer = (ctx) => createSlicer({ yieldToScheduler: () => ctx.checkpoint(), maxItemsPerSlice: CHECK_EVERY });
 
 async function subtreeRecords(owners, fragList, ctx) {
@@ -86,7 +86,7 @@ export function createViewerElementEnumerator({ scheduleTimeout, clearScheduled,
 
   async function digestScope(binding, scope, ctx) {
     requireCall(binding, ctx);
-    { const p = checkpointNow(ctx); if (p) await p; } // liveness before the first model read
+    { const p = checkpointNow(ctx); if (p) await p; } // cancellation / engine checkpoint before the first model read
     const model = binding.model;
     if (scope === 'whole') {
       const { count, records } = await scanPopulation(model.getFragmentList(), ctx, { loadEpoch: binding.lease?.epoch });
@@ -126,7 +126,7 @@ export function createViewerElementEnumerator({ scheduleTimeout, clearScheduled,
     const { tree, fragList } = await awaitObjectTree(binding.model, ctx, readiness);
     const loadEpoch = binding.lease?.epoch;
     // Global Constraint 5: the `await` above is an asynchronous boundary and scanPopulation reads getCount() on entry
-    // (it has no entry checkpoint of its own), so liveness is re-validated here, same tick as that first read.
+    // (it has no entry checkpoint of its own), so the cancellation / engine checkpoint runs again here, same tick as that first read.
     { const p = checkpointNow(ctx); if (p) await p; }
     // D-V9 order: (2) bounded population/count validation FIRST (O(1) count gate, then <= 20,000 records) ...
     const { count, records } = await scanPopulation(fragList, ctx, { loadEpoch });
