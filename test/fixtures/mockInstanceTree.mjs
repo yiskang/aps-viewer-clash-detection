@@ -156,6 +156,15 @@ export function buildMockModel(rootNodes, fragmentGeometry, options = {}) {
       stats.isNodeHiddenCalls++;
       return hiddenDbIds.has(dbId);
     },
+    // The real Viewer InstanceTree.getRootId(). The mock takes an array of root nodes, so it can answer
+    // only when there is exactly one; a multi-root array has no honest single answer and must not get an
+    // invented virtual root (whole-model root discovery in clashtest/viewer starts here).
+    getRootId() {
+      if (rootNodes.length !== 1) {
+        throw new Error('mock getRootId requires a single-rooted tree (pass exactly one root node)');
+      }
+      return rootNodes[0].dbId;
+    },
   };
 
   const fragmentList = {
