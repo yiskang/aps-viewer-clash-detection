@@ -114,7 +114,7 @@ Everything other phases may rely on. Paths repo-relative. Types are JSDoc-level;
 - Consumes: nothing (no imports).
 - Produces: `isValidModelKey`, `isValidDbId`, `makeElementRef`, `elementRefFrom`, `compareModelKeys`, `compareElementRefs`, `elementRefKey` (reconciliation N12; see the interface summary).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // test/clashtest/identity/ids.elementRef.test.mjs
@@ -214,12 +214,12 @@ test('elementRefKey is order-preserving: string order of keys == compareElementR
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `node --test test/clashtest/identity/ids.elementRef.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `clashtest/identity/ids.js` (module does not exist yet).
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 ```js
 // clashtest/identity/ids.js
@@ -282,12 +282,12 @@ export function elementRefKey(ref) {
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `node --test test/clashtest/identity/ids.elementRef.test.mjs`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git add clashtest/identity/ids.js test/clashtest/identity/ids.elementRef.test.mjs && git commit -m "feat(clashtest): ElementRef and element order (P1.1)"`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git add clashtest/identity/ids.js test/clashtest/identity/ids.elementRef.test.mjs && git commit -m "feat(clashtest): ElementRef and element order (P1.1)"`.
 
 ---
 
@@ -301,7 +301,7 @@ Expected: PASS, 7 tests.
 - Consumes: `makeElementRef`, `elementRefFrom`, `compareElementRefs` from P1.1.
 - Produces: `CLASH_MODES`, `pairSemanticsOf`, `sameSemanticsClass`, `makePairId`, `comparePairIds`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // test/clashtest/identity/ids.pairId.test.mjs
@@ -442,12 +442,12 @@ test('comparePairIds is the spec §11.3 order (first.modelKey, first.dbId, secon
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `node --test test/clashtest/identity/ids.pairId.test.mjs`
 Expected: FAIL — `SyntaxError: The requested module '../../../clashtest/identity/ids.js' does not provide an export named 'CLASH_MODES'`.
 
-- [ ] **Step 3: Add the implementation** (append to `clashtest/identity/ids.js`)
+- [x] **Step 3: Add the implementation** (append to `clashtest/identity/ids.js`)
 
 ```js
 // ---- pair semantics (spec §4.5) -------------------------------------------------------------------
@@ -498,12 +498,12 @@ export function comparePairIds(p, q) {
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `node --test test/clashtest/identity/ids.pairId.test.mjs test/clashtest/identity/ids.elementRef.test.mjs`
 Expected: PASS (elementRef 7 + pairId 9).
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): pair semantics and PairId canonicalization (P1.2)"`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): pair semantics and PairId canonicalization (P1.2)"`.
 
 ---
 
@@ -518,7 +518,7 @@ Expected: PASS (elementRef 7 + pairId 9).
   - **RECONCILED (reconciliation row N3):** P0 exports `digestCanonical(value) → 'sha256:…'` (**synchronous**, small values) and `digestCanonicalSliced(value, slicer, {label?}) → Promise<'sha256:…'>`; there is no `digestOf`. This task uses `digestCanonical`, returning `"sha256:" + 64 lowercase hex` of the canonical-JSON encoding (spec §5.4: sorted keys, well-formed `JSON.stringify` strings, shortest round-trip numbers, `-0 → 0`). **Read `digestOf` as `digestCanonical` and drop the `await` in every sketch below** — the helper becomes synchronous. `semanticDigest` proper is P2's (`definition/normalize.js`); this task uses a **test-local stand-in** to prove the `ResultId ⇄ digest` coupling.
 - Produces: `SEMANTIC_DIGEST_PATTERN`, `isSemanticDigest`, `makeResultId`, `parseResultId`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // test/clashtest/identity/ids.resultId.test.mjs
@@ -645,12 +645,12 @@ test('the same element pair gets a different ResultId under each different quest
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `node --test test/clashtest/identity/ids.resultId.test.mjs`
 Expected: FAIL — `SyntaxError ... does not provide an export named 'makeResultId'` (or `ERR_MODULE_NOT_FOUND` for `clashtest/util/canonical.js` if P0 has not landed — P0 is a prerequisite of this task).
 
-- [ ] **Step 3: Add the implementation** (append to `clashtest/identity/ids.js`)
+- [x] **Step 3: Add the implementation** (append to `clashtest/identity/ids.js`)
 
 ```js
 // ---- ResultId (spec §4.4) -------------------------------------------------------------------------
@@ -694,12 +694,12 @@ export function parseResultId(text) {
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `node --test test/clashtest/identity/ids.resultId.test.mjs test/clashtest/identity/ids.pairId.test.mjs test/clashtest/identity/ids.elementRef.test.mjs`
 Expected: PASS (all three files).
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): ResultId canonical form and parse (P1.3)"`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): ResultId canonical form and parse (P1.3)"`.
 
 ---
 
@@ -714,7 +714,7 @@ Expected: PASS (all three files).
 - Produces: `makeLeaseWorld() → { admitModel, isLeaseValid, evictModel, invalidateModelPlacement, dispose, calls, hooks }` where `calls` counts each method and `hooks.beforeAdmitModel(model)` / `hooks.beforeIsLeaseValid(lease)` are optional re-entrancy callbacks fired at the top of the respective method (used by the atomic-snapshot tests).
 - **Assumed:** P0's shared fake world may already expose some of these; this file is additive and self-contained so P1 does not depend on it. The controller may fold it into P0's fake later.
 
-- [ ] **Step 1: Write the failing contract test**
+- [x] **Step 1: Write the failing contract test**
 
 ```js
 // test/clashtest/support/leaseWorld.contract.test.mjs
@@ -785,12 +785,12 @@ test('leaseWorld fake: call counters and re-entrancy hooks exist', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `node --test test/clashtest/support/leaseWorld.contract.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `./leaseWorld.mjs`.
 
-- [ ] **Step 3: Write the fake**
+- [x] **Step 3: Write the fake**
 
 ```js
 // test/clashtest/support/leaseWorld.mjs
@@ -854,12 +854,12 @@ export function makeLeaseWorld() {
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `node --test test/clashtest/support/leaseWorld.contract.test.mjs`
 Expected: PASS, 9 tests (4 x 2 implementations + 1). If a *real* `CollisionWorld` assertion fails, the fake's premise (and this task's "Verified facts") is wrong — stop and report; do not weaken the contract.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git add test/clashtest/support/leaseWorld.mjs test/clashtest/support/leaseWorld.contract.test.mjs && git commit -m "test(clashtest): lease-world fake with real-world contract (P1.4)"`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git add test/clashtest/support/leaseWorld.mjs test/clashtest/support/leaseWorld.contract.test.mjs && git commit -m "test(clashtest): lease-world fake with real-world contract (P1.4)"`.
 
 ---
 
@@ -877,7 +877,7 @@ Expected: PASS, 9 tests (4 x 2 implementations + 1). If a *real* `CollisionWorld
 - Consumes (world, public surface): `admitModel(model) → lease`, `isLeaseValid(lease) → boolean`, `invalidateModelPlacement(model) → void` (`invalidateModelPlacement` is used in P1.7).
 - Produces: `ModelRegistry` (constructor, `world`, `registrySessionId`, `registryRevision`, `register`, `unregister`, `keyOf`, `bindingFor`), `createModelRegistry` (reconciliation N11), `BINDING_REASONS`. `snapshotBindings`, `isBindingCurrent`, `bindingsEquivalent` are added in P1.6; placement methods in P1.7; `assertRegistryBelongsToWorld` in P1.8. A private atomic reader `#read(keys)` is written here so that `bindingFor` is already on the final code path.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // test/clashtest/identity/ModelRegistry.register.test.mjs
@@ -1102,12 +1102,12 @@ test('the lease is obtained lazily on first read, then cached', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `node --test test/clashtest/identity/ModelRegistry.register.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `clashtest/identity/ModelRegistry.js`.
 
-- [ ] **Step 3: Write the implementation** (P1.6–P1.8 anchor comments included; leave them)
+- [x] **Step 3: Write the implementation** (P1.6–P1.8 anchor comments included; leave them)
 
 ```js
 // clashtest/identity/ModelRegistry.js
@@ -1319,12 +1319,12 @@ export function createModelRegistry(options) {
 // (P1.8 adds: assertRegistryBelongsToWorld)
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `node --test test/clashtest/identity/ModelRegistry.register.test.mjs`
 Expected: PASS, 17 tests. (This step also requires P0's `clashtest/errors.js` to export the two error classes.)
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git add clashtest/identity/ModelRegistry.js test/clashtest/identity/ModelRegistry.register.test.mjs && git commit -m "feat(clashtest): ModelRegistry bindings, version guard, generations (P1.5)"`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git add clashtest/identity/ModelRegistry.js test/clashtest/identity/ModelRegistry.register.test.mjs && git commit -m "feat(clashtest): ModelRegistry bindings, version guard, generations (P1.5)"`.
 
 ---
 
@@ -1338,7 +1338,7 @@ Expected: PASS, 17 tests. (This step also requires P0's `clashtest/errors.js` to
 - Consumes: P1.5's `ModelRegistry`; the fake world (P1.4); the real `CollisionWorld` (one cross-check test).
 - Produces: `registry.snapshotBindings`, `registry.isBindingCurrent`, `bindingsEquivalent`. P6 uses `snapshotBindings` at the `queued → planning` boundary (spec §5.2) and for the three freshness brackets (§16.4); P3/P4 read `binding.model`/`binding.lease`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // test/clashtest/identity/ModelRegistry.snapshot.test.mjs
@@ -1564,12 +1564,12 @@ test('isBindingCurrent is true only while the registry still holds exactly that 
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `node --test test/clashtest/identity/ModelRegistry.snapshot.test.mjs`
 Expected: FAIL — `SyntaxError ... does not provide an export named 'bindingsEquivalent'`.
 
-- [ ] **Step 3: Add the implementation** — in `ModelRegistry.js` replace the `// (P1.6 adds: snapshotBindings, isBindingCurrent)` comment inside the class, and the `// (P1.6 adds: bindingsEquivalent)` comment after it.
+- [x] **Step 3: Add the implementation** — in `ModelRegistry.js` replace the `// (P1.6 adds: snapshotBindings, isBindingCurrent)` comment inside the class, and the `// (P1.6 adds: bindingsEquivalent)` comment after it.
 
 Inside the class:
 
@@ -1615,12 +1615,12 @@ export function bindingsEquivalent(a, b) {
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `node --test test/clashtest/identity/ModelRegistry.snapshot.test.mjs test/clashtest/identity/ModelRegistry.register.test.mjs`
 Expected: PASS (snapshot 13 + register 17).
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): atomic snapshotBindings and binding equivalence (P1.6)"`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): atomic snapshotBindings and binding equivalence (P1.6)"`.
 
 ---
 
@@ -1634,7 +1634,7 @@ Expected: PASS (snapshot 13 + register 17).
 - Consumes: P1.5/P1.6; world `invalidateModelPlacement(model)` (spec F13; may throw `ModelEvictedError` / `WorldDisposedError`).
 - Produces: `registry.notifyPlacementChanged(modelKey) → number`, `registry.invalidateModelPlacement(modelKey) → number`. P7's `engine.invalidateModelPlacement(modelKey)` delegates to the latter; P6 compares `placementGeneration` at unit boundaries (spec §16.3).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // test/clashtest/identity/ModelRegistry.placement.test.mjs
@@ -1732,12 +1732,12 @@ test('a placement change between snapshots is visible through bindingsEquivalent
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `node --test test/clashtest/identity/ModelRegistry.placement.test.mjs`
 Expected: FAIL — `TypeError: registry.notifyPlacementChanged is not a function` (first test).
 
-- [ ] **Step 3: Add the implementation** — replace the `// (P1.7 adds: ...)` comment inside the class:
+- [x] **Step 3: Add the implementation** — replace the `// (P1.7 adds: ...)` comment inside the class:
 
 ```js
   /**
@@ -1766,12 +1766,12 @@ Expected: FAIL — `TypeError: registry.notifyPlacementChanged is not a function
   }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `node --test test/clashtest/identity/ModelRegistry.placement.test.mjs test/clashtest/identity/ModelRegistry.snapshot.test.mjs test/clashtest/identity/ModelRegistry.register.test.mjs`
 Expected: PASS (see the per-file counts in each task's Step 4).
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): placement generation and invalidateModelPlacement (P1.7)"`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): placement generation and invalidateModelPlacement (P1.7)"`.
 
 ---
 
@@ -1785,7 +1785,7 @@ Expected: PASS (see the per-file counts in each task's Step 4).
 - Consumes: everything above.
 - Produces: `assertRegistryBelongsToWorld(registry, world) → registry`. **P6 owns the coordinator**: the `WeakMap<CollisionWorld, Coordinator>` stored on `globalThis` under `Symbol.for('clashtest.coordinators')`, `protocolVersion` / `ModelBindingError{reason:'coordinator-version-mismatch'}`, and the creation of the one registry per world. P6 calls `assertRegistryBelongsToWorld(options.registry, world)` first, then compares `options.registry !== coordinator.registry` and throws `ModelBindingError{reason:'registry-mismatch'}` itself (spec §4.3, AC-8). P1 deliberately ships **no** `getRegistryForWorld` (design decision 7); the check is duck-typed so a registry from a duplicate module copy on the same page is still recognized (spec §7.3 cross-bundle rationale).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // test/clashtest/identity/identity.guards.test.mjs
@@ -1877,12 +1877,12 @@ test('no Model / loadEpoch / modelId can enter a durable identity, even from a l
 
 Note: `{ ...binding, dbId: 6 }` has `modelKey: 'k'` and `dbId: 6`, so it is valid and distinct from `ref` (`'k'`, 5); the point of the test is that `elementRefFrom` drops the Model/lease/generation fields.
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `node --test test/clashtest/identity/identity.guards.test.mjs`
 Expected: FAIL — `SyntaxError ... does not provide an export named 'assertRegistryBelongsToWorld'`.
 
-- [ ] **Step 3: Add the implementation** — replace the trailing `// (P1.8 adds: assertRegistryBelongsToWorld)` comment:
+- [x] **Step 3: Add the implementation** — replace the trailing `// (P1.8 adds: assertRegistryBelongsToWorld)` comment:
 
 ```js
 const REGISTRY_METHODS = ['register', 'unregister', 'bindingFor', 'snapshotBindings', 'notifyPlacementChanged'];
@@ -1904,7 +1904,7 @@ export function assertRegistryBelongsToWorld(registry, world) {
 }
 ```
 
-- [ ] **Step 4: Run the whole phase**
+- [x] **Step 4: Run the whole phase**
 
 Run:
 ```
@@ -1912,12 +1912,12 @@ node --test test/clashtest/identity/ids.elementRef.test.mjs test/clashtest/ident
 ```
 Expected: PASS, all files, 0 failures.
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `npm test`
 Expected: PASS with no live server / APS credentials; the pre-existing suites are untouched (this phase edits nothing outside `clashtest/identity/` and `test/clashtest/`).
 
-- [ ] **Step 6: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): registry world scoping and identity guards (P1.8)"`.
+- [x] **Step 6: Checkpoint commit (only if the user has authorized commits)** — `git commit -am "feat(clashtest): registry world scoping and identity guards (P1.8)"`.
 
 ---
 
@@ -1925,17 +1925,21 @@ Expected: PASS with no live server / APS credentials; the pre-existing suites ar
 
 Run individually with `node --test <file>`; the phase passes when every command below exits 0 and `npm test` is green.
 
-- [ ] `node --test test/clashtest/identity/ids.elementRef.test.mjs` — ElementRef closed/frozen/`-0`; code-unit (not code-point, not locale) element order; **`elementRefKey`** injective on delimiter-shaped `modelKey`s and order-preserving against `compareElementRefs` (7 tests).
-- [ ] `node --test test/clashtest/identity/ids.pairId.test.mjs` — semantics derived from mode (§4.5); unordered collapses `(x,y)/(y,x)`; containment keeps orientation; 20-seed shuffle property tests (120 unordered / 240 ordered pairs); same `PairId` across all three unordered modes (**AC-14 (iv)**, identity part; the rerun/compare side is P8/P7); §11.3 canonical order; no Model/epoch/modelId in a `PairId`.
-- [ ] `node --test test/clashtest/identity/ids.resultId.test.mjs` — canonical string form (§4.4), arity 3, stability, delimiter-safety incl. lone surrogates, strict `parseResultId`, digest sensitivity to mode/clearance/selections/swap through P0's canonical util, distinct `modelKey`s over identical dbIds give distinct `ResultId`s (**AC-16 "Identity" last clause**).
-- [ ] `node --test test/clashtest/identity/ModelRegistry.register.test.mjs` — **AC-16 "Identity"**: `register` without `modelVersion` throws `ModelBindingError`; re-register with a different version (also after `unregister`) throws `ModelKeyVersionConflictError`; a reload of unchanged content bumps `bindingGeneration`; one live Model ↔ one key; atomic rejection; late-unload identity rule; `unregister` never throws/awaits (spec §16.6); `registrySessionId` nonce; **`createModelRegistry`** factory (world required, no `now`); typed errors carry `.reason` / `.existingVersion` / `.offeredVersion` (never `.code` / `.seen`) (17 tests).
-- [ ] `node --test test/clashtest/identity/ModelRegistry.snapshot.test.mjs` — **AC-8 (R13-6)**: mutation from inside the read or from the key iterator cannot yield a mixed-generation snapshot; synchronous, frozen; lease semantics against fake and real `CollisionWorld`; **every snapshot binding carries a valid cached lease, admitted at most once per live binding (P6 admits nothing)**; **a dead / unregistered / evicted / disposed binding reads as `null` and no returned `Binding` has a `dead` (or `alive`) property (N10)**; `bindingsEquivalent` / `isBindingCurrent` as used by the §16.4 brackets (13 tests).
-- [ ] `node --test test/clashtest/identity/ModelRegistry.placement.test.mjs` — §16.2 placement generation, single-call `invalidateModelPlacement` (bump-first), monotonicity across reloads, bracket visibility; supports the registry half of **AC-8** placement/`notifyPlacementChanged` scenarios (the run-level `invalidated` outcome is P6).
-- [ ] `node --test test/clashtest/identity/identity.guards.test.mjs` — `registry-mismatch` check (**AC-8** last clause; the construction-time throw itself is P6), public-surface-only, layering, no runtime identity in durable ids (**spec D3/D11, §13.4**).
-- [ ] `node --test test/clashtest/support/leaseWorld.contract.test.mjs` — fake ≡ real world on the lease surface.
-- [ ] `npm test` — full suite green.
+- [x] `node --test test/clashtest/identity/ids.elementRef.test.mjs` — ElementRef closed/frozen/`-0`; code-unit (not code-point, not locale) element order; **`elementRefKey`** injective on delimiter-shaped `modelKey`s and order-preserving against `compareElementRefs` (7 tests).
+- [x] `node --test test/clashtest/identity/ids.pairId.test.mjs` — semantics derived from mode (§4.5); unordered collapses `(x,y)/(y,x)`; containment keeps orientation; 20-seed shuffle property tests (120 unordered / 240 ordered pairs); same `PairId` across all three unordered modes (**AC-14 (iv)**, identity part; the rerun/compare side is P8/P7); §11.3 canonical order; no Model/epoch/modelId in a `PairId`.
+- [x] `node --test test/clashtest/identity/ids.resultId.test.mjs` — canonical string form (§4.4), arity 3, stability, delimiter-safety incl. lone surrogates, strict `parseResultId`, digest sensitivity to mode/clearance/selections/swap through P0's canonical util, distinct `modelKey`s over identical dbIds give distinct `ResultId`s (**AC-16 "Identity" last clause**).
+- [x] `node --test test/clashtest/identity/ModelRegistry.register.test.mjs` — **AC-16 "Identity"**: `register` without `modelVersion` throws `ModelBindingError`; re-register with a different version (also after `unregister`) throws `ModelKeyVersionConflictError`; a reload of unchanged content bumps `bindingGeneration`; one live Model ↔ one key; atomic rejection; late-unload identity rule; `unregister` never throws/awaits (spec §16.6); `registrySessionId` nonce; **`createModelRegistry`** factory (world required, no `now`); typed errors carry `.reason` / `.existingVersion` / `.offeredVersion` (never `.code` / `.seen`) (17 tests).
+- [x] `node --test test/clashtest/identity/ModelRegistry.snapshot.test.mjs` — **AC-8 (R13-6)**: mutation from inside the read or from the key iterator cannot yield a mixed-generation snapshot; synchronous, frozen; lease semantics against fake and real `CollisionWorld`; **every snapshot binding carries a valid cached lease, admitted at most once per live binding (P6 admits nothing)**; **a dead / unregistered / evicted / disposed binding reads as `null` and no returned `Binding` has a `dead` (or `alive`) property (N10)**; `bindingsEquivalent` / `isBindingCurrent` as used by the §16.4 brackets (13 tests).
+- [x] `node --test test/clashtest/identity/ModelRegistry.placement.test.mjs` — §16.2 placement generation, single-call `invalidateModelPlacement` (bump-first), monotonicity across reloads, bracket visibility; supports the registry half of **AC-8** placement/`notifyPlacementChanged` scenarios (the run-level `invalidated` outcome is P6).
+- [x] `node --test test/clashtest/identity/identity.guards.test.mjs` — `registry-mismatch` check (**AC-8** last clause; the construction-time throw itself is P6), public-surface-only, layering, no runtime identity in durable ids (**spec D3/D11, §13.4**).
+- [x] `node --test test/clashtest/support/leaseWorld.contract.test.mjs` — fake ≡ real world on the lease surface.
+- [x] `npm test` — full suite green.
 
 AC items only partly covered here (the remainder has a named owner): **AC-1** digest goldens and `semanticDigest` invariance → P0/P2 (P1 contributes the ResultId coupling); **AC-11** durable `modelKey → modelVersion` index and `IdentityConflictError` atomicity → P5; **AC-11** "unknown field inside a `PairId` is rejected" → P5's `validateResultSet` (P1 supplies the closed shape and `isValidModelKey`/`isValidDbId`); **AC-14** compare classification → P8; **AC-15** "same `PairId` whichever role the planner assigned" end-to-end → P3/P7 (P1 supplies the invariance property, tested here).
+
+## Implementation status (2026-09-21)
+
+**P1.1–P1.8 IMPLEMENTED and verified on branch `feature/federated-clash-test-core-engine`; awaiting the independent Work review and adjudication gate before any P2 work.** Modules were created from this file's code blocks by task (RED confirmed for each test file before its implementation; no plan defects found). Per-task "Checkpoint commit" boxes are ticked as satisfied by the single authorized phase commit (if and when authorized), not eight commits. One internal Codex finding (C1, duplicate-key lease re-admission under reentrant mutation) was accepted and fixed with a regression test; see [`docs/reviews/2026-09-21-federated-clash-test-core-p1-internal-codex-review.md`](../../../reviews/2026-09-21-federated-clash-test-core-p1-internal-codex-review.md). Implemented counts: elementRef 7, pairId 9, resultId 10, register 17, snapshot 14 (13 planned + the C1 regression), placement 7, guards 5, leaseWorld contract 9 = **78**; full `node scripts/run-tests.mjs` 1,316 total / 1,315 pass / 0 fail / 1 todo (the pre-existing KNOWN GAP todo).
 
 ## Spec coverage
 

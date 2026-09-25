@@ -2217,6 +2217,8 @@ export class CollisionWorld {
       // surfaceIntersectionQuery is SYNCHRONOUS and owns a private, traversal-local clock: bvhcast
       // cannot pause mid-traversal, so there is nothing for this call's shared checkpoint to do
       // inside it. The pair-boundary checkpoint in findClashes is the one that applies here.
+      // That private clock is READ from this world's injected `now` (`this._now`, D-11), not the
+      // host's `performance.now()`, so an injected clock makes the traversal budget deterministic.
       //
       // This mode performs no parity test, so it emits no TOLERANCE diagnostics -- but it does emit
       // one on an ABORT (`crossing-budget-exhausted`, from its own private candidate-count/time
@@ -2228,7 +2230,7 @@ export class CollisionWorld {
       // `result.diagnostics` is [] whenever `aborted` is false, so this is a no-op on every
       // conclusive pair.
       const stageStartedAt = isDiagnosticEventRecorderActive() ? performance.now() : 0;
-      const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix);
+      const result = surfaceIntersectionQuery(sourceRecord.bvh, targetRecord.bvh, relativeMatrix, { now: this._now });
       if (isDiagnosticEventRecorderActive()) {
         reportDiagnosticEvent('narrow-phase-pair', {
           sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,

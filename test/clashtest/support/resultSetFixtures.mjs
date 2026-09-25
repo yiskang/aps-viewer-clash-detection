@@ -1,0 +1,1251 @@
+// test/clashtest/support/resultSetFixtures.mjs
+//
+// Shared fixture builders for the Result Set phase (P5). `runParts`/`sealedSet`'s original kinds
+// ('default', 'cancelled-pre-resolution', 'wide') are UNCHANGED (P5.1-P5.4's own tests build on
+// them, unvalidated by `validateResultSet`). Task P5.5 adds new kinds that are full, self-consistent,
+// `validateResultSet`-clean sets (built through the real `buildResultSet`/`sealResultSet` pipeline,
+// never hand-assembled): 'positives' (volume-overlap), 'schema-corpus' (clearance, reaching every
+// remaining OPTIONAL/branch schema row the WAIVED set in the invariants test does not waive),
+// 'completed-with-gaps', 'completed-clean', 'unreachable-positive', 'many-results' (an alias of
+// 'wide', used only for the node-ceiling rejection path, which never reaches validation) -- plus
+// `resealed`, which mutates a fresh draft of a named kind and reseals it so its digests stay
+// self-consistent.
+
+import { DIGEST_VERSION } from '../../../clashtest/util/canonical.js';
+import { RUN_OPTION_DEFAULTS } from '../../../clashtest/options.js';
+import {
+  buildResultSet, sealResultSet, createResultAccumulator, deriveRunOutcome,
+} from '../../../clashtest/results/resultSet.js';
+import { makeResultId, makePairId } from '../../../clashtest/identity/ids.js';
+import { computeSemanticDigest } from '../../../clashtest/definition/normalize.js';
+
+/** P4's `DiagnosticsSummary` (`snapshot()` shape) with every counter at 0. `countsByReason` is an
+ *  ARRAY (the real, shipped `execution/diagnostics.js` shape -- see resultSetSchema.js's own note),
+ *  which an empty array already satisfies. */
+export function emptyDiagnostics() {
+  return {
+    diagnostics: [],
+    truncated: false,
+    total: 0,
+    completenessAffectingCount: 0,
+    unclassifiedOccurrences: 0,
+    completenessAffectingUpperBound: 0,
+    countsByReason: [],
+    omittedReasonOccurrences: 0,
+    geometryReadinessOccurrences: 0,
+  };
+}
+
+/** The pinned `Ledger` shape (plan "Shapes this phase pins"), with `planExists: true`,
+ *  `pairSpaceTotal: 10` and every table empty by default. */
+export function ledgerWith(over = {}) {
+  return {
+    planExists: true,
+    pairSpaceTotal: 10,
+    emptyOperand: false,
+    units: [],
+    rootOwners: [],
+    unresolvedSelections: [],
+    unreachablePopulation: [],
+    hierarchyInternal: [],
+    planningGaps: [],
+    exclusions: [],
+    warnings: [],
+    budgetExhausted: false,
+    firstRefusalUnitId: null,
+    ...over,
+  };
+}
+
+/** One `UnitRecord`. A `split` record defaults `scopeProof: 'not-checked'` (superseded by its
+ *  leaves and never itself checked); every other outcome defaults `scopeProof: 'equal'`. */
+export function unit(unitId, outcome, over = {}) {
+  return {
+    unitId,
+    outcome,
+    cause: null,
+    secondaryCauses: [],
+    capacityKind: null,
+    capDetail: null,
+    scopeProof: outcome === 'split' ? 'not-checked' : 'equal',
+    pairSpaceWeight: 1,
+    taints: [],
+    attempts: 1,
+    durationMs: 0,
+    ...over,
+  };
+}
+
+const ZERO_DIGEST = `sha256:${'0'.repeat(64)}`;
+
+/**
+ * The empty-results, `completed`/`full`/`clean`/no-caveats shape the §8.3 claim truth table flips
+ * one conjunct at a time (P5.2). Every field the predicate reads is present and claimable; the
+ * FLIPS table in claim.test.mjs mutates exactly one of them per row.
+ */
+export function claimableSet() {
+  return {
+    outcome: {
+      status: 'completed',
+      coverage: 'full',
+      integrity: 'clean',
+      freshness: 'current',
+      environmentSensitive: false,
+      environmentSensitiveCauses: [],
+      reasons: [],
+    },
+    ledger: {
+      pairSpaceTotal: 10,
+      emptyOperand: false,
+      unresolvedSelections: [],
+      unreachablePopulation: [],
+      hierarchyInternal: [],
+    },
+    provenance: {
+      libraryExclusions: [],
+      hierarchyInternalAcceptance: null,
+      scopeProof: { method: 'bracketed-digest', digestVersion: DIGEST_VERSION },
+    },
+    results: [],
+    digests: {
+      digestVersion: DIGEST_VERSION,
+      pairSetDigest: ZERO_DIGEST,
+      ledgerDigest: ZERO_DIGEST,
+    },
+  };
+}
+
+/**
+ * P0's `tick(label?)` slicer shape (`createSlicer`'s contract), test-only (P5.3): counts every
+ * tick and, once every `yieldEvery` ticks (default 64, matching a real slicer's rough cadence),
+ * returns a resolved Promise instead of `undefined` and counts that as a yield. Swapping in the
+ * real `createSlicer` changes nothing at call sites, which all do `const p = slicer.tick(label);
+ * if (p) await p;`.
+ */
+export function fakeSlicer({ yieldEvery = 64 } = {}) {
+  let tickCount = 0;
+  let yieldCount = 0;
+  return {
+    tick(_label) {
+      tickCount += 1;
+      if (tickCount % yieldEvery === 0) {
+        yieldCount += 1;
+        return Promise.resolve();
+      }
+      return undefined;
+    },
+    get ticks() { return tickCount; },
+    get yields() { return yieldCount; },
+  };
+}
+
+// Exported (Task P5.6): `status.test.mjs` builds its own probe `PairId`s (via `pairOf`) and
+// bespoke fixtures (`widePlan`, `sharedRootPlan`) against these SAME model keys, rather than
+// inventing a second pair of placeholder keys that could silently drift from the ones every other
+// P5.5 fixture in this file already uses.
+export const MODEL_A = 'urn:adsk.wipprod:fs.file:vf.model-a?version=1';
+export const MODEL_B = 'urn:adsk.wipprod:fs.file:vf.model-b?version=1';
+
+/** One `ClashResult` (§11.3 projected shape), deterministic and JSON-plain, for digest fixtures.
+ *  Placeholder `resultId` (`r${i}`) -- fine ONLY for the 'wide'/'many-results' kind, which is never
+ *  run through `validateResultSet` (it exists solely to trip the node-ceiling rejection path of
+ *  `captureResultSet`, well before any schema check). */
+function fakeClashResult(i, unitId) {
+  const pair = { first: { modelKey: MODEL_A, dbId: 100 + i }, second: { modelKey: MODEL_B, dbId: 200 + i } };
+  return {
+    resultId: `r${i}`,
+    pair,
+    mode: 'volume-overlap',
+    evaluatedAs: { source: pair.first, target: pair.second },
+    evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } },
+    flags: {},
+    unitId,
+  };
+}
+
+/**
+ * The raw material of a finished run (P5.3's `buildResultSet(parts)` input), plus the top-level
+ * `runOptions` convenience the digest tests read directly (mirrored at `provenance.runOptions`,
+ * per §13.6's `Provenance.runOptions` field). `kind`:
+ *  - `'default'` (omitted): one evaluated leaf unit, one result, `coverage: 'full'`.
+ *  - `'cancelled-pre-resolution'`: no plan, no units, no results, `definition: null`.
+ *  - `'wide'` / `'many-results'`: the same one-unit ledger but ~2,000 results, so a sliced deep
+ *    freeze ticks well past a fixed `yieldEvery` and yields at least once, and a tiny
+ *    `maxCapturedNodes` rejects it long before validation. NOT `validateResultSet`-clean (see
+ *    `fakeClashResult`'s own note) -- never pass this kind to anything but `sealResultSet` or
+ *    `readResultSet`'s node-ceiling path.
+ * Every call returns freshly built, unshared objects: mutating one call's return never affects
+ * another's.
+ */
+export function runParts(kind = 'default') {
+  const runOptions = { ...RUN_OPTION_DEFAULTS };
+  const provenance = {
+    registrySessionId: 'session-1',
+    libraryVersion: '1.0.0',
+    broadPhase: runOptions.broadPhase,
+    determinismClass: 'deterministic',
+    runOptions,
+    models: [],
+    scopeProof: { method: 'bracketed-digest', digestVersion: DIGEST_VERSION },
+    admissionBaseline: [],
+    hierarchyInternalAcceptance: null,
+    libraryExclusions: [],
+    placementVerified: false,
+    startedAt: '2026-09-22T00:00:00.000Z',
+    finishedAt: '2026-09-22T00:00:01.000Z',
+  };
+  const base = {
+    runId: 'run-1',
+    testRef: { testId: 'T1', revision: 1, semanticDigest: `sha256:${'a'.repeat(64)}` },
+    definition: { testId: 'T1', mode: 'volume-overlap' },
+    derivedFromRunId: null,
+    provenance,
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+    runOptions,
+  };
+
+  if (kind === 'cancelled-pre-resolution') {
+    return {
+      ...base,
+      testRef: { testId: 'T1', revision: null, semanticDigest: null },
+      definition: null,
+      outcome: {
+        status: 'cancelled',
+        coverage: 'partial',
+        integrity: 'clean',
+        freshness: 'unverifiable',
+        environmentSensitive: false,
+        environmentSensitiveCauses: [],
+        reasons: ['planning:cancelled'],
+      },
+      ledger: ledgerWith({
+        planExists: false, pairSpaceTotal: 0, units: [], rootOwners: [],
+        planningGaps: [{ phase: 'planning', cause: 'cancelled' }],
+      }),
+      results: [],
+    };
+  }
+
+  const resultCount = (kind === 'wide' || kind === 'many-results') ? 2000 : 1;
+  const units = [unit('u1', 'evaluated', {
+    kind: 'leaf',
+    parentUnitId: null,
+    sourceModelKey: MODEL_A,
+    sourceRootDbIds: [10],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }],
+    pairSpaceWeight: 10,
+  })];
+  const results = [];
+  for (let i = 0; i < resultCount; i++) results.push(fakeClashResult(i, units[0].unitId));
+
+  return {
+    ...base,
+    outcome: {
+      status: 'completed',
+      coverage: 'full',
+      integrity: 'clean',
+      freshness: 'current',
+      environmentSensitive: false,
+      environmentSensitiveCauses: [],
+      reasons: [],
+    },
+    ledger: ledgerWith({
+      planExists: true,
+      pairSpaceTotal: units.reduce((n, u) => n + u.pairSpaceWeight, 0),
+      units,
+      rootOwners: [{ modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [10], cls: 'A' }] }],
+    }),
+    results,
+  };
+}
+
+/**
+ * A real, fully sealed, self-consistent `ResultSet` (Task P5.4): `sealResultSet(buildResultSet(
+ * runParts(kind)), ...)` -- the exact same production pipeline P5.1-P5.3's own tests already use
+ * (see `resultSet.seal.test.mjs`), not a hand-built/fake object. Every call is freshly built and
+ * unshared (per `runParts`'s own contract), so mutating one call's result never affects another's.
+ * `kind` is `runParts`'s own kind switch for the ORIGINAL three kinds, plus (Task P5.5)
+ * `validParts`'s kinds below.
+ */
+export async function sealedSet(kind = 'default') {
+  const parts = ['default', 'cancelled-pre-resolution', 'wide', 'many-results'].includes(kind)
+    ? runParts(kind)
+    : validParts(kind);
+  return sealResultSet(buildResultSet(parts), { slicer: fakeSlicer() });
+}
+
+/**
+ * Mutates a FRESH draft of `sealedSet(kind)` and reseals it, so the mutation's digests are
+ * recomputed and self-consistent (never a stale digest left over from the original seal). The
+ * intermediate value passed to `sealResultSet` is always a genuinely fresh object (via
+ * `structuredClone`, reset to draft shape), satisfying `sealResultSet`'s own fresh-draft identity
+ * requirement (spec §13.3) even though it started life as an already-sealed set.
+ */
+export async function resealed(mutate, kind = 'positives') {
+  const sealed = await sealedSet(kind);
+  const draft = structuredClone(sealed);
+  draft.digests = null;
+  draft.sealed = false;
+  mutate(draft);
+  return sealResultSet(draft, { slicer: fakeSlicer() });
+}
+
+// =================================================================================================
+// Task P5.7: `InMemoryResultStore` fixtures. Both are thin wrappers over `resealed` -- neither
+// touches `results`/`ledger`/`provenance.runOptions` (the only inputs `sealResultSet`'s digests
+// depend on), so overriding `runId` or `provenance.models` is always digest-safe and produces a
+// genuinely fresh, resealed, self-consistent set (never a hand-patched already-sealed object).
+// =================================================================================================
+
+/** A fresh `sealedSet(kind)` with `runId` overridden to the given value; everything else
+ *  (`testRef.testId`, `provenance.models`, `ledger`, `results`) is the named kind's own content
+ *  unchanged, so several calls with the SAME `kind` but DIFFERENT `runId`s share one identity
+ *  (`modelKey -> modelVersion`) and one `testRef.testId`, which is exactly what the store tests
+ *  need to probe the identity index and the tombstone index across many runIds of one test. */
+export async function withRunId(runId, kind = 'positives') {
+  return resealed((draft) => { draft.runId = runId; }, kind);
+}
+
+let withModelsCounter = 0;
+
+/**
+ * A fresh `sealedSet(kind)` with `provenance.models` REPLACED by the given `[modelKey,
+ * modelVersion]` pairs (each built through the same `provenanceModel` helper every other P5.5+
+ * fixture in this file uses, so the row shape never drifts) and a freshly minted, globally unique
+ * `runId` (this file's own counter -- never the kind's default literal `runId`, and never derived
+ * from the model list) so that two `withModels` calls, even with overlapping model pairs, are always
+ * two independent runs the identity index can be probed against one at a time. `kind`'s own
+ * `ledger`/`results` content is otherwise unchanged (the identity-index tests below only ever read
+ * `provenance.models` and `runId`/`testRef.testId` off the returned set).
+ */
+export async function withModels(modelPairs, kind = 'positives') {
+  withModelsCounter += 1;
+  const runId = `run-with-models-${withModelsCounter}`;
+  return resealed((draft) => {
+    draft.runId = runId;
+    draft.provenance.models = modelPairs.map(([modelKey, modelVersion]) => provenanceModel(modelKey, { modelVersion }));
+  }, kind);
+}
+
+// =================================================================================================
+// Task P5.5: full, `validateResultSet`-clean base fixtures.
+//
+// `positives` (volume-overlap) and `schema-corpus` (clearance) TOGETHER reach every declared
+// schema row except the anti-drift test's own WAIVED set (`ResultSet.definition` -- delegated to
+// P2; `ResultSet.statistics` / `Provenance.runOptions` / `Diagnostics.countsByReason` -- documented,
+// undeclared-inner-shape fields; `ClashResult.evidence` -- shape is per-mode, checked by the
+// `custom` hook instead). `completed-with-gaps`, `completed-clean` and `unreachable-positive` are
+// separate, narrower base fixtures each dispatch's own targeted test asks for by name; they are NOT
+// part of the {positives, schema-corpus} anti-drift corpus.
+// =================================================================================================
+
+// A fresh `{modelKey, dbId}` object every call -- deliberately NOT shared with any other reference
+// to the same element. The real, shipped `projectUnitPairs` (resultSet.js) makes `evaluatedAs.
+// source === pair.first` the SAME object on purpose (so the two can never disagree on a -0 vs 0
+// dbId); P0's `captureData` correctly treats that live sharing as `cyclic` on a revisited object
+// (verified: `validateResultSet.capture.test.mjs`'s own `rawSet()` helper JSON-round-trips a real
+// sealed set for exactly this reason before capturing it). This test file's own fixtures are fed to
+// `readResultSet`/`captureResultSet` via plain `structuredClone` (matching the brief's own literal
+// test code), and `structuredClone` PRESERVES internal reference identity -- so a hand-built fixture
+// that reused the same object for `pair.first` and `evaluatedAs.source` would falsely report
+// `cyclic` the moment it was captured. Every fixture below therefore builds `pair` and `evaluatedAs`
+// from INDEPENDENT (value-equal, reference-distinct) ref objects.
+const ref = (modelKey, dbId) => ({ modelKey, dbId });
+
+// Exported (Task P7.9): `maximumShape.mjs` builds its sets on the SAME provenance rows, so the two
+// fixture families cannot drift apart.
+export function baseProvenance(over = {}) {
+  const runOptions = { ...RUN_OPTION_DEFAULTS };
+  return {
+    registrySessionId: 'session-p5.5',
+    libraryVersion: '1.0.0',
+    broadPhase: runOptions.broadPhase,
+    determinismClass: 'deterministic',
+    runOptions,
+    models: [],
+    scopeProof: { method: 'bracketed-digest', digestVersion: DIGEST_VERSION },
+    admissionBaseline: [],
+    hierarchyInternalAcceptance: null,
+    libraryExclusions: [],
+    placementVerified: false,
+    startedAt: '2026-09-22T00:00:00.000Z',
+    finishedAt: '2026-09-22T00:00:01.000Z',
+    ...over,
+  };
+}
+
+export function provenanceModel(modelKey, over = {}) {
+  return {
+    modelKey, modelVersion: 'v1',
+    scopeKinds: ['model'],
+    elementCount: 1,
+    scopeDigests: { population: null, roots: [{ dbId: 1, subtreeDigest: ZERO_DIGEST }] },
+    bindingGeneration: 0, placementGeneration: 0,
+    ...over,
+  };
+}
+
+/** The 'positives' base: volume-overlap, 2 results on 1 evaluated leaf unit (`u1`), plus a SECOND
+ *  unit (`u2`) with a non-fatal gap and no results of its own -- so `coverage` genuinely derives
+ *  `'partial'` at baseline (a real, structural gap, not merely a declared value), which is what
+ *  makes the `coverage-not-full` CORRUPTION mutation (`s.outcome.coverage = 'full'`) an actual
+ *  violation rather than a no-op restating an already-true derivation. Also reaches
+ *  `Flags.witnessUnavailable` (result[1]'s witness is unavailable) on top of the normal happy path. */
+function positivesParts() {
+  const pair0 = { first: ref(MODEL_A, 100), second: ref(MODEL_B, 200) };
+  const pair1 = { first: ref(MODEL_A, 101), second: ref(MODEL_B, 201) };
+  const testId = 'T1';
+  // P5-REM2 (H1, docs/reviews/2026-09-22-federated-clash-test-core-p5-independent-review.md): the
+  // `definition` binding is built FIRST and `semanticDigest` is the REAL `computeSemanticDigest`
+  // of that same binding (never a placeholder) -- checkCrossField's new H1 check reconciles the
+  // two, so a fixture whose declared `semanticDigest` disagreed with its own `definition` content
+  // would now (correctly) fail validation.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'positives',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
+  const unit1 = unit('u1', 'evaluated', {
+    kind: 'leaf', parentUnitId: null,
+    sourceModelKey: MODEL_A, sourceRootDbIds: [10],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }],
+    pairSpaceWeight: 10,
+  });
+  const unit2 = unit('u2', 'failed', {
+    kind: 'leaf', parentUnitId: null,
+    sourceModelKey: MODEL_A, sourceRootDbIds: [11],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }],
+    pairSpaceWeight: 5,
+    cause: 'capacity-exceeded', capacityKind: 'bucket-capacity', scopeProof: 'not-checked',
+  });
+  const results = [
+    {
+      resultId: makeResultId(testId, semanticDigest, pair0), pair: pair0, mode: 'volume-overlap',
+      evaluatedAs: { source: ref(MODEL_A, 100), target: ref(MODEL_B, 200) },
+      evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {}, unitId: 'u1',
+    },
+    {
+      resultId: makeResultId(testId, semanticDigest, pair1), pair: pair1, mode: 'volume-overlap',
+      evaluatedAs: { source: ref(MODEL_A, 101), target: ref(MODEL_B, 201) },
+      evidence: { witness: null }, flags: { witnessUnavailable: true }, unitId: 'u1',
+    },
+  ];
+  return {
+    runId: 'run-positives',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition,
+    derivedFromRunId: null,
+    // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
+    // `unit2` below is `failed`/`capacity-exceeded` with `capacityKind: 'bucket-capacity'`, which
+    // `deriveRunOutcome` (resultSet.js) derives as `environmentSensitive: true` /
+    // `environmentSensitiveCauses: ['bucket-capacity']` REGARDLESS of the unit's own outcome/cause.
+    // Before P5-REM's read-time re-derivation existed, nothing checked this axis, so this fixture
+    // hardcoded `false`/`[]` -- self-inconsistent with its own ledger content. Corrected to the true
+    // derived value so it does not trip the new `environment-sensitive-mismatch` check.
+    outcome: {
+      status: 'completed', coverage: 'partial', integrity: 'clean', freshness: 'current',
+      environmentSensitive: true, environmentSensitiveCauses: ['bucket-capacity'], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [
+        provenanceModel(MODEL_A, { scopeDigests: { population: null, roots: [{ dbId: 10, subtreeDigest: ZERO_DIGEST }] } }),
+        provenanceModel(MODEL_B, { scopeDigests: { population: { count: 1, digest: ZERO_DIGEST }, roots: [] } }),
+      ],
+      admissionBaseline: [{ modelKey: MODEL_A, epochInstanceCount: 1 }],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: 15,
+      units: [unit1, unit2],
+      // P5-REM5 (Finding B): u2's source root 11 was never listed in rootOwners -- a real planner builds
+      // rootOwners from every resolved root (planner.js rootOwnerRowsOfSliced), so every unit root is owned.
+      rootOwners: [
+        { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100, 101], cls: 'A' },
+          { rootDbId: 11, ownerDbIds: [110], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200, 201], cls: 'B' }] },
+      ],
+    }),
+    results,
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+}
+
+/** The 'schema-corpus' base: a clearance-mode set (never mixed-mode with 'positives' -- mode-
+ *  mismatch is a real, enforced cross-field rule) built specifically to reach every OPTIONAL/branch
+ *  schema row 'positives' does not: `ClearanceEvidence`, `UnitTarget.rootDbIds`, non-empty
+ *  `Taint`/`PlanningGap`/`Warning`/`UnresolvedSelection`/`UnreachablePopulation`/`HierarchyInternal`,
+ *  a non-null `Acceptance`/`Environment`, a non-empty `diagnostics.diagnostics` (both `fragment` and
+ *  `fragments` branches of `NormalizedDiagnostic`), and the `Flags.mixedOwnerProvenance` /
+ *  `.duplicateEvidenceConflict` / `.unreachableOwner` literals. `status: 'failed'` (not
+ *  `'completed'`) is deliberate: it is what makes a non-empty `planningGaps` structurally
+ *  admissible here without tripping `completed-with-fatal-cause`. */
+function schemaCorpusParts() {
+  const testId = 'T2';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'schema-corpus',
+    selectionA: { entries: [{ kind: 'elements', modelKey: MODEL_A, dbIds: [300, 301, 302, 303] }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'clearance', clearance: 5,
+  };
+  const semanticDigest = computeSemanticDigest(definition);
+  const unit2 = unit('u2', 'evaluated', {
+    kind: 'leaf', parentUnitId: null,
+    sourceModelKey: MODEL_A, sourceRootDbIds: [30],
+    targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [40] }],
+    pairSpaceWeight: 3,
+    taints: [{ kind: 'unit', modelKey: null, dbId: null, reason: 'r1', occurrences: 1 }],
+  });
+  const clearanceResult = (first, second, flags) => {
+    const pair = { first: ref(MODEL_A, first), second: ref(MODEL_B, second) };
+    return {
+      resultId: makeResultId(testId, semanticDigest, pair), pair, mode: 'clearance',
+      evaluatedAs: { source: ref(MODEL_A, first), target: ref(MODEL_B, second) },
+      evidence: { distance: 1.5, clearance: 5, closestPoints: { first: [0, 0, 0], second: [1, 0, 0] } },
+      flags, unitId: 'u2',
+    };
+  };
+  const results = [
+    clearanceResult(300, 400, {}),
+    clearanceResult(301, 401, { mixedOwnerProvenance: true }),
+    clearanceResult(302, 402, { duplicateEvidenceConflict: true }),
+    clearanceResult(303, 499, { unreachableOwner: true }),   // 499 is NOT a root owner -- see below
+  ];
+  return {
+    runId: 'run-schema-corpus',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition,
+    derivedFromRunId: null,
+    // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
+    // `unit2` below has no `capacityKind` and no `failed:stale-placement` leaf, and `diagnostics`'s
+    // `geometryReadinessOccurrences`/`unclassifiedOccurrences` are both 0, so `deriveRunOutcome`
+    // (resultSet.js) derives `environmentSensitive: false` / `environmentSensitiveCauses: []` for
+    // this ledger content. Before P5-REM's read-time re-derivation existed, nothing checked this
+    // axis, so this fixture hardcoded `true`/`['bucket-capacity']` -- self-inconsistent with its own
+    // ledger content. Corrected to the true derived value so it does not trip the new
+    // `environment-sensitive-mismatch` check.
+    outcome: {
+      status: 'failed', coverage: 'partial', integrity: 'caveated', freshness: 'unverifiable',
+      environmentSensitive: false, environmentSensitiveCauses: [],
+      reasons: ['schema-corpus-fixture'],
+    },
+    provenance: baseProvenance({
+      registrySessionId: 'session-schema-corpus',
+      libraryVersion: null,                                    // reaches the nullable branch
+      determinismClass: 'time-sensitive',
+      models: [
+        provenanceModel(MODEL_A, {
+          modelVersion: 'v2', scopeKinds: ['elements'], elementCount: 4,
+          scopeDigests: { population: { count: 4, digest: ZERO_DIGEST }, roots: [{ dbId: 30, subtreeDigest: ZERO_DIGEST }] },
+          bindingGeneration: 1, placementGeneration: 1,
+        }),
+        provenanceModel(MODEL_B, {
+          modelVersion: 'v2',
+          scopeDigests: { population: null, roots: [{ dbId: 40, subtreeDigest: ZERO_DIGEST }] },
+          bindingGeneration: 1, placementGeneration: 1,
+        }),
+      ],
+      admissionBaseline: [{ modelKey: MODEL_A, epochInstanceCount: 2 }],
+      hierarchyInternalAcceptance: { recordRef: 'rec-1' },      // reaches `Acceptance`
+      libraryExclusions: ['hierarchy-internal'],
+      environment: { viewerVersion: '25.0.0', userAgent: 'test-agent' },   // reaches `Environment`
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: 3,
+      units: [unit2],
+      // P5-REM7 (F/G role reconciliation): MODEL_A is named only by selectionA and MODEL_B only by
+      // selectionB, so a real planner labels their roots 'A' and 'B' (`rootResolution.js` step 6) --
+      // formerly 'B' and 'C', labels no planner could produce for this definition.
+      rootOwners: [
+        { modelKey: MODEL_A, owners: [{ rootDbId: 30, ownerDbIds: [300, 301, 302, 303], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 40, ownerDbIds: [400, 401, 402], cls: 'B' }] },   // NOT 499
+      ],
+      unresolvedSelections: [{ selectionRole: 'A', modelKey: MODEL_A, cause: 'element-unresolvable', dbIds: [999] }],
+      // D-A (2026-09-24): `count` added (spec §6.2 row shape, as P3 writes it); additive only.
+      unreachablePopulation: [{ modelKey: MODEL_B, count: 1, ownerDbIds: [499], mixedOwnerDbIds: [498],
+        unattributable: { notLoaded: 1, ownerUnresolvable: 0 } }],
+      hierarchyInternal: [{ modelKey: MODEL_A, rootCount: 1, ownerCount: 2,
+        examples: [{ rootDbId: 30, ownerDbIds: [300, 301] }] }],
+      planningGaps: [{ phase: 'planning', cause: 'test-unavailable' }],
+      warnings: [{ code: 'w1', modelKey: MODEL_A }],
+    }),
+    results,
+    diagnostics: {
+      diagnostics: [
+        { scope: 'fragment', reason: 'fragment-not-loaded', completenessAffecting: true, attribution: 'element',
+          fragment: { modelKey: MODEL_A, dbId: 300, fragId: 1, role: 'source' },
+          ambiguousModelId: false, occurrences: 1, unitIds: ['u2'] },
+        { scope: 'pair', reason: 'inconclusive-crossing', completenessAffecting: true, attribution: 'unit',
+          fragments: { first: { modelKey: MODEL_A, dbId: 300, fragId: 1 }, second: { modelKey: MODEL_B, dbId: 400, fragId: 2 } },
+          occurrences: 1, unitIds: ['u2'] },
+      ],
+      truncated: false,
+      total: 2,
+      completenessAffectingCount: 2,
+      unclassifiedOccurrences: 0,
+      completenessAffectingUpperBound: 2,
+      countsByReason: [{ scope: 'fragment', reason: 'fragment-not-loaded', count: 1 },
+        { scope: 'pair', reason: 'inconclusive-crossing', count: 1 }],
+      omittedReasonOccurrences: 0,
+      geometryReadinessOccurrences: 0,
+    },
+    statistics: { note: 'schema-corpus' },
+  };
+}
+
+/** 'completed-with-gaps': 2 units -- `u1` evaluated (1 result), `u2` with a non-fatal gap and no
+ *  results of its own -- so `coverage` derives `'partial'` at baseline, matching the declared
+ *  value, and `u2` can be freely re-shaped by the GAPS-list test (`ledger.units[1] = {...}`). */
+function completedWithGapsParts() {
+  const testId = 'T3';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'completed-with-gaps',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
+  const pair0 = { first: { modelKey: MODEL_A, dbId: 100 }, second: { modelKey: MODEL_B, dbId: 200 } };
+  const unit1 = unit('u1', 'evaluated', {
+    kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10,
+  });
+  const unit2 = unit('u2', 'failed', {
+    kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [11],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 5,
+    cause: 'capacity-exceeded', capacityKind: 'bucket-capacity', scopeProof: 'not-checked',
+  });
+  return {
+    runId: 'run-completed-with-gaps',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition,
+    derivedFromRunId: null,
+    // P5-REM (Item 1, docs/reviews/2026-09-22-federated-clash-test-core-p5-owner-decision-brief.md):
+    // `unit2` below is `failed`/`capacity-exceeded` with `capacityKind: 'bucket-capacity'`, which
+    // `deriveRunOutcome` (resultSet.js) derives as `environmentSensitive: true` /
+    // `environmentSensitiveCauses: ['bucket-capacity']` REGARDLESS of the unit's own outcome/cause.
+    // Before P5-REM's read-time re-derivation existed, nothing checked this axis, so this fixture
+    // hardcoded `false`/`[]` -- self-inconsistent with its own ledger content. Corrected to the true
+    // derived value so it does not trip the new `environment-sensitive-mismatch` check.
+    outcome: {
+      status: 'completed', coverage: 'partial', integrity: 'clean', freshness: 'current',
+      environmentSensitive: true, environmentSensitiveCauses: ['bucket-capacity'], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: 15,
+      units: [unit1, unit2],
+      // P5-REM5 (Finding B): u2's source root 11 added -- every unit root must be owned (see positivesParts).
+      rootOwners: [
+        { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }, { rootDbId: 11, ownerDbIds: [110], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'B' }] },
+      ],
+    }),
+    results: [{
+      resultId: makeResultId(testId, semanticDigest, pair0), pair: pair0, mode: 'volume-overlap',
+      evaluatedAs: { source: ref(MODEL_A, 100), target: ref(MODEL_B, 200) },
+      evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {}, unitId: 'u1',
+    }],
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+}
+
+/** 'completed-clean': the full pipeline's own "no clashes found" shape -- one evaluated leaf,
+ *  zero results. Distinct from `claimableSet()` (which is a hand-built §8.3-conjunct fixture, not
+ *  put through `buildResultSet`/`sealResultSet`). */
+function completedCleanParts() {
+  const testId = 'T4';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'completed-clean',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
+  const unit1 = unit('u1', 'evaluated', {
+    kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10,
+  });
+  return {
+    runId: 'run-completed-clean',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition,
+    derivedFromRunId: null,
+    outcome: {
+      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: 10,
+      units: [unit1],
+      rootOwners: [
+        { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [], cls: 'B' }] },
+      ],
+    }),
+    results: [],
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+}
+
+/** 'unreachable-positive': a result whose second element (dbId 999 of MODEL_B) is not a root
+ *  owner anywhere but IS listed in `ledger.unreachablePopulation`, with `flags.unreachableOwner`
+ *  correctly set -- the one legitimate way `owner-not-in-ledger` is NOT raised for an unresolved
+ *  owner. */
+function unreachablePositiveParts() {
+  const testId = 'T5';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'unreachable-positive',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
+  const pair0 = { first: { modelKey: MODEL_A, dbId: 100 }, second: { modelKey: MODEL_B, dbId: 999 } };
+  const unit1 = unit('u1', 'evaluated', {
+    kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10,
+  });
+  return {
+    runId: 'run-unreachable-positive',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition,
+    derivedFromRunId: null,
+    outcome: {
+      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: 10,
+      units: [unit1],
+      // P5-REM7 (F/G coverage reconciliation): a real planner emits one rootOwners row for EVERY
+      // definition model (`rootResolution.js` + `ledger.js` `rootOwnerRowsOfSteps`), and a whole-model
+      // target (`u1`'s `scope: 'model'` on MODEL_B) is only planned for a model with run-start B'
+      // roots (`sizing.js` `wholeRootCount`). MODEL_B's row was simply missing; 999 stays a
+      // tree-unreachable owner, NOT under this root.
+      rootOwners: [{ modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'B' }] }],
+      // D-A (2026-09-24): `count` added (spec §6.2 row shape, as P3 writes it); additive only.
+      unreachablePopulation: [{ modelKey: MODEL_B, count: 1, ownerDbIds: [999], mixedOwnerDbIds: [],
+        unattributable: { notLoaded: 0, ownerUnresolvable: 0 } }],
+    }),
+    results: [{
+      resultId: makeResultId(testId, semanticDigest, pair0), pair: pair0, mode: 'volume-overlap',
+      evaluatedAs: { source: ref(MODEL_A, 100), target: ref(MODEL_B, 999) },
+      evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } },
+      flags: { unreachableOwner: true }, unitId: 'u1',
+    }],
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+}
+
+/** 'hierarchy-internal' (Task P5.6): one normal evaluated pair (MODEL_A/50 <-> MODEL_B/60) for a
+ *  non-trivial baseline, PLUS a SECOND MODEL_A root (100, cls 'C' -- R2's A n B marker) owned by
+ *  TWO owners (101, 102) -- the AC-20(c) fixture: two elements under the SAME root, in the SAME
+ *  model, are never a required pair regardless of taints. `ledger.hierarchyInternal` carries the
+ *  matching (bounded, capped-at-20) examples row so both the `cls`-based and `examples`-based
+ *  reading can be told apart by a test that empties `examples` (R2's own point). */
+function hierarchyInternalParts() {
+  const testId = 'T6';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'hierarchy-internal',
+    // P5-REM7 (F/G coverage reconciliation): root 100 is labelled `cls: 'C'` (A n B), so MODEL_A must
+    // genuinely be named by BOTH selections -- before this, MODEL_A was selectionA-only, which no real
+    // planner could label 'C' (`rootResolution.js` step 6). selectionB now also names MODEL_A's root
+    // 100 explicitly, which is exactly the A n B root the fixture always meant.
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'elements', modelKey: MODEL_A, dbIds: [100] }, { kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
+  const pair0 = { first: ref(MODEL_A, 50), second: ref(MODEL_B, 60) };
+  // The §6.3 cells for A' = {10}, C = {100}, B' = {20}: cell 1 is A' -> (C u B') -- root 100 as an
+  // explicit target of MODEL_A (A_n is non-empty, so no whole-model sentinel for it) plus MODEL_B
+  // whole -- and cell 2 is C -> B' (u2), so the C root is evaluated in both of its required roles.
+  const unit1 = unit('u1', 'evaluated', {
+    kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [10],
+    targets: [{ modelKey: MODEL_A, scope: 'roots', rootDbIds: [100] }, { modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10,
+  });
+  const unit2 = unit('u2', 'evaluated', {
+    kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [100],
+    targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 1,
+  });
+  return {
+    runId: 'run-hierarchy-internal',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition,
+    derivedFromRunId: null,
+    outcome: {
+      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: 11,
+      units: [unit1, unit2],
+      rootOwners: [
+        { modelKey: MODEL_A, owners: [
+          { rootDbId: 10, ownerDbIds: [50], cls: 'A' },
+          { rootDbId: 100, ownerDbIds: [101, 102], cls: 'C' },
+        ] },
+        { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [60], cls: 'B' }] },
+      ],
+      hierarchyInternal: [{ modelKey: MODEL_A, rootCount: 1, ownerCount: 2,
+        examples: [{ rootDbId: 100, ownerDbIds: [101, 102] }] }],
+    }),
+    results: [{
+      resultId: makeResultId(testId, semanticDigest, pair0), pair: pair0, mode: 'volume-overlap',
+      evaluatedAs: { source: ref(MODEL_A, 50), target: ref(MODEL_B, 60) },
+      evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {}, unitId: 'u1',
+    }],
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+}
+
+/** Dispatch for every Task P5.5/P5.6 fixture kind (never called for the original three -- see `sealedSet`). */
+function validParts(kind) {
+  switch (kind) {
+    case 'positives': return positivesParts();
+    case 'schema-corpus': return schemaCorpusParts();
+    case 'completed-with-gaps': return completedWithGapsParts();
+    case 'completed-clean': return completedCleanParts();
+    case 'unreachable-positive': return unreachablePositiveParts();
+    case 'hierarchy-internal': return hierarchyInternalParts();
+    default: throw new Error(`resultSetFixtures: unknown kind ${kind}`);
+  }
+}
+
+// =================================================================================================
+// Task P5.6: `status.js` reader fixtures.
+// =================================================================================================
+
+/** A raw `PairId` `{first, second}` for a `getPairStatus`/`getElementStatus` probe, canonicalized
+ *  through P1's OWN `makePairId` (never a hand-rolled `{first,second}` object) -- `makePairId` owns
+ *  validation, -0/0 normalization and unordered-pair canonical order (row N13); a raw builder could
+ *  silently disagree with a `ClashResult.pair` built the production way and make
+ *  `status.js`'s own order-sensitive `pairKey` look up the wrong (or no) result. */
+export const pairOf = (modelKeyA, dbIdA, modelKeyB, dbIdB) => makePairId(
+  'volume-overlap', { modelKey: modelKeyA, dbId: dbIdA }, { modelKey: modelKeyB, dbId: dbIdB });
+
+/**
+ * Task P5.6's status-reader complexity acceptance fixture: `unitCount` leaf units, each owning a
+ * DISTINCT root pair -- source root `1000+i` in MODEL_A against the ONE target root `2000` in
+ * MODEL_B via `scope: 'roots'` (an exact cover, one leaf per root pair, per spec 6.3: the cell-1
+ * layout the real sizer emits with one source root per chunk) -- plus exactly `min(50, unitCount)`
+ * results spread across the FIRST units, so a complexity probe run at two different `unitCount`s
+ * issues IDENTICAL lookups while only the build's own input size changes. Built through the real
+ * `buildResultSet`/`sealResultSet` pipeline (never hand-assembled as an already-sealed object),
+ * like every other kind in this file.
+ *
+ * P5-REM9 correction (pair-level exact cover): this fixture used to pair `1000+i` with its OWN
+ * target root `2000+i`, i.e. `unitCount` A roots x `unitCount` B roots evaluated on the diagonal
+ * only -- `unitCount` of the `unitCount^2` required pairs, the exact candidate-finding-I shape --
+ * while recording `coverage: 'full'`. With one shared target root the same `unitCount` one-pair
+ * leaves ARE the whole required pair set, so the fixture now means what its comment always said.
+ * Every source root is still in exactly one unit (what the status-reader probes rely on).
+ */
+const WIDE_TARGET_ROOT = 2000;
+export async function widePlan(unitCount) {
+  const probeCount = Math.min(50, unitCount);
+  const units = [];
+  const ownersA = [];
+  const ownersB = [];
+  const results = [];
+  for (let i = 0; i < unitCount; i++) {
+    const rootA = 1000 + i;
+    units.push(unit(`u${i}`, 'evaluated', {
+      kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [rootA],
+      targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [WIDE_TARGET_ROOT] }], pairSpaceWeight: 1,
+    }));
+    ownersA.push({ rootDbId: rootA, ownerDbIds: [rootA], cls: 'A' });
+  }
+  ownersB.push({ rootDbId: WIDE_TARGET_ROOT, ownerDbIds: [WIDE_TARGET_ROOT], cls: 'B' });
+  const testId = 'TW';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'wide-plan',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
+  for (let i = 0; i < probeCount; i++) {
+    const pair = { first: ref(MODEL_A, 1000 + i), second: ref(MODEL_B, WIDE_TARGET_ROOT) };
+    results.push({
+      resultId: makeResultId(testId, semanticDigest, pair), pair, mode: 'volume-overlap',
+      evaluatedAs: { source: ref(MODEL_A, 1000 + i), target: ref(MODEL_B, WIDE_TARGET_ROOT) },
+      evidence: { witness: { kind: 'vertex', point: [0, 0, 0] } }, flags: {}, unitId: `u${i}`,
+    });
+  }
+  const parts = {
+    runId: 'run-wide-plan',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition,
+    derivedFromRunId: null,
+    outcome: {
+      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A, { elementCount: unitCount }),
+        provenanceModel(MODEL_B, { elementCount: unitCount })],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: unitCount,
+      units,
+      rootOwners: [{ modelKey: MODEL_A, owners: ownersA }, { modelKey: MODEL_B, owners: ownersB }],
+    }),
+    results,
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+  return sealResultSet(buildResultSet(parts), { slicer: fakeSlicer() });
+}
+
+/**
+ * Task P5.6 (codex-advisor finding, 2026-09-22): `widePlan`'s exact-cover design (one leaf per
+ * root pair) can never exercise `findCoveringUnit`'s OWN worst case -- a source root shared by
+ * MANY leaf units (real split fan-out that keeps the same source root while partitioning only the
+ * target side, per `planning/splitting.test.mjs`), where the candidate list at
+ * `sourceRoots[modelKey][rootDbId]` has more than one entry and a probe landing on the LAST one
+ * scans every entry before it. `sharedRootPlan({fanOut, unrelatedUnits})` isolates exactly that
+ * shape: `fanOut` leaf units all sourcing ONE shared root (5000) in MODEL_A, each targeting its
+ * OWN distinct root in MODEL_B, PLUS `unrelatedUnits` leaf units sourcing their OWN distinct,
+ * unrelated MODEL_A roots (9000+i) that never touch the shared root at all -- so a test can tell
+ * apart "cost grows with `unrelatedUnits`" (would mean the index is not scoped by root -- a real
+ * regression) from "cost grows with `fanOut`" (the known, bounded-by-split-fan-out property this
+ * task's own status-reader contract already names, not a defect introduced here).
+ *
+ * P5-REM10 correction (pair-level exact cover, same class of defect `widePlan` had): with
+ * `unrelatedUnits > 0` this fixture used to give each unrelated unit its OWN distinct MODEL_B
+ * target root (8000+i) too, recording `coverage: 'full'`. `provePairExactCoverSteps`'s required
+ * count is the GLOBAL cross product of every recorded MODEL_A root x every recorded MODEL_B root
+ * (`nA * nB`) -- not partitioned by "island" -- so with `nA = 1 + unrelatedUnits` and
+ * `nB = fanOut + unrelatedUnits` distinct roots, required = `(1+unrelatedUnits)*(fanOut+unrelatedUnits)`
+ * while only `fanOut + unrelatedUnits` pairs were ever evaluated: a real gap for any
+ * `unrelatedUnits > 0` (confirmed: `sharedRootPlan({fanOut:5, unrelatedUnits:2})` rejected with
+ * `coverage-pair-uncovered`). Unlike `widePlan`, collapsing the FAN-OUT side's targets to one root
+ * is not an option (the status-reader probe needs `fanOut` MUTUALLY DISTINCT MODEL_B roots to force
+ * a worst-case scan), and a true dense full cover would need `nA * nB` evaluated leaves --
+ * quadratic in `fanOut * unrelatedUnits` (this fixture is exercised up to `fanOut:50,
+ * unrelatedUnits:2000`), defeating the fixture's own cheap/scalable purpose. `outcome.coverage:
+ * 'partial'` was considered and rejected (codex-advisor, 2026-09-23): every leaf here really is
+ * `outcome:'evaluated'`/`scopeProof:'equal'`, so `derivedFull` computes `true` regardless, and
+ * recording a compensating non-empty `ledger.planningGaps` entry alongside `status: 'completed'`
+ * is independently rejected by `validateResultSet.js` as `completed-with-fatal-cause` (verified).
+ * The actual fix (codex-advisor, 2026-09-23, verified against `validateResultSet`/`readResultSet`
+ * for `{fanOut:5, unrelatedUnits:2}` and `{fanOut:50, unrelatedUnits:2000}`): each unrelated leaf's
+ * target is now a single `scope: 'model'` (whole-MODEL_B) entry instead of its own distinct root,
+ * with `pairSpaceWeight: fanOut` -- ONE leaf now honestly claims all `fanOut` pairs from its own
+ * source root to every B-role root, without materializing `fanOut` new target root IDs. With no new
+ * MODEL_B roots recorded, `nB` stays exactly `fanOut` and `nA = 1 + unrelatedUnits`, so
+ * `required = nA * nB = (1+unrelatedUnits) * fanOut`, which exactly equals the union of the fanOut
+ * group's `fanOut` pairs plus each of the `unrelatedUnits` leaves' own `fanOut` pairs (all disjoint,
+ * since each unrelated leaf's own MODEL_A source root is unique) -- `required === evaluated` for
+ * any `fanOut`/`unrelatedUnits` combination, remains linear in stored fixture size, and does not
+ * touch the fanOut group's distinct targets or the unrelated units' distinct, shared-root-disjoint
+ * MODEL_A source roots (`findCoveringUnit` indexes purely by `sourceRootDbIds`, so this is
+ * unaffected by the target-side change -- see `status.js`).
+ */
+export async function sharedRootPlan({ fanOut, unrelatedUnits = 0 }) {
+  const SHARED_ROOT = 5000;
+  const units = [];
+  const ownersA = [{ rootDbId: SHARED_ROOT, ownerDbIds: [SHARED_ROOT], cls: 'A' }];
+  const ownersB = [];
+  for (let i = 0; i < fanOut; i++) {
+    const rootB = 6000 + i;
+    units.push(unit(`shared-${i}`, 'evaluated', {
+      kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [SHARED_ROOT],
+      targets: [{ modelKey: MODEL_B, scope: 'roots', rootDbIds: [rootB] }], pairSpaceWeight: 1,
+    }));
+    ownersB.push({ rootDbId: rootB, ownerDbIds: [rootB], cls: 'B' });
+  }
+  for (let i = 0; i < unrelatedUnits; i++) {
+    const rootA = 9000 + i;
+    units.push(unit(`unrelated-${i}`, 'evaluated', {
+      kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A, sourceRootDbIds: [rootA],
+      targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: fanOut,
+    }));
+    ownersA.push({ rootDbId: rootA, ownerDbIds: [rootA], cls: 'A' });
+  }
+  const testId = 'TSR';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = {
+    schemaVersion: 1, testId, revision: 1, name: 'shared-root-plan',
+    selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+    selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+    mode: 'volume-overlap',
+  };
+  const semanticDigest = computeSemanticDigest(definition);
+  const parts = {
+    runId: 'run-shared-root-plan',
+    testRef: { testId, revision: 1, semanticDigest },
+    definition,
+    derivedFromRunId: null,
+    outcome: {
+      status: 'completed', coverage: 'full', integrity: 'clean', freshness: 'current',
+      environmentSensitive: false, environmentSensitiveCauses: [], reasons: [],
+    },
+    provenance: baseProvenance({
+      models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)],
+    }),
+    ledger: ledgerWith({
+      pairSpaceTotal: fanOut * (unrelatedUnits + 1),
+      units,
+      rootOwners: [{ modelKey: MODEL_A, owners: ownersA }, { modelKey: MODEL_B, owners: ownersB }],
+    }),
+    results: [],
+    diagnostics: emptyDiagnostics(),
+    statistics: {},
+  };
+  return sealResultSet(buildResultSet(parts), { slicer: fakeSlicer() });
+}
+
+// =================================================================================================
+// Task P5.9: `sealFakeRun(kind)` -- the phase's own acceptance harness. Unlike every fixture above
+// (which hand-assembles `results[]` via `makeResultId` directly, bypassing P5.1's projection), this
+// ONE builder drives the real P5.1 stage too: fake `UnitOutcome`s go through
+// `createResultAccumulator` (`projectUnitPairs` + the whole-unit result cap), the accumulated
+// results and a hand-built ledger go through the real `deriveRunOutcome` (P5.2) -- so
+// `outcome.coverage`/`integrity`/`environmentSensitive(+Causes)` are DERIVED, never asserted -- and
+// only then `buildResultSet`/`sealResultSet` (P5.3). This is what makes `roundTrip.test.mjs` a
+// genuine produce -> persist -> evict -> read -> validate proof of P5.1-P5.3 wired together, not
+// just P5.3 sealing whatever it is handed.
+// =================================================================================================
+
+/** A fake `UnitOutcome` (library orientation), the ONLY shape `projectUnitPairs`/
+ *  `createResultAccumulator` read: `{unitId, pairs}`, `pairs[]` = `{source, target, witness}`
+ *  (volume-overlap evidence -- the only mode these fixtures use). */
+const fakeUnitOutcome = (unitId, pairs = []) => ({ unitId, pairs });
+
+/** `createResultAccumulator`'s own `ctx` (P5.1): mode + identity inputs + the whole-run result cap.
+ *  `unreachableOwners`/`mixedOwners` are empty -- none of these fixtures need a spoofed-ownership
+ *  flag -- and `unitPlanRank` is unused (no fixture here produces a duplicate resultId to
+ *  reconcile). */
+function fakeAccumulatorCtx(testId, semanticDigest) {
+  return {
+    mode: 'volume-overlap', testId, semanticDigest,
+    maxResultsPerRun: RUN_OPTION_DEFAULTS.maxResultsPerRun,
+    unitPlanRank: new Map(),
+    unreachableOwners: new Map(),
+    mixedOwners: new Map(),
+  };
+}
+
+/** Runs every fake `UnitOutcome` through the REAL `createResultAccumulator` (P5.1) and returns its
+ *  final, canonically-ordered `results[]`. Throws if a unit is refused (never expected here --
+ *  every fixture below stays far under `maxResultsPerRun`), so a future fixture that DID overflow
+ *  the cap would fail loudly here rather than silently seal an unexpectedly-short `results[]`. */
+function fakeAccumulate(ctx, unitOutcomes) {
+  const acc = createResultAccumulator(ctx);
+  for (const uo of unitOutcomes) {
+    const admitted = acc.addUnit(uo);
+    if (!admitted.accepted) {
+      throw new Error(`resultSetFixtures.sealFakeRun: unit ${uo.unitId} refused (${admitted.reason})`);
+    }
+  }
+  return acc.toArray();
+}
+
+const fakeDefinition = (testId, mode = 'volume-overlap') => ({
+  schemaVersion: 1, testId, revision: 1, name: testId,
+  selectionA: { entries: [{ kind: 'model', modelKey: MODEL_A }] },
+  selectionB: { entries: [{ kind: 'model', modelKey: MODEL_B }] },
+  mode,
+});
+
+/** `completed-clean`: 2 evaluated leaves, `pairSpaceTotal: 12`, no gaps/taints, zero results.
+ *  `deriveRunOutcome` derives `coverage: 'full'` / `integrity: 'clean'` from exactly that shape --
+ *  every §8.3 claim conjunct ends up true, so this is the ONE shape `canClaimNoClashes` allows. */
+function fakeCompletedClean() {
+  const testId = 'TF-completed-clean';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = fakeDefinition(testId);
+  const semanticDigest = computeSemanticDigest(definition);
+  const ctx = fakeAccumulatorCtx(testId, semanticDigest);
+  const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [10], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 6 });
+  const u2 = unit('u2', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [12], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 6 });
+  const results = fakeAccumulate(ctx, [fakeUnitOutcome('u1'), fakeUnitOutcome('u2')]);
+  const ledger = ledgerWith({
+    pairSpaceTotal: 12, units: [u1, u2],
+    // No result mentions any of these owners (zero clashes), but P7's T3 live acceptance reuses
+    // this fixture (spec AC-15 prerequisite) and `status.js`'s readers index `rootOwners` -- an
+    // empty table would give a degenerate answer to any future consumer of this shape.
+    rootOwners: [
+      { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [], cls: 'A' }, { rootDbId: 12, ownerDbIds: [], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [], cls: 'B' }] },
+    ],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'completed', freshness: 'current', ledger, diagnostics, results });
+  return {
+    runId: 'run-fake-completed-clean', testRef: { testId, revision: 1, semanticDigest },
+    definition, derivedFromRunId: null, outcome,
+    provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
+    ledger, results, diagnostics, statistics: {},
+  };
+}
+
+/** `completed-with-gaps`: 1 evaluated leaf (1 positive result) + 1 `failed:capacity-exceeded` leaf
+ *  with no results of its own -- `deriveRunOutcome` derives `coverage: 'partial'` because not every
+ *  leaf is `evaluated`, which is exactly what blocks the claim (the `full` conjunct). `capacity-
+ *  exceeded` is in neither `FATAL_CAUSES` nor `INPUT_CHANGE_CAUSES`, so `status: 'completed'` stays
+ *  admissible (no `completed-with-fatal-cause`). */
+function fakeCompletedWithGaps() {
+  const testId = 'TF-completed-with-gaps';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = fakeDefinition(testId);
+  const semanticDigest = computeSemanticDigest(definition);
+  const ctx = fakeAccumulatorCtx(testId, semanticDigest);
+  const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [10], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10 });
+  const u2 = unit('u2', 'failed', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [11], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 5,
+    cause: 'capacity-exceeded', capacityKind: 'bucket-capacity', scopeProof: 'not-checked' });
+  const results = fakeAccumulate(ctx, [
+    fakeUnitOutcome('u1', [{ source: ref(MODEL_A, 100), target: ref(MODEL_B, 200),
+      witness: { kind: 'vertex', point: [0, 0, 0] } }]),
+    fakeUnitOutcome('u2'),
+  ]);
+  const ledger = ledgerWith({
+    pairSpaceTotal: 15, units: [u1, u2],
+    // P5-REM5 (Finding B): u2's source root 11 added -- every unit root must be owned (see positivesParts).
+    rootOwners: [
+      { modelKey: MODEL_A, owners: [{ rootDbId: 10, ownerDbIds: [100], cls: 'A' }, { rootDbId: 11, ownerDbIds: [110], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 20, ownerDbIds: [200], cls: 'B' }] },
+    ],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'completed', freshness: 'current', ledger, diagnostics, results });
+  return {
+    runId: 'run-fake-completed-with-gaps', testRef: { testId, revision: 1, semanticDigest },
+    definition, derivedFromRunId: null, outcome,
+    provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
+    ledger, results, diagnostics, statistics: {},
+  };
+}
+
+/** `cancelled-pre-resolution`: cancelled before a plan ever existed -- `planExists: false`,
+ *  `units: []`, a `{phase:'queued', cause:'cancelled'}` planning gap, `definition: null` paired
+ *  with a null `testRef.semanticDigest` (the definition/digest null-parity rule). No unit ever ran,
+ *  so `createResultAccumulator` is not exercised here (there is nothing to project). */
+function fakeCancelledPreResolution() {
+  const testId = 'TF-cancelled-pre-resolution';
+  const ledger = ledgerWith({
+    planExists: false, pairSpaceTotal: 0, units: [],
+    planningGaps: [{ phase: 'queued', cause: 'cancelled' }],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'cancelled', freshness: 'unverifiable', ledger, diagnostics, results: [] });
+  return {
+    runId: 'run-fake-cancelled-pre-resolution',
+    testRef: { testId, revision: null, semanticDigest: null },
+    definition: null, derivedFromRunId: null, outcome,
+    provenance: baseProvenance(),
+    ledger, results: [], diagnostics, statistics: {},
+  };
+}
+
+/** `failed`: a `{phase:'planning', cause:'plan-too-large'}` planning gap stopped the run before any
+ *  unit was produced -- structurally the same empty-ledger shape as `cancelled-pre-resolution`,
+ *  distinguished only by `outcome.status`. */
+function fakeFailed() {
+  const testId = 'TF-failed';
+  const ledger = ledgerWith({
+    planExists: false, pairSpaceTotal: 0, units: [],
+    planningGaps: [{ phase: 'planning', cause: 'plan-too-large' }],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'failed', freshness: 'unverifiable', ledger, diagnostics, results: [] });
+  return {
+    runId: 'run-fake-failed',
+    testRef: { testId, revision: null, semanticDigest: null },
+    definition: null, derivedFromRunId: null, outcome,
+    provenance: baseProvenance(),
+    ledger, results: [], diagnostics, statistics: {},
+  };
+}
+
+/** `invalidated`: 1 evaluated leaf retained (1 positive result) + 1 `discarded:scope-drift` leaf --
+ *  `deriveRunOutcome` derives `coverage: 'partial'` (the discarded leaf is not `evaluated`), and
+ *  `freshness: 'stale'` records the invalidation at seal time (irrelevant to the round-trip test's
+ *  own claim check, which always supplies its OWN `currentFreshness: 'current'` -- §8.3's `current`
+ *  conjunct reads the CALLER's freshness, never the sealed set's own `outcome.freshness`). */
+function fakeInvalidated() {
+  const testId = 'TF-invalidated';
+  // P5-REM2 (H1): `definition` built first; `semanticDigest` is the real computed digest of it.
+  const definition = fakeDefinition(testId);
+  const semanticDigest = computeSemanticDigest(definition);
+  const ctx = fakeAccumulatorCtx(testId, semanticDigest);
+  const u1 = unit('u1', 'evaluated', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [15], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 10 });
+  const u2 = unit('u2', 'discarded', { kind: 'leaf', parentUnitId: null, sourceModelKey: MODEL_A,
+    sourceRootDbIds: [16], targets: [{ modelKey: MODEL_B, scope: 'model' }], pairSpaceWeight: 5,
+    cause: 'scope-drift', scopeProof: 'not-checked' });
+  const results = fakeAccumulate(ctx, [
+    fakeUnitOutcome('u1', [{ source: ref(MODEL_A, 150), target: ref(MODEL_B, 250),
+      witness: { kind: 'vertex', point: [0, 0, 0] } }]),
+    fakeUnitOutcome('u2'),
+  ]);
+  const ledger = ledgerWith({
+    pairSpaceTotal: 15, units: [u1, u2],
+    rootOwners: [
+      // P5-REM5 (Finding B): u2's source root 16 added -- every unit root must be owned (see positivesParts).
+      { modelKey: MODEL_A, owners: [{ rootDbId: 15, ownerDbIds: [150], cls: 'A' }, { rootDbId: 16, ownerDbIds: [160], cls: 'A' }] },
+      { modelKey: MODEL_B, owners: [{ rootDbId: 25, ownerDbIds: [250], cls: 'B' }] },
+    ],
+  });
+  const diagnostics = emptyDiagnostics();
+  const outcome = deriveRunOutcome({ status: 'invalidated', freshness: 'stale', ledger, diagnostics, results });
+  return {
+    runId: 'run-fake-invalidated', testRef: { testId, revision: 1, semanticDigest },
+    definition, derivedFromRunId: null, outcome,
+    provenance: baseProvenance({ models: [provenanceModel(MODEL_A), provenanceModel(MODEL_B)] }),
+    ledger, results, diagnostics, statistics: {},
+  };
+}
+
+const FAKE_RUN_BUILDERS = Object.freeze({
+  'completed-clean': fakeCompletedClean,
+  'completed-with-gaps': fakeCompletedWithGaps,
+  'cancelled-pre-resolution': fakeCancelledPreResolution,
+  failed: fakeFailed,
+  invalidated: fakeInvalidated,
+});
+
+/**
+ * Task P5.9's own acceptance-harness builder, for one of the five terminal shapes
+ * (`completed-clean`, `completed-with-gaps`, `cancelled-pre-resolution`, `failed`, `invalidated`).
+ * Unlike `sealedSet`, this drives P5.1's `createResultAccumulator`/`deriveRunOutcome` too (see the
+ * section header above) -- `roundTrip.test.mjs`'s own acceptance proof that P5.1-P5.3 agree with
+ * each other, not just that P5.3 can seal whatever it is handed.
+ */
+export async function sealFakeRun(kind) {
+  const build = FAKE_RUN_BUILDERS[kind];
+  if (build === undefined) throw new Error(`resultSetFixtures.sealFakeRun: unknown kind ${kind}`);
+  const parts = build();
+  return sealResultSet(buildResultSet(parts), { slicer: fakeSlicer() });
+}

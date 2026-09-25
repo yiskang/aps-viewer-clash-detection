@@ -762,22 +762,12 @@ test('an aborted surface-intersection traversal is surfaced as a diagnostic, not
       200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
     },
   );
-  const world = await freshWorld(viewer, { now: frozenClock() });
-
-  // The query's private clock reads the real `performance.now()` and findClashes exposes no seam to
-  // override it (the injected `now` above drives only the world's own frame-budget accumulator), so
-  // the abort is forced by making that global clock leap on every read: the traversal is already
-  // past frameBudgetMs at its very first callback entry. Deterministic -- no wall-clock luck, and no
-  // dependence on how many candidate pairs this particular BVH pair happens to produce.
-  const realNow = performance.now;
-  let result;
-  try {
-    let t = 0;
-    performance.now = () => (t += 1_000_000);
-    result = await world.findClashes(query(model, [10], [20]));
-  } finally {
-    performance.now = realNow;
-  }
+  // D-11 (clock propagation): the query's traversal budget reads the WORLD's injected `now`, so the
+  // abort is forced through that seam -- a clock that leaps on every read is already past
+  // frameBudgetMs at the traversal's first callback entry. Deterministic, and the host's real
+  // `performance.now()` is deliberately left untouched to prove it is not what drives the abort.
+  const world = await freshWorld(viewer, { now: advancingClock(1_000_000) });
+  const result = await world.findClashes(query(model, [10], [20]));
 
   assert.equal(result.statistics.narrowPhasePairs, 1, 'the pair did reach the narrow phase');
   assert.equal(result.pairs.length, 0, 'an aborted traversal never fabricates a hit');
@@ -789,6 +779,31 @@ test('an aborted surface-intersection traversal is surfaced as a diagnostic, not
     sourceFragment: { modelId: model.id, dbId: 10, fragId: 100 },
     targetFragment: { modelId: model.id, dbId: 20, fragId: 200 },
   });
+});
+
+// D-11 (clock propagation, converse of the test above): with a frozen injected `now`, a real host
+// clock that leaps (CPU load / GC pause stand-in) must NOT abort the surface-intersection traversal.
+// Before the fix the query fell back to `performance.now()` and this pair became a caveated drop.
+test('surface-intersection traversal budget is driven by the injected clock, not host wall-clock time (D-11)', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 1, children: [{ dbId: 10, fragments: [100] }, { dbId: 20, fragments: [200] }] }],
+    {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [1, 0, 0] },
+    },
+  );
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  const realNow = performance.now;
+  let result;
+  try {
+    let t = 0;
+    performance.now = () => (t += 1_000_000);
+    result = await world.findClashes(query(model, [10], [20]));
+  } finally {
+    performance.now = realNow;
+  }
+  assert.equal(result.pairs.length, 1, 'the genuine hit is reported, not dropped');
+  assert.deepEqual(result.statistics.diagnostics, [], 'and no crossing-budget-exhausted caveat is attached');
 });
 
 // --- Finding 5: the instance-tree readiness wait (Task 15's own approved decision) ---------------

@@ -8,7 +8,7 @@ import { box, at, comb, testInstance } from '../fixtures/geometry.mjs';
 test('duct through beam, no vertex inside either (round 7 regression)', async () => {
   const duct = testInstance(box(20, 0.4, 0.4));
   const beam = testInstance(box(0.4, 0.4, 20));
-  const r = await containmentModeQuery(duct, beam);
+  const r = await containmentModeQuery(duct, beam, { now: () => 0 }); // frozen clock: no host-timing dependence (D-12)
   // ROUND 7 REGRESSION: bare anyComponentInside gave a clean false here -- forces
   // SurfaceCrossingWitness to run.
   assert.equal(r.contained, true, 'duct through beam: contained');
@@ -22,7 +22,7 @@ test('lone large triangle through room, all 3 corners outside (round 7 regressio
   bigTriangle.setIndex([0, 1, 2]);
   const source = testInstance(bigTriangle);
   const target = testInstance(box(4, 4, 4));
-  const r = await containmentModeQuery(source, target);
+  const r = await containmentModeQuery(source, target, { now: () => 0 }); // frozen clock (D-12)
   // unfixable by raising sample count alone -- no vertex is ever inside.
   assert.equal(r.contained, true, 'lone large triangle through room: contained');
 });
@@ -161,4 +161,32 @@ test('aspect-ratio gate: SOURCE flagged does not suppress a genuine vertex-term 
   assert.equal(r.via, 'vertex', 'still decided via the vertex term');
   assert.equal(r.stats.vertexTerm.inside, true, 'vertex term genuinely found inside:true, not gated');
   assert.equal('witnessTerm' in r.stats, false, 'witness term never ran -- vertex term already resolved it');
+});
+
+// D-12 (clock propagation): the default scheduler's clock is injectable via `options.now`, so a
+// caller (or test) that injects a clock never has host wall-clock time reach the witness's
+// frameBudgetMs abort. The default (no `now`) is unchanged: real performance.now().
+test('injected `now` reaches the witness: frozen clock survives a leaping host clock (D-12)', async () => {
+  const duct = testInstance(box(20, 0.4, 0.4));
+  const beam = testInstance(box(0.4, 0.4, 20));
+  const realNow = performance.now;
+  let r;
+  try {
+    let t = 0;
+    performance.now = () => (t += 1_000_000);
+    r = await containmentModeQuery(duct, beam, { now: () => 0 });
+  } finally {
+    performance.now = realNow;
+  }
+  assert.equal(r.contained, true, 'not aborted by host time');
+  assert.equal(r.via, 'surface-crossing');
+});
+
+test('injected `now` reaches the witness: a leaping injected clock aborts it (D-12)', async () => {
+  const duct = testInstance(box(20, 0.4, 0.4));
+  const beam = testInstance(box(0.4, 0.4, 20));
+  let t = 0;
+  const r = await containmentModeQuery(duct, beam, { now: () => (t += 1_000_000) });
+  assert.equal(r.contained, false, 'budget-exhausted witness is never read as a hit');
+  assert.equal(r.diagnostics.some((d) => d.reason === 'crossing-budget-exhausted'), true);
 });

@@ -46,14 +46,14 @@ Every export of P5. Later phases consume these names and must not re-implement t
 | `isOpenPath` | `clashtest/results/resultSetSchema.js` | `(pathSegments: readonly string[]) → boolean` | True exactly at an unknown field of one of §13.6's five **open** types. Consumed by `captureResultSet` as P0's `openFieldBudget.isOpenPath` **and** by the validator's defensive re-check — one definition of "unknown", used by both. |
 | `checkShapeAndUnknownFields` | `clashtest/results/resultSetSchema.js` | `(set, add, limits) → void` | The table-driven structural validator. Runs as the **first** phase of `validateResultSetSteps`, before every cross-field check, so no later phase can traverse a value whose shape it has not established. |
 | `validateResultSet` | `clashtest/results/validateResultSet.js` | `(set, {limits}) → {ok: boolean, issues: {path, code}[]}` | The **schema and semantic** validator of §13.6, run on an **already-captured copy only** (review question 1). **It is not an untrusted-input boundary and must never be handed a raw caller/store object**: `captureResultSet`/`readResultSet` are the one boundary, and they hand this function a detached, plain-data, accessor-free, acyclic, depth- and size-bounded copy. Because it traverses properties directly, a raw hostile object would invoke getters — exactly what capture exists to prevent. It therefore asserts a **cheap O(1) precondition** on entry (plain object, `Object.getPrototypeOf(set) === Object.prototype`, and no accessor among the root's own descriptors) and throws `TypeError{code:'ERR_UNCAPTURED_INPUT'}` if it fails — a programmer error, never a §18 class. Pure and synchronous; drains the generator below. |
-| `validateResultSetSteps` | `clashtest/results/validateResultSet.js` | `function*(set, {limits}) → yields after each phase, returns {ok, issues}` | Sliceable form for read-through. |
+| `validateResultSetSteps` | `clashtest/results/validateResultSet.js` | `function*(set, {limits}) → yields a 'validate:<phase>' label before each phase and once per item of every size-dependent loop within it, returns {ok, issues}` (P5-REM5: frozen spec §17.3 — the driver's `slicer.tick(label)` must be able to check `now` at least every 64 items) | Sliceable form for read-through. |
 | `captureResultSet` | `clashtest/results/validateResultSet.js` | `(raw, {limits, runId?, migrations?}) → ResultSet` (synchronous; throws `UnsupportedSchemaVersionError` \| `CorruptResultSetError` \| `ResultSetTooLargeError`) | Capture-first detached copy (§13.6), built on P0's **`captureData`** (N4/N29). **`runId` is an explicit diagnostic parameter defaulting to `null` — it is never read off `raw`** (reading any property of the untrusted argument before capture would invoke an attacker-controlled getter, which §13.6 forbids absolutely). `migrations` is consulted only by the root gate, to decide whether an older `schemaVersion` is admissible, and only for a version that is `Number.isInteger(v) && v >= 1 && v < SCHEMA_VERSION` (review Important 1 — a registered migration must never widen the set of *valid* schema versions). **It passes P0's `openFieldBudget`, so the §13.6 64 KiB unknown-field budget is charged DURING the traversal, before the offending value is copied** (review Critical 1). |
 | `applyMigration` | `clashtest/results/validateResultSet.js` | `(captured, migrations, {runId}) → ResultSet` | The **single-hop** migration dispatcher: one lookup keyed by the *source* version, whose entry must return a set at `SCHEMA_VERSION`. No chaining through intermediate versions (§13.6 registers migrations per `(type, fromVersion)`). Exported so the dispatcher is directly testable while the real table is empty. |
 | `readResultSet` | `clashtest/results/validateResultSet.js` | `(raw, {limits, migrations?, slicer, runId?}) → Promise<ResultSet>` | capture → version → migrate → re-validate → freeze; every failure is a **rejected promise** (§13.6 R19-1). The capture is synchronous, **before the first `await`**. |
 | `validateResultSetSummary` | `clashtest/results/validateResultSet.js` | `(summary, {limits}) → {ok, issues}` | Closed `ResultSetSummary` shape for listings (§13.5). |
 | `createInMemoryResultStore` | `clashtest/results/InMemoryResultStore.js` | `({now?}) → ResultStore` | Reference `put`/`get`/`list`/`delete`/`tombstoneTest`/`isTombstoned`. |
 | `createResidencyManager` | `clashtest/results/residency.js` | `({limits, resultStore, now, onPersistence}) → ResidencyManager` | Slot accounting, classes, retain/release/discard, persistence attempts. |
-| `createReadCoordinator` | `clashtest/results/residency.js` | `({limits}) → {reserveSync() → slot, acquire() → Promise<slot>, inUse() → number}` | Read slots: synchronous reserve-or-reject for raw sets, FIFO for by-id reads. |
+| `createReadCoordinator` | `clashtest/results/residency.js` | `({limits}) → {reserveSync() → slot, acquire({signal}?) → Promise<slot>, inUse() → number}` | Read slots: synchronous reserve-or-reject for raw sets, FIFO for by-id reads. **Delta (2026-09-25, owner ruling M3 / D-7, spec A17 — additive, owner-authorized change to accepted P5 code):** `acquire` takes an optional `signal`; already aborted ⇒ `ReadAbortedError` with no slot and no queue entry; aborted while queued ⇒ the waiter is removed from the FIFO (no longer counts against `maxQueuedStoreReads`, never granted) and rejects `ReadAbortedError`; the listener is removed on grant. FIFO order, one-shot release and `ReadCapacityError` unchanged. Tests: `test/clashtest/results/readCoordinator.abort.test.mjs`. |
 
 `ResidencyManager` surface (all synchronous unless stated): `reserveRunSlot(runId)`, `releaseRunSlot(runId)`, `reservationHeld(runId) → boolean`, `admitSealedSet(runId, resultSet)`, `beginPersist(runId, {persist}) → Promise<PersistenceOutcome>`, `getPersistenceState(runId) → PersistenceSnapshot|null`, `retryPersist(runId) → Promise<PersistenceOutcome>`, `retainResultSet(runId) → {release()}`, `releaseResultSet(runId, {acknowledgeUnsaved})`, `discardRun(runId) → Promise<void>`, `getResident(runId) → ResultSet|null`, `touch(runId)`, `retentionReport() → object`, `drainForDispose() → {droppedUnsaved, persistenceInFlight}`.
 
@@ -81,7 +81,7 @@ The spec fixes the *meaning* of the ledger but never its exact JSON; `validateRe
  *                                                                         `ROOT_CLASS = {A_ONLY:'A', B_ONLY:'B', BOTH:'C'}`);
  *                                                                         'C' = the root is in A ∩ B. Persisted AND digested.
  *  @property {Array<{selectionRole: 'A'|'B', modelKey: string|null, cause: string, dbIds: number[]}>} unresolvedSelections
- *  @property {Array<{modelKey: string, ownerDbIds: number[], mixedOwnerDbIds: number[],
+ *  @property {Array<{modelKey: string, count: number, ownerDbIds: number[], mixedOwnerDbIds: number[],
  *                    unattributable: {notLoaded: number, ownerUnresolvable: number}}>} unreachablePopulation
  *  @property {Array<{modelKey: string, rootCount: number, ownerCount: number,
  *                    examples: Array<{rootDbId: number, ownerDbIds: number[]}>}>} hierarchyInternal
@@ -1432,7 +1432,7 @@ So P5 pins a **closed structural schema** — every durable type, every field �
 | `ScopeDigests` | `population` `{count: int ≥ 0, digest}`\|null · `roots` `{dbId, subtreeDigest: digest}[]` unique by `dbId` |
 | `ScopeProof` | `method` = literal `'bracketed-digest'` · `digestVersion` = literal `DIGEST_VERSION` |
 | `AdmissionBaseline` | `modelKey` string(modelKey) · `epochInstanceCount` int ≥ 0 |
-| `Acceptance` | `recordRef` string(id) |
+| `Acceptance` | `recordRef` string(recordRef) — cap 512 (erratum 2026-09-25) |
 | `Environment` | `viewerVersion`/`userAgent` string(environmentField), both optional |
 | `Ledger` † | `planExists` bool · `pairSpaceTotal` int ≥ 0 · `emptyOperand` bool · `units` `UnitRecord[]` ≤ `RUN_OPTION_CEILINGS.maxUnitsPerRun`, unique by `unitId` · `rootOwners` `RootOwners[]` unique by `modelKey` · `unresolvedSelections` `UnresolvedSelection[]` · `unreachablePopulation` `UnreachablePopulation[]` unique by `modelKey` · `hierarchyInternal` `HierarchyInternal[]` unique by `modelKey` · `planningGaps` `PlanningGap[]` · `exclusions` string(reason)[] unique · `warnings` `Warning[]` · `budgetExhausted` bool · `firstRefusalUnitId` string(id)\|null |
 | `UnitRecord` | `unitId` string(id) · `kind` enum(`leaf`,`split`) · `parentUnitId` string(id)\|null · `sourceModelKey` string(modelKey) · `sourceRootDbIds` dbId[] unique · `targets` `UnitTarget[]` unique by `modelKey` · `outcome` enum(`evaluated`,`failed`,`skipped`,`discarded`,`not-run`,`split`) · `cause` string(reason)\|null · `secondaryCauses` string(reason)[] unique · `capacityKind` string(reason)\|null · `capDetail` enum(`ledger-records`,`unit-records`)\|null · `scopeProof` enum(`equal`,`drift`,`unverifiable`,`not-checked`) · `pairSpaceWeight` int ≥ 0 · `taints` `Taint[]` ≤ `RUN_OPTION_CEILINGS.maxElementTaintsPerUnit` · `attempts` int ≥ 0 · `durationMs` int ≥ 0 |
@@ -1441,7 +1441,7 @@ So P5 pins a **closed structural schema** — every durable type, every field �
 | `RootOwners` | `modelKey` string(modelKey) · `owners` `RootOwnerRow[]` **unique by `rootDbId`** |
 | `RootOwnerRow` | `rootDbId` dbId · `ownerDbIds` dbId[] unique · `cls` enum(`A`,`B`,`C`) → **`root-cls-invalid`** |
 | `UnresolvedSelection` | `selectionRole` enum(`A`,`B`) · `modelKey` string(modelKey)\|null · `cause` string(reason) · `dbIds` dbId[] unique |
-| `UnreachablePopulation` | `modelKey` string(modelKey) · `ownerDbIds` dbId[] unique · `mixedOwnerDbIds` dbId[] unique · `unattributable` `{notLoaded: int ≥ 0, ownerUnresolvable: int ≥ 0}` |
+| `UnreachablePopulation` | `modelKey` string(modelKey) · `count` int ≥ 0 (loaded, owner-resolvable fragments in no root subtree; spec §6.2; added by D-A, `7514d54`) · `ownerDbIds` dbId[] unique · `mixedOwnerDbIds` dbId[] unique · `unattributable` `{notLoaded: int ≥ 0, ownerUnresolvable: int ≥ 0}` |
 | `HierarchyInternal` | `modelKey` string(modelKey) · `rootCount`/`ownerCount` int ≥ 0 · `examples` `{rootDbId, ownerDbIds: dbId[]}[]` ≤ `HIERARCHY_EXAMPLES_CAP` |
 | `PlanningGap` | `phase` string(reason) · `cause` string(reason) |
 | `Warning` | `code` string(reason) · `modelKey` string(modelKey) (optional) |
@@ -1463,7 +1463,7 @@ Three deliberate non-rows, each with its reason:
 2. **`statistics`, `provenance.runOptions` and `diagnostics.countsByReason`** are *documented* fields with undocumented (or open-ended) contents: §12.6 calls `statistics` "aggregated, informational". They are checked as plain objects (`countsByReason` additionally as a bounded count-map) and their contents are bounded by the capture node ceiling — **not** by the unknown-field budget, because they are documented fields, not unknown ones. `isOpenPath` returns `false` inside them, which is what makes that statement true rather than merely intended.
 3. **Digest strings** are `/^sha256:[0-9a-f]{64}$/` (§5.4's format), not merely "a string" — the syntax check is what stops a malformed digest reaching `checkDigests` and being reported as a content mismatch.
 
-**Where the numbers come from.** Array ceilings are read from P0's `RUN_OPTION_CEILINGS` / `ENGINE_LIMIT_CEILINGS` (§17.1.1) and **never** from the reading engine's configured run options (§13.6: "a valid set produced under a larger configuration must not become corrupt under a smaller one"). The **per-field string caps** are a P5-owned, spec-derived table by P0's own ruling ("there is no schema-wide string-length ceiling in the spec; a per-path `stringLimitFor` is P5's own table" — P0 *Not exported from `options.js`*), so `STRING_CAPS` lives in `resultSetSchema.js` beside the fields it caps, sourced from §13.5.2: `modelKey`/`modelVersion` 1,024, `libraryVersion` 256, `environmentField` 512, plus P5's own `id`/`reason`/`timestamp`/`default` caps. Like `MAX_DEPTH = 64` and `MAX_ISSUES = 20`, these are **data-format** constants, not G-CAL-gated §17.1 defaults, which is why they are not in `options.js`. `HIERARCHY_EXAMPLES_CAP = 20` is the same kind of constant (§13.1's bounded `examples`).
+**Where the numbers come from.** Array ceilings are read from P0's `RUN_OPTION_CEILINGS` / `ENGINE_LIMIT_CEILINGS` (§17.1.1) and **never** from the reading engine's configured run options (§13.6: "a valid set produced under a larger configuration must not become corrupt under a smaller one"). The **per-field string caps** are a P5-owned, spec-derived table by P0's own ruling ("there is no schema-wide string-length ceiling in the spec; a per-path `stringLimitFor` is P5's own table" — P0 *Not exported from `options.js`*), so `STRING_CAPS` lives in `resultSetSchema.js` beside the fields it caps, sourced from §13.5.2: `modelKey`/`modelVersion` 1,024, `libraryVersion` 256, `environmentField` 512, `recordRef` 512, plus P5's own `id`/`reason`/`timestamp`/`default` caps. **Erratum (2026-09-25, owner ruling H1 of the P7 independent-review adjudication):** this plan originally typed `Acceptance.recordRef` as `str('id')` (256), which contradicted the frozen spec's 512-code-unit `recordRef` limit (§8.3, §18, AC-20(d)) and enforced by the engine — a 257–512-unit ref sealed and persisted, then failed every read-back. `STRING_CAPS.recordRef = 512` is the dedicated cap and `Acceptance.recordRef` is `str('recordRef')`; the generic `id` cap stays 256. Boundary tests: `test/clashtest/integration/recordRef.producerReader.test.mjs`. Like `MAX_DEPTH = 64` and `MAX_ISSUES = 20`, these are **data-format** constants, not G-CAL-gated §17.1 defaults, which is why they are not in `options.js`. `HIERARCHY_EXAMPLES_CAP = 20` is the same kind of constant (§13.1's bounded `examples`).
 
 **Validation rule table** (each row is one `{path, code}` issue; the first 20 are reported, never a value). The **structural** phase above runs **first and in full**; the rows below are the cross-field, linkage, order and digest phases that may then assume a well-shaped set:
 
@@ -1476,13 +1476,23 @@ Three deliberate non-rows, each with its reason:
 | open/closed | embedded `definition` fails `validateTest` | `definition-invalid` |
 | open/closed | a `ledger.rootOwners[].owners[]` row whose `cls` is absent or not `'A'` / `'B'` / `'C'` (R2 — the marker is schema, and a writer that omits it produces a set no reader accepts) | `root-cls-invalid` |
 | cross-field | `definition === null ⇎ testRef.semanticDigest === null` | `definition-digest-mismatch` |
-| cross-field | `coverage: 'full'` with no plan, a planning gap, **no leaf unit at all**, or a leaf that is not `evaluated` / not `scopeProof: 'equal'` — verbatim the predicate `deriveRunOutcome` applies (R21-2) | `coverage-not-full` |
+| cross-field | **(P5-REM2, H1)** `definition !== null` and (`definition.testId ≠ testRef.testId` or `definition.revision ≠ testRef.revision`) | `definition-identity-mismatch` |
+| cross-field | **(P5-REM2, H1)** `definition !== null` and `computeSemanticDigest(definition) ≠ testRef.semanticDigest` (reuses P2's `computeSemanticDigest`, never reimplemented) | `semantic-digest-mismatch` |
+| cross-field | **(P5-REM3, follow-up item 1)** `definition !== null` and `normalizeDefinition(definition)` (reuses P2's `normalizeDefinition`, never reimplemented) is not a fixed point of `definition` under `canonicalJson` comparison (never `JSON.stringify`, per the same key-order lesson as the P5.9/M2 round-trip fix) — a resolved embedded definition must already be in normalized form | `definition-not-normalized` |
+| cross-field | **(P5-REM2, H2)** `definition === null` and any of: `testRef.revision ≠ null`; `outcome.status` not `failed`/`cancelled`; `outcome.coverage ≠ partial`; `ledger.planExists ≠ false`; `ledger.units` non-empty; `ledger.planningGaps.length ≠ 1`; `ledger.pairSpaceTotal ≠ 0`; `results` non-empty — the unique §13.1 pre-resolution shape (R11-4) | `pre-resolution-shape-invalid` |
+| cross-field | `coverage: 'full' ⇎` the ledger's own facts derive `full` — no plan, a planning gap, **no leaf unit at all**, or a leaf that is not `evaluated` / not `scopeProof: 'equal'` — verbatim the predicate `deriveRunOutcome` applies (R21-2). **(P5-REM2, M1: exact equality in BOTH directions — a recorded `partial` when the facts derive `full` is now also rejected, not only the reverse.)** | `coverage-not-full` |
+| cross-field | **(P5-REM9, candidate finding I; owner ruling e1, 2026-09-23)** only when `coverage: 'full'` is recorded AND derived: an evaluated leaf's source roots are not ONE contiguous run of ONE class table, or an explicit target entry's roots are not ONE contiguous run, under the canonical root order (per model: `A'` < `C` < `B'`, then ascending `rootDbId` — the plan-table order of §6.5.1, rebuilt from the persisted `rootOwners[].owners[].{cls, rootDbId}`). §6.3's cell-3b block-triangular substitute must use contiguous blocks under this order; an arbitrary-subset block layout is not a legal persisted layout (owner clarification applied at spec §25, errata row A10) | `coverage-layout-noncontiguous` |
+| cross-field | **(P5-REM9)** same gate, legal layout: the number of distinct required pairs covered by the union of the evaluated leaves' source × target rectangles (both orientations in unordered modes; overlap and duplicates count once; the diagonal is excluded) differs from the closed-form `|P|` of §6.1 — some required pair was evaluated by no leaf | `coverage-pair-uncovered` |
 | cross-field | `status: 'completed'` carrying a fatal cause (`world-disposed`, `internal-error`, `result-cap`), any planning gap, an input-change cause (`input-changed`, `scope-drift`) or `cancel-requested` | `completed-with-fatal-cause` |
 | cross-field | `status: 'completed'` with a **non-fatal** unit gap (`capacity-exceeded`, `extraction-limit`, `object-tree-unavailable`, `stale-placement`, `unit-cap`, `target-too-large`, `model-evicted`, `skipped:*`, `discarded:scope-unverifiable`) and `coverage: 'partial'` | — (accepted) |
 | cross-field | `emptyOperand: true` with `pairSpaceTotal > 0`, or `pairSpaceTotal ≠ Σ leaf pairSpaceWeight` | `pair-space-inconsistent` |
+| cross-field | (P5-REM Item 1) `outcome.integrity` disagrees with the derived value (`caveated` iff `diagnostics.completenessAffectingUpperBound > 0` or any result's `flags.duplicateEvidenceConflict`, else `clean`) — mirrors `deriveRunOutcome` exactly | `integrity-not-derived` |
+| cross-field | (P5-REM Item 1) `outcome.environmentSensitive`/`environmentSensitiveCauses` disagree with the derived value (`bucket-capacity`/`placement-contention`/`geometry-readiness`, `ENVIRONMENT_CAUSES` order) — mirrors `deriveRunOutcome` exactly | `environment-sensitive-mismatch` |
+| cross-field | (codex-review, security) the same `ownerDbId` claimed by two different roots of the same model in `ledger.rootOwners` | `duplicate-owner-dbid` |
 | cross-field | a result owner in neither `rootOwners` nor (with `flags.unreachableOwner`) that model's `unreachablePopulation.ownerDbIds` | `owner-not-in-ledger` |
 | cross-field | `flags.unreachableOwner` on a pair whose owners are both root owners | `unreachable-flag-invalid` |
 | cross-field | `resultId ≠ makeResultId(testRef.testId, testRef.semanticDigest, pair)` | `result-id-mismatch` |
+| linkage (R21-4) | (P5-REM Item 2) stored `pair.first`/`pair.second` is not the canonical orientation `makePairId(mode, evaluatedAs.source, evaluatedAs.target)` would produce | `pair-orientation-invalid` |
 | linkage (R21-4) | `unitId` names no unit, a `split` parent, or a non-`evaluated` / non-`equal` unit | `result-unit-invalid` |
 | linkage (R21-4) | the unit's source/target ranges do not cover the result's root pair | `result-unit-coverage` |
 | linkage (R21-4) | `evaluatedAs.source.modelKey ≠ unit.sourceModelKey`, or `evaluatedAs` names refs other than the result's two | `evaluated-as-mismatch` |
@@ -1835,6 +1845,7 @@ import { SCHEMA_VERSION, ENVIRONMENT_CAUSES } from './resultSet.js';
 export const STRING_CAPS = Object.freeze({
   modelKey: 1024, modelVersion: 1024, libraryVersion: 256, environmentField: 512,
   id: 256, reason: 256, timestamp: 64, digest: 128, default: 1024,
+  recordRef: 512,                                                  // erratum 2026-09-25 (H1): the spec's §8.3 cap, NOT `id`
 });
 export const HIERARCHY_EXAMPLES_CAP = 20;                          // §13.1: the bounded examples list
 export const UNKNOWN_FIELD_BYTES = 64 * 1024;                      // §13.6's budget — a DATA-FORMAT
@@ -1929,7 +1940,7 @@ export const TYPES = new Map(Object.entries({
   RootDigest: { fields: { dbId: dbId(), subtreeDigest: digest() } },
   ScopeProof: { fields: { method: lit('bracketed-digest'), digestVersion: lit(DIGEST_VERSION) } },
   AdmissionBaseline: { fields: { modelKey: str('modelKey'), epochInstanceCount: int() } },
-  Acceptance: { fields: { recordRef: str('id') } },
+  Acceptance: { fields: { recordRef: str('recordRef') } },
   Environment: { fields: { viewerVersion: str('environmentField', { optional: true }),
                            userAgent: str('environmentField', { optional: true }) } },
   Ledger: { open: true, fields: {
@@ -1982,7 +1993,7 @@ export const TYPES = new Map(Object.entries({
   UnresolvedSelection: { fields: { selectionRole: enm(['A', 'B']),
                                    modelKey: str('modelKey', { nullable: true }),
                                    cause: str('reason'), dbIds: ids() } },
-  UnreachablePopulation: { fields: { modelKey: str('modelKey'), ownerDbIds: ids(),
+  UnreachablePopulation: { fields: { modelKey: str('modelKey'), count: int(), ownerDbIds: ids(),   // `count`: D-A (`7514d54`), spec §6.2
                                      mixedOwnerDbIds: ids(), unattributable: obj('Unattributable') } },
   Unattributable: { fields: { notLoaded: int(), ownerUnresolvable: int() } },
   HierarchyInternal: { fields: { modelKey: str('modelKey'), rootCount: int(), ownerCount: int(),
@@ -3553,7 +3564,15 @@ test('put → evict → read → validate preserves the claim outcome for every 
     assert.equal(canClaimNoClashes(read, 'current'), canClaimNoClashes(sealed, 'current'), kind);
     assert.deepEqual(read.digests, sealed.digests, kind);
     assert.equal(Object.isFrozen(read), true, kind);
-    assert.equal(JSON.stringify(read.results), JSON.stringify(sealed.results), kind);
+    // P5-REM2 (M2, docs/reviews/2026-09-22-federated-clash-test-core-p5-independent-review.md):
+    // corrected from this task's own original `assert.equal(JSON.stringify(read.results),
+    // JSON.stringify(sealed.results), kind)`, which is unconditionally false for any non-empty
+    // `results[]` -- the store persists canonical JSON (sorted keys), while `readResultSet`/
+    // `captureData` deliberately preserve the read-back copy's own key order, so `JSON.stringify`
+    // differs by key order alone. `deepStrictEqual` is the content-preservation assertion this task
+    // intended, without being sensitive to that reordering -- matching what the shipped test
+    // (`test/clashtest/results/roundTrip.test.mjs`) already correctly does.
+    assert.deepStrictEqual(read.results, sealed.results, kind);
   }
 });
 

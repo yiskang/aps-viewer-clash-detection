@@ -1,0 +1,157 @@
+// clashtest/derive/compare.js
+import { ComparisonTooLargeError } from '../errors.js';
+import { comparePairIds, pairSemanticsOf } from '../identity/ids.js';
+import { canonicalJson } from '../util/canonical.js';
+import { COMPARE_TOLERANCE_DEFAULTS } from '../options.js';   // P0 owns it (OPEN-4); no local definition here
+import { buildStatusReaderSteps } from '../results/status.js';   // P5 (D4)
+import { drive, assertCanonicalResultOrder } from './steps.js';
+import { invalid } from './validate.js';
+const near = (a, b, tol) => a === b || Math.abs(a - b) <= tol;              // a-b overflowing to Infinity is "not near", i.e. changed
+const nearPoint = (p, q, tol) => (p === null || q === null ? p === q : p.every((v, i) => near(v, q[i], tol)));
+const FLAGS = ['witnessUnavailable', 'duplicateEvidenceConflict', 'unreachableOwner', 'mixedOwnerProvenance'];
+
+export function changedFieldsOf(a, b, _defA, _defB, tol) {
+  if (a.mode !== b.mode) return ['mode'];
+  if (a.mode === 'clearance' && a.evidence.clearance !== b.evidence.clearance) return ['clearance'];
+  const f = [];
+  if (a.mode === 'clearance') {
+    if (!near(a.evidence.distance, b.evidence.distance, tol.distanceTolerance)) f.push('distance');
+    const [p, q] = [a.evidence.closestPoints, b.evidence.closestPoints];
+    if (!nearPoint(p.first, q.first, tol.pointTolerance) || !nearPoint(p.second, q.second, tol.pointTolerance)) f.push('closestPoints');
+  } else if (a.mode === 'volume-overlap') {
+    const [w, v] = [a.evidence.witness, b.evidence.witness];
+    if (w === null || v === null) { if (w !== v) f.push('witnessKind'); }
+    else { if (w.kind !== v.kind) f.push('witnessKind'); if (!nearPoint(w.point, v.point, tol.pointTolerance)) f.push('witnessPoint'); }
+  }
+  if (FLAGS.some((k) => !!a.flags?.[k] !== !!b.flags?.[k])) f.push('flags');
+  return f;
+}
+
+const weaker = (x, y) => (x === 'deterministic' && y === 'deterministic' ? 'deterministic' : 'time-sensitive'); // unknown => weaker
+const cls = (s) => (s.provenance.determinismClass === 'deterministic' ? 'deterministic' : 'time-sensitive');
+const modelMap = (s) => new Map(s.provenance.models.map((m) => [m.modelKey, m]));
+
+function comparabilityOf(base, next, conflictKeys) {
+  const notes = []; const bm = modelMap(base); const nm = modelMap(next);
+  let sameEnumeration = bm.size === nm.size; let sameVersions = bm.size === nm.size; let sameGen = bm.size === nm.size && base.provenance.registrySessionId === next.provenance.registrySessionId;   // differing model-key sets => placement unverifiable
+  for (const [k, m] of bm) {
+    const n = nm.get(k); if (!n) { sameEnumeration = false; sameVersions = false; sameGen = false; continue; }
+    if (m.modelVersion !== n.modelVersion) sameVersions = false;
+    if (canonicalJson(m.scopeDigests) !== canonicalJson(n.scopeDigests)) { sameEnumeration = false; notes.push(`scope-digest-mismatch:${k}`); }   // 15.2: independent of modelVersion
+    if (m.placementGeneration !== n.placementGeneration) sameGen = false;
+  }
+  const bc = cls(base); const nc = cls(next); const dc = weaker(bc, nc);
+  if (bc === 'time-sensitive') notes.push('time-sensitive:base');
+  if (nc === 'time-sensitive') notes.push('time-sensitive:next');
+  if (base.outcome.environmentSensitive) notes.push('environment-sensitive:base');
+  if (next.outcome.environmentSensitive) notes.push('environment-sensitive:next');
+  const lv = base.provenance.libraryVersion; const nv = next.provenance.libraryVersion;
+  if (lv == null || nv == null) notes.push('library-version-unverified');
+  const semB = base.testRef.semanticDigest; const semN = next.testRef.semanticDigest;
+  return { sameDefinition: semB != null && semB === semN, sameModelVersions: sameVersions && conflictKeys.size === 0, sameEnumeration,
+    sameLibraryVersion: lv == null || nv == null ? null : lv === nv, baseDeterminismClass: bc, nextDeterminismClass: nc, determinismClass: dc,
+    placement: sameGen ? 'same-generation' : 'unverifiable', notes };
+}
+
+/**
+ * `covered-clean` as proof of a CLEAN (absent) pair. P5's reader looks the covering unit up in both orientations and only
+ * checks that each root sits on SOME side of it, so the verdict is not by itself proof that the unit EVALUATED the pair.
+ * A unit evaluates (x, y) -- x as source, y as target -- only when all three hold:
+ *   (i)   x's root is in the unit's source domain (unit.sourceModelKey === x.modelKey and sourceRootDbIds holds it);
+ *   (ii)  y's root is in its target domain (a target entry for y.modelKey that is whole-model or lists the root);
+ *   (iii) on the source model, y's root is NOT also a source root: the library drops target fragments that are also
+ *         source fragments (validateResultSet's `coverage-root-role-invalid` rule), so such a pair is never asked.
+ * Ordered (containment) sets need the DIRECT orientation (the pair's first element as source: "first inside second");
+ * unordered sets accept either orientation. Anything else is fail-closed -> the matching unverified class.
+ * Planner-produced leaves never violate (iii) (disjoint same-model roles), so this only bites forged/raw sets.
+ * O(1) per pair: one Map lookup for the unit, then Set/Map tests on its scope, built at most once per unit per side.
+ * Exported for unit tests only (like `changedFieldsOf`); not part of the public surface.
+ */
+export function cleanProof(reader, ordered) {
+  const scopes = new Map();   // unitId -> { source: Set(root), targets: Map(modelKey -> { whole, roots: Set(root) }) }, lazily
+  const scopeOf = (unit) => {
+    let s = scopes.get(unit.unitId);
+    if (s === undefined) {
+      const targets = new Map();
+      for (const t of unit.targets) {
+        const e = targets.get(t.modelKey) ?? { whole: false, roots: new Set() };   // repeated model entries: their union
+        if (t.scope === 'model') e.whole = true; else for (const r of t.rootDbIds ?? []) e.roots.add(r);
+        targets.set(t.modelKey, e);
+      }
+      s = { source: new Set(unit.sourceRootDbIds), targets };
+      scopes.set(unit.unitId, s);
+    }
+    return s;
+  };
+  const evaluates = (unit, s, xModel, xRoot, yModel, yRoot) => {
+    if (unit.sourceModelKey !== xModel || !s.source.has(xRoot)) return false;                  // (i)
+    const t = s.targets.get(yModel);
+    if (t === undefined || !(t.whole || t.roots.has(yRoot))) return false;                     // (ii)
+    return !(yModel === unit.sourceModelKey && s.source.has(yRoot));                          // (iii)
+  };
+  return (pair) => {
+    const st = reader.pairStatus(pair);
+    if (st.verdict !== 'covered-clean') return false;
+    const unit = reader.ledger.unitsById.get(st.coveringUnitId);
+    if (unit === undefined) return false;
+    const s = scopeOf(unit);
+    const [fm, fr, sm, sr] = [pair.first.modelKey, st.roots.first, pair.second.modelKey, st.roots.second];   // P5 `roots.*` = ROOT dbIds
+    return evaluates(unit, s, fm, fr, sm, sr) || (!ordered && evaluates(unit, s, sm, sr, fm, fr));
+  };
+}
+
+export const compareRunner = {
+  optionKeys: ['signal', 'distanceTolerance', 'pointTolerance'],
+  prepare(_args, opts) {
+    const tol = { ...COMPARE_TOLERANCE_DEFAULTS };
+    for (const k of ['distanceTolerance', 'pointTolerance']) if (opts[k] !== undefined) {
+      if (!Number.isFinite(opts[k]) || opts[k] < 0) throw invalid('bad-tolerance', `options.${k}`);
+      tol[k] = opts[k];
+    }
+    return { tol };
+  },
+  async run({ tol }, [base, next], { gate, limits }) {
+    const bm = modelMap(base); const nm = modelMap(next);
+    const conflictKeys = new Set([...bm].filter(([k, m]) => nm.has(k) && nm.get(k).modelVersion !== m.modelVersion).map(([k]) => k));
+    const comparability = comparabilityOf(base, next, conflictKeys);
+    await drive(assertCanonicalResultOrder(base.results, base.runId), gate);
+    await drive(assertCanonicalResultOrder(next.results, next.runId), gate);
+    const semB = base.definition ? pairSemanticsOf(base.definition.mode) : null; const semN = next.definition ? pairSemanticsOf(next.definition.mode) : null;
+    const gated = semB !== null && semN !== null && semB !== semN;
+    const out = { comparability, incomparable: gated ? { reason: 'pair-semantics-changed', base: semB, next: semN } : null,
+      unchanged: [], changed: [], added: [], addedUnverifiedBase: [], resolved: [], removedUnverifiedNext: [], identityConflicts: [] };
+    if (base.definition && next.definition && base.definition.mode === 'containment' && next.definition.mode === 'containment'
+      && canonicalJson(base.definition.selectionA) === canonicalJson(next.definition.selectionB) && canonicalJson(base.definition.selectionB) === canonicalJson(next.definition.selectionA)
+      && canonicalJson(base.definition.selectionA) !== canonicalJson(base.definition.selectionB)) comparability.notes.push('containment-orientation-reversed');
+    const [baseReader, nextReader] = gated ? [null, null] : [await drive(buildStatusReaderSteps(base), gate), await drive(buildStatusReaderSteps(next), gate)]; // indexes built ONCE per side
+    const ordered = semB === 'ordered' || semN === 'ordered';   // not gated => both sides share one class (a null definition defers to the other)
+    const [baseClean, nextClean] = gated ? [null, null] : [cleanProof(baseReader, ordered), cleanProof(nextReader, ordered)];
+    const ts = comparability.determinismClass === 'time-sensitive';
+    let entries = 0;
+    const push = (list, entry) => { entries += 1; if (entries > limits.maxComparisonEntries) throw new ComparisonTooLargeError({ limit: limits.maxComparisonEntries, observed: entries }); list.push(entry); };
+    const conflict = (pair) => conflictKeys.has(pair.first.modelKey) || conflictKeys.has(pair.second.modelKey);
+    const A = base.results; const B = next.results; let i = 0; let j = 0;
+    while (i < A.length || j < B.length) {
+      const a = A[i]; const b = B[j];
+      const c = a === undefined ? 1 : b === undefined ? -1 : comparePairIds(a.pair, b.pair);
+      const pair = (c <= 0 ? a : b).pair;
+      if (conflict(pair)) push(out.identityConflicts, { pairId: pair });
+      else if (!gated) {
+        if (c === 0) {
+          const fields = changedFieldsOf(a, b, base.definition, next.definition, tol);
+          if (fields.length === 0) push(out.unchanged, { pairId: pair, baseResultId: a.resultId, nextResultId: b.resultId });
+          else push(out.changed, { pairId: pair, baseResultId: a.resultId, nextResultId: b.resultId, changedFields: fields });
+        } else if (c < 0) {
+          const clean = nextClean(pair);
+          push(clean ? out.resolved : out.removedUnverifiedNext, { pairId: pair, baseResultId: a.resultId, ...(clean && ts ? { timeSensitive: true } : {}) });
+        } else {
+          const clean = baseClean(pair);
+          push(clean ? out.added : out.addedUnverifiedBase, { pairId: pair, nextResultId: b.resultId, ...(clean && ts ? { timeSensitive: true } : {}) });
+        }
+      }
+      if (c <= 0) i += 1; if (c >= 0) j += 1;
+      const p = gate.tick(); if (p !== undefined) await p;
+    }
+    return out;
+  },
+};

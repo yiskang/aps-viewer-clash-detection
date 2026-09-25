@@ -16,7 +16,9 @@ import { surfaceCrossingWitness } from './SurfaceCrossingWitness.js';
  * @typedef {{ geometry, bvh, localDiagonal, connectivity, closedManifold: boolean, matrix, aspectRatioExceeded?: boolean }} Instance
  * @param {Instance} source
  * @param {Instance} target
- * @param {{ containment?: object, witness?: object, scheduler?: object }} [options]
+ * @param {{ containment?: object, witness?: object, scheduler?: object, now?: () => number }} [options]
+ *   `now` (D-12): clock for the DEFAULT scheduler only (ignored when `scheduler` is injected);
+ *   defaults to the real `performance.now()`.
  */
 export async function containmentModeQuery(source, target, options = {}) {
   // Default scheduler's `elapsedMs()` must report REAL, increasing wall-clock time
@@ -24,8 +26,9 @@ export async function containmentModeQuery(source, target, options = {}) {
   // own by design (it reads only `scheduler.elapsedMs()`), so an always-0 default
   // scheduler makes frameBudgetMs inert for the witness term on any standalone call
   // with no injected scheduler (final whole-branch review, Finding 3).
-  const t0 = performance.now();
-  const defaultScheduler = { elapsedMs: () => performance.now() - t0, checkpointIfDue: async () => {} };
+  const now = options.now ?? (() => performance.now());
+  const t0 = now();
+  const defaultScheduler = { elapsedMs: () => now() - t0, checkpointIfDue: async () => {} };
   const scheduler = options.scheduler ?? defaultScheduler;
   const diagnostics = [];
   const addDiagnostic = (reason, role) => {

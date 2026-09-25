@@ -19,6 +19,8 @@ the quick-start example, and known limitations, and
 [`wwwroot/extensions/RoomLocatorExtension.js`](wwwroot/extensions/RoomLocatorExtension.js) for the
 reference sample integration.
 
+The federated clash-test core engine (`clashtest/`): see [`clashtest/README.md`](clashtest/README.md) and its [design spec](docs/superpowers/specs/2026-09-20-federated-clash-test-and-results-design.md).
+
 ## Development
 
 ### Prerequisites

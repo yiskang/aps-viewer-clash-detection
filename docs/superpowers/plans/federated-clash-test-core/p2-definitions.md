@@ -36,11 +36,14 @@ Every exported name P2 owns. Later phases consume these signatures verbatim and 
 | `normalizeDefinition` | `clashtest/definition/normalize.js` | `(captured) → ClashTestDefinition` | Pure, synchronous: merge/sort/de-duplicate per §5.2+§5.3. Input must be a `captured` value (already V-valid). |
 | `canonicalSemanticForm` | `clashtest/definition/normalize.js` | `(normalized) → object` | `{mode, clearance?, selectionA, selectionB}`; `clearance` present **iff** `mode === 'clearance'`. §5.4. |
 | `computeSemanticDigest` | `clashtest/definition/normalize.js` | `(normalized) → string` | `digestCanonical(canonicalSemanticForm(normalized))` (P0): `'sha256:' + hex` over the canonical JSON. Synchronous. §5.4. |
-| `prepareDefinition` | `clashtest/definition/normalize.js` | `(captured, {yieldToScheduler, now, sliceBudgetMs?, limits?}) → Promise<{definition, semanticDigest}>` | The **sliced** post-validation body: normalize → digest (`digestCanonicalSliced`) → deep-freeze (`deepFreezeSliced`), all through one P0 `createSlicer`. `sliceBudgetMs` / `limits` default from P0's `ENGINE_LIMIT_DEFAULTS`. `definition` is deep-frozen; safe to embed, persist and plan over. §5.3. |
+| `prepareDefinition` | `clashtest/definition/normalize.js` | `(captured, {yieldToScheduler, now, sliceBudgetMs?, limits?, spanRecorder?}) → Promise<{definition, semanticDigest}>` | The **sliced** post-validation body: normalize → digest (`digestCanonicalSliced`) → deep-freeze (`deepFreezeSliced`), all through one P0 `createSlicer`. `sliceBudgetMs` / `limits` default from P0's `ENGINE_LIMIT_DEFAULTS`. Optional `spanRecorder(label, ms)` is forwarded to the slicer; span labels are `'normalize'` and `'semanticDigest'` (the digest phase), plus P0's `'freeze'`. `definition` is deep-frozen; safe to embed, persist and plan over. §5.3. |
 | `deepFreezeDefinition` | `clashtest/definition/normalize.js` | `(def) → def` | Idempotent deep freeze (P0 `deepFreeze`). |
 | `assertRootAntichain` | `clashtest/definition/normalize.js` | `(roots) → {ok, violations}` | §5.6.2 roots contract check over `[{dbId, ownerDbIds}]` as returned by `ElementEnumerator.resolveRoots`. |
 | `checkCrossRoleNesting` | `clashtest/definition/normalize.js` | `({rootsA, rootsB, rootsUnion}) → {supported, offenders, enumeratorInconsistent}` | §5.6.5 rule **input**: `RU = RA ∪ RB` as dbId sets. `offenders` = up to 20 `{ancestor, descendant}`. The planner's use of it is P3. |
 | `hierarchyInternalCandidates` | `clashtest/definition/normalize.js` | `({rootsA, rootsB}) → Array<{dbId, ownerCount}>` | §5.6.3 rule input: roots in `A ∩ B` whose subtree has ≥ 2 fragment owners. Claim-blocking bookkeeping is P5/P6. |
+| `assertRootAntichainSliced` | `clashtest/definition/normalize.js` | `(roots, {tick}) → Promise<{ok, violations}>` | Same rule as `assertRootAntichain` (one shared generator body, so semantics cannot drift), deadline-aware: `tick(label?) → void \| Promise<void>` is called once per unit of size-dependent work (owner scans, index inserts, candidate-sort steps) and a returned Promise is awaited. **P3 calls this form on planning data** (via its checkpoint adapter), not the sync one. Added by the P2 independent-review remediation (2026-09-21, H1). |
+| `checkCrossRoleNestingSliced` | `clashtest/definition/normalize.js` | `({rootsA, rootsB, rootsUnion}, {tick}) → Promise<{supported, offenders, enumeratorInconsistent}>` | Sliced form of `checkCrossRoleNesting` (shared generator body; same `tick` contract, including the dropped-id sort). |
+| `hierarchyInternalCandidatesSliced` | `clashtest/definition/normalize.js` | `({rootsA, rootsB}, {tick}) → Promise<Array<{dbId, ownerCount}>>` | Sliced form of `hierarchyInternalCandidates` (shared generator body; same `tick` contract, including the dbId sort). |
 | `createInMemoryClashTestStore` | `clashtest/stores/InMemoryClashTestStore.js` | `({now?} = {}) → ClashTestStore` | The `ClashTestStore` reference implementation (§5.5); `now` is accepted for parity and unused. |
 | `ClashTestStore` (port shape) | `clashtest/stores/InMemoryClashTestStore.js` (JSDoc typedef) | `{put, get, resolveForRun, list, archive, delete, isTombstoned}` | The port every store honors. Signatures below. |
 | `store.put` | — | `(def) → Promise<ClashTestDefinition>` | Atomic `latest + 1`; rejects `TestDeletedError` → `TestArchivedError` → `RevisionConflictError` in that order (P0 object-argument errors); never overwrites. |
@@ -50,7 +53,7 @@ Every exported name P2 owns. Later phases consume these signatures verbatim and 
 | `store.archive` | — | `(testId) → Promise<void>` | One-way `active → archived`, all revisions, idempotent. No restore exists (§5.5, errata E12). |
 | `store.delete` | — | `(testId) → Promise<void>` | Removes bodies **and** writes the permanent tombstone in one linearization point. Idempotent. |
 | `store.isTombstoned` | — | `(testId) → Promise<boolean>` | Linearizable with `delete`. §5.5. |
-| `createDefinitionOperations` | `clashtest/definition/operations.js` | `({testStore, limits, yieldToScheduler, now}) → {validateTest, saveTest, getTest, listTests, archiveTest}` | The §18 definition surface, store-bound; P7's engine facade delegates to it. |
+| `createDefinitionOperations` | `clashtest/definition/operations.js` | `({testStore, limits, yieldToScheduler, now, spanRecorder?}) → {validateTest, saveTest, getTest, listTests, archiveTest}` | The §18 definition surface, store-bound; P7's engine facade delegates to it. Optional `spanRecorder` is forwarded to `prepareDefinition` for both `saveTest` and store-returned definitions (`getTest`). |
 | `RESOLVE_STATUS_TO_PLANNING_CAUSE` | `clashtest/definition/operations.js` | `Readonly<Record<string,string>>` | `{live:null, archived:'test-archived', deleted:'test-deleted', missing:'test-not-found'}` (§5.5). Consumed by P6; P2 does not map it. |
 
 **Closed DTOs P2 owns** (plain data, structured-clone safe):
@@ -105,7 +108,7 @@ Why the copy's keys rather than own **enumerable** keys: `captureData` copies by
 
 Why a second capture (classification, then `captureAndValidate` / `validateReference`) is safe: nothing is invoked and nothing is trusted from the first. Only a `Proxy` can answer differently twice, and both orders fail closed — a shape that shifts reference→definition is rejected by V1 for missing required keys, and one that shifts definition→reference is rejected by R1 for unknown keys. The classification pass costs at most the definition node ceiling (P0 bounds allocation before reading elements), so `startRun`'s synchronous span stays bounded by the same lowered ceilings as §5.3.
 
-- [ ] **Step 1: Write the failing discrimination test.**
+- [x] **Step 1: Write the failing discrimination test.**
 
 ```js
 // test/clashtest/definition/reference.test.mjs
@@ -190,9 +193,9 @@ test('a non-plain prototype is rejected at the reference level', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/reference.test.mjs` — expected failure: `Cannot find module '.../clashtest/definition/validate.js'` (ERR_MODULE_NOT_FOUND) for every test.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/reference.test.mjs` — expected failure: `Cannot find module '.../clashtest/definition/validate.js'` (ERR_MODULE_NOT_FOUND) for every test.
 
-- [ ] **Step 3: Write the minimal implementation.**
+- [x] **Step 3: Write the minimal implementation.**
 
 ```js
 // clashtest/definition/validate.js
@@ -360,9 +363,9 @@ export function validateReference(ref, { limits } = {}) {
 }
 ```
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/reference.test.mjs` — expected: all 9 tests pass.
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/reference.test.mjs` — expected: all 9 tests pass.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add ClashTestReference schema and startRun overload discrimination (R21-I3)`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add ClashTestReference schema and startRun overload discrimination (R21-I3)`.
 
 ---
 
@@ -396,7 +399,7 @@ export function validateReference(ref, { limits } = {}) {
 | V5 | `…/entries[i]/modelKey`, `…/dbIds` | `modelKey` string 1–1024; `dbIds` non-empty array of non-negative safe integers; running total per selection ≤ `limits.maxExplicitElementsPerSelection`; **an over-cap array is rejected before its elements are read** | structure: `too-many-elements` (over-cap array); schema: `not-a-string`, `string-too-short`, `string-too-long`, `not-an-array`, `not-an-integer`, `out-of-range`, `too-many-elements` (running total) |
 | V6 | `/mode`, `/clearance` | `mode` ∈ `CLASH_MODES` (P1); `clearance` present **iff** `mode === 'clearance'`, and then a finite number `> 0`. No default clearance exists | schema: `invalid-enum`, `clearance-required`, `clearance-forbidden`, `not-a-finite-number` (a non-number), `not-positive`; a `NaN`/`±Infinity` never survives capture and is reported there as `not-plain-object` |
 
-- [ ] **Step 1: Write the failing matrix test.**
+- [x] **Step 1: Write the failing matrix test.**
 
 ```js
 // test/clashtest/support/definitions.mjs
@@ -594,9 +597,9 @@ test('validateTest returns the same issues and no capture', () => {
 
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/validate.test.mjs` — expected failure: `SyntaxError: The requested module '../../../clashtest/definition/validate.js' does not provide an export named 'captureAndValidate'` (the module exists from P2.1 but exports neither `captureAndValidate` nor `validateTest`).
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/validate.test.mjs` — expected failure: `SyntaxError: The requested module '../../../clashtest/definition/validate.js' does not provide an export named 'captureAndValidate'` (the module exists from P2.1 but exports neither `captureAndValidate` nor `validateTest`).
 
-- [ ] **Step 3: Write the minimal implementation.** Add `import { CLASH_MODES } from '../identity/ids.js';` to the import block at the top of `clashtest/definition/validate.js`, then append:
+- [x] **Step 3: Write the minimal implementation.** Add `import { CLASH_MODES } from '../identity/ids.js';` to the import block at the top of `clashtest/definition/validate.js`, then append:
 
 ```js
 const ENTRY_KEYS_MODEL = Object.freeze(['kind', 'modelKey']);
@@ -715,9 +718,9 @@ export function validateTest(def, opts) {
 }
 ```
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/validate.test.mjs` — expected: all 15 tests pass.
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/validate.test.mjs` — expected: all 15 tests pass.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add the single capture-and-validate pass for ClashTestDefinition (V1-V6)`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add the single capture-and-validate pass for ClashTestDefinition (V1-V6)`.
 
 ---
 
@@ -732,7 +735,7 @@ export function validateTest(def, opts) {
 - Consumes: `result.gate` from P2.2 (`{key:'schemaVersion', value}`), which is where the offending version comes from.
 - Produces: `toDefinitionError(result) → Error`.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 ```js
 // append to test/clashtest/definition/validate.test.mjs (add `toDefinitionError` to the validate.js import)
@@ -788,9 +791,9 @@ test('issue messages never embed a caller value', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/validate.test.mjs` — expected failure: `SyntaxError ... does not provide an export named 'toDefinitionError'` (the whole file fails to load until P2.3 step 3).
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/validate.test.mjs` — expected failure: `SyntaxError ... does not provide an export named 'toDefinitionError'` (the whole file fails to load until P2.3 step 3).
 
-- [ ] **Step 3: Write the minimal implementation.** Add `import { InvalidTestDefinitionError, UnsupportedSchemaVersionError } from '../errors.js';` to the import block at the top of `clashtest/definition/validate.js`, then append:
+- [x] **Step 3: Write the minimal implementation.** Add `import { InvalidTestDefinitionError, UnsupportedSchemaVersionError } from '../errors.js';` to the import block at the top of `clashtest/definition/validate.js`, then append:
 
 ```js
 /** 5.3: UnsupportedSchemaVersionError iff `unsupported-schema-version` is the ONLY issue. Object-argument errors (P0 N1). */
@@ -804,11 +807,13 @@ export function toDefinitionError({ issues, issuesTruncated, gate }) {
 }
 ```
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/validate.test.mjs` — expected: all 19 tests pass.
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/validate.test.mjs` — expected: all 19 tests pass.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): map validation results to InvalidTestDefinitionError / UnsupportedSchemaVersionError`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): map validation results to InvalidTestDefinitionError / UnsupportedSchemaVersionError`.
 
 ---
+
+> **Superseded by the P2 independent-review remediation (2026-09-21).** The P2.4, P2.5, P2.8 and P2.9 code blocks below are superseded where the implementation differs: the model-key sort is the sliced generator merge sort (H2), the three roots-contract helpers are shared generator bodies with `*Sliced` forms (H1), and `prepareDefinition` / `createDefinitionOperations` accept and forward an optional `spanRecorder` with the digest span labelled `'semanticDigest'` (H3). Authority: [`docs/reviews/2026-09-21-federated-clash-test-core-p2-independent-review-adjudication.md`](../../../reviews/2026-09-21-federated-clash-test-core-p2-independent-review-adjudication.md).
 
 ### Task P2.4: Normalization, canonical form and `semanticDigest`
 
@@ -825,7 +830,7 @@ export function toDefinitionError({ issues, issuesTruncated, gate }) {
 
 **Canonical semantic form (§5.4):** `{mode, clearance?, selectionA, selectionB}` — `name`, `description`, `revision`, `testId` and `schemaVersion` are excluded; `clearance` is present iff `mode === 'clearance'`. Role tagging needs no extra machinery: the keys `selectionA` and `selectionB` are themselves the role tags, so swapping the two selections changes the canonical JSON (and hence the digest) for every mode, exactly as §5.4 requires.
 
-- [ ] **Step 1: Write the failing test.** The golden vectors below are real SHA-256 values over the canonical JSON; they are the byte-level anchor AC-1 asks for. (They were re-derived against an executable copy of P0's `canonicalJson` / `digestCanonical`; if P0's encoder ever produces different bytes, P0 has the defect, not P2.)
+- [x] **Step 1: Write the failing test.** The golden vectors below are real SHA-256 values over the canonical JSON; they are the byte-level anchor AC-1 asks for. (They were re-derived against an executable copy of P0's `canonicalJson` / `digestCanonical`; if P0's encoder ever produces different bytes, P0 has the defect, not P2.)
 
 ```js
 // test/clashtest/definition/normalize.test.mjs
@@ -941,9 +946,9 @@ test('the first golden vector pins the canonical JSON bytes (P0 canonicalJson: s
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/normalize.test.mjs` — expected failure: `ERR_MODULE_NOT_FOUND` for `clashtest/definition/normalize.js`.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/normalize.test.mjs` — expected failure: `ERR_MODULE_NOT_FOUND` for `clashtest/definition/normalize.js`.
 
-- [ ] **Step 3: Write the minimal implementation.**
+- [x] **Step 3: Write the minimal implementation.**
 
 ```js
 // clashtest/definition/normalize.js
@@ -1016,9 +1021,9 @@ export function computeSemanticDigest(normalized) {
 }
 ```
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/normalize.test.mjs` — expected: all 8 tests pass, including all 7 golden vectors.
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/normalize.test.mjs` — expected: all 8 tests pass, including all 7 golden vectors.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add definition normalization, canonical form and semanticDigest`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add definition normalization, canonical form and semanticDigest`.
 
 ---
 
@@ -1036,9 +1041,9 @@ The V1 mutation-during-yield guarantee: a caller object mutated by a getter, a p
 - Consumes (P0 `clashtest/util/canonical.js`): `digestCanonicalSliced(value, slicer, {label?}) → Promise<'sha256:…'>`, byte-identical to `digestCanonical` with one `tick` per ~8 KiB of canonical text — the sliced body uses it because `digestCanonical` is "small values only".
 - Consumes (P0 `clashtest/options.js`): `ENGINE_LIMIT_DEFAULTS` — `prepareDefinition`'s optional `limits` is merged over it, so `sliceBudgetMs` and `aggregationSliceMaxItems` are never restated here.
 - Consumes (P0 test support): `createFakeClock({start, tickMs, yieldAdvanceMs})` and its `onYield(fn)` hook from `test/clashtest/support/index.mjs` — P2 adds **no** clock of its own (master §2.1 rule 5).
-- Produces: `prepareDefinition(captured, {yieldToScheduler, now, sliceBudgetMs?, limits?}) → Promise<{definition, semanticDigest}>`, `deepFreezeDefinition(def) → def`.
+- Produces: `prepareDefinition(captured, {yieldToScheduler, now, sliceBudgetMs?, limits?, spanRecorder?}) → Promise<{definition, semanticDigest}>`, `deepFreezeDefinition(def) → def`.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 ```js
 // test/clashtest/definition/capture-stability.test.mjs
@@ -1141,9 +1146,9 @@ test('normalizeDefinition and prepareDefinition agree byte for byte (one shared 
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/capture-stability.test.mjs` — expected failure: `SyntaxError ... does not provide an export named 'prepareDefinition'` (the file fails to load until step 3; the getter test is already satisfied by P2.2's capture).
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/capture-stability.test.mjs` — expected failure: `SyntaxError ... does not provide an export named 'prepareDefinition'` (the file fails to load until step 3; the getter test is already satisfied by P2.2's capture).
 
-- [ ] **Step 3: Write the minimal implementation.** Add these imports to the top of `clashtest/definition/normalize.js` (and extend the `canonical.js` import to `{ digestCanonical, digestCanonicalSliced }`):
+- [x] **Step 3: Write the minimal implementation.** Add these imports to the top of `clashtest/definition/normalize.js` (and extend the `canonical.js` import to `{ digestCanonical, digestCanonicalSliced }`):
 
 ```js
 import { digestCanonicalSliced } from '../util/canonical.js';   // (merge with the existing canonical.js import)
@@ -1180,9 +1185,9 @@ export async function prepareDefinition(captured, { yieldToScheduler, now, slice
 }
 ```
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/capture-stability.test.mjs` — expected: all 7 tests pass. Then re-run the earlier two files to confirm no regression: `node --test test/clashtest/definition/validate.test.mjs test/clashtest/definition/normalize.test.mjs`.
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/capture-stability.test.mjs` — expected: all 7 tests pass. Then re-run the earlier two files to confirm no regression: `node --test test/clashtest/definition/validate.test.mjs test/clashtest/definition/normalize.test.mjs`.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add sliced prepareDefinition with deep freeze and yield-stable capture`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add sliced prepareDefinition with deep freeze and yield-stable capture`.
 
 ---
 
@@ -1201,7 +1206,7 @@ export async function prepareDefinition(captured, { yieldToScheduler, now, slice
 
 **Refusal precedence in `put`, pinned here** (§5.5 names the three refusals but not their order; the order below is fail-closed — the most permanent refusal first): **1.** tombstoned ⇒ `TestDeletedError`; **2.** archived ⇒ `TestArchivedError` (whatever revision was offered); **3.** revision ≠ `latest + 1` (or ≠ 1 for a never-seen id) ⇒ `RevisionConflictError{testId, latest, offered}`. Nothing is written on any refusal.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 ```js
 // test/clashtest/stores/InMemoryClashTestStore.test.mjs
@@ -1328,9 +1333,9 @@ test('the store hands back frozen definitions', async () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/stores/InMemoryClashTestStore.test.mjs` — expected failure: `ERR_MODULE_NOT_FOUND` for `clashtest/stores/InMemoryClashTestStore.js`.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/stores/InMemoryClashTestStore.test.mjs` — expected failure: `ERR_MODULE_NOT_FOUND` for `clashtest/stores/InMemoryClashTestStore.js`.
 
-- [ ] **Step 3: Write the minimal implementation.**
+- [x] **Step 3: Write the minimal implementation.**
 
 ```js
 // clashtest/stores/InMemoryClashTestStore.js
@@ -1408,9 +1413,9 @@ export function createInMemoryClashTestStore(_opts = {}) {
 }
 ```
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/stores/InMemoryClashTestStore.test.mjs` — expected: 8 of 9 tests pass; the `delete tombstones the testId permanently` test still fails on its final `s.list()` assertion with `Error: list is implemented in task P2.7`. Complete that one assertion in P2.7 and re-run.
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/stores/InMemoryClashTestStore.test.mjs` — expected: 8 of 9 tests pass; the `delete tombstones the testId permanently` test still fails on its final `s.list()` assertion with `Error: list is implemented in task P2.7`. Complete that one assertion in P2.7 and re-run.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add InMemoryClashTestStore with atomic revisioning, archive and tombstone`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add InMemoryClashTestStore with atomic revisioning, archive and tombstone`.
 
 ---
 
@@ -1430,7 +1435,7 @@ export function createInMemoryClashTestStore(_opts = {}) {
 
 `TestSummary` is the closed shape `{testId, latestRevision, archived, name}` (§13.5), where `name` is the latest revision's name. `validateTestSummaryPage` is the reader side: any engine reading a *foreign* store's page runs it through this before trusting it, and maps a non-empty result to `CorruptListingError({issues})` (that mapping lives in P2.8/P7, not here). It captures the page with `captureData` first (node ceiling `8 + 5 × LIST_LIMIT.max`, `/summaries` capped at `LIST_LIMIT.max` rows, strings at 1024), then validates the copy. It caps at **20** issues, per §5.5/§13.5's "first 20 `{path, code}` only — no values", so its issues carry an empty `message` — the collector's `valueFree` flag blanks every message, structural ones included.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 ```js
 // test/clashtest/stores/clashTestStore.listing.test.mjs
@@ -1545,9 +1550,9 @@ test('validateTestSummaryPage caps at 20 issues', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/stores/clashTestStore.listing.test.mjs` — expected failure: `Error: list is implemented in task P2.7` for the listing tests and `TypeError: validateTestSummaryPage is not a function` for the last two.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/stores/clashTestStore.listing.test.mjs` — expected failure: `Error: list is implemented in task P2.7` for the listing tests and `TypeError: validateTestSummaryPage is not a function` for the last two.
 
-- [ ] **Step 3: Write the minimal implementation.** In `clashtest/stores/InMemoryClashTestStore.js`, replace the `errors.js` import line with the two lines below (keeping the `normalize.js` import):
+- [x] **Step 3: Write the minimal implementation.** In `clashtest/stores/InMemoryClashTestStore.js`, replace the `errors.js` import line with the two lines below (keeping the `normalize.js` import):
 
 ```js
 import { RevisionConflictError, TestArchivedError, TestDeletedError, InvalidOptionsError } from '../errors.js';
@@ -1660,9 +1665,9 @@ export function validateTestSummaryPage(page) {
 
 > The collector's `valueFree` flag is what makes `validateTestSummaryPage` value-free: it blanks every issue message, so no listing rejection ever carries a caller value (§13.5); the assertion `r.issues[0].message === ''` is the contract.
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/stores/clashTestStore.listing.test.mjs test/clashtest/stores/InMemoryClashTestStore.test.mjs` — expected: all 7 listing tests and all 9 store tests pass (the P2.6 `list` assertion is now reachable).
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/stores/clashTestStore.listing.test.mjs test/clashtest/stores/InMemoryClashTestStore.test.mjs` — expected: all 7 listing tests and all 9 store tests pass (the P2.6 `list` assertion is now reachable).
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add ClashTestStore keyset listing, resolveForRun coverage and page validation`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add ClashTestStore keyset listing, resolveForRun coverage and page validation`.
 
 ---
 
@@ -1677,7 +1682,7 @@ export function validateTestSummaryPage(page) {
 - Consumes (**P0 `clashtest/errors.js`**, row N1 — object arguments): `StoreNotConfiguredError({store})`, `CorruptListingError({issues})` (P0 keeps the first 20 `{path, code}` pairs and never values or messages).
 - Consumes (P0 `clashtest/options.js`): `ENGINE_LIMIT_DEFAULTS` — the caller's `limits` (P7 passes its resolved engine limits; the tests pass `{}`) are merged over it, so the slicer's `sliceBudgetMs` is never restated here.
 - Consumes (P0 test support): `createFakeClock` from `test/clashtest/support/index.mjs`; its `now` / `yieldToScheduler` are detachable closures.
-- **Consumed by P7** (`createDefinitionOperations({testStore, limits, yieldToScheduler, now})`) and by P6 (`RESOLVE_STATUS_TO_PLANNING_CAUSE`).
+- **Consumed by P7** (`createDefinitionOperations({testStore, limits, yieldToScheduler, now, spanRecorder})`) and by P6 (`RESOLVE_STATUS_TO_PLANNING_CAUSE`).
 - Produces: `createDefinitionOperations`, `RESOLVE_STATUS_TO_PLANNING_CAUSE`.
 
 **Rules pinned here** (§5.3 scope (iii)/(iv), §5.5 "Missing stores"):
@@ -1686,7 +1691,7 @@ export function validateTestSummaryPage(page) {
 - `listTests` validates the store's page with `validateTestSummaryPage` and rejects `CorruptListingError{issues}` on any issue — never a partially trusted page, never a per-entry skip.
 - `archiveTest` and `getTest`/`listTests` reject `StoreNotConfiguredError` with no store. `deleteTest` is **not** here: it needs `resultStore.tombstoneTest` first (§5.5 ordering) and is wired in P7.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 ```js
 // test/clashtest/definition/operations.test.mjs
@@ -1796,9 +1801,9 @@ test('archiveTest delegates and then blocks stored-reference revisions', async (
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/operations.test.mjs` — expected failure: `ERR_MODULE_NOT_FOUND` for `clashtest/definition/operations.js`.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/operations.test.mjs` — expected failure: `ERR_MODULE_NOT_FOUND` for `clashtest/definition/operations.js`.
 
-- [ ] **Step 3: Write the minimal implementation.**
+- [x] **Step 3: Write the minimal implementation.**
 
 ```js
 // clashtest/definition/operations.js
@@ -1863,9 +1868,9 @@ export function createDefinitionOperations({ testStore = null, limits = {}, yiel
 
 > `requireStore()` throws inside the async bodies, which turns into a rejection — the §5.5 behavior for these four methods ("reject/throw … the last synchronously", where "the last" is `startRun({testId})`, which is P6/P7's).
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/operations.test.mjs` — expected: all 10 tests pass.
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/operations.test.mjs` — expected: all 10 tests pass.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add the store-bound definition operations surface (spec 18)`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add the store-bound definition operations surface (spec 18)`.
 
 ---
 
@@ -1878,12 +1883,12 @@ Pure rule **inputs** for §5.6. The planner (P3) decides what to do with them; P
 - Test: `test/clashtest/definition/roots.test.mjs`
 
 **Interfaces**
-- Consumes: nothing beyond plain data. Root records are `{dbId: number, ownerDbIds: number[]}` — the §6.2 `resolveRoots` shape, of which only these two fields are used (`fragmentCount` and `subtreeDigest` are ignored here). That ordering is **enforced by P3** — `validateResolveRootsResult` (`clashtest/planning/ElementEnumerator.js`) rejects non-ascending roots, duplicate roots and non-ascending `ownerDbIds` at the port boundary — so these helpers may rely on it; P2 imports nothing from P3. P3's `resolveSelectionRoots` calls all three helpers below with exactly these argument shapes (`assertRootAntichain(roots)`, `checkCrossRoleNesting({rootsA, rootsB, rootsUnion})`, `hierarchyInternalCandidates({rootsA, rootsB})`) and owns only the planning consequences.
-- Produces: `assertRootAntichain`, `checkCrossRoleNesting`, `hierarchyInternalCandidates`.
+- Consumes: nothing beyond plain data. Root records are `{dbId: number, ownerDbIds: number[]}` — the §6.2 `resolveRoots` shape, of which only these two fields are used (`fragmentCount` and `subtreeDigest` are ignored here). That ordering is **enforced by P3** — `validateResolveRootsResult` (`clashtest/planning/ElementEnumerator.js`) rejects non-ascending roots, duplicate roots and non-ascending `ownerDbIds` at the port boundary — so these helpers may rely on it; P2 imports nothing from P3. P3's `resolveSelectionRoots` calls the sliced form of all three helpers below with exactly these argument shapes (plus the trailing `{tick}`) (`assertRootAntichain(roots)`, `checkCrossRoleNesting({rootsA, rootsB, rootsUnion})`, `hierarchyInternalCandidates({rootsA, rootsB})`) and owns only the planning consequences.
+- Produces: `assertRootAntichain`, `checkCrossRoleNesting`, `hierarchyInternalCandidates` and their deadline-aware `assertRootAntichainSliced`, `checkCrossRoleNestingSliced`, `hierarchyInternalCandidatesSliced` (`(input, {tick})`; P3 calls the sliced forms with `{tick: () => checkpoint()}`).
 
 **The nesting test, using only owner sets.** §5.6.5 states the rule as `RU = RA ∪ RB` on dbId sets. Deriving the *offending* `(ancestor, descendant)` pairs needs an ancestry relation; rather than take a tree, P2 uses the containment already implied by the enumerator's output — a root `d` is nested under a root `u` iff `ownerDbIds(d) ⊆ ownerDbIds(u)` and `d ≠ u`. That is derivable from §6.2 data alone, is deterministic, and is exactly what "no root in one role may be an ancestor of a root in the other" means for the fragments in scope. Offenders are capped at 20 (§5.6.5). If a union root appears that is in **neither** role's root set, the three enumerations disagree; that is not a nesting failure but an enumerator inconsistency (§6.2 already fails planning with `enumeration-failed` for it), so it is reported through the separate `enumeratorInconsistent` flag and P3 routes it there.
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 ```js
 // test/clashtest/definition/roots.test.mjs
@@ -1957,9 +1962,9 @@ test('hierarchyInternalCandidates is empty for disjoint selections', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/roots.test.mjs` — expected failure: `TypeError: assertRootAntichain is not a function` (and the same for the other two) in all 7 tests.
+- [x] **Step 2: Run it and see it fail.** `node --test test/clashtest/definition/roots.test.mjs` — expected failure: `TypeError: assertRootAntichain is not a function` (and the same for the other two) in all 7 tests.
 
-- [ ] **Step 3: Write the minimal implementation.** Append to `clashtest/definition/normalize.js`:
+- [x] **Step 3: Write the minimal implementation.** Append to `clashtest/definition/normalize.js`:
 
 ```js
 const MAX_OFFENDERS = 20;
@@ -2014,9 +2019,9 @@ export function hierarchyInternalCandidates({ rootsA, rootsB }) {
 }
 ```
 
-- [ ] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/roots.test.mjs` — expected: all 7 tests pass.
+- [x] **Step 4: Run it and see it pass.** `node --test test/clashtest/definition/roots.test.mjs` — expected: all 7 tests pass.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add roots-contract helpers for the 5.6 hierarchy rules`.
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits).** Message: `feat(clashtest): add roots-contract helpers for the 5.6 hierarchy rules`.
 
 ---
 
@@ -2052,6 +2057,10 @@ Run in this order; every command must be green before P2 is handed to P3.
 - [ ] The mechanical grep of *Conformance check* (every pre-reconciliation name from the reconciliation register) finds nothing in this file outside that section, and nothing in the P2 source and test files.
 - [ ] `npm test` passes from a clean checkout with no server, no APS credentials and no network.
 - [ ] `docs/handoffs/latest.md` updated from the verified final state (project CLAUDE.md).
+
+## Implementation status (2026-09-21)
+
+**P2.1–P2.9 IMPLEMENTED and verified on branch `feature/federated-clash-test-core-engine`; awaiting the independent Work review and adjudication gate before any P3 work.** Modules were built from this file's code blocks by task (RED confirmed per test file; per-task "Checkpoint commit" boxes are ticked as satisfied by a single authorized phase commit, if and when authorized). One internal Codex round (four findings: three High, one Low, all accepted and fixed with adversarial tests and mutation checks) is recorded in [`docs/reviews/2026-09-21-federated-clash-test-core-p2-internal-codex-review.md`](../../../reviews/2026-09-21-federated-clash-test-core-p2-internal-codex-review.md); the plan blocks for P2.4 `normalizeSelectionSteps`, P2.8 `listTests`, P2.9 `assertRootAntichain` and the P2.2 mapping test are superseded by the implementation. **P2 independent-review remediation (2026-09-21, uncommitted): the three adjudicated High findings are implemented** — H1 (`*Sliced` root-rule forms on shared generator bodies), H2 (sliced model-key sort), H3 (`spanRecorder` forwarding, digest span `'semanticDigest'`); see the adjudication record in `docs/reviews/`; a focused independent re-review is still required before P2 acceptance. Implemented counts after remediation: reference 9, validate 21, normalize 9, capture-stability 19, store 9, listing 7, operations 29, roots 22 = **125**; all `test/clashtest` 317/317. (Before remediation: 109 and 301/301.) Pre-remediation counts, for the record: reference 9, validate 21, normalize 9, capture-stability 14, store 9, listing 7, operations 26, roots 14 = 109; all `test/clashtest` 301/301; full `node scripts/run-tests.mjs` 1,427 total / 1,426 pass / 0 fail / 1 todo (pre-existing KNOWN GAP).
 
 ## Spec coverage
 

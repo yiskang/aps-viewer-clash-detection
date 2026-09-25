@@ -142,3 +142,26 @@ If an independent Work review later finds blockers:
 - remediate the specific blocking findings;
 - run targeted internal verification/review of the affected areas;
 - do not automatically restart an unrestricted full-artifact review unless the independent review explicitly requires it.
+
+## Independent review adjudication
+
+When ChatGPT Work completes an independent phase/checkpoint review:
+
+- Treat the persisted `docs/reviews/` artifact as a review claim, not as ground truth.
+- Before advancing to the next implementation phase, perform a targeted adjudication of that review using the configured Codex workflow.
+- Verify only:
+  - the review's cited findings;
+  - its repository/commit boundary;
+  - its claimed test/verification results;
+  - its final gate verdict.
+- Do not start a new unrestricted review of the implementation.
+- Do not modify production code during adjudication.
+
+If Work and the adjudication agree:
+- update `docs/handoffs/latest.md` with the verified gate result;
+- proceed only if the next phase is already explicitly authorized by the accepted implementation plan, handoff, or milestone-owner authorization.
+
+If they disagree on a blocking finding or gate verdict:
+- persist the disagreement under `docs/reviews/`;
+- update `docs/handoffs/latest.md` to `awaiting owner decision`;
+- do not advance to the next phase.

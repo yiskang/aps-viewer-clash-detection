@@ -113,7 +113,7 @@ ledger.units      : [{ unitId, kind:'leaf'|'split', parentUnitId, sourceModelKey
                        outcome:'evaluated'|'failed'|'skipped'|'discarded'|'not-run'|'split', cause:string|null, secondaryCauses:[],
                        capacityKind, capDetail, scopeProof, pairSpaceWeight,
                        taints:[{ kind:'element'|'target-model'|'unit', modelKey:string|null, dbId:number|null, reason, occurrences }], attempts, durationMs }]
-ledger.unreachablePopulation : [{ modelKey, ownerDbIds, mixedOwnerDbIds, unattributable:{ notLoaded, ownerUnresolvable } }]
+ledger.unreachablePopulation : [{ modelKey, count, ownerDbIds, mixedOwnerDbIds, unattributable:{ notLoaded, ownerUnresolvable } }]
 ledger.hierarchyInternal     : [{ modelKey, rootCount, ownerCount, examples:[{rootDbId, ownerDbIds}] /* bounded: first 20 */ }]
 ledger.planningGaps          : [{ phase, cause }]
 ```
@@ -1680,7 +1680,7 @@ Commands: per file `node --test test/clashtest/derive/<file>.test.mjs`; phase `n
 | §15.4 `compareResultSets` (O(n+m), abort, `maxComparisonEntries`, pair-semantics gate, unverified classes, determinism classes, extreme numerics) | P8.7 |
 | §17.1 / §17.1.1 derivation limits (defaults from P0 only, incl. the compare tolerances) | P8.2 (via `resolveEngineLimits`), P8.7 (`COMPARE_TOLERANCE_DEFAULTS` from P0 `options.js`) |
 | §18 `engine.derivations`, standalone helpers, error names | P8.2, P8.8 |
-| §22 AC-13 (except annotation compat/jobs/lifecycle, read backpressure), AC-14 | P8.1–P8.8 |
+| §22 AC-13 (except annotation compat/jobs/lifecycle, read backpressure — read backpressure incl. read abort → **P7**, spec A17 / owner ruling M3 / D-7), AC-14 | P8.1–P8.8 |
 
 ## Gates and open items
 

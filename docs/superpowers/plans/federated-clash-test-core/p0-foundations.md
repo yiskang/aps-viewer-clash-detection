@@ -13,7 +13,7 @@ This phase inherits the master's Global Constraints (no collision-core change; l
 - **§17.1 (single source of defaults, R21-I1):** "This table is the single normative source of default values (R21-I1). Other sections name an option and cross-reference §17.1 rather than restating its number; where a number stated elsewhere in this spec disagrees with this table, **this table governs**. Hard ceilings live in §17.1.1 and are governed the same way."
 - **§17.1 (calibration gate):** "*No default in this section — including the 16,000,000-node capture ceiling and the 512 MiB stored-result allowance (the table's `maxCapturedNodes` and `maxStoredResultBytes`) — may be implemented as a frozen constant before the AC-12 calibration; until then they ship only as provisional, overridable defaults.*" **Every default in `options.js` is therefore provisional pending gate G-CAL** and is flagged as such in code (`DEFAULTS_STATUS`), in the interface summary below, and in Task P0.8.
 - **§17.1.1 (ownership):** "Every option below is exactly one of two kinds. **RunOptions** … **Engine limits** … The constructor's `limits` and the `RunOptions` schema of §18 list exactly these sets; a key in the wrong place is an unknown key and is rejected (`InvalidOptionsError`)." Validation "collects every issue and throws `InvalidOptionsError{issues}` synchronously … Rules: a plain object; **unknown keys rejected**; no coercion; every number must be a **finite integer** (`NaN`, `±Infinity`, fractions, strings rejected); enums exact."
-- **§13.6 (producer/reader invariant, R21-2, normative):** "*an engine never produces a set it cannot read.* At `startRun`/`rerun` option validation (§17.1.1) the run's worst case must fit this engine's reader limits — `24 × maxResultsPerRun + 12 × maxLedgerRecords + 12 × maxRetainedDiagnostics + 65,536 ≤ maxCapturedNodes` **and** `maxCapturedNodes × bytesPerNode ≤ maxStoredResultBytes` (`bytesPerNode` = 32, provisional, calibrated by AC-12) — else `InvalidOptionsError('result-unreadable')`."
+- **§13.6 (producer/reader invariant, R21-2, normative):** "*an engine never produces a set it cannot read.* At `startRun`/`rerun` option validation (§17.1.1) the run's worst case must fit this engine's reader limits — `35 × maxResultsPerRun + 12 × maxLedgerRecords + (24 + maxUnitIdsPerDiagnostic) × maxRetainedDiagnostics + 65,536 ≤ maxCapturedNodes` [spec erratum A11, 2026-09-24: the result factor was 24; erratum A13, 2026-09-24: the diagnostic term was a flat `12 × maxRetainedDiagnostics`] **and** `maxCapturedNodes × bytesPerNode ≤ maxStoredResultBytes` (`bytesPerNode` = 32, provisional, calibrated by AC-12) — else `InvalidOptionsError('result-unreadable')`."
 - **§5.3 (capture):** "reads each schema key's **own property descriptor once** and rejects an accessor descriptor … so no getter on the caller's object is ever *invoked*"; a trap that throws or a revoked proxy "is caught and reported as a V1 issue `unreadable` — never an internal failure and never an escape of the thrown value". "A `Proxy` is **not** detected and no promise is made about it."
 - **§5.4 (digest):** `"sha256:" + lowercase hex` of SHA-256 over the UTF-8 bytes of canonical JSON — "object keys sorted by UTF-16 code-unit order, no insignificant whitespace, strings serialized by the ECMAScript well-formed `JSON.stringify` algorithm (ES2019: lone surrogates are escaped as `\uXXXX` …), numbers rendered as the shortest round-trip `Number#toString` (finite only; `-0` normalized to `0`), arrays in their normalized order." "The *implementation* (Web Crypto `SubtleCrypto`, or a sliceable pure-JS SHA-256 for the ≤ `frameBudgetMs` span rule, §17.3) is a plan-level choice; the output bytes are not." Every durable digest records `digestVersion: 1`.
 - **§13.4 (serialization):** a sealed set "contains only plain objects, arrays, strings, finite numbers, booleans and `null`. Forbidden anywhere inside it: `Model` or any Viewer object, functions, `THREE` objects, `Map`/`Set`, `undefined` values, and non-finite numbers."
@@ -66,11 +66,11 @@ Convention: every class is constructed `new XError({ ...typedFields, message?, c
 | `RUN_OPTION_DEFAULTS`, `ENGINE_LIMIT_DEFAULTS` | frozen `{[key]: value}` | Fully resolved defaults (derived ones materialised). Tests import these; nothing restates a number. |
 | `RUN_OPTION_KEYS`, `ENGINE_LIMIT_KEYS` | `string[]` | The two ownership sets (19 and 21 keys, spec §18). |
 | `RUN_OPTION_CEILINGS`, `ENGINE_LIMIT_CEILINGS` | `{[intKey]: number \| null}` | Hard ceilings (`null` = cross-field only). |
-| `SCHEMA_MAX_NODES`, `SCHEMA_NODE_FACTORS`, `BYTES_PER_NODE` | `number`, `{result:24, ledger:12, diagnostic:12, slack:65536}`, `32` | §13.6 data-format constants. `SCHEMA_MAX_NODES` is also the hard ceiling of the engine limit `maxCapturedNodes` (so `limits.maxCapturedNodes <= SCHEMA_MAX_NODES` always holds for a resolved `limits`). |
+| `SCHEMA_MAX_NODES`, `SCHEMA_NODE_FACTORS`, `BYTES_PER_NODE` | `number`, `{result:35, ledger:12, diagnostic:24, slack:65536}` (spec erratum A11, 2026-09-24; `result` was 24; erratum A13, 2026-09-24: `diagnostic` is now the per-diagnostic frame, charged `+ maxUnitIdsPerDiagnostic` per retained diagnostic, was a flat 12), `32` | §13.6 data-format constants. `SCHEMA_MAX_NODES` is also the hard ceiling of the engine limit `maxCapturedNodes` (so `limits.maxCapturedNodes <= SCHEMA_MAX_NODES` always holds for a resolved `limits`). |
 | `COMPARE_TOLERANCE_DEFAULTS` | frozen `{distanceTolerance: 1e-6, pointTolerance: 1e-6}` | Spec §15.4 provisional defaults for `compareResultSets` (`changed` tolerances, world units). **Provisional, flagged G-CAL-pending like every other default** (`DEFAULTS_STATUS` covers it). It is **neither a RunOption nor an engine limit**: it is not in `RUN_OPTION_KEYS` / `ENGINE_LIMIT_KEYS` and `resolveRunOptions` / `resolveEngineLimits` reject it as an unknown key. Added by the conformance pass (reconciliation OPEN-4, strict reading): P8's `derive/compare.js` **imports** it and must not restate `1e-6` (a guard test fails if any other file under `clashtest/` contains the literal). |
 | `resolveRunOptions(input, limits?)` | `(object \| undefined, ResolvedLimits?) → frozen ResolvedRunOptions`; throws `InvalidOptionsError` synchronously | Validate + fill defaults + cross-field rules + producer/reader invariant. `limits` defaults to the default engine limits. |
 | `resolveEngineLimits(input)` | `(object \| undefined) → frozen ResolvedLimits`; throws `InvalidOptionsError` | Same for the engine constructor's `limits`. |
-| `worstCaseCapturedNodes(runOptions)` | `→ number` | `24·maxResultsPerRun + 12·maxLedgerRecords + 12·maxRetainedDiagnostics + 65,536`. |
+| `worstCaseCapturedNodes(runOptions)` | `→ number` | `35·maxResultsPerRun + 12·maxLedgerRecords + (24 + maxUnitIdsPerDiagnostic)·maxRetainedDiagnostics + 65,536` (spec erratum A11, 2026-09-24; was `24·`; erratum A13, 2026-09-24: the diagnostic term was `12·maxRetainedDiagnostics`). |
 | `producerReaderIssues(runOptions, limits)` | `→ {path,code,message}[]` (codes `result-unreadable-nodes`, `result-unreadable-bytes`) | Pure. |
 | `assertProducerReaderInvariant(runOptions, limits)` | throws `InvalidOptionsError{reason:'result-unreadable'}` | §13.6 R21-2. |
 
@@ -170,7 +170,7 @@ Commit-message rule for every checkpoint step: use the repo's Conventional-style
 - Consumes: nothing.
 - Produces: `ClashTestError`, the 33 error classes of spec §18 plus `RunIdConflictError`, and `ERROR_CATALOGUE` (see the interface summary table for fields). Every later phase imports its errors from here; none defines its own.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `test/clashtest/errors.test.mjs`:
 
@@ -249,12 +249,12 @@ test('UnsupportedSchemaVersionError never retains an arbitrary caller object as 
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Run: `node --test test/clashtest/errors.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` (`Cannot find module '…/clashtest/errors.js'`).
 
-- [ ] **Step 3: Implement `clashtest/errors.js`**
+- [x] **Step 3: Implement `clashtest/errors.js`**
 
 ```js
 // clashtest/errors.js
@@ -383,12 +383,12 @@ export const FacetRangeError = defineError('FacetRangeError', { facetId: null },
 export const ERROR_CATALOGUE = Object.freeze(catalogue.slice());
 ```
 
-- [ ] **Step 4: Run it and confirm it passes**
+- [x] **Step 4: Run it and confirm it passes**
 
 Run: `node --test test/clashtest/errors.test.mjs`
 Expected: PASS — 7 tests, 0 failures.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)**
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)**
 
 ```bash
 git add clashtest/errors.js test/clashtest/errors.test.mjs
@@ -405,7 +405,7 @@ git commit -m "feat(clashtest): P0.1 typed error catalogue (spec section 18)"
 - Consumes: nothing (`deepFreezeSliced` takes any object with `tick(label)`; P0.6's slicer satisfies it).
 - Produces: `captureData`, `CAPTURE_CODES`, `deepFreeze`, `deepFreezeSliced`, `isDeepFrozen`. P2 uses `captureData` for definitions (`maxIssues: limits.maxValidationIssues`, a `maxNodes` derived from `maxEntriesPerSelection`/`maxExplicitElementsPerSelection`); P5 uses it, with `rootGate: {key:'schemaVersion', …}` and `stringLimitFor`/`arrayLimitFor`, for external Result Sets; P6/P7 use it for `runOptions` via `options.js`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `test/clashtest/util/capture.test.mjs`:
 
@@ -750,12 +750,12 @@ test('an object with 100,000 unknown own keys is rejected before any key is copi
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Run: `node --test test/clashtest/util/capture.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `clashtest/util/capture.js`.
 
-- [ ] **Step 3: Implement `clashtest/util/capture.js`**
+- [x] **Step 3: Implement `clashtest/util/capture.js`**
 
 ```js
 // clashtest/util/capture.js
@@ -1053,12 +1053,12 @@ export function isDeepFrozen(value) {
 }
 ```
 
-- [ ] **Step 4: Run it and confirm it passes**
+- [x] **Step 4: Run it and confirm it passes**
 
 Run: `node --test test/clashtest/util/capture.test.mjs`
 Expected: PASS — 29 tests, 0 failures.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)**
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)**
 
 ```bash
 git add clashtest/util/capture.js test/clashtest/util/capture.test.mjs
@@ -1077,7 +1077,7 @@ git commit -m "feat(clashtest): P0.2 detached descriptor-based capture and deep 
 
 Numbers in this task are the provisional values of spec §17.1 (defaults) and §17.1.1 (ceilings). They are provisional pending gate **G-CAL**; nothing else in `clashtest/` may restate them.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `test/clashtest/options.test.mjs`:
 
@@ -1232,12 +1232,12 @@ test('option errors are thrown synchronously (not as a rejected promise)', () =>
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Run: `node --test test/clashtest/options.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `clashtest/options.js`.
 
-- [ ] **Step 3: Implement `clashtest/options.js`**
+- [x] **Step 3: Implement `clashtest/options.js`**
 
 ```js
 // clashtest/options.js
@@ -1489,12 +1489,12 @@ export function resolveRunOptions(input, limits) {
 }
 ```
 
-- [ ] **Step 4: Run it and confirm it passes**
+- [x] **Step 4: Run it and confirm it passes**
 
 Run: `node --test test/clashtest/options.test.mjs`
 Expected: PASS — 16 tests, 0 failures.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)**
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)**
 
 ```bash
 git add clashtest/options.js test/clashtest/options.test.mjs
@@ -1512,7 +1512,7 @@ This is a guard task: it adds no production code. It proves the defaults table i
 - Consumes: `options.js` exports from P0.3 (including `COMPARE_TOLERANCE_DEFAULTS`); `maxCollisionInstancesPerEpoch`, `maxFragmentsPerDbId`, `frameBudgetMs` from `collision/constants.js` (test only); the spec file `docs/superpowers/specs/2026-09-20-federated-clash-test-and-results-design.md`.
 - Produces: the named guards that make G-CAL freezing (Task P0.8) safe: changing any number without updating the referenced source fails a named test.
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 `test/clashtest/options.defaults.test.mjs`:
 
@@ -1731,29 +1731,29 @@ test('spec 17.1.1 drift: hard ceilings in the spec table equal options.js', () =
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it passes against the P0.3 implementation**
+- [x] **Step 2: Run it and confirm it passes against the P0.3 implementation**
 
 Run: `node --test test/clashtest/options.defaults.test.mjs`
 Expected: PASS — 12 tests, 0 failures. (If the `spec 17.1 drift` test reports a mismatch, options.js has a transcription error; fix options.js, never the spec or the test.)
 
-- [ ] **Step 3: Mutation check A — a wrong default must fail the drift and invariant tests**
+- [x] **Step 3: Mutation check A — a wrong default must fail the drift and invariant tests**
 
 Temporarily edit `clashtest/options.js`: change `maxResultsPerRun: int(1, 1_000_000, 100_000)` to `int(1, 1_000_000, 200_000)`.
 Run: `node --test test/clashtest/options.defaults.test.mjs`
 Expected: FAIL — tests `every default is inside [min, ceiling] …`, `PRODUCER/READER INVARIANT at the defaults …` and `spec 17.1 drift …` (message `maxResultsPerRun: options.js 200000 vs spec 100000`).
 
-- [ ] **Step 4: Mutation check B — an unreadable default must fail the producer/reader invariant**
+- [x] **Step 4: Mutation check B — an unreadable default must fail the producer/reader invariant**
 
 Revert step 3, then temporarily change `maxCapturedNodes: int(1, SCHEMA_MAX_NODES, 16_000_000)` to `14_000_000`.
 Run the same command.
 Expected: FAIL — at least the invariant test (worst case 14,585,536 nodes exceeds 14,000,000) and the drift test. Revert this edit.
 
-- [ ] **Step 5: Re-run clean**
+- [x] **Step 5: Re-run clean**
 
 Run: `node --test test/clashtest/options.test.mjs test/clashtest/options.defaults.test.mjs`
 Expected: PASS — 28 tests, 0 failures, and `git diff --stat clashtest/options.js` shows no change.
 
-- [ ] **Step 6: Checkpoint commit (only if the user has authorized commits)**
+- [x] **Step 6: Checkpoint commit (only if the user has authorized commits)**
 
 ```bash
 git add test/clashtest/options.defaults.test.mjs
@@ -1770,7 +1770,7 @@ git commit -m "test(clashtest): P0.4 provisional-defaults conformance and drift 
 - Consumes: `EnumerationCancelledError`, `ModelKeyVersionConflictError` (P0.1); `WorldDisposedError` from `collision/errors.js` (test-side).
 - Produces: the support exports of the interface summary. **Assumed:** binding shape (P1), enumerator port shapes (P3), query shape (P4) — see the Assumed paragraph above.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `test/clashtest/support.test.mjs`:
 
@@ -1880,12 +1880,12 @@ test('fake registry placeholder: bindings, generation bump, version conflict, so
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Run: `node --test test/clashtest/support.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `./support/index.mjs`.
 
-- [ ] **Step 3: Implement the fake clock**
+- [x] **Step 3: Implement the fake clock**
 
 `test/clashtest/support/fakeClock.mjs`:
 
@@ -1923,7 +1923,7 @@ export function createFakeClock({ start = 0, tickMs = 0, yieldAdvanceMs = 0 } = 
 }
 ```
 
-- [ ] **Step 4: Implement the fake world**
+- [x] **Step 4: Implement the fake world**
 
 `test/clashtest/support/fakeWorld.mjs`:
 
@@ -2006,7 +2006,7 @@ export function createFakeWorld({ defaultResult = emptyClashResult } = {}) {
 }
 ```
 
-- [ ] **Step 5: Implement the fake enumerator**
+- [x] **Step 5: Implement the fake enumerator**
 
 `test/clashtest/support/fakeEnumerator.mjs`:
 
@@ -2087,7 +2087,7 @@ export function createFakeEnumerationContext({ yieldToScheduler = async () => {}
 }
 ```
 
-- [ ] **Step 6: Implement the fake registry placeholder and the barrel**
+- [x] **Step 6: Implement the fake registry placeholder and the barrel**
 
 `test/clashtest/support/fakeRegistry.mjs`:
 
@@ -2171,12 +2171,12 @@ export * from './fakeRegistry.mjs';
 
 **The barrel is the roster, and it is one file every later phase edits.** Rule (2) above says a phase adds a **new** `support/<area>.mjs` and appends its export line here; it never edits another phase's file, and appending a line to this barrel is not "editing another phase's file". A test may import either from `./support/index.mjs` or from the specific module (`../support/leaseWorld.mjs`) — both are legal, and the phase files use both — but a double that is *not* listed here is a fork and a defect. The commented roster above is the check: every `test/clashtest/support/*.mjs` created by P1–P8 appears in it exactly once.
 
-- [ ] **Step 7: Run it and confirm it passes**
+- [x] **Step 7: Run it and confirm it passes**
 
 Run: `node --test test/clashtest/support.test.mjs`
 Expected: PASS — 6 tests, 0 failures.
 
-- [ ] **Step 8: Checkpoint commit (only if the user has authorized commits)**
+- [x] **Step 8: Checkpoint commit (only if the user has authorized commits)**
 
 ```bash
 git add test/clashtest/support test/clashtest/support.test.mjs
@@ -2193,7 +2193,7 @@ git commit -m "test(clashtest): P0.5 shared fakes (clock, world, enumerator, reg
 - Consumes: `ENGINE_LIMIT_DEFAULTS` (P0.3) for default budgets; `createFakeClock` (P0.5) in tests.
 - Produces: `createSlicer`, `makeYieldToScheduler` (see summary). P2 (normalization), P3 (enumeration handling, planning), P4 (projection), P5 (merge/sort/digest/seal), P6 (inter-unit yield, cancellation via `afterYield`), P8 (derivations) all obtain their slicing from here. The engine passes its own `spanRecorder` (spec §17.3) when constructing slicers; the recorder receives `(label, ms)` exactly like `collision/scheduler.js`'s `setSpanRecorder` callback.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `test/clashtest/util/slicer.test.mjs`:
 
@@ -2347,12 +2347,12 @@ test('makeYieldToScheduler: animation-frame uses requestAnimationFrame when pres
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Run: `node --test test/clashtest/util/slicer.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `clashtest/util/slicer.js`.
 
-- [ ] **Step 3: Implement `clashtest/util/slicer.js`**
+- [x] **Step 3: Implement `clashtest/util/slicer.js`**
 
 ```js
 // clashtest/util/slicer.js
@@ -2482,12 +2482,12 @@ export function createSlicer({
 }
 ```
 
-- [ ] **Step 4: Run it and confirm it passes**
+- [x] **Step 4: Run it and confirm it passes**
 
 Run: `node --test test/clashtest/util/slicer.test.mjs`
 Expected: PASS — 12 tests, 0 failures.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)**
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)**
 
 ```bash
 git add clashtest/util/slicer.js test/clashtest/util/slicer.test.mjs
@@ -2504,7 +2504,7 @@ git commit -m "feat(clashtest): P0.6 deadline-aware slicer and scheduler seam"
 - Consumes: `createSlicer` (P0.6) and `createFakeClock` (P0.5) in tests only; `digestCanonicalSliced` accepts any `{tick(label)}`.
 - Produces: `DIGEST_VERSION`, `DIGEST_PREFIX`, `canonicalJson`, `canonicalChunks`, `Sha256`, `sha256Text`, `digestCanonical`, `digestCanonicalSliced`. P2 uses it for `semanticDigest` (AC-1 definition-level golden vectors — entry permutation, swapped `selectionA`/`selectionB` — live in P2 because they need P2's normalization; P0 pins the byte-level encoding). P3 uses it for scope digests; P5 for `pairSetDigest`/`ledgerDigest` (over "documented fields only", spec §13.6 — the projection is P5's job, P0 digests exactly the value it is given).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `test/clashtest/util/canonical.test.mjs`:
 
@@ -2620,12 +2620,12 @@ test('sliced digest is byte-identical to the synchronous one, and yields on a la
 });
 ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
 Run: `node --test test/clashtest/util/canonical.test.mjs`
 Expected: FAIL — `ERR_MODULE_NOT_FOUND` for `clashtest/util/canonical.js`.
 
-- [ ] **Step 3: Implement `clashtest/util/canonical.js`**
+- [x] **Step 3: Implement `clashtest/util/canonical.js`**
 
 ```js
 // clashtest/util/canonical.js
@@ -2806,12 +2806,12 @@ export async function digestCanonicalSliced(value, slicer, { label = 'digest' } 
 }
 ```
 
-- [ ] **Step 4: Run it and confirm it passes**
+- [x] **Step 4: Run it and confirm it passes**
 
 Run: `node --test test/clashtest/util/canonical.test.mjs`
 Expected: PASS — 20 tests, 0 failures. The SHA-256 cases cross-check against `node:crypto` at every padding boundary; if any differ, the round constants or padding in `Sha256` are wrong.
 
-- [ ] **Step 5: Checkpoint commit (only if the user has authorized commits)**
+- [x] **Step 5: Checkpoint commit (only if the user has authorized commits)**
 
 ```bash
 git add clashtest/util/canonical.js test/clashtest/util/canonical.test.mjs
@@ -2843,16 +2843,16 @@ git commit -m "feat(clashtest): P0.7 canonical JSON and sliceable SHA-256 digest
 
 Run, from the repo root, in this order:
 
-- [ ] `node --test test/clashtest/errors.test.mjs` — 7 pass
-- [ ] `node --test test/clashtest/util/capture.test.mjs` — 29 pass (incl. the accessor-on-`schemaVersion`/`runId` test, the one-ceiling test, the five-name export-surface test and the eight `openFieldBudget` tests)
-- [ ] `node --test test/clashtest/options.test.mjs test/clashtest/options.defaults.test.mjs` — 28 pass (incl. `COMPARE_TOLERANCE_DEFAULTS` and the single-defaults literal guard)
-- [ ] `node --test test/clashtest/support.test.mjs` — 6 pass
-- [ ] `node --test test/clashtest/util/slicer.test.mjs test/clashtest/util/canonical.test.mjs` — 32 pass (slicer 12 incl. `reset()`, canonical 20)
-- [ ] `node --test test/clashtest/*.test.mjs test/clashtest/util/*.test.mjs` — 102 pass, 0 fail
-- [ ] `npm test` — the whole suite still passes with no server and no credentials (the new files are discovered by `scripts/run-tests.mjs`; the `support/` files are not, because they are not `*.test.mjs`)
-- [ ] `grep -rn "from '.*collision" clashtest/` returns nothing (layering: `clashtest/` imports no `collision/` module)
-- [ ] `git status --short` shows only the files of the file-structure table (no change to `collision/`, `wwwroot/`, `package.json`)
-- [ ] `docs/handoffs/latest.md` updated from the verified final state (project CLAUDE.md), listing P0 status and the open items below
+- [x] `node --test test/clashtest/errors.test.mjs` — 7 pass
+- [x] `node --test test/clashtest/util/capture.test.mjs` — 29 pass (incl. the accessor-on-`schemaVersion`/`runId` test, the one-ceiling test, the five-name export-surface test and the eight `openFieldBudget` tests)
+- [x] `node --test test/clashtest/options.test.mjs test/clashtest/options.defaults.test.mjs` — 28 pass (incl. `COMPARE_TOLERANCE_DEFAULTS` and the single-defaults literal guard)
+- [x] `node --test test/clashtest/support.test.mjs` — 6 pass
+- [x] `node --test test/clashtest/util/slicer.test.mjs test/clashtest/util/canonical.test.mjs` — 32 pass (slicer 12 incl. `reset()`, canonical 20)
+- [x] `node --test test/clashtest/*.test.mjs test/clashtest/util/*.test.mjs` — 102 pass, 0 fail
+- [x] `npm test` — the whole suite still passes with no server and no credentials (the new files are discovered by `scripts/run-tests.mjs`; the `support/` files are not, because they are not `*.test.mjs`)
+- [x] `grep -rn "from '.*collision" clashtest/` returns nothing (layering: `clashtest/` imports no `collision/` module)
+- [x] `git status --short` shows only the files of the file-structure table (no change to `collision/`, `wwwroot/`, `package.json`)
+- [x] `docs/handoffs/latest.md` updated from the verified final state (project CLAUDE.md), listing P0 status and the open items below
 
 Named tests mapped to spec acceptance criteria (P0's share; the rest of each AC is owned by the phase noted):
 
@@ -2866,6 +2866,10 @@ Named tests mapped to spec acceptance criteria (P0's share; the rest of each AC 
 | AC-12 (b) synchronous capture | `node ceiling is charged BEFORE elements are read…` (over-cap arrays cost O(1)) | P7 (wall-clock distribution, G-CAL) |
 | §17.1 / §17.1.1 / §13.6 | `options.defaults.test.mjs` (all 12), `producer/reader invariant …` in `options.test.mjs` | — |
 | §15.4 tolerance defaults | `COMPARE_TOLERANCE_DEFAULTS (spec 15.4, …)`, `single-defaults rule: no file under clashtest/ except options.js restates a compare-tolerance literal` | P8 (`derive/compare.js` imports them) |
+
+## Implementation status (2026-09-21)
+
+**P0.1–P0.7 IMPLEMENTED and verified on branch `feature/federated-clash-test-core-engine`; P0.8 remains BLOCKED by G-CAL (not started, by design).** P0 is committed as one authorized commit (the per-task "Checkpoint commit" boxes above are ticked as satisfied by that single commit, not eight separate commits). Modules were created from this file's code blocks (RED confirmed by `ERR_MODULE_NOT_FOUND` before each module existed, then GREEN); the P0.4 mutation checks A and B were run and reverted (A: 3 failing tests, B: 3 failing tests, `options.js` byte-identical afterwards). A targeted internal Codex review (`docs/reviews/2026-09-21-federated-clash-test-core-p0-internal-codex-review.md`) led to six accepted hardening fixes in `capture.js` / `options.js` with six new tests; **implemented test counts therefore exceed the plan-time counts above: capture 31, options 20 + defaults 12 = 32, P0 suite 108** (errors 7, support 6, slicer 12, canonical 20 unchanged). No export surface, default value, signature or spec/plan contract changed. The handoff item below is ticked when `docs/handoffs/latest.md` records this state.
 
 ## Spec coverage
 

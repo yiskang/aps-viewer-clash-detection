@@ -1,0 +1,24 @@
+# Federated Clash Test core — P2 internal Codex review (targeted)
+
+- **Date:** 2026-09-21 · **Branch:** `feature/federated-clash-test-core-engine` · **Scope:** P2 definitions only (`clashtest/definition/{validate,normalize,operations}.js`, `clashtest/stores/InMemoryClashTestStore.js`, their tests, `test/clashtest/support/definitions.mjs`), per project `CLAUDE.md` internal-review boundary. P0/P1 were not re-reviewed. No spec or plan-architecture question was raised or reopened.
+- **Tool:** `codex-advisor`, effort `medium`, one pass. Request `20260921-182838-25114-13224` (raw response in the gitignored `.codex-worker/responses/`).
+- **Status:** internal review only — **not** the independent Work review/adjudication gate that the owner requires before P3.
+
+## Findings and dispositions
+
+Each finding was checked against the frozen spec and the code before acceptance.
+
+| # | File | Severity (Codex) | Finding | Disposition |
+| --- | --- | --- | --- | --- |
+| C1 | `normalize.js` `normalizeSelectionSteps` (P2.4) | High | dbId union/dedupe and the native sort ran with no scheduler checkpoint; a selection at the resolved cap (default 10,000, hard ceiling 100,000 explicit elements) was a large synchronous span. Spec §5.3 requires de-duplicate/sort to run "in slices". The plan's yield test used only `kind:'model'` entries. | **Accepted, fixed.** One yield per id in the union loop and one per element written in a generator bottom-up merge sort; the single generator body still drives both `normalizeDefinition` (sync) and `prepareDefinition` (sliced). Output and golden digests unchanged. 6 tests added (100,000-id shuffled input, ≤64 dbId reads between yields, dedupe-only / sort-only yield floors, sync≡sliced, 300-round random vs native sort + merge-pass boundary sizes); mutation-checked (no union yield → 4 fail, no sort yield → 2 fail, native sort → 2 fail). |
+| C2 | `operations.js` `listTests` (P2.8) | High | `validateTestSummaryPage(page)` validated a detached capture but `listTests` returned the store-owned `page`, which a store could keep mutating after validation. | **Accepted, fixed.** `listTests` now returns the captured, validated, deep-frozen copy (`CorruptListingError` with values stripped if invalid). Implemented as an optional `validateTestSummaryPage(page, {returnCopy: true})` (see deviation below). Tests: result is not the store's object, is frozen, unaffected by later store mutation, captured exactly once; `getTest` shares no structure with the stored object; mutation-checked. |
+| C3 | `normalize.js` `assertRootAntichain` (P2.9) | High | Θ(n²) pair loop with a `new Set` per pair, and every violation was allocated before `.slice(0, 20)`. | **Accepted, fixed.** Inverted owner index + one Set per root, early stop at the 20th violation; ordering and edge semantics (same-dbId duplicates i<j only, empty-owner roots nested under every other root) preserved and pinned by a 300-round equivalence test against a copy of the old implementation. `checkCrossRoleNesting` builds owner Sets lazily, results unchanged (300-round equivalence). New tests: 20,000 disjoint roots with an owner-read counter (≤10× total owners), 5,000 nested roots → exactly 20 violations without materializing n; mutation-checked. |
+| C4 | `validate.js` | Low | `CAPTURE_TO_ISSUE` was exported, an extra public export beyond the P2 Phase interface summary ("exports exactly the names … no extras"). | **Accepted, fixed.** Module-private; its test became a behavior test (one input per reachable P0 capture code → issue code ∈ public `ISSUE_CODES`; completeness assertion `CAPTURE_CODES` = table keys + documented unreachable `unknown-field-bytes`, so a newly added P0 code still fails the test). |
+
+The loop was stopped after this single round (convergence rule); the fixes were verified mechanically (full targeted suite, mutation checks, independent re-run), not by a further Codex round.
+
+## Deviations from the plan text (for the independent reviewer)
+
+1. `validateTestSummaryPage` gained an optional second parameter `{returnCopy}` (default behavior unchanged, still `{issues, issuesTruncated}`) so `listTests` can return the captured copy without exporting `captureStructural`. This is an addition to a signature named in the P2 summary; the alternative (exporting the private capture helper) would have been a larger public-surface change.
+2. Plan code blocks superseded by the C1–C4 fixes: P2.4 `normalizeSelectionSteps`, P2.8 `listTests`, P2.9 `assertRootAntichain`, and the P2.2 `CAPTURE_TO_ISSUE` mapping test. The implementation, not the plan text, is authoritative; the plan was not edited.
+3. Pre-existing P0 interaction: remediated P0 added the `unknown-field-bytes` capture code (fires only with `openFieldBudget`, which P2 never passes); P2 maps it to the fail-closed `unreadable` issue.
