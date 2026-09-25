@@ -10,13 +10,16 @@ const scopeOf = (t) => (t.whole ? { modelKey: t.modelKey, scope: 'model' } : { m
  *          a model-level `cls` is only a default for its roots.
  *  units:  [{unitId, outcome?, cause?, source:{modelKey, roots:[dbId]}, targets:[{modelKey, whole:true}|{modelKey, roots:[dbId]}],
  *            taints?, pairSpaceWeight?, scopeProof?}]      outcome:'split' => kind:'split' (superseded parent)
- *  results:[{pair:[[mk,db],[mk,db]], unitId, evidence?, flags?}]  (sorted into canonical order here) */
+ *  results:[{pair:[[mk,db],[mk,db]], unitId, evidence?, flags?}]  (sorted into canonical order here)
+ *  keepPairOrder: ordered-mode (containment) sets only — keep each result pair's given (contained, container)
+ *          orientation instead of sorting it ascending, so a converse ordered pair (y,x) is expressible;
+ *          the result LIST is still sorted into canonical PairId order. Default false (unchanged behavior). */
 export function makeResultSet(spec = {}) {
   const {
     runId = 'run-1', testId = 't1', semanticDigest = 'sha256:aaa', mode = 'volume-overlap', clearance,
     models = [{ modelKey: 'M', modelVersion: 'v1', roots: [{ dbId: 100, ownerDbIds: [100, 105] }, { dbId: 200, ownerDbIds: [200] }, { dbId: 300, ownerDbIds: [300] }] }],
     units = [], results = [], unreachable = [], freshness = 'current', status = 'completed', coverage = 'full', integrity = 'clean',
-    environmentSensitive = false, determinismClass = 'deterministic', registrySessionId = 'sess-1', placementGeneration = 0,
+    keepPairOrder = false, environmentSensitive = false, determinismClass = 'deterministic', registrySessionId = 'sess-1', placementGeneration = 0,
     libraryVersion = '1.0.0', diagnostics = {}, scopeDigests = {}, planningGaps = [], definitionOverrides = {},
   } = spec;
   const rootOwners = models.map((m) => ({ modelKey: m.modelKey,
@@ -36,7 +39,7 @@ export function makeResultSet(spec = {}) {
   });
   const clashResults = results
     .map((r) => {
-      const [a, b] = [...r.pair].sort(refCmp);
+      const [a, b] = keepPairOrder ? r.pair : [...r.pair].sort(refCmp);
       return { resultId: rid(testId, semanticDigest, a, b), pair: { first: { modelKey: a[0], dbId: a[1] }, second: { modelKey: b[0], dbId: b[1] } },
         mode, evaluatedAs: { source: { modelKey: a[0], dbId: a[1] }, target: { modelKey: b[0], dbId: b[1] } },
         evidence: r.evidence ?? (mode === 'clearance' ? { distance: 0.04, clearance: clearance ?? 0.05, closestPoints: { first: [0, 0, 0], second: [0.04, 0, 0] } }

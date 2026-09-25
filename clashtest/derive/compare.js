@@ -53,6 +53,27 @@ function comparabilityOf(base, next, conflictKeys) {
     placement: sameGen ? 'same-generation' : 'unverifiable', notes };
 }
 
+/**
+ * `covered-clean` as proof of a CLEAN (absent) pair. P5's reader looks the covering unit up in both orientations, which is
+ * right for unordered modes but not for ordered (containment) ones: a unit source=y -> target=x answers only "y in x",
+ * never "x in y". For ordered sets the covering unit's SOURCE side must therefore hold the pair's FIRST element (the
+ * contained one); otherwise the absence proves nothing (fail-closed -> the unverified class). O(1) per pair: one Map
+ * lookup plus one Set test; each unit's source-root Set is built at most once per side (bounded by the ledger size).
+ */
+function cleanProof(reader, ordered) {
+  if (!ordered) return (pair) => reader.pairStatus(pair).verdict === 'covered-clean';
+  const sourceRoots = new Map();   // unitId -> Set(sourceRootDbIds), lazily, once per unit
+  return (pair) => {
+    const st = reader.pairStatus(pair);
+    if (st.verdict !== 'covered-clean') return false;
+    const unit = reader.ledger.unitsById.get(st.coveringUnitId);
+    if (unit === undefined || unit.sourceModelKey !== pair.first.modelKey) return false;
+    let roots = sourceRoots.get(unit.unitId);
+    if (roots === undefined) { roots = new Set(unit.sourceRootDbIds); sourceRoots.set(unit.unitId, roots); }
+    return roots.has(st.roots.first);   // `roots.first` is the first element's ROOT dbId (P5 PairStatus)
+  };
+}
+
 export const compareRunner = {
   optionKeys: ['signal', 'distanceTolerance', 'pointTolerance'],
   prepare(_args, opts) {
@@ -77,6 +98,8 @@ export const compareRunner = {
       && canonicalJson(base.definition.selectionA) === canonicalJson(next.definition.selectionB) && canonicalJson(base.definition.selectionB) === canonicalJson(next.definition.selectionA)
       && canonicalJson(base.definition.selectionA) !== canonicalJson(base.definition.selectionB)) comparability.notes.push('containment-orientation-reversed');
     const [baseReader, nextReader] = gated ? [null, null] : [await drive(buildStatusReaderSteps(base), gate), await drive(buildStatusReaderSteps(next), gate)]; // indexes built ONCE per side
+    const ordered = semB === 'ordered' || semN === 'ordered';   // not gated => both sides share one class (a null definition defers to the other)
+    const [baseClean, nextClean] = gated ? [null, null] : [cleanProof(baseReader, ordered), cleanProof(nextReader, ordered)];
     const ts = comparability.determinismClass === 'time-sensitive';
     let entries = 0;
     const push = (list, entry) => { entries += 1; if (entries > limits.maxComparisonEntries) throw new ComparisonTooLargeError({ limit: limits.maxComparisonEntries, observed: entries }); list.push(entry); };
@@ -93,10 +116,10 @@ export const compareRunner = {
           if (fields.length === 0) push(out.unchanged, { pairId: pair, baseResultId: a.resultId, nextResultId: b.resultId });
           else push(out.changed, { pairId: pair, baseResultId: a.resultId, nextResultId: b.resultId, changedFields: fields });
         } else if (c < 0) {
-          const clean = nextReader.pairStatus(pair).verdict === 'covered-clean';
+          const clean = nextClean(pair);
           push(clean ? out.resolved : out.removedUnverifiedNext, { pairId: pair, baseResultId: a.resultId, ...(clean && ts ? { timeSensitive: true } : {}) });
         } else {
-          const clean = baseReader.pairStatus(pair).verdict === 'covered-clean';
+          const clean = baseClean(pair);
           push(clean ? out.added : out.addedUnverifiedBase, { pairId: pair, nextResultId: b.resultId, ...(clean && ts ? { timeSensitive: true } : {}) });
         }
       }

@@ -80,15 +80,40 @@ test('gate still reports identityConflicts; a modelVersion mismatch is a conflic
 test('ordered class: swapped selections keep the sets comparable and add the orientation note; unordered modes still join across a mode change', async () => {
   const sel = (id) => ({ entries: [{ kind: 'elements', modelKey: 'M', dbIds: [id] }] });
   const c1 = mk({ mode: 'containment', semanticDigest: 'sha256:1', definitionOverrides: { selectionA: sel(100), selectionB: sel(200) }, units: [cover([200])], results: [pr(200, { evidence: {} })] });
-  const c2 = mk({ mode: 'containment', semanticDigest: 'sha256:2', definitionOverrides: { selectionA: sel(200), selectionB: sel(100) }, units: [cover([200])], results: [] });
+  // c2's selections are swapped, so its (only) unit is oriented to match: source 200 -> target 100. It asks ONLY the converse
+  // ordered question "is 200 inside 100?", which says nothing about c1's pair (100 inside 200).
+  const c2 = mk({ mode: 'containment', semanticDigest: 'sha256:2', definitionOverrides: { selectionA: sel(200), selectionB: sel(100) },
+    units: [{ unitId: '1.0', source: { modelKey: 'M', roots: [200] }, targets: [{ modelKey: 'M', roots: [100] }] }], results: [] });
   const c = await cmp(c1, c2);
   assert.equal(c.incomparable, null);
   assert.ok(c.comparability.notes.includes('containment-orientation-reversed'));
-  assert.deepEqual(ids(c.resolved), [200]);                     // the converse question is reported through the ordinary classes, verified via getPairStatus
+  assert.deepEqual(c.resolved, []);                             // never a false `resolved`: c2 never asked (100 in 200)
+  assert.deepEqual(ids(c.removedUnverifiedNext), [200]);        // the converse run is reported through the ordinary (unverified) class
   const vo = mk({ semanticDigest: 'sha256:vo', units: [cover([200])], results: [pr(200)] });
   const cl = mk({ mode: 'clearance', clearance: 0.05, semanticDigest: 'sha256:cl', units: [cover([200])], results: [pr(200)] });
   const j = await cmp(vo, cl);
   assert.equal(j.incomparable, null); assert.deepEqual(j.changed.map((e) => e.changedFields), [['mode']]);
+});
+
+test('ordered (containment) coverage is orientation-aware: a converse-oriented unit never proves resolved/added', async () => {
+  const sel = (id) => ({ entries: [{ kind: 'elements', modelKey: 'M', dbIds: [id] }] });
+  const unit = (src, tgt) => ({ unitId: '1.0', source: { modelKey: 'M', roots: [src] }, targets: [{ modelKey: 'M', roots: [tgt] }] });
+  const cset = (a, b, over) => mk({ mode: 'containment', keepPairOrder: true, definitionOverrides: { selectionA: sel(a), selectionB: sel(b) }, ...over });
+  const pairs = (list) => list.map((e) => [e.pairId.first.dbId, e.pairId.second.dbId]);
+  // c1 holds (100 in 200); c3 (swapped selections, unit 200 -> 100) holds the converse (200 in 100)
+  const c1 = cset(100, 200, { semanticDigest: 'sha256:1', units: [unit(100, 200)], results: [{ pair: [['M', 100], ['M', 200]], evidence: {} }] });
+  const c3 = cset(200, 100, { semanticDigest: 'sha256:3', units: [unit(200, 100)], results: [{ pair: [['M', 200], ['M', 100]], evidence: {} }] });
+  assert.deepEqual(pairs(c3.results.map((r) => ({ pairId: r.pair }))), [[200, 100]]);   // fixture kept the ordered orientation
+  const c = await cmp(c1, c3);
+  assert.deepEqual([c.resolved, c.added], [[], []]);
+  assert.deepEqual(pairs(c.removedUnverifiedNext), [[100, 200]]);   // c3's unit answers only (200 in 100)
+  assert.deepEqual(pairs(c.addedUnverifiedBase), [[200, 100]]);     // c1's unit answers only (100 in 200)
+  // positive control: the other side's correctly oriented unit still proves resolved / added
+  const clean = cset(100, 200, { semanticDigest: 'sha256:4', units: [unit(100, 200)], results: [] });
+  const r = await cmp(c1, clean);
+  assert.deepEqual([pairs(r.resolved), r.removedUnverifiedNext], [[[100, 200]], []]);
+  const a = await cmp(clean, c1);
+  assert.deepEqual([pairs(a.added), a.addedUnverifiedBase], [[[100, 200]], []]);
 });
 
 test('clearance 0.05 -> 0.10: same pair is changed(["clearance"]) carrying pairId and BOTH ResultIds, never added+removed', async () => {
