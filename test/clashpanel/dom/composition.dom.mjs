@@ -396,3 +396,41 @@ test('dispose folds the controller\'s {released:false, errors} into the Aggregat
   assert.ok(r.error.inner.some((m) => /release failed for run-1/.test(m)), JSON.stringify(r.error));
   assert.deepEqual({ ...r, error: undefined }, { error: undefined, meshes: 0, viewerListeners: 0, catalogListeners: 0, panelInDom: false });
 }));
+
+test('C-M1: bridge teardown failures (listener removal, isolation restore) make dispose reject with an AggregateError, after every step ran', () => withPage(async ({ page }) => {
+  await boot(page);
+  await configureAndRun(page);
+  await finishRun(page);
+  await selectFirstRowWithMarkers(page);
+  await page.check('#clash-detection-panel [data-key="action-isolate"]');
+  await page.waitForFunction(() => window.__e2e.world.viewer.getAggregateIsolation().length > 0);
+  const r = await page.evaluate(async () => {
+    const { world, panel } = window.__e2e;
+    const { viewer } = world;
+    const removeListener = viewer.removeEventListener;
+    viewer.removeEventListener = function failingRemove(type, fn) { removeListener.call(this, type, fn); throw new Error('removeEventListener failed'); };
+    viewer.setAggregateIsolation = () => { throw new Error('setAggregateIsolation failed'); };
+    const p1 = panel.dispose();
+    const p2 = panel.dispose();
+    let error = null;
+    try { await p1; } catch (e) { error = { name: e.name, inner: e.errors.map((x) => x.message) }; }
+    let again = null;
+    try { await p2; } catch (e) { again = e.name; }
+    return {
+      same: p1 === p2,
+      again,
+      error,
+      meshes: viewer.meshCount(),
+      viewerListeners: viewer.listenerCount(),
+      catalogListeners: world.catalog.listenerCount(),
+      leases: world.engine.activeLeases(),
+      panelInDom: document.getElementById('clash-detection-panel') !== null,
+    };
+  });
+  assert.equal(r.error?.name, 'AggregateError', JSON.stringify(r));
+  assert.ok(r.error.inner.some((m) => /removeEventListener failed/.test(m)), JSON.stringify(r.error));
+  assert.ok(r.error.inner.some((m) => /Isolation could not be restored/.test(m)), JSON.stringify(r.error));
+  assert.deepEqual({ ...r, error: undefined }, {
+    same: true, again: 'AggregateError', error: undefined, meshes: 0, viewerListeners: 0, catalogListeners: 0, leases: 0, panelInDom: false,
+  });
+}));
