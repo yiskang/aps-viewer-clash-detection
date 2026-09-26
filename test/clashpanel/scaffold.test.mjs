@@ -25,6 +25,9 @@ const EXPECTED_MODULES = [
   'core/filters.js',
   'core/grouping.js',
   'core/orderedList.js',
+  'core/labels.js',
+  'core/resolve.js',
+  'core/rows.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
