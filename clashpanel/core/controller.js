@@ -28,8 +28,8 @@ import { buildViewModel } from './viewModel.js';
 import { buildResultIndex } from './resultIndex.js';
 import { EMPTY_FILTER_SPEC, isFilterActive, parseMaxGap, runFilterPass } from './filters.js';
 import { computeElementGroups, filterGroups, sortGroups, matchIdsFrom } from './grouping.js';
-import { buildOrderedIndex, pageSlice, clampPage } from './orderedList.js';
-import { buildRow, buildGroupHeaderRow, livenessOf } from './rows.js';
+import { buildOrderedIndex, pageSlice, clampPage, pageOfPosition } from './orderedList.js';
+import { buildRow, buildGroupHeaderRow, livenessOf, locationOf, sideView, gapOf } from './rows.js';
 import { BASIS_VERDICT_TIMEOUT_MS, READINESS_POLL_MS, PAGE_SIZE, FILTER_DEBOUNCE_MS } from './constants.js';
 
 // ── construction ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -59,7 +59,7 @@ export function createPanelController({ engine, catalog, bridge, scheduler = cre
     runRecord: null,                       // Panel-local facts captured when the run was ADMITTED (not in the sealed set)
     readAbort: new AbortController(),
   };
-  Object.assign(c, resultsState());
+  Object.assign(c, resultsState(), selectionState());
   c.labels = createLabelResolver({
     catalog, scheduler,
     resolveLiveModel: (modelKey) => liveModelFor(c, modelKey),
@@ -68,6 +68,7 @@ export function createPanelController({ engine, catalog, bridge, scheduler = cre
   });
   revalidate(c);
   c.disposers.push(catalog.onChange(() => onCatalogChange(c)));
+  c.disposers.push(bridge.onModelLeft((event) => onModelLeft(c, event)));
 
   return Object.freeze({
     getViewModel: () => viewModelOf(c),
@@ -526,6 +527,9 @@ function resultsState() {
 function resetResultsView(c) {
   c.pipe = null;
   c.view = { ...defaultView(), groupBy: c.view.groupBy };
+  c.selection = null;                                              // restore table: a new run drops the selection
+  c.presented = null;
+  c.presentNotes = [];
 }
 
 /** A pipeline completion commits only for the displayed generation. */
@@ -698,7 +702,13 @@ function rebuildOrdered(c, { follow = false } = {}) {
     view: grouped ? 'grouped' : 'flat', matching: p.matching, index: p.index,
     sortKey: v.sort === 'gap-asc' && p.index.isSoft ? 'gap-asc' : 'default', groups, expanded: v.expanded,
   });
-  if (follow) v.page = 0;                                           // a new ordering starts at its first page
+  if (follow) {
+    // AC-P17: the page follows the selected OCCURRENCE; a selection hidden by filters leaves the page where it is;
+    // with no selection a new ordering starts at its first page.
+    const pos = c.selection === null ? -1 : p.ordered.positionOf(c.selection.occurrence);
+    if (pos >= 0) v.page = pageOfPosition(pos, PAGE_SIZE);
+    else if (c.selection === null) v.page = 0;
+  }
   v.page = clampPage(v.page, p.ordered.length, PAGE_SIZE);
 }
 
@@ -791,8 +801,11 @@ function onGroupMode(c, intent) {
 
 function onGroupToggle(c, intent) {
   if (typeof intent.groupId !== 'string') return;
-  if (c.view.expanded.has(intent.groupId)) c.view.expanded.delete(intent.groupId);
-  else c.view.expanded.add(intent.groupId);
+  if (c.view.expanded.has(intent.groupId)) {
+    c.view.expanded.delete(intent.groupId);
+    // Collapsing the group the user navigates in ends group-scoped navigation (whole-list Prev/Next).
+    if (c.selection !== null && c.selection.navScope === intent.groupId) c.selection = { ...c.selection, navScope: null };
+  } else c.view.expanded.add(intent.groupId);
   rebuildOrdered(c);                                                // expansion keeps the current page
   touch(c);
 }
@@ -819,7 +832,8 @@ function resultRow(c, canonicalIndex, groupId) {
   const p = c.pipe;
   const record = p.index.at(canonicalIndex);
   const resolution = resolveResult({ record, provenance: p.set.provenance, engine: c.engine, catalog: c.catalog });   // lazy (§11.2)
-  return buildRow({ record, canonicalIndex, groupId, labels: c.labels, liveness: livenessOf(resolution), caveatedIds: p.caveatedIds, selected: false });
+  const selected = c.selection !== null && c.selection.occurrence.resultId === record.resultId;   // every occurrence
+  return buildRow({ record, canonicalIndex, groupId, labels: c.labels, liveness: livenessOf(resolution), caveatedIds: p.caveatedIds, selected });
 }
 
 /** Only the current page is materialized (PAGE_SIZE entries at most, spec §12.1). */
@@ -828,6 +842,205 @@ function pageRows(c) {
   return pageSlice(p.ordered, c.view.page, PAGE_SIZE).map((entry) => (entry.kind === 'group'
     ? buildGroupHeaderRow({ group: p.groupsById.get(entry.groupId), labels: c.labels, expanded: c.view.expanded.has(entry.groupId) })
     : resultRow(c, entry.canonicalIndex, entry.groupId)));
+}
+
+// ── selection, navigation and presentation (spec §9.1–§9.6, §12.2, §12.3; Task 18) ─────────────────────────────
+
+const ISOLATION_UNAVAILABLE_TEXT = 'Isolation is unavailable in the current viewer state.';
+
+function selectionState() {
+  return {
+    selection: null,                     // {occurrence:{groupId,resultId}, navScope:string|null}
+    toggles: { focusOnSelect: true, isolate: false, markers: true },
+    presented: null,                     // {modelKeys:string[]} of the current visualization (never a Model object)
+    presentNotes: [],
+  };
+}
+
+/** Sync, read-only (§9.5). Any failure reads as "unavailable" — Isolate is then disabled, never faked. */
+function isolationState(c) {
+  try {
+    const r = c.bridge.checkIsolationPrerequisite();
+    if (r?.available === true) return { available: true, reason: null };
+    return { available: false, reason: typeof r?.reason === 'string' && r.reason !== '' ? r.reason : ISOLATION_UNAVAILABLE_TEXT };
+  } catch {
+    return { available: false, reason: ISOLATION_UNAVAILABLE_TEXT };
+  }
+}
+
+function containsSorted(sorted, value) {
+  let lo = 0;
+  let hi = sorted.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sorted[mid] === value) return true;
+    if (sorted[mid] < value) lo = mid + 1; else hi = mid - 1;
+  }
+  return false;
+}
+
+function selectedCanonical(c) {
+  const p = c.pipe;
+  if (c.selection === null || p === null || p.index === null) return -1;
+  return p.index.indexOfResultId(c.selection.occurrence.resultId);
+}
+
+function selectionHidden(c) {
+  const i = selectedCanonical(c);
+  return i >= 0 && c.pipe.matching !== null && !containsSorted(c.pipe.matching, i);
+}
+
+/** Page follows the selected OCCURRENCE (never indexOf(resultId)); a hidden selection leaves the page alone. */
+function pageToSelection(c) {
+  const ordered = c.pipe?.ordered ?? null;
+  if (ordered === null || c.selection === null) return;
+  const pos = ordered.positionOf(c.selection.occurrence);
+  if (pos >= 0) c.view.page = pageOfPosition(pos, PAGE_SIZE);
+}
+
+/**
+ * Presents the selected result through the bridge (the only Viewer mutator). Only live sides are sent; with no
+ * live side nothing is attempted (AC-P7). Hard ⇒ `point` (witness), Soft ⇒ `closestPoints`. Isolation is
+ * requested only when the §9.5 prerequisite holds. Fit only when `fit` (row/Prev/Next: Focus-on-select; Focus: always).
+ */
+async function present(c, { fit }) {
+  const p = c.pipe;
+  const i = selectedCanonical(c);
+  if (c.disposed || i < 0) return;
+  const record = p.index.at(i);
+  const resolution = resolveResult({ record, provenance: p.set.provenance, engine: c.engine, catalog: c.catalog });
+  if (!resolution.anyLive) {                                        // no Viewer action for an unresolvable result…
+    const shown = c.presented !== null;
+    c.presented = null;
+    c.presentNotes = [];
+    if (shown) await clearViewer(c);                                // …but never leave the previous clash shown
+    if (!c.disposed) touch(c);                                      // a clear-only outcome is still a state change
+    return;
+  }
+  const live = resolution.sides.filter((side) => side.state === 'live');
+  const location = locationOf(record);
+  const request = {
+    sides: live.map((side) => ({ model: side.model, dbId: side.dbId })),
+    options: { focus: fit === true, isolate: c.toggles.isolate === true && isolationState(c).available, marker: c.toggles.markers === true },
+  };
+  if (location?.kind === 'witness') request.point = location.point;
+  if (location?.kind === 'closest-points') request.closestPoints = location.closestPoints;
+  c.presented = { modelKeys: [...new Set(live.map((side) => side.modelKey))] };
+  c.viewerSeq += 1;
+  const seq = c.viewerSeq;
+  const g = c.gen.current();
+  let outcome;
+  try {
+    outcome = await c.bridge.present(request);
+  } catch (error) {
+    outcome = { superseded: false, fitted: false, isolated: false, marked: false, notes: [`The clash could not be shown in the viewer: ${String(error?.message ?? error)}`] };
+  }
+  if (c.disposed || !c.gen.isCurrent(g) || seq !== c.viewerSeq || outcome?.superseded === true || outcome?.disposed === true) return;
+  c.presentNotes = Array.isArray(outcome?.notes) ? outcome.notes.filter((n) => typeof n === 'string') : [];
+  c.isolationNotice = null;                                         // a successful present supersedes old notices
+  touch(c);
+}
+
+function select(c, occurrence, navScope) {
+  c.selection = { occurrence: { groupId: occurrence.groupId ?? null, resultId: occurrence.resultId }, navScope };
+  c.presentNotes = [];                                              // never show the previous clash's notes with this one
+  pageToSelection(c);
+  touch(c);
+  return present(c, { fit: c.toggles.focusOnSelect });
+}
+
+function onNavSelect(c, intent) {
+  const p = c.pipe;
+  if (p === null || p.index === null || typeof intent.resultId !== 'string' || p.index.indexOfResultId(intent.resultId) < 0) return undefined;
+  const groupId = typeof intent.groupId === 'string' ? intent.groupId : null;
+  if (groupId !== null && !c.view.expanded.has(groupId)) {        // §10.2: selecting expands the group it came from
+    c.view.expanded.add(groupId);
+    rebuildOrdered(c);
+  }
+  return select(c, { groupId, resultId: intent.resultId }, groupId);   // navScope = the group the user reads
+}
+
+function onNavStep(c, dir) {
+  const ordered = c.pipe?.ordered ?? null;
+  if (ordered === null) return undefined;
+  const scope = c.selection?.navScope ?? null;
+  const next = ordered.navNeighbor(c.selection?.occurrence ?? null, dir, scope);
+  if (next === null) return undefined;                             // ends: no wrap
+  // navScope is always the selected occurrence's OWN group (T14 carry-forward: navNeighbor matches by resultId
+  // only): a whole-list step that landed in another group ends group-scoped navigation.
+  return select(c, next, scope !== null && next.groupId === scope ? scope : null);
+}
+
+function onNavPrev(c) { return onNavStep(c, -1); }
+function onNavNext(c) { return onNavStep(c, 1); }
+
+function onActionFocus(c) { return present(c, { fit: true }); }   // Focus always fits
+
+function onActionIsolate(c, intent) {
+  c.toggles = { ...c.toggles, isolate: intent.value === true && isolationState(c).available };
+  touch(c);
+  return c.selection === null ? undefined : present(c, { fit: false });
+}
+
+function onActionMarkers(c, intent) {
+  c.toggles = { ...c.toggles, markers: intent.value === true };
+  touch(c);
+  return c.selection === null ? undefined : present(c, { fit: false });
+}
+
+function onActionFocusOnSelect(c, intent) {
+  c.toggles = { ...c.toggles, focusOnSelect: intent.value === true };
+  touch(c);
+}
+
+/** Back to All = bridge.clear() + clear selection + navScope; filters, grouping, page and results untouched. */
+function onBackToAll(c) {
+  c.selection = null;
+  c.presented = null;
+  c.presentNotes = [];
+  touch(c);
+  return clearViewer(c);
+}
+
+/** Restore-table "Hide Panel": clear the visualization, KEEP the selection (reapply via Focus). */
+function onPanelHidden(c) {
+  c.presented = null;
+  c.presentNotes = [];
+  touch(c);
+  return clearViewer(c);
+}
+
+/**
+ * bridge.onModelLeft ('unload' or 'removed'; a real unload may deliver both for one model — idempotent):
+ * clear the visualization iff it references that model (unknown key ⇒ conservatively clear), forget its
+ * search labels, re-check freshness; results, counts, filters and grouping stay (rows re-resolve lazily).
+ */
+function onModelLeft(c, event) {
+  if (c.disposed) return;
+  let key = null;
+  try { key = c.catalog.keyOfModel(event?.model); } catch { key = null; }
+  // Forget the left model's search labels. reset() (not forgetModel alone) also supersedes an in-flight warm() that
+  // already read that model's names (T15 carry-forward); the index is then rebuilt from the models still live.
+  c.labels.reset();
+  if (c.pipe !== null) { c.pipe.textIndexed = false; ensureLabelIndex(c); }
+  const shown = c.presented;
+  if (shown !== null && (typeof key !== 'string' || shown.modelKeys.includes(key))) {
+    c.presented = null;
+    c.presentNotes = [];
+    clearViewer(c).catch(() => { /* a throwing commit must not surface as unhandled */ });
+  }
+  recheckFreshness(c);
+  touch(c);
+}
+
+function navOf(c) {
+  const ordered = c.pipe?.ordered ?? null;
+  const sel = c.selection;
+  const label = sel === null ? 'No clash selected' : `Clash #${selectedCanonical(c) + 1}${sel.navScope !== null ? ' (within its group)' : ''}`;
+  if (ordered === null) return { canPrev: false, canNext: false, label };
+  const occ = sel?.occurrence ?? null;
+  const scope = sel?.navScope ?? null;
+  return { canPrev: ordered.navNeighbor(occ, -1, scope) !== null, canNext: ordered.navNeighbor(occ, 1, scope) !== null, label };
 }
 
 // ── view input (pure data handed to viewModel.js) ─────────────────────────────────────────────────────────────
@@ -902,11 +1115,25 @@ function listInput(c) {
     view: ordered === null ? 'flat' : ordered.view,
     page: { index: v.page, count: ordered === null ? 0 : Math.max(1, Math.ceil(ordered.length / PAGE_SIZE)), size: PAGE_SIZE },
     rows: ordered === null ? [] : pageRows(c),
+    nav: navOf(c),
+    hiddenByFilters: selectionHidden(c),
   };
 }
 
-/** Task 16 has no selection yet (Task 18 adds selection and navigation). */
-function selectedInput() { return null; }
+function selectedInput(c) {
+  const i = selectedCanonical(c);
+  if (i < 0) return null;
+  const p = c.pipe;
+  const record = p.index.at(i);
+  const resolution = resolveResult({ record, provenance: p.set.provenance, engine: c.engine, catalog: c.catalog });
+  return {
+    resultId: record.resultId, ordinal: i + 1,
+    side1: sideView(record.pair.first, c.labels), side2: sideView(record.pair.second, c.labels),
+    gap: gapOf(record), hasLocation: locationOf(record) !== null, liveness: livenessOf(resolution),
+    notes: [...resolution.notes, ...c.presentNotes], hiddenByFilters: selectionHidden(c),
+    anyLive: resolution.anyLive, isolation: isolationState(c), toggles: { ...c.toggles },
+  };
+}
 
 // ── dispatch ────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -937,6 +1164,15 @@ const DISPATCH = {
   [INTENT.SORT_SET]: onSortSet,
   [INTENT.NAV_PAGE]: onNavPage,
   [INTENT.PANEL_SHOWN]: onPanelShown,
+  [INTENT.NAV_SELECT]: onNavSelect,
+  [INTENT.NAV_PREV]: onNavPrev,
+  [INTENT.NAV_NEXT]: onNavNext,
+  [INTENT.ACTION_FOCUS]: onActionFocus,
+  [INTENT.ACTION_ISOLATE]: onActionIsolate,
+  [INTENT.ACTION_MARKERS]: onActionMarkers,
+  [INTENT.ACTION_FOCUS_ON_SELECT]: onActionFocusOnSelect,
+  [INTENT.ACTION_BACK_TO_ALL]: onBackToAll,
+  [INTENT.PANEL_HIDDEN]: onPanelHidden,
 };
 
 /** Unknown intents throw synchronously (a programming error in the UI); known intents resolve after their effect

@@ -354,8 +354,26 @@ function buildResultsRegion(input) {
   return { ...listed, state: 'list', message: null };
 }
 
-function buildSelectedRegion() {
-  return null;
+/** Selected Clash region (§9.3, §14.4 region 5): detail survives filters/pages; actions carry enable reasons. */
+function buildSelectedRegion(input) {
+  const s = input.selected;
+  if (s === null) return null;
+  const blocked = s.anyLive !== true ? `Viewer actions are unavailable: ${s.liveness}.` : null;   // AC-P7
+  return {
+    resultId: s.resultId, ordinal: s.ordinal, side1: { ...s.side1 }, side2: { ...s.side2 }, gap: s.gap,
+    hasLocation: s.hasLocation, liveness: s.liveness, notes: [...s.notes], hiddenByFilters: s.hiddenByFilters === true,
+    actions: {
+      focus: { enabled: blocked === null, reason: blocked },
+      isolate: {
+        enabled: blocked === null && s.isolation.available,
+        checked: s.toggles.isolate === true && s.isolation.available,
+        reason: blocked ?? (s.isolation.available ? null : s.isolation.reason),
+      },
+      markers: { enabled: blocked === null, checked: s.toggles.markers === true, reason: blocked },
+      focusOnSelect: { checked: s.toggles.focusOnSelect === true },
+      backToAll: { enabled: true },
+    },
+  };
 }
 
 // ── entry point ─────────────────────────────────────────────────────────────────────────────────────────────────
