@@ -177,7 +177,7 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
         if (removeExact(mesh, notes)) L.markerMeshes.splice(L.markerMeshes.indexOf(mesh), 1);
       }
       if (!(isolate && liveSides.length > 0) && isolation.owns()) {
-        isolation.restore({ beforeMutation: () => guard(t) });
+        notes.push(...isolation.restore({ beforeMutation: () => guard(t) }).notes);   // 'failed' is surfaced, never dropped
       }
       guard(t);
 
@@ -196,7 +196,13 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
       if (isolate && liveSides.length > 0) {
         const r = isolation.apply(liveSides, { beforeMutation: () => guard(t) });
         isolated = r.applied;
-        if (!r.applied) notes.push(r.reason);
+        if (!r.applied) {
+          notes.push(r.reason);
+          // Fix (T25 review): the release step skipped the restore because this present meant to isolate; a
+          // replacement that did not apply must not leave the PREVIOUS target on screen under the new markers.
+          // Ownership-guarded and token-guarded restore; never a clear-all fallback.
+          if (isolation.owns()) notes.push(...isolation.restore({ beforeMutation: () => guard(t) }).notes);
+        }
       }
       guard(t);
     } catch (error) {

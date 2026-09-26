@@ -486,3 +486,60 @@ test('T24 extra (nuance, pinned as-is): a confirmed record whose state is alread
   assert.equal(h.callsOf('setAggregateIsolation').length, before, 'no mutation');
   assert.equal(session.owns(), false);
 });
+
+// ---- Fix round 1 (review finding): a replacement isolation that does NOT apply must not leave the previous
+// target on screen under the new markers; a non-isolating replacement reports its restore notes. ----
+
+test('fix: a replacement present whose isolation apply does not apply restores the previous isolation (guarded)', async () => {
+  const faults = {
+    'getAggregateIsolation unreadable inside apply': (h) => h.failAt('getAggregateIsolation', 'before'),
+    // getAllModels #1 = step-1 scene read, #2 = the scene read inside isolation.apply
+    'getAllModels throws inside apply': (h) => h.viewer.onCall('getAllModels', () => { throw new Error('scene read failed'); }, { nth: 2, phase: 'before' }),
+  };
+  for (const [label, arm] of Object.entries(faults)) {
+    const s = setup({ prior: (m) => [{ model: m, ids: [9] }] });
+    const { h, bridge, A, B, m3 } = s;
+    assert.equal((await bridge.present(A)).isolated, true, label);
+    const aMeshes = h.panelMeshes();
+    arm(h);
+    const o = await bridge.present(B);
+    assert.equal(o.superseded, false, label);
+    assert.equal(o.isolated, false, `${label}: the outcome never claims isolation`);
+    assert.equal(o.marked, true, label);
+    const ledger = bridge.inspectLedger();
+    assert.equal(ledger.markerMeshes.length, 3, label);
+    assert.deepEqual(new Set(ledger.markerMeshes), new Set(h.panelMeshes()), `${label}: only B's markers are held`);
+    assert.ok(h.panelMeshes().every((m) => !aMeshes.includes(m)), label);
+    const restored = sameIsolation(h.isolation(), [{ model: m3, ids: [9] }]);
+    const failedNoted = o.notes.some((n) => Object.values(ISOLATION_NOTE).includes(n)) && ledger.isolation !== null;
+    assert.ok(restored || failedNoted, `${label}: prior restored (got ${JSON.stringify(h.isolation().map((e) => e.ids))}) or failure noted with the record kept`);
+    assert.equal(sameIsolation(h.isolation(), targetFor(A.sides)), false, `${label}: A's target is not left under B's markers`);
+    h.assertNoTheming();
+  }
+});
+
+test('fix: a non-isolating replacement reports a failed restore of the previous isolation in its outcome', async () => {
+  const cases = {
+    'restore keeps throwing': [(h) => { h.failAt('setAggregateIsolation', 'before'); h.failAt('setAggregateIsolation', 'before'); }, ISOLATION_NOTE.RESTORE_FAILED],
+    'unreadable at restore': [(h) => h.failAt('getAggregateIsolation', 'before'), ISOLATION_NOTE.UNREADABLE_AT_RESTORE],
+  };
+  for (const [label, [arm, note]] of Object.entries(cases)) {
+    const { h, bridge, A, B, m3 } = setup({ prior: (m) => [{ model: m, ids: [9] }] });
+    await bridge.present(A);
+    arm(h);
+    const o = await bridge.present({ ...B, options: { focus: false, isolate: false, marker: true } });
+    assert.ok(o.notes.includes(note), `${label}: note surfaced (got ${o.notes})`);
+    assert.notEqual(bridge.inspectLedger().isolation, null, `${label}: record kept for the next cleanup`);
+    assert.equal((await bridge.clear()).isolation, 'restored', label);
+    assert.deepEqual(h.isolation(), [{ model: m3, ids: [9] }], label);
+    h.assertNoTheming();
+  }
+  // skipped-external: the isolation module attaches no note (the state is someone else's) — foreign state untouched.
+  const { h, bridge, A, B, m3 } = setup();
+  await bridge.present(A);
+  h.viewer.setIsolationState([{ model: m3, ids: [5] }]);
+  const o = await bridge.present({ ...B, options: { focus: false, isolate: false, marker: true } });
+  assert.equal(o.isolated, false);
+  assert.deepEqual(h.isolation(), [{ model: m3, ids: [5] }]);
+  assert.equal(bridge.inspectLedger().isolation, null);
+});
