@@ -1,12 +1,38 @@
 // clashpanel/viewer/ViewerBridge.js
-// The ONLY Viewer mutator of the Panel (spec §9.2). Tier B. T22 skeleton: sequencing only — single-flight
-// queue, tokens, invalidation, disposed no-ops, symmetric listener bookkeeping. NO Viewer mutation yet
-// (markers/isolation/fit arrive in T25/T26).
+// The ONLY Viewer mutator of the Panel (spec §9.2). Tier B: sequencing, ledger and rollback are proven
+// against injected fakes only; live Viewer behaviour is gated (G2 / PG-1 / F7 / F8).
 //
-// Invalidation (normative, §9.2): each present gets token ++n; clear(), dispose() and any later present
-// invalidate every earlier token AT CALL TIME, before the queue reaches them; a stale token re-checked
-// at its next check point returns {superseded:true} and performs no further work. clear()/dispose()
-// resolve only after the queue has drained up to them — the completion point for AC-P6/AC-P16.
+// Presentation transaction (normative, §9.2): present/clear/dispose share one single-flight queue;
+// each present gets token ++n; clear/dispose/a later present invalidate every earlier token AT CALL
+// TIME (before the queue reaches them); the token is re-checked immediately before every Viewer
+// mutation. All Panel-owned Viewer resources hang off exactly ONE write-ahead ledger (`held`):
+// {token, markerMeshes[], isolation: session record}. An in-flight present adopts the previous ledger
+// (releasing it first), so a failure or supersession cleans everything recorded — the newest surviving
+// token's resources or none. Mutation order: compute → release previous → markers → isolation → fit.
+// Fit is outside the guarantee (best-effort, never rolled back). The bridge never calls any theming
+// member and never touches selection or camera restore.
+import { createMarkerSet, computeMarkerRadius, MIN_MARKER_RADIUS } from './markers.js';
+import { createIsolationSession } from './isolation.js';
+
+// Minimal best-effort fit for the transaction (T26 replaces it with fit.js#fitSides): frame the first live
+// side with the public per-model form. Never throws; a failure only adds a note.
+function fitSides(viewerApi, sides, isCurrent) {
+  if (!isCurrent()) return { fitted: false, notes: [], superseded: true };   // never move the camera for a stale token
+  try {
+    viewerApi.fitToView([sides[0].dbId], sides[0].model);
+    return { fitted: true, notes: sides.some((s) => s.model !== sides[0].model) ? ['Framing first element only'] : [] };
+  } catch {
+    return { fitted: false, notes: ['Could not frame the clash'] };
+  }
+}
+
+export const BRIDGE_NOTE = Object.freeze({
+  NO_LOCATION: 'no location',
+  NO_BOUNDS: 'Element bounds unavailable; outline omitted',
+  NOT_IN_SCENE: "An element's model is no longer in the scene",
+  FAILED: 'The Viewer rejected the presentation; nothing is shown',
+  REMOVE_FAILED: 'A marker could not be removed',
+});
 
 // Serial single-flight queue: tasks run one at a time in call order; a rejected task never wedges it.
 export function createSerialQueue() {
@@ -41,9 +67,7 @@ export function createListenerRegistry(viewerApi) {
   });
 }
 
-export const BRIDGE_NOTE = Object.freeze({
-  FAILED: 'The Viewer rejected the presentation; nothing is shown',
-});
+class Superseded extends Error {}
 
 const isModel = (v) => v !== null && typeof v === 'object';
 const isDbId = (v) => Number.isInteger(v) && v >= 0;
@@ -77,24 +101,121 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
   }
   const queue = createSerialQueue();
   const listeners = createListenerRegistry(viewerApi);
+  const markers = createMarkerSet({ THREE, overlays: viewerApi.overlays, names });
+  const isolation = createIsolationSession(viewerApi);
   let seq = 0;
   let live = 0;
   let disposed = false;
   let disposePromise = null;
+  let held = null;                          // the single ledger holding every Panel-owned resource
 
   const isLive = (t) => !disposed && t === live;
+  const guard = (t) => { if (!isLive(t)) throw new Superseded(); };
+
+  function removeExact(mesh, notes) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { markers.remove(mesh); return true; } catch { /* retry once: removal of an absent mesh is a no-op */ }
+    }
+    notes.push(BRIDGE_NOTE.REMOVE_FAILED);
+    return false;
+  }
+
+  // Cleanup of EVERYTHING the held ledger records (confirmed or not). Never token-gated. A mesh whose exact
+  // removal failed stays in the ledger and an isolation restore that failed keeps its session record, so the
+  // next clear/present/dispose retries them.
+  function releaseHeld() {
+    const notes = [];
+    let markersRemoved = 0;
+    const L = held;
+    let iso = { isolation: 'none', notes: [] };
+    try {
+      if (L !== null) {
+        const remaining = L.markerMeshes.filter((mesh) => { const ok = removeExact(mesh, notes); if (ok) markersRemoved += 1; return !ok; });
+        L.markerMeshes.length = 0;
+        L.markerMeshes.push(...remaining);
+        held = remaining.length > 0 ? L : null;   // keep the ledger until every mesh is gone: later clear/present/dispose retry
+      }
+    } finally {
+      iso = isolation.restore();
+    }
+    return { isolation: iso.isolation, markersRemoved, notes: [...notes, ...iso.notes] };
+  }
 
   function sceneModels() {
     try { const m = viewerApi.getAllModels(); return Array.isArray(m) ? m : []; } catch { return []; }
   }
 
+  function readBounds(side) {
+    try { return viewerApi.getElementWorldBounds(side.model, side.dbId); } catch { return null; }
+  }
+
   async function runPresent(t, req) {
     if (!isLive(t)) return outcome({ superseded: true });
-    // (1) resolve / compute — reads only. T25 adds the mutating steps, each preceded by a token check.
+    const notes = [];
+    const { focus, isolate, marker } = req.options;
+
+    // (1) resolve / compute — reads only, no mutation.
     const inScene = sceneModels();
-    const notes = req.sides.every((s) => inScene.includes(s.model)) ? [] : ["An element's model is no longer in the scene"];
-    if (!isLive(t)) return outcome({ superseded: true });   // invalidated during the reads
-    return outcome({ notes });
+    const liveSides = req.sides.filter((s) => inScene.includes(s.model));
+    if (liveSides.length < req.sides.length) notes.push(BRIDGE_NOTE.NOT_IN_SCENE);
+    const boxes = marker ? liveSides.map(readBounds) : [];
+    const radius = marker ? computeMarkerRadius(boxes) : MIN_MARKER_RADIUS;
+
+    // Adopt the previous ledger: from here on this token's ledger holds every Panel resource.
+    const L = { token: t, markerMeshes: held === null ? [] : held.markerMeshes, get isolation() { return isolation.record(); } };
+    held = L;
+    const hooks = {
+      beforeAdd: (mesh) => { L.markerMeshes.push(mesh); guard(t); },   // write-ahead, then token check
+      beforeScene: () => guard(t),
+    };
+    let marked = false;
+    let isolated = false;
+    try {
+      // Release the previous presentation first (exact meshes; isolation only if this one won't isolate).
+      for (const mesh of [...L.markerMeshes]) {
+        guard(t);
+        if (removeExact(mesh, notes)) L.markerMeshes.splice(L.markerMeshes.indexOf(mesh), 1);
+      }
+      if (!(isolate && liveSides.length > 0) && isolation.owns()) {
+        isolation.restore({ beforeMutation: () => guard(t) });
+      }
+      guard(t);
+
+      // (2) markers
+      if (marker) {
+        const loc = markers.addLocation({ point: req.point, closestPoints: req.closestPoints, radius }, hooks);
+        if (loc.length === 0) notes.push(BRIDGE_NOTE.NO_LOCATION);
+        const boundsOf = (model, dbId) => boxes[liveSides.findIndex((s) => s.model === model && s.dbId === dbId)] ?? null;
+        const outl = markers.addOutlines(liveSides, boundsOf, hooks);   // bounds already read in step 1
+        if (outl.omitted > 0) notes.push(BRIDGE_NOTE.NO_BOUNDS);
+        marked = loc.length + outl.meshes.length > 0;
+      }
+      guard(t);
+
+      // (3) isolation — only if requested and the §9.5 prerequisite holds (checked inside apply).
+      if (isolate && liveSides.length > 0) {
+        const r = isolation.apply(liveSides, { beforeMutation: () => guard(t) });
+        isolated = r.applied;
+        if (!r.applied) notes.push(r.reason);
+      }
+      guard(t);
+    } catch (error) {
+      const cleanup = releaseHeld();
+      if (error instanceof Superseded) return outcome({ superseded: true });
+      return outcome({ notes: [...notes, BRIDGE_NOTE.FAILED, ...cleanup.notes] });
+    }
+
+    // (4) fit — best-effort, last, outside the transaction guarantee.
+    let fitted = false;
+    if (focus && liveSides.length > 0) {
+      const f = fitSides(viewerApi, liveSides, () => isLive(t));   // token re-checked before every camera call
+      fitted = f.fitted;
+      notes.push(...f.notes);
+    }
+    // Invalidated during fit: this presentation is stale. No camera rollback (OD-6); its markers/isolation stay
+    // in the held ledger for the invalidator (clear/dispose/newer present) to release.
+    if (!isLive(t)) return outcome({ superseded: true });
+    return outcome({ fitted, isolated, marked, notes });
   }
 
   function present(req) {
@@ -105,8 +226,9 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
     return queue.run(async () => {
       try {
         return await runPresent(t, req);
-      } catch {                                // unexpected failure: never reject
-        return outcome({ superseded: !isLive(t), notes: [BRIDGE_NOTE.FAILED] });
+      } catch {                                // unexpected (non-Viewer) failure: clean, never reject
+        const cleanup = releaseHeld();
+        return outcome({ superseded: !isLive(t), notes: [BRIDGE_NOTE.FAILED, ...cleanup.notes] });
       }
     });
   }
@@ -115,7 +237,7 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
     if (disposed) return Promise.resolve(DISPOSED_CLEAR);
     seq += 1;
     live = 0;
-    return queue.run(async () => Object.freeze({ isolation: 'none', markersRemoved: 0, notes: Object.freeze([]) }));
+    return queue.run(async () => Object.freeze(releaseHeld()));
   }
 
   function dispose() {
@@ -124,10 +246,24 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
     seq += 1;
     live = 0;
     disposePromise = queue.run(async () => {
-      listeners.removeAll();
+      try {
+        try {
+          releaseHeld();
+        } finally {
+          markers.removeAll();                 // anything a failed removal left behind
+        }
+      } finally {
+        try { markers.disposeShared(); } finally { listeners.removeAll(); }
+      }
     }).then(() => undefined, () => undefined);
     return disposePromise;
   }
 
-  return Object.freeze({ present, clear, dispose });
+  // Diagnostic read of the write-ahead ledger (tests; never used by the controller).
+  function inspectLedger() {
+    if (held === null) return null;
+    return Object.freeze({ token: held.token, markerMeshes: Object.freeze([...held.markerMeshes]), isolation: isolation.record() });
+  }
+
+  return Object.freeze({ present, clear, dispose, inspectLedger });
 }
