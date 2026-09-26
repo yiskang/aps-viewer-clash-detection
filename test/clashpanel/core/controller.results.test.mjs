@@ -486,3 +486,64 @@ test('a retired run\'s late persisted outcome changes nothing (Clear confirmed /
     assert.equal(h.engine.resident.has('run-1'), false, retire);
   }
 });
+
+// Fix round 1 (review Critical): a re-check must supersede the previous check SYNCHRONOUSLY — the previous check's
+// already-queued commit must not re-land the pre-event pair after the invalidating event (k microtask hops apart).
+const hops = async (k) => { for (let i = 0; i < k; i += 1) await Promise.resolve(); };
+
+async function raceHarness({ empty }) {
+  const h = makeHarness();
+  await h.readyHard();
+  h.engine.control.getFreshness.manual = true;
+  h.engine.control.assessNoClashClaim.manual = true;
+  await h.runToDone(makeSet({ runId: 'run-1', results: empty ? [] : hardResults(2) }));
+  return h;
+}
+
+for (const trigger of ['catalog', 'panel-shown']) {
+  test(`H1 claim gate race (${trigger}): the previous check's queued commit never re-publishes its claim after the re-check starts`, async () => {
+    const ALLOWED = { allowed: true, unqualified: true, qualifiers: [], exclusions: [], proofMethod: 'bracketed-digest' };
+    const CURRENT = { state: 'current', reasons: [] };
+    for (let k = 0; k <= 4; k += 1) {
+      const h = await raceHarness({ empty: true });
+      h.engine.control.getFreshness.resolveNext(CURRENT);                  // check A: freshness lands (half pair)
+      await h.settle();
+      let fired = false;
+      const after = [];
+      h.controller.subscribe((vm) => { if (fired) after.push([vm.results.state, vm.results.message, vm.run.badges.freshness.pending]); });
+      h.engine.control.assessNoClashClaim.resolveNext(ALLOWED);            // check A: claim resolves; its commit is queued
+      await hops(k);
+      fired = true;
+      if (trigger === 'catalog') h.catalog.fire();
+      else void h.controller.dispatch({ type: INTENT.PANEL_SHOWN });
+      await h.settle();
+      assert.equal(h.engine.control.getFreshness.pending.length, 1, `k=${k}`);   // re-check B is pending
+      assert.ok(!after.some(([state, message]) => state === 'empty-claim' || message === STATEMENTS.CLAIM), `k=${k}: ${JSON.stringify(after)}`);
+      assert.ok(after.every(([, , pending]) => pending === true), `k=${k}: the badge stays "checking" until B lands`);
+      assert.equal(h.vm().results.message, STATEMENTS.CLAIM_PENDING, `k=${k}`);
+      h.engine.control.getFreshness.resolveNext(CURRENT);                  // B's own pair lands ⇒ the claim is worded again
+      h.engine.control.assessNoClashClaim.resolveNext(ALLOWED);
+      await h.settle();
+      assert.equal(h.vm().results.state, 'empty-claim', `k=${k}`);
+    }
+  });
+}
+
+test('freshness race (non-empty set): an old "current" never comes back after the re-check starts', async () => {
+  for (let k = 0; k <= 4; k += 1) {
+    const h = await raceHarness({ empty: false });
+    let fired = false;
+    const after = [];
+    h.controller.subscribe((vm) => { if (fired) after.push([vm.run.badges.freshness.value, vm.run.badges.freshness.pending]); });
+    h.engine.control.getFreshness.resolveNext({ state: 'current', reasons: [] });   // check A lands; its commit is queued
+    await hops(k);
+    fired = true;
+    h.catalog.fire();
+    await h.settle();
+    assert.equal(h.engine.control.getFreshness.pending.length, 1, `k=${k}`);
+    assert.ok(after.every(([, pending]) => pending === true), `k=${k}: ${JSON.stringify(after)}`);
+    h.engine.control.getFreshness.resolveNext({ state: 'stale', reasons: ['scope-drift'] });
+    await h.settle();
+    assert.deepEqual([h.vm().run.badges.freshness.value, h.vm().run.badges.freshness.pending], ['stale', false], `k=${k}`);
+  }
+});

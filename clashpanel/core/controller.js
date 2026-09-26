@@ -581,6 +581,12 @@ function startPipeline(c, g, resultSet) {
 function recheckFreshness(c) {
   const p = c.pipe;
   if (p === null || p.index === null) return;
+  // Supersede the previous check NOW (not in the microtask below): its already-queued commit must not re-land the
+  // pre-event pair after the invalidating event (review fix round 1). Its generation listener is removed here too.
+  if (c.freshAbort !== null) c.freshAbort.abort();
+  if (c.freshDetach !== null) c.freshDetach();
+  c.freshAbort = null;
+  c.freshDetach = null;
   p.freshnessPending = true;
   if (p.index.count === 0) { p.claim = null; p.claimPending = true; }   // withdraw the previous claim now (fail closed)
   if (c.freshQueued) return;                                        // coalesce a burst of triggers
