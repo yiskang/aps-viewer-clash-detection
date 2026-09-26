@@ -6,6 +6,21 @@ and proves the whole collision library correct end-to-end, using the spike's kno
 answer as ground truth. It is a real Playwright script, not a mock/stub harness -- there is no fake
 Viewer anywhere in this file.
 
+## Which browser tests are in `npm test`
+
+Two different kinds of Playwright/Chromium script live under this repo's tests; only one is part of the default
+gate:
+
+- **The Viewer Clash Panel DOM suite** (`test/clashpanel/dom/*.dom.mjs`, `npm run test:clashpanel:dom`) is
+  **included in `npm test`.** It runs the Panel's UI code against fakes (a fake Viewer, a `DockingPanel` stub, a
+  fake engine and catalog) served from repo files by Playwright `page.route`: no server, no APS credentials, no
+  network, and never loads a live Viewer. It needs only the installed Playwright Chromium (see **First-time
+  setup** below), which is why `npm test` requires it; `npm run test:offline` stays browser-free.
+- **The live acceptance scripts** (`room-locator.acceptance.mjs`, `clash-finder.acceptance.mjs`,
+  `clashtest-viewer-adapter.acceptance.mjs`, and the performance gates under `test/performance/`) are **not part
+  of `npm test`.** They need a running server, APS credentials and network access, and are run explicitly. Live
+  Viewer / SVF2 acceptance is never part of the default gate.
+
 ## Credentials needed
 
 `APS_CLIENT_ID` / `APS_CLIENT_SECRET` in a `.env` file at the repo root (see `config.js:6-10`) --
