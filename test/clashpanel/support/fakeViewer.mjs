@@ -131,6 +131,41 @@ export function createFakeViewer({ models = [], isolation = [], hiddenNodes = []
     },
     injectionsRemaining: () => [...injections.values()].reduce((n, q) => n + q.length, 0),
   };
+  // ---- Task 22 addition (preserving: no existing behaviour changes) --------------------------------------------
+  // Ordered cross-method call log + one-shot re-entrancy hooks. `onCall(method, fn, {nth, phase})` runs `fn(...args)`
+  // synchronously INSIDE the nth matching call: phase 'before' = before any state change / injected failure; phase
+  // 'after' (default) = after the call's effect, and — when an injected failure throws — after that throw is raised
+  // but before it propagates (so an `afterEffect` failure is observed as "state changed, hook ran, caller sees throw").
+  // Tests use it to call bridge.clear()/dispose()/present() or change isolation mid-mutation (AC-P16 interleavings).
+  // Hooks for the same method+phase form a FIFO queue: at most one fires per call, and each counts its `nth` only
+  // once it is at the head of that queue (so two `nth: 1` hooks fire on two consecutive calls).
+  const callLog = [];
+  const hooks = [];
+  const runHooks = (method, args, phase) => {
+    const i = hooks.findIndex((h) => h.method === method && h.phase === phase);
+    if (i < 0) return;
+    hooks[i].nth -= 1;
+    if (hooks[i].nth > 0) return;
+    const [hook] = hooks.splice(i, 1);
+    hook.fn(...args);
+  };
+  const hookable = (target, method) => {
+    const original = target[method];
+    target[method] = (...args) => {
+      callLog.push({ method, args });
+      runHooks(method, args, 'before');
+      let result;
+      try { result = original.apply(target, args); } catch (error) { runHooks(method, args, 'after'); throw error; }
+      runHooks(method, args, 'after');
+      return result;
+    };
+  };
+  for (const m of ['getAllModels', 'getAggregateIsolation', 'getAggregateHiddenNodes', 'setAggregateIsolation', 'fitToView', 'getAggregateSelection']) hookable(viewer, m);
+  for (const m of ['hasScene', 'addScene', 'addMesh', 'removeMesh', 'removeScene']) hookable(overlays, m);
+  viewer.callLog = callLog;
+  viewer.onCall = (method, fn, { nth = 1, phase = 'after' } = {}) => { hooks.push({ method, fn, nth, phase }); };
+  viewer.hooksRemaining = () => hooks.length;
+  viewer.isolationState = () => copyIso(state.isolation);   // raw read for assertions: not logged, not hooked, never fails
   for (const name of THEMING_METHODS) {
     viewer[name] = (...args) => { themingCalls.push({ name, args }); forbiddenCalls.push(name); throw new Error('theming forbidden'); };
   }

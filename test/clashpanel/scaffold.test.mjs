@@ -32,6 +32,7 @@ const EXPECTED_MODULES = [
   'core/controller.js',
   'core/viewModel.js',
   'core/index.js',
+  'viewer/ViewerBridge.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
