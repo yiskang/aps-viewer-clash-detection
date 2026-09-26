@@ -19,6 +19,7 @@ const EXPECTED_MODULES = [
   'core/softAvailability.js',
   'core/derivationQueue.js',
   'core/runMachine.js',
+  'core/residency.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {

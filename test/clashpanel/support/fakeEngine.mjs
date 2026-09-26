@@ -170,6 +170,7 @@ export function createFakeEngine({ bindings = [], journal = null, runIdPrefix = 
   const startRunErrors = [];
   const retainErrors = [];
   const releaseErrors = [];
+  const leaseReleaseErrors = [];   // Task 9: a throwing lease.release() (failure injection)
   const stats = { inFlight: 0, maxInFlight: 0, total: 0 };
   let validateSource = { issues: [], issuesTruncated: false };
   let startRunOverride = null;
@@ -249,6 +250,7 @@ export function createFakeEngine({ bindings = [], journal = null, runIdPrefix = 
         release() {
           record.releaseCalls += 1;
           if (journal) journal.push('lease.release');
+          if (leaseReleaseErrors.length > 0) throw leaseReleaseErrors.shift();
           record.released = true;
         },
       });
@@ -284,6 +286,8 @@ export function createFakeEngine({ bindings = [], journal = null, runIdPrefix = 
     failNextStartRun(err, times = 1) { for (let i = 0; i < times; i += 1) startRunErrors.push(err); },
     failNextRetain(err) { retainErrors.push(err); },
     failNextRelease(err) { releaseErrors.push(err); },
+    failNextLeaseRelease(err) { leaseReleaseErrors.push(err); },
+    liveLeaseCount: () => leases.filter((l) => !l.released).length,
     setPersistenceState(runId, state) { persistenceStates.set(runId, state); },
   };
   const forbid = (target, name, label) => Object.defineProperty(target, name, {
