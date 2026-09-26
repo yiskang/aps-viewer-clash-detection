@@ -20,6 +20,7 @@ const EXPECTED_MODULES = [
   'core/derivationQueue.js',
   'core/runMachine.js',
   'core/residency.js',
+  'core/resultIndex.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
