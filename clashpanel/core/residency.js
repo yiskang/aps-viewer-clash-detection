@@ -147,5 +147,11 @@ export function createResidency({ engine }) {
     return { droppedUnsaved: r.droppedUnsaved === true, errors: r.errors, stuckCount: r.stuckCount };
   }
 
-  return Object.freeze({ adopt, onPersisted, current, release, releaseSuperseded, disposeAll });
+  /** Read-only: the runIds of the Panel's own sets whose release is still stuck (spec §7.6: a capacity error
+   *  caused by one of them must still offer "Release previous results and retry"). */
+  function stuckRunIds() {
+    return Object.freeze(stuck.map((entry) => entry.runId));
+  }
+
+  return Object.freeze({ adopt, onPersisted, current, release, releaseSuperseded, disposeAll, stuckRunIds });
 }

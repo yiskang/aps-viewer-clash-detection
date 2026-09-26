@@ -285,6 +285,29 @@ test('a failed release (stuck lease) shows the release-error banner; the next Cl
   assert.equal(h.engine.resident.has(handle.runId), false);                 // …and recovers
 });
 
+test('A-1: capacity 1 + a STUCK release of the Panel\'s own set ⇒ Run offers release-and-retry (not "other runs"); release-and-retry retries the stuck release and the run starts', async () => {
+  const h = makeHarness({ capacity: 1 });
+  await h.readyHard();
+  await h.runToDone(twoResults());                                         // saved ⇒ leased ⇒ holds the only slot
+  h.engine.failNextLeaseRelease(new Error('lease release failed'));
+  await h.dispatch({ type: INTENT.RESULTS_CLEAR });                        // display cleared; run-1 is now stuck
+  assert.equal(h.engine.resident.get('run-1').leases, 1);
+  assert.ok(h.vm().run.banners.some((b) => b.id === 'release-error'));
+  await h.dispatch({ type: INTENT.RUN_START });                            // ordinary Run: Core rejects (capacity)
+  assert.equal(h.engine.startCalls.length, 2);
+  const banner = h.vm().run.banners.find((b) => b.id === 'admission-error');
+  assert.ok(banner, 'admission-error banner shown');
+  assert.doesNotMatch(banner.text, /other runs/);
+  assert.deepEqual(banner.action?.intent, { type: INTENT.RUN_RELEASE_AND_RETRY });
+  await h.dispatch({ type: INTENT.RUN_RELEASE_AND_RETRY });
+  const vm = h.vm();
+  assert.equal(h.engine.startCalls.length, 3);
+  assert.equal(h.engine.resident.has('run-1'), false);                     // the stuck release was retried first
+  assert.equal(vm.run.state, 'preparing');                                  // …and the new run was admitted
+  assert.equal(vm.run.banners.some((b) => b.id === 'admission-error'), false);
+  assert.equal(vm.run.banners.some((b) => b.id === 'release-error'), false);
+});
+
 test('dispose: a transient late-set release failure is retried before resolving {released:true}; a permanent one resolves {released:false, errors} without rejecting', async () => {
   const h = makeHarness();
   await h.readyHard();

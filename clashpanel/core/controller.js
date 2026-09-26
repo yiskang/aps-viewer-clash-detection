@@ -293,7 +293,7 @@ function startRun(c, { acknowledgeUnsaved }) {
   } catch (error) {
     // Admission failure: previous results, residency and Viewer state stay exactly as they were (AC-P14) —
     // unless the user already confirmed discarding them (then they were released above, by consent).
-    c.admission = mapAdmissionError(error, { heldRunId: c.residency.current()?.runId ?? null });
+    c.admission = mapAdmissionError(error, { heldRunId: c.residency.current()?.runId ?? null, ownRunIds: stuckRunIdsOf(c) });
     c.run = reduceRun(c.run, { type: 'admission-failed', error });
     c.setupCollapsed = false;                                     // §14.3: Setup re-expands when a run cannot start
     touch(c);
@@ -308,6 +308,11 @@ function startRun(c, { acknowledgeUnsaved }) {
   c.setupCollapsed = true;                                        // spec §14.3: collapses when a run starts
   adoptHandle(c, handle);
   touch(c);
+}
+
+/** The Panel's own sets whose release is stuck (A-1): they count as "own" blockers for release-and-retry. */
+function stuckRunIdsOf(c) {
+  try { return typeof c.residency.stuckRunIds === 'function' ? [...c.residency.stuckRunIds()] : []; } catch { return []; }
 }
 
 /** Replace/clear path shared by Run, Clear results and New test (restore-table rows "Start a new run"/"Back to All"). */

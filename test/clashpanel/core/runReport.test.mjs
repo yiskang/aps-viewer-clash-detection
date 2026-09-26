@@ -275,6 +275,14 @@ test('mapAdmissionError by error.name (real Core error instances); release-and-r
   assert.equal(mapAdmissionError(Object.assign(new Error(hostile), { name: 'WeirdError' })).text, `The run could not be started: ${hostile}`, 'untrusted text passes through as a plain string');
 });
 
+test('A-1: mapAdmissionError treats a STUCK own set (ownRunIds) as the Panel\'s own blocker ⇒ release-and-retry', () => {
+  const blockedByStuck = new ResultCapacityError({ cap: 1, active: [], retained: ['stuck-1'], held: [] });
+  assert.deepEqual({ ...mapAdmissionError(blockedByStuck, { heldRunId: null, ownRunIds: ['stuck-1'] }) },
+    { text: 'The clash engine is at capacity. Clear previous results and try again.', action: 'release-and-retry' });
+  assert.equal(mapAdmissionError(blockedByStuck, { heldRunId: 'shown', ownRunIds: ['other'] }).action, null, 'not one of ours ⇒ no action');
+  assert.equal(mapAdmissionError(blockedByStuck, { ownRunIds: 'stuck-1' }).action, null, 'malformed ownRunIds ⇒ ignored');
+});
+
 test('bannersFor: no-result-set, failed, stale (live reasons, plain text), setup changed, held-unsaved; axes badges', async () => {
   const none = bannersFor({ terminal: { status: 'failed', resultSetPresent: false }, resultSet: null });
   assert.deepEqual(none.map((b) => [b.id, b.kind]), [['no-result-set', 'error']]);

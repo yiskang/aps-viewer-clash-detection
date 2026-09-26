@@ -292,9 +292,10 @@ export function mapSealedFailure(resultSet) {
 
 // ---- admission errors (startRun threw; spec §7.1, §13) -------------------------------------------------
 
-/** `heldRunId` = the runId of the set the Panel currently holds (null if none). The Release-and-retry
- *  action is offered ONLY when a ResultCapacityError names that set among its blockers. */
-export function mapAdmissionError(error, { heldRunId = null } = {}) {
+/** `heldRunId` = the runId of the set the Panel currently holds (null if none); `ownRunIds` = the runIds of
+ *  the Panel's own sets whose release is still stuck (residency.stuckRunIds()). The Release-and-retry action
+ *  is offered ONLY when a ResultCapacityError names one of the Panel's own sets among its blockers. */
+export function mapAdmissionError(error, { heldRunId = null, ownRunIds = [] } = {}) {
   const name = typeof error?.name === 'string' ? error.name : '';
   const out = (text, action = null) => Object.freeze({ text, action });
   switch (name) {
@@ -308,7 +309,8 @@ export function mapAdmissionError(error, { heldRunId = null } = {}) {
       return out('The clash engine rejected the run options.');
     case 'ResultCapacityError': {
       const blockers = [...list(error.active), ...list(error.retained), ...list(error.held).map((h) => h?.runId)];
-      return heldRunId !== null && blockers.includes(heldRunId)
+      const own = [...(heldRunId !== null ? [heldRunId] : []), ...list(ownRunIds)];
+      return own.some((runId) => runId !== null && runId !== undefined && blockers.includes(runId))
         ? out('The clash engine is at capacity. Clear previous results and try again.', 'release-and-retry')
         : out('The clash engine is at capacity: its result slots are held by other runs. Try again after they are released.');
     }

@@ -135,6 +135,22 @@ test('each release step in its own try: a throwing lease.release does not strand
   assert.deepEqual(out2.errors.map((e) => e.name), ['EngineDisposedError']);
 });
 
+test('A-1: stuckRunIds() lists the Panel\'s own stuck sets (read-only) until the retry recovers them', () => {
+  const engine = createFakeEngine();
+  const r = createResidency({ engine });
+  assert.deepEqual(r.stuckRunIds(), []);
+  r.adopt(seal(engine, 'a', P.saved));
+  engine.failNextLeaseRelease(new Error('boom'));
+  r.release({});
+  const ids = r.stuckRunIds();
+  assert.deepEqual(ids, ['a']);
+  assert.ok(Object.isFrozen(ids), 'a frozen snapshot, not the private list');
+  assert.equal(r.current(), null);
+  r.release({});                                       // retried and recovered
+  assert.deepEqual(r.stuckRunIds(), []);
+  clean(engine);
+});
+
 test('a stuck release (one-shot lease.release failure) is recovered by the next Run-replace, Clear or dispose', () => {
   for (const next of ['run-replace', 'clear', 'dispose']) {
     const engine = createFakeEngine();
