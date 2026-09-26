@@ -37,6 +37,9 @@ const EXPECTED_MODULES = [
   'viewer/isolation.js',
   'viewer/fit.js',
   'viewer/viewerApi.js',
+  'ui/dom.js',
+  'ui/render/setup.js',
+  'ui/render/run.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
