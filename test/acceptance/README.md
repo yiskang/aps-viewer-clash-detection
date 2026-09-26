@@ -130,3 +130,24 @@ was a genuine coverage gap in `ViewerGeometryAdapter.js`, not a bug in this test
 adding a fourth branch to `resolvePositions()` recognizing this shape (commits `c498ea5`/`adb88e0`,
 same batch as this fix wave), and this re-run confirms the fix holds against the real acceptance
 model end to end.
+
+## Viewer-adapter T3 live acceptance (`clashtest-viewer-adapter.acceptance.mjs`): authored, not executed
+
+`clashtest-viewer-adapter.acceptance.mjs` is the T3 live acceptance script for the Federated Clash Test Viewer
+adapter (`clashtest/viewer/`, Task 13 of the adapter plan). It checks the production `ElementEnumerator` and the
+`BEFORE_MODEL_UNLOAD` wiring against a real Viewer loaded with the three-model Audubon fixture. The script's header
+lists what it covers: brief items (a)-(f), the asserted unload-wiring step (h) with its guarded cleanup and fallback
+gate, and the negative controls. It does **not** cover (g), the PairId role-symmetry half of AC-15 (g).
+
+- **Accepted envelope:** Audubon / SVF non-OTG / Viewer 7.124.2 / Chromium 151 (OQ-4). The script records and checks
+  the environment, and it fails when the run falls outside that envelope.
+- **Not part of `npm test`.** `scripts/run-tests.mjs` collects only `*.test.mjs`, and no `package.json` script runs
+  this file.
+- **Running it requires a separate, explicit owner authorization.** At the time of writing it has **never been
+  executed**. Until an authorized run is recorded under `docs/research/`, the gates G-VA-T3-EXEC and
+  `LIVE_UNLOAD_INTEGRATION_UNVERIFIED` in `clashtest/viewer/README.md` stay open.
+- **Prerequisites (for an authorized run only):** the same server-side credentials as above (`.env`, never read by the
+  script), `npm start` listening on `PORT` (default 8080), Playwright Chromium, and network access to APS. The script
+  serves `/clashtest/**` to the page itself with Playwright `page.route`, so `server.js` is unchanged. Run it with
+  `node test/acceptance/clashtest-viewer-adapter.acceptance.mjs`. It writes
+  `test/acceptance/results/clashtest-viewer-adapter-run-report.json`.
