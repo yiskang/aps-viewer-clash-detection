@@ -19,6 +19,7 @@ export const ISOLATION_REASON = Object.freeze({
 export const ISOLATION_NOTE = Object.freeze({
   UNREADABLE_AT_RESTORE: 'Isolation could not be read; left unchanged.',
   RESTORE_FAILED: 'Isolation could not be restored (the Viewer reported an error).',
+  SCENE_UNREADABLE_AT_RESTORE: 'The models in the scene could not be read; isolation left unchanged.',
 });
 
 const isDbId = (v) => Number.isInteger(v) && v >= 0;
@@ -92,13 +93,24 @@ export function isolationPrerequisite(viewerApi) {
 
 const toViewerList = (normalized) => normalized.map((e) => ({ model: e.model, ids: [...e.ids] }));
 
+// Projection onto the models still loaded (B-1): an entry for a model that has left the scene can no longer be
+// expressed by the Viewer, so ownership compares and restores consider ONLY models present in ONE scene read.
+// A difference on a model that is still loaded stays foreign; a departed model never triggers a clear-all.
+const projectOnto = (normalized, inScene) => (normalized === null ? null
+  : Object.freeze(normalized.filter((e) => inScene.includes(e.model))));
+
 // Session = the isolation half of the bridge's resource ledger. `record` is the WRITE-AHEAD entry:
 // {preImage, target, prevTarget, confirmed}; restore() is the ownership-guarded undo. preImage is the state before the Panel's ownership began
 // (captured, via a fresh read, immediately before the first isolating mutation of a session);
 // prevTarget is the Panel's own previously displayed target while a replacement is in flight.
 export function createIsolationSession(viewerApi) {
   let record = null;
-  const ours = (cur, r) => isolationEquals(cur, r.target) || (r.prevTarget !== null && isolationEquals(cur, r.prevTarget));
+  // Ownership compare restricted to `inScene` (one getAllModels() read): see projectOnto.
+  const ours = (cur, r, inScene) => {
+    const c = projectOnto(cur, inScene);
+    return isolationEquals(c, projectOnto(r.target, inScene))
+      || (r.prevTarget !== null && isolationEquals(c, projectOnto(r.prevTarget, inScene)));
+  };
 
   function apply(sides, { beforeMutation } = {}) {
     const target = targetFor(sides);
@@ -111,7 +123,7 @@ export function createIsolationSession(viewerApi) {
     if (cur === null) return { applied: false, reason: ISOLATION_REASON.UNREADABLE };
     let preImage;
     let prevTarget = null;
-    if (record !== null && ours(cur, record)) {
+    if (record !== null && ours(cur, record, inScene)) {
       preImage = record.preImage;                     // ownership continues: prior kept (§9.6 row 1)
       prevTarget = cur;
     } else {
@@ -135,7 +147,8 @@ export function createIsolationSession(viewerApi) {
   // One call + at most one retry, each followed by read-and-compare. 'failed' = the Viewer kept throwing
   // or became unreadable (the caller KEEPS the record so a later clear/dispose retries); 'skipped-external'
   // only when the state is now genuinely someone else's.
-  function restoreTo(preImage, r) {
+  // `preImage` is already projected onto `inScene`; the post-throw compares use the same projection.
+  function restoreTo(preImage, r, inScene) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         viewerApi.setAggregateIsolation(toViewerList(preImage));
@@ -143,8 +156,8 @@ export function createIsolationSession(viewerApi) {
       } catch {
         const cur = readIsolation(viewerApi);
         if (cur === null) break;                                     // unreadable: never retry blind
-        if (isolationEquals(cur, preImage)) return { isolation: 'restored', notes: [] };
-        if (!ours(cur, r)) return { isolation: 'skipped-external', notes: [] };   // foreign now: leave it
+        if (isolationEquals(projectOnto(cur, inScene), preImage)) return { isolation: 'restored', notes: [] };
+        if (!ours(cur, r, inScene)) return { isolation: 'skipped-external', notes: [] };   // foreign now: leave it
       }
     }
     return { isolation: 'failed', notes: [ISOLATION_NOTE.RESTORE_FAILED] };
@@ -159,12 +172,21 @@ export function createIsolationSession(viewerApi) {
     const r = record;
     const cur = readIsolation(viewerApi);
     if (cur === null) return { isolation: 'failed', notes: [ISOLATION_NOTE.UNREADABLE_AT_RESTORE] };
-    if (!ours(cur, r)) {
+    // ONE scene read; unreadable ⇒ 'failed' and the record is KEPT (never substitute an empty scene).
+    let inScene;
+    try { inScene = viewerApi.getAllModels(); } catch { inScene = null; }
+    if (!Array.isArray(inScene)) return { isolation: 'failed', notes: [ISOLATION_NOTE.SCENE_UNREADABLE_AT_RESTORE] };
+    const preImage = projectOnto(r.preImage, inScene);
+    if (!ours(cur, r, inScene)) {
       record = null;
-      return { isolation: !r.confirmed && isolationEquals(cur, r.preImage) ? 'none' : 'skipped-external', notes: [] };
+      return { isolation: !r.confirmed && isolationEquals(projectOnto(cur, inScene), preImage) ? 'none' : 'skipped-external', notes: [] };
+    }
+    if (isolationEquals(projectOnto(cur, inScene), preImage)) {   // already at the (still-loaded) prior: no write
+      record = null;
+      return { isolation: 'restored', notes: [] };
     }
     if (beforeMutation) beforeMutation();             // may throw: the record stays for the next cleanup
-    const result = restoreTo(r.preImage, r);
+    const result = restoreTo(preImage, r, inScene);
     if (result.isolation !== 'failed' && record === r) record = null;
     return result;
   }

@@ -543,3 +543,70 @@ test('fix: a non-isolating replacement reports a failed restore of the previous 
   assert.deepEqual(h.isolation(), [{ model: m3, ids: [5] }]);
   assert.equal(bridge.inspectLedger().isolation, null);
 });
+
+// ── B-1: a model LEAVES the scene (the fake's removeModel drops its isolation entry) before an awaited clear() ──
+
+test('B-1 (i): the only isolated model departs ⇒ clear() restores the prior state; nothing stranded, record dropped', async () => {
+  const { h, bridge, m1, m3 } = setup({ prior: (m) => [{ model: m, ids: [42] }] });
+  const o = await bridge.present({ sides: [{ model: m1, dbId: 1 }, { model: m1, dbId: 3 }], point: [0.5, 0.5, 0.5], options: ON });
+  assert.equal(o.isolated, true);
+  h.viewer.removeModel(m1);
+  h.viewer.dispatch(h.api.eventNames.BEFORE_MODEL_UNLOAD, { model: m1 });
+  const c = await bridge.clear();
+  assert.equal(c.isolation, 'restored');
+  assert.deepEqual(h.isolation(), [{ model: m3, ids: [42] }], 'the prior isolation is back');
+  assert.equal((await bridge.clear()).isolation, 'none', 'record dropped: nothing left to restore');
+});
+
+test('B-1 (ii): two-model isolation, one model departs ⇒ the still-loaded part of the prior state is restored', async () => {
+  const { h, bridge, A, m1, m2 } = setup({ prior: (m3) => [] });
+  h.viewer.setIsolationState([{ model: m1, ids: [7] }, { model: m2, ids: [8] }]);    // prior covers both models
+  assert.equal((await bridge.present(A)).isolated, true);
+  assert.ok(sameIsolation(h.isolation(), targetFor(A.sides)));
+  h.viewer.removeModel(m2);
+  const c = await bridge.clear();
+  assert.equal(c.isolation, 'restored');
+  assert.deepEqual(h.isolation(), [{ model: m1, ids: [7] }], 'm1 back at its prior; the departed m2 is not written');
+  const last = h.viewer.calls.setAggregateIsolation.at(-1);
+  assert.ok(last.every((e) => e.model !== m2), 'no write names the departed model');
+  assert.equal((await bridge.clear()).isolation, 'none', 'record dropped');
+});
+
+test('B-1 (iii): a model departs AND a still-loaded model was changed by someone else ⇒ skipped-external, no write', async () => {
+  const { h, bridge, A, m1, m2, m3 } = setup({ prior: (m) => [{ model: m, ids: [42] }] });
+  await bridge.present(A);
+  h.viewer.removeModel(m2);
+  h.viewer.setIsolationState([{ model: m1, ids: [5] }]);                              // foreign change on a loaded model
+  const writes = h.callsOf('setAggregateIsolation').length;
+  const c = await bridge.clear();
+  assert.equal(c.isolation, 'skipped-external');
+  assert.equal(h.callsOf('setAggregateIsolation').length, writes, 'foreign state is never overwritten');
+  assert.deepEqual(h.isolation(), [{ model: m1, ids: [5] }]);
+  assert.ok(m3);
+});
+
+test('B-1 (iv): the scene read fails at restore ⇒ failed, no write, record KEPT and a later clear() restores', async () => {
+  const { h, bridge, A, m2, m3 } = setup({ prior: (m) => [{ model: m, ids: [42] }] });
+  await bridge.present(A);
+  h.viewer.removeModel(m2);
+  const writes = h.callsOf('setAggregateIsolation').length;
+  h.viewer.onCall('getAllModels', () => { throw new Error('scene read failed'); }, { phase: 'before' });
+  const c = await bridge.clear();
+  assert.equal(c.isolation, 'failed');
+  assert.ok(c.notes.includes(ISOLATION_NOTE.SCENE_UNREADABLE_AT_RESTORE));
+  assert.equal(h.callsOf('setAggregateIsolation').length, writes, 'no blind write');
+  const retry = await bridge.clear();
+  assert.equal(retry.isolation, 'restored');
+  assert.deepEqual(h.isolation(), [{ model: m3, ids: [42] }]);
+});
+
+test('B-1 (v): apply() after a model departs keeps ownership (projected compare) ⇒ the original prior survives', async () => {
+  const { h, bridge, A, m1, m2, m3 } = setup({ prior: (m) => [{ model: m, ids: [42] }] });
+  await bridge.present(A);
+  h.viewer.removeModel(m2);
+  const o = await bridge.present({ sides: [{ model: m1, dbId: 3 }], point: [5.5, 0.5, 0.5], options: ON });
+  assert.equal(o.isolated, true);
+  assert.deepEqual(h.isolation(), [{ model: m1, ids: [3] }]);
+  assert.equal((await bridge.clear()).isolation, 'restored');
+  assert.deepEqual(h.isolation(), [{ model: m3, ids: [42] }], 'the pre-image is the original prior, not the leftover');
+});
