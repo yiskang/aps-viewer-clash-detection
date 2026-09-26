@@ -1,0 +1,201 @@
+[T3] model 1 (Architecture)
+  PASS  [import] /clashtest/viewer/index.js loads in-page with the required exports
+        expected=true actual=true
+  PASS  [import] /clashtest/index.js loads in-page with the required exports
+        expected=true actual=true
+  PASS  [import] /collision/index.js loads in-page with the required exports
+        expected=true actual=true
+  PASS  [import] /collision/viewer/ViewerModelAdapter.js loads in-page with the required exports
+        expected=true actual=true
+  PASS  [import] /clashtest/planning/scopeDigest.js loads in-page with the required exports
+        expected=true actual=true
+  PASS  [import] /collision/constants.js loads in-page with the required exports
+        expected=true actual=true
+[T3] model 2 (Structure)
+[T3] model 3 (Mechanical)
+  PASS  [load] exactly three Model objects loaded
+        expected=3 actual=3
+  PASS  [load] all three models resolved by URN
+        expected=[true,true,true] actual=[true,true,true]
+  PASS  [env] Viewer script is the pinned 7.124.2 build
+        expected=true actual=true
+  PASS  [env] Chromium major version is 151 (accepted envelope)
+        expected=151 actual=151
+  PASS  [env] every model is SVF (isOTG === false) and 3D
+        expected=[[false,true],[false,true],[false,true]] actual=[[false,true],[false,true],[false,true]]
+
+=== (d) readiness: immediate whole resolveRoots inside MODEL_ADDED (recorded, not asserted) ===
+  Audubon_Architecture_clash_test.rvt: resolved atCall={"isObjectTreeCreated":false,"instanceTreeInData":false,"isLoadDone":false}
+  Audubon_Structure_clash_test.rvt: resolved atCall={"isObjectTreeCreated":false,"instanceTreeInData":false,"isLoadDone":false}
+  Audubon_Mechanical_clash_test.rvt: resolved atCall={"isObjectTreeCreated":false,"instanceTreeInData":false,"isLoadDone":false}
+
+=== (a)(b)(c) arch ===
+  PASS  [a][arch] whole resolveRoots succeeds (a D-V9 bound/capacity rejection here is a finding: the model would be refused)
+        expected=null actual=null
+  PASS  [a][arch] ownerMismatch.count === 0
+        expected=0 actual=0
+  PASS  [a][arch] unreachable.count === 0
+        expected=0 actual=0
+  PASS  [a][arch] unreachable.unattributable both 0
+        expected={"notLoaded":0,"ownerUnresolvable":0} actual={"notLoaded":0,"ownerUnresolvable":0}
+  PASS  [a][arch] population.count equals the OQ-4 value
+        expected=5435 actual=5435
+  PASS  [a][arch] roots.length equals the OQ-4 value
+        expected=4244 actual=4244
+  D-V9 record: max(roots[].fragmentCount) = 14
+  PASS  [b][arch] every root compared against extractFragments
+        expected=4244 actual=4244
+  PASS  [b][arch] per-root mismatches (size / owners / subtree digest / library threw) all 0
+        expected=[0,0,0,0] actual=[0,0,0,0]
+  PASS  [b][arch] population digest recomputed from extractAllFragments equals the adapter's
+        expected=true actual=true
+  PASS  [b][arch] extractAllFragments owner differs from fragList.getDbIds: 0
+        expected=0 actual=0
+  PASS  [c][arch] digestScope('whole') equals resolveRoots population (count, digest)
+        expected=["population",true,true] actual=["population",true,true]
+  PASS  [c][arch] sampled per-root digestScope == resolveRoots (mismatches, throws)
+        expected=[0,0] actual=[0,0]
+  PASS  [c][arch] one multi-root digestScope equals resolveRoots for the same scope
+        expected=true actual=true
+
+=== (a)(b)(c) struct ===
+  PASS  [a][struct] whole resolveRoots succeeds (a D-V9 bound/capacity rejection here is a finding: the model would be refused)
+        expected=null actual=null
+  PASS  [a][struct] ownerMismatch.count === 0
+        expected=0 actual=0
+  PASS  [a][struct] unreachable.count === 0
+        expected=0 actual=0
+  PASS  [a][struct] unreachable.unattributable both 0
+        expected={"notLoaded":0,"ownerUnresolvable":0} actual={"notLoaded":0,"ownerUnresolvable":0}
+  PASS  [a][struct] population.count equals the OQ-4 value
+        expected=543 actual=543
+  PASS  [a][struct] roots.length equals the OQ-4 value
+        expected=468 actual=468
+  D-V9 record: max(roots[].fragmentCount) = 3
+  PASS  [b][struct] every root compared against extractFragments
+        expected=468 actual=468
+  PASS  [b][struct] per-root mismatches (size / owners / subtree digest / library threw) all 0
+        expected=[0,0,0,0] actual=[0,0,0,0]
+  PASS  [b][struct] population digest recomputed from extractAllFragments equals the adapter's
+        expected=true actual=true
+  PASS  [b][struct] extractAllFragments owner differs from fragList.getDbIds: 0
+        expected=0 actual=0
+  PASS  [c][struct] digestScope('whole') equals resolveRoots population (count, digest)
+        expected=["population",true,true] actual=["population",true,true]
+  PASS  [c][struct] sampled per-root digestScope == resolveRoots (mismatches, throws)
+        expected=[0,0] actual=[0,0]
+  PASS  [c][struct] one multi-root digestScope equals resolveRoots for the same scope
+        expected=true actual=true
+  PASS  [c][struct] explicit root 2734: exactly 1 fragment owned by itself, digestScope == resolveRoots
+        expected=[1,1,[2734],[],true] actual=[1,1,[2734],[],true]
+  PASS  [c][struct] explicit root 3965: exactly 1 fragment owned by itself, digestScope == resolveRoots
+        expected=[1,1,[3965],[],true] actual=[1,1,[3965],[],true]
+
+=== (a)(b)(c) mech ===
+  PASS  [a][mech] whole resolveRoots succeeds (a D-V9 bound/capacity rejection here is a finding: the model would be refused)
+        expected=null actual=null
+  PASS  [a][mech] ownerMismatch.count === 0
+        expected=0 actual=0
+  PASS  [a][mech] unreachable.count === 0
+        expected=0 actual=0
+  PASS  [a][mech] unreachable.unattributable both 0
+        expected={"notLoaded":0,"ownerUnresolvable":0} actual={"notLoaded":0,"ownerUnresolvable":0}
+  PASS  [a][mech] population.count equals the OQ-4 value
+        expected=1496 actual=1496
+  PASS  [a][mech] roots.length equals the OQ-4 value
+        expected=1257 actual=1257
+  D-V9 record: max(roots[].fragmentCount) = 2
+  PASS  [b][mech] every root compared against extractFragments
+        expected=1257 actual=1257
+  PASS  [b][mech] per-root mismatches (size / owners / subtree digest / library threw) all 0
+        expected=[0,0,0,0] actual=[0,0,0,0]
+  PASS  [b][mech] population digest recomputed from extractAllFragments equals the adapter's
+        expected=true actual=true
+  PASS  [b][mech] extractAllFragments owner differs from fragList.getDbIds: 0
+        expected=0 actual=0
+  PASS  [c][mech] digestScope('whole') equals resolveRoots population (count, digest)
+        expected=["population",true,true] actual=["population",true,true]
+  PASS  [c][mech] sampled per-root digestScope == resolveRoots (mismatches, throws)
+        expected=[0,0] actual=[0,0]
+  PASS  [c][mech] one multi-root digestScope equals resolveRoots for the same scope
+        expected=true actual=true
+
+=== (f) profile (recorded only) ===
+  {"note":"G-CAL characterization only; no value is asserted.","which":"arch","treeNodeCount":4747,"fragListCount":5435,"resolveRootsWhole":{"elapsedMs":34.89999997615814,"checkpointCalls":1508,"maxSpanBetweenCheckpointsMs":15.100000023841858,"spansOverFrameBudget":2,"frameBudgetMs":8,"error":null},"digestScopeWhole":{"elapsedMs":8.5,"checkpointCalls":1274,"maxSpanBetweenCheckpointsMs":4.5,"spansOverFrameBudget":0,"frameBudgetMs":8,"error":null},"digestScopeExplicitOneRoot":{"elapsedMs":0.30000001192092896,"checkpointCalls":76,"maxSpanBetweenCheckpointsMs":0.10000002384185791,"spansOverFrameBudget":0,"frameBudgetMs":8,"error":null}}
+  PASS  [control i-wrong-owner] detected
+        expected=true actual=true
+  PASS  [control ii-hidden-fragment] detected
+        expected=true actual=true
+  PASS  [control iii-not-loaded] detected
+        expected=true actual=true
+  PASS  [control iv-tree-unavailable] detected
+        expected=true actual=true
+  PASS  [control v-capacity] detected
+        expected=true actual=true
+  PASS  [control] after restore: Structure is clean again (no mismatch, no unreachable, OQ-4 counts, no leftover patch)
+        expected=[0,0,543,468,[]] actual=[0,0,543,468,[]]
+
+=== (e) reload arm (recorded only) ===
+  {"note":"CHARACTERIZATION ONLY: cross-reload identity is not evidenced and not asserted.","reloadCandidates":1,"modelIdBefore":3,"modelIdAfter":4,"populationBefore":{"count":1496,"digest":"sha256:aa764b0f4156b1dbc32660df100f928244e5d4abb9e0bf28219724554d931148"},"populationAfter":{"count":1496,"digest":"sha256:bf3a8a78dc05bb825deaa926da187f57b5b30cef97e2791c1785af7bb4eea83d"},"populationDigestEqual":false,"rootsBefore":1257,"rootsAfter":1257,"perRoot":{"compared":1257,"missingAfter":0,"digestEqual":0,"digestDiffer":1257,"fragIdsEqual":1257,"fragIdsDiffer":0}}
+
+=== (h) main run ===
+  PASS  [h] step1: probe listener saw event.model === X
+        expected=true actual=true
+  PASS  [h] step1: probe saw the binding still present at dispatch
+        expected=true actual=true
+  PASS  [h] step1: world.evictModel shim was called for X
+        expected=true actual=true
+  PASS  [h] step1: evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)
+        expected=true actual=true
+  PASS  [h] step1: registry.bindingFor(K) === null after the unload
+        expected=true actual=true
+  PASS  [h] step1: world.isModelLive(X) === false after the unload
+        expected=true actual=true
+  PASS  [h] step2: Y !== X
+        expected=true actual=true
+  PASS  [h] step2: Y is absent from the expected-sibling snapshot
+        expected=true actual=true
+  PASS  [h] step2: registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)
+        expected=true actual=true
+  PASS  [h] step3: the wiring handler did not throw
+        expected=true actual=true
+  PASS  [h] step3: registry.bindingFor(K).model === Y after the late unload of X
+        expected=true actual=true
+  PASS  [h] step3: world.isModelLive(Y) === true
+        expected=true actual=true
+  PASS  [h] step3: resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds
+        expected=true actual=true
+  PASS  [h] step4: registry.bindingFor(K) still non-null (model Y) after dispose + unload(Y)
+        expected=true actual=true
+  PASS  [h] step4: world.isModelLive(Y) still true
+        expected=true actual=true
+  PASS  [h] step4: the disposed wiring did not evict Y
+        expected=true actual=true
+  PASS  [h] main run completed with no primary failure and no cleanup failure
+        expected=null actual=null
+  PASS  [h] main run: cleanup postcondition (c) holds (no listener, evictModel original, binding null, disposed, models == expected siblings)
+        expected=true actual=true
+  PASS  [h] main run: every step (1)-(4) executed
+        expected=["step1","step2","step3","step4"] actual=["step1","step2","step3","step4"]
+  PASS  [h control ctrl-no-wiring] detected
+        expected=true actual=true
+  PASS  [h control ctrl-step3-sensitivity] detected
+        expected=true actual=true
+  PASS  [h control ctrl-step4-sensitivity] detected
+        expected=true actual=true
+  PASS  [h control ctrl-cleanup-a-partial-init] detected
+        expected=true actual=true
+  PASS  [h control ctrl-cleanup-b-independence] detected
+        expected=true actual=true
+  PASS  [h control ctrl-cleanup-aggregate] detected
+        expected=true actual=true
+  PASS  [h] no removed probe listener fired after its cleanup (behavioral backup of postcondition (c))
+        expected=true actual=true
+  PASS  zero console errors across the whole run
+        expected=[] actual=[]
+  PASS  zero uncaught page exceptions across the whole run
+        expected=[] actual=[]
+
+86/86 checks passed.
+Gates: {"T3":"PASS (inside the accepted envelope only)","liveUnloadIntegration":"VERIFIED_IN_ACCEPTED_ENVELOPE"}
+EXIT=0

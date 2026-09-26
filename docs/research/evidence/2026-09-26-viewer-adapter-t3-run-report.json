@@ -1,0 +1,3955 @@
+{
+  "script": "clashtest-viewer-adapter.acceptance.mjs",
+  "acceptedEnvelope": "Audubon / SVF non-OTG / Viewer 7.124.2 / Chromium 151",
+  "notCovered": [
+    "(g) PairId role-symmetry half of AC-15 (g): not evidenced / not covered by this script"
+  ],
+  "phase": "done",
+  "env": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36",
+    "viewerScripts": [
+      "https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js"
+    ],
+    "viewerVersion": null,
+    "threeRevision": "71",
+    "modelNames": [
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "loadOptions": [
+          "sharedPropertyDbPath",
+          "acmSessionId",
+          "applyRefPoint",
+          "page",
+          "keepCurrentModels",
+          "loadOptions",
+          "bubbleNode",
+          "skipPropertyDb",
+          "addViews",
+          "hydrateViews",
+          "fileExt",
+          "isAEC",
+          "createWireframe",
+          "disablePrecomputedNodeBoxes",
+          "bvhOptions",
+          "pdfRenderingMode"
+        ],
+        "isOTG": false,
+        "is3d": true
+      },
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "loadOptions": [
+          "sharedPropertyDbPath",
+          "acmSessionId",
+          "applyRefPoint",
+          "page",
+          "keepCurrentModels",
+          "loadOptions",
+          "bubbleNode",
+          "skipPropertyDb",
+          "addViews",
+          "hydrateViews",
+          "fileExt",
+          "isAEC",
+          "createWireframe",
+          "disablePrecomputedNodeBoxes",
+          "bvhOptions",
+          "pdfRenderingMode"
+        ],
+        "isOTG": false,
+        "is3d": true
+      },
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+        "loadOptions": [
+          "sharedPropertyDbPath",
+          "acmSessionId",
+          "applyRefPoint",
+          "page",
+          "keepCurrentModels",
+          "loadOptions",
+          "bubbleNode",
+          "skipPropertyDb",
+          "addViews",
+          "hydrateViews",
+          "fileExt",
+          "isAEC",
+          "createWireframe",
+          "disablePrecomputedNodeBoxes",
+          "bvhOptions",
+          "pdfRenderingMode"
+        ],
+        "isOTG": false,
+        "is3d": true
+      }
+    ],
+    "chromium": "151.0.7922.34",
+    "node": "v22.23.1",
+    "baseUrl": "http://localhost:8080"
+  },
+  "imports": {
+    "/clashtest/viewer/index.js": {
+      "ok": true,
+      "missing": [],
+      "exports": [
+        "createViewerElementEnumerator",
+        "wireModelUnload"
+      ]
+    },
+    "/clashtest/index.js": {
+      "ok": true,
+      "missing": [],
+      "exports": [
+        "AnnotationBusyError",
+        "AnnotationSupersededError",
+        "AnnotationTooLargeError",
+        "AttributeSourceError",
+        "ClashTestError",
+        "ComparisonTooLargeError",
+        "CorruptListingError",
+        "CorruptResultSetError",
+        "DerivationAbortedError",
+        "DerivationBusyError",
+        "ENGINE_LIMIT_DEFAULTS",
+        "EngineDisposedError",
+        "EnumerationCancelledError",
+        "FacetRangeError",
+        "GroupingTooLargeError",
+        "IdentityConflictError",
+        "InvalidOptionsError",
+        "InvalidTestDefinitionError",
+        "ModelBindingError",
+        "ModelKeyVersionConflictError",
+        "PersistenceOutcomeUnknownError",
+        "RUN_OPTION_DEFAULTS",
+        "ReadAbortedError",
+        "ReadCapacityError",
+        "ResultCapacityError",
+        "ResultNotResidentError",
+        "ResultSetRetainedError",
+        "ResultSetTooLargeError",
+        "RevisionConflictError",
+        "RunIdConflictError",
+        "RunNotTerminalError",
+        "RunQueueFullError",
+        "StoreNotConfiguredError",
+        "TestArchivedError",
+        "TestDeletedError",
+        "UnsavedResultSetError",
+        "UnsupportedSchemaVersionError",
+        "assessNoClashClaim",
+        "canClaimNoClashes",
+        "createClashTestEngine",
+        "createDerivationContext",
+        "createInMemoryClashTestStore",
+        "createInMemoryResultStore",
+        "createLocalUnitExecutor",
+        "createModelRegistry",
+        "getElementStatus",
+        "getFreshness",
+        "getPairStatus",
+        "validateTest"
+      ]
+    },
+    "/collision/index.js": {
+      "ok": true,
+      "missing": [],
+      "exports": [
+        "CapacityExceededError",
+        "CollisionWorld",
+        "ExtractionLimitExceededError",
+        "ModelEvictedError",
+        "ModelPlacementChangedError",
+        "ObjectTreeUnavailableError",
+        "RenderProxyUnavailableError",
+        "WorldDisposedError"
+      ]
+    },
+    "/collision/viewer/ViewerModelAdapter.js": {
+      "ok": true,
+      "missing": [],
+      "exports": [
+        "ExtractionLimitExceededError",
+        "extractAllFragments",
+        "extractFragments",
+        "readWorldBounds",
+        "readWorldMatrix"
+      ]
+    },
+    "/clashtest/planning/scopeDigest.js": {
+      "ok": true,
+      "missing": [],
+      "exports": [
+        "POPULATION_CLASS",
+        "checkScopeBracket",
+        "compareScopeExpectation",
+        "digestPopulation",
+        "digestSubtree",
+        "encodePopulationRecords",
+        "encodePopulationRecordsSliced"
+      ]
+    },
+    "/collision/constants.js": {
+      "ok": true,
+      "missing": [],
+      "exports": [
+        "barycentricEpsilon",
+        "clearanceDistanceCrossCheckCombinedRelativeTolerance",
+        "clearanceDistanceCrossCheckRelativeTolerance",
+        "clearanceTraversalThresholdSafetyMargin",
+        "clearanceUniformScaleRelativeTolerance",
+        "coplanarAngleEpsilon",
+        "crossingProbeFractions",
+        "frameBudgetMs",
+        "maxBroadPhaseInstancePairs",
+        "maxCandidatePairsExamined",
+        "maxChildrenPerNode",
+        "maxClearanceNarrowPhasePairs",
+        "maxCollisionInstancesPerEpoch",
+        "maxContainmentSamples",
+        "maxCrossingPairsExamined",
+        "maxCrossingPointClassifications",
+        "maxFragmentsPerDbId",
+        "maxLocalAspectRatio",
+        "maxProbeClassificationsPerCrossingPair",
+        "maxSyncTriangleCount",
+        "maxTlasCandidatePairs",
+        "maxWitnessTriangles",
+        "mergeDistanceFactor",
+        "minPenetrationDepthFactor",
+        "minSurfaceCrossingProbeFactor",
+        "offsetLadderFactors",
+        "samplesPerComponent",
+        "surfaceEpsilonFactor",
+        "weldEpsilonMeters",
+        "witnessLadderFactors"
+      ]
+    }
+  },
+  "readiness": {
+    "note": "RECORDED ONLY (G-VA-READY): no readiness-gate sufficiency is asserted.",
+    "readinessSignals": [
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "isLoadDone": true,
+        "hasInstanceTreeInData": true,
+        "hasGetObjectTree": true,
+        "hasIsObjectTreeCreated": true,
+        "isObjectTreeCreated": true,
+        "getObjectTreeSyncReturnsTree": true,
+        "getInstanceTreeReturnsTree": true
+      },
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "isLoadDone": true,
+        "hasInstanceTreeInData": true,
+        "hasGetObjectTree": true,
+        "hasIsObjectTreeCreated": true,
+        "isObjectTreeCreated": true,
+        "getObjectTreeSyncReturnsTree": true,
+        "getInstanceTreeReturnsTree": true
+      },
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+        "isLoadDone": true,
+        "hasInstanceTreeInData": true,
+        "hasGetObjectTree": true,
+        "hasIsObjectTreeCreated": true,
+        "isObjectTreeCreated": true,
+        "getObjectTreeSyncReturnsTree": true,
+        "getInstanceTreeReturnsTree": true
+      }
+    ],
+    "fineReadiness": {
+      "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0": {
+        "firstSeen": 6092,
+        "instanceTreeInData": 8915.300000011921,
+        "isObjectTreeCreated": 8915.300000011921,
+        "loadDone": 10437
+      },
+      "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0": {
+        "firstSeen": 16411.69999998808,
+        "instanceTreeInData": 19727.19999998808,
+        "isObjectTreeCreated": 19727.19999998808,
+        "loadDone": 23451.100000023842
+      },
+      "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA": {
+        "firstSeen": 28560.80000001192,
+        "instanceTreeInData": 29637.69999998808,
+        "isObjectTreeCreated": 29637.69999998808,
+        "loadDone": 32388.19999998808
+      }
+    },
+    "events": [
+      {
+        "name": "MODEL_ADDED_EVENT",
+        "t": 6091.399999976158,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+      },
+      {
+        "name": "OBJECT_TREE_CREATED_EVENT",
+        "t": 8863.899999976158,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+      },
+      {
+        "name": "GEOMETRY_LOADED_EVENT",
+        "t": 12500.199999988079,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+      },
+      {
+        "name": "MODEL_ADDED_EVENT",
+        "t": 16410.600000023842,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+      },
+      {
+        "name": "OBJECT_TREE_CREATED_EVENT",
+        "t": 19718.899999976158,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+      },
+      {
+        "name": "GEOMETRY_LOADED_EVENT",
+        "t": 23457.80000001192,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+      },
+      {
+        "name": "MODEL_ADDED_EVENT",
+        "t": 28560,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+      },
+      {
+        "name": "OBJECT_TREE_CREATED_EVENT",
+        "t": 29624.5,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+      },
+      {
+        "name": "GEOMETRY_LOADED_EVENT",
+        "t": 32653.100000023842,
+        "hasModel": true,
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+      }
+    ],
+    "eventSnapshots": [
+      {
+        "name": "OBJECT_TREE_CREATED_EVENT",
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "t": 8864,
+        "isLoadDone": false,
+        "fragListCount": 5435,
+        "notLoaded": 0,
+        "tree": true,
+        "nodeCount": 4747,
+        "ownFragmentCallbacks": 5435,
+        "distinctTreeFragments": 5435
+      },
+      {
+        "name": "GEOMETRY_LOADED_EVENT",
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "t": 12500.199999988079,
+        "isLoadDone": true,
+        "fragListCount": 5435,
+        "notLoaded": 0,
+        "tree": true,
+        "nodeCount": 4747,
+        "ownFragmentCallbacks": 5435,
+        "distinctTreeFragments": 5435
+      },
+      {
+        "name": "OBJECT_TREE_CREATED_EVENT",
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "t": 19718.899999976158,
+        "isLoadDone": false,
+        "fragListCount": 543,
+        "notLoaded": 0,
+        "tree": true,
+        "nodeCount": 547,
+        "ownFragmentCallbacks": 543,
+        "distinctTreeFragments": 543
+      },
+      {
+        "name": "GEOMETRY_LOADED_EVENT",
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "t": 23457.80000001192,
+        "isLoadDone": true,
+        "fragListCount": 543,
+        "notLoaded": 0,
+        "tree": true,
+        "nodeCount": 547,
+        "ownFragmentCallbacks": 543,
+        "distinctTreeFragments": 543
+      },
+      {
+        "name": "OBJECT_TREE_CREATED_EVENT",
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+        "t": 29624.5,
+        "isLoadDone": false,
+        "fragListCount": 1496,
+        "notLoaded": 0,
+        "tree": true,
+        "nodeCount": 1366,
+        "ownFragmentCallbacks": 1496,
+        "distinctTreeFragments": 1496
+      },
+      {
+        "name": "GEOMETRY_LOADED_EVENT",
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+        "t": 32653.100000023842,
+        "isLoadDone": true,
+        "fragListCount": 1496,
+        "notLoaded": 0,
+        "tree": true,
+        "nodeCount": 1366,
+        "ownFragmentCallbacks": 1496,
+        "distinctTreeFragments": 1496
+      }
+    ],
+    "treePollsBeforeAllTreesPresent": 0,
+    "timeline": [
+      {
+        "label": "viewer-present",
+        "tMs": 3170,
+        "models": 0,
+        "loadDone": [],
+        "tree": [],
+        "events": []
+      },
+      {
+        "label": "m1-loadDone",
+        "tMs": 11178,
+        "models": 1,
+        "loadDone": [
+          true
+        ],
+        "tree": [
+          true
+        ],
+        "events": [
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 6091.399999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 8863.899999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          }
+        ]
+      },
+      {
+        "label": "m2-loadDone",
+        "tMs": 23820,
+        "models": 2,
+        "loadDone": [
+          true,
+          true
+        ],
+        "tree": [
+          true,
+          true
+        ],
+        "events": [
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 6091.399999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 8863.899999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "GEOMETRY_LOADED_EVENT",
+            "t": 12500.199999988079,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 16410.600000023842,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 19718.899999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "GEOMETRY_LOADED_EVENT",
+            "t": 23457.80000001192,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          }
+        ]
+      },
+      {
+        "label": "m3-loadDone",
+        "tMs": 33015,
+        "models": 3,
+        "loadDone": [
+          true,
+          true,
+          true
+        ],
+        "tree": [
+          true,
+          true,
+          true
+        ],
+        "events": [
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 6091.399999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 8863.899999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "GEOMETRY_LOADED_EVENT",
+            "t": 12500.199999988079,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 16410.600000023842,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 19718.899999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "GEOMETRY_LOADED_EVENT",
+            "t": 23457.80000001192,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 28560,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 29624.5,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+          },
+          {
+            "name": "GEOMETRY_LOADED_EVENT",
+            "t": 32653.100000023842,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+          }
+        ]
+      },
+      {
+        "label": "tree-poll-0",
+        "tMs": 33306,
+        "models": 3,
+        "loadDone": [
+          true,
+          true,
+          true
+        ],
+        "tree": [
+          true,
+          true,
+          true
+        ],
+        "events": [
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 6091.399999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 8863.899999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "GEOMETRY_LOADED_EVENT",
+            "t": 12500.199999988079,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 16410.600000023842,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 19718.899999976158,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "GEOMETRY_LOADED_EVENT",
+            "t": 23457.80000001192,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0"
+          },
+          {
+            "name": "MODEL_ADDED_EVENT",
+            "t": 28560,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+          },
+          {
+            "name": "OBJECT_TREE_CREATED_EVENT",
+            "t": 29624.5,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+          },
+          {
+            "name": "GEOMETRY_LOADED_EVENT",
+            "t": 32653.100000023842,
+            "hasModel": true,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+          }
+        ]
+      }
+    ],
+    "immediateResolveRootsOnModelAdded": {
+      "outcomes": [
+        {
+          "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+          "tEvent": 6091.399999976158,
+          "atCall": {
+            "isObjectTreeCreated": false,
+            "instanceTreeInData": false,
+            "isLoadDone": false
+          },
+          "outcome": "resolved",
+          "result": {
+            "roots": 4244,
+            "population": 5435,
+            "ownerMismatch": 0,
+            "unreachable": 0
+          },
+          "tSettled": 8914.899999976158
+        },
+        {
+          "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+          "tEvent": 16410.600000023842,
+          "atCall": {
+            "isObjectTreeCreated": false,
+            "instanceTreeInData": false,
+            "isLoadDone": false
+          },
+          "outcome": "resolved",
+          "result": {
+            "roots": 468,
+            "population": 543,
+            "ownerMismatch": 0,
+            "unreachable": 0
+          },
+          "tSettled": 19726.399999976158
+        },
+        {
+          "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+          "tEvent": 28560,
+          "atCall": {
+            "isObjectTreeCreated": false,
+            "instanceTreeInData": false,
+            "isLoadDone": false
+          },
+          "outcome": "resolved",
+          "result": {
+            "roots": 1257,
+            "population": 1496,
+            "ownerMismatch": 0,
+            "unreachable": 0
+          },
+          "tSettled": 29636.30000001192
+        }
+      ],
+      "pending": 0,
+      "installedAt": 2858.699999988079,
+      "modelsPresentAtInstall": []
+    }
+  },
+  "measurements": {
+    "arch": {
+      "which": "arch",
+      "a": {
+        "ownerMismatchCount": 0,
+        "ownerMismatchFirst20": [],
+        "unreachableCount": 0,
+        "unreachableOwnerDbIdsCount": 0,
+        "unattributable": {
+          "notLoaded": 0,
+          "ownerUnresolvable": 0
+        },
+        "populationCount": 5435,
+        "rootsLength": 4244,
+        "unresolvedLength": 0,
+        "maxRootFragmentCount": 14,
+        "sumRootFragmentCount": 5435
+      },
+      "b": {
+        "rootsCompared": 4244,
+        "sizeMismatch": 0,
+        "ownersMismatch": 0,
+        "subtreeDigestMismatch": 0,
+        "libraryThrew": 0,
+        "firstMismatches": [],
+        "population": {
+          "libraryRecords": 5435,
+          "libraryDiagnostics": 0,
+          "libOwnerDiffersFromFragList": 0,
+          "libraryCount": 5435,
+          "adapterCount": 5435,
+          "digestEqual": true
+        }
+      },
+      "c": {
+        "whole": {
+          "kind": "population",
+          "countEqual": true,
+          "digestEqual": true
+        },
+        "sample": {
+          "ids": [
+            3474,
+            3477,
+            3480,
+            3481,
+            3482,
+            3490,
+            3497,
+            3498,
+            3499,
+            3500,
+            8437,
+            16642,
+            16643,
+            16644,
+            16645,
+            16646,
+            16647,
+            16648,
+            16649,
+            16650,
+            17327
+          ],
+          "compared": 21,
+          "mismatches": 0,
+          "threw": 0,
+          "firstMismatches": []
+        },
+        "multiRoot": {
+          "equal": true,
+          "roots": 21,
+          "unresolved": []
+        },
+        "explicit": []
+      }
+    },
+    "struct": {
+      "which": "struct",
+      "a": {
+        "ownerMismatchCount": 0,
+        "ownerMismatchFirst20": [],
+        "unreachableCount": 0,
+        "unreachableOwnerDbIdsCount": 0,
+        "unattributable": {
+          "notLoaded": 0,
+          "ownerUnresolvable": 0
+        },
+        "populationCount": 543,
+        "rootsLength": 468,
+        "unresolvedLength": 0,
+        "maxRootFragmentCount": 3,
+        "sumRootFragmentCount": 543
+      },
+      "b": {
+        "rootsCompared": 468,
+        "sizeMismatch": 0,
+        "ownersMismatch": 0,
+        "subtreeDigestMismatch": 0,
+        "libraryThrew": 0,
+        "firstMismatches": [],
+        "population": {
+          "libraryRecords": 543,
+          "libraryDiagnostics": 0,
+          "libOwnerDiffersFromFragList": 0,
+          "libraryCount": 543,
+          "adapterCount": 543,
+          "digestEqual": true
+        }
+      },
+      "c": {
+        "whole": {
+          "kind": "population",
+          "countEqual": true,
+          "digestEqual": true
+        },
+        "sample": {
+          "ids": [
+            2387,
+            2388,
+            2391,
+            2392,
+            2395,
+            2396,
+            2397,
+            2398,
+            2399,
+            2400,
+            3633,
+            4842,
+            4843,
+            4844,
+            4852,
+            4853,
+            4854,
+            4951,
+            4957,
+            4958,
+            4976
+          ],
+          "compared": 21,
+          "mismatches": 0,
+          "threw": 0,
+          "firstMismatches": []
+        },
+        "multiRoot": {
+          "equal": true,
+          "roots": 21,
+          "unresolved": []
+        },
+        "explicit": [
+          {
+            "dbId": 2734,
+            "isWholeModelRoot": true,
+            "resolveRoots": {
+              "roots": 1,
+              "fragmentCount": 1,
+              "ownerDbIds": [
+                2734
+              ],
+              "unresolved": []
+            },
+            "digestEqualsResolveRoots": true,
+            "digestEqualsWholeRoot": true
+          },
+          {
+            "dbId": 3965,
+            "isWholeModelRoot": true,
+            "resolveRoots": {
+              "roots": 1,
+              "fragmentCount": 1,
+              "ownerDbIds": [
+                3965
+              ],
+              "unresolved": []
+            },
+            "digestEqualsResolveRoots": true,
+            "digestEqualsWholeRoot": true
+          }
+        ]
+      }
+    },
+    "mech": {
+      "which": "mech",
+      "a": {
+        "ownerMismatchCount": 0,
+        "ownerMismatchFirst20": [],
+        "unreachableCount": 0,
+        "unreachableOwnerDbIdsCount": 0,
+        "unattributable": {
+          "notLoaded": 0,
+          "ownerUnresolvable": 0
+        },
+        "populationCount": 1496,
+        "rootsLength": 1257,
+        "unresolvedLength": 0,
+        "maxRootFragmentCount": 2,
+        "sumRootFragmentCount": 1496
+      },
+      "b": {
+        "rootsCompared": 1257,
+        "sizeMismatch": 0,
+        "ownersMismatch": 0,
+        "subtreeDigestMismatch": 0,
+        "libraryThrew": 0,
+        "firstMismatches": [],
+        "population": {
+          "libraryRecords": 1496,
+          "libraryDiagnostics": 0,
+          "libOwnerDiffersFromFragList": 0,
+          "libraryCount": 1496,
+          "adapterCount": 1496,
+          "digestEqual": true
+        }
+      },
+      "c": {
+        "whole": {
+          "kind": "population",
+          "countEqual": true,
+          "digestEqual": true
+        },
+        "sample": {
+          "ids": [
+            2354,
+            2355,
+            2356,
+            2359,
+            2362,
+            2363,
+            2364,
+            2365,
+            2366,
+            2367,
+            2531,
+            4898,
+            4899,
+            4900,
+            4901,
+            4902,
+            4903,
+            4904,
+            4905,
+            4906,
+            5220
+          ],
+          "compared": 21,
+          "mismatches": 0,
+          "threw": 0,
+          "firstMismatches": []
+        },
+        "multiRoot": {
+          "equal": true,
+          "roots": 21,
+          "unresolved": []
+        },
+        "explicit": []
+      }
+    }
+  },
+  "controls": {
+    "i-wrong-owner": {
+      "control": "i-wrong-owner",
+      "sameFragListObject": true,
+      "sameTreeObject": true,
+      "resolved": {
+        "ownerMismatchCount": 1,
+        "ownerMismatchFirst": [
+          {
+            "fragId": 0,
+            "treeOwner": 3663,
+            "fragListOwner": 1003663
+          }
+        ],
+        "unreachableCount": 0,
+        "populationCount": 543,
+        "roots": 468
+      }
+    },
+    "ii-hidden-fragment": {
+      "control": "ii-hidden-fragment",
+      "sameFragListObject": true,
+      "sameTreeObject": true,
+      "resolved": {
+        "ownerMismatchCount": 0,
+        "ownerMismatchFirst": [],
+        "unreachableCount": 1,
+        "populationCount": 543,
+        "roots": 468
+      }
+    },
+    "iii-not-loaded": {
+      "control": "iii-not-loaded",
+      "sameFragListObject": true,
+      "sameTreeObject": true,
+      "threw": {
+        "name": "EnumerationInconsistencyError",
+        "message": "Viewer enumeration inconsistent: tree-reachable-fragment-unattributable",
+        "reason": "tree-reachable-fragment-unattributable",
+        "detail": {
+          "fragId": 2,
+          "cls": "N"
+        }
+      }
+    },
+    "iv-tree-unavailable": {
+      "control": "iv-tree-unavailable",
+      "sameFragListObject": true,
+      "sameTreeObject": null,
+      "threw": {
+        "name": "ObjectTreeUnavailableError",
+        "message": "Object tree unavailable for model 2"
+      }
+    },
+    "v-capacity": {
+      "control": "v-capacity",
+      "sameFragListObject": true,
+      "sameTreeObject": true,
+      "calls": {
+        "enumNodeChildren": 0,
+        "enumNodeFragments": 0
+      },
+      "threw": {
+        "name": "CapacityExceededError",
+        "message": "CollisionInstance admission rejected (whole-model-enumeration)",
+        "kind": "whole-model-enumeration"
+      }
+    },
+    "afterRestoreClean": {
+      "ownerMismatch": 0,
+      "unreachable": 0,
+      "population": 543,
+      "roots": 468,
+      "leftoverOwnPatches": []
+    }
+  },
+  "reload": {
+    "note": "CHARACTERIZATION ONLY: cross-reload identity is not evidenced and not asserted.",
+    "reloadCandidates": 1,
+    "modelIdBefore": 3,
+    "modelIdAfter": 4,
+    "populationBefore": {
+      "count": 1496,
+      "digest": "sha256:aa764b0f4156b1dbc32660df100f928244e5d4abb9e0bf28219724554d931148"
+    },
+    "populationAfter": {
+      "count": 1496,
+      "digest": "sha256:bf3a8a78dc05bb825deaa926da187f57b5b30cef97e2791c1785af7bb4eea83d"
+    },
+    "populationDigestEqual": false,
+    "rootsBefore": 1257,
+    "rootsAfter": 1257,
+    "perRoot": {
+      "compared": 1257,
+      "missingAfter": 0,
+      "digestEqual": 0,
+      "digestDiffer": 1257,
+      "fragIdsEqual": 1257,
+      "fragIdsDiffer": 0
+    }
+  },
+  "profile": {
+    "note": "G-CAL characterization only; no value is asserted.",
+    "which": "arch",
+    "treeNodeCount": 4747,
+    "fragListCount": 5435,
+    "resolveRootsWhole": {
+      "elapsedMs": 34.89999997615814,
+      "checkpointCalls": 1508,
+      "maxSpanBetweenCheckpointsMs": 15.100000023841858,
+      "spansOverFrameBudget": 2,
+      "frameBudgetMs": 8,
+      "error": null
+    },
+    "digestScopeWhole": {
+      "elapsedMs": 8.5,
+      "checkpointCalls": 1274,
+      "maxSpanBetweenCheckpointsMs": 4.5,
+      "spansOverFrameBudget": 0,
+      "frameBudgetMs": 8,
+      "error": null
+    },
+    "digestScopeExplicitOneRoot": {
+      "elapsedMs": 0.30000001192092896,
+      "checkpointCalls": 76,
+      "maxSpanBetweenCheckpointsMs": 0.10000002384185791,
+      "spansOverFrameBudget": 0,
+      "frameBudgetMs": 8,
+      "error": null
+    }
+  },
+  "h": {
+    "runs": {
+      "main": {
+        "label": "main",
+        "opts": {},
+        "phase": "done",
+        "setup": {
+          "ok": true,
+          "info": {
+            "eventName": "beforeModelUnload",
+            "clashFinderExtensionLoaded": true,
+            "worldOptionsSource": "ClashFinderExtension instance options",
+            "preBindingPresent": true,
+            "preBindingModelIsX": true,
+            "preXLive": true,
+            "handlerCaptured": true
+          }
+        },
+        "steps": {
+          "step1": {
+            "siblingCount": 2,
+            "assertions": [
+              [
+                "probeSawX",
+                "probe listener saw event.model === X",
+                true,
+                {
+                  "probeXEvents": 1
+                }
+              ],
+              [
+                "probeSawBindingPresent",
+                "probe saw the binding still present at dispatch",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingPresent": true,
+                  "t": 41815.80000001192
+                }
+              ],
+              [
+                "evictCalledForX",
+                "world.evictModel shim was called for X",
+                true,
+                {
+                  "evictXCalls": 1
+                }
+              ],
+              [
+                "evictSawBindingNull",
+                "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingNullAtCall": true
+                }
+              ],
+              [
+                "bindingNullAfterUnload",
+                "registry.bindingFor(K) === null after the unload",
+                true,
+                true
+              ],
+              [
+                "xNotLiveAfterUnload",
+                "world.isModelLive(X) === false after the unload",
+                true,
+                false
+              ]
+            ]
+          },
+          "step2": {
+            "assertions": [
+              [
+                "yIsNotX",
+                "Y !== X",
+                true,
+                null
+              ],
+              [
+                "yAbsentFromSiblings",
+                "Y is absent from the expected-sibling snapshot",
+                true,
+                null
+              ],
+              [
+                "registerYSucceeds",
+                "registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+                true,
+                null
+              ]
+            ]
+          },
+          "step3": {
+            "assertions": [
+              [
+                "handlerNeverThrows",
+                "the wiring handler did not throw",
+                true,
+                null
+              ],
+              [
+                "bindingModelIsY",
+                "registry.bindingFor(K).model === Y after the late unload of X",
+                true,
+                null
+              ],
+              [
+                "yLive",
+                "world.isModelLive(Y) === true",
+                true,
+                true
+              ],
+              [
+                "resolveRootsOnY",
+                "resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+                true,
+                {
+                  "roots": 468,
+                  "population": 543,
+                  "ownerMismatch": 0,
+                  "unreachable": 0
+                }
+              ]
+            ]
+          },
+          "step4": {
+            "assertions": [
+              [
+                "bindingSurvivesYUnload",
+                "registry.bindingFor(K) still non-null (model Y) after dispose + unload(Y)",
+                true,
+                null
+              ],
+              [
+                "yStillLive",
+                "world.isModelLive(Y) still true",
+                true,
+                true
+              ],
+              [
+                "noEvictForY",
+                "the disposed wiring did not evict Y",
+                true,
+                {
+                  "evictYCalls": 0
+                }
+              ]
+            ]
+          }
+        },
+        "assertions": [
+          {
+            "step": "step1",
+            "key": "probeSawX",
+            "description": "probe listener saw event.model === X",
+            "ok": true,
+            "actual": {
+              "probeXEvents": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "probeSawBindingPresent",
+            "description": "probe saw the binding still present at dispatch",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingPresent": true,
+              "t": 41815.80000001192
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictCalledForX",
+            "description": "world.evictModel shim was called for X",
+            "ok": true,
+            "actual": {
+              "evictXCalls": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictSawBindingNull",
+            "description": "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingNullAtCall": true
+            }
+          },
+          {
+            "step": "step1",
+            "key": "bindingNullAfterUnload",
+            "description": "registry.bindingFor(K) === null after the unload",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step1",
+            "key": "xNotLiveAfterUnload",
+            "description": "world.isModelLive(X) === false after the unload",
+            "ok": true,
+            "actual": false
+          },
+          {
+            "step": "step2",
+            "key": "yIsNotX",
+            "description": "Y !== X",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step2",
+            "key": "yAbsentFromSiblings",
+            "description": "Y is absent from the expected-sibling snapshot",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step2",
+            "key": "registerYSucceeds",
+            "description": "registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "handlerNeverThrows",
+            "description": "the wiring handler did not throw",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "bindingModelIsY",
+            "description": "registry.bindingFor(K).model === Y after the late unload of X",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "yLive",
+            "description": "world.isModelLive(Y) === true",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step3",
+            "key": "resolveRootsOnY",
+            "description": "resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+            "ok": true,
+            "actual": {
+              "roots": 468,
+              "population": 543,
+              "ownerMismatch": 0,
+              "unreachable": 0
+            }
+          },
+          {
+            "step": "step4",
+            "key": "bindingSurvivesYUnload",
+            "description": "registry.bindingFor(K) still non-null (model Y) after dispose + unload(Y)",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step4",
+            "key": "yStillLive",
+            "description": "world.isModelLive(Y) still true",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step4",
+            "key": "noEvictForY",
+            "description": "the disposed wiring did not evict Y",
+            "ok": true,
+            "actual": {
+              "evictYCalls": 0
+            }
+          }
+        ],
+        "cleanup": {
+          "hadState": true,
+          "done": {
+            "1.disposeWiring": "ran",
+            "2.removeProbeListener": "ran",
+            "3.restoreEvictModel": "ran",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "ran",
+            "5a.evictX": "skipped",
+            "5b.evictY": "ran",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "realCallMade": {
+            "1.disposeWiring": true,
+            "2.removeProbeListener": true,
+            "3.restoreEvictModel": true,
+            "4a.unregisterX": true,
+            "4b.unregisterY": true,
+            "5b.evictY": true,
+            "6.disposeEngine": true,
+            "7.disposeWorld": true
+          },
+          "failures": [],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "cleanupFailures": [],
+        "attachment": null,
+        "primary": null,
+        "failingLink": null
+      },
+      "ctrl-no-wiring": {
+        "label": "ctrl-no-wiring",
+        "opts": {
+          "noWiring": true
+        },
+        "phase": "step1:assert",
+        "setup": {
+          "ok": true,
+          "info": {
+            "eventName": "beforeModelUnload",
+            "clashFinderExtensionLoaded": true,
+            "worldOptionsSource": "ClashFinderExtension instance options",
+            "preBindingPresent": true,
+            "preBindingModelIsX": true,
+            "preXLive": true
+          }
+        },
+        "steps": {
+          "step1": {
+            "siblingCount": 2,
+            "assertions": [
+              [
+                "probeSawX",
+                "probe listener saw event.model === X",
+                true,
+                {
+                  "probeXEvents": 1
+                }
+              ],
+              [
+                "probeSawBindingPresent",
+                "probe saw the binding still present at dispatch",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingPresent": true,
+                  "t": 62000.39999997616
+                }
+              ],
+              [
+                "evictCalledForX",
+                "world.evictModel shim was called for X",
+                false,
+                {
+                  "evictXCalls": 0
+                }
+              ],
+              [
+                "evictSawBindingNull",
+                "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+                false,
+                null
+              ],
+              [
+                "bindingNullAfterUnload",
+                "registry.bindingFor(K) === null after the unload",
+                false,
+                false
+              ],
+              [
+                "xNotLiveAfterUnload",
+                "world.isModelLive(X) === false after the unload",
+                false,
+                true
+              ]
+            ]
+          }
+        },
+        "assertions": [
+          {
+            "step": "step1",
+            "key": "probeSawX",
+            "description": "probe listener saw event.model === X",
+            "ok": true,
+            "actual": {
+              "probeXEvents": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "probeSawBindingPresent",
+            "description": "probe saw the binding still present at dispatch",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingPresent": true,
+              "t": 62000.39999997616
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictCalledForX",
+            "description": "world.evictModel shim was called for X",
+            "ok": false,
+            "actual": {
+              "evictXCalls": 0
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictSawBindingNull",
+            "description": "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+            "ok": false,
+            "actual": null
+          },
+          {
+            "step": "step1",
+            "key": "bindingNullAfterUnload",
+            "description": "registry.bindingFor(K) === null after the unload",
+            "ok": false,
+            "actual": false
+          },
+          {
+            "step": "step1",
+            "key": "xNotLiveAfterUnload",
+            "description": "world.isModelLive(X) === false after the unload",
+            "ok": false,
+            "actual": true
+          }
+        ],
+        "cleanup": {
+          "hadState": true,
+          "done": {
+            "1.disposeWiring": "skipped",
+            "2.removeProbeListener": "ran",
+            "3.restoreEvictModel": "ran",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "skipped",
+            "5a.evictX": "ran",
+            "5b.evictY": "skipped",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "realCallMade": {
+            "2.removeProbeListener": true,
+            "3.restoreEvictModel": true,
+            "4a.unregisterX": true,
+            "5a.evictX": true,
+            "6.disposeEngine": true,
+            "7.disposeWorld": true
+          },
+          "failures": [],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "cleanupFailures": [],
+        "attachment": "not-needed",
+        "primary": {
+          "name": "HFailure",
+          "message": "T3 (h) failed at step1:assertion: evictCalledForX, evictSawBindingNull, bindingNullAfterUnload, xNotLiveAfterUnload",
+          "link": "step1:assertion",
+          "failedAssertions": [
+            "evictCalledForX",
+            "evictSawBindingNull",
+            "bindingNullAfterUnload",
+            "xNotLiveAfterUnload"
+          ]
+        },
+        "failingLink": "step1:assert"
+      },
+      "ctrl-step3-sensitivity": {
+        "label": "ctrl-step3-sensitivity",
+        "opts": {
+          "step3Model": "Y"
+        },
+        "phase": "step3",
+        "setup": {
+          "ok": true,
+          "info": {
+            "eventName": "beforeModelUnload",
+            "clashFinderExtensionLoaded": true,
+            "worldOptionsSource": "ClashFinderExtension instance options",
+            "preBindingPresent": true,
+            "preBindingModelIsX": true,
+            "preXLive": true,
+            "handlerCaptured": true
+          }
+        },
+        "steps": {
+          "step1": {
+            "siblingCount": 2,
+            "assertions": [
+              [
+                "probeSawX",
+                "probe listener saw event.model === X",
+                true,
+                {
+                  "probeXEvents": 1
+                }
+              ],
+              [
+                "probeSawBindingPresent",
+                "probe saw the binding still present at dispatch",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingPresent": true,
+                  "t": 71161.10000002384
+                }
+              ],
+              [
+                "evictCalledForX",
+                "world.evictModel shim was called for X",
+                true,
+                {
+                  "evictXCalls": 1
+                }
+              ],
+              [
+                "evictSawBindingNull",
+                "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingNullAtCall": true
+                }
+              ],
+              [
+                "bindingNullAfterUnload",
+                "registry.bindingFor(K) === null after the unload",
+                true,
+                true
+              ],
+              [
+                "xNotLiveAfterUnload",
+                "world.isModelLive(X) === false after the unload",
+                true,
+                false
+              ]
+            ]
+          },
+          "step2": {
+            "assertions": [
+              [
+                "yIsNotX",
+                "Y !== X",
+                true,
+                null
+              ],
+              [
+                "yAbsentFromSiblings",
+                "Y is absent from the expected-sibling snapshot",
+                true,
+                null
+              ],
+              [
+                "registerYSucceeds",
+                "registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+                true,
+                null
+              ]
+            ]
+          },
+          "step3": {
+            "assertions": [
+              [
+                "handlerNeverThrows",
+                "the wiring handler did not throw",
+                true,
+                null
+              ],
+              [
+                "bindingModelIsY",
+                "registry.bindingFor(K).model === Y after the late unload of X",
+                false,
+                null
+              ],
+              [
+                "yLive",
+                "world.isModelLive(Y) === true",
+                false,
+                false
+              ],
+              [
+                "resolveRootsOnY",
+                "resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+                false,
+                {
+                  "skipped": "no live binding for K",
+                  "bindingError": null
+                }
+              ]
+            ]
+          }
+        },
+        "assertions": [
+          {
+            "step": "step1",
+            "key": "probeSawX",
+            "description": "probe listener saw event.model === X",
+            "ok": true,
+            "actual": {
+              "probeXEvents": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "probeSawBindingPresent",
+            "description": "probe saw the binding still present at dispatch",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingPresent": true,
+              "t": 71161.10000002384
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictCalledForX",
+            "description": "world.evictModel shim was called for X",
+            "ok": true,
+            "actual": {
+              "evictXCalls": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictSawBindingNull",
+            "description": "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingNullAtCall": true
+            }
+          },
+          {
+            "step": "step1",
+            "key": "bindingNullAfterUnload",
+            "description": "registry.bindingFor(K) === null after the unload",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step1",
+            "key": "xNotLiveAfterUnload",
+            "description": "world.isModelLive(X) === false after the unload",
+            "ok": true,
+            "actual": false
+          },
+          {
+            "step": "step2",
+            "key": "yIsNotX",
+            "description": "Y !== X",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step2",
+            "key": "yAbsentFromSiblings",
+            "description": "Y is absent from the expected-sibling snapshot",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step2",
+            "key": "registerYSucceeds",
+            "description": "registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "handlerNeverThrows",
+            "description": "the wiring handler did not throw",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "bindingModelIsY",
+            "description": "registry.bindingFor(K).model === Y after the late unload of X",
+            "ok": false,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "yLive",
+            "description": "world.isModelLive(Y) === true",
+            "ok": false,
+            "actual": false
+          },
+          {
+            "step": "step3",
+            "key": "resolveRootsOnY",
+            "description": "resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+            "ok": false,
+            "actual": {
+              "skipped": "no live binding for K",
+              "bindingError": null
+            }
+          }
+        ],
+        "cleanup": {
+          "hadState": true,
+          "done": {
+            "1.disposeWiring": "ran",
+            "2.removeProbeListener": "ran",
+            "3.restoreEvictModel": "ran",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "ran",
+            "5a.evictX": "skipped",
+            "5b.evictY": "skipped",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "realCallMade": {
+            "1.disposeWiring": true,
+            "2.removeProbeListener": true,
+            "3.restoreEvictModel": true,
+            "4a.unregisterX": true,
+            "4b.unregisterY": true,
+            "6.disposeEngine": true,
+            "7.disposeWorld": true
+          },
+          "failures": [],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [
+              "Y"
+            ],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": true,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "cleanupFailures": [],
+        "attachment": "not-needed",
+        "primary": {
+          "name": "HFailure",
+          "message": "T3 (h) failed at step3:assertion: bindingModelIsY, yLive, resolveRootsOnY",
+          "link": "step3:assertion",
+          "failedAssertions": [
+            "bindingModelIsY",
+            "yLive",
+            "resolveRootsOnY"
+          ]
+        },
+        "failingLink": "step3"
+      },
+      "ctrl-step4-sensitivity": {
+        "label": "ctrl-step4-sensitivity",
+        "opts": {
+          "skipDisposeInStep4": true
+        },
+        "phase": "step4:assert",
+        "setup": {
+          "ok": true,
+          "info": {
+            "eventName": "beforeModelUnload",
+            "clashFinderExtensionLoaded": true,
+            "worldOptionsSource": "ClashFinderExtension instance options",
+            "preBindingPresent": true,
+            "preBindingModelIsX": true,
+            "preXLive": true,
+            "handlerCaptured": true
+          }
+        },
+        "steps": {
+          "step1": {
+            "siblingCount": 2,
+            "assertions": [
+              [
+                "probeSawX",
+                "probe listener saw event.model === X",
+                true,
+                {
+                  "probeXEvents": 1
+                }
+              ],
+              [
+                "probeSawBindingPresent",
+                "probe saw the binding still present at dispatch",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingPresent": true,
+                  "t": 80929.89999997616
+                }
+              ],
+              [
+                "evictCalledForX",
+                "world.evictModel shim was called for X",
+                true,
+                {
+                  "evictXCalls": 1
+                }
+              ],
+              [
+                "evictSawBindingNull",
+                "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingNullAtCall": true
+                }
+              ],
+              [
+                "bindingNullAfterUnload",
+                "registry.bindingFor(K) === null after the unload",
+                true,
+                true
+              ],
+              [
+                "xNotLiveAfterUnload",
+                "world.isModelLive(X) === false after the unload",
+                true,
+                false
+              ]
+            ]
+          },
+          "step2": {
+            "assertions": [
+              [
+                "yIsNotX",
+                "Y !== X",
+                true,
+                null
+              ],
+              [
+                "yAbsentFromSiblings",
+                "Y is absent from the expected-sibling snapshot",
+                true,
+                null
+              ],
+              [
+                "registerYSucceeds",
+                "registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+                true,
+                null
+              ]
+            ]
+          },
+          "step3": {
+            "assertions": [
+              [
+                "handlerNeverThrows",
+                "the wiring handler did not throw",
+                true,
+                null
+              ],
+              [
+                "bindingModelIsY",
+                "registry.bindingFor(K).model === Y after the late unload of X",
+                true,
+                null
+              ],
+              [
+                "yLive",
+                "world.isModelLive(Y) === true",
+                true,
+                true
+              ],
+              [
+                "resolveRootsOnY",
+                "resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+                true,
+                {
+                  "roots": 468,
+                  "population": 543,
+                  "ownerMismatch": 0,
+                  "unreachable": 0
+                }
+              ]
+            ]
+          },
+          "step4": {
+            "assertions": [
+              [
+                "bindingSurvivesYUnload",
+                "registry.bindingFor(K) still non-null (model Y) after dispose + unload(Y)",
+                false,
+                null
+              ],
+              [
+                "yStillLive",
+                "world.isModelLive(Y) still true",
+                false,
+                false
+              ],
+              [
+                "noEvictForY",
+                "the disposed wiring did not evict Y",
+                false,
+                {
+                  "evictYCalls": 1
+                }
+              ]
+            ]
+          }
+        },
+        "assertions": [
+          {
+            "step": "step1",
+            "key": "probeSawX",
+            "description": "probe listener saw event.model === X",
+            "ok": true,
+            "actual": {
+              "probeXEvents": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "probeSawBindingPresent",
+            "description": "probe saw the binding still present at dispatch",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingPresent": true,
+              "t": 80929.89999997616
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictCalledForX",
+            "description": "world.evictModel shim was called for X",
+            "ok": true,
+            "actual": {
+              "evictXCalls": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictSawBindingNull",
+            "description": "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingNullAtCall": true
+            }
+          },
+          {
+            "step": "step1",
+            "key": "bindingNullAfterUnload",
+            "description": "registry.bindingFor(K) === null after the unload",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step1",
+            "key": "xNotLiveAfterUnload",
+            "description": "world.isModelLive(X) === false after the unload",
+            "ok": true,
+            "actual": false
+          },
+          {
+            "step": "step2",
+            "key": "yIsNotX",
+            "description": "Y !== X",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step2",
+            "key": "yAbsentFromSiblings",
+            "description": "Y is absent from the expected-sibling snapshot",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step2",
+            "key": "registerYSucceeds",
+            "description": "registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "handlerNeverThrows",
+            "description": "the wiring handler did not throw",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "bindingModelIsY",
+            "description": "registry.bindingFor(K).model === Y after the late unload of X",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "yLive",
+            "description": "world.isModelLive(Y) === true",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step3",
+            "key": "resolveRootsOnY",
+            "description": "resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+            "ok": true,
+            "actual": {
+              "roots": 468,
+              "population": 543,
+              "ownerMismatch": 0,
+              "unreachable": 0
+            }
+          },
+          {
+            "step": "step4",
+            "key": "bindingSurvivesYUnload",
+            "description": "registry.bindingFor(K) still non-null (model Y) after dispose + unload(Y)",
+            "ok": false,
+            "actual": null
+          },
+          {
+            "step": "step4",
+            "key": "yStillLive",
+            "description": "world.isModelLive(Y) still true",
+            "ok": false,
+            "actual": false
+          },
+          {
+            "step": "step4",
+            "key": "noEvictForY",
+            "description": "the disposed wiring did not evict Y",
+            "ok": false,
+            "actual": {
+              "evictYCalls": 1
+            }
+          }
+        ],
+        "cleanup": {
+          "hadState": true,
+          "done": {
+            "1.disposeWiring": "ran",
+            "2.removeProbeListener": "ran",
+            "3.restoreEvictModel": "ran",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "ran",
+            "5a.evictX": "skipped",
+            "5b.evictY": "skipped",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "realCallMade": {
+            "1.disposeWiring": true,
+            "2.removeProbeListener": true,
+            "3.restoreEvictModel": true,
+            "4a.unregisterX": true,
+            "4b.unregisterY": true,
+            "6.disposeEngine": true,
+            "7.disposeWorld": true
+          },
+          "failures": [],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "cleanupFailures": [],
+        "attachment": "not-needed",
+        "primary": {
+          "name": "HFailure",
+          "message": "T3 (h) failed at step4:assertion: bindingSurvivesYUnload, yStillLive, noEvictForY",
+          "link": "step4:assertion",
+          "failedAssertions": [
+            "bindingSurvivesYUnload",
+            "yStillLive",
+            "noEvictForY"
+          ]
+        },
+        "failingLink": "step4:assert"
+      },
+      "ctrl-cleanup-a-partial-init": {
+        "label": "ctrl-cleanup-a-partial-init",
+        "opts": {
+          "forceReloadTimeout": true
+        },
+        "phase": "step2:reload-wait",
+        "setup": {
+          "ok": true,
+          "info": {
+            "eventName": "beforeModelUnload",
+            "clashFinderExtensionLoaded": true,
+            "worldOptionsSource": "ClashFinderExtension instance options",
+            "preBindingPresent": true,
+            "preBindingModelIsX": true,
+            "preXLive": true,
+            "handlerCaptured": true
+          }
+        },
+        "steps": {
+          "step1": {
+            "siblingCount": 2,
+            "assertions": [
+              [
+                "probeSawX",
+                "probe listener saw event.model === X",
+                true,
+                {
+                  "probeXEvents": 1
+                }
+              ],
+              [
+                "probeSawBindingPresent",
+                "probe saw the binding still present at dispatch",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingPresent": true,
+                  "t": 98235.69999998808
+                }
+              ],
+              [
+                "evictCalledForX",
+                "world.evictModel shim was called for X",
+                true,
+                {
+                  "evictXCalls": 1
+                }
+              ],
+              [
+                "evictSawBindingNull",
+                "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingNullAtCall": true
+                }
+              ],
+              [
+                "bindingNullAfterUnload",
+                "registry.bindingFor(K) === null after the unload",
+                true,
+                true
+              ],
+              [
+                "xNotLiveAfterUnload",
+                "world.isModelLive(X) === false after the unload",
+                true,
+                false
+              ]
+            ]
+          }
+        },
+        "assertions": [
+          {
+            "step": "step1",
+            "key": "probeSawX",
+            "description": "probe listener saw event.model === X",
+            "ok": true,
+            "actual": {
+              "probeXEvents": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "probeSawBindingPresent",
+            "description": "probe saw the binding still present at dispatch",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingPresent": true,
+              "t": 98235.69999998808
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictCalledForX",
+            "description": "world.evictModel shim was called for X",
+            "ok": true,
+            "actual": {
+              "evictXCalls": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictSawBindingNull",
+            "description": "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingNullAtCall": true
+            }
+          },
+          {
+            "step": "step1",
+            "key": "bindingNullAfterUnload",
+            "description": "registry.bindingFor(K) === null after the unload",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step1",
+            "key": "xNotLiveAfterUnload",
+            "description": "world.isModelLive(X) === false after the unload",
+            "ok": true,
+            "actual": false
+          }
+        ],
+        "cleanup": {
+          "hadState": true,
+          "done": {
+            "1.disposeWiring": "ran",
+            "2.removeProbeListener": "ran",
+            "3.restoreEvictModel": "ran",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "skipped",
+            "5a.evictX": "skipped",
+            "5b.evictY": "skipped",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "realCallMade": {
+            "1.disposeWiring": true,
+            "2.removeProbeListener": true,
+            "3.restoreEvictModel": true,
+            "4a.unregisterX": true,
+            "6.disposeEngine": true,
+            "7.disposeWorld": true
+          },
+          "failures": [],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "cleanupFailures": [],
+        "attachment": "not-needed",
+        "primary": {
+          "name": "TimeoutError",
+          "message": "page.waitForFunction: Timeout 5000ms exceeded."
+        },
+        "failingLink": "step2:reload-wait"
+      },
+      "ctrl-cleanup-b-independence": {
+        "label": "ctrl-cleanup-b-independence",
+        "opts": {
+          "forceReloadTimeout": true,
+          "injectCleanupFailure": "2.removeProbeListener"
+        },
+        "phase": "step2:reload-wait",
+        "setup": {
+          "ok": true,
+          "info": {
+            "eventName": "beforeModelUnload",
+            "clashFinderExtensionLoaded": true,
+            "worldOptionsSource": "ClashFinderExtension instance options",
+            "preBindingPresent": true,
+            "preBindingModelIsX": true,
+            "preXLive": true,
+            "handlerCaptured": true
+          }
+        },
+        "steps": {
+          "step1": {
+            "siblingCount": 2,
+            "assertions": [
+              [
+                "probeSawX",
+                "probe listener saw event.model === X",
+                true,
+                {
+                  "probeXEvents": 1
+                }
+              ],
+              [
+                "probeSawBindingPresent",
+                "probe saw the binding still present at dispatch",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingPresent": true,
+                  "t": 110675.39999997616
+                }
+              ],
+              [
+                "evictCalledForX",
+                "world.evictModel shim was called for X",
+                true,
+                {
+                  "evictXCalls": 1
+                }
+              ],
+              [
+                "evictSawBindingNull",
+                "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingNullAtCall": true
+                }
+              ],
+              [
+                "bindingNullAfterUnload",
+                "registry.bindingFor(K) === null after the unload",
+                true,
+                true
+              ],
+              [
+                "xNotLiveAfterUnload",
+                "world.isModelLive(X) === false after the unload",
+                true,
+                false
+              ]
+            ]
+          }
+        },
+        "assertions": [
+          {
+            "step": "step1",
+            "key": "probeSawX",
+            "description": "probe listener saw event.model === X",
+            "ok": true,
+            "actual": {
+              "probeXEvents": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "probeSawBindingPresent",
+            "description": "probe saw the binding still present at dispatch",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingPresent": true,
+              "t": 110675.39999997616
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictCalledForX",
+            "description": "world.evictModel shim was called for X",
+            "ok": true,
+            "actual": {
+              "evictXCalls": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictSawBindingNull",
+            "description": "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingNullAtCall": true
+            }
+          },
+          {
+            "step": "step1",
+            "key": "bindingNullAfterUnload",
+            "description": "registry.bindingFor(K) === null after the unload",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step1",
+            "key": "xNotLiveAfterUnload",
+            "description": "world.isModelLive(X) === false after the unload",
+            "ok": true,
+            "actual": false
+          }
+        ],
+        "cleanup": {
+          "hadState": true,
+          "done": {
+            "1.disposeWiring": "ran",
+            "2.removeProbeListener": "threw",
+            "3.restoreEvictModel": "ran",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "skipped",
+            "5a.evictX": "skipped",
+            "5b.evictY": "skipped",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "realCallMade": {
+            "1.disposeWiring": true,
+            "2.removeProbeListener": true,
+            "3.restoreEvictModel": true,
+            "4a.unregisterX": true,
+            "6.disposeEngine": true,
+            "7.disposeWorld": true
+          },
+          "failures": [
+            {
+              "step": "2.removeProbeListener",
+              "error": {
+                "name": "Error",
+                "message": "T3 control: injected cleanup failure at 2.removeProbeListener (after the real call)"
+              }
+            }
+          ],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "cleanupFailures": [
+          {
+            "step": "2.removeProbeListener",
+            "error": {
+              "name": "Error",
+              "message": "T3 control: injected cleanup failure at 2.removeProbeListener (after the real call)"
+            }
+          }
+        ],
+        "attachment": "attached",
+        "primary": {
+          "name": "TimeoutError",
+          "message": "page.waitForFunction: Timeout 5000ms exceeded."
+        },
+        "failingLink": "step2:reload-wait"
+      },
+      "ctrl-cleanup-aggregate": {
+        "label": "ctrl-cleanup-aggregate",
+        "opts": {
+          "injectCleanupFailure": "3.restoreEvictModel"
+        },
+        "phase": "done",
+        "setup": {
+          "ok": true,
+          "info": {
+            "eventName": "beforeModelUnload",
+            "clashFinderExtensionLoaded": true,
+            "worldOptionsSource": "ClashFinderExtension instance options",
+            "preBindingPresent": true,
+            "preBindingModelIsX": true,
+            "preXLive": true,
+            "handlerCaptured": true
+          }
+        },
+        "steps": {
+          "step1": {
+            "siblingCount": 2,
+            "assertions": [
+              [
+                "probeSawX",
+                "probe listener saw event.model === X",
+                true,
+                {
+                  "probeXEvents": 1
+                }
+              ],
+              [
+                "probeSawBindingPresent",
+                "probe saw the binding still present at dispatch",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingPresent": true,
+                  "t": 124666.39999997616
+                }
+              ],
+              [
+                "evictCalledForX",
+                "world.evictModel shim was called for X",
+                true,
+                {
+                  "evictXCalls": 1
+                }
+              ],
+              [
+                "evictSawBindingNull",
+                "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+                true,
+                {
+                  "modelIs": "X",
+                  "bindingNullAtCall": true
+                }
+              ],
+              [
+                "bindingNullAfterUnload",
+                "registry.bindingFor(K) === null after the unload",
+                true,
+                true
+              ],
+              [
+                "xNotLiveAfterUnload",
+                "world.isModelLive(X) === false after the unload",
+                true,
+                false
+              ]
+            ]
+          },
+          "step2": {
+            "assertions": [
+              [
+                "yIsNotX",
+                "Y !== X",
+                true,
+                null
+              ],
+              [
+                "yAbsentFromSiblings",
+                "Y is absent from the expected-sibling snapshot",
+                true,
+                null
+              ],
+              [
+                "registerYSucceeds",
+                "registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+                true,
+                null
+              ]
+            ]
+          },
+          "step3": {
+            "assertions": [
+              [
+                "handlerNeverThrows",
+                "the wiring handler did not throw",
+                true,
+                null
+              ],
+              [
+                "bindingModelIsY",
+                "registry.bindingFor(K).model === Y after the late unload of X",
+                true,
+                null
+              ],
+              [
+                "yLive",
+                "world.isModelLive(Y) === true",
+                true,
+                true
+              ],
+              [
+                "resolveRootsOnY",
+                "resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+                true,
+                {
+                  "roots": 468,
+                  "population": 543,
+                  "ownerMismatch": 0,
+                  "unreachable": 0
+                }
+              ]
+            ]
+          },
+          "step4": {
+            "assertions": [
+              [
+                "bindingSurvivesYUnload",
+                "registry.bindingFor(K) still non-null (model Y) after dispose + unload(Y)",
+                true,
+                null
+              ],
+              [
+                "yStillLive",
+                "world.isModelLive(Y) still true",
+                true,
+                true
+              ],
+              [
+                "noEvictForY",
+                "the disposed wiring did not evict Y",
+                true,
+                {
+                  "evictYCalls": 0
+                }
+              ]
+            ]
+          }
+        },
+        "assertions": [
+          {
+            "step": "step1",
+            "key": "probeSawX",
+            "description": "probe listener saw event.model === X",
+            "ok": true,
+            "actual": {
+              "probeXEvents": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "probeSawBindingPresent",
+            "description": "probe saw the binding still present at dispatch",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingPresent": true,
+              "t": 124666.39999997616
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictCalledForX",
+            "description": "world.evictModel shim was called for X",
+            "ok": true,
+            "actual": {
+              "evictXCalls": 1
+            }
+          },
+          {
+            "step": "step1",
+            "key": "evictSawBindingNull",
+            "description": "evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+            "ok": true,
+            "actual": {
+              "modelIs": "X",
+              "bindingNullAtCall": true
+            }
+          },
+          {
+            "step": "step1",
+            "key": "bindingNullAfterUnload",
+            "description": "registry.bindingFor(K) === null after the unload",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step1",
+            "key": "xNotLiveAfterUnload",
+            "description": "world.isModelLive(X) === false after the unload",
+            "ok": true,
+            "actual": false
+          },
+          {
+            "step": "step2",
+            "key": "yIsNotX",
+            "description": "Y !== X",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step2",
+            "key": "yAbsentFromSiblings",
+            "description": "Y is absent from the expected-sibling snapshot",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step2",
+            "key": "registerYSucceeds",
+            "description": "registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "handlerNeverThrows",
+            "description": "the wiring handler did not throw",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "bindingModelIsY",
+            "description": "registry.bindingFor(K).model === Y after the late unload of X",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step3",
+            "key": "yLive",
+            "description": "world.isModelLive(Y) === true",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step3",
+            "key": "resolveRootsOnY",
+            "description": "resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+            "ok": true,
+            "actual": {
+              "roots": 468,
+              "population": 543,
+              "ownerMismatch": 0,
+              "unreachable": 0
+            }
+          },
+          {
+            "step": "step4",
+            "key": "bindingSurvivesYUnload",
+            "description": "registry.bindingFor(K) still non-null (model Y) after dispose + unload(Y)",
+            "ok": true,
+            "actual": null
+          },
+          {
+            "step": "step4",
+            "key": "yStillLive",
+            "description": "world.isModelLive(Y) still true",
+            "ok": true,
+            "actual": true
+          },
+          {
+            "step": "step4",
+            "key": "noEvictForY",
+            "description": "the disposed wiring did not evict Y",
+            "ok": true,
+            "actual": {
+              "evictYCalls": 0
+            }
+          }
+        ],
+        "cleanup": {
+          "hadState": true,
+          "done": {
+            "1.disposeWiring": "ran",
+            "2.removeProbeListener": "ran",
+            "3.restoreEvictModel": "threw",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "ran",
+            "5a.evictX": "skipped",
+            "5b.evictY": "ran",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "realCallMade": {
+            "1.disposeWiring": true,
+            "2.removeProbeListener": true,
+            "3.restoreEvictModel": true,
+            "4a.unregisterX": true,
+            "4b.unregisterY": true,
+            "5b.evictY": true,
+            "6.disposeEngine": true,
+            "7.disposeWorld": true
+          },
+          "failures": [
+            {
+              "step": "3.restoreEvictModel",
+              "error": {
+                "name": "Error",
+                "message": "T3 control: injected cleanup failure at 3.restoreEvictModel (after the real call)"
+              }
+            }
+          ],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "cleanupFailures": [
+          {
+            "step": "3.restoreEvictModel",
+            "error": {
+              "name": "Error",
+              "message": "T3 control: injected cleanup failure at 3.restoreEvictModel (after the real call)"
+            }
+          }
+        ],
+        "attachment": null,
+        "primary": null,
+        "failingLink": null
+      }
+    },
+    "controls": {
+      "ctrl-no-wiring": {
+        "detected": true,
+        "why": {
+          "failedAssertions": [
+            "evictCalledForX",
+            "evictSawBindingNull",
+            "bindingNullAfterUnload",
+            "xNotLiveAfterUnload"
+          ],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "thrown": {
+          "name": "HFailure",
+          "message": "T3 (h) failed at step1:assertion: evictCalledForX, evictSawBindingNull, bindingNullAfterUnload, xNotLiveAfterUnload",
+          "link": "step1:assertion",
+          "failedAssertions": [
+            "evictCalledForX",
+            "evictSawBindingNull",
+            "bindingNullAfterUnload",
+            "xNotLiveAfterUnload"
+          ]
+        }
+      },
+      "ctrl-step3-sensitivity": {
+        "detected": true,
+        "why": {
+          "failedAssertions": [
+            "bindingModelIsY",
+            "yLive",
+            "resolveRootsOnY"
+          ],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [
+              "Y"
+            ],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": true,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "thrown": {
+          "name": "HFailure",
+          "message": "T3 (h) failed at step3:assertion: bindingModelIsY, yLive, resolveRootsOnY",
+          "link": "step3:assertion",
+          "failedAssertions": [
+            "bindingModelIsY",
+            "yLive",
+            "resolveRootsOnY"
+          ]
+        }
+      },
+      "ctrl-step4-sensitivity": {
+        "detected": true,
+        "why": {
+          "failedAssertions": [
+            "bindingSurvivesYUnload",
+            "yStillLive",
+            "noEvictForY"
+          ],
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "thrown": {
+          "name": "HFailure",
+          "message": "T3 (h) failed at step4:assertion: bindingSurvivesYUnload, yStillLive, noEvictForY",
+          "link": "step4:assertion",
+          "failedAssertions": [
+            "bindingSurvivesYUnload",
+            "yStillLive",
+            "noEvictForY"
+          ]
+        }
+      },
+      "ctrl-cleanup-a-partial-init": {
+        "detected": true,
+        "why": {
+          "done": {
+            "1.disposeWiring": "ran",
+            "2.removeProbeListener": "ran",
+            "3.restoreEvictModel": "ran",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "skipped",
+            "5a.evictX": "skipped",
+            "5b.evictY": "skipped",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          },
+          "primary": {
+            "name": "TimeoutError",
+            "message": "page.waitForFunction: Timeout 5000ms exceeded."
+          }
+        },
+        "thrown": {
+          "name": "TimeoutError",
+          "message": "page.waitForFunction: Timeout 5000ms exceeded."
+        }
+      },
+      "ctrl-cleanup-b-independence": {
+        "detected": true,
+        "why": {
+          "done": {
+            "1.disposeWiring": "ran",
+            "2.removeProbeListener": "threw",
+            "3.restoreEvictModel": "ran",
+            "4a.unregisterX": "ran",
+            "4b.unregisterY": "skipped",
+            "5a.evictX": "skipped",
+            "5b.evictY": "skipped",
+            "6.disposeEngine": "ran",
+            "7.disposeWorld": "ran"
+          },
+          "cleanupFailures": [
+            {
+              "step": "2.removeProbeListener",
+              "error": {
+                "name": "Error",
+                "message": "T3 control: injected cleanup failure at 2.removeProbeListener (after the real call)"
+              }
+            }
+          ],
+          "attachment": "attached",
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "thrown": {
+          "name": "TimeoutError",
+          "message": "page.waitForFunction: Timeout 5000ms exceeded."
+        }
+      },
+      "ctrl-cleanup-aggregate": {
+        "detected": true,
+        "why": {
+          "thrown": {
+            "name": "AggregateError",
+            "message": "T3 (h) [ctrl-cleanup-aggregate]: test passed but 1 cleanup step(s) failed"
+          },
+          "post": {
+            "bindingNullAfterUnregister": true,
+            "hasEventListenerAvailable": true,
+            "probeListenerRemains": false,
+            "wiringHandlerRemains": false,
+            "evictModelIsOriginal": true,
+            "bindingNullPost": true,
+            "engineDisposed": true,
+            "worldDisposed": true,
+            "modelBasis": "expected-sibling snapshot (after X disappeared in step 1)",
+            "extraModels": [],
+            "missingModels": 0,
+            "yLoadedAndNotUnloaded": false,
+            "modelsOk": true,
+            "ok": true
+          }
+        },
+        "thrown": {
+          "name": "AggregateError",
+          "message": "T3 (h) [ctrl-cleanup-aggregate]: test passed but 1 cleanup step(s) failed"
+        }
+      }
+    },
+    "probeSilentAfterCleanup": {
+      "main": true,
+      "ctrl-no-wiring": true,
+      "ctrl-step3-sensitivity": true,
+      "ctrl-step4-sensitivity": true,
+      "ctrl-cleanup-a-partial-init": true,
+      "ctrl-cleanup-b-independence": true,
+      "ctrl-cleanup-aggregate": true
+    }
+  },
+  "gates": {
+    "T3": "PASS (inside the accepted envelope only)",
+    "liveUnloadIntegration": "VERIFIED_IN_ACCEPTED_ENVELOPE",
+    "failingLinks": [],
+    "notCovered": [
+      "(g) PairId role-symmetry half of AC-15 (g): not evidenced / not covered by this script"
+    ],
+    "durationMs": 132806
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "checks": [
+    {
+      "name": "[import] /clashtest/viewer/index.js loads in-page with the required exports",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[import] /clashtest/index.js loads in-page with the required exports",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[import] /collision/index.js loads in-page with the required exports",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[import] /collision/viewer/ViewerModelAdapter.js loads in-page with the required exports",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[import] /clashtest/planning/scopeDigest.js loads in-page with the required exports",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[import] /collision/constants.js loads in-page with the required exports",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[load] exactly three Model objects loaded",
+      "ok": true,
+      "expected": 3,
+      "actual": 3
+    },
+    {
+      "name": "[load] all three models resolved by URN",
+      "ok": true,
+      "expected": [
+        true,
+        true,
+        true
+      ],
+      "actual": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "name": "[env] Viewer script is the pinned 7.124.2 build",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[env] Chromium major version is 151 (accepted envelope)",
+      "ok": true,
+      "expected": 151,
+      "actual": 151
+    },
+    {
+      "name": "[env] every model is SVF (isOTG === false) and 3D",
+      "ok": true,
+      "expected": [
+        [
+          false,
+          true
+        ],
+        [
+          false,
+          true
+        ],
+        [
+          false,
+          true
+        ]
+      ],
+      "actual": [
+        [
+          false,
+          true
+        ],
+        [
+          false,
+          true
+        ],
+        [
+          false,
+          true
+        ]
+      ]
+    },
+    {
+      "name": "[a][arch] whole resolveRoots succeeds (a D-V9 bound/capacity rejection here is a finding: the model would be refused)",
+      "ok": true,
+      "expected": null,
+      "actual": null
+    },
+    {
+      "name": "[a][arch] ownerMismatch.count === 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[a][arch] unreachable.count === 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[a][arch] unreachable.unattributable both 0",
+      "ok": true,
+      "expected": {
+        "notLoaded": 0,
+        "ownerUnresolvable": 0
+      },
+      "actual": {
+        "notLoaded": 0,
+        "ownerUnresolvable": 0
+      }
+    },
+    {
+      "name": "[a][arch] population.count equals the OQ-4 value",
+      "ok": true,
+      "expected": 5435,
+      "actual": 5435
+    },
+    {
+      "name": "[a][arch] roots.length equals the OQ-4 value",
+      "ok": true,
+      "expected": 4244,
+      "actual": 4244
+    },
+    {
+      "name": "[b][arch] every root compared against extractFragments",
+      "ok": true,
+      "expected": 4244,
+      "actual": 4244
+    },
+    {
+      "name": "[b][arch] per-root mismatches (size / owners / subtree digest / library threw) all 0",
+      "ok": true,
+      "expected": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "actual": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "[b][arch] population digest recomputed from extractAllFragments equals the adapter's",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[b][arch] extractAllFragments owner differs from fragList.getDbIds: 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[c][arch] digestScope('whole') equals resolveRoots population (count, digest)",
+      "ok": true,
+      "expected": [
+        "population",
+        true,
+        true
+      ],
+      "actual": [
+        "population",
+        true,
+        true
+      ]
+    },
+    {
+      "name": "[c][arch] sampled per-root digestScope == resolveRoots (mismatches, throws)",
+      "ok": true,
+      "expected": [
+        0,
+        0
+      ],
+      "actual": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "[c][arch] one multi-root digestScope equals resolveRoots for the same scope",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[a][struct] whole resolveRoots succeeds (a D-V9 bound/capacity rejection here is a finding: the model would be refused)",
+      "ok": true,
+      "expected": null,
+      "actual": null
+    },
+    {
+      "name": "[a][struct] ownerMismatch.count === 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[a][struct] unreachable.count === 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[a][struct] unreachable.unattributable both 0",
+      "ok": true,
+      "expected": {
+        "notLoaded": 0,
+        "ownerUnresolvable": 0
+      },
+      "actual": {
+        "notLoaded": 0,
+        "ownerUnresolvable": 0
+      }
+    },
+    {
+      "name": "[a][struct] population.count equals the OQ-4 value",
+      "ok": true,
+      "expected": 543,
+      "actual": 543
+    },
+    {
+      "name": "[a][struct] roots.length equals the OQ-4 value",
+      "ok": true,
+      "expected": 468,
+      "actual": 468
+    },
+    {
+      "name": "[b][struct] every root compared against extractFragments",
+      "ok": true,
+      "expected": 468,
+      "actual": 468
+    },
+    {
+      "name": "[b][struct] per-root mismatches (size / owners / subtree digest / library threw) all 0",
+      "ok": true,
+      "expected": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "actual": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "[b][struct] population digest recomputed from extractAllFragments equals the adapter's",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[b][struct] extractAllFragments owner differs from fragList.getDbIds: 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[c][struct] digestScope('whole') equals resolveRoots population (count, digest)",
+      "ok": true,
+      "expected": [
+        "population",
+        true,
+        true
+      ],
+      "actual": [
+        "population",
+        true,
+        true
+      ]
+    },
+    {
+      "name": "[c][struct] sampled per-root digestScope == resolveRoots (mismatches, throws)",
+      "ok": true,
+      "expected": [
+        0,
+        0
+      ],
+      "actual": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "[c][struct] one multi-root digestScope equals resolveRoots for the same scope",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[c][struct] explicit root 2734: exactly 1 fragment owned by itself, digestScope == resolveRoots",
+      "ok": true,
+      "expected": [
+        1,
+        1,
+        [
+          2734
+        ],
+        [],
+        true
+      ],
+      "actual": [
+        1,
+        1,
+        [
+          2734
+        ],
+        [],
+        true
+      ]
+    },
+    {
+      "name": "[c][struct] explicit root 3965: exactly 1 fragment owned by itself, digestScope == resolveRoots",
+      "ok": true,
+      "expected": [
+        1,
+        1,
+        [
+          3965
+        ],
+        [],
+        true
+      ],
+      "actual": [
+        1,
+        1,
+        [
+          3965
+        ],
+        [],
+        true
+      ]
+    },
+    {
+      "name": "[a][mech] whole resolveRoots succeeds (a D-V9 bound/capacity rejection here is a finding: the model would be refused)",
+      "ok": true,
+      "expected": null,
+      "actual": null
+    },
+    {
+      "name": "[a][mech] ownerMismatch.count === 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[a][mech] unreachable.count === 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[a][mech] unreachable.unattributable both 0",
+      "ok": true,
+      "expected": {
+        "notLoaded": 0,
+        "ownerUnresolvable": 0
+      },
+      "actual": {
+        "notLoaded": 0,
+        "ownerUnresolvable": 0
+      }
+    },
+    {
+      "name": "[a][mech] population.count equals the OQ-4 value",
+      "ok": true,
+      "expected": 1496,
+      "actual": 1496
+    },
+    {
+      "name": "[a][mech] roots.length equals the OQ-4 value",
+      "ok": true,
+      "expected": 1257,
+      "actual": 1257
+    },
+    {
+      "name": "[b][mech] every root compared against extractFragments",
+      "ok": true,
+      "expected": 1257,
+      "actual": 1257
+    },
+    {
+      "name": "[b][mech] per-root mismatches (size / owners / subtree digest / library threw) all 0",
+      "ok": true,
+      "expected": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "actual": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "[b][mech] population digest recomputed from extractAllFragments equals the adapter's",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[b][mech] extractAllFragments owner differs from fragList.getDbIds: 0",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[c][mech] digestScope('whole') equals resolveRoots population (count, digest)",
+      "ok": true,
+      "expected": [
+        "population",
+        true,
+        true
+      ],
+      "actual": [
+        "population",
+        true,
+        true
+      ]
+    },
+    {
+      "name": "[c][mech] sampled per-root digestScope == resolveRoots (mismatches, throws)",
+      "ok": true,
+      "expected": [
+        0,
+        0
+      ],
+      "actual": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "[c][mech] one multi-root digestScope equals resolveRoots for the same scope",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[control i-wrong-owner] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[control ii-hidden-fragment] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[control iii-not-loaded] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[control iv-tree-unavailable] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[control v-capacity] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[control] after restore: Structure is clean again (no mismatch, no unreachable, OQ-4 counts, no leftover patch)",
+      "ok": true,
+      "expected": [
+        0,
+        0,
+        543,
+        468,
+        []
+      ],
+      "actual": [
+        0,
+        0,
+        543,
+        468,
+        []
+      ]
+    },
+    {
+      "name": "[h] step1: probe listener saw event.model === X",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step1: probe saw the binding still present at dispatch",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step1: world.evictModel shim was called for X",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step1: evictModel shim saw registry.bindingFor(K) already null (unregister ran before evict)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step1: registry.bindingFor(K) === null after the unload",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step1: world.isModelLive(X) === false after the unload",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step2: Y !== X",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step2: Y is absent from the expected-sibling snapshot",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step2: registry.register(K, Y, { modelVersion: 'live-1' }) succeeds (a ModelKeyVersionConflictError is a FAILURE)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step3: the wiring handler did not throw",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step3: registry.bindingFor(K).model === Y after the late unload of X",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step3: world.isModelLive(Y) === true",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step3: resolveRoots({ modelKey: K, model: Y, ... }, 'whole', ctx) succeeds",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step4: registry.bindingFor(K) still non-null (model Y) after dispose + unload(Y)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step4: world.isModelLive(Y) still true",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] step4: the disposed wiring did not evict Y",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] main run completed with no primary failure and no cleanup failure",
+      "ok": true,
+      "expected": null,
+      "actual": null
+    },
+    {
+      "name": "[h] main run: cleanup postcondition (c) holds (no listener, evictModel original, binding null, disposed, models == expected siblings)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] main run: every step (1)-(4) executed",
+      "ok": true,
+      "expected": [
+        "step1",
+        "step2",
+        "step3",
+        "step4"
+      ],
+      "actual": [
+        "step1",
+        "step2",
+        "step3",
+        "step4"
+      ]
+    },
+    {
+      "name": "[h control ctrl-no-wiring] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h control ctrl-step3-sensitivity] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h control ctrl-step4-sensitivity] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h control ctrl-cleanup-a-partial-init] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h control ctrl-cleanup-b-independence] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h control ctrl-cleanup-aggregate] detected",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[h] no removed probe listener fired after its cleanup (behavioral backup of postcondition (c))",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "zero console errors across the whole run",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "zero uncaught page exceptions across the whole run",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    }
+  ],
+  "readinessHookInstall": {
+    "installed": true,
+    "modelsPresentAtInstall": []
+  },
+  "readinessAfterReload": {
+    "outcomes": [
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "tEvent": 6091.399999976158,
+        "atCall": {
+          "isObjectTreeCreated": false,
+          "instanceTreeInData": false,
+          "isLoadDone": false
+        },
+        "outcome": "resolved",
+        "result": {
+          "roots": 4244,
+          "population": 5435,
+          "ownerMismatch": 0,
+          "unreachable": 0
+        },
+        "tSettled": 8914.899999976158
+      },
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+        "tEvent": 16410.600000023842,
+        "atCall": {
+          "isObjectTreeCreated": false,
+          "instanceTreeInData": false,
+          "isLoadDone": false
+        },
+        "outcome": "resolved",
+        "result": {
+          "roots": 468,
+          "population": 543,
+          "ownerMismatch": 0,
+          "unreachable": 0
+        },
+        "tSettled": 19726.399999976158
+      },
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+        "tEvent": 28560,
+        "atCall": {
+          "isObjectTreeCreated": false,
+          "instanceTreeInData": false,
+          "isLoadDone": false
+        },
+        "outcome": "resolved",
+        "result": {
+          "roots": 1257,
+          "population": 1496,
+          "ownerMismatch": 0,
+          "unreachable": 0
+        },
+        "tSettled": 29636.30000001192
+      },
+      {
+        "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+        "tEvent": 37732.19999998808,
+        "atCall": {
+          "isObjectTreeCreated": false,
+          "instanceTreeInData": false,
+          "isLoadDone": false
+        },
+        "outcome": "resolved",
+        "result": {
+          "roots": 1257,
+          "population": 1496,
+          "ownerMismatch": 0,
+          "unreachable": 0
+        },
+        "tSettled": 37761
+      }
+    ],
+    "pending": 0,
+    "installedAt": 2858.699999988079,
+    "modelsPresentAtInstall": []
+  }
+}
