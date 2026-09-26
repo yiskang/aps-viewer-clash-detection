@@ -165,19 +165,27 @@ export function caveatedFilterFor(set, caveatedIds = []) {
   return { matches, count: matches.length, total: set.results.length, unavailable: [] };
 }
 
-/** The real `derivations.summarize(set)` response for a hand-built set (only what the Panel reads is exact; see support test). */
+/**
+ * The real `derivations.summarize(set)` response for a hand-built set, mirroring clashtest/derive/summarize.js.
+ * ONLY the fields the Panel reads are supported: runId, status, environmentSensitive, axes, totalResults, unitOutcomes,
+ * planningGaps (cause-keyed `{cause, count}` rows) and gapWeight. It deliberately omits `resultsByMode`,
+ * `resultsByPairModels`, `resultsByCrossModel`, `resultsCaveated` and `caveats`; the agreement test compares only these keys.
+ */
 export function summaryFor(set) {
+  const sortedRows = (map) => [...map.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([, v]) => v);
+  const bump = (map, key, seed) => { const e = map.get(key); if (e) e.count += 1; else map.set(key, { ...seed, count: 1 }); };
   const outcomes = new Map();
   let gapWeight = 0;
   for (const u of set.ledger.units) {
     if (u.outcome === 'split') continue;
-    const key = `${u.outcome}\u0000${u.cause}`;
-    outcomes.set(key, { outcome: u.outcome, cause: u.cause, count: (outcomes.get(key)?.count ?? 0) + 1 });
-    if (u.outcome !== 'evaluated') gapWeight += u.pairSpaceWeight;
+    bump(outcomes, `${u.outcome}\u0000${u.cause ?? ''}`, { outcome: u.outcome, cause: u.cause ?? null });
+    if (u.outcome !== 'evaluated') gapWeight += u.pairSpaceWeight ?? 0;
   }
+  const gaps = new Map();
+  for (const g of set.ledger.planningGaps ?? []) bump(gaps, g.cause, { cause: g.cause });
   return {
-    runId: set.runId, status: set.outcome.status, environmentSensitive: set.outcome.environmentSensitive,
+    runId: set.runId, status: set.outcome.status, environmentSensitive: !!set.outcome.environmentSensitive,
     axes: { coverage: set.outcome.coverage, integrity: set.outcome.integrity, freshness: set.outcome.freshness, freshnessAtSeal: true },
-    totalResults: set.results.length, unitOutcomes: [...outcomes.values()], planningGaps: [...set.ledger.planningGaps], gapWeight,
+    totalResults: set.results.length, unitOutcomes: sortedRows(outcomes), planningGaps: sortedRows(gaps), gapWeight,
   };
 }

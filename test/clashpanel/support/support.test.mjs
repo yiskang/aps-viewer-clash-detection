@@ -491,9 +491,9 @@ test('fake viewer: fitToView supports the per-model form and the aggregate form 
   const a = createFakeModel({ id: 1 });
   const v = createFakeViewer({ models: [a] });
   v.fitToView([1, 2], a, true);
-  v.fitToView([{ model: a, selection: [1] }], true);
+  v.fitToView([{ model: a, selection: [1] }], undefined, true);
   assert.deepEqual(v.calls.fitToView.map((c) => c.form), ['ids', 'aggregate']);
-  assert.throws(() => v.fitToView([{ model: a, ids: [1] }], true), TypeError);
+  assert.throws(() => v.fitToView([{ model: a, ids: [1] }], undefined, true), TypeError);
   assert.throws(() => v.fitToView('x', a), TypeError);
   v.aggregateFit = false;
   assert.throws(() => v.fitToView([{ model: a, selection: [1] }]), /aggregate form is not supported/);
@@ -554,6 +554,10 @@ test('fake viewer api: delegates to the fake viewer, returns bounds only when th
   a.setBoundsMode('throw');
   assert.throws(() => api.getElementWorldBounds(a, 5));
   assert.equal(api.hasAggregateFit(), true);
+  const list = [{ model: a, selection: [5] }];
+  api.fitToViewAggregate(list, true);
+  assert.deepEqual(v.calls.fitToView.at(-1).args, [list, undefined, true]);
+  assert.equal(v.calls.fitToView.at(-1).form, 'aggregate');
   v.aggregateFit = false;
   assert.equal(api.hasAggregateFit(), false);
   api.overlays.addScene('s');
@@ -637,7 +641,8 @@ test('fixtures: manyResults(n) yields n distinct, canonically ordered results ch
 
 test('fixtures: elementGroupsFor / caveatedFilterFor / summaryFor agree with the REAL derivation context on hand-built sets', async () => {
   const ctx = createDerivationContext();
-  for (const set of [hardSet(3, { unlocated: [1] }), softSet(), partialSet(2), emptyCompletedClean()]) {
+  for (const set of [hardSet(3, { unlocated: [1] }), softSet(), partialSet(2), emptyCompletedClean(),
+    failedSet({ planningGaps: [{ phase: 'planning', cause: 'enumeration-failed' }, { phase: 'planning', cause: 'enumeration-failed' }, { phase: 'planning', cause: 'another-cause' }] })]) {
     assert.deepEqual(await ctx.groupBy(set, ['element']), elementGroupsFor(set));
     assert.deepEqual(await ctx.filter(set, [{ facet: 'caveated', op: 'eq', value: true }]), caveatedFilterFor(set));
     const real = await ctx.summarize(set);
