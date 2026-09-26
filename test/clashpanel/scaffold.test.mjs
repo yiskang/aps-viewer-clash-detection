@@ -28,6 +28,9 @@ const EXPECTED_MODULES = [
   'core/labels.js',
   'core/resolve.js',
   'core/rows.js',
+  'core/intents.js',
+  'core/controller.js',
+  'core/viewModel.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
