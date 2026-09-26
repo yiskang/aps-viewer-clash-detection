@@ -23,9 +23,14 @@ import { RUN_PHASE, initialRunState, reduceRun, canRun, canStop } from './runMac
 import { createResidency } from './residency.js';
 import { mapAdmissionError, diagnosticsExport } from './runReport.js';
 import { createLabelResolver } from './labels.js';
-import { resolveSide } from './resolve.js';
+import { resolveSide, resolveResult } from './resolve.js';
 import { buildViewModel } from './viewModel.js';
-import { BASIS_VERDICT_TIMEOUT_MS, READINESS_POLL_MS } from './constants.js';
+import { buildResultIndex } from './resultIndex.js';
+import { EMPTY_FILTER_SPEC, isFilterActive, parseMaxGap, runFilterPass } from './filters.js';
+import { computeElementGroups, filterGroups, sortGroups, matchIdsFrom } from './grouping.js';
+import { buildOrderedIndex, pageSlice, clampPage } from './orderedList.js';
+import { buildRow, buildGroupHeaderRow, livenessOf } from './rows.js';
+import { BASIS_VERDICT_TIMEOUT_MS, READINESS_POLL_MS, PAGE_SIZE, FILTER_DEBOUNCE_MS } from './constants.js';
 
 // ── construction ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -54,6 +59,7 @@ export function createPanelController({ engine, catalog, bridge, scheduler = cre
     runRecord: null,                       // Panel-local facts captured when the run was ADMITTED (not in the sealed set)
     readAbort: new AbortController(),
   };
+  Object.assign(c, resultsState());
   c.labels = createLabelResolver({
     catalog, scheduler,
     resolveLiveModel: (modelKey) => liveModelFor(c, modelKey),
@@ -99,6 +105,9 @@ function bumpGeneration(c) {
   c.gen.bump();
   c.readAbort.abort();
   c.readAbort = new AbortController();
+  if (c.filterTimer !== null) { c.scheduler.clearTimeout(c.filterTimer); c.filterTimer = null; }
+  c.filterEpoch += 1;
+  c.labels.reset();
 }
 
 /**
@@ -248,6 +257,7 @@ function onCatalogChange(c) {
   if (c.disposed) return;
   c.labels.invalidateNames();                                     // names/known models may have changed (RF-2)
   revalidate(c, { reEvaluateSoft: true });                        // readiness/registration/basis may have changed
+  recheckFreshness(c);                                            // §7.3: re-check on model add/unload
   touch(c);
 }
 
@@ -315,6 +325,7 @@ function retireDisplayed(c, { acknowledgeUnsaved }) {
   c.runRecord = null;
   c.handle = null;
   c.run = initialRunState();
+  resetResultsView(c);
 }
 
 function safeSnapshot(handle) {
@@ -386,6 +397,7 @@ function onRunDone(c, g, handle, summary) {
   c.displayed = { runId: summary.runId, status: summary.status, resultSet: summary.resultSet ?? null, persistence: summary.persistence ?? null };
   c.labels.invalidateNames();                                     // the displayed run's models join the known set
   if (summary.status === 'failed' || !summary.resultSet) c.setupCollapsed = false;   // §14.3: re-expands on failure
+  if (summary.resultSet) startPipeline(c, g, summary.resultSet);
   touch(c);
 }
 
@@ -492,6 +504,326 @@ function dispose(c) {
   return c.disposing;
 }
 
+// ── results pipeline (spec §7.3, §7.5, §8, §10, §12; Task 17) ─────────────────────────────────────────────────
+
+const CAVEATED_CLAUSE = Object.freeze({ facet: 'caveated', op: 'eq', value: true });
+const SORT_VALUES = new Set(['default', 'gap-asc', 'group-count', 'group-label']);
+const GROUP_SORT = Object.freeze({ 'group-count': 'count-desc', 'group-label': 'label' });
+const NO_CLAIM = Object.freeze({ allowed: false, unqualified: false, qualifiers: [], exclusions: [] });   // fail closed
+
+function defaultView() {
+  return {
+    filter: EMPTY_FILTER_SPEC, textDraft: '', maxGapText: '', maxGapError: null,
+    groupBy: 'none', sort: 'default', page: 0, expanded: new Set(),
+  };
+}
+
+function resultsState() {
+  return { pipe: null, view: defaultView(), filterTimer: null, filterEpoch: 0, freshAbort: null, freshDetach: null, freshQueued: false };
+}
+
+/** New run / Clear / New test: drop the displayed list; Group-by mode is a view preference and survives. */
+function resetResultsView(c) {
+  c.pipe = null;
+  c.view = { ...defaultView(), groupBy: c.view.groupBy };
+}
+
+/** A pipeline completion commits only for the displayed generation. */
+function current(c, g) {
+  return !c.disposed && c.gen.isCurrent(g) && c.pipe !== null && c.pipe.gen === g;
+}
+
+function startPipeline(c, g, resultSet) {
+  let index = null;
+  try { index = buildResultIndex(resultSet); } catch { index = null; }
+  c.pipe = {
+    gen: g, set: resultSet, index,
+    summary: null, caveatedIds: null, maskState: 'pending',   // caveated mask: 'pending' | 'ready' | 'unavailable'
+    maskMissing: false,
+    freshness: null, freshnessPending: false, claim: null, claimPending: false,
+    groupTable: null, groupingState: 'idle', groupingReason: null, groupsById: null,
+    matching: null, filterBusy: false, ordered: null, textIndexed: false,
+  };
+  if (index === null) return;
+  const p = c.pipe;
+  // One summarize and one caveated mask per (generation, spec), single-flight, summarize first (§5.2, AC-P4).
+  c.queue.submit({ key: 'summarize', priority: 0, job: (signal) => c.engine.derivations.summarize(resultSet, { signal }) })
+    .then((r) => {
+      if (!current(c, g) || r.status !== 'ok') return;
+      p.summary = r.value;
+      touch(c);
+    }, () => {}).catch(() => { /* a throwing commit must not surface as unhandled */ });
+  c.queue.submit({ key: 'caveated-mask', priority: 1, job: (signal) => c.engine.derivations.filter(resultSet, [CAVEATED_CLAUSE], { signal }) })
+    .then((r) => {
+      if (!current(c, g) || r.status === 'superseded') return;
+      p.caveatedIds = r.status === 'ok' ? new Set(r.value.matches) : null;
+      p.maskState = r.status === 'ok' ? 'ready' : 'unavailable';     // failed after the queue's bounded retries
+      if (c.view.filter.unverified) refreshList(c);
+      touch(c);
+    }, () => {}).catch(() => { /* a throwing commit must not surface as unhandled */ });
+  recheckFreshness(c);
+  refreshList(c);
+  if (c.view.groupBy === 'element') ensureGrouping(c);
+}
+
+/**
+ * Async freshness (and, for an EMPTY set, the no-clash claim). Re-checked on done, catalog change, model left and
+ * Panel show. Triggers in the same tick are coalesced into ONE check; a newer check aborts the previous pair
+ * through its own AbortController (also aborted by a generation change); an aborted read is swallowed — never
+ * shown as 'unverifiable' — and the generation guard remains the final commit check.
+ *
+ * CLAIM GATE (review H1). For an EMPTY set the two reads are ONE snapshot: `land()` commits `freshness` and `claim`
+ * together, only after BOTH reads of the SAME check completed, so the badge, the claim and the wording can never
+ * describe different reads; and a re-check withdraws the held claim immediately (it never outlives the event that
+ * invalidated it). Non-empty sets need no claim, so their freshness commits on its own. Each check registers ONE listener
+ * on the generation signal and removes it when its reads settle or a newer check supersedes it (no per-recheck growth).
+ */
+function recheckFreshness(c) {
+  const p = c.pipe;
+  if (p === null || p.index === null) return;
+  p.freshnessPending = true;
+  if (p.index.count === 0) { p.claim = null; p.claimPending = true; }   // withdraw the previous claim now (fail closed)
+  if (c.freshQueued) return;                                        // coalesce a burst of triggers
+  c.freshQueued = true;
+  queueMicrotask(() => { c.freshQueued = false; startFreshnessCheck(c); });
+}
+
+const UNVERIFIABLE_FRESHNESS = Object.freeze({ state: 'unverifiable', reasons: [] });
+
+function startFreshnessCheck(c) {
+  const p = c.pipe;
+  if (c.disposed || p === null || p.index === null) return;
+  const g = p.gen;
+  const runId = p.set.runId;
+  if (c.freshAbort !== null) c.freshAbort.abort();                  // the previous freshness/claim pair is obsolete…
+  if (c.freshDetach !== null) c.freshDetach();                      // …and stops listening to the generation signal
+  const controller = new AbortController();
+  c.freshAbort = controller;
+  const { signal } = controller;
+  const generationSignal = c.readAbort.signal;
+  const onGenerationAbort = () => controller.abort();
+  generationSignal.addEventListener('abort', onGenerationAbort, { once: true });
+  const detach = () => generationSignal.removeEventListener('abort', onGenerationAbort);   // no listener outlives its check
+  c.freshDetach = detach;
+  const wantsClaim = p.index.count === 0;                           // the claim only words an EMPTY set (§7.5)
+  let outstanding = wantsClaim ? 2 : 1;                             // reads of THIS check still to settle
+  const release = () => { outstanding -= 1; if (outstanding === 0) detach(); };
+  const reads = { freshness: null, claim: null };                   // the reads of THIS check only
+  const land = () => {
+    if (reads.freshness === null || (wantsClaim && reads.claim === null)) return;   // the pair is incomplete
+    p.freshness = reads.freshness;
+    p.freshnessPending = false;
+    if (wantsClaim) { p.claim = reads.claim; p.claimPending = false; }
+  };
+  const commit = (apply) => (r) => {
+    try {
+      if (signal.aborted || r.error?.name === 'ReadAbortedError' || !current(c, g)) return;   // swallowed
+      apply(r);
+      land();
+      touch(c);
+    } finally {
+      release();
+    }
+  };
+  const settle = (promiseFn) => Promise.resolve().then(promiseFn).then((value) => ({ value }), (error) => ({ error }));
+  settle(() => c.engine.getFreshness(runId, { signal })).then(commit((r) => {
+    reads.freshness = r.error === undefined && r.value ? r.value : UNVERIFIABLE_FRESHNESS;   // a failed read is never 'current'
+  })).catch(() => { /* a throwing commit must not surface as unhandled */ });
+  if (!wantsClaim) return;
+  settle(() => c.engine.assessNoClashClaim(runId, { signal })).then(commit((r) => {
+    reads.claim = r.error === undefined && r.value ? r.value : NO_CLAIM;    // fail closed
+  })).catch(() => { /* a throwing commit must not surface as unhandled */ });
+}
+
+/**
+ * One sliced, supersedable Panel-side filter pass (filterEpoch inside the generation, §10.1). The 'unverified'
+ * filter needs the caveated mask: while it is pending the previously committed list stays (busy); if it is
+ * unavailable the list is an explicit error state — an empty match set is never committed for a missing mask.
+ */
+function refreshList(c) {
+  const p = c.pipe;
+  if (p === null || p.index === null) return;
+  const g = p.gen;
+  c.filterEpoch += 1;
+  const epoch = c.filterEpoch;
+  p.maskMissing = false;
+  if (c.view.filter.unverified) {
+    if (p.maskState === 'pending') return;                          // re-run when the mask lands (startPipeline)
+    if (p.maskState === 'unavailable') { p.maskMissing = true; p.filterBusy = false; return; }
+  }
+  const isCurrent = () => current(c, g) && epoch === c.filterEpoch;
+  p.filterBusy = true;
+  Promise.resolve()
+    .then(() => runFilterPass({
+      index: p.index, spec: c.view.filter, caveatedIds: p.caveatedIds,
+      labelText: (ref) => c.labels.searchText(ref), scheduler: c.scheduler, isCurrent,
+    }))
+    .then((matching) => {
+      if (matching === 'superseded' || !isCurrent()) return;
+      if (matching === 'mask-missing') { p.maskMissing = true; p.filterBusy = false; touch(c); return; }
+      p.matching = matching;
+      p.filterBusy = false;
+      rebuildOrdered(c, { follow: true });
+      touch(c);
+    }, () => {
+      if (!isCurrent()) return;
+      p.filterBusy = false;
+      touch(c);
+    }).catch(() => { /* a throwing commit must not surface as unhandled */ });
+}
+
+function labelOfRef(c, ref) {
+  return `${c.labels.modelName(ref.modelKey)} · ${c.labels.elementLabel(ref)}`;
+}
+
+/** Rebuilds the typed-array ordered index from the cached pass + group table (no Core call, AC-P4). */
+function rebuildOrdered(c, { follow = false } = {}) {
+  const p = c.pipe;
+  if (p === null || p.matching === null) return;
+  const v = c.view;
+  const grouped = v.groupBy === 'element' && p.groupingState === 'ok';
+  let groups = [];
+  if (grouped) {
+    const matchIds = isFilterActive(v.filter) ? matchIdsFrom(p.matching, p.index) : null;
+    groups = sortGroups(filterGroups(p.groupTable, { matchIds, index: p.index }), GROUP_SORT[v.sort] ?? 'core', (ref) => labelOfRef(c, ref));
+  }
+  p.groupsById = grouped ? new Map(groups.map((gr) => [gr.groupId, gr])) : null;
+  p.ordered = buildOrderedIndex({
+    view: grouped ? 'grouped' : 'flat', matching: p.matching, index: p.index,
+    sortKey: v.sort === 'gap-asc' && p.index.isSoft ? 'gap-asc' : 'default', groups, expanded: v.expanded,
+  });
+  if (follow) v.page = 0;                                           // a new ordering starts at its first page
+  v.page = clampPage(v.page, p.ordered.length, PAGE_SIZE);
+}
+
+function ensureGrouping(c) {
+  const p = c.pipe;
+  if (p === null || p.index === null || p.groupingState !== 'idle') return;
+  const g = p.gen;
+  p.groupingState = 'pending';
+  computeElementGroups({ queue: c.queue, engine: c.engine, resultSet: p.set })
+    .then((r) => r, () => ({ status: 'unavailable', reason: 'error' }))
+    .then((r) => {
+      if (!current(c, g) || r.status === 'superseded') return;
+      if (r.status === 'ok') { p.groupTable = r.table; p.groupingState = 'ok'; }
+      else { p.groupingState = 'unavailable'; p.groupingReason = r.reason; }
+      rebuildOrdered(c, { follow: true });
+      touch(c);
+    }).catch(() => { /* a throwing commit must not surface as unhandled */ });
+}
+
+/** Lazily builds the text-filter label index once per displayed set (sliced), then re-filters. */
+function ensureLabelIndex(c) {
+  const p = c.pipe;
+  if (p === null || p.index === null || p.textIndexed || c.view.filter.text.trim() === '') return;
+  p.textIndexed = true;
+  const g = p.gen;
+  c.labels.warm(p.index, { isCurrent: () => current(c, g) })
+    .then((committed) => { if (committed && current(c, g) && c.view.filter.text.trim() !== '') refreshList(c); }, () => {})
+    .catch(() => { /* a throwing commit must not surface as unhandled */ });
+}
+
+function setFilter(c, patch) {
+  c.view.filter = { ...c.view.filter, ...patch };
+  refreshList(c);
+  touch(c);
+}
+
+function onFilterText(c, intent) {
+  c.view.textDraft = String(intent.value ?? '');
+  if (c.filterTimer !== null) c.scheduler.clearTimeout(c.filterTimer);
+  const g = c.gen.current();
+  c.filterTimer = c.scheduler.setTimeout(() => {                    // debounced (FILTER_DEBOUNCE_MS)
+    c.filterTimer = null;
+    if (c.disposed || !c.gen.isCurrent(g)) return;
+    setFilter(c, { text: c.view.textDraft });
+    ensureLabelIndex(c);
+  }, FILTER_DEBOUNCE_MS);
+  touch(c);
+}
+
+function onFilterModel(c, intent) {
+  const raw = Array.isArray(intent.value) ? intent.value : [];
+  setFilter(c, { models: [...new Set(raw.filter((k) => typeof k === 'string'))] });
+}
+
+function onFilterMaxGap(c, intent) {
+  const text = String(intent.value ?? '');
+  const parsed = parseMaxGap(text, c.pipe?.index?.clearance ?? null);
+  c.view.maxGapText = text;
+  c.view.maxGapError = parsed.error;
+  if (parsed.error !== null || c.pipe?.index?.isSoft !== true) { touch(c); return; }   // invalid: keep the last good filter
+  setFilter(c, { maxGap: parsed.value });
+}
+
+function onFilterUnverified(c, intent) { setFilter(c, { unverified: intent.value === true }); }
+function onFilterHasLocation(c, intent) { setFilter(c, { hasLocation: intent.value === true }); }
+
+function onFilterElement(c, intent) {
+  const ref = intent.ref;
+  const valid = ref !== null && typeof ref === 'object' && typeof ref.modelKey === 'string' && Number.isInteger(ref.dbId);
+  setFilter(c, { elementOnly: valid ? { modelKey: ref.modelKey, dbId: ref.dbId } : null });
+}
+
+function onFilterClear(c) {
+  if (c.filterTimer !== null) { c.scheduler.clearTimeout(c.filterTimer); c.filterTimer = null; }
+  c.view.textDraft = '';
+  c.view.maxGapText = '';
+  c.view.maxGapError = null;
+  c.view.filter = EMPTY_FILTER_SPEC;
+  refreshList(c);
+  touch(c);
+}
+
+function onGroupMode(c, intent) {
+  if (intent.value !== 'none' && intent.value !== 'element') return;
+  c.view.groupBy = intent.value;
+  if (intent.value === 'element') ensureGrouping(c);
+  rebuildOrdered(c, { follow: true });
+  touch(c);
+}
+
+function onGroupToggle(c, intent) {
+  if (typeof intent.groupId !== 'string') return;
+  if (c.view.expanded.has(intent.groupId)) c.view.expanded.delete(intent.groupId);
+  else c.view.expanded.add(intent.groupId);
+  rebuildOrdered(c);                                                // expansion keeps the current page
+  touch(c);
+}
+
+function onSortSet(c, intent) {
+  if (!SORT_VALUES.has(intent.value)) return;
+  c.view.sort = intent.value;
+  rebuildOrdered(c, { follow: true });
+  touch(c);
+}
+
+function onNavPage(c, intent) {
+  const length = c.pipe?.ordered?.length ?? 0;
+  c.view.page = clampPage(Number(intent.page), length, PAGE_SIZE);
+  touch(c);
+}
+
+function onPanelShown(c) {
+  recheckFreshness(c);                                              // §7.3: re-check on Panel show
+  touch(c);
+}
+
+function resultRow(c, canonicalIndex, groupId) {
+  const p = c.pipe;
+  const record = p.index.at(canonicalIndex);
+  const resolution = resolveResult({ record, provenance: p.set.provenance, engine: c.engine, catalog: c.catalog });   // lazy (§11.2)
+  return buildRow({ record, canonicalIndex, groupId, labels: c.labels, liveness: livenessOf(resolution), caveatedIds: p.caveatedIds, selected: false });
+}
+
+/** Only the current page is materialized (PAGE_SIZE entries at most, spec §12.1). */
+function pageRows(c) {
+  const p = c.pipe;
+  return pageSlice(p.ordered, c.view.page, PAGE_SIZE).map((entry) => (entry.kind === 'group'
+    ? buildGroupHeaderRow({ group: p.groupsById.get(entry.groupId), labels: c.labels, expanded: c.view.expanded.has(entry.groupId) })
+    : resultRow(c, entry.canonicalIndex, entry.groupId)));
+}
+
 // ── view input (pure data handed to viewModel.js) ─────────────────────────────────────────────────────────────
 
 function viewInput(c) {
@@ -535,11 +867,37 @@ function runInput(c) {
 
 function displayedInput(c) {
   if (c.displayed === null) return null;
-  return { ...c.displayed, freshness: null, freshnessPending: false, claim: null, claimPending: false };
+  const p = c.pipe;
+  return {
+    ...c.displayed,
+    freshness: p?.freshness ?? null, freshnessPending: p?.freshnessPending === true,
+    claim: p?.claim ?? null, claimPending: p?.claimPending === true,
+    summary: p?.summary ?? null,
+    runRecord: c.runRecord,
+  };
 }
 
-/** Task 16 has no browsable list yet (Task 17 builds the results pipeline). */
-function listInput() { return null; }
+function listInput(c) {
+  const p = c.pipe;
+  if (p === null || p.index === null) return null;
+  const v = c.view;
+  const ordered = p.ordered;
+  const elementOnly = v.filter.elementOnly;
+  return {
+    total: p.index.count,
+    filtered: p.matching === null ? null : p.matching.length,
+    busy: p.filterBusy || p.groupingState === 'pending' || (v.filter.unverified && p.maskState === 'pending'),
+    maskUnavailable: v.filter.unverified === true && p.maskMissing === true,
+    spec: v.filter, textDraft: v.textDraft, maxGapText: v.maxGapText, maxGapError: v.maxGapError,
+    groupBy: v.groupBy, groupingState: p.groupingState, groupingReason: p.groupingReason,
+    sort: v.sort, isSoft: p.index.isSoft, clearance: p.index.clearance,
+    modelOptions: p.index.models.map((m) => ({ modelKey: m.modelKey, label: c.labels.modelName(m.modelKey) })),
+    elementOnly: elementOnly === null ? null : { ...elementOnly, label: labelOfRef(c, elementOnly) },
+    view: ordered === null ? 'flat' : ordered.view,
+    page: { index: v.page, count: ordered === null ? 0 : Math.max(1, Math.ceil(ordered.length / PAGE_SIZE)), size: PAGE_SIZE },
+    rows: ordered === null ? [] : pageRows(c),
+  };
+}
 
 /** Task 16 has no selection yet (Task 18 adds selection and navigation). */
 function selectedInput() { return null; }
@@ -561,6 +919,18 @@ const DISPATCH = {
   [INTENT.RESULTS_CLEAR_CONFIRMED]: onResultsClearConfirmed,
   [INTENT.RUN_RELEASE_AND_RETRY]: onReleaseAndRetry,
   [INTENT.DIAGNOSTICS_COPY]: onDiagnosticsCopy,
+  [INTENT.FILTER_TEXT]: onFilterText,
+  [INTENT.FILTER_MODEL]: onFilterModel,
+  [INTENT.FILTER_MAX_GAP]: onFilterMaxGap,
+  [INTENT.FILTER_UNVERIFIED]: onFilterUnverified,
+  [INTENT.FILTER_HAS_LOCATION]: onFilterHasLocation,
+  [INTENT.FILTER_ELEMENT]: onFilterElement,
+  [INTENT.FILTER_CLEAR]: onFilterClear,
+  [INTENT.GROUP_MODE]: onGroupMode,
+  [INTENT.GROUP_TOGGLE]: onGroupToggle,
+  [INTENT.SORT_SET]: onSortSet,
+  [INTENT.NAV_PAGE]: onNavPage,
+  [INTENT.PANEL_SHOWN]: onPanelShown,
 };
 
 /** Unknown intents throw synchronously (a programming error in the UI); known intents resolve after their effect

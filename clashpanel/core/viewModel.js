@@ -5,7 +5,9 @@
 // Task 16 fills `setup` and `run`; `filters`/`results`/`selected` are shape-complete defaults that Tasks 17–19
 // replace region by region.
 import { PAGE_SIZE } from './constants.js';
-import { runHeadline, STATEMENTS } from './runReport.js';
+import { runHeadline, STATEMENTS, describeAxes, bannersFor, emptyStatement } from './runReport.js';
+import { isFilterActive, FILTER_MASK_UNAVAILABLE_TEXT } from './filters.js';
+import { GROUPING_UNAVAILABLE_TEXT, MULTI_VALUED_NOTE } from './grouping.js';
 import { INTENT } from './intents.js';
 
 // ── shared helpers ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -139,12 +141,16 @@ function headlineOf(input) {
   return runHeadline({ status: set.outcome.status, total: set.results.length, coverage: set.outcome.coverage, resultSet: set });
 }
 
-function countsOf() {
-  return { total: null, filtered: null };
+function countsOf(input) {
+  const l = input.list;
+  return { total: l === null ? null : l.total, filtered: l === null ? null : l.filtered };
 }
 
-function badgesOf() {
-  return null;
+/** Coverage / Integrity / Freshness, always together (§7.3); freshness shows the at-seal value while pending. */
+function badgesOf(input) {
+  const d = input.displayed;
+  if (d === null || d.resultSet === null) return null;
+  return describeAxes(d.resultSet.outcome, d.freshnessPending ? null : d.freshness);
 }
 
 /** Controller-owned banners (admission error, discard confirmation, release errors, residency notice). */
@@ -166,7 +172,16 @@ function controllerBanners(input) {
 }
 
 function runBanners(input) {
-  return controllerBanners(input);
+  const banners = controllerBanners(input);
+  const d = input.displayed;
+  if (d === null) return banners;
+  const report = bannersFor({
+    terminal: input.run.machine.terminal, resultSet: d.resultSet,
+    freshness: d.freshnessPending ? null : d.freshness, setupChanged: input.run.setupChanged, persistence: d.persistence,
+  });
+  const texts = new Set(report.map((b) => b.text));
+  // The residency notice and the report's held-in-memory banner say the same thing: keep one.
+  return [...report, ...banners.filter((b) => !(b.id === 'residency-notice' && texts.has(b.text)))];
 }
 
 /** Short plain-text preview for "Copy diagnostics" (≤ DIAGNOSTICS_PREVIEW_MAX lines); the full JSON comes from
@@ -210,6 +225,44 @@ function buildRunRegion(input) {
   return run;
 }
 
+// ── run details (spec §8.4) ──────────────────────────────────────────────────────────────────────────────────────
+
+const text = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+
+function basisText(verdict) {
+  if (verdict === null || verdict === undefined) return 'single model (no cross-model comparison)';
+  if (verdict.state === 'verified') return `verified (${text(verdict.basisKey)})`;
+  return `${text(verdict.state)}: ${text(verdict.reason)}`;
+}
+
+/**
+ * "Run details" lines, built ONLY from the sealed set plus the Panel-local run record (the Soft basis verdict the
+ * run was admitted under — not part of the sealed set). All values are plain strings; model names and Core values
+ * pass through as raw text (the UI uses textContent). `provenance.models[].elementCount` is never read (G-EC, AC-P12).
+ */
+export function buildRunDetails({ resultSet, runRecord = null, modelName = (key) => String(key) }) {
+  const lines = [];
+  const add = (label, value) => lines.push({ label, value: text(value) });
+  const definition = resultSet.definition ?? null;
+  if (definition === null) add('Definition', 'not recorded (the run ended before its definition was resolved)');
+  else {
+    add('Test', definition.name);
+    add('Mode', definition.mode === 'clearance' ? 'Soft (clearance)' : 'Hard (volume overlap)');
+    if (definition.mode === 'clearance') add('Clearance', definition.clearance);
+  }
+  const provenance = resultSet.provenance ?? {};
+  add('Started', provenance.startedAt);
+  add('Finished', provenance.finishedAt);
+  add('Determinism', provenance.determinismClass);
+  for (const m of Array.isArray(provenance.models) ? provenance.models : []) {
+    add(`Model ${modelName(m.modelKey)}`, `key ${text(m.modelKey)} · version ${text(m.modelVersion)} · binding generation ${text(m.bindingGeneration)}`);
+  }
+  const exclusions = Array.isArray(provenance.libraryExclusions) ? provenance.libraryExclusions : [];
+  add('Library exclusions', exclusions.length === 0 ? 'none' : exclusions.map(text).join('; '));
+  if (definition?.mode === 'clearance') add('Measurement basis (at run start)', basisText(runRecord?.basisVerdict));
+  return lines;
+}
+
 // ── filters / results / selected regions (Task 16 defaults) ────────────────────────────────────────────────────
 
 export const DEFAULT_SORT_OPTIONS = Object.freeze([{ value: 'default', label: 'Default order' }]);
@@ -222,8 +275,30 @@ function defaultFilters() {
   };
 }
 
-function buildFiltersRegion() {
-  return defaultFilters();
+export const SORT_LABELS = Object.freeze({
+  default: 'Default order', 'gap-asc': 'Gap (smallest first)', 'group-count': 'Group size (largest first)', 'group-label': 'Group name',
+});
+
+function buildFiltersRegion(input) {
+  const l = input.list;
+  if (l === null) return defaultFilters();
+  const sortValues = ['default', ...(l.isSoft ? ['gap-asc'] : []), ...(l.view === 'grouped' ? ['group-count', 'group-label'] : [])];
+  return {
+    text: l.textDraft,
+    models: [...l.spec.models],
+    modelOptions: l.modelOptions,
+    maxGap: { visible: l.isSoft === true, value: l.maxGapText, max: l.clearance, error: l.maxGapError },
+    unverified: l.spec.unverified === true,
+    hasLocation: l.spec.hasLocation === true,
+    elementOnly: l.elementOnly,
+    groupBy: l.groupBy,
+    groupingNote: l.groupBy === 'element' && l.groupingState === 'unavailable'
+      ? (GROUPING_UNAVAILABLE_TEXT[l.groupingReason] ?? GROUPING_UNAVAILABLE_TEXT.error) : null,
+    sort: l.sort,
+    sortOptions: sortValues.map((value) => ({ value, label: SORT_LABELS[value] })),
+    active: isFilterActive(l.spec),
+    busy: l.busy === true,
+  };
 }
 
 export const NO_SELECTION_TEXT = 'No clash selected';
@@ -236,13 +311,47 @@ function resultsBase() {
   };
 }
 
+export const EMPTY_FILTERED_TEXT = 'No clashes match the current filters.';
+
+export const INDEX_FAILED_TEXT = 'The result set could not be read. Details are available to copy.';
+
+/**
+ * The ONE (claim, freshness) pair the empty-set wording may use (review H1) — this view-model builder owns the combined
+ * decision, `emptyStatement` (T11) is its pure gate. The controller commits both halves together (T17); this function
+ * additionally refuses to hand over a half-settled pair: unless BOTH are settled the statement sees `(null, null)`
+ * and words "checking…", never a clearance.
+ */
+function claimGateOf(d) {
+  const settled = d.claimPending !== true && d.freshnessPending !== true && d.claim !== null && d.freshness !== null;
+  return settled ? { claim: d.claim, freshness: d.freshness } : { claim: null, freshness: null };
+}
+
+/** Results-region state machine (§14.4 "State coverage inside the Results region"): never a bare "No clashes". */
 function buildResultsRegion(input) {
   const base = resultsBase();
   if (NON_TERMINAL.has(input.run.machine.phase)) return { ...base, state: 'running', message: RUNNING_RESULTS_TEXT };
   const d = input.displayed;
   if (d === null) return base;
   if (d.resultSet === null) return { ...base, state: 'error', message: STATEMENTS.NO_RESULT_SET };
-  return { ...base, state: 'list', message: null };                // rows arrive with Task 17's results pipeline
+  const l = input.list;
+  if (l === null) return { ...base, state: 'error', message: INDEX_FAILED_TEXT };
+  const listed = {
+    ...base, view: l.view, page: { ...l.page }, rows: l.rows,
+    multiValuedNote: l.view === 'grouped' ? MULTI_VALUED_NOTE : null,
+    hiddenByFiltersNote: l.hiddenByFilters === true,
+    nav: l.nav ? { ...l.nav } : base.nav,
+  };
+  if (l.total === 0) {
+    const statement = emptyStatement({ resultSet: d.resultSet, ...claimGateOf(d), modelName: input.setup.modelName });
+    const claimed = statement?.kind === 'claim' || statement?.kind === 'qualified-claim';
+    return { ...listed, rows: [], state: claimed ? 'empty-claim' : 'empty-nonclaim', message: statement?.text ?? STATEMENTS.NON_CLAIM, lines: [...(statement?.lines ?? [])] };
+  }
+  if (l.maskUnavailable === true) return { ...listed, rows: [], state: 'error', message: FILTER_MASK_UNAVAILABLE_TEXT };
+  if (l.filtered === 0) return { ...listed, rows: [], state: 'empty-filtered', message: EMPTY_FILTERED_TEXT };
+  if (l.groupBy === 'element' && l.groupingState === 'unavailable') {
+    return { ...listed, state: 'grouping-unavailable', message: GROUPING_UNAVAILABLE_TEXT[l.groupingReason] ?? GROUPING_UNAVAILABLE_TEXT.error };
+  }
+  return { ...listed, state: 'list', message: null };
 }
 
 function buildSelectedRegion() {
