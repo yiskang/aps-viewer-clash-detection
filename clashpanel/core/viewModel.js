@@ -2,8 +2,18 @@
 // PURE builder: (view input assembled by the controller) -> deep-frozen ViewModel of the exact catalog shape.
 // The UI renders ONLY this object (AC-P21). No Viewer/DOM access; all Viewer-derived strings arrive in the input
 // already resolved (labels, rows) and stay raw text (the UI inserts them with textContent, AC-P13).
-// Task 16 fills `setup` and `run`; `filters`/`results`/`selected` are shape-complete defaults that Tasks 17–19
-// replace region by region.
+//
+// ViewInput (built by controller.js `viewInput`; documented here because this builder is its only consumer):
+//   { version,
+//     setup:     { draft, validation, soft:{available,pending,verdict,explanation}, models:[{modelKey|null,displayName,loaded,registered}],
+//                  modelName(key), setupChangedSinceRun, collapsed, runActive },
+//     run:       { machine (runMachine RunState), snapshot|null, elapsedMs|null, canRun, canStop, admission|null, confirm|null,
+//                  releaseErrors[], releaseStuck?, residencyNotice|null, setupChanged, isolationNotice|null },
+//     displayed: null | { runId, status, resultSet|null, persistence, freshness|null, freshnessPending, claim|null, claimPending, summary|null,
+//                  runRecord?: null | { basisVerdict } },
+//     list:      null | { total, filtered|null, busy, maskUnavailable?, spec, textDraft, maxGapText, maxGapError, groupBy, groupingState,
+//                  groupingReason, sort, isSoft, clearance, modelOptions, elementOnly, view, page, rows, nav, hiddenByFilters },
+//     selected:  null | { resultId, ordinal, side1, side2, gap, hasLocation, liveness, notes, hiddenByFilters, anyLive, isolation, toggles } }
 import { PAGE_SIZE } from './constants.js';
 import { runHeadline, STATEMENTS, describeAxes, bannersFor, emptyStatement } from './runReport.js';
 import { isFilterActive, FILTER_MASK_UNAVAILABLE_TEXT } from './filters.js';
@@ -198,9 +208,26 @@ function diagnosticsOf(input) {
   return { available: true, preview: lines.slice(0, DIAGNOSTICS_PREVIEW_MAX) };
 }
 
-/** aria-live text for the status region. */
-function describeStatusLive(run) {
-  return run.headline;
+/** Run details (§8.4) for the displayed sealed set; null before any set is displayed. */
+function detailsOf(input) {
+  const d = input.displayed;
+  if (d === null || d.resultSet === null) return null;
+  return { lines: buildRunDetails({ resultSet: d.resultSet, runRecord: d.runRecord ?? null, modelName: input.setup.modelName }) };
+}
+
+/**
+ * aria-live="polite" text for the status region (§14.5): the headline, the filtered-of-total count when a filter
+ * narrows the list, a pending freshness check, and the first error banner that the headline does not already say.
+ * Progress counters are deliberately left out (they change per work unit and would flood a screen reader).
+ */
+export function describeStatusLive(run) {
+  const parts = [run.headline];
+  const { total, filtered } = run.counts;
+  if (total !== null && filtered !== null && filtered !== total) parts.push(`${filtered} of ${total} clashes match the filters`);
+  if (run.badges?.freshness?.pending === true) parts.push('Checking freshness');
+  const error = run.banners.find((b) => b.kind === 'error' && b.text !== run.headline);
+  if (error) parts.push(error.text);
+  return `${parts.map((p) => String(p).replace(/[\s.…]+$/u, '')).filter((p) => p !== '').join('. ')}.`;
 }
 
 function buildRunRegion(input) {
@@ -218,6 +245,7 @@ function buildRunRegion(input) {
     badges: badgesOf(input),
     banners: runBanners(input),
     diagnostics: diagnosticsOf(input),
+    details: detailsOf(input),
     statusLive: '',
     waitingForOtherRun: m.waitingForOtherRun === true,
   };
