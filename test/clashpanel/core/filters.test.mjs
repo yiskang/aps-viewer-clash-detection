@@ -1,10 +1,12 @@
 // test/clashpanel/core/filters.test.mjs — Task 12 (spec §10.1, AC-P4)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { EMPTY_FILTER_SPEC, FILTER_MASK_UNAVAILABLE_TEXT, isFilterActive, parseMaxGap, createRecordPredicate, runFilterPass } from '../../../clashpanel/core/filters.js';
 import { buildResultIndex } from '../../../clashpanel/core/resultIndex.js';
 import { LIST_CHUNK_SIZE } from '../../../clashpanel/core/constants.js';
 import { createFakeScheduler } from '../support/fakeScheduler.mjs';
+import { stripComments } from '../support/layering.mjs';
 import { sealedSet } from '../../clashtest/support/resultSetFixtures.mjs';
 
 const spec = (over = {}) => ({ ...EMPTY_FILTER_SPEC, ...over });
@@ -100,16 +102,23 @@ test('runFilterPass is sliced: one yield between chunks; supersession checked pe
   assert.equal(await runFilterPass({ index, spec: spec({ text: 'x' }), labelText, scheduler: createFakeScheduler(), isCurrent: () => false }), 'superseded');
 });
 
-test('AC-P4: filter interactions never touch the engine (derivations spies unchanged after the one mask computation)', async () => {
-  const calls = [];
-  const spy = (name) => async () => { calls.push(name); return { matches: ['r1'], count: 1, total: 4, unavailable: [] }; };
-  const engine = { derivations: { summarize: spy('summarize'), groupBy: spy('groupBy'), filter: spy('filter') }, startRun: () => calls.push('startRun') };
-  const recs = Array.from({ length: 4 }, (_, i) => rec(i));
-  const index = indexOf(recs);
-  const mask = new Set((await engine.derivations.filter({ results: recs }, [{ facet: 'caveated', op: 'eq', value: true }])).matches);   // controller: once per run
-  assert.deepEqual(calls, ['filter']);
+const ENGINE_TOKENS = [['engine', /\bengine\b/], ['derivations', /\bderivations\b/], ['getPairStatus', /\bgetPairStatus\b/], ['getElementStatus', /\bgetElementStatus\b/]];
+const engineTokensIn = (source) => { const code = stripComments(source); return ENGINE_TOKENS.filter(([, re]) => re.test(code)).map(([name]) => name); };
+
+test('AC-P4: runFilterPass takes no engine and filters.js never references engine/derivations/getPairStatus/getElementStatus', async () => {
+  const source = readFileSync(new URL('../../../clashpanel/core/filters.js', import.meta.url), 'utf8');
+  assert.deepEqual(engineTokensIn(source), [], 'filters.js (comments stripped) has no engine/derivations/pair-status token');
+  assert.equal(runFilterPass.length, 1, 'a single options-object parameter: there is no engine argument to call');
+  const index = indexOf(Array.from({ length: 4 }, (_, i) => rec(i)));
+  const mask = new Set(['r1']);
   for (const s of [spec({ text: '1' }), spec({ unverified: true }), spec({ hasLocation: true }), spec({ models: ['mB'] }), EMPTY_FILTER_SPEC]) {
-    await runFilterPass({ index, spec: s, caveatedIds: mask, labelText, scheduler: createFakeScheduler() });
+    const out = await runFilterPass({ index, spec: s, caveatedIds: mask, labelText, scheduler: createFakeScheduler() });
+    assert.ok(out instanceof Uint32Array, 'the pass is a pure function of (index, spec, mask, labelText)');
   }
-  assert.deepEqual(calls, ['filter'], 'no derivation and no startRun per interaction');
+});
+
+test('AC-P4 token check can fail: it flags engine references outside comments and ignores those inside comments', () => {
+  assert.deepEqual(engineTokensIn('// engine derivations getPairStatus getElementStatus\n/* engine */ const a = 1;'), []);
+  assert.deepEqual(engineTokensIn('// x\nconst engine = null;'), ['engine']);
+  assert.deepEqual(engineTokensIn('const r = await x.derivations.filter(); getPairStatus(); getElementStatus();'), ['derivations', 'getPairStatus', 'getElementStatus']);
 });
