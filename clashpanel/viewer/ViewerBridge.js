@@ -12,19 +12,8 @@
 // Fit is outside the guarantee (best-effort, never rolled back). The bridge never calls any theming
 // member and never touches selection or camera restore.
 import { createMarkerSet, computeMarkerRadius, MIN_MARKER_RADIUS } from './markers.js';
-import { createIsolationSession } from './isolation.js';
-
-// Minimal best-effort fit for the transaction (T26 replaces it with fit.js#fitSides): frame the first live
-// side with the public per-model form. Never throws; a failure only adds a note.
-function fitSides(viewerApi, sides, isCurrent) {
-  if (!isCurrent()) return { fitted: false, notes: [], superseded: true };   // never move the camera for a stale token
-  try {
-    viewerApi.fitToView([sides[0].dbId], sides[0].model);
-    return { fitted: true, notes: sides.some((s) => s.model !== sides[0].model) ? ['Framing first element only'] : [] };
-  } catch {
-    return { fitted: false, notes: ['Could not frame the clash'] };
-  }
-}
+import { createIsolationSession, isolationPrerequisite, isolationEquals, readIsolation } from './isolation.js';
+import { fitSides } from './fit.js';
 
 export const BRIDGE_NOTE = Object.freeze({
   NO_LOCATION: 'no location',
@@ -108,6 +97,9 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
   let disposed = false;
   let disposePromise = null;
   let held = null;                          // the single ledger holding every Panel-owned resource
+  const leftCallbacks = new Set();
+  const disposeErrors = [];                 // listener removals that failed at dispose (surfaced, never discarded)
+  const disposeNotes = [];                  // cleanup notes of the dispose-time release (surfaced, never discarded)
 
   const isLive = (t) => !disposed && t === live;
   const guard = (t) => { if (!isLive(t)) throw new Superseded(); };
@@ -254,15 +246,71 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
     disposePromise = queue.run(async () => {
       try {
         try {
-          releaseHeld();
+          disposeNotes.push(...releaseHeld().notes);   // e.g. a failed isolation restore: surfaced, not dropped
         } finally {
           markers.removeAll();                 // anything a failed removal left behind
         }
       } finally {
-        try { markers.disposeShared(); } finally { listeners.removeAll(); }
+        try { markers.disposeShared(); } finally {
+          // Surface (never discard) listener-removal failures; the callbacks are dropped regardless, so a
+          // listener the Viewer refused to remove relays to nobody.
+          try { disposeErrors.push(...listeners.removeAll()); } finally { leftCallbacks.clear(); }
+        }
       }
     }).then(() => undefined, () => undefined);
     return disposePromise;
+  }
+
+  // §9.5 prerequisite for the Isolate toggle: sync, read-only. Stays available while the Panel owns the
+  // current isolation (its own isolation is not "foreign hidden state"); otherwise the plain §9.5 check.
+  function checkIsolationPrerequisite() {
+    if (disposed) return Object.freeze({ available: false, reason: 'The panel is closed' });
+    const record = isolation.record();
+    if (record !== null && record.confirmed) {
+      const cur = readIsolation(viewerApi);
+      if (cur !== null && isolationEquals(cur, record.target)) return Object.freeze({ available: true, reason: null });
+    }
+    return isolationPrerequisite(viewerApi);
+  }
+
+  // "Use current selection" read: scene models only, ids sorted/de-duplicated, never throws, never mutates
+  // (the Panel never changes the Viewer selection).
+  function readAggregateSelection() {
+    let raw;
+    try { raw = viewerApi.getAggregateSelection(); } catch { return Object.freeze([]); }
+    if (!Array.isArray(raw)) return Object.freeze([]);
+    const inScene = sceneModels();
+    const out = [];
+    for (const e of raw) {
+      if (!isModel(e?.model) || !inScene.includes(e.model) || !Array.isArray(e.selection)) continue;
+      const dbIds = [...new Set(e.selection.filter(isDbId))].sort((a, b) => a - b);
+      if (dbIds.length > 0) out.push(Object.freeze({ model: e.model, dbIds: Object.freeze(dbIds) }));
+    }
+    return Object.freeze(out);
+  }
+
+  // Model-left events (spec §11.2): ONE Viewer listener per event name, added lazily on the first
+  // subscription and removed symmetrically at dispose. Live dispatch order/payloads are gate G2 / F8.
+  let subscribed = false;
+  function subscribeOnce() {
+    if (subscribed) return;
+    subscribed = true;
+    const eventNames = viewerApi.eventNames ?? {};
+    const relay = (reason) => (event) => {
+      const model = event?.model;
+      if (!isModel(model)) return;                 // payload guard: {model} required
+      for (const cb of [...leftCallbacks]) { try { cb({ model, reason }); } catch { /* never throw into dispatch */ } }
+    };
+    if (typeof eventNames.BEFORE_MODEL_UNLOAD === 'string') listeners.add(eventNames.BEFORE_MODEL_UNLOAD, relay('unload'));
+    if (typeof eventNames.MODEL_REMOVED === 'string') listeners.add(eventNames.MODEL_REMOVED, relay('removed'));
+  }
+
+  function onModelLeft(cb) {
+    if (typeof cb !== 'function') throw new TypeError('onModelLeft: callback must be a function');
+    if (disposed) return () => {};
+    subscribeOnce();
+    leftCallbacks.add(cb);
+    return () => { leftCallbacks.delete(cb); };
   }
 
   // Diagnostic read of the write-ahead ledger (tests; never used by the controller).
@@ -271,5 +319,10 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
     return Object.freeze({ token: held.token, markerMeshes: Object.freeze([...held.markerMeshes]), isolation: isolation.record() });
   }
 
-  return Object.freeze({ present, clear, dispose, inspectLedger });
+  // Diagnostic read of dispose-time failures (tests/host diagnostics; never used by the controller).
+  function inspectDisposal() {
+    return Object.freeze({ disposed, releaseNotes: Object.freeze([...disposeNotes]), listenerErrors: Object.freeze([...disposeErrors]) });
+  }
+
+  return Object.freeze({ present, clear, dispose, checkIsolationPrerequisite, readAggregateSelection, onModelLeft, inspectLedger, inspectDisposal });
 }
