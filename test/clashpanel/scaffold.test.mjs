@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 const DIR = fileURLToPath(new URL('../../clashpanel/', import.meta.url));
 const EXPECTED_MODULES = [
   'core/constants.js',
+  'core/scheduler.js',
+  'core/generation.js',
+  'core/ports.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
