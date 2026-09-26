@@ -45,6 +45,7 @@ const EXPECTED_MODULES = [
   'ui/render/selected.js',
   'ui/render/panel.js',
   'ui/ClashDockingPanel.js',
+  'index.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
