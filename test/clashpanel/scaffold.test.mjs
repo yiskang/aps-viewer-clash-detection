@@ -42,6 +42,8 @@ const EXPECTED_MODULES = [
   'ui/render/run.js',
   'ui/render/filters.js',
   'ui/render/results.js',
+  'ui/render/selected.js',
+  'ui/render/panel.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
