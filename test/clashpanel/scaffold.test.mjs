@@ -15,6 +15,7 @@ const EXPECTED_MODULES = [
   'core/generation.js',
   'core/ports.js',
   'core/draft.js',
+  'core/setupValidation.js',
 ];
 
 const walk = (dir) => readdirSync(dir).flatMap((n) => {
