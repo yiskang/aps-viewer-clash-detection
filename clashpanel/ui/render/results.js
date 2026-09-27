@@ -40,7 +40,7 @@ function resultRow(doc, row, dispatch) {
 
 function groupRow(doc, row, dispatch) {
   const countText = row.filteredCount !== row.count ? `${row.filteredCount} of ${row.count}` : `${row.count}`;
-  return el(doc, 'li', { class: 'clash-group-row', attrs: { role: 'presentation' } }, [
+  return el(doc, 'div', { class: 'clash-group-row' }, [
     el(doc, 'button', {
       attrs: { type: 'button', 'data-key': row.key, 'aria-expanded': row.expanded ? 'true' : 'false' },
       on: { click: () => dispatch({ type: INTENT.GROUP_TOGGLE, groupId: row.groupId }) },
@@ -50,6 +50,36 @@ function groupRow(doc, row, dispatch) {
       el(doc, 'span', { class: 'clash-group-count', text: ` (${countText})` }),
     ]),
   ]);
+}
+
+// A listbox may own only options (WAI-ARIA), so in the grouped view the interactive group toggle sits OUTSIDE any
+// listbox: each group is its own listbox of that group's option rows, named by the group label, placed right after
+// its header button (Tab order: header → its options → next header). A page that starts mid-group has leading option
+// rows with no header on this page; they keep a plain "Clash results" listbox. A collapsed group emits no rows, so
+// it emits no (empty) listbox.
+function optionList(doc, label, rowNodes) {
+  return el(doc, 'ul', { class: 'clash-rows', attrs: { role: 'listbox', 'aria-label': label } }, rowNodes);
+}
+
+function groupedRows(doc, rows, dispatch) {
+  const nodes = [];
+  let label = 'Clash results';
+  let pending = [];
+  const flush = () => {
+    if (pending.length > 0) nodes.push(optionList(doc, label, pending));
+    pending = [];
+  };
+  for (const row of rows) {
+    if (row.kind === 'group') {
+      flush();
+      label = row.label;
+      nodes.push(groupRow(doc, row, dispatch));
+    } else {
+      pending.push(resultRow(doc, row, dispatch));
+    }
+  }
+  flush();
+  return el(doc, 'div', { class: 'clash-groups', attrs: { role: 'group', 'aria-label': 'Clash results' } }, nodes);
 }
 
 function navBlock(doc, results, dispatch) {
@@ -103,10 +133,9 @@ export function renderResults(root, results, dispatch, doc) {
       box.appendChild(el(doc, 'p', { class: 'clash-hidden-note', text: 'The selected clash is hidden by the current filters.' }));
     }
     if (!LIST_STATES.has(results.state)) return;
-    box.appendChild(el(doc, 'ul', {
-      class: 'clash-rows',
-      attrs: { role: 'listbox', 'aria-label': 'Clash results' },
-    }, results.rows.map((row) => (row.kind === 'group' ? groupRow(doc, row, dispatch) : resultRow(doc, row, dispatch)))));
+    box.appendChild(results.rows.some((row) => row.kind === 'group')
+      ? groupedRows(doc, results.rows, dispatch)
+      : optionList(doc, 'Clash results', results.rows.map((row) => resultRow(doc, row, dispatch))));
     box.appendChild(navBlock(doc, results, dispatch));
   });
 }

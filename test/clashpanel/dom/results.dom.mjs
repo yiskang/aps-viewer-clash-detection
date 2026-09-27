@@ -120,3 +120,82 @@ test('results: focus on a row survives a re-render (keyed by data-key)', () => w
   await rerender(page, resultsVm({ rows: [resultRow(0), resultRow(1), resultRow(2, { selected: true })] }));
   assert.equal(await page.evaluate(() => document.activeElement.getAttribute('data-key')), '-|r2');
 }));
+
+// --- Bounded ARIA remediation (independent review M1): a listbox may own ONLY option children. ---
+const GROUPED_ROWS = () => [
+  groupRow('gA', { label: 'Architecture · Wall-1', count: 2, filteredCount: 2, expanded: true }),
+  resultRow(0, { groupId: 'gA', key: 'gA|r0' }),
+  resultRow(1, { groupId: 'gA', key: 'gA|r1', selected: true }),
+  groupRow('gB', { label: 'Structure · Beam-9', count: 1, filteredCount: 1, expanded: true }),
+  resultRow(2, { groupId: 'gB', key: 'gB|r2' }),
+  groupRow('gC', { label: 'Mechanical · Duct-3', count: 4, filteredCount: 4, expanded: false }),
+];
+
+test('results ARIA: in the grouped view every listbox owns only options; group toggle buttons live outside any listbox', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, resultsVm({ view: 'grouped', rows: GROUPED_ROWS() }));
+  const r = await page.evaluate(() => {
+    const listboxes = [...document.querySelectorAll('[role="listbox"]')];
+    return {
+      ownedRoles: listboxes.map((lb) => [...lb.children].map((c) => c.getAttribute('role'))),
+      buttonsInsideListbox: document.querySelectorAll('[role="listbox"] button').length,
+      groupButtons: document.querySelectorAll('.clash-group-row button').length,
+      optionsOutsideListbox: [...document.querySelectorAll('[role="option"]')].filter((o) => o.parentElement.getAttribute('role') !== 'listbox').length,
+      labels: listboxes.map((lb) => lb.getAttribute('aria-label')),
+    };
+  });
+  assert.deepEqual(r.ownedRoles, [['option', 'option'], ['option']]);
+  assert.equal(r.buttonsInsideListbox, 0);
+  assert.equal(r.groupButtons, 3);
+  assert.equal(r.optionsOutsideListbox, 0);
+  assert.deepEqual(r.labels, ['Architecture · Wall-1', 'Structure · Beam-9']); // each group's options are named by their group
+}));
+
+test('results ARIA: grouped Tab order is header → its options → next header; Enter/Space on a header toggles; option Enter still selects', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, resultsVm({ view: 'grouped', rows: GROUPED_ROWS() }));
+  await page.focus('.clash-group-row button >> nth=0');
+  const order = [];
+  for (let i = 0; i < 5; i += 1) {
+    order.push(await page.evaluate(() => document.activeElement.getAttribute('data-key')));
+    await page.keyboard.press('Tab');
+  }
+  assert.deepEqual(order, ['g|gA', 'gA|r0', 'gA|r1', 'g|gB', 'gB|r2']);
+  await page.focus('.clash-group-row button >> nth=1');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Space');
+  await page.focus('[data-key="gA|r1"]');
+  await page.keyboard.press('Space');
+  assert.deepEqual(await intents(page), [
+    { type: 'group/toggle', groupId: 'gB' }, { type: 'group/toggle', groupId: 'gB' },
+    { type: 'nav/select', resultId: 'r1', groupId: 'gA' },
+  ]);
+}));
+
+test('results ARIA: focus on a group header or an option inside a group survives a grouped re-render', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, resultsVm({ view: 'grouped', rows: GROUPED_ROWS() }));
+  for (const key of ['g|gB', 'gA|r1']) {
+    await page.focus(`[data-key="${key}"]`);
+    await rerender(page, resultsVm({ view: 'grouped', rows: GROUPED_ROWS() }));
+    assert.equal(await page.evaluate(() => document.activeElement.getAttribute('data-key')), key);
+  }
+}));
+
+test('results ARIA: a page that starts mid-group (options before any header) still nests options in a listbox; collapsed groups emit no empty listbox', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, resultsVm({ view: 'grouped', rows: [
+    resultRow(5, { groupId: 'gA', key: 'gA|r5' }),
+    groupRow('gB', { label: 'Structure · Beam-9', count: 1, filteredCount: 1, expanded: false }),
+  ] }));
+  const r = await page.evaluate(() => ({
+    listboxes: document.querySelectorAll('[role="listbox"]').length,
+    emptyListboxes: [...document.querySelectorAll('[role="listbox"]')].filter((lb) => lb.children.length === 0).length,
+    orphanOptions: [...document.querySelectorAll('[role="option"]')].filter((o) => o.parentElement.getAttribute('role') !== 'listbox').length,
+  }));
+  assert.deepEqual(r, { listboxes: 1, emptyListboxes: 0, orphanOptions: 0 });
+}));
+
+test('results ARIA: the flat view is unchanged — one listbox "Clash results" owning only options', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, resultsVm({ rows: [resultRow(0), resultRow(1)] }));
+  const r = await page.evaluate(() => ({
+    listboxes: [...document.querySelectorAll('[role="listbox"]')].map((lb) => [lb.getAttribute('aria-label'), [...lb.children].map((c) => c.getAttribute('role'))]),
+  }));
+  assert.deepEqual(r.listboxes, [['Clash results', ['option', 'option']]]);
+}));
