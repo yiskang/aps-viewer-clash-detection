@@ -22,7 +22,15 @@ and binding for every later task in this plan):
   beside the tests that use it, not under `test/fixtures/`, since it is specific to this vendored
   library's own defects, not a general cross-file `collision/` test helper.
 - **Running tests**:
-  - `npm test` runs the whole suite via `scripts/run-tests.mjs` (Batch-5 final review, finding I-1
+  - `npm test` is the canonical **default aggregate gate**. It runs, in order, the browser-free offline suite
+    (`npm run test:offline`) and then the Viewer Clash Panel DOM suite (`npm run test:clashpanel:dom`); either
+    half failing fails it. Because the DOM suite drives headless Chromium, **`npm test` requires the installed
+    Playwright Chromium** (`npx playwright install chromium`; see `test/acceptance/README.md`, "First-time
+    setup"); a missing browser fails the gate instead of skipping. The Panel DOM suite uses fakes (a fake Viewer,
+    a `DockingPanel` stub, a fake engine and catalog) and needs **no server, no credentials and no network**, and
+    never loads a live APS Viewer. The live acceptance scripts stay outside `npm test`.
+  - `npm run test:offline` is the **browser-free** command: it runs the whole offline suite via
+    `scripts/run-tests.mjs` (Batch-5 final review, finding I-1
     fix round 2): a bare `node --test` (no path argument) sweeps in every `.js`/`.mjs` file under
     ANY directory literally named `test`, not just this repo's own `*.test.mjs` convention -- that
     included, disastrously, live-browser/live-server scripts like `test/performance/run-gate.mjs`
@@ -38,7 +46,8 @@ and binding for every later task in this plan):
     left for a shell or a Node version to interpret differently.
     **Note:** `npm test` automatically runs `npm run build:vendor` first via a `pretest`
     hook (spec:1038-1076 prerequisite), so the vendor files are always populated when
-    tests run.
+    tests run. (`npm run test:offline` invoked directly does not run `pretest`; run `npm run build:vendor`
+    first on a fresh checkout.)
   - A single file: `node --test test/geometry/GeometryConnectivity.test.mjs`.
   - A directory subset via glob: `node --test 'test/query/**/*.test.mjs'` (glob support for a
     manual, ad hoc invocation like this is fine -- the concern above is specifically about
