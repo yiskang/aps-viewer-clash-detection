@@ -1,0 +1,51 @@
+{
+  "script": "g1-svf2-initializer-diagnostic.mjs",
+  "authorization": "docs/prompts/g1-svf2-nonproduction-diagnostic-harness-authorization.md",
+  "startedAt": "2026-09-27T08:46:29.933Z",
+  "viewerVersion": "7.124.2",
+  "viewerScriptUrl": "https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js",
+  "initializer": {
+    "env": "AutodeskProduction2",
+    "api": "streamingV2"
+  },
+  "productionInitializerUnchanged": {
+    "env": "AutodeskProduction",
+    "api": null
+  },
+  "model": {
+    "label": "racbasicsampleproject.rvt (Room Locator model)",
+    "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ",
+    "priorLegacyResult": {
+      "isOTG": false,
+      "is3d": true
+    }
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "loadOutcome": "success",
+  "runtime": {
+    "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ",
+    "isOTG": true,
+    "isSVF2": true,
+    "is3d": true,
+    "loadOptions": [
+      "sharedPropertyDbPath",
+      "acmSessionId",
+      "applyRefPoint",
+      "page",
+      "loadOptions",
+      "bubbleNode",
+      "skipPropertyDb",
+      "addViews",
+      "hydrateViews",
+      "fileExt",
+      "isAEC",
+      "createWireframe",
+      "disablePrecomputedNodeBoxes",
+      "bvhOptions",
+      "pdfRenderingMode"
+    ]
+  },
+  "disposition": "H1 (initializer confirmed as the blocker -- model now loads with SVF2/OTG runtime evidence)",
+  "finishedAt": "2026-09-27T08:46:40.425Z"
+}
