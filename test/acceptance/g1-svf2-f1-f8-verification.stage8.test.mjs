@@ -722,6 +722,9 @@ function fabricateValidResult() {
     cleanupFailures: [], cleanupUnresolvedOwnership: false,
     overall: OVERALL_VERDICT.PASS,
     startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+    // Task 10 (bounded completion pass, area 3 shared foundation): validateResultSchema now
+    // requires this field's TYPE -- see that function's own doc comment.
+    sessionTainted: false,
   };
 }
 
@@ -908,7 +911,11 @@ test('runInPageResourceCleanup: session-not-found -- every step skipped/not-appl
   assert.equal(result.cleanupUnresolvedOwnership, false);
   assert.equal(result.cleanupFailures.length, 0); // cross-realm array -- length check, not deepEqual (this file's own documented gotcha)
   assert.equal(result.stepStatus.verifyViewerModelSetEmpty, 'skipped');
-  assert.equal(result.stepStatus.restoreAllControlPatches, 'not-applicable-this-stage');
+  // Task 10 (bounded completion pass, area 3 shared foundation): `restoreAllControlPatches` is
+  // now a real step -- with no session, there is no `session.activeControl` to have ever
+  // existed, so it is genuinely 'skipped' (nothing to restore), not the old
+  // 'not-applicable-this-stage' stub (now removed -- the mechanism it deferred is implemented).
+  assert.equal(result.stepStatus.restoreAllControlPatches, 'skipped');
 });
 
 test('runInPageResourceCleanup: THE CRITICAL REGRESSION -- healthy teardown (empty model set, no live model, null binding) -> cleanupUnresolvedOwnership MUST be false, not unconditionally true', async () => {

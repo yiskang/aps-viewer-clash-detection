@@ -2603,10 +2603,209 @@ async function setupSharedSessionResources(tokenId) {
   g.sessions[sessionId] = {
     tokenId, world, registry, enumerator, binding, model,
     K: 'g1-f1f8-verification', modelVersion: 'g1-live-1',
+    // Task 10 (bounded completion pass, area 3 shared foundation) addition: the load record's
+    // own `gen` (`r.gen`, already read above), retained on the session itself -- strictly
+    // additive, no existing field renamed/removed. `acquireControlLease` (below) needs this to
+    // validate a control command's own `{tokenId, gen}` claim against what the session was
+    // ACTUALLY constructed from, never trusting the command's own say-so alone.
+    tokenGen: r.gen,
     artifacts: { f1FragmentMapsByRoot: new Map() },
+    // Task 10 addition: no control has ever acquired this session's lease yet -- see
+    // `acquireControlLease`/`releaseControlLease`, below.
+    activeControl: null,
   };
 
   return { ok: true, sessionId, postconditions, error: null, cleanup: null };
+}
+
+// ============================================================================================
+// Bounded completion pass, area 3 -- control-bridging SHARED FOUNDATION (this file's own Task
+// 10; the six mandatory controls' own mutation/detection logic is Tasks 11/12, not built here).
+//
+// Why this exists (see `.superpowers/sdd/g1-f1-f8-harness/briefs/task-10-brief.md` for the full
+// reasoning -- transcribed from a codex-advisor consult, request 20260928-170455-5002-1315, plus
+// a second design-sanity-check consult for this task specifically, request
+// 20260928-180527-75769-27344): the six existing `run*Control` functions below (
+// `runTreeUnavailableControl`, `runWrongOwnerControl`, `runHiddenFragmentControl`,
+// `runCapacityBreachControl`, `runInvalidBoundsControl`, `runBoundsBeyondToleranceControl`) were
+// written assuming DIRECT Node-side access to `modelBefore`/`world`/`registry` as live JS object
+// references -- impossible for a real run, since those objects live only in the browser page
+// (`window.__g1.sessions[sessionId]`, this file's own `setupSharedSessionResources`). This
+// section builds the shared, generic, artifact-key-driven, control-agnostic machinery every one
+// of the six controls will use to bridge across the realm boundary safely: an exclusive
+// page-owned lease (so an outer-watchdog-timed-out control can never race a later step against
+// the same shared session state), an isolated scratch-artifact namespace (so a control's own
+// detection re-observation, e.g. re-running observeF1's logic for wrong-owner, can never corrupt
+// the RETAINED F1/F2/F4/F7 evidence later checks consume), and a generic Node-side two-tier-
+// timeout wrapper (`runBridgedControl`, below `withControlTimeout`) plus the `sessionTainted`
+// short-circuit `runHarness` itself needs when that OUTER watchdog (never the in-page one) fires.
+// ============================================================================================
+
+/**
+ * In-page. `recordControlPatch(session, {target, property, originalDescriptor})` -- deliverable
+ * 1 (Task 10 brief). Appends one patch-rollback record onto `session.activeControl.patches`.
+ * Throws if `session.activeControl` does not exist (a control must `acquireControlLease` before
+ * it may ever call this) or if `target`/`property` are missing -- a control forgetting to
+ * acquire its lease first is a genuine bug, never silently tolerated here.
+ *
+ * `target`/`property` identify WHAT was patched. `originalDescriptor` is the result of
+ * `Object.getOwnPropertyDescriptor(target, property)` taken BEFORE the patch was installed, or
+ * `null` if the property did not exist as an own property before patching -- matching the six
+ * existing controls' own `hasOwnProperty` + delete-vs-restore convention, preserved here via a
+ * full descriptor rather than a separately-tracked boolean (the six existing controls' own
+ * `hasOwn*`/`original*` pair, e.g. `runWrongOwnerControl`, this file, ~line 3171).
+ *
+ * Per the second (task-sanity-check) codex-advisor consult's finding 4: this ALSO captures
+ * `installedDescriptor` -- `Object.getOwnPropertyDescriptor(target, property)` read AGAIN, right
+ * NOW (i.e. the patch is assumed already installed by the time a control calls this) -- so
+ * Phase 11's own fallback restoration (`restoreAllControlPatches`, `runInPageResourceCleanup`,
+ * below) can verify the CURRENT property is still the exact patch this record describes before
+ * ever overwriting it, never blindly clobbering a legitimate external change made after this
+ * patch was installed (e.g. a later control's own patch to the SAME property, however unlikely
+ * given the exclusive lease -- defense in depth, not assumed impossible).
+ *
+ * Returns the appended record (never required by callers).
+ */
+function recordControlPatch(session, { target, property, originalDescriptor } = {}) {
+  if (!session || !session.activeControl) {
+    throw new Error('recordControlPatch: no active control lease on this session');
+  }
+  if (!target || typeof property !== 'string' || property === '') {
+    throw new Error('recordControlPatch: target/property required');
+  }
+  const installedDescriptor = Object.getOwnPropertyDescriptor(target, property) || null;
+  const record = {
+    target, property,
+    originalDescriptor: originalDescriptor || null,
+    installedDescriptor,
+  };
+  session.activeControl.patches.push(record);
+  return record;
+}
+
+/**
+ * In-page. `acquireControlLease({sessionId, tokenId, gen, controlId})` -- deliverable 1 (Task 10
+ * brief). Validates the four preconditions from the original consult's finding 5, IN THIS EXACT
+ * ORDER, returning the FIRST failure's own reason (never a generic failure):
+ *
+ * 1. `no-session` -- `window.__g1.sessions[sessionId]` does not exist.
+ * 2. `load-record-mismatch` -- EITHER the session's own retained `{tokenId, tokenGen}` (set at
+ *    Phase 2.5 construction time, `setupSharedSessionResources`) disagrees with the command's own
+ *    `{tokenId, gen}` claim, OR `window.__g1.loads[tokenId]` is no longer the matching completed
+ *    `loadDocumentNode` record for that same `gen` (mirrors `onDeadline`/`onSuccess`/`onError`'s
+ *    own `r.gen !== gen` convention, this file, ~line 992/1015/1042 -- exact equality, never a
+ *    truthy/loose comparison) -- folded into ONE reason since both describe the same underlying
+ *    concern (the load/session identity this command claims to operate against is no longer
+ *    valid), per the original consult's own finding 5 bullet list.
+ * 3. `model-mismatch` -- `window.__g1.models[tokenId] !== session.model`.
+ * 4. `lease-already-held` -- `session.activeControl` is already set (mutual exclusion: an outer
+ *    watchdog timeout is EXACTLY the condition that could otherwise leave an earlier control's
+ *    mutation "in flight" while a later step starts -- original consult's own finding 5).
+ *
+ * On success, sets `session.activeControl = {controlId, tokenId, gen, acquiredAt: Date.now(),
+ * patches: []}` and returns `{ok: true}`. `patches` is an array the control itself appends to via
+ * `recordControlPatch` (above) -- one entry per property it patches, so a control that patches
+ * more than one member (none of the six currently do) is still fully recoverable.
+ */
+function acquireControlLease({ sessionId, tokenId, gen, controlId } = {}) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session) return { ok: false, reason: 'no-session' };
+
+  const sessionIdentityMatches = session.tokenId === tokenId && session.tokenGen === gen;
+  const r = g.loads && g.loads[tokenId];
+  const loadRecordMatches = Boolean(r) && r.status === 'completed' && r.api === 'loadDocumentNode' && r.gen === gen;
+  if (!sessionIdentityMatches || !loadRecordMatches) return { ok: false, reason: 'load-record-mismatch' };
+
+  const model = g.models && g.models[tokenId];
+  if (!model || model !== session.model) return { ok: false, reason: 'model-mismatch' };
+
+  if (session.activeControl) return { ok: false, reason: 'lease-already-held' };
+
+  session.activeControl = { controlId, tokenId, gen, acquiredAt: Date.now(), patches: [] };
+  return { ok: true };
+}
+
+/**
+ * In-page. `releaseControlLease({sessionId, controlId})` -- deliverable 1 (Task 10 brief). Clears
+ * `session.activeControl` ONLY if its `controlId` matches -- never clears a DIFFERENT control's
+ * lease. Returns `{ok: false, reason: 'no-active-lease'}` if there is no session or no active
+ * lease at all, `{ok: false, reason: 'controlId-mismatch'}` if a DIFFERENT control currently holds
+ * it, `{ok: true}` on success.
+ */
+function releaseControlLease({ sessionId, controlId } = {}) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.activeControl) return { ok: false, reason: 'no-active-lease' };
+  if (session.activeControl.controlId !== controlId) return { ok: false, reason: 'controlId-mismatch' };
+  session.activeControl = null;
+  return { ok: true };
+}
+
+/**
+ * In-page. `createControlScratchSession(sessionId, {controlId, copyArtifactKeys})` -- deliverable
+ * 2 (Task 10 brief). Publishes a NEW session under a fresh, collision-proof key,
+ * `` `${sessionId}::control-scratch::${controlId}` `` (`sessionId` is `registry.registrySessionId`,
+ * `controlId` is always one of the fixed `CONTROL_NAMES` strings -- neither ever contains `::`),
+ * whose `model`/`world`/`registry`/`binding`/`K`/`modelVersion`/`tokenId` are the SAME live
+ * references as the real session (these stay live -- a control needs to mutate/read the actual
+ * model), but whose `artifacts` is a FRESH object containing ONLY the keys named in
+ * `copyArtifactKeys`, each independently copied from the real session's own `artifacts[key]`.
+ *
+ * Copy strategy (generic, artifact-shape-driven, per key): a `Map` is copied via
+ * `new Map(value.entries())` -- an INDEPENDENT top-level Map whose OWN entries (add/delete/
+ * reassign a top-level key) can never affect the original, though a value stored at an existing
+ * key that is ITSELF a further mutable object/Map is not independently deep-copied (documented,
+ * not silently assumed -- Tasks 11/12 must account for this per-control, e.g. for
+ * `f1FragmentMapsByRoot`'s own nested-Map-of-Map shape, if they ever need to mutate a value
+ * in place rather than replace a top-level entry). Anything else (plain object, array, primitive)
+ * is copied via `structuredClone` -- a genuine deep copy. `undefined`/absent keys are silently
+ * skipped (nothing to copy). Picking exactly which `copyArtifactKeys` each control needs, and
+ * whatever finer-grained copy strategy a specific key's own shape might require beyond this
+ * generic mechanism, is explicitly Tasks 11/12's own job, NOT this task's.
+ *
+ * Returns `{ok: true, scratchSessionId}` or `{ok: false, scratchSessionId: null, reason}`.
+ */
+function createControlScratchSession(sessionId, { controlId, copyArtifactKeys = [] } = {}) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session) return { ok: false, scratchSessionId: null, reason: 'no-session' };
+
+  const scratchSessionId = `${sessionId}::control-scratch::${controlId}`;
+  g.sessions = g.sessions || {};
+  if (g.sessions[scratchSessionId]) {
+    return { ok: false, scratchSessionId: null, reason: 'scratch-session-already-exists' };
+  }
+
+  const artifacts = {};
+  for (const key of copyArtifactKeys) {
+    const value = session.artifacts ? session.artifacts[key] : undefined;
+    if (value === undefined) continue;
+    artifacts[key] = value instanceof Map ? new Map(value.entries()) : structuredClone(value);
+  }
+
+  g.sessions[scratchSessionId] = {
+    tokenId: session.tokenId, tokenGen: session.tokenGen,
+    world: session.world, registry: session.registry, enumerator: session.enumerator,
+    binding: session.binding, model: session.model,
+    K: session.K, modelVersion: session.modelVersion,
+    artifacts, activeControl: null,
+  };
+
+  return { ok: true, scratchSessionId };
+}
+
+/**
+ * In-page. `disposeControlScratchSession(scratchSessionId)` -- deliverable 2 (Task 10 brief).
+ * Deletes `window.__g1.sessions[scratchSessionId]`. Safe to call even if the key does not exist
+ * (a control's own `finally` calls this unconditionally) -- never throws.
+ */
+function disposeControlScratchSession(scratchSessionId) {
+  const g = window.__g1;
+  if (g && g.sessions && g.sessions[scratchSessionId]) {
+    delete g.sessions[scratchSessionId];
+  }
+  return { ok: true };
 }
 
 // ------------------------------------------------------------------------------------------
@@ -5597,30 +5796,36 @@ function loadDocumentNodeStarter({ tokenId, docTokenId, loadTimeoutMs }) {
  * BEFORE this call; page/context/browser close happen strictly AFTER it, regardless of this
  * call's own outcome).
  *
- * Covers the 12 page-owned steps of `runCleanup`'s own 22-name ledger (`CLEANUP_STEP_NAMES`):
+ * Covers the 13 page-owned steps of `runCleanup`'s own 22-name ledger (`CLEANUP_STEP_NAMES`):
  * `removeF3Listeners`, `removeF6ProbeListener`, `removeF6ReloadProbeListener`,
- * `disposeF6Wiring`, `unloadModelBeforeFromViewer`, `unloadModelAfterFromViewer`,
- * `unregisterModelBefore`, `unregisterModelAfter`, `evictModelBefore`, `evictModelAfter`,
- * `disposeWorld`, `verifyViewerModelSetEmpty` -- using the SAME step names, the SAME guard/
- * try-catch-per-step structure, and the SAME postcondition-based (never "the action threw
- * alone") unresolved-ownership determination `runCleanup` itself already established, per the
- * consult's own explicit instruction not to duplicate its entire ledger design, only its
- * per-step semantics for the subset that must run in this realm.
+ * `disposeF6Wiring`, `restoreAllControlPatches`, `unloadModelBeforeFromViewer`,
+ * `unloadModelAfterFromViewer`, `unregisterModelBefore`, `unregisterModelAfter`,
+ * `evictModelBefore`, `evictModelAfter`, `disposeWorld`, `verifyViewerModelSetEmpty` -- using the
+ * SAME step names, the SAME guard/try-catch-per-step structure, and the SAME postcondition-based
+ * (never "the action threw alone") unresolved-ownership determination `runCleanup` itself already
+ * established, per the consult's own explicit instruction not to duplicate its entire ledger
+ * design, only its per-step semantics for the subset that must run in this realm.
  *
- * `restoreAllControlPatches` is DELIBERATELY OMITTED from this stage's own scope (documented,
- * not silently dropped -- see this file's own Stage 8 report): the six model-data controls
- * (`tree-unavailable`/`wrong-owner`/`hidden-fragment`/`capacity-breach`/`invalid-bounds`/
- * `bounds-beyond-tolerance`) still take live `modelBefore`/`world`/`registry` as direct
- * Node-side parameters (Stages 4-6's own design, predating this stage's own realm-boundary
- * discovery) -- bridging THEM across the realm boundary for a real run is out of this stage's
- * own scope, exactly like Stage 3 left F3's real probe as "a later, separately-authorized
- * stage's job" until Stage 7 needed to build its own version for F6 specifically. Each control
- * already restores its OWN patch in its OWN `finally` block before returning (Stages 4-6's own
- * design); this step existed only as F6's -- no wait, `runCleanup`'s -- LAST-RESORT fallback for
- * a control whose own `finally` restoration itself already failed, which has no generic,
- * patch-shape-agnostic way to be retried here without that same deferred bridging work. Recorded
- * explicitly as `'not-applicable-this-stage'` in the merged evidence (never silently omitted),
- * per this file's own "never a missing object" discipline (plan §8).
+ * `restoreAllControlPatches` (Task 10, bounded completion pass, area 3 shared foundation) is now
+ * REAL here -- Phase 11's own fallback restoration for a control whose own `finally` restoration
+ * already failed (e.g. an outer-watchdog-timed-out control, `runBridgedControl`/
+ * `runControlSafely`'s own `sessionTainted` path, below), driven entirely by
+ * `session.activeControl.patches` (`acquireControlLease`/`recordControlPatch`, above) -- the
+ * SAME generic, patch-shape-agnostic mechanism every one of the six controls' own bridged in-page
+ * handlers (Tasks 11/12) will use, never a control-specific restoration written here. Was
+ * previously deliberately deferred (recorded as `'not-applicable-this-stage'`, per this file's
+ * own "never a missing object" discipline, plan §8) until this shared foundation existed --
+ * PRECISELY what this task closes; a stub comment claiming this is still out of scope would now
+ * be stale, so it is removed, not left behind. `runCleanup`'s OWN, separate, Node-side
+ * `restoreAllControlPatches` step (`~line 1552`, operating on `resources.controlPatches`, the
+ * OLD pre-realm-split Node-side-live-object design) is untouched by this task and stays
+ * permanently `'skipped'` in real wiring (`nodeCleanupResources` never includes
+ * `controlPatches`, `runHarness`'s own doc comment) -- `mergedStepStatus = {...nodeCleanup.
+ * stepStatus, ...pageCleanup.stepStatus}` (`runHarness`, Phase 11) makes THIS function's own
+ * real result for the shared ledger name `restoreAllControlPatches` authoritative, exactly like
+ * the other 12 already-real page-owned steps (second, task-sanity-check codex-advisor consult,
+ * request 20260928-180527-75769-27344, finding 2: confirmed this is the correct name/ownership
+ * resolution, not a new/differently-named step).
  */
 function runInPageResourceCleanup({ sessionId }) {
   const g = window.__g1;
@@ -5673,7 +5878,11 @@ function runInPageResourceCleanup({ sessionId }) {
     stepStatus.evictModelAfter = 'skipped';
     stepStatus.disposeWorld = 'skipped';
     stepStatus.verifyViewerModelSetEmpty = 'skipped';
-    stepStatus.restoreAllControlPatches = 'not-applicable-this-stage';
+    // Task 10: no session means no `session.activeControl` could ever have existed -- genuinely
+    // 'skipped' (nothing to restore), not the old 'not-applicable-this-stage' stub, which is now
+    // stale (the mechanism this step needs is fully implemented below, for the session-exists
+    // path).
+    stepStatus.restoreAllControlPatches = 'skipped';
     return { ok: true, stepStatus, cleanupFailures, cleanupUnresolvedOwnership };
   }
 
@@ -5696,6 +5905,80 @@ function runInPageResourceCleanup({ sessionId }) {
     () => Boolean(session.f6 && session.f6.wiringRef && session.f6.wiringRef.disposed === false && typeof session.f6.dispose === 'function'),
     () => session.f6.dispose(),
     { checkOwnership: () => Boolean(session.f6 && session.f6.wiringRef && session.f6.wiringRef.disposed === false) });
+
+  // Task 10 (bounded completion pass, area 3 shared foundation): last-resort fallback for a
+  // control that never reached its own `finally` restoration (the outer-watchdog-timeout case
+  // `runBridgedControl`/`runControlSafely`'s `sessionTainted` path exists for, below) --
+  // `session.activeControl` is this function's ONLY source of truth for what a control patched,
+  // per `acquireControlLease`/`recordControlPatch`, above. Second codex-advisor consult (task
+  // sanity check, request 20260928-180527-75769-27344), finding 4, all adopted:
+  //  - restore EVERY recorded patch, most-recent-first (reverse order, in case of any dependency
+  //    between patches), even if an earlier one in this same pass fails -- one failure must never
+  //    prevent an attempt on the rest;
+  //  - before overwriting, confirm the CURRENT descriptor still matches the recorded
+  //    `installedDescriptor` -- never blindly clobber a legitimate external change made to the
+  //    same property after this patch was installed;
+  //  - after attempting restoration, re-read and confirm the descriptor now matches
+  //    `originalDescriptor` -- "postcondition, never just no-throw" (this function's own
+  //    established discipline: a sloppy-mode `delete` of a non-configurable property silently
+  //    no-ops rather than throwing, so a bare try/catch around it would falsely report success);
+  //  - clear `session.activeControl` (release the lease) ONLY once every patch is confirmed
+  //    restored -- a partial restoration must never look "done".
+  //
+  // codex-review (code, high effort, Task 10's own pre-commit review pass) Important #4, fixed:
+  // the ORIGINAL guard (`patches.length > 0`) silently reported 'skipped' + left
+  // `cleanupUnresolvedOwnership` false for an `activeControl` that was acquired but never
+  // recorded a single patch (e.g. a control that hung/timed-out BETWEEN acquiring its lease and
+  // its first `recordControlPatch` call) -- reproduced directly by the review: the lease stayed
+  // held, invisibly, forever. The lease itself (not "did it record >=1 patch") is now the guard
+  // AND the postcondition: an outer-watchdog timeout only stops NODE from waiting -- it does NOT
+  // prove the in-page control actually stopped executing (the original codex-advisor consult's
+  // own finding 2: "a synchronous infinite loop or crashed page cannot be repaired by any
+  // JavaScript finally"), so a lease with zero patches could still belong to code that is
+  // genuinely still running concurrently with this very cleanup pass and could mutate shared
+  // state (or call `recordControlPatch`) AFTER this step returns -- fail closed, never silently
+  // "nothing to do" here. This also makes `checkOwnership` strictly simpler AND more robust:
+  // "is a lease still held" is exactly the invariant the action itself maintains (it clears
+  // `session.activeControl` if and only if every patch was verified restored), so re-deriving
+  // "unresolved" from a per-patch descriptor re-scan was redundant -- removed in favor of this
+  // single, harder-to-drift-from-the-action postcondition.
+  const descriptorsEqual = (a, b) => {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return a.value === b.value && a.get === b.get && a.set === b.set
+      && a.writable === b.writable && a.enumerable === b.enumerable && a.configurable === b.configurable;
+  };
+  step('restoreAllControlPatches',
+    () => Boolean(session.activeControl),
+    () => {
+      const patches = Array.isArray(session.activeControl.patches) ? session.activeControl.patches : [];
+      if (patches.length === 0) {
+        throw new Error('restoreAllControlPatches: an active control lease was left held with zero recorded patches -- cannot confirm the control never mutated shared state outside the tracked patch mechanism; the lease is NOT released');
+      }
+      const failures = [];
+      for (let i = patches.length - 1; i >= 0; i -= 1) {
+        const { target, property, originalDescriptor, installedDescriptor } = patches[i];
+        try {
+          const current = Object.getOwnPropertyDescriptor(target, property) || null;
+          if (!descriptorsEqual(current, installedDescriptor)) {
+            throw new Error(`restoreAllControlPatches: '${property}' no longer matches its recorded installed patch -- refusing to overwrite`);
+          }
+          if (originalDescriptor) Object.defineProperty(target, property, originalDescriptor);
+          else delete target[property];
+          const after = Object.getOwnPropertyDescriptor(target, property) || null;
+          if (!descriptorsEqual(after, originalDescriptor)) {
+            throw new Error(`restoreAllControlPatches: '${property}' restoration did not take effect`);
+          }
+        } catch (e) {
+          failures.push(e);
+        }
+      }
+      if (failures.length === 0) session.activeControl = null;
+      if (failures.length > 0) {
+        throw new Error(`restoreAllControlPatches: ${failures.length} patch(es) failed to restore`);
+      }
+    },
+    { checkOwnership: () => Boolean(session.activeControl) });
 
   step('unloadModelBeforeFromViewer',
     () => Boolean(viewer && modelBefore && viewer.getAllModels().includes(modelBefore)),
@@ -5760,9 +6043,122 @@ function runInPageResourceCleanup({ sessionId }) {
     },
     { checkOwnership: modelSetStillNotEmpty });
 
-  stepStatus.restoreAllControlPatches = 'not-applicable-this-stage';
+  // Task 10: `restoreAllControlPatches` is now a real step (above, run right after
+  // `disposeF6Wiring`, matching `CLEANUP_STEP_NAMES`'s own canonical order) -- `stepStatus` is
+  // already fully populated by its own `step()` call; no placeholder needed here any more.
 
   return { ok: true, stepStatus, cleanupFailures, cleanupUnresolvedOwnership };
+}
+
+// ------------------------------------------------------------------------------------------
+// Bounded completion pass, area 3 -- control-bridging SHARED FOUNDATION, Node-side half
+// (deliverable 3, Task 10 brief). See the banner comment above `recordControlPatch` (this file,
+// after `setupSharedSessionResources`) for the full "why".
+// ------------------------------------------------------------------------------------------
+
+/**
+ * Node-side, pure. `mapControlAttemptOutcome(controlName, {detected, restored, timedOut, reason})`
+ * -- deliverable 3 (Task 10 brief). The ONE generic state-derivation rule every one of the six
+ * existing Node-side `run*Control` functions above already encodes inline (`if (timedOut)
+ * TIMED_OUT; else if (!detected) NOT_DETECTED; else if (!restored) RESTORE_FAILED; else
+ * DETECTED_RESTORED` -- confirmed identical in shape across all six by direct read), written ONCE
+ * here so Tasks 11/12's own bridged in-page ports never re-duplicate it per control.
+ *
+ * Deliberately NEVER produces `NOT_EXECUTABLE` -- per the brief's own explicit ownership split,
+ * confirmed by the second (task-sanity-check) codex-advisor consult (request
+ * 20260928-180527-75769-27344), finding 3: an in-page precondition failure is reported by the
+ * in-page function itself returning `{ok: false, reason}` BEFORE ever attempting a mutation --
+ * `runBridgedControl` (below) maps THAT directly to `NOT_EXECUTABLE`, never routing it through
+ * this function. This function's own input is only ever the `{detected, restored, timedOut}`
+ * triple from an attempt that genuinely ran (`{ok: true, ...}`).
+ */
+function mapControlAttemptOutcome(controlName, { detected, restored, timedOut, reason = null } = {}) {
+  let state;
+  if (timedOut) state = CONTROL_STATE.TIMED_OUT;
+  else if (!detected) state = CONTROL_STATE.NOT_DETECTED;
+  else if (!restored) state = CONTROL_STATE.RESTORE_FAILED;
+  else state = CONTROL_STATE.DETECTED_RESTORED;
+
+  return createControlResult(controlName, {
+    state,
+    executed: true,
+    detected: timedOut ? null : Boolean(detected),
+    restored: timedOut ? null : Boolean(restored),
+    reason,
+  });
+}
+
+/**
+ * Node-side. `runBridgedControl({pageEvaluate, controlName, inPageFn, arg, innerTimeoutMs,
+ * outerTimeoutMs = innerTimeoutMs * 3})` -- deliverable 3 (Task 10 brief). The ONE generic
+ * Node-side wrapper every one of the six mandatory browser-realm controls (Tasks 11/12) reuses
+ * identically -- never control-specific logic baked in here.
+ *
+ * `arg` is merged with `innerTimeoutMs` before being handed to `inPageFn` (as `{...arg,
+ * innerTimeoutMs}`): every bridged in-page control function (Tasks 11/12) races ITS OWN
+ * observation against `innerTimeoutMs` via an in-page timer, so its OWN `finally` (restoration)
+ * always completes BEFORE a `TIMED_OUT` outcome is ever returned -- exactly the property the
+ * original consult's finding 2 requires, and what makes `raw.timedOut === true` a LEGITIMATE,
+ * restoration-attempted result, categorically different from this wrapper's own OUTER timeout,
+ * below. (The in-page realm cannot call this file's own Node-side `withControlTimeout` directly
+ * -- each bridged handler reimplements the identical small race inline, matching this file's own
+ * established "every in-page function stays independently reconstructable, never importing a
+ * Node-side helper across the realm boundary" discipline.)
+ *
+ * Races `pageEvaluate(inPageFn, {...arg, innerTimeoutMs})` against `outerTimeoutMs` via
+ * `withControlTimeout` (this file's own existing Node-side timeout primitive -- reused verbatim,
+ * never a second one). `outerTimeoutMs` should be strictly greater than `innerTimeoutMs` (default
+ * `innerTimeoutMs * 3`) so the in-page race above has a genuine chance to settle first.
+ *
+ * On the OUTER timeout firing (the in-page call never settled within `outerTimeoutMs` -- the page
+ * may be hung, wedged, or the transport itself lost): rejects with a specially-tagged error
+ * (`Object.assign(new Error('outer-watchdog-timeout'), {outerWatchdogTimeout: true,
+ * controlName})`) -- NEVER silently downgraded to an ordinary `TIMED_OUT` `ControlResult` at this
+ * layer; the caller (`runControlSafely`, `runHarness`, below) is what turns this into a
+ * `ControlResult` AND taints the session, since only it has `sessionTainted` in scope.
+ *
+ * On the in-page call resolving normally: `raw.ok === false` (a precondition failure BEFORE any
+ * mutation was ever attempted) maps directly to a `NOT_EXECUTABLE` `ControlResult`, `raw.reason`
+ * carried through. `raw.ok === true` (an attempt genuinely ran) is handed to the pure
+ * `mapControlAttemptOutcome`, above. Any other shape (`raw` falsy, `raw.ok` neither `true` nor
+ * `false`) is treated as `NOT_EXECUTABLE{reason: 'malformed-in-page-result'}` -- fail-closed,
+ * never assumed successful.
+ */
+async function runBridgedControl({ pageEvaluate, controlName, inPageFn, arg = {}, innerTimeoutMs, outerTimeoutMs = innerTimeoutMs * 3 }) {
+  let raw;
+  try {
+    raw = await withControlTimeout(pageEvaluate(inPageFn, { ...arg, innerTimeoutMs }), outerTimeoutMs);
+  } catch (e) {
+    if (e && e.controlTimeout) {
+      throw Object.assign(new Error('outer-watchdog-timeout'), { outerWatchdogTimeout: true, controlName });
+    }
+    throw e;
+  }
+
+  if (!raw || typeof raw.ok !== 'boolean') {
+    return createControlResult(controlName, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'malformed-in-page-result' });
+  }
+  if (raw.ok === false) {
+    return createControlResult(controlName, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: raw.reason || 'precondition-unmet' });
+  }
+  // codex-review (code, high effort, Task 10's own pre-commit review pass) Critical #1: `raw.ok
+  // === true` alone is NOT enough to trust `raw.detected`/`raw.restored`/`raw.timedOut` -- both
+  // `mapControlAttemptOutcome`'s own branching AND `createControlResult`'s own field-expectation
+  // validation use TRUTHINESS (`!detected`/`Boolean(detected)`), so a serialization bug or a
+  // buggy future bridged control (Tasks 11/12) that accidentally hands back STRING booleans
+  // (e.g. `{detected: "false", restored: "false", timedOut: false}`, plausible if a control
+  // stringifies its own raw values before returning) would silently produce a false
+  // `DETECTED_RESTORED` -- reproduced directly by the review. Strictly type-check every field
+  // BEFORE ever reaching the outcome mapper; malformed booleans are `NOT_EXECUTABLE`, never
+  // coerced. `timedOut` MUST be a real boolean too (never merely present) -- this is the runtime
+  // boundary between untrusted cross-realm page data and this file's own typed `ControlResult`
+  // contract, so it belongs HERE, not inside the pure `mapControlAttemptOutcome` (which is
+  // documented as trusting its own caller's contract, matching this file's established
+  // "validate at the realm boundary, trust internally" discipline).
+  if (typeof raw.detected !== 'boolean' || typeof raw.restored !== 'boolean' || typeof raw.timedOut !== 'boolean') {
+    return createControlResult(controlName, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'malformed-in-page-result' });
+  }
+  return mapControlAttemptOutcome(controlName, raw);
 }
 
 /**
@@ -5837,6 +6233,10 @@ async function runHarness(deps, config) {
   const {
     urn, loadTimeoutMs, unloadWaitTimeoutMs = CHECK_TIMEOUT_MS, reloadProbeTimeoutMs = CHECK_TIMEOUT_MS,
     controlTimeoutMs = CHECK_TIMEOUT_MS, censusTimeoutMs = CENSUS_TIMEOUT_MS,
+    // Task 10 (bounded completion pass, area 3 shared foundation), deliverable 4's last bullet:
+    // the outer watchdog around Phase 11's own `pageEvaluate(runInPageResourceCleanup, ...)`
+    // call -- same `innerTimeoutMs * 3`-style default multiplier `runBridgedControl` uses, above.
+    cleanupWatchdogTimeoutMs = controlTimeoutMs * 3,
     unloadEventName, addedEventName,
   } = config;
 
@@ -5864,6 +6264,18 @@ async function runHarness(deps, config) {
   let cleanupUnresolvedOwnership = false;
   const cleanupFailures = [];
   const staleContinuationsDropped = [];
+  // Task 10 (bounded completion pass, area 3 shared foundation), deliverable 4: a SEPARATE flag
+  // from `fatalErrorObserved` -- deliberately never reused/overloaded for this narrower meaning
+  // (second codex-advisor consult, request 20260928-180527-75769-27344: "Preserve the existing
+  // error-ledger recording and fatalErrorObserved = true; sessionTainted must not replace
+  // either"). Set ONLY when a control's own OUTER watchdog fires (`runBridgedControl`'s
+  // `outerWatchdogTimeout`-tagged rejection, below) -- i.e. Node gave up waiting on the page and
+  // has no idea what state it's in, as opposed to an ordinary thrown error (which already sets
+  // `fatalErrorObserved` via this same `runControlSafely`'s existing generic catch branch,
+  // unchanged). Once true, every REMAINING Phase 3c-10 step (every Fi check AND every control)
+  // short-circuits -- see the `if (!sessionTainted)` gates below -- rather than risking another
+  // `pageEvaluate` call against a possibly-wedged page.
+  let sessionTainted = false;
 
   const notExecutable = (name, reason) => createControlResult(name, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason });
   const blockedControl = (name, classifierState) => createControlResult(name, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: `classifier:${classifierState}` });
@@ -5872,6 +6284,16 @@ async function runHarness(deps, config) {
     try {
       return await fn({ controlTimeoutMs });
     } catch (e) {
+      if (e && e.outerWatchdogTimeout === true) {
+        // Task 10, deliverable 4: still return a well-formed ControlResult for THIS control
+        // (TIMED_OUT is the more accurate of the two PASS-blocking choices here, since the
+        // plan's own precedence already treats it as PASS-blocking either way -- brief's own
+        // explicit call), but ALSO taint the session so `runHarness`'s own remaining sequence
+        // never continues talking to a possibly-wedged page.
+        sessionTainted = true;
+        errorLedger.record({ kind: 'required-resource-failure', reason: `control-outer-watchdog-timeout:${name}`, error: describeError(e) });
+        return createControlResult(name, { state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null, reason: 'outer-watchdog-timeout' });
+      }
       errorLedger.record({ kind: 'required-resource-failure', reason: `control-threw:${name}`, error: describeError(e) });
       fatalErrorObserved = true;
       return notExecutable(name, 'control-threw');
@@ -5952,128 +6374,175 @@ async function runHarness(deps, config) {
         evidence: { status: 'observed', error: f3Score.error || null },
       });
 
+      // Task 10 (bounded completion pass, area 3 shared foundation), deliverable 4: every step
+      // from Phase 3c through Phase 10 (inclusive) is now gated behind `if (!sessionTainted)` --
+      // once an outer-watchdog timeout taints the session (`runControlSafely`'s own catch,
+      // above), every REMAINING step short-circuits rather than risking another `pageEvaluate`
+      // call against a possibly-wedged page. `f1Result`/`f2Result`/`f4Result`/`f7Result` are
+      // hoisted so a LATER gated block can still read an EARLIER one's result -- always safe,
+      // since taint can only ever become true via a control (never an Fi check itself), so a
+      // later block that depends on an earlier one is either running with that earlier value
+      // already populated (taint became true only AFTER it, if at all) or is itself skipped
+      // (taint was already true before this later block's own gate was reached).
+
       // Phase 3c -- tree-unavailable control, immediately after F3.
-      controlResults['tree-unavailable'] = await runControlSafely('tree-unavailable', controls && controls.treeUnavailable);
+      if (!sessionTainted) {
+        controlResults['tree-unavailable'] = await runControlSafely('tree-unavailable', controls && controls.treeUnavailable);
+      }
 
       // Phase 4 -- F1.
-      const f1Result = await pageEvaluate(observeF1, sessionId);
-      const f1Score = scoreF1(f1Result.fields || {});
-      // Fix wave (Important I4): see buildCheckRecord's own doc comment. An observation
-      // failure (f1Result.ok !== true) never fabricates fields/a scored reason from an empty
-      // observation -- fields stays {}, reason/evidence.error name the actual observe failure.
-      checks.F1 = f1Result.ok === true
-        ? buildCheckRecord({ verdict: f1Score.verdict, reason: f1Score.reason, fields: f1Score.fields, evidence: { status: 'observed' } })
-        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f1Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
-      // Fix wave (final whole-branch review, Minor M3, treated as a real bug): captured HERE,
-      // immediately after F1 is computed -- never inline at the control call site below. The
-      // prior `f1SnapshotBefore: checks.F1` / `readCurrentF1: () => checks.F1` both ultimately
-      // read the SAME Node-side variable, evaluated back-to-back at the same call site, with
-      // nothing this oracle could ever observe changing in between -- a comparison against
-      // itself, incapable of ever detecting a real leak. `f1Snapshot` now genuinely predates
-      // every control that runs before this oracle (wrong-owner, immediately below), matching
-      // the pre-control-snapshot pattern the review named. `structuredClone` (never a bare
-      // assignment): `checks.F1` is a primitive string today, but a future I4 change (evidence-
-      // shape tightening, this same fix wave's own remaining item) turns it into an object --
-      // a bare assignment would then alias the SAME object `readCurrentF1()` re-reads, silently
-      // reintroducing this exact self-comparison bug the moment that lands.
-      const f1Snapshot = structuredClone(checks.F1);
+      let f1Result = null;
+      let f1Snapshot;
+      if (!sessionTainted) {
+        f1Result = await pageEvaluate(observeF1, sessionId);
+        const f1Score = scoreF1(f1Result.fields || {});
+        // Fix wave (Important I4): see buildCheckRecord's own doc comment. An observation
+        // failure (f1Result.ok !== true) never fabricates fields/a scored reason from an empty
+        // observation -- fields stays {}, reason/evidence.error name the actual observe failure.
+        checks.F1 = f1Result.ok === true
+          ? buildCheckRecord({ verdict: f1Score.verdict, reason: f1Score.reason, fields: f1Score.fields, evidence: { status: 'observed' } })
+          : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f1Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+        // Fix wave (final whole-branch review, Minor M3, treated as a real bug): captured HERE,
+        // immediately after F1 is computed -- never inline at the control call site below. The
+        // prior `f1SnapshotBefore: checks.F1` / `readCurrentF1: () => checks.F1` both ultimately
+        // read the SAME Node-side variable, evaluated back-to-back at the same call site, with
+        // nothing this oracle could ever observe changing in between -- a comparison against
+        // itself, incapable of ever detecting a real leak. `f1Snapshot` now genuinely predates
+        // every control that runs before this oracle (wrong-owner, immediately below), matching
+        // the pre-control-snapshot pattern the review named. `structuredClone` (never a bare
+        // assignment): `checks.F1` is a primitive string today, but a future I4 change (evidence-
+        // shape tightening, this same fix wave's own remaining item) turns it into an object --
+        // a bare assignment would then alias the SAME object `readCurrentF1()` re-reads, silently
+        // reintroducing this exact self-comparison bug the moment that lands.
+        f1Snapshot = structuredClone(checks.F1);
+      }
 
       // Phase 4c -- wrong-owner, then late-completion-after-timeout, both before Phase 5.
       // late-completion-after-timeout is synthetic/Node-only (no realm bridging needed at all,
       // unlike wrong-owner) -- runHarness calls it directly, never through deps.controls, since
       // only it (not main()) has checks.F1 in scope to build f1SnapshotBefore/readCurrentF1 from.
-      controlResults['wrong-owner'] = await runControlSafely('wrong-owner', controls && controls.wrongOwner);
-      controlResults['late-completion-after-timeout'] = await runLateCompletionAfterTimeoutControl({
-        f1SnapshotBefore: f1Snapshot, readCurrentF1: () => checks.F1,
-      });
+      if (!sessionTainted) {
+        controlResults['wrong-owner'] = await runControlSafely('wrong-owner', controls && controls.wrongOwner);
+      }
+      if (!sessionTainted) {
+        controlResults['late-completion-after-timeout'] = await runLateCompletionAfterTimeoutControl({
+          f1SnapshotBefore: f1Snapshot, readCurrentF1: () => checks.F1,
+        });
+      }
 
       // Phase 5 -- F2.
-      const f2Result = await pageEvaluate(observeF2, sessionId);
-      const f2Score = scoreF2(f2Result.fields || {});
-      // Fix wave (Important I4): see F1's own comment above -- same pattern.
-      checks.F2 = f2Result.ok === true
-        ? buildCheckRecord({ verdict: f2Score.verdict, reason: f2Score.reason, fields: f2Score.fields, evidence: { status: 'observed' } })
-        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f2Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+      let f2Result = null;
+      if (!sessionTainted) {
+        f2Result = await pageEvaluate(observeF2, sessionId);
+        const f2Score = scoreF2(f2Result.fields || {});
+        // Fix wave (Important I4): see F1's own comment above -- same pattern.
+        checks.F2 = f2Result.ok === true
+          ? buildCheckRecord({ verdict: f2Score.verdict, reason: f2Score.reason, fields: f2Score.fields, evidence: { status: 'observed' } })
+          : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f2Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+      }
 
       // Phase 5c -- hidden-fragment control.
-      controlResults['hidden-fragment'] = await runControlSafely('hidden-fragment', controls && controls.hiddenFragment);
+      if (!sessionTainted) {
+        controlResults['hidden-fragment'] = await runControlSafely('hidden-fragment', controls && controls.hiddenFragment);
+      }
 
       // Phase 6 -- F4.
-      const f4Result = await pageEvaluate(observeF4, sessionId);
-      const f4Score = scoreF4(f4Result.fields || {});
-      // Fix wave (Important I4): see F1's own comment above -- same pattern.
-      checks.F4 = f4Result.ok === true
-        ? buildCheckRecord({ verdict: f4Score.verdict, reason: f4Score.reason, fields: f4Score.fields, evidence: { status: 'observed' } })
-        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f4Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
-      // Fix wave (final whole-branch review, Minor M3, treated as a real bug): same fix as
-      // f1Snapshot above -- captured immediately after F4 is computed, never inline at the
-      // control call site (where it previously ran with truly nothing at all in between,
-      // making it the most direct of the two self-comparisons the review found). Deep-cloned
-      // for the same forward-compatibility reason as f1Snapshot above.
-      const f4Snapshot = structuredClone(checks.F4);
+      let f4Result = null;
+      let f4Snapshot;
+      if (!sessionTainted) {
+        f4Result = await pageEvaluate(observeF4, sessionId);
+        const f4Score = scoreF4(f4Result.fields || {});
+        // Fix wave (Important I4): see F1's own comment above -- same pattern.
+        checks.F4 = f4Result.ok === true
+          ? buildCheckRecord({ verdict: f4Score.verdict, reason: f4Score.reason, fields: f4Score.fields, evidence: { status: 'observed' } })
+          : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f4Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+        // Fix wave (final whole-branch review, Minor M3, treated as a real bug): same fix as
+        // f1Snapshot above -- captured immediately after F4 is computed, never inline at the
+        // control call site (where it previously ran with truly nothing at all in between,
+        // making it the most direct of the two self-comparisons the review found). Deep-cloned
+        // for the same forward-compatibility reason as f1Snapshot above.
+        f4Snapshot = structuredClone(checks.F4);
+      }
 
       // Phase 6c -- invalid-geometry-consumer control (synthetic-only, already realm-safe).
       // Same reasoning as late-completion-after-timeout above: called directly, never through
       // deps.controls, since only runHarness has checks.F4 in scope at this point.
-      controlResults['invalid-geometry-consumer'] = await runInvalidGeometryConsumerControl({
-        f4SnapshotBefore: f4Snapshot, readCurrentF4: () => checks.F4, controlTimeoutMs,
-      });
+      if (!sessionTainted) {
+        controlResults['invalid-geometry-consumer'] = await runInvalidGeometryConsumerControl({
+          f4SnapshotBefore: f4Snapshot, readCurrentF4: () => checks.F4, controlTimeoutMs,
+        });
+      }
 
       // Phase 7 -- F5 (its own corrected dependency: consumes F1's outcome directly, §7.5/I5).
-      const f5Score = scoreF5({ f1Result, f2Fields: f2Result.fields, f4Fields: f4Result.fields });
-      // Fix wave (Important I4): F5 is pure/always-executes (no pageEvaluate ok-gate) -- see
-      // buildCheckRecord's own doc comment.
-      checks.F5 = buildCheckRecord({ verdict: f5Score.verdict, reason: f5Score.reason, fields: f5Score.fields, evidence: { status: 'observed' } });
+      if (!sessionTainted) {
+        const f5Score = scoreF5({ f1Result, f2Fields: f2Result.fields, f4Fields: f4Result.fields });
+        // Fix wave (Important I4): F5 is pure/always-executes (no pageEvaluate ok-gate) -- see
+        // buildCheckRecord's own doc comment.
+        checks.F5 = buildCheckRecord({ verdict: f5Score.verdict, reason: f5Score.reason, fields: f5Score.fields, evidence: { status: 'observed' } });
+      }
 
       // Phase 7c -- capacity-breach control.
-      controlResults['capacity-breach'] = await runControlSafely('capacity-breach', controls && controls.capacityBreach);
+      if (!sessionTainted) {
+        controlResults['capacity-breach'] = await runControlSafely('capacity-breach', controls && controls.capacityBreach);
+      }
 
       // Phase 8 -- F7.
-      const f7Result = await pageEvaluate(observeF7, sessionId);
-      const f7Score = scoreF7(f7Result.fields || {});
-      // Fix wave (Important I4): see F1's own comment above -- same pattern.
-      checks.F7 = f7Result.ok === true
-        ? buildCheckRecord({ verdict: f7Score.verdict, reason: f7Score.reason, fields: f7Score.fields, evidence: { status: 'observed' } })
-        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f7Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+      let f7Result = null;
+      if (!sessionTainted) {
+        f7Result = await pageEvaluate(observeF7, sessionId);
+        const f7Score = scoreF7(f7Result.fields || {});
+        // Fix wave (Important I4): see F1's own comment above -- same pattern.
+        checks.F7 = f7Result.ok === true
+          ? buildCheckRecord({ verdict: f7Score.verdict, reason: f7Score.reason, fields: f7Score.fields, evidence: { status: 'observed' } })
+          : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f7Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+      }
 
       // Phase 8c -- invalid-bounds, then bounds-beyond-tolerance.
-      controlResults['invalid-bounds'] = await runControlSafely('invalid-bounds', controls && controls.invalidBounds);
-      controlResults['bounds-beyond-tolerance'] = await runControlSafely('bounds-beyond-tolerance', controls && controls.boundsBeyondTolerance);
+      if (!sessionTainted) {
+        controlResults['invalid-bounds'] = await runControlSafely('invalid-bounds', controls && controls.invalidBounds);
+      }
+      if (!sessionTainted) {
+        controlResults['bounds-beyond-tolerance'] = await runControlSafely('bounds-beyond-tolerance', controls && controls.boundsBeyondTolerance);
+      }
 
       // Phase 9 -- F8 (built entirely from F1/F2's own already-computed fields, never re-derived).
-      const f8Result = await pageEvaluate(observeF8, { sessionId, f1Fields: f1Result.fields, f2Fields: f2Result.fields });
-      const f8Score = scoreF8(f8Result.fields || {});
-      // Fix wave (Important I4): see F1's own comment above -- same pattern.
-      checks.F8 = f8Result.ok === true
-        ? buildCheckRecord({ verdict: f8Score.verdict, reason: f8Score.reason, fields: f8Score.fields, evidence: { status: 'observed' } })
-        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f8Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+      if (!sessionTainted) {
+        const f8Result = await pageEvaluate(observeF8, { sessionId, f1Fields: f1Result.fields, f2Fields: f2Result.fields });
+        const f8Score = scoreF8(f8Result.fields || {});
+        // Fix wave (Important I4): see F1's own comment above -- same pattern.
+        checks.F8 = f8Result.ok === true
+          ? buildCheckRecord({ verdict: f8Score.verdict, reason: f8Score.reason, fields: f8Score.fields, evidence: { status: 'observed' } })
+          : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f8Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+      }
 
       // Phase 10 -- F6 (MUTATES state; must run last of all checks; includes its own
       // stale-old-model-event control, copied -- never re-run -- into the controls manifest).
-      const f6Result = await runF6UnloadReload({
-        sessionId, pageEvaluate, pageWaitForFunction,
-        loadStarter, urn, loadTimeoutMs, unloadEventName, addedEventName,
-        unloadWaitTimeoutMs, reloadProbeTimeoutMs, captureFormatSignalsFn,
-        ...f6Deps,
-      });
-      const f6Score = scoreF6(f6Result.fields || {});
-      // Fix wave (Important I4): see F1's own comment above -- same pattern (F6's own "ok" gate
-      // is runF6UnloadReload's own wiring-install-failed early return, not a pageEvaluate-shaped
-      // {ok, reason}, but the same never-fabricate-fields-on-failure discipline applies).
-      checks.F6 = f6Result.ok === true
-        ? buildCheckRecord({ verdict: f6Score.verdict, reason: f6Score.reason, fields: f6Score.fields, evidence: { status: 'observed' } })
-        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f6Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
-      if (f6Result.loadDocumentNode && f6Result.loadDocumentNode.token) {
-        tokens.push(f6Result.loadDocumentNode.token);
-        tokenGens.set(f6Result.loadDocumentNode.token.id, f6Result.loadDocumentNode.gen);
-        f6TokenIds.add(f6Result.loadDocumentNode.token.id);
+      if (!sessionTainted) {
+        const f6Result = await runF6UnloadReload({
+          sessionId, pageEvaluate, pageWaitForFunction,
+          loadStarter, urn, loadTimeoutMs, unloadEventName, addedEventName,
+          unloadWaitTimeoutMs, reloadProbeTimeoutMs, captureFormatSignalsFn,
+          ...f6Deps,
+        });
+        const f6Score = scoreF6(f6Result.fields || {});
+        // Fix wave (Important I4): see F1's own comment above -- same pattern (F6's own "ok" gate
+        // is runF6UnloadReload's own wiring-install-failed early return, not a pageEvaluate-shaped
+        // {ok, reason}, but the same never-fabricate-fields-on-failure discipline applies).
+        checks.F6 = f6Result.ok === true
+          ? buildCheckRecord({ verdict: f6Score.verdict, reason: f6Score.reason, fields: f6Score.fields, evidence: { status: 'observed' } })
+          : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f6Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+        if (f6Result.loadDocumentNode && f6Result.loadDocumentNode.token) {
+          tokens.push(f6Result.loadDocumentNode.token);
+          tokenGens.set(f6Result.loadDocumentNode.token.id, f6Result.loadDocumentNode.gen);
+          f6TokenIds.add(f6Result.loadDocumentNode.token.id);
+        }
+        if (f6Result.docLoad && f6Result.docLoad.token) {
+          tokens.push(f6Result.docLoad.token);
+          tokenGens.set(f6Result.docLoad.token.id, f6Result.docLoad.gen);
+          f6TokenIds.add(f6Result.docLoad.token.id);
+        }
+        controlResults['stale-old-model-event'] = buildStaleOldModelEventControlResult(f6Result.fields || {});
       }
-      if (f6Result.docLoad && f6Result.docLoad.token) {
-        tokens.push(f6Result.docLoad.token);
-        tokenGens.set(f6Result.docLoad.token.id, f6Result.docLoad.gen);
-        f6TokenIds.add(f6Result.docLoad.token.id);
-      }
-      controlResults['stale-old-model-event'] = buildStaleOldModelEventControlResult(f6Result.fields || {});
     }
     } catch (e) {
       fatalErrorObserved = true;
@@ -6118,36 +6587,63 @@ async function runHarness(deps, config) {
   // Phase 11 step 1a)" precedes the rest of cleanup; drain is step 1b). Previously built
   // (sealLoadRecords/drainLoadToken) but never called anywhere in the assembled runHarness.
   const claimedTokenIds = tokens.filter((t) => t.state === TOKEN_STATE.COMPLETED).map((t) => t.id);
-  try {
-    await sealLoadRecords({ tokens, pageEvaluate, sealFn: sealLoads, claimedTokenIds });
-  } catch (e) {
-    cleanupFailures.push({ step: 'sealLoadRecords', error: describeError(e) });
-    cleanupUnresolvedOwnership = true; // whole seal RPC failed while page presumed alive -- ownership unknown, same reasoning as the pageCleanup catch below
-  }
-  for (const token of tokens) {
-    if (token.state !== TOKEN_STATE.TIMED_OUT) continue; // sealLoadRecords already moved every ACTIVE token to timed-out above; only those are ever drained (drainLoadToken's own doc comment)
+  // Task 10 (bounded completion pass, area 3 shared foundation): per the second, task-sanity-
+  // check codex-advisor consult (request 20260928-180527-75769-27344), finding 5 -- when the
+  // session is already tainted (an outer watchdog fired; the page may be hung/wedged), issuing
+  // MORE unprotected page RPCs (sealLoadRecords/drainLoadToken, both un-watchdogged) before ever
+  // reaching the one call this task DOES protect (`pageEvaluate(runInPageResourceCleanup, ...)`,
+  // below) would defeat the whole point of the outer watchdog: `runHarness` could still hang
+  // here, before ever reaching the protected call. Skip both when tainted and go straight to the
+  // protected page-cleanup attempt -- any token left non-terminal as a result is still correctly
+  // accounted for by the existing per-token escalation loop below (`finalizeLoadTokens`/
+  // `tokenEscalatesToUnresolvedOwnership`), unchanged.
+  if (!sessionTainted) {
     try {
-      const drainResult = await drainLoadToken({
-        token, pageWaitForFunction, pageEvaluate,
-        ownershipCleanPredicate: f11DrainOwnershipCleanPredicate,
-        readRecordFn: readLoadRecordSnapshot,
-        tokenId: token.id, gen: tokenGens.get(token.id),
-      });
-      if (!drainResult.drained) {
-        cleanupFailures.push({ step: 'drainPendingTokens', tokenId: token.id, reason: drainResult.reason });
-      }
+      await sealLoadRecords({ tokens, pageEvaluate, sealFn: sealLoads, claimedTokenIds });
     } catch (e) {
-      cleanupFailures.push({ step: 'drainPendingTokens', tokenId: token.id, error: describeError(e) });
-      cleanupUnresolvedOwnership = cleanupUnresolvedOwnership || f6TokenIds.has(token.id);
+      cleanupFailures.push({ step: 'sealLoadRecords', error: describeError(e) });
+      cleanupUnresolvedOwnership = true; // whole seal RPC failed while page presumed alive -- ownership unknown, same reasoning as the pageCleanup catch below
     }
+    for (const token of tokens) {
+      if (token.state !== TOKEN_STATE.TIMED_OUT) continue; // sealLoadRecords already moved every ACTIVE token to timed-out above; only those are ever drained (drainLoadToken's own doc comment)
+      try {
+        const drainResult = await drainLoadToken({
+          token, pageWaitForFunction, pageEvaluate,
+          ownershipCleanPredicate: f11DrainOwnershipCleanPredicate,
+          readRecordFn: readLoadRecordSnapshot,
+          tokenId: token.id, gen: tokenGens.get(token.id),
+        });
+        if (!drainResult.drained) {
+          cleanupFailures.push({ step: 'drainPendingTokens', tokenId: token.id, reason: drainResult.reason });
+        }
+      } catch (e) {
+        cleanupFailures.push({ step: 'drainPendingTokens', tokenId: token.id, error: describeError(e) });
+        cleanupUnresolvedOwnership = cleanupUnresolvedOwnership || f6TokenIds.has(token.id);
+      }
+    }
+  } else {
+    cleanupFailures.push({ step: 'sealLoadRecords', reason: 'skipped-session-tainted' });
+    cleanupFailures.push({ step: 'drainPendingTokens', reason: 'skipped-session-tainted' });
   }
 
+  // Task 10, deliverable 4's last bullet: THIS specific call is the one this task protects with
+  // an outer watchdog (the SAME `withControlTimeout` mechanism `runBridgedControl` uses, above --
+  // never a third timeout primitive) -- a fully deadlocked page's own
+  // `pageEvaluate(runInPageResourceCleanup, ...)` could otherwise hang `runHarness` itself
+  // forever. `main()`'s own `page.close()`/`context.close()`/`browser.close()` (Node-side, not
+  // page-evaluated, via `runCleanup`/`closeAllBestEffort`, unchanged) remain the actual final
+  // backstop for a truly wedged page -- this watchdog only prevents THIS ONE RPC from hanging
+  // `runHarness` before that backstop is ever reached.
   let pageCleanup = { ok: false, stepStatus: {}, cleanupFailures: [], cleanupUnresolvedOwnership: false };
   try {
-    pageCleanup = await pageEvaluate(runInPageResourceCleanup, { sessionId });
+    pageCleanup = await withControlTimeout(pageEvaluate(runInPageResourceCleanup, { sessionId }), cleanupWatchdogTimeoutMs);
   } catch (e) {
-    cleanupFailures.push({ step: 'removeF3Listeners', error: describeError(e) });
-    cleanupUnresolvedOwnership = true; // whole page-cleanup RPC failed while page presumed alive -- ownership unknown (codex-advisor finding #3)
+    if (e && e.controlTimeout) {
+      cleanupFailures.push({ step: 'in-page-cleanup-watchdog-timeout', error: describeError(e) });
+    } else {
+      cleanupFailures.push({ step: 'removeF3Listeners', error: describeError(e) });
+    }
+    cleanupUnresolvedOwnership = true; // whole page-cleanup RPC failed/timed-out while page presumed alive -- ownership unknown (codex-advisor finding #3)
   }
   const nodeOnlyResources = { ...nodeCleanupResources, tokens };
   const nodeCleanup = await runCleanup(nodeOnlyResources, {});
@@ -6249,8 +6745,14 @@ async function runHarness(deps, config) {
   // (persisted into the result below); `projectCheckVerdicts` derives the bare-string shape
   // ONLY for this one call, from a single source of truth, never a second independently-
   // maintained map.
+  // Task 10 (bounded completion pass, area 3 shared foundation): `sessionTainted` feeds
+  // `computeOverall` the SAME way an ordinary fatal-failure signal already does (second
+  // codex-advisor consult, request 20260928-180527-75769-27344, recommendation) -- inline at
+  // THIS call site only, never by mutating the `fatalErrorObserved` variable itself (which stays
+  // the narrower, already-established signal `errorLedger.fatalErrorObserved` in the persisted
+  // result below reflects) and never by touching `computeOverall`'s own frozen internals.
   const overall = computeOverall({
-    fatalErrorObserved, cleanupUnresolvedOwnership, viewerScriptIntegrity,
+    fatalErrorObserved: fatalErrorObserved || sessionTainted, cleanupUnresolvedOwnership, viewerScriptIntegrity,
     classifier: classifierResult ? classifierResult.classifier : null,
     checks: projectCheckVerdicts(checks), controls: controlResults, cleanupFailures,
   });
@@ -6329,6 +6831,15 @@ async function runHarness(deps, config) {
     // 22-step cleanup ledger and the classified viewer-script-integrity reason.
     cleanupStepStatus: mergedStepStatus,
     viewerScriptIntegrityReason: integrityReason,
+    // Task 10 addition, same "additive diagnostic evidence" category as the two fields above:
+    // whether an outer-watchdog-timed-out control ever tainted this run (`runControlSafely`'s
+    // own catch, above) -- the causing control's OWN `controls.<name>.reason` already says
+    // `'outer-watchdog-timeout'`; this top-level field makes it possible to see AT A GLANCE,
+    // without hunting through every control, whether the remainder of the Phase 3c-10 sequence
+    // was ever short-circuited for this reason (as opposed to an ordinary fatal error, which
+    // `errorLedger.fatalErrorObserved`, above, already covers). Never gates `overall` itself
+    // beyond what `fatalErrorObserved || sessionTainted` already fed `computeOverall`, above.
+    sessionTainted,
   };
 
   if (typeof writeResultAtomically === 'function') {
@@ -6496,6 +7007,13 @@ function validateResultSchema(result) {
   if (!Array.isArray(result.cleanupFailures)) fail("'cleanupFailures' must be an array");
   if (typeof result.cleanupUnresolvedOwnership !== 'boolean') fail("'cleanupUnresolvedOwnership' must be a boolean");
 
+  // Task 10 (bounded completion pass, area 3 shared foundation): `sessionTainted` is additive
+  // diagnostic evidence (same category as `cleanupStepStatus`/`viewerScriptIntegrityReason`,
+  // neither of which this function validates either), but per the second codex-advisor consult
+  // (request 20260928-180527-75769-27344), finding 1, its own TYPE is still checked here --
+  // otherwise a malformed or missing taint signal would silently pass schema validation.
+  if (typeof result.sessionTainted !== 'boolean') fail("'sessionTainted' must be a boolean");
+
   if (!VALID_OVERALL_VALUES.has(result.overall)) fail(`'overall' must be one of ${[...VALID_OVERALL_VALUES].join('|')}`);
 
   return { valid: errors.length === 0, errors };
@@ -6537,6 +7055,13 @@ const IN_PAGE_FUNCTION_REGISTRY = Object.freeze({
   f6RunLateUnloadControl, f6Cleanup,
   f3InstallProbe, f3ProbeSettledPredicate, f3FinalizeProbe,
   documentLoadStarter, loadDocumentNodeStarter, runInPageResourceCleanup,
+  // Task 10 (bounded completion pass, area 3 shared foundation): the control-bridging in-page
+  // foundation -- `acquireControlLease`/`releaseControlLease` reference `recordControlPatch` by
+  // free identifier nowhere themselves, but `recordControlPatch` itself must still be declared
+  // in the SAME bootstrap IIFE scope as whatever future bridged control handler (Tasks 11/12)
+  // calls it by name, exactly like `sessionErrOf` above.
+  recordControlPatch, acquireControlLease, releaseControlLease,
+  createControlScratchSession, disposeControlScratchSession,
 });
 
 /**
@@ -6908,6 +7433,11 @@ async function handlePhase0Failure({
     resourcesExisted: { browser: Boolean(browserExisted), page: Boolean(pageExisted), context: Boolean(contextExisted) },
     cleanupAttempted: true,
     viewerScriptIntegrityReason: integrityReason,
+    // Task 10 (bounded completion pass, area 3 shared foundation) addition: `validateResultSchema`
+    // now requires this field's TYPE (never its presence alone -- see that function's own doc
+    // comment). A Phase 0 failure never reaches Phase 2.5/control-bridging at all, so `false` is
+    // the honestly-correct value here, not a hack to satisfy the validator.
+    sessionTainted: false,
   };
 
   let evidenceWriteError = null;
@@ -7385,6 +7915,13 @@ export {
   SESSION_MODEL_VERSION,
   sessionErrOf,
   setupSharedSessionResources,
+  recordControlPatch,
+  acquireControlLease,
+  releaseControlLease,
+  createControlScratchSession,
+  disposeControlScratchSession,
+  mapControlAttemptOutcome,
+  runBridgedControl,
   observeF1,
   scoreF1,
   observeF2,
