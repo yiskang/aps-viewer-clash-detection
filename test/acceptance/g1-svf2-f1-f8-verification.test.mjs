@@ -146,11 +146,18 @@ test('describeError: a wide-but-shallow structure that satisfies every depth/bre
   // by this shape on its own. Each value is individually small (500 bytes), but
   // DESCRIBE_ERROR_MAX_OBJECT_KEYS * 500 bytes comfortably exceeds
   // DESCRIBE_ERROR_MAX_TOTAL_BYTES, so only the new running total-size cap can catch this.
+  //
+  // Because each string leaf is now capped to whatever remains of the total budget (fix round
+  // 2), the container never has to drop a whole key wholesale here -- every key stays present,
+  // but the later ones' values get individually shortened (down to empty) once the budget runs
+  // out mid-walk. That is the correct, strictly-better-than-before behavior for this shape: no
+  // key is silently dropped, but the total serialized size is still bounded near the cap.
   const bigValue = 'x'.repeat(500);
   const wide = {};
   for (let i = 0; i < DESCRIBE_ERROR_MAX_OBJECT_KEYS; i += 1) wide[`key${i}`] = bigValue;
+  const uncappedTotalBytes = DESCRIBE_ERROR_MAX_OBJECT_KEYS * bigValue.length;
   assert.ok(
-    DESCRIBE_ERROR_MAX_OBJECT_KEYS * 500 > DESCRIBE_ERROR_MAX_TOTAL_BYTES,
+    uncappedTotalBytes > DESCRIBE_ERROR_MAX_TOTAL_BYTES,
     'test precondition: the wide object must be large enough to exceed the total-bytes cap while staying at the breadth-cap boundary',
   );
 
@@ -158,12 +165,37 @@ test('describeError: a wide-but-shallow structure that satisfies every depth/bre
   const result = describeError(err);
 
   assert.equal(result.truncated, true, 'top-level truncated flag must be set by the total-size cap');
-  assert.equal(result.details.truncated, true, 'the wide object itself must carry a truncated:true marker');
 
-  const capturedKeys = Object.keys(result.details).filter((k) => k !== 'truncated');
+  const values = Object.keys(result.details).filter((k) => k !== 'truncated').map((k) => result.details[k]);
+  assert.equal(values.length, DESCRIBE_ERROR_MAX_OBJECT_KEYS, 'every key stays present -- values are shortened, not dropped');
   assert.ok(
-    capturedKeys.length < DESCRIBE_ERROR_MAX_OBJECT_KEYS,
-    `expected fewer than all ${DESCRIBE_ERROR_MAX_OBJECT_KEYS} keys to be captured once the total-size cap tripped mid-walk, got ${capturedKeys.length}`,
+    values.some((v) => v.length < bigValue.length),
+    'at least one later value must have been shortened by the per-leaf total-budget cap',
+  );
+
+  const outputBytes = Buffer.byteLength(JSON.stringify(result), 'utf8');
+  assert.ok(
+    outputBytes < uncappedTotalBytes,
+    `capped output (${outputBytes} bytes) must be materially smaller than the uncapped size would have been (${uncappedTotalBytes}+ bytes)`,
+  );
+});
+
+test('describeError: a single oversized string leaf is capped and marked truncated, not charged in full (fix round 2 regression)', () => {
+  // Reviewer's exact repro against the fix-round-1 module: a single large string leaf under
+  // `details` (e.g. a large response body embedded in error detail -- plan §4.2's own named
+  // motivation for the total-bytes cap) was charged and returned in full, uncapped, because no
+  // single leaf's own charge was itself capped before being applied -- so `truncated` came
+  // back `false` even though the output was ~12x over DESCRIBE_ERROR_MAX_TOTAL_BYTES.
+  const err = { name: 'E', message: 'm', details: 'A'.repeat(100000) };
+  const result = describeError(err);
+
+  assert.equal(result.truncated, true, 'a single oversized leaf must set truncated, not just the many-small-values case');
+  assert.ok(result.details.length < 100000, 'the oversized string itself must have been shortened, not returned in full');
+
+  const outputBytes = Buffer.byteLength(JSON.stringify(result), 'utf8');
+  assert.ok(
+    outputBytes <= DESCRIBE_ERROR_MAX_TOTAL_BYTES * 1.5,
+    `output (${outputBytes} bytes) must stay close to DESCRIBE_ERROR_MAX_TOTAL_BYTES (${DESCRIBE_ERROR_MAX_TOTAL_BYTES}), not the original ~100,112-byte unbounded size`,
   );
 });
 

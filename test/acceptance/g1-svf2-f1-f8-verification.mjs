@@ -241,6 +241,30 @@ function chargeBytes(state, value) {
   state.totalBytes += size;
 }
 
+/**
+ * Redacts, then caps `str` to at most whatever remains of the total-bytes budget (never more,
+ * never negative), reusing the same byte-safe truncation as `stack`'s own fixed-cap handling.
+ * Sets `state.truncated = true` whenever the string itself had to be shortened for size reasons.
+ *
+ * This is the single-leaf counterpart to the mid-loop/entry-of-normalizeValue total-budget
+ * checks: without it, a bare string charge (`chargeBytes` alone, with no cap) let one oversized
+ * string -- e.g. a large response body embedded in `details`, exactly plan §4.2's own named
+ * motivation for this cap -- blow the total budget by an arbitrary amount in a single, uncapped
+ * charge. Because the entry-level `overTotalBudget()` check runs BEFORE a node is processed
+ * (not after), that single-leaf overage would otherwise never set `truncated` at all: the
+ * budget was fine walking in, and by the time it wasn't, the whole (uncapped) string was
+ * already returned. Capping each string TO the remaining budget, right where it's produced,
+ * closes that gap.
+ */
+function chargeStringValue(str, path, state) {
+  const redacted = redactString(str, path, state);
+  const remainingBudget = Math.max(0, DESCRIBE_ERROR_MAX_TOTAL_BYTES - state.totalBytes);
+  const { value, truncated } = truncateStringBytes(redacted, remainingBudget);
+  if (truncated) state.truncated = true;
+  chargeBytes(state, value);
+  return value;
+}
+
 function redactString(str, path, state) {
   if (typeof str !== 'string') return str;
   let result = str;
@@ -258,27 +282,26 @@ function redactString(str, path, state) {
 
 function normalizeScalar(value, path, state) {
   if (value === undefined || value === null) return null;
-  if (typeof value === 'string') {
-    const redacted = redactString(value, path, state);
-    chargeBytes(state, redacted);
-    return redacted;
-  }
+  if (typeof value === 'string') return chargeStringValue(value, path, state);
   if (typeof value === 'number' || typeof value === 'boolean') {
     chargeBytes(state, value);
     return value;
   }
   // Unexpected shape in a scalar slot (e.g. a non-Error `reason` object) -- stringify
   // defensively rather than throwing or silently dropping it.
-  const stringified = redactString(String(value), path, state);
-  chargeBytes(state, stringified);
-  return stringified;
+  return chargeStringValue(String(value), path, state);
 }
 
 function normalizeStack(stack, state) {
   if (stack === undefined || stack === null) return null;
   const str = typeof stack === 'string' ? stack : String(stack);
   const redacted = redactString(str, 'stack', state);
-  const { value, truncated } = truncateStringBytes(redacted, DESCRIBE_ERROR_MAX_STACK_BYTES);
+  // `stack` keeps its own fixed byte cap (plan §4.2 names it explicitly), but is ALSO capped by
+  // whatever remains of the total budget once name/message/code/reason were already charged --
+  // the stricter of the two always wins, so stack can never itself push the total over budget.
+  const remainingBudget = Math.max(0, DESCRIBE_ERROR_MAX_TOTAL_BYTES - state.totalBytes);
+  const cap = Math.min(DESCRIBE_ERROR_MAX_STACK_BYTES, remainingBudget);
+  const { value, truncated } = truncateStringBytes(redacted, cap);
   if (truncated) state.truncated = true;
   chargeBytes(state, value);
   return value;
@@ -335,11 +358,7 @@ function normalizeValue(value, path, depth, visited, state) {
   }
 
   if (value === null || value === undefined) return null;
-  if (typeof value === 'string') {
-    const redacted = redactString(value, path, state);
-    chargeBytes(state, redacted);
-    return redacted;
-  }
+  if (typeof value === 'string') return chargeStringValue(value, path, state);
   if (typeof value === 'number' || typeof value === 'boolean') {
     chargeBytes(state, value);
     return value;
@@ -362,9 +381,7 @@ function normalizeValue(value, path, depth, visited, state) {
   }
 
   if (typeof value !== 'object') {
-    const stringified = redactString(String(value), path, state);
-    chargeBytes(state, stringified);
-    return stringified;
+    return chargeStringValue(String(value), path, state);
   }
 
   if (visited.has(value)) {
@@ -436,10 +453,17 @@ function normalizeValue(value, path, depth, visited, state) {
  *    serialized size of the whole output (DESCRIBE_ERROR_MAX_TOTAL_BYTES) -- the depth/breadth
  *    caps alone only bound per-level fan-out, not a wide-but-shallow tree's cumulative size, so
  *    the total-bytes cap is tracked independently and can truncate the walk even when neither
- *    the depth nor the breadth cap has individually fired; anything beyond any of these caps is
- *    replaced with a `{ truncated: true }` marker (or an object/array gains `truncated: true`)
- *    and the top-level `truncated` flag is set -- informational loss is always visible, never
- *    silent;
+ *    the depth nor the breadth cap has individually fired. The total cap is enforced BOTH
+ *    between siblings (a container stops processing further children once the running total
+ *    tips over mid-walk) AND within a single string leaf (every string -- `stack`, every other
+ *    scalar field, and every string reached via the structured-field walk -- is itself capped
+ *    to whatever remains of the total budget before being charged, exactly like a large
+ *    embedded response body would be, per this section's own named motivation), so one
+ *    oversized leaf can never blow the total by an arbitrary amount in a single uncapped
+ *    charge. Anything shortened or dropped for size reasons is replaced with (or, for a
+ *    string, truncated the same byte-safe way `stack` already was) a `{ truncated: true }`
+ *    marker where a whole value is dropped, and the top-level `truncated` flag is always set --
+ *    informational loss is always visible, never silent;
  *  - detects and breaks circular references via a `WeakSet`-tracked visited-node guard,
  *    replacing a re-encountered object with `{ circular: true }`, rather than letting
  *    `JSON.stringify` throw;
@@ -462,8 +486,7 @@ function describeError(e) {
   }
 
   if (typeof e !== 'object' && typeof e !== 'function') {
-    const message = redactString(String(e), 'message', state);
-    chargeBytes(state, message);
+    const message = chargeStringValue(String(e), 'message', state);
     return {
       name: null,
       message,
