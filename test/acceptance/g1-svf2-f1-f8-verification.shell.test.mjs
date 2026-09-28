@@ -146,7 +146,15 @@ test('buildServedModuleManifest: an injected readFileFn is honored (never couple
   assert.deepEqual(Object.keys(manifest).sort(), ['/dep.js', '/entry.js']);
 });
 
-test('SERVED_MODULE_ENTRY_POINTS: matches the plan §5 module list exactly', () => {
+test('SERVED_MODULE_ENTRY_POINTS: matches the plan §5 module list, PLUS the one genuine gap Stage 8 found', () => {
+  // Fix round (Stage 8 assembly): plan §5's own module list (line 244) never names
+  // `/clashpanel/viewer/viewerApi.js` -- but Stage 6's own observeF7 reads it directly via
+  // `window.__g1.mod['/clashpanel/viewer/viewerApi.js']` (createViewerApi), confirmed by direct
+  // source read. Left out of servedModuleManifest's own entry points, F7's own dependency would
+  // never be served/hashed into harnessIntegrity, silently defeating the manifest's own H5
+  // byte-comparison purpose for exactly the module F7 depends on. This is a genuine divergence
+  // from the plan's own §5 text (not merely an implementation gap this repo introduced), flagged
+  // explicitly in the Stage 8 report rather than silently patched.
   assert.deepEqual(SERVED_MODULE_ENTRY_POINTS, [
     '/clashtest/viewer/index.js',
     '/clashtest/index.js',
@@ -155,6 +163,7 @@ test('SERVED_MODULE_ENTRY_POINTS: matches the plan §5 module list exactly', () 
     '/clashtest/planning/scopeDigest.js',
     '/collision/index.js',
     '/collision/constants.js',
+    '/clashpanel/viewer/viewerApi.js',
   ]);
 });
 

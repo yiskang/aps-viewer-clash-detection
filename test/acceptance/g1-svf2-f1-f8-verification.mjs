@@ -1,38 +1,34 @@
 // test/acceptance/g1-svf2-f1-f8-verification.mjs
 //
 // ============================================================================================
-//  VERIFICATION-ONLY HARNESS (Stage 1 of 8) -- NOT PART OF `npm test`, NOT WIRED INTO
-//  server.js OR ANY ROUTE. Live F1-F8 execution is explicitly NOT authorized by this task.
+//  VERIFICATION-ONLY HARNESS -- NOT PART OF `npm test`, NOT WIRED INTO server.js OR ANY ROUTE,
+//  NOT a production module. This file is never imported by `wwwroot/viewer.js` or any other
+//  production code, adds no npm script, and starts no server.
 //
 //  Authorization: docs/prompts/g1-f1-f8-harness-implementation-authorization.md
 //  Governing plan: docs/research/2026-09-27-g1-svf2-f1-f8-harness-build-plan.md
 //
-//  This file is being built across 8 staged commits. THIS STAGE (1 of 8) implements ONLY the
-//  pure, browser-free "contract" layer that every later stage (async Playwright wiring, the
-//  runtime shell, F1-F8 evidence collection, mandatory-control perturbation/restoration logic)
-//  calls into:
-//    - the fail-closed format classifier (readFormat, plan §4.1)
-//    - the bounded, JSON-safe, secret-redacting error serializer (describeError, plan §4.2)
-//    - the generic per-operation Token state machine (plan §6.4a's two named paragraphs only --
-//      NOT the browser-owned load-record wiring, which is a later stage)
-//    - the overall-verdict precedence function (computeOverall, plan §6.3)
-//    - the mandatory-control ControlResult model (plan §6.3a)
-//
-//  It does NOT implement async Playwright wiring, the runtime shell, F1-F8 evidence collection,
-//  or the mandatory controls' own perturbation/restoration logic -- those are later stages.
-//
-//  `main()` below is a placeholder that throws until a later stage replaces it; the guarded
-//  entrypoint at the bottom never fires on `import`, so this module's pure functions can be
-//  safely imported and unit-tested offline (see the sibling
-//  g1-svf2-f1-f8-verification.test.mjs, run under `npm run test:offline`).
-//
-//  Never touches wwwroot/viewer.js or any other production file. Never performs live
-//  Playwright/browser/F1-F8 execution.
+//  IMPLEMENTED, NOT EXECUTED. Every piece of this harness's own logic -- the classifier,
+//  `computeOverall`, the control-state model, the 22-step cleanup executor, the browser-owned
+//  load-record protocol, page-routing/manifest/error-ledger logic, F1-F8's own evidence
+//  collection, all 9 mandatory controls, and the full Phase 0-11 composition (`runHarness`) --
+//  is written and offline-tested (fakes/`node:vm`, zero real Playwright import anywhere in any
+//  test). `main()` is the ONLY place real Playwright objects are ever constructed, and it is
+//  gated behind an explicit, fail-closed activation interlock (both a `--execute-live-f1-f8`
+//  CLI flag AND a `G1_F1_F8_LIVE_AUTHORIZED=YES` environment variable, checked before any
+//  dynamic `import('playwright')`, browser launch, or other real side effect). Neither
+//  condition's presence is proof of owner authorization by itself -- live F1-F8 execution
+//  requires separate, explicit authorization per the authorization file linked above, regardless
+//  of whether these mechanical safeguards are satisfied. Whether this harness has actually been
+//  RUN, and with what result, is recorded in this repository's own handoff/review artifacts
+//  (`docs/handoffs/latest.md`, `docs/reviews/`), never in this source file's own banner --
+//  treat this comment as a description of the CODE's own state, not of any particular run.
 // ============================================================================================
 
 import { randomUUID, createHash } from 'node:crypto';
-import { readFile as nodeReadFile } from 'node:fs/promises';
+import { readFile as nodeReadFile, writeFile as nodeWriteFile, rename as nodeRename, mkdir as nodeMkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 // Stage 5: compactAndWeld/the collision engine's own limit constants are PURE, already-tested
 // production code with no live-Viewer/browser dependency at all (confirmed by direct source
 // read -- see the Stage 5 report) -- imported here for genuine, real (never faked/simulated)
@@ -1689,6 +1685,12 @@ const SERVED_MODULE_ENTRY_POINTS = Object.freeze([
   '/clashtest/planning/scopeDigest.js',
   '/collision/index.js',
   '/collision/constants.js',
+  // Stage 8 fix: F7's own observeF7 (line ~3577) reads `mod['/clashpanel/viewer/viewerApi.js']`
+  // (createViewerApi) via window.__g1.mod -- omitted from Stage 6's own entry-point list, which
+  // meant a real run would never have served this module nor hashed it into
+  // harnessIntegrity.servedModuleManifest, silently defeating the manifest's own H5 byte-
+  // comparison purpose for exactly the module F7 depends on. Caught during Stage 8 assembly.
+  '/clashpanel/viewer/viewerApi.js',
 ]);
 
 // Matches `... from '<specifier>'` -- covers `import X from '...'`, `import {a,b} from '...'`,
@@ -3020,6 +3022,87 @@ async function runWrongOwnerControl({ modelBefore, world, registry, registryKey,
     return createControlResult('wrong-owner', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: reason || 'restore-assertion-failed' });
   }
   return createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
+/**
+ * `runLateCompletionAfterTimeoutControl({f1SnapshotBefore, readCurrentF1})` -- plan §6.5's
+ * `late-completion-after-timeout` row (4c, immediately after `wrong-owner`), Stage 8's own
+ * implementation (no prior stage built a runner for this control; only
+ * `CONTROL_RESTORATION_REQUIRED['late-completion-after-timeout'] = false`, Stage 1, existed
+ * before now). Entirely Node-side and harness-local -- unlike every shared-state control, it
+ * never touches `modelBefore`/`world`/`registry`/the page at all, exactly like
+ * `invalid-geometry-consumer` (whose `f4SnapshotBefore`/`readCurrentF4` non-interference-oracle
+ * pattern this control's own doc comments (this file, 4432) already named as its own precedent).
+ *
+ * Realizes plan §6.4a's per-operation-token quarantine directly against Stage 1's own
+ * `createToken`/`transitionToken`/`TOKEN_STATE`/`isTokenLive` machinery, deterministically (no
+ * real timer/clock dependency, so this is fast and non-flaky offline): mints a token for a
+ * synthetic operation, transitions it `active -> timed-out` (the operation is *by construction*
+ * held open past its own budget -- there is nothing to actually wait for; a real elapsed-time
+ * measurement would only reproduce the same decision non-deterministically), THEN releases the
+ * late completion by invoking its own continuation. The continuation begins
+ * `if (!isTokenLive(token)) return` -- its first statement, exactly like every real in-page/
+ * Node-side continuation this file's other operations already use (plan §6.4a) -- so releasing
+ * it only after the timed-out transition is what actually exercises the drop path; releasing it
+ * before would trivially "pass" without proving anything. `detected` requires the continuation
+ * to have genuinely taken the drop branch (never the live branch, which would indicate the
+ * quarantine failed to protect a live operation) AND `f1SnapshotBefore` (a deep copy of
+ * `checks.F1`, captured by the CALLER before this control runs) to `jsonDeepEqual` whatever
+ * `readCurrentF1()` (an injected callable, re-reading the current `checks.F1` AFTER the late
+ * completion has been fully processed) returns -- proving the late arrival never leaked into any
+ * shared result field. Only once both hold does the token move `timed-out -> disposed`
+ * (confirmed terminal before reporting success), matching the control's own restoration
+ * discipline despite `restorationRequired: false` (nothing to reverse; this is the non-
+ * interference oracle per §6.3a, cross-checked via `createControlResult`, never hardcoded).
+ * ANY failure (the continuation took the live branch instead of dropping, or `checks.F1` leaked)
+ * is `RESTORE_FAILED`, per §6.3a's per-control table for this control.
+ */
+async function runLateCompletionAfterTimeoutControl({ f1SnapshotBefore, readCurrentF1 } = {}) {
+  if (typeof readCurrentF1 !== 'function') {
+    return createControlResult('late-completion-after-timeout', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'precondition-unmet' });
+  }
+
+  const token = createToken({ operation: 'late-completion-after-timeout-synthetic' });
+  transitionToken(token, TOKEN_STATE.TIMED_OUT);
+
+  // The continuation's own first statement is the quarantine check every real continuation in
+  // this file uses (§6.4a) -- `isTokenLive(token)` is false immediately after the transition
+  // above, so a correctly-behaving continuation can only take the drop branch here. Both
+  // branches are still recorded (never assumed) so a hypothetical future regression in
+  // isTokenLive/transitionToken itself would be caught, not silently passed.
+  let continuationTookDropBranch = false;
+  const continuation = () => {
+    if (!isTokenLive(token)) { continuationTookDropBranch = true; return; }
+  };
+  continuation();
+  const detected = continuationTookDropBranch;
+  const reason = detected ? null : 'continuation-not-dropped';
+
+  let f1After;
+  let readCurrentF1Threw = false;
+  try {
+    f1After = readCurrentF1();
+  } catch {
+    readCurrentF1Threw = true;
+  }
+  const noLeak = !readCurrentF1Threw && jsonDeepEqual(f1SnapshotBefore, f1After);
+
+  if (detected) transitionToken(token, TOKEN_STATE.DISPOSED);
+  const restored = detected && noLeak && token.state === TOKEN_STATE.DISPOSED;
+
+  if (!detected) {
+    return createControlResult('late-completion-after-timeout', { state: CONTROL_STATE.NOT_DETECTED, executed: true, detected: false, restored, reason });
+  }
+  if (!restored) {
+    return createControlResult('late-completion-after-timeout', {
+      state: CONTROL_STATE.RESTORE_FAILED,
+      executed: true,
+      detected: true,
+      restored: false,
+      reason: !noLeak ? (readCurrentF1Threw ? 'readCurrentF1-threw' : 'f1-snapshot-leaked') : 'token-not-disposed',
+    });
+  }
+  return createControlResult('late-completion-after-timeout', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
 }
 
 /**
@@ -4573,6 +4656,13 @@ function f6InstallUnloadWiring({ sessionId, unloadEventName }) {
     modelBefore: model, modelAfter: null, capturedHandler: null,
     unloadProbeFired: false, unloadEventModel: null, unregisterBeforeEvict: null,
     reloadProbe: null, dispose: null,
+    // Fix round (Stage 8 review, codex-advisor finding #4): inspectable bookkeeping -- exact
+    // listener identity/event name and disposed/removed state -- so Phase 11's fallback cleanup
+    // can PROVE its own removal/disposal succeeded (via runInPageResourceCleanup, below) rather
+    // than trusting a single, error-swallowing `dispose` closure whose own success can never be
+    // independently re-verified. `probeListener`/`wiringRef` are never touched by anything
+    // outside this function and `f6Cleanup`, so `removed`/`disposed` are always accurate.
+    probeListener: null, wiringRef: null,
   };
 
   const probe = (event) => {
@@ -4580,6 +4670,7 @@ function f6InstallUnloadWiring({ sessionId, unloadEventName }) {
     f6.unloadEventModel = event && event.model !== undefined ? event.model : null;
   };
   viewer.addEventListener(unloadEventName, probe);
+  f6.probeListener = { eventName: unloadEventName, fn: probe, removed: false };
 
   const originalEvictModel = world.evictModel;
   world.evictModel = (m) => {
@@ -4594,11 +4685,18 @@ function f6InstallUnloadWiring({ sessionId, unloadEventName }) {
     removeEventListener(n, fn) { viewer.removeEventListener(n, fn); },
   };
   const wiring = wireModelUnload({ world, registry, eventTarget: recorder, eventName: unloadEventName });
+  f6.wiringRef = { disposed: false };
 
   f6.dispose = () => {
-    try { viewer.removeEventListener(unloadEventName, probe); } catch { /* best-effort */ }
+    try {
+      viewer.removeEventListener(unloadEventName, probe);
+      f6.probeListener.removed = true;
+    } catch { /* best-effort -- f6.probeListener.removed stays false, an accurate signal */ }
     world.evictModel = originalEvictModel;
-    try { wiring.dispose(); } catch { /* best-effort */ }
+    try {
+      wiring.dispose();
+      f6.wiringRef.disposed = true;
+    } catch { /* best-effort -- f6.wiringRef.disposed stays false, an accurate signal */ }
   };
 
   session.f6 = f6;
@@ -4753,6 +4851,9 @@ function f6FinalizeReloadProbe({ sessionId, tokenId, timedOut = false } = {}) {
   if (!session || !session.f6 || !session.f6.reloadProbe) return { ok: false, reason: 'reload-probe-not-installed' };
   const rp = session.f6.reloadProbe;
   window.__viewer.removeEventListener(rp.addedEventName, rp.listener);
+  // Fix round (Stage 8 review): inspectable, alongside f6.probeListener/f6.wiringRef above --
+  // Phase 11's fallback cleanup checks this before attempting a redundant removal.
+  rp.removed = true;
   if (rp.resolveRootsOutcome === null && timedOut === true) {
     rp.resolveRootsOutcome = 'timed-out';
   }
@@ -4854,9 +4955,15 @@ async function f6RunLateUnloadControl({ sessionId }) {
 function f6Cleanup({ sessionId }) {
   const g = window.__g1;
   const session = g && g.sessions && g.sessions[sessionId];
-  if (!session || !session.f6 || typeof session.f6.dispose !== 'function') return { ok: true, disposed: false };
-  try { session.f6.dispose(); } catch { /* best-effort, mirrors this file's own guarded cleanup discipline */ }
-  return { ok: true, disposed: true };
+  if (!session || !session.f6 || typeof session.f6.dispose !== 'function') return { ok: true, disposed: false, probeRemoved: null, wiringDisposed: null };
+  try { session.f6.dispose(); } catch { /* best-effort, mirrors this file's own guarded cleanup discipline --
+    session.f6.probeListener.removed/session.f6.wiringRef.disposed below report the TRUE outcome
+    regardless: dispose() itself sets each flag only on its own individual try's success (fix
+    round, Stage 8 review, codex-advisor finding #4 -- this return value must never silently
+    claim success it cannot prove). */ }
+  const probeRemoved = session.f6.probeListener ? session.f6.probeListener.removed : null;
+  const wiringDisposed = session.f6.wiringRef ? session.f6.wiringRef.disposed : null;
+  return { ok: true, disposed: probeRemoved === true && wiringDisposed === true, probeRemoved, wiringDisposed };
 }
 
 /**
@@ -5066,12 +5173,1076 @@ function buildStaleOldModelEventControlResult(f6Fields) {
   return createControlResult('stale-old-model-event', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
 }
 
+// ============================================================================================
+// STAGE 8 -- Integration slice: real F3-probe install/finalize, the real browser-owned load
+// starters, the in-page half of Phase 11 cleanup, `runHarness`, `main()`'s activation interlock,
+// and the full §8 evidence-schema validator.
+//
+// This is where the composition finally gets assembled -- writing launch-capable code here is
+// implementation, not live execution (this stage's own brief, second-opinion-confirmed). Every
+// real side effect (dynamic `import('playwright')`, a browser launch, any file/network I/O) is
+// gated behind the activation interlock in `main()` itself (below); `runHarness` remains fully
+// offline-testable via injected `deps`, exactly like every function built in Stages 2-7. NEVER
+// invoked with real dependencies anywhere in this stage's own code or tests.
+// ============================================================================================
+
+/**
+ * In-page. Plan §7.3/§4.4's real F3 probe: install the `MODEL_ADDED_EVENT` listener
+ * IMMEDIATELY after `viewer.start()`, before `Document.load` is ever called. No `sessionId`
+ * exists yet at this point (Phase 2.5 has not run) -- state lives in the fixed, singleton
+ * `window.__g1.f3Probe` slot (there is only ever one F3 probe per harness run). Reuses the SAME
+ * timeline shape/logic `f6InstallReloadProbe` already established for the reload's own repeat
+ * of this exact probe (Stage 7) -- kept as an independent, self-contained duplicate per this
+ * file's own "in-page function may reference only its own argument and page globals" rule
+ * (neither may call the other as a Node-side sibling).
+ */
+function f3InstallProbe() {
+  const g = (window.__g1 = window.__g1 || { closing: false, nextGen: 1, loads: {}, docs: {}, models: {} });
+  const viewer = window.__viewer;
+  const addedEventName = window.Autodesk && window.Autodesk.Viewing ? window.Autodesk.Viewing.MODEL_ADDED_EVENT : undefined;
+  if (!viewer || typeof addedEventName !== 'string' || addedEventName === '') {
+    return { ok: false, reason: 'viewer-or-MODEL_ADDED_EVENT-not-available' };
+  }
+  const errOf = (e) => (e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? '') }
+    : { primitive: typeof e, value: String(e) });
+  const readFlags = (model) => ({
+    isObjectTreeCreated: (() => { try { return model && typeof model.isObjectTreeCreated === 'function' ? model.isObjectTreeCreated() : null; } catch { return null; } })(),
+    instanceTreeInData: (() => { try { return model && typeof model.getData === 'function' ? Boolean(model.getData() && model.getData().instanceTree) : null; } catch { return null; } })(),
+    isLoadDone: (() => { try { return model && typeof model.isLoadDone === 'function' ? model.isLoadDone() : null; } catch { return null; } })(),
+  });
+
+  const probe = {
+    modelAddedObserved: false, tModelAdded: null, atInvocation: null,
+    resolveRootsOutcome: null, atSettlement: null, elapsedMs: null, rejectionError: null,
+    model: null, listener: null, addedEventName, removed: false,
+  };
+  const listener = (event) => {
+    if (probe.modelAddedObserved) return; // only the FIRST MODEL_ADDED_EVENT of the whole run
+    probe.modelAddedObserved = true;
+    const model = event && event.model !== undefined ? event.model : null;
+    probe.model = model;
+    probe.tModelAdded = performance.now();
+    probe.atInvocation = readFlags(model);
+    const mod = g.mod || {};
+    const { createViewerElementEnumerator } = mod['/clashtest/viewer/index.js'] || {};
+    if (typeof createViewerElementEnumerator !== 'function') {
+      probe.resolveRootsOutcome = 'rejected';
+      probe.atSettlement = readFlags(model);
+      probe.elapsedMs = performance.now() - probe.tModelAdded;
+      probe.rejectionError = { name: 'ConfigurationError', message: 'createViewerElementEnumerator not available on window.__g1.mod' };
+      return;
+    }
+    const enumerator = createViewerElementEnumerator();
+    const ctx = { checkpoint() {} };
+    enumerator.resolveRoots({ model }, 'whole', ctx).then(
+      () => {
+        probe.resolveRootsOutcome = 'resolved';
+        probe.atSettlement = readFlags(model);
+        probe.elapsedMs = performance.now() - probe.tModelAdded;
+      },
+      (err) => {
+        probe.resolveRootsOutcome = 'rejected';
+        probe.atSettlement = readFlags(model);
+        probe.elapsedMs = performance.now() - probe.tModelAdded;
+        probe.rejectionError = errOf(err);
+      },
+    );
+  };
+  viewer.addEventListener(addedEventName, listener);
+  probe.listener = listener;
+  g.f3Probe = probe;
+  return { ok: true };
+}
+
+/** In-page predicate (Stage 2's `pageWaitForFunction` shape). True once F3's own probe has
+ * settled (`resolveRootsOutcome` no longer `null`). */
+function f3ProbeSettledPredicate() {
+  const g = window.__g1;
+  return Boolean(g && g.f3Probe && g.f3Probe.resolveRootsOutcome !== null);
+}
+
+/**
+ * In-page. Plan §7.3's own "Phase 3 (F3 finalize)... removes the listener immediately" --
+ * removes F3's listener NOW (not at Phase 11), reads out F3's own exact field shape (plan line
+ * 929 -- the SAME shape `scoreF3Readiness` already consumes and `f6FinalizeReloadProbe` already
+ * produces for the reload's own repeat of this probe, Stage 7). `timedOut` (from the Node-side
+ * orchestrator's own bounded-wait outcome) assigns `resolveRootsOutcome = 'timed-out'` when the
+ * probe never settled on its own -- mirrors `f6FinalizeReloadProbe` exactly.
+ */
+function f3FinalizeProbe({ timedOut = false } = {}) {
+  const g = window.__g1;
+  if (!g || !g.f3Probe) return { ok: false, reason: 'f3-probe-not-installed' };
+  const probe = g.f3Probe;
+  if (!probe.removed) {
+    window.__viewer.removeEventListener(probe.addedEventName, probe.listener);
+    probe.removed = true;
+  }
+  if (probe.resolveRootsOutcome === null && timedOut === true) {
+    probe.resolveRootsOutcome = 'timed-out';
+  }
+  return {
+    ok: true,
+    modelAddedObserved: probe.modelAddedObserved,
+    tModelAdded: probe.tModelAdded,
+    atInvocation: probe.atInvocation,
+    resolveRootsOutcome: probe.resolveRootsOutcome,
+    atSettlement: probe.atSettlement,
+    elapsedMs: probe.elapsedMs,
+    rejectionError: probe.rejectionError,
+  };
+}
+
+/**
+ * In-page. Plan §6.4a's real `Document.load` starter -- the concrete implementation
+ * `startLoad({..., starter: documentLoadStarter, ...})` calls via `pageEvaluate`. Reuses Stage
+ * 2's own already-built record/transition machinery verbatim
+ * (`createLoadRecord`/`onDeadline`/`onSuccess`/`onError`/`readLoadRecordSnapshot`/`pageErrOf`,
+ * all in the SAME lexical bundle, per this file's own "in-page function may reference only its
+ * own argument and page globals" rule -- sibling in-page functions are the one documented
+ * exception, per the Stage-2 "BUNDLING NOTE" comment). Mirrors `wwwroot/viewer.js`'s own
+ * REAL, already-reviewed, production `Document.load` call shape exactly
+ * (`Autodesk.Viewing.Document.load('urn:'+urn, onSuccess, onFailure)`) -- confirmed by direct
+ * source read, never guessed. Resolves once the record reaches a terminal status (via the
+ * success/error callback settling it, OR the deadline timer firing) -- whichever comes first;
+ * a Promise only ever settles once, so a later race arrival is a harmless no-op resolve.
+ */
+function documentLoadStarter({ tokenId, urn, loadTimeoutMs }) {
+  const g = (window.__g1 = window.__g1 || { closing: false, nextGen: 1, loads: {}, docs: {}, models: {} });
+  const gen = g.nextGen++;
+  const record = createLoadRecord(tokenId, 'Document.load', gen, performance.now() + loadTimeoutMs);
+  return new Promise((resolve) => {
+    record.timer = setTimeout(() => {
+      onDeadline(tokenId, gen);
+      resolve(readLoadRecordSnapshot(tokenId));
+    }, loadTimeoutMs);
+    try {
+      window.Autodesk.Viewing.Document.load(
+        `urn:${urn}`,
+        (doc) => { onSuccess(tokenId, gen, doc); resolve(readLoadRecordSnapshot(tokenId)); },
+        (code, message, errors) => { onError(tokenId, gen, pageErrOf({ name: 'DocumentLoadError', message: String(message ?? ''), code, reason: errors })); resolve(readLoadRecordSnapshot(tokenId)); },
+      );
+    } catch (e) {
+      onError(tokenId, gen, pageErrOf(e));
+      resolve(readLoadRecordSnapshot(tokenId));
+    }
+  });
+}
+
+/**
+ * In-page. Plan §6.4a's real `loadDocumentNode` starter, the second half of `startLoad`'s own
+ * two-call sequence (Document.load -> loadDocumentNode). `docTokenId` names the PRIOR
+ * `Document.load` token whose resulting `Document` this reads from `window.__g1.docs`. Mirrors
+ * `wwwroot/viewer.js`'s own real, production `loadDocumentNode` call shape exactly
+ * (`viewer.loadDocumentNode(doc, doc.getRoot().getDefaultGeometry(true), options)`) -- confirmed
+ * by direct source read.
+ */
+function loadDocumentNodeStarter({ tokenId, docTokenId, loadTimeoutMs }) {
+  const g = (window.__g1 = window.__g1 || { closing: false, nextGen: 1, loads: {}, docs: {}, models: {} });
+  const gen = g.nextGen++;
+  const record = createLoadRecord(tokenId, 'loadDocumentNode', gen, performance.now() + loadTimeoutMs);
+  return new Promise((resolve) => {
+    record.timer = setTimeout(() => {
+      onDeadline(tokenId, gen);
+      resolve(readLoadRecordSnapshot(tokenId));
+    }, loadTimeoutMs);
+    const doc = g.docs[docTokenId];
+    if (!doc) {
+      onError(tokenId, gen, pageErrOf({ name: 'LoadDocumentNodeError', message: 'no Document found for docTokenId' }));
+      resolve(readLoadRecordSnapshot(tokenId));
+      return;
+    }
+    try {
+      Promise.resolve(window.__viewer.loadDocumentNode(doc, doc.getRoot().getDefaultGeometry(true), {})).then(
+        (model) => { onSuccess(tokenId, gen, model); resolve(readLoadRecordSnapshot(tokenId)); },
+        (err) => { onError(tokenId, gen, pageErrOf(err)); resolve(readLoadRecordSnapshot(tokenId)); },
+      );
+    } catch (e) {
+      onError(tokenId, gen, pageErrOf(e));
+      resolve(readLoadRecordSnapshot(tokenId));
+    }
+  });
+}
+
+/**
+ * In-page. The page-owned half of Phase 11 cleanup (plan §4.3's 22-step ledger) -- resolves the
+ * cleanup-ownership hand-off Stage 4 flagged and no stage closed until now: `world`/`registry`/
+ * `model` are page-owned (`setupSharedSessionResources`'s own doc comment: "Node never learns
+ * about this in-page-only world/registry otherwise"), so Node-side `runCleanup` (Stage 2,
+ * frozen, unmodified by this fix) can never be handed live references to them. codex-advisor
+ * consult (Stage 8, high effort, before implementation) confirmed: split cleanup by REALM (this
+ * function handles the page-owned steps; Node-side `runCleanup` is called separately, restricted
+ * to ONLY the genuinely Node-owned steps -- see `runHarness`'s own Phase 11, below) AND by
+ * PHASE (browser-owned load-record sealing/draining and Node timer/controller cleanup happen
+ * BEFORE this call; page/context/browser close happen strictly AFTER it, regardless of this
+ * call's own outcome).
+ *
+ * Covers the 12 page-owned steps of `runCleanup`'s own 22-name ledger (`CLEANUP_STEP_NAMES`):
+ * `removeF3Listeners`, `removeF6ProbeListener`, `removeF6ReloadProbeListener`,
+ * `disposeF6Wiring`, `unloadModelBeforeFromViewer`, `unloadModelAfterFromViewer`,
+ * `unregisterModelBefore`, `unregisterModelAfter`, `evictModelBefore`, `evictModelAfter`,
+ * `disposeWorld`, `verifyViewerModelSetEmpty` -- using the SAME step names, the SAME guard/
+ * try-catch-per-step structure, and the SAME postcondition-based (never "the action threw
+ * alone") unresolved-ownership determination `runCleanup` itself already established, per the
+ * consult's own explicit instruction not to duplicate its entire ledger design, only its
+ * per-step semantics for the subset that must run in this realm.
+ *
+ * `restoreAllControlPatches` is DELIBERATELY OMITTED from this stage's own scope (documented,
+ * not silently dropped -- see this file's own Stage 8 report): the six model-data controls
+ * (`tree-unavailable`/`wrong-owner`/`hidden-fragment`/`capacity-breach`/`invalid-bounds`/
+ * `bounds-beyond-tolerance`) still take live `modelBefore`/`world`/`registry` as direct
+ * Node-side parameters (Stages 4-6's own design, predating this stage's own realm-boundary
+ * discovery) -- bridging THEM across the realm boundary for a real run is out of this stage's
+ * own scope, exactly like Stage 3 left F3's real probe as "a later, separately-authorized
+ * stage's job" until Stage 7 needed to build its own version for F6 specifically. Each control
+ * already restores its OWN patch in its OWN `finally` block before returning (Stages 4-6's own
+ * design); this step existed only as F6's -- no wait, `runCleanup`'s -- LAST-RESORT fallback for
+ * a control whose own `finally` restoration itself already failed, which has no generic,
+ * patch-shape-agnostic way to be retried here without that same deferred bridging work. Recorded
+ * explicitly as `'not-applicable-this-stage'` in the merged evidence (never silently omitted),
+ * per this file's own "never a missing object" discipline (plan §8).
+ */
+function runInPageResourceCleanup({ sessionId }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  const stepStatus = {};
+  const cleanupFailures = [];
+  let cleanupUnresolvedOwnership = false;
+
+  const step = (name, guard, fn, { checkOwnership } = {}) => {
+    let shouldRun;
+    try {
+      shouldRun = Boolean(guard());
+    } catch (e) {
+      stepStatus[name] = 'threw';
+      cleanupFailures.push({ step: name, error: { name: e && e.name, message: e ? String(e.message ?? '') : null } });
+      if (checkOwnership && checkOwnership()) cleanupUnresolvedOwnership = true;
+      return;
+    }
+    if (!shouldRun) { stepStatus[name] = 'skipped'; return; }
+    try {
+      fn();
+      stepStatus[name] = 'ran';
+    } catch (e) {
+      stepStatus[name] = 'threw';
+      cleanupFailures.push({ step: name, error: { name: e && e.name, message: e ? String(e.message ?? '') : null } });
+    }
+    // Postcondition-based ownership check -- ALWAYS re-checked after a 'ran' attempt too, never
+    // only on a throw (codex-advisor consult finding #3: "action threw but the final
+    // postcondition is clean" must NOT set cleanupUnresolvedOwnership; the converse -- action
+    // reported success but the postcondition still fails -- must).
+    if (checkOwnership && checkOwnership()) cleanupUnresolvedOwnership = true;
+  };
+
+  // F3's own listener is session-independent (installed before any session exists) -- fallback
+  // removal is attempted regardless of whether a session was ever published.
+  step('removeF3Listeners',
+    () => Boolean(g && g.f3Probe && g.f3Probe.listener && g.f3Probe.removed === false),
+    () => { window.__viewer.removeEventListener(g.f3Probe.addedEventName, g.f3Probe.listener); g.f3Probe.removed = true; },
+    { checkOwnership: () => Boolean(g && g.f3Probe && g.f3Probe.removed === false) });
+
+  if (!session) {
+    stepStatus.removeF6ProbeListener = 'skipped';
+    stepStatus.removeF6ReloadProbeListener = 'skipped';
+    stepStatus.disposeF6Wiring = 'skipped';
+    stepStatus.unloadModelBeforeFromViewer = 'skipped';
+    stepStatus.unloadModelAfterFromViewer = 'skipped';
+    stepStatus.unregisterModelBefore = 'skipped';
+    stepStatus.unregisterModelAfter = 'skipped';
+    stepStatus.evictModelBefore = 'skipped';
+    stepStatus.evictModelAfter = 'skipped';
+    stepStatus.disposeWorld = 'skipped';
+    stepStatus.verifyViewerModelSetEmpty = 'skipped';
+    stepStatus.restoreAllControlPatches = 'not-applicable-this-stage';
+    return { ok: true, stepStatus, cleanupFailures, cleanupUnresolvedOwnership };
+  }
+
+  const { world, registry, model: modelBefore, K: registryKey } = session;
+  const f6Ran = Boolean(session.f6 && session.f6.modelAfter);
+  const modelAfter = f6Ran ? session.f6.modelAfter : null;
+  const viewer = window.__viewer;
+
+  step('removeF6ProbeListener',
+    () => Boolean(session.f6 && session.f6.probeListener && session.f6.probeListener.removed === false),
+    () => { viewer.removeEventListener(session.f6.probeListener.eventName, session.f6.probeListener.fn); session.f6.probeListener.removed = true; },
+    { checkOwnership: () => Boolean(session.f6 && session.f6.probeListener && session.f6.probeListener.removed === false) });
+
+  step('removeF6ReloadProbeListener',
+    () => Boolean(session.f6 && session.f6.reloadProbe && session.f6.reloadProbe.listener && session.f6.reloadProbe.removed === false),
+    () => { viewer.removeEventListener(session.f6.reloadProbe.addedEventName, session.f6.reloadProbe.listener); session.f6.reloadProbe.removed = true; },
+    { checkOwnership: () => Boolean(session.f6 && session.f6.reloadProbe && session.f6.reloadProbe.removed === false) });
+
+  step('disposeF6Wiring',
+    () => Boolean(session.f6 && session.f6.wiringRef && session.f6.wiringRef.disposed === false && typeof session.f6.dispose === 'function'),
+    () => session.f6.dispose(),
+    { checkOwnership: () => Boolean(session.f6 && session.f6.wiringRef && session.f6.wiringRef.disposed === false) });
+
+  step('unloadModelBeforeFromViewer',
+    () => Boolean(viewer && modelBefore && viewer.getAllModels().includes(modelBefore)),
+    () => viewer.unloadModel(modelBefore));
+
+  step('unloadModelAfterFromViewer',
+    () => Boolean(f6Ran && viewer && modelAfter && viewer.getAllModels().includes(modelAfter)),
+    () => viewer.unloadModel(modelAfter));
+
+  step('unregisterModelBefore',
+    () => Boolean(registry && modelBefore),
+    () => registry.unregister(modelBefore),
+    { checkOwnership: () => Boolean(registry && registry.bindingFor(registryKey) != null) });
+
+  step('unregisterModelAfter',
+    () => Boolean(f6Ran && registry && modelAfter),
+    () => registry.unregister(modelAfter),
+    { checkOwnership: () => Boolean(registry && registry.bindingFor(registryKey) != null) });
+
+  step('evictModelBefore',
+    () => Boolean(world && modelBefore && world.isModelLive(modelBefore)),
+    () => world.evictModel(modelBefore),
+    { checkOwnership: () => Boolean(world && world.isModelLive(modelBefore)) });
+
+  step('evictModelAfter',
+    () => Boolean(f6Ran && world && modelAfter && world.isModelLive(modelAfter)),
+    () => world.evictModel(modelAfter),
+    { checkOwnership: () => Boolean(world && world.isModelLive(modelAfter)) });
+
+  step('disposeWorld',
+    () => Boolean(world),
+    () => world.dispose());
+
+  step('verifyViewerModelSetEmpty',
+    () => true,
+    () => {
+      const models = viewer ? viewer.getAllModels() : [];
+      const stillHasBefore = modelBefore != null && models.includes(modelBefore);
+      const stillHasAfter = f6Ran && modelAfter != null && models.includes(modelAfter);
+      if (stillHasBefore || stillHasAfter) {
+        throw new Error(`verifyViewerModelSetEmpty: viewer.getAllModels() still contains ${[stillHasBefore && 'modelBefore', stillHasAfter && 'modelAfter'].filter(Boolean).join(' and ')}`);
+      }
+    },
+    { checkOwnership: () => true });
+
+  stepStatus.restoreAllControlPatches = 'not-applicable-this-stage';
+
+  return { ok: true, stepStatus, cleanupFailures, cleanupUnresolvedOwnership };
+}
+
+/**
+ * Node-side. `runHarness(deps, config)` -- plan §6.1's COMPLETE Phase 0-11 sequence, composing
+ * every stage's already-built function in order. Fully offline-testable: every Playwright-shaped
+ * dependency is INJECTED via `deps`, exactly like every function built in Stages 2-7 already
+ * does (`runSetupThroughClassification`, `runF6UnloadReload`, etc.) -- this function itself
+ * never imports/constructs Playwright, never launches a browser, never performs file/network
+ * I/O directly. NEVER invoked with real dependencies anywhere in this stage's own code or tests
+ * (see `main()`, below, for the ONLY place that happens, gated behind the activation interlock).
+ *
+ * **Disclosed scope boundary (see this stage's own report for the full reasoning):** six of the
+ * nine mandatory controls (`tree-unavailable`/`wrong-owner`/`hidden-fragment`/`capacity-breach`/
+ * `invalid-bounds`/`bounds-beyond-tolerance`) still take live `modelBefore`/`world`/`registry`
+ * as direct Node-side parameters (Stages 4-6's own design, predating this stage's own discovery
+ * -- confirmed by direct source read of `setupSharedSessionResources`'s own doc comment -- that
+ * these are page-owned and structurally cannot cross a real Playwright realm boundary as live
+ * Node-side references). `runHarness` therefore takes each of those six controls' own invocation
+ * as an OPAQUE INJECTED FUNCTION (`deps.controls.<name>(ctx) => Promise<ControlResult>`) --
+ * exactly the same pattern Stage 3 already established for `installF3Probe`/`finalizeF3Probe`
+ * before Stage 7 had to build F6's own real, in-page-bridged version for F6 specifically.
+ * Building the real in-page-bridged versions of these six wrappers is explicitly OUT OF SCOPE
+ * for this stage, not silently deferred. `invalid-geometry-consumer` (synthetic-input-only) and
+ * `late-completion-after-timeout` (isolated synthetic, Node-side token/checkpoint bookkeeping
+ * only) are already realm-safe by construction and ARE genuinely composed for real, below;
+ * `stale-old-model-event` is F6's own step 6, already fully real (Stage 7); F1/F2/F4/F5/F7/F8
+ * are genuinely real (in-page, called via `pageEvaluate`, realm-safe by construction since Stage
+ * 4-7 built them that way from the start).
+ *
+ * `deps` shape:
+ * {
+ *   pageEvaluate, pageWaitForFunction,                    // Stage 2/3's own injected shape
+ *   loadStarter: { documentLoad, loadDocumentNode },      // real starters (main()) or fakes (tests)
+ *   installF3Probe, finalizeF3Probe,                      // real (main()) or fakes (tests)
+ *   captureFormatSignalsFn = captureModelFormatSignals,
+ *   setupSharedSessionResources,
+ *   controls: {                                           // each: (ctx) => Promise<ControlResult>
+ *     treeUnavailable, wrongOwner, lateCompletionAfterTimeout, hiddenFragment,
+ *     invalidGeometryConsumer, capacityBreach, invalidBounds, boundsBeyondTolerance,
+ *   },
+ *   f6Deps,                     // runF6UnloadReload's own deps, minus sessionId (added here)
+ *   nodeCleanupResources,       // {page, context, browser, tokens, timers, abortControllers, httpServer} --
+ *                                // Node-owned only; world/registry/viewer/modelBefore/modelAfter/
+ *                                // f3Listener/f6/controlPatches are DELIBERATELY omitted (page-
+ *                                // owned, handled by runInPageResourceCleanup instead, per the
+ *                                // cleanup-ownership hand-off resolution above)
+ *   captureViewerScriptIntegrity: () => Promise<captureRecordShape>,  // classifyViewerScriptIntegrity's own input
+ *   errorLedger: { events: [...], record(event) {} },     // accrues continuously from Phase 0
+ *   harnessIntegrity: { sha256, branch, headSha, gitStatusPorcelain },  // computed before any browser action
+ *   writeResultAtomically: (result) => Promise<void>,
+ * }
+ * `config`: `{ urn, loadTimeoutMs, unloadWaitTimeoutMs = CHECK_TIMEOUT_MS, reloadProbeTimeoutMs =
+ * CHECK_TIMEOUT_MS, controlTimeoutMs = CHECK_TIMEOUT_MS, censusTimeoutMs = CENSUS_TIMEOUT_MS,
+ * unloadEventName, addedEventName, viewerVersion, node, chromium, initializer }` -- the run's own
+ * scalar envelope, kept separate from `deps`' own function/object dependencies (mirrors the
+ * shape/config split the brief's own `runHarness(deps, config)` signature names explicitly).
+ *
+ * Returns the full §8 result object. `runHarness` itself calls `deps.writeResultAtomically`
+ * (if injected) once, as its own last action before returning -- never a raw `fs` call, so the
+ * real atomic-write side effect stays behind `main()`'s own activation interlock exactly like
+ * every other real side effect (only `main()` ever injects a real, file-writing implementation).
+ */
+async function runHarness(deps, config) {
+  const startedAt = new Date().toISOString();
+  const {
+    pageEvaluate, pageWaitForFunction, loadStarter, installF3Probe, finalizeF3Probe,
+    captureFormatSignalsFn = captureModelFormatSignals, setupSharedSessionResources: setupPhase25,
+    controls, f6Deps = {}, nodeCleanupResources = {}, captureViewerScriptIntegrity,
+    errorLedger = { events: [], record() {} }, harnessIntegrity: harnessIntegrityInput,
+    writeResultAtomically,
+  } = deps;
+  const {
+    urn, loadTimeoutMs, unloadWaitTimeoutMs = CHECK_TIMEOUT_MS, reloadProbeTimeoutMs = CHECK_TIMEOUT_MS,
+    controlTimeoutMs = CHECK_TIMEOUT_MS, censusTimeoutMs = CENSUS_TIMEOUT_MS,
+    unloadEventName, addedEventName,
+  } = config;
+
+  const checks = {};
+  const controlResults = {};
+  const tokens = [];
+  let classifierResult = null;
+  let sessionId = null;
+  let fatalErrorObserved = false;
+  let cleanupUnresolvedOwnership = false;
+  const cleanupFailures = [];
+  const staleContinuationsDropped = [];
+
+  const notExecutable = (name, reason) => createControlResult(name, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason });
+  const blockedControl = (name, classifierState) => createControlResult(name, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: `classifier:${classifierState}` });
+  const runControlSafely = async (name, fn) => {
+    if (typeof fn !== 'function') return notExecutable(name, 'control-not-injected');
+    try {
+      return await fn({ controlTimeoutMs });
+    } catch (e) {
+      errorLedger.record({ kind: 'required-resource-failure', reason: `control-threw:${name}`, error: describeError(e) });
+      fatalErrorObserved = true;
+      return notExecutable(name, 'control-threw');
+    }
+  };
+
+  // Phase 1 -- F3 probe install, strictly before Phase 2's load call (§4.4).
+  await installF3Probe();
+
+  // Phase 2 -- load: Document.load, then (only if that token completed) loadDocumentNode.
+  const docLoad = await startLoad({ pageEvaluate, starter: loadStarter.documentLoad, api: LOAD_API.DOCUMENT_LOAD, urn, loadTimeoutMs });
+  tokens.push(docLoad.token);
+  let loadDocumentNodeResult = null;
+  if (docLoad.token.state === TOKEN_STATE.COMPLETED) {
+    loadDocumentNodeResult = await startLoad({ pageEvaluate, starter: loadStarter.loadDocumentNode, api: LOAD_API.LOAD_DOCUMENT_NODE, docTokenId: docLoad.token.id, loadTimeoutMs });
+    tokens.push(loadDocumentNodeResult.token);
+  }
+
+  const loadReachedCompleted = loadDocumentNodeResult && loadDocumentNodeResult.token.state === TOKEN_STATE.COMPLETED;
+
+  let signalSnapshot = null;
+  if (loadReachedCompleted) {
+    signalSnapshot = await pageEvaluate(captureFormatSignalsFn, { tokenId: loadDocumentNodeResult.token.id, gen: loadDocumentNodeResult.gen });
+    if (!signalSnapshot || signalSnapshot.ok !== true || signalSnapshot.isOTG === null || signalSnapshot.isSVF2 === null) {
+      fatalErrorObserved = true;
+    } else {
+      classifierResult = readFormat(buildFormatSignalShim(signalSnapshot));
+    }
+  }
+
+  // Only CONFIRMED_SVF2 proceeds past the classifier (§4.1) into Phase 2.5 and F1-F8/F6/controls.
+  const classifierConfirmed = classifierResult && classifierResult.classifier === CLASSIFIER.CONFIRMED_SVF2;
+
+  if (classifierConfirmed) {
+    // Phase 2.5 -- shared session resources + setup postconditions (§6.1a).
+    // The whole Phase 2.5-10 sequence below is wrapped in try/catch: a thrown Fi, a control
+    // throwing unexpectedly, or any other fatal mid-sequence error must still reach Phase 11
+    // cleanup and the atomic write (brief's own "nothing early-returns past cleanup" rule) --
+    // this catch is what makes that true structurally, not just for the already-self-guarded
+    // individual steps (runControlSafely/scoreFn's own try/catch only protect THOSE calls, never
+    // an unexpected throw from, say, pageEvaluate(observeF1, ...) itself rejecting).
+    try {
+    const phase25 = await setupPhase25(loadDocumentNodeResult.token.id);
+    if (!phase25 || phase25.ok !== true) {
+      fatalErrorObserved = true;
+    } else {
+      sessionId = phase25.sessionId;
+
+      // Phase 3 -- F3 finalize: remove the listener NOW, read out the timeline, score F3.
+      let f3TimedOut = false;
+      try {
+        await pageWaitForFunction(f3ProbeSettledPredicate, {}, { timeout: reloadProbeTimeoutMs });
+      } catch { f3TimedOut = true; }
+      const f3Timeline = await finalizeF3Probe({ timedOut: f3TimedOut });
+      const f3Score = scoreF3Readiness(f3Timeline);
+      checks.F3 = f3Score.verdict;
+
+      // Phase 3c -- tree-unavailable control, immediately after F3.
+      controlResults['tree-unavailable'] = await runControlSafely('tree-unavailable', controls && controls.treeUnavailable);
+
+      // Phase 4 -- F1.
+      const f1Result = await pageEvaluate(observeF1, sessionId);
+      const f1Score = scoreF1(f1Result.fields || {});
+      checks.F1 = f1Result.ok === true ? f1Score.verdict : CHECK_VERDICT.BLOCKED;
+
+      // Phase 4c -- wrong-owner, then late-completion-after-timeout, both before Phase 5.
+      // late-completion-after-timeout is synthetic/Node-only (no realm bridging needed at all,
+      // unlike wrong-owner) -- runHarness calls it directly, never through deps.controls, since
+      // only it (not main()) has checks.F1 in scope to build f1SnapshotBefore/readCurrentF1 from.
+      controlResults['wrong-owner'] = await runControlSafely('wrong-owner', controls && controls.wrongOwner);
+      controlResults['late-completion-after-timeout'] = await runLateCompletionAfterTimeoutControl({
+        f1SnapshotBefore: checks.F1, readCurrentF1: () => checks.F1,
+      });
+
+      // Phase 5 -- F2.
+      const f2Result = await pageEvaluate(observeF2, sessionId);
+      const f2Score = scoreF2(f2Result.fields || {});
+      checks.F2 = f2Result.ok === true ? f2Score.verdict : CHECK_VERDICT.BLOCKED;
+
+      // Phase 5c -- hidden-fragment control.
+      controlResults['hidden-fragment'] = await runControlSafely('hidden-fragment', controls && controls.hiddenFragment);
+
+      // Phase 6 -- F4.
+      const f4Result = await pageEvaluate(observeF4, sessionId);
+      const f4Score = scoreF4(f4Result.fields || {});
+      checks.F4 = f4Result.ok === true ? f4Score.verdict : CHECK_VERDICT.BLOCKED;
+
+      // Phase 6c -- invalid-geometry-consumer control (synthetic-only, already realm-safe).
+      // Same reasoning as late-completion-after-timeout above: called directly, never through
+      // deps.controls, since only runHarness has checks.F4 in scope at this point.
+      controlResults['invalid-geometry-consumer'] = await runInvalidGeometryConsumerControl({
+        f4SnapshotBefore: checks.F4, readCurrentF4: () => checks.F4, controlTimeoutMs,
+      });
+
+      // Phase 7 -- F5 (its own corrected dependency: consumes F1's outcome directly, §7.5/I5).
+      const f5Score = scoreF5({ f1Result, f2Fields: f2Result.fields, f4Fields: f4Result.fields });
+      checks.F5 = f5Score.verdict;
+
+      // Phase 7c -- capacity-breach control.
+      controlResults['capacity-breach'] = await runControlSafely('capacity-breach', controls && controls.capacityBreach);
+
+      // Phase 8 -- F7.
+      const f7Result = await pageEvaluate(observeF7, sessionId);
+      const f7Score = scoreF7(f7Result.fields || {});
+      checks.F7 = f7Result.ok === true ? f7Score.verdict : CHECK_VERDICT.BLOCKED;
+
+      // Phase 8c -- invalid-bounds, then bounds-beyond-tolerance.
+      controlResults['invalid-bounds'] = await runControlSafely('invalid-bounds', controls && controls.invalidBounds);
+      controlResults['bounds-beyond-tolerance'] = await runControlSafely('bounds-beyond-tolerance', controls && controls.boundsBeyondTolerance);
+
+      // Phase 9 -- F8 (built entirely from F1/F2's own already-computed fields, never re-derived).
+      const f8Result = await pageEvaluate(observeF8, sessionId, { f1Fields: f1Result.fields, f2Fields: f2Result.fields });
+      const f8Score = scoreF8(f8Result.fields || {});
+      checks.F8 = f8Result.ok === true ? f8Score.verdict : CHECK_VERDICT.BLOCKED;
+
+      // Phase 10 -- F6 (MUTATES state; must run last of all checks; includes its own
+      // stale-old-model-event control, copied -- never re-run -- into the controls manifest).
+      const f6Result = await runF6UnloadReload({
+        sessionId, pageEvaluate, pageWaitForFunction,
+        loadStarter, urn, loadTimeoutMs, unloadEventName, addedEventName,
+        unloadWaitTimeoutMs, reloadProbeTimeoutMs, captureFormatSignalsFn,
+        ...f6Deps,
+      });
+      const f6Score = scoreF6(f6Result.fields || {});
+      checks.F6 = f6Result.ok === true ? f6Score.verdict : CHECK_VERDICT.BLOCKED;
+      if (f6Result.loadDocumentNode && f6Result.loadDocumentNode.token) tokens.push(f6Result.loadDocumentNode.token);
+      if (f6Result.docLoad && f6Result.docLoad.token) tokens.push(f6Result.docLoad.token);
+      controlResults['stale-old-model-event'] = buildStaleOldModelEventControlResult(f6Result.fields || {});
+    }
+    } catch (e) {
+      fatalErrorObserved = true;
+      errorLedger.record({ kind: 'required-resource-failure', reason: 'runHarness-phase-sequence-threw', error: describeError(e) });
+    }
+    // Schema completeness on any abort above (classifier-confirmed but Phase 2.5 failed, or a
+    // mid-sequence throw caught just above): every checks.F* / controls.* the sequence didn't
+    // reach yet is filled with a fail-closed placeholder here, exactly like the classifier-stop
+    // branch below already does -- never a missing object (plan §8), regardless of where the
+    // sequence actually stopped.
+    for (const name of F_CHECK_NAMES) {
+      if (!(name in checks)) checks[name] = CHECK_VERDICT.BLOCKED;
+    }
+    for (const name of CONTROL_NAMES) {
+      if (!(name in controlResults)) controlResults[name] = notExecutable(name, 'not-reached:fatal-error');
+    }
+  } else {
+    // Classifier stop (or Phase 2.5 setup failure folded into the same "never proceeds past
+    // this point" branch): every check and control is still written, per plan §8's own "no
+    // missing objects" discipline -- never a silently-absent object.
+    const classifierState = classifierResult ? classifierResult.classifier : 'unavailable';
+    for (const name of F_CHECK_NAMES) checks[name] = CHECK_VERDICT.BLOCKED;
+    for (const name of CONTROL_NAMES) controlResults[name] = blockedControl(name, classifierState);
+  }
+
+  // Phase 11 -- cleanup: guarded, independent, continue-on-failure; ALWAYS runs, regardless of
+  // how far the sequence above got (this is exactly what "never early-return past cleanup"
+  // means). Realm-split per the cleanup-ownership hand-off resolution above: page-owned steps
+  // via runInPageResourceCleanup while the page is still alive, THEN Node-owned steps via the
+  // existing, frozen, unmodified `runCleanup` (Stage 2) -- page/context/browser close strictly
+  // AFTER the in-page half, regardless of that half's own outcome.
+  let pageCleanup = { ok: false, stepStatus: {}, cleanupFailures: [], cleanupUnresolvedOwnership: false };
+  try {
+    pageCleanup = await pageEvaluate(runInPageResourceCleanup, { sessionId });
+  } catch (e) {
+    cleanupFailures.push({ step: 'removeF3Listeners', error: describeError(e) });
+    cleanupUnresolvedOwnership = true; // whole page-cleanup RPC failed while page presumed alive -- ownership unknown (codex-advisor finding #3)
+  }
+  const nodeOnlyResources = { ...nodeCleanupResources, tokens };
+  const nodeCleanup = await runCleanup(nodeOnlyResources, {});
+
+  const mergedStepStatus = { ...pageCleanup.stepStatus, ...nodeCleanup.stepStatus };
+  cleanupFailures.push(...(pageCleanup.cleanupFailures || []), ...nodeCleanup.cleanupFailures);
+  cleanupUnresolvedOwnership = cleanupUnresolvedOwnership || Boolean(pageCleanup.cleanupUnresolvedOwnership) || Boolean(nodeCleanup.cleanupUnresolvedOwnership);
+
+  // Late-arrival/stale-continuation accounting: any token never reaching a terminal state by
+  // the time cleanup ran is retained here (plan §8's own staleContinuationsDropped field), never
+  // silently dropped.
+  for (const t of tokens) {
+    if (t.state !== TOKEN_STATE.COMPLETED && t.state !== TOKEN_STATE.DISPOSED) {
+      staleContinuationsDropped.push({ tokenId: t.id, operation: t.meta && t.meta.operation, phase: t.state });
+    }
+  }
+
+  // viewerScriptIntegrity finalization -- per plan §8's own explicit ordering requirement,
+  // AFTER cleanup (Phase 11) has completed, BEFORE computeOverall.
+  let viewerScriptIntegrity = INTEGRITY_RESULT.CAPTURE_UNAVAILABLE;
+  let integrityReason = 'capture-function-not-injected';
+  if (typeof captureViewerScriptIntegrity === 'function') {
+    try {
+      const captureRecord = await captureViewerScriptIntegrity();
+      const classified = classifyViewerScriptIntegrity(captureRecord);
+      viewerScriptIntegrity = classified.integrityResult;
+      integrityReason = classified.reason;
+    } catch (e) {
+      viewerScriptIntegrity = INTEGRITY_RESULT.CAPTURE_UNAVAILABLE;
+      integrityReason = 'capture-threw';
+      errorLedger.record({ kind: 'required-resource-failure', reason: 'viewer-script-integrity-capture-threw', error: describeError(e) });
+    }
+  }
+
+  const ledgerFatal = (errorLedger.events || []).some((event) => {
+    try { return classifyLedgerEvent(event, { closeIntent: 'cleanup' }).fatal === true; } catch { return true; }
+  });
+  fatalErrorObserved = fatalErrorObserved || ledgerFatal;
+
+  // computeOverall -- ONLY ever invoked after BOTH remote-asset (viewerScriptIntegrity)
+  // finalization AND cleanup have both completed (plan §8's own explicit ordering requirement,
+  // enforced here structurally: neither viewerScriptIntegrity nor cleanupFailures/
+  // cleanupUnresolvedOwnership could have been computed before this line).
+  const overall = computeOverall({
+    fatalErrorObserved, cleanupUnresolvedOwnership, viewerScriptIntegrity,
+    classifier: classifierResult ? classifierResult.classifier : null,
+    checks, controls: controlResults, cleanupFailures,
+  });
+
+  // Merge the just-finalized remote-asset identity into harnessIntegrity (plan §8: "remoteAssets
+  // cannot be written before any browser action: it is populated during Phase 0 and finalized
+  // after Phase 11's page close and before computeOverall()" -- the sha256/branch/headSha/
+  // servedModuleManifest fields were already written first, by the caller, unchanged; only
+  // remoteAssets is assembled here). viewerStyle/otherObservedRemoteAssets are not separately
+  // captured by this stage (deps carries only captureViewerScriptIntegrity, not a style/other-
+  // assets capture hook -- a disclosed, documented gap, see this stage's own report) --
+  // defaulted to a schema-valid, honestly-unavailable shape rather than fabricated.
+  const finalizedHarnessIntegrity = {
+    ...(harnessIntegrityInput || {}),
+    remoteAssets: {
+      viewerScript: { integrityResult: viewerScriptIntegrity, reason: integrityReason },
+      viewerStyle: { identityScope: 'CAPTURE_UNAVAILABLE', identityGatesOverall: false },
+      otherObservedRemoteAssets: [],
+    },
+  };
+
+  const finishedAt = new Date().toISOString();
+  const result = {
+    script: 'g1-svf2-f1-f8-verification.mjs',
+    harnessIntegrity: finalizedHarnessIntegrity,
+    runtimeEnvelope: {
+      viewerVersion: config.viewerVersion || null, chromium: config.chromium || null,
+      node: config.node || process.version, modelUrn: urn,
+      initializer: config.initializer || null,
+    },
+    classifier: classifierResult ? classifierResult.classifier : CLASSIFIER.INDETERMINATE_UNAVAILABLE,
+    runtime: { isOTG: signalSnapshot ? signalSnapshot.isOTG : null, isSVF2: signalSnapshot ? signalSnapshot.isSVF2 : null },
+    checks,
+    controls: controlResults,
+    staleContinuationsDropped,
+    errorLedger: {
+      pageErrors: [], unhandledRejections: [], requiredResourceFailures: [], contextLoss: [],
+      consoleErrors: [], consoleWarnings: [], allowListedFingerprints: [],
+      fatalErrorObserved,
+      ...(errorLedger.summary ? errorLedger.summary() : {}),
+    },
+    cleanupFailures, cleanupUnresolvedOwnership,
+    overall,
+    startedAt, finishedAt,
+    // Non-§8-named, additive diagnostic evidence (retained, never gates anything): the merged
+    // 22-step cleanup ledger and the classified viewer-script-integrity reason.
+    cleanupStepStatus: mergedStepStatus,
+    viewerScriptIntegrityReason: integrityReason,
+  };
+
+  if (typeof writeResultAtomically === 'function') {
+    await writeResultAtomically(result);
+  }
+
+  return result;
+}
+
+// ------------------------------------------------------------------------------------------
+// §8 evidence-schema validation
+// ------------------------------------------------------------------------------------------
+
+const REQUIRED_STRING_ENVELOPE_FIELDS = Object.freeze(['script', 'startedAt', 'finishedAt']);
+const VALID_CLASSIFIER_VALUES = new Set(Object.values(CLASSIFIER));
+const VALID_OVERALL_VALUES = new Set(Object.values(OVERALL_VERDICT));
+
+/**
+ * `validateResultSchema(result)` -- pure, Node-side. Checks the COMPLETE §8 JSON shape (plan
+ * lines 1140-1229) against everything every prior stage actually produces: `harnessIntegrity`
+ * (including `servedModuleManifest`/`remoteAssets`), `runtimeEnvelope`, `classifier`, `runtime`,
+ * all 8 `checks.F*`, all 9 `controls.*` (validated via Stage 1's own `validateControlResult`,
+ * never re-implemented here), `staleContinuationsDropped`, `errorLedger`,
+ * `cleanupFailures`/`cleanupUnresolvedOwnership`, `overall`, `startedAt`/`finishedAt`.
+ *
+ * Returns `{ valid: boolean, errors: string[] }` -- never throws (a malformed `result` is
+ * exactly the input this function exists to reject, not to crash on).
+ */
+function validateResultSchema(result) {
+  const errors = [];
+  const fail = (msg) => errors.push(msg);
+
+  if (!result || typeof result !== 'object') {
+    return { valid: false, errors: ['result must be an object'] };
+  }
+
+  for (const field of REQUIRED_STRING_ENVELOPE_FIELDS) {
+    if (typeof result[field] !== 'string' || result[field] === '') fail(`'${field}' must be a non-empty string`);
+  }
+
+  // harnessIntegrity
+  const hi = result.harnessIntegrity;
+  if (!hi || typeof hi !== 'object') {
+    fail("'harnessIntegrity' must be an object");
+  } else {
+    if (typeof hi.path !== 'string' || hi.path === '') fail("'harnessIntegrity.path' must be a non-empty string");
+    if (typeof hi.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(hi.sha256)) fail("'harnessIntegrity.sha256' must be a 64-hex-char SHA-256 string");
+    if (typeof hi.branch !== 'string') fail("'harnessIntegrity.branch' must be a string");
+    if (typeof hi.headSha !== 'string') fail("'harnessIntegrity.headSha' must be a string");
+    if (typeof hi.gitStatusPorcelain !== 'string') fail("'harnessIntegrity.gitStatusPorcelain' must be a string");
+    if (!hi.servedModuleManifest || typeof hi.servedModuleManifest !== 'object' || Array.isArray(hi.servedModuleManifest)) {
+      fail("'harnessIntegrity.servedModuleManifest' must be an object");
+    } else {
+      for (const [modPath, digest] of Object.entries(hi.servedModuleManifest)) {
+        if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) fail(`'harnessIntegrity.servedModuleManifest["${modPath}"]' must be a 64-hex-char SHA-256 string`);
+      }
+    }
+    const ra = hi.remoteAssets;
+    if (!ra || typeof ra !== 'object') {
+      fail("'harnessIntegrity.remoteAssets' must be an object");
+    } else {
+      const vs = ra.viewerScript;
+      if (!vs || typeof vs !== 'object') {
+        fail("'harnessIntegrity.remoteAssets.viewerScript' must be an object");
+      } else if (!VALID_INTEGRITY_VALUES.has(vs.integrityResult)) {
+        fail(`'harnessIntegrity.remoteAssets.viewerScript.integrityResult' must be one of ${[...VALID_INTEGRITY_VALUES].join('|')}`);
+      }
+      if (!ra.viewerStyle || typeof ra.viewerStyle !== 'object') fail("'harnessIntegrity.remoteAssets.viewerStyle' must be an object");
+      else if (ra.viewerStyle.identityGatesOverall !== false) fail("'harnessIntegrity.remoteAssets.viewerStyle.identityGatesOverall' must be exactly false");
+      if (!Array.isArray(ra.otherObservedRemoteAssets)) fail("'harnessIntegrity.remoteAssets.otherObservedRemoteAssets' must be an array");
+    }
+  }
+
+  // runtimeEnvelope
+  const re = result.runtimeEnvelope;
+  if (!re || typeof re !== 'object') {
+    fail("'runtimeEnvelope' must be an object");
+  } else {
+    for (const field of ['viewerVersion', 'chromium', 'node', 'modelUrn']) {
+      if (!(field in re)) fail(`'runtimeEnvelope.${field}' is required (may be null, but must be present)`);
+    }
+    if (!re.initializer || typeof re.initializer !== 'object') fail("'runtimeEnvelope.initializer' must be an object");
+  }
+
+  // classifier / runtime
+  if (!VALID_CLASSIFIER_VALUES.has(result.classifier)) fail(`'classifier' must be one of ${[...VALID_CLASSIFIER_VALUES].join('|')}`);
+  if (!result.runtime || typeof result.runtime !== 'object') fail("'runtime' must be an object");
+
+  // checks.F1-F8
+  if (!result.checks || typeof result.checks !== 'object') {
+    fail("'checks' must be an object");
+  } else {
+    for (const name of F_CHECK_NAMES) {
+      const c = result.checks[name];
+      if (c === undefined || c === null) { fail(`'checks.${name}' is missing (plan §8: every check is always written, never a missing object)`); continue; }
+      // checks[*] may be recorded either as a bare verdict string (this stage's own retained
+      // shape, matching computeOverall's own `checks` input) or as a full
+      // `{verdict, reason, fields, evidence}` record (plan §8's own JSON sketch) -- both are
+      // accepted here; only the verdict itself is schema-checked, since `fields`/`evidence` are
+      // each check's own, already-validated-elsewhere shape (F1-F8's own scoreFn tests).
+      const verdict = typeof c === 'string' ? c : c.verdict;
+      if (!Object.values(CHECK_VERDICT).includes(verdict)) fail(`'checks.${name}' verdict must be one of ${Object.values(CHECK_VERDICT).join('|')}`);
+    }
+  }
+
+  // controls.* -- validated via Stage 1's own validateControlResult, never re-implemented here.
+  if (!result.controls || typeof result.controls !== 'object') {
+    fail("'controls' must be an object");
+  } else {
+    for (const name of CONTROL_NAMES) {
+      const record = result.controls[name];
+      if (record === undefined || record === null) { fail(`'controls.${name}' is missing (plan §8: every control is always written, never a missing object)`); continue; }
+      const { valid, errors: controlErrors } = validateControlResult(name, record);
+      if (!valid) fail(`'controls.${name}' invalid: ${controlErrors.join('; ')}`);
+    }
+  }
+
+  if (!Array.isArray(result.staleContinuationsDropped)) fail("'staleContinuationsDropped' must be an array");
+
+  // errorLedger
+  const el = result.errorLedger;
+  if (!el || typeof el !== 'object') {
+    fail("'errorLedger' must be an object");
+  } else {
+    for (const field of ['pageErrors', 'unhandledRejections', 'requiredResourceFailures', 'contextLoss', 'consoleErrors', 'consoleWarnings', 'allowListedFingerprints']) {
+      if (!Array.isArray(el[field])) fail(`'errorLedger.${field}' must be an array`);
+    }
+    if (typeof el.fatalErrorObserved !== 'boolean') fail("'errorLedger.fatalErrorObserved' must be a boolean");
+  }
+
+  if (!Array.isArray(result.cleanupFailures)) fail("'cleanupFailures' must be an array");
+  if (typeof result.cleanupUnresolvedOwnership !== 'boolean') fail("'cleanupUnresolvedOwnership' must be a boolean");
+
+  if (!VALID_OVERALL_VALUES.has(result.overall)) fail(`'overall' must be one of ${[...VALID_OVERALL_VALUES].join('|')}`);
+
+  return { valid: errors.length === 0, errors };
+}
+
 // ------------------------------------------------------------------------------------------
 // Guarded entrypoint stub (item 8) -- a later stage replaces main()'s body.
 // ------------------------------------------------------------------------------------------
 
+/**
+ * Node-side, pure. Every in-page function this file's own real-run wiring needs installed on a
+ * real page, once, at Phase 0, before navigation -- explicit stable string keys (codex-advisor
+ * consult, Stage 8: "Dispatch through explicit stable keys... never `fn.name`" -- avoids both
+ * ~35 bare-global-identifier pollution AND any risk of a minifier/bundler-renamed `fn.name`
+ * silently breaking dispatch). `main()`'s own bootstrap script assigns each entry as a property
+ * of one dedicated registry object (`window.__g1HarnessFns`), reconstructed from its own
+ * `fn.toString()` source -- the SAME technique every one of this file's own test files already
+ * uses via their own `createPageRealm` helper, just targeting a real page instead of a `node:vm`
+ * context. A sibling in-page function referenced by bare identifier (e.g. `onSuccess` calling
+ * `pushLoadTransition`) resolves correctly because BOTH are installed in the same bootstrap
+ * script's own lexical scope (an IIFE containing every one of these function declarations
+ * verbatim), not because either is looked up through the registry object itself.
+ */
+const IN_PAGE_FUNCTION_REGISTRY = Object.freeze({
+  pageErrOf, pushLoadTransition, isLateModelsAllGone, createLoadRecord, onDeadline, onSuccess,
+  onError, disposeLateArrival, sealLoads, isOwnershipClean, readLoadRecordSnapshot,
+  captureModelFormatSignals, setupSharedSessionResources,
+  observeF1, observeF2, observeF4, observeF7, observeF8,
+  f6InstallUnloadWiring, f6TriggerUnload, f6UnloadSettledPredicate, f6ReadUnloadSnapshot,
+  f6InstallReloadProbe, f6ReloadProbeSettledPredicate, f6FinalizeReloadProbe, f6Reregister,
+  f6RunLateUnloadControl, f6Cleanup,
+  f3InstallProbe, f3ProbeSettledPredicate, f3FinalizeProbe,
+  documentLoadStarter, loadDocumentNodeStarter, runInPageResourceCleanup,
+});
+
+/**
+ * Node-side, pure. Builds the bootstrap script SOURCE TEXT `main()` hands to
+ * `page.addInitScript({content})` (real run only -- never evaluated by this stage's own tests,
+ * which exercise every in-page function above directly via `node:vm`, exactly like every prior
+ * stage). An IIFE: declares every registry function verbatim (their own real source, via
+ * `fn.toString()`), then assigns each onto `window.__g1HarnessFns` by its own registry key.
+ * Deliberately does NOT initialize `window.__g1` itself (codex-advisor consult, Stage 8: doing
+ * so here would make `window.__g1` truthy before `createLoadRecord`'s own required
+ * `{closing, nextGen, loads, docs, models}` shape exists) -- `createLoadRecord`/the load
+ * starters already lazily construct it themselves, unchanged, exactly as Stages 2/8 already
+ * wrote them.
+ */
+function buildBootstrapScriptSource(registry = IN_PAGE_FUNCTION_REGISTRY) {
+  const decls = Object.entries(registry).map(([key, fn]) => `const ${key} = ${fn.toString()};`).join('\n');
+  const assigns = Object.keys(registry).map((key) => `  window.__g1HarnessFns.${key} = ${key};`).join('\n');
+  return `(() => {\n${decls}\n  window.__g1HarnessFns = window.__g1HarnessFns || {};\n${assigns}\n})();`;
+}
+
+/**
+ * Node-side. Builds a real `pageEvaluate(fn, arg)`/`pageWaitForFunction(fn, arg, opts)` pair
+ * bound to a real Playwright `page`, dispatching through the bootstrap registry's own stable
+ * keys (never `fn.name`) via a Node-side `Map<function, key>` built once from
+ * `IN_PAGE_FUNCTION_REGISTRY`. Matches Stage 2/3's own established `pageEvaluate`/
+ * `pageWaitForFunction` two/three-argument shape exactly, so `runHarness`/`startLoad`/
+ * `runF6UnloadReload` need no changes to consume a real `page` versus a test fake.
+ */
+function buildRealPageDeps(page, registry = IN_PAGE_FUNCTION_REGISTRY) {
+  const keyOf = new Map(Object.entries(registry).map(([key, fn]) => [fn, key]));
+  const resolveKey = (fn) => {
+    const key = keyOf.get(fn);
+    if (!key) throw new Error(`buildRealPageDeps: function '${fn && fn.name}' is not registered in IN_PAGE_FUNCTION_REGISTRY`);
+    return key;
+  };
+  return {
+    pageEvaluate: (fn, arg) => page.evaluate(({ key, arg: a }) => window.__g1HarnessFns[key](a), { key: resolveKey(fn), arg }),
+    pageWaitForFunction: (fn, arg, opts) => page.waitForFunction(({ key, arg: a }) => window.__g1HarnessFns[key](a), { key: resolveKey(fn), arg }, opts),
+  };
+}
+
+/**
+ * `parseLiveActivation({argv, env})` -- pure, Node-side, the activation interlock's own decision
+ * logic extracted from `main()` so it is genuinely dynamically testable without ever calling
+ * `main()` itself (this stage's own absolute constraint). Both the `--execute-live-f1-f8` CLI
+ * flag (checked via `argv.includes(...)`, matching `process.argv`'s own shape) AND the
+ * `G1_F1_F8_LIVE_AUTHORIZED=YES` environment variable (exact string match, never truthy-coerced)
+ * are REQUIRED; either missing is unauthorized. Returns `{authorized, reason}` -- never throws,
+ * so `main()`'s own call site owns the actual fail-closed throw/message. `reason` is one of
+ * `'flag-and-env-missing' | 'flag-missing' | 'env-missing' | null` (null iff authorized).
+ */
+function parseLiveActivation({ argv, env } = {}) {
+  const flagPresent = Array.isArray(argv) && argv.includes('--execute-live-f1-f8');
+  const envPresent = Boolean(env) && env.G1_F1_F8_LIVE_AUTHORIZED === 'YES';
+  if (flagPresent && envPresent) return { authorized: true, reason: null };
+  if (!flagPresent && !envPresent) return { authorized: false, reason: 'flag-and-env-missing' };
+  if (!flagPresent) return { authorized: false, reason: 'flag-missing' };
+  return { authorized: false, reason: 'env-missing' };
+}
+
+/**
+ * `main()` -- the ONLY place real Playwright objects get constructed, anywhere in this file.
+ * Small by design (plan/brief's own explicit requirement): steps 1-2 below, in this exact
+ * order, checking the activation interlock BEFORE step 2, via `parseLiveActivation` (above) --
+ * the guard's own decision logic is dynamically unit-tested there; `main()` itself contributes
+ * only the fail-closed throw and is never invoked. No top-level `import 'playwright'` exists
+ * anywhere in this file -- the import below is the ONLY one, dynamic, reached only past the
+ * guard -- which is what makes "`chromium.launch` unreachable before activation validation" a
+ * checkable, testable property (this stage's own offline tests verify exactly this, both via
+ * `parseLiveActivation`'s own exhaustive tests and a static source-order check on `main()`
+ * itself, never by code review alone).
+ *
+ * Never actually invoked anywhere in this stage's own code or tests (the brief's own strongest-
+ * yet restatement of every prior stage's authorization boundary).
+ */
 async function main() {
-  throw new Error('G1 F1-F8 harness: not yet implemented past Stage 1');
+  // Step 1 -- activation interlock, checked FIRST, before anything else (including this
+  // function's own step 2). Delegates its decision to parseLiveActivation (above); either
+  // condition missing throws immediately, before any dynamic import, browser launch, or
+  // file/network I/O of any kind.
+  const activation = parseLiveActivation({ argv: process.argv, env: process.env });
+  if (!activation.authorized) {
+    throw new Error(
+      'g1-svf2-f1-f8-verification.mjs: live execution requires BOTH the --execute-live-f1-f8 '
+      + 'CLI flag AND the G1_F1_F8_LIVE_AUTHORIZED=YES environment variable. These are '
+      + 'MECHANICAL SAFEGUARDS ONLY -- their presence is NOT proof of owner authorization. Live '
+      + 'F1-F8 execution requires separate, explicit owner authorization per '
+      + `docs/prompts/g1-f1-f8-harness-implementation-authorization.md. (${activation.reason})`,
+    );
+  }
+
+  // Step 2 -- only past this point: dynamic import('playwright'), a real browser launch, and
+  // every other real side effect this file performs.
+  const { chromium } = await import('playwright');
+
+  // harnessIntegrity (plan §8): computed before any browser action -- git/hash/manifest fields
+  // only, never anything requiring a page. `servedModuleManifest` walks the SAME entry points
+  // the harness actually serves (SERVED_MODULE_ENTRY_POINTS, above), via the already-built, pure
+  // buildServedModuleManifest -- no new hashing logic here.
+  const harnessSha256 = createHash('sha256').update(await nodeReadFile(new URL(import.meta.url), 'utf8')).digest('hex');
+  const gitField = (args) => {
+    try { return execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' }).trim(); } catch { return null; }
+  };
+  const harnessIntegrity = {
+    path: 'test/acceptance/g1-svf2-f1-f8-verification.mjs',
+    sha256: harnessSha256,
+    // '' (never null) on a git-command failure -- validateResultSchema requires a string; an
+    // empty value is itself informative (git unavailable), never a missing/non-string field.
+    branch: gitField(['rev-parse', '--abbrev-ref', 'HEAD']) ?? '',
+    headSha: gitField(['rev-parse', 'HEAD']) ?? '',
+    gitStatusPorcelain: gitField(['status', '--porcelain']) ?? '',
+    servedModuleManifest: await buildServedModuleManifest(SERVED_MODULE_ENTRY_POINTS, {}),
+  };
+
+  const browser = await chromium.launch();
+  const context = await browser.newContext({ serviceWorkers: 'block' });
+  const page = await context.newPage();
+
+  const errorLedgerEvents = [];
+  const errorLedger = {
+    events: errorLedgerEvents,
+    record(event) { errorLedgerEvents.push(event); },
+    summary() {
+      const byKind = (kind) => errorLedgerEvents.filter((e) => e.kind === kind);
+      return {
+        pageErrors: byKind('pageerror'), unhandledRejections: byKind('unhandledrejection'),
+        requiredResourceFailures: byKind('required-resource-failure'), contextLoss: byKind('webglcontextlost'),
+        consoleErrors: byKind('console').filter((e) => e.level === 'error'),
+        consoleWarnings: byKind('console').filter((e) => e.level === 'warn'),
+        allowListedFingerprints: [],
+      };
+    },
+  };
+  page.on('pageerror', (err) => errorLedger.record({ kind: 'pageerror', error: describeError(err) }));
+  page.on('console', (msg) => errorLedger.record({ kind: 'console', level: msg.type(), text: msg.text() }));
+  page.on('requestfailed', (request) => errorLedger.record({ kind: 'required-resource-failure', url: request.url() }));
+
+  await context.route('**/clashtest/**', (route) => handleClashtestRoute(route, {}));
+  // Stage 8 fix: F7's own observeF7 (Stage 6) reads window.__g1.mod['/clashpanel/viewer/
+  // viewerApi.js'] (createViewerApi) -- a module OUTSIDE clashtest/, which
+  // resolveClashtestModulePath/handleClashtestRoute (hardwired to CLASHTEST_DIR) cannot resolve.
+  // Mirrors the exact same security pattern (path-traversal + extension check, serve from disk,
+  // 404 on anything else) scoped to clashpanel/ instead, inline here since it is real-wiring-
+  // only and never exercised by any offline test (those fake pageEvaluate/window.__g1.mod
+  // directly, per every prior stage's own convention).
+  const clashpanelDir = path.join(REPO_ROOT, 'clashpanel');
+  await context.route('**/clashpanel/**', async (route) => {
+    const url = new URL(route.request().url());
+    const rel = decodeURIComponent(url.pathname).replace(/^\/clashpanel\//, '');
+    const abs = path.resolve(clashpanelDir, rel);
+    if (!abs.startsWith(clashpanelDir + path.sep) || !abs.endsWith('.js')) {
+      return route.fulfill({ status: 404, body: 'not served by g1-svf2-f1-f8-verification' });
+    }
+    try {
+      await nodeReadFile(abs);
+    } catch {
+      return route.fulfill({ status: 404, body: 'not found' });
+    }
+    return route.fulfill({ path: abs, contentType: 'text/javascript' });
+  });
+  await page.addInitScript({ content: buildBootstrapScriptSource() });
+
+  const { pageEvaluate, pageWaitForFunction } = buildRealPageDeps(page);
+
+  const config = {
+    urn: process.env.G1_F1_F8_URN || '',
+    loadTimeoutMs: 60_000,
+    unloadEventName: 'beforeModelUnload',
+    addedEventName: 'modelAdded',
+    initializer: { env: 'AutodeskProduction2', api: 'streamingV2' },
+    node: process.version,
+  };
+
+  // Atomic write (plan §8): write-temp-then-rename to the existing, git-ignored
+  // test/acceptance/results/ convention (§5's own file table) -- called by runHarness itself,
+  // once, as its own last action (never mid-sequence, never partial).
+  const resultPath = path.join(REPO_ROOT, 'test', 'acceptance', 'results', 'g1-svf2-f1-f8-verification-result.json');
+  const writeResultAtomically = async (result) => {
+    await nodeMkdir(path.dirname(resultPath), { recursive: true });
+    const tmpPath = `${resultPath}.tmp-${randomUUID()}`;
+    await nodeWriteFile(tmpPath, JSON.stringify(result, null, 2), 'utf8');
+    await nodeRename(tmpPath, resultPath);
+  };
+
+  const result = await runHarness({
+    pageEvaluate, pageWaitForFunction,
+    loadStarter: { documentLoad: documentLoadStarter, loadDocumentNode: loadDocumentNodeStarter },
+    installF3Probe: () => pageEvaluate(f3InstallProbe, undefined),
+    finalizeF3Probe: (arg) => pageEvaluate(f3FinalizeProbe, arg),
+    setupSharedSessionResources: (tokenId) => pageEvaluate(setupSharedSessionResources, tokenId),
+    controls: {}, // real in-page-bridged control wrappers for the 6 model-data controls: out of
+                  // this stage's own disclosed scope boundary, see runHarness's own doc comment.
+                  // invalid-geometry-consumer/late-completion-after-timeout need no entry here --
+                  // runHarness calls them directly (see its own Phase 4c/6c comments).
+    nodeCleanupResources: { page, context, browser },
+    errorLedger,
+    harnessIntegrity,
+    writeResultAtomically,
+  }, config);
+
+  return result;
 }
 
 if (import.meta.url === `file://${process.argv[1]}` && !process.env.NODE_TEST_CONTEXT) {
@@ -5184,5 +6355,18 @@ export {
   runF6UnloadReload,
   scoreF6,
   buildStaleOldModelEventControlResult,
+  f3InstallProbe,
+  f3ProbeSettledPredicate,
+  f3FinalizeProbe,
+  documentLoadStarter,
+  loadDocumentNodeStarter,
+  runInPageResourceCleanup,
+  runLateCompletionAfterTimeoutControl,
+  runHarness,
+  validateResultSchema,
+  IN_PAGE_FUNCTION_REGISTRY,
+  buildBootstrapScriptSource,
+  buildRealPageDeps,
+  parseLiveActivation,
   main,
 };
