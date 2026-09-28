@@ -3018,15 +3018,60 @@ async function observeF4(sessionId) {
     ? { name: e.name, message: String(e.message ?? ''), reason: e.reason ?? null }
     : { primitive: typeof e, value: String(e) });
 
+  // Fix round 1 (Stage 5 review): F4's own ownership-metadata observation (plan line 946:
+  // "additionally record whether getGeometryId returns a usable id for every fragment in the
+  // tested population (no undefined/throw)"). This is a FRESH, INDEPENDENT per-fragment
+  // fragList.getGeometryId()/getDbIds() re-verification -- deliberately NOT derived from F1's
+  // already-cached record.geometryIdentity/ownerDbId. Reasoning: F1's own extractAllFragments
+  // call builds geometryIdentity via `createGeometryIdentity(loadEpoch,
+  // fragList.getGeometryId(fragId))` (ViewerModelAdapter.js:267), and createGeometryIdentity
+  // itself THROWS a TypeError if geometryIndex is undefined/non-integer
+  // (collision/geometry/GeometryIdentity.js:8-16) -- so if getGeometryId were EVER undefined
+  // or threw for even one fragment during F1's OWN scan, that exception would propagate out of
+  // extractAllFragments, be swallowed by observeF1's own try/catch, and
+  // session.artifacts.f1PopulationRecords would never be set at all. Since observeF4 refuses to
+  // run without that artifact (the precondition check above), relying on F1's cached
+  // geometryIdentity here would make this check STRUCTURALLY INCAPABLE of ever observing the
+  // exact failure it exists to catch. Re-deriving fresh, in F4's own try/catch, is the only way
+  // this observation can ever be meaningful.
+  let libraryThrew = 0;
+  let libOwnerDiffersFromFragList = 0;
+  const droppedDiagnosticsCount = { 'geometry-id-undefined': 0, 'geometry-id-threw': 0 };
+  const fragList = model.getFragmentList();
+
   const geometryIdToRepresentativeFragId = new Map();
   const fragmentGeometryId = new Map();
   const worldMatricesByFragId = new Map();
   for (const [fragId, record] of session.artifacts.f1PopulationRecords) {
-    const geometryId = record.geometryIdentity ? record.geometryIdentity.geometryIndex : undefined;
-    if (geometryId === undefined) continue;
-    fragmentGeometryId.set(fragId, geometryId);
+    let freshGeometryId;
+    try {
+      freshGeometryId = fragList.getGeometryId(fragId);
+    } catch {
+      libraryThrew += 1;
+      droppedDiagnosticsCount['geometry-id-threw'] += 1;
+      continue; // no usable geometry id -- excluded from the census below, per plan's own
+                // "droppedDiagnosticsCount... distinct from the already-known N/U classes".
+    }
+    if (freshGeometryId === undefined) {
+      droppedDiagnosticsCount['geometry-id-undefined'] += 1;
+      continue;
+    }
+
+    // T3's own libOwnerDiffersFromFragList convention (MEASURE_ADAPTER,
+    // clashtest-viewer-adapter.acceptance.mjs:326-327): compares the library's (F1's own
+    // extractAllFragments) already-computed ownerDbId against a FRESH fragList.getDbIds(fragId)
+    // read for the same fragment -- a getDbIds throw is a distinct, unnamed concern (no field
+    // exists for it) and is deliberately excluded from this specific count rather than
+    // fabricating a bucket the plan never names.
+    try {
+      const freshOwnerDbId = fragList.getDbIds(fragId);
+      if (freshOwnerDbId !== record.ownerDbId) libOwnerDiffersFromFragList += 1;
+    } catch { /* getDbIds threw -- not counted toward libOwnerDiffersFromFragList (a value
+                 comparison field), and the plan names no separate field for this case */ }
+
+    fragmentGeometryId.set(fragId, freshGeometryId);
     worldMatricesByFragId.set(fragId, record.worldMatrix);
-    if (!geometryIdToRepresentativeFragId.has(geometryId)) geometryIdToRepresentativeFragId.set(geometryId, fragId);
+    if (!geometryIdToRepresentativeFragId.has(freshGeometryId)) geometryIdToRepresentativeFragId.set(freshGeometryId, fragId);
   }
 
   const distinctGeometryCount = geometryIdToRepresentativeFragId.size;
@@ -3121,6 +3166,9 @@ async function observeF4(sessionId) {
   return {
     ok: true,
     fields: {
+      libraryThrew,
+      libOwnerDiffersFromFragList,
+      droppedDiagnosticsCount,
       distinctGeometryCount,
       renderProxyFailures: renderProxyFailures.length,
       geometryAdapterFailures: geometryAdapterFailures.length,
@@ -3139,17 +3187,36 @@ async function observeF4(sessionId) {
 
 /**
  * `scoreF4(fields)` -- plan §7.4's exact success/failure criteria, pure, Node-side. `FAIL` iff
- * any render-proxy failure, any geometry-adapter failure (an `unsupported:true` result for a
- * geometry F1 confirmed populated), or any weld-consumer failure (`index-references-invalid-
- * vertex` or a non-finite `position` component) occurred. `geometriesWithNullIndex` and
- * `oversizedGeometryCount` are NEVER failure conditions here (a `null` index is an explicit
- * PASS for that geometry; an oversized-for-sync-build geometry is F5's own limit-conformance
- * finding, never an F4 collision-compatibility regression).
+ * ANY of: the ownership-metadata half (`libraryThrew > 0`, `libOwnerDiffersFromFragList > 0`,
+ * or any `droppedDiagnosticsCount` class non-zero -- fix round 1, Stage 5 review: exactly the
+ * "unexplained extraction failures beyond the already-known N/U diagnostic classes" plan
+ * §7.4's own success criteria, line 947, names, and a metadata-read failure per line 949's own
+ * failure criteria) OR the geometry-buffer half (any render-proxy failure, any geometry-adapter
+ * failure -- an `unsupported:true` result for a geometry F1 confirmed populated -- or any
+ * weld-consumer failure -- `index-references-invalid-vertex` or a non-finite `position`
+ * component). `geometriesWithNullIndex` and `oversizedGeometryCount` are NEVER failure
+ * conditions here (a `null` index is an explicit PASS for that geometry; an oversized-for-
+ * sync-build geometry is F5's own limit-conformance finding, never an F4 collision-
+ * compatibility regression).
  */
 function scoreF4(fields) {
   const f = fields || {};
-  const failed = f.renderProxyFailures > 0 || f.geometryAdapterFailures > 0 || f.weldConsumerFailures > 0;
-  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason: failed ? 'f4-render-proxy-adapter-or-weld-consumer-failure' : null, fields: f };
+  // Fix round 1 (Stage 5 review): libraryThrew/libOwnerDiffersFromFragList/
+  // droppedDiagnosticsCount are exactly the "unexplained extraction failures beyond the
+  // already-known N/U diagnostic classes" plan §7.4's own success criteria (line 947) names --
+  // a genuinely broken getGeometryId()/getDbIds() resolution for a fragment F1/F2 already
+  // confirmed present is a metadata-read failure (line 949's own failure criteria), not merely
+  // informational.
+  const droppedDiagnosticsTotal = f.droppedDiagnosticsCount
+    ? Object.values(f.droppedDiagnosticsCount).reduce((sum, n) => sum + (n || 0), 0)
+    : 0;
+  const ownershipMetadataFailed = f.libraryThrew > 0 || f.libOwnerDiffersFromFragList > 0 || droppedDiagnosticsTotal > 0;
+  const geometryBufferFailed = f.renderProxyFailures > 0 || f.geometryAdapterFailures > 0 || f.weldConsumerFailures > 0;
+  const failed = ownershipMetadataFailed || geometryBufferFailed;
+  const reason = !failed ? null
+    : ownershipMetadataFailed ? 'f4-ownership-metadata-failure'
+    : 'f4-render-proxy-adapter-or-weld-consumer-failure';
+  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason, fields: f };
 }
 
 // ------------------------------------------------------------------------------------------

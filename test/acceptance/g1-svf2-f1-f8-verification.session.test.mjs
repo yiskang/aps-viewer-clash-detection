@@ -676,11 +676,30 @@ function fakePopulationRecord(fragId, geometryIndex, { worldMatrix = [1, 0, 0, 0
   return [fragId, { fragmentId: fragId, geometryIdentity: createGeometryIdentity(0, geometryIndex), worldMatrix, ownerDbId }];
 }
 
-function buildF4Session(populationRecordsEntries, { getUnitScale = () => 1 } = {}) {
-  const model = { getUnitScale };
+function buildF4Session(populationRecordsEntries, { getUnitScale = () => 1, getGeometryId, getDbIds } = {}) {
+  const records = new Map(populationRecordsEntries);
+  // Defaults: a fresh fragList.getGeometryId()/getDbIds() that AGREES with each record's own
+  // already-cached geometryIdentity/ownerDbId -- the "fully healthy" case. Individual tests
+  // override getGeometryId/getDbIds to exercise the fix-round-1 re-verification pass (throws,
+  // undefined, or a disagreeing value).
+  const defaultGetGeometryId = (fragId) => {
+    const record = records.get(fragId);
+    return record && record.geometryIdentity ? record.geometryIdentity.geometryIndex : undefined;
+  };
+  const defaultGetDbIds = (fragId) => {
+    const record = records.get(fragId);
+    return record ? record.ownerDbId : undefined;
+  };
+  const model = {
+    getUnitScale,
+    getFragmentList: () => ({
+      getGeometryId: getGeometryId || defaultGetGeometryId,
+      getDbIds: getDbIds || defaultGetDbIds,
+    }),
+  };
   return {
     model,
-    artifacts: { f1PopulationRecords: new Map(populationRecordsEntries) },
+    artifacts: { f1PopulationRecords: records },
   };
 }
 
@@ -825,6 +844,98 @@ test('observeF4: refuses to run before F1 has populated f1PopulationRecords', as
   const result = await realm.call(observeF4, 's1');
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'f1-population-records-not-available-run-observeF1-first');
+});
+
+// -- F4's ownership-metadata observation (fix round 1, Stage 5 review: plan §7.4 line 946 --
+// "additionally record whether getGeometryId returns a usable id for every fragment in the
+// tested population (no undefined/throw)") --
+
+test('observeF4: a fragment with a usable geometry id contributes zero to libraryThrew/droppedDiagnosticsCount/libOwnerDiffersFromFragList', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1)]); // default fragList agrees with the record
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => fakeGeometryProxy(VALID_TRIANGLE_POSITIONS, VALID_TRIANGLE_INDEX) } },
+  });
+
+  const result = await realm.call(observeF4, 's1');
+
+  assert.equal(result.fields.libraryThrew, 0);
+  assert.equal(result.fields.libOwnerDiffersFromFragList, 0);
+  // droppedDiagnosticsCount was built by code running INSIDE the vm realm -- a cross-realm
+  // plain object (same issue documented elsewhere in this file) -- compare fields individually.
+  assert.equal(result.fields.droppedDiagnosticsCount['geometry-id-undefined'], 0);
+  assert.equal(result.fields.droppedDiagnosticsCount['geometry-id-threw'], 0);
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('observeF4: getGeometryId THROWING for a fragment -- libraryThrew reflects it, droppedDiagnosticsCount[\'geometry-id-threw\'] increments, fragment excluded from the census, FAIL', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1), fakePopulationRecord(1, 1)], {
+    getGeometryId: (fragId) => { if (fragId === 0) throw new Error('getGeometryId blew up'); return 1; },
+  });
+  let getRenderProxyCalls = 0;
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => { getRenderProxyCalls += 1; return fakeGeometryProxy(VALID_TRIANGLE_POSITIONS, VALID_TRIANGLE_INDEX); } } },
+  });
+
+  const result = await realm.call(observeF4, 's1');
+
+  assert.equal(result.fields.libraryThrew, 1);
+  assert.equal(result.fields.droppedDiagnosticsCount['geometry-id-threw'], 1);
+  assert.equal(result.fields.droppedDiagnosticsCount['geometry-id-undefined'], 0);
+  // Fragment 0's failure never prevents fragment 1 (same geometry id, still usable) from being
+  // censused -- this is F4's own observation running per-fragment, not aborting the whole pass.
+  assert.equal(getRenderProxyCalls, 1);
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.FAIL);
+  assert.equal(scoreF4(result.fields).reason, 'f4-ownership-metadata-failure');
+});
+
+test('observeF4: getGeometryId returning undefined (unusable, no throw) -- droppedDiagnosticsCount[\'geometry-id-undefined\'] increments, never silently skipped, FAIL', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1)], {
+    getGeometryId: () => undefined,
+  });
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => fakeGeometryProxy(VALID_TRIANGLE_POSITIONS, VALID_TRIANGLE_INDEX) } },
+  });
+
+  const result = await realm.call(observeF4, 's1');
+
+  assert.equal(result.fields.libraryThrew, 0, 'undefined without a throw must never be counted as a throw');
+  assert.equal(result.fields.droppedDiagnosticsCount['geometry-id-undefined'], 1);
+  assert.equal(result.fields.distinctGeometryCount, 0, 'the fragment is excluded from the census, not silently included with an undefined id');
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.FAIL);
+  assert.equal(scoreF4(result.fields).reason, 'f4-ownership-metadata-failure');
+});
+
+test('observeF4: libOwnerDiffersFromFragList increments when a fresh fragList.getDbIds() disagrees with F1\'s already-cached ownerDbId, FAIL', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1, { ownerDbId: 100 })], {
+    getDbIds: () => 999, // disagrees with the cached record's ownerDbId (100)
+  });
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => fakeGeometryProxy(VALID_TRIANGLE_POSITIONS, VALID_TRIANGLE_INDEX) } },
+  });
+
+  const result = await realm.call(observeF4, 's1');
+
+  assert.equal(result.fields.libOwnerDiffersFromFragList, 1);
+  // A disagreeing owner does not itself make the geometry id unusable -- the fragment is still
+  // censused (this mirrors T3's own libOwnerDiffersFromFragList convention: a distinct,
+  // independently-reported metric, not a census-exclusion condition).
+  assert.equal(result.fields.distinctGeometryCount, 1);
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.FAIL);
+  assert.equal(scoreF4(result.fields).reason, 'f4-ownership-metadata-failure');
+});
+
+test('scoreF4: the ownership-metadata half alone (zero render-proxy/adapter/weld failures) still fails F4', () => {
+  const result = scoreF4({
+    libraryThrew: 1, libOwnerDiffersFromFragList: 0, droppedDiagnosticsCount: { 'geometry-id-undefined': 0, 'geometry-id-threw': 1 },
+    distinctGeometryCount: 0, renderProxyFailures: 0, geometryAdapterFailures: 0, geometriesWithNullIndex: 0,
+    weldConsumerFailures: 0, weldConsumerSuccessCount: 0, maxActiveTriangleCount: 0, oversizedGeometryCount: 0,
+  });
+  assert.equal(result.verdict, CHECK_VERDICT.FAIL);
+  assert.equal(result.reason, 'f4-ownership-metadata-failure');
 });
 
 // -- classifyWeldResult (Node-side, shared by scoreF4's own evidence and the control) --
