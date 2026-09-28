@@ -284,11 +284,12 @@ test('runF6UnloadReload: full happy path -- unload, reload, late-unload control 
   assert.equal(result.fields.modelAfterStillLive, true);
   assert.equal(result.fields.resolveRootsOk, true);
   assert.equal(result.fields.reloadClassifier.classifier, CLASSIFIER.CONFIRMED_SVF2);
-  assert.equal(result.fields.f3RepeatProbe.fired, true);
-  assert.equal(result.fields.f3RepeatProbe.settled, true);
-  assert.equal(result.fields.f3RepeatProbe.timedOut, false);
+  assert.equal(result.fields.f3RepeatProbe.modelAddedObserved, true);
+  assert.equal(result.fields.f3RepeatProbe.resolveRootsOutcome, 'resolved');
   assert.equal(result.fields.f3RepeatProbe.modelMatchesReloadToken, true);
-  assert.equal(result.fields.f3RepeatProbe.entry.outcome, 'resolved');
+  assert.equal(result.fields.f3RepeatProbe.readinessGateSufficient, true);
+  assert.ok(result.fields.f3RepeatProbe.atInvocation, 'invocation-time flag snapshot recorded');
+  assert.ok(result.fields.f3RepeatProbe.atSettlement, 'settlement-time flag snapshot recorded');
 
   assert.equal(scoreF6(result.fields).verdict, CHECK_VERDICT.PASS);
 
@@ -367,26 +368,52 @@ test('runF6UnloadReload: reload probe fires for an UNRELATED model (correlation 
   };
   // The real reload's own loadDocumentNode starter never fires modelAdded itself (fireModelAddedOnLoad:false)
   // -- the probe's only recorded event is the stray one above, which resolveRoots will still
-  // succeed against (it's a valid-shaped model), so `fired`/`settled` are true, but the model
-  // identity must NOT match modelAfter.
+  // succeed against (it's a valid-shaped model), so `modelAddedObserved`/`resolveRootsOutcome`
+  // report as usual, but the model identity must NOT match modelAfter.
   const result = await runF6UnloadReload(fx.deps);
 
-  assert.equal(result.fields.f3RepeatProbe.fired, true);
-  assert.equal(result.fields.f3RepeatProbe.entry.model, strayModel);
+  assert.equal(result.fields.f3RepeatProbe.modelAddedObserved, true);
+  assert.equal(result.fields.f3RepeatProbe.resolveRootsOutcome, 'resolved');
   assert.equal(result.fields.f3RepeatProbe.modelMatchesReloadToken, false);
   assert.equal(scoreF6(result.fields).verdict, CHECK_VERDICT.FAIL);
   assert.equal(scoreF6(result.fields).reason, 'f6-reload-probe-did-not-resolve');
 });
 
-test('runF6UnloadReload: reload probe never fires (times out) -> f3RepeatProbe.timedOut true, FAIL', async () => {
+test('runF6UnloadReload: reload probe never fires (times out) -> resolveRootsOutcome becomes \'timed-out\' (F3\'s own third outcome state), FAIL', async () => {
   const fx = buildF6Fixture({ fireModelAddedOnLoad: false });
   fx.deps.reloadProbeTimeoutMs = 30;
   const result = await runF6UnloadReload(fx.deps);
 
-  assert.equal(result.fields.f3RepeatProbe.fired, false);
-  assert.equal(result.fields.f3RepeatProbe.timedOut, true);
+  assert.equal(result.fields.f3RepeatProbe.modelAddedObserved, false);
+  assert.equal(result.fields.f3RepeatProbe.resolveRootsOutcome, 'timed-out');
   assert.equal(scoreF6(result.fields).verdict, CHECK_VERDICT.FAIL);
   assert.equal(scoreF6(result.fields).reason, 'f6-reload-probe-did-not-resolve');
+});
+
+test('runF6UnloadReload: reload probe captures TWO distinct flag snapshots (atInvocation vs atSettlement), characterizing a genuine readiness gap', async () => {
+  const fx = buildF6Fixture();
+  // isLoadDone() is false at MODEL_ADDED_EVENT time, flips true only once resolveRoots is
+  // actually invoked with modelAfter -- simulating the real Adapter readiness gap F3's own text
+  // (plan §7.3) says atInvocation/atSettlement exist to characterize.
+  fx.modelAfter.__loadDone = false;
+  fx.modelAfter.isLoadDone = function isLoadDoneFake() { return this.__loadDone; };
+  fx.session.enumerator.resolveRoots = async (binding) => {
+    if (!binding || !binding.model) throw new Error('no model');
+    if (binding.model === fx.modelAfter) fx.modelAfter.__loadDone = true;
+    return { roots: [{ dbId: 1 }] };
+  };
+
+  const result = await runF6UnloadReload(fx.deps);
+  const { f3RepeatProbe } = result.fields;
+
+  assert.equal(f3RepeatProbe.resolveRootsOutcome, 'resolved');
+  assert.notEqual(f3RepeatProbe.atInvocation, f3RepeatProbe.atSettlement, 'two distinct capture objects, never the same reference reused');
+  assert.equal(f3RepeatProbe.atInvocation.isLoadDone, false, 'not ready yet at MODEL_ADDED_EVENT time');
+  assert.equal(f3RepeatProbe.atSettlement.isLoadDone, true, 'ready by the time resolveRoots settles -- the gap is characterized');
+  assert.equal(typeof f3RepeatProbe.tModelAdded, 'number');
+  assert.equal(typeof f3RepeatProbe.elapsedMs, 'number');
+  assert.equal(f3RepeatProbe.readinessGateSufficient, true);
+  assert.equal(scoreF6(result.fields).verdict, CHECK_VERDICT.PASS);
 });
 
 test('runF6UnloadReload: wiring install fails (wireModelUnload not available in window.__g1.mod) -> ok:false, fatal', async () => {

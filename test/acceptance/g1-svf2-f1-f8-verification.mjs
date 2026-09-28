@@ -2473,6 +2473,11 @@ async function observeF1(sessionId) {
   const session = g && g.sessions && g.sessions[sessionId];
   if (!session) return { ok: false, reason: 'session-not-found' };
 
+  // `session.binding` is frozen at Phase-2.5 registration (setupSharedSessionResources) and is
+  // never updated by F6's own re-registration (F6 always re-fetches registry.bindingFor(K)
+  // fresh instead, per its own doc comment) -- safe here only because the plan's own strict
+  // phase order runs every other check, including this one, strictly BEFORE F6 (the harness's
+  // one mutating check, required to run last); noted explicitly per Stage 7 review (Minor).
   const { binding, model, enumerator } = session;
   const mod = g.mod || {};
   const { extractFragments, extractAllFragments } = mod['/collision/viewer/ViewerModelAdapter.js'] || {};
@@ -4643,14 +4648,27 @@ function f6ReadUnloadSnapshot({ sessionId }) {
  * Node-side orchestrator -- self-contained implementation of plan §7.3's own prose logic (no
  * concrete implementation of this exists anywhere else in the repo to import; Stage 3 left it as
  * an opaque injected dependency, explicitly out of that stage's own scope -- writing it here, for
- * F6's own reload probe, is this stage's own explicit brief). On the FIRST `MODEL_ADDED_EVENT`
- * after install: snapshot `{isObjectTreeCreated, instanceTreeInData, isLoadDone}`, immediately
- * call `resolveRoots({model}, 'whole', ctx)` against a throwaway binding (`resolveRoots`'s own
- * `requireCall` only requires `binding.model` to be a non-null object,
- * `ViewerElementEnumerator.js:72-79` -- confirmed by direct source read, no `K`/`modelVersion`
- * needed for a throwaway probe binding), and record elapsed time + outcome + the flags again
- * once that settles. Only the FIRST event is acted on (`rp.fired` guard) -- a later, unrelated
- * `MODEL_ADDED_EVENT` must never overwrite this reload's own probe result.
+ * F6's own reload probe, is this stage's own explicit brief).
+ *
+ * Fix round 1 (Stage 7 review, Important finding): plan line 1002 says F6's own `f3RepeatProbe`
+ * field is "per §7.3's fields" -- an explicit instruction to reuse F3's own field shape and
+ * names, not merely its general idea. The timeline this function builds is now BYTE-IDENTICAL in
+ * shape to the `timeline` object `scoreF3Readiness` itself already documents and consumes
+ * (`modelAddedObserved`, `tModelAdded`, `atInvocation`, `resolveRootsOutcome`
+ * `'resolved'|'rejected'|'timed-out'`, `atSettlement`, `elapsedMs`, `rejectionError`) --
+ * including the previously-missing SECOND flag snapshot, `atSettlement`, taken when the
+ * `resolveRoots` promise actually settles (resolve or reject), distinct from the pre-call
+ * `atInvocation` snapshot. This is the exact "recorded flag snapshots... characterize how large
+ * that gap actually was" comparison plan §7.3's own success-criteria text requires, and F6's own
+ * "Repeatability note" text (plan line 929) explicitly says F6's reload repeats this SAME
+ * characterization. `model`/`listener`/`addedEventName` are this function's own bookkeeping,
+ * never part of F3's own field list, kept off the eventually-returned/scored shape (see
+ * `f6FinalizeReloadProbe`). `resolveRootsOutcome` starts `null` and is set to `'resolved'`/
+ * `'rejected'` here when the promise settles, or to `'timed-out'` in `f6FinalizeReloadProbe`
+ * (Node-side bounded-wait timeout, which this in-page function has no way to observe itself).
+ *
+ * Only the FIRST `MODEL_ADDED_EVENT` after install is acted on (`rp.modelAddedObserved` guard)
+ * -- a later, unrelated event must never overwrite this reload's own probe result.
  */
 function f6InstallReloadProbe({ sessionId, addedEventName }) {
   const g = window.__g1;
@@ -4661,26 +4679,35 @@ function f6InstallReloadProbe({ sessionId, addedEventName }) {
   const errOf = (e) => (e !== null && typeof e === 'object'
     ? { name: e.name, message: String(e.message ?? '') }
     : { primitive: typeof e, value: String(e) });
+  const readFlags = (model) => ({
+    isObjectTreeCreated: (() => { try { return model && typeof model.isObjectTreeCreated === 'function' ? model.isObjectTreeCreated() : null; } catch { return null; } })(),
+    instanceTreeInData: (() => { try { return model && typeof model.getData === 'function' ? Boolean(model.getData() && model.getData().instanceTree) : null; } catch { return null; } })(),
+    isLoadDone: (() => { try { return model && typeof model.isLoadDone === 'function' ? model.isLoadDone() : null; } catch { return null; } })(),
+  });
 
-  const rp = { fired: false, settled: false, entry: null, listener: null, addedEventName };
+  const rp = {
+    modelAddedObserved: false, tModelAdded: null, atInvocation: null,
+    resolveRootsOutcome: null, atSettlement: null, elapsedMs: null, rejectionError: null,
+    model: null, listener: null, addedEventName,
+  };
   const listener = (event) => {
-    if (rp.fired) return;
-    rp.fired = true;
+    if (rp.modelAddedObserved) return;
+    rp.modelAddedObserved = true;
     const model = event && event.model !== undefined ? event.model : null;
-    const snapshotBefore = {
-      isObjectTreeCreated: (() => { try { return model && typeof model.isObjectTreeCreated === 'function' ? model.isObjectTreeCreated() : null; } catch { return null; } })(),
-      instanceTreeInData: (() => { try { return model && typeof model.getData === 'function' ? Boolean(model.getData() && model.getData().instanceTree) : null; } catch { return null; } })(),
-      isLoadDone: (() => { try { return model && typeof model.isLoadDone === 'function' ? model.isLoadDone() : null; } catch { return null; } })(),
-    };
-    const startedAt = performance.now();
+    rp.model = model;
+    rp.tModelAdded = performance.now();
+    rp.atInvocation = readFlags(model);
     session.enumerator.resolveRoots({ model }, 'whole', ctx).then(
-      (result) => {
-        rp.entry = { model, snapshotBefore, elapsedMs: performance.now() - startedAt, outcome: 'resolved', rootsLength: result ? result.roots.length : null, error: null };
-        rp.settled = true;
+      () => {
+        rp.resolveRootsOutcome = 'resolved';
+        rp.atSettlement = readFlags(model);
+        rp.elapsedMs = performance.now() - rp.tModelAdded;
       },
       (err) => {
-        rp.entry = { model, snapshotBefore, elapsedMs: performance.now() - startedAt, outcome: 'rejected', rootsLength: null, error: errOf(err) };
-        rp.settled = true;
+        rp.resolveRootsOutcome = 'rejected';
+        rp.atSettlement = readFlags(model);
+        rp.elapsedMs = performance.now() - rp.tModelAdded;
+        rp.rejectionError = errOf(err);
       },
     );
   };
@@ -4691,37 +4718,60 @@ function f6InstallReloadProbe({ sessionId, addedEventName }) {
 }
 
 /** In-page predicate (Stage 2's `pageWaitForFunction` shape). True once the reload probe's own
- * `resolveRoots` call has settled (resolved or rejected). */
+ * `resolveRoots` call has settled (`resolveRootsOutcome` is no longer `null` -- `'resolved'` or
+ * `'rejected'`; `'timed-out'` is assigned separately, by `f6FinalizeReloadProbe`, once THIS
+ * predicate's own bounded wait gives up). */
 function f6ReloadProbeSettledPredicate({ sessionId }) {
   const g = window.__g1;
   const session = g && g.sessions && g.sessions[sessionId];
-  return Boolean(session && session.f6 && session.f6.reloadProbe && session.f6.reloadProbe.settled);
+  return Boolean(session && session.f6 && session.f6.reloadProbe && session.f6.reloadProbe.resolveRootsOutcome !== null);
 }
 
 /**
  * In-page. Plan §7.6 step 7: read out the timeline, remove the listener immediately (mirrors
- * F3's own "finalize immediately, don't wait for Phase 11" discipline).
+ * F3's own "finalize immediately, don't wait for Phase 11" discipline). Returns F3's own field
+ * shape verbatim (plan line 1002/929 -- fix round 1, Stage 7 review) plus this function's own
+ * necessary addition, `modelMatchesReloadToken`.
+ *
+ * `timedOut` (from the Node-side orchestrator's own bounded-wait outcome, since this in-page
+ * function has no visibility into that wait itself): if the probe never settled on its own
+ * (`resolveRootsOutcome` still `null`) and the bounded wait gave up, this assigns
+ * `resolveRootsOutcome = 'timed-out'` -- F3's own third named outcome state (plan line 929),
+ * never left as a bare `null`/an undocumented separate boolean.
  *
  * codex-advisor consult (Stage 7): a fresh listener can observe an UNRELATED `MODEL_ADDED_EVENT`
  * (e.g. a stray/duplicate load elsewhere) -- URN matching alone is insufficient. `tokenId` (the
  * reload's own `loadDocumentNode` token, once known) lets this correlate the probe's own
- * recorded `event.model` against the AUTHORITATIVE model for that exact reload
+ * recorded `model` against the AUTHORITATIVE model for that exact reload
  * (`window.__g1.models[tokenId]`, the same record Stage 2's own load machinery already
  * populates) -- `modelMatchesReloadToken` is `null` only when `tokenId` was never supplied
  * (the reload itself never reached a completed token), never silently assumed true.
  */
-function f6FinalizeReloadProbe({ sessionId, tokenId } = {}) {
+function f6FinalizeReloadProbe({ sessionId, tokenId, timedOut = false } = {}) {
   const g = window.__g1;
   const session = g && g.sessions && g.sessions[sessionId];
   if (!session || !session.f6 || !session.f6.reloadProbe) return { ok: false, reason: 'reload-probe-not-installed' };
   const rp = session.f6.reloadProbe;
   window.__viewer.removeEventListener(rp.addedEventName, rp.listener);
-  let modelMatchesReloadToken = null;
-  if (tokenId !== undefined && rp.entry) {
-    const expectedModel = g.models ? g.models[tokenId] : undefined;
-    modelMatchesReloadToken = expectedModel !== undefined && rp.entry.model === expectedModel;
+  if (rp.resolveRootsOutcome === null && timedOut === true) {
+    rp.resolveRootsOutcome = 'timed-out';
   }
-  return { ok: true, fired: rp.fired, settled: rp.settled, entry: rp.entry, modelMatchesReloadToken };
+  let modelMatchesReloadToken = null;
+  if (tokenId !== undefined && rp.modelAddedObserved) {
+    const expectedModel = g.models ? g.models[tokenId] : undefined;
+    modelMatchesReloadToken = expectedModel !== undefined && rp.model === expectedModel;
+  }
+  return {
+    ok: true,
+    modelAddedObserved: rp.modelAddedObserved,
+    tModelAdded: rp.tModelAdded,
+    atInvocation: rp.atInvocation,
+    resolveRootsOutcome: rp.resolveRootsOutcome,
+    atSettlement: rp.atSettlement,
+    elapsedMs: rp.elapsedMs,
+    rejectionError: rp.rejectionError,
+    modelMatchesReloadToken,
+  };
 }
 
 /**
@@ -4896,14 +4946,30 @@ async function runF6UnloadReload(deps) {
   }
   const probeFinal = await pageEvaluate(f6FinalizeReloadProbe, {
     sessionId, tokenId: loadDocumentNodeResult ? loadDocumentNodeResult.token.id : undefined,
-  });
-  const f3RepeatProbe = {
-    fired: Boolean(probeFinal && probeFinal.fired),
-    settled: Boolean(probeFinal && probeFinal.settled) && reloadProbeSettled,
-    entry: probeFinal ? probeFinal.entry : null,
-    modelMatchesReloadToken: probeFinal ? probeFinal.modelMatchesReloadToken : null,
     timedOut: !reloadProbeSettled,
-  };
+  });
+  // Fix round 1 (Stage 7 review): F3's own exact field shape (plan line 1002/929), never a
+  // separate ad hoc wrapper -- see f6InstallReloadProbe/f6FinalizeReloadProbe's own doc
+  // comments. `readinessGateSufficient` mirrors scoreF3Readiness's own derivation (`resolved`
+  // is the only sufficient outcome) rather than duplicating its reason/error-formatting logic,
+  // which is specific to F3's own top-level check, not a nested field within F6.
+  const f3RepeatProbe = probeFinal && probeFinal.ok === true
+    ? {
+      modelAddedObserved: probeFinal.modelAddedObserved,
+      tModelAdded: probeFinal.tModelAdded,
+      atInvocation: probeFinal.atInvocation,
+      resolveRootsOutcome: probeFinal.resolveRootsOutcome,
+      atSettlement: probeFinal.atSettlement,
+      elapsedMs: probeFinal.elapsedMs,
+      rejectionError: probeFinal.rejectionError,
+      readinessGateSufficient: probeFinal.resolveRootsOutcome === 'resolved',
+      modelMatchesReloadToken: probeFinal.modelMatchesReloadToken,
+    }
+    : {
+      modelAddedObserved: false, tModelAdded: null, atInvocation: null,
+      resolveRootsOutcome: null, atSettlement: null, elapsedMs: null, rejectionError: null,
+      readinessGateSufficient: false, modelMatchesReloadToken: null,
+    };
 
   await pageEvaluate(f6Cleanup, { sessionId });
 
@@ -4944,10 +5010,12 @@ async function runF6UnloadReload(deps) {
  */
 function scoreF6(fields) {
   const f = fields || {};
-  const probeOutcomeOk = Boolean(f.f3RepeatProbe) && f.f3RepeatProbe.fired === true
-    && f.f3RepeatProbe.settled === true && f.f3RepeatProbe.timedOut !== true
-    && f.f3RepeatProbe.modelMatchesReloadToken === true
-    && Boolean(f.f3RepeatProbe.entry) && f.f3RepeatProbe.entry.outcome === 'resolved';
+  // Fix round 1 (Stage 7 review): reads F3's own field shape (modelAddedObserved/
+  // resolveRootsOutcome), matching plan line 1002's "per §7.3's fields" instruction -- never
+  // the prior ad hoc fired/settled/timedOut/entry.outcome wrapper.
+  const probeOutcomeOk = Boolean(f.f3RepeatProbe) && f.f3RepeatProbe.modelAddedObserved === true
+    && f.f3RepeatProbe.resolveRootsOutcome === 'resolved'
+    && f.f3RepeatProbe.modelMatchesReloadToken === true;
   const reloadOk = Boolean(f.reloadClassifier) && f.reloadClassifier.classifier === CLASSIFIER.CONFIRMED_SVF2;
   const lateUnloadOk = f.lateUnloadHandlerThrew === false && f.bindingSurvivesLateUnload === true
     && f.modelAfterStillLive === true && f.resolveRootsOk === true;
