@@ -609,6 +609,40 @@ test('runSetupThroughClassification: a load timeout stops at "load", classifier 
   assert.equal(result.loadDocumentNode, null, 'loadDocumentNode must never be minted when Document.load itself timed out');
 });
 
+test('runSetupThroughClassification: a capture failure (isOTG()/isSVF2() threw in-page) sets fatalErrorObserved -- fix round 1 regression', async () => {
+  // Reviewer's exact concern: a thrown isOTG()/isSVF2() (captureFailure: true) is a genuinely
+  // broken/throwing runtime, not a benign "never confirmed SVF2" outcome -- it must set
+  // fatalErrorObserved, exactly like the structurally analogous Phase 2.5 postcondition-failure
+  // branch does, so it is never indistinguishable by shape from an ordinary classifier-stop
+  // (CONFIRMED_NON_SVF2/CONTRADICTORY/INDETERMINATE_*). Drives the capture failure end-to-end
+  // through the real orchestration function (not just captureModelFormatSignals in isolation).
+  const captureFn = () => {};
+  captureFn.__kind = 'captureFormatSignals';
+  captureFn.__result = { ok: true, isOTG: null, isSVF2: true, captureErrors: [{ signal: 'isOTG', error: { name: 'Error', message: 'broken' } }] };
+
+  let setupCalled = false;
+  let finalizeCalled = false;
+
+  const result = await runSetupThroughClassification({
+    installF3Probe: async () => {},
+    finalizeF3Probe: async () => { finalizeCalled = true; return {}; },
+    pageEvaluate: fakePageEvaluateFor([{ status: 'completed' }, { status: 'completed' }]),
+    pageWaitForFunction: async () => true,
+    loadStarter: { documentLoad: fakeStarter('doc'), loadDocumentNode: fakeStarter('ldn') },
+    captureFormatSignalsFn: captureFn,
+    loadTimeoutMs: 30_000,
+    urn: 'urn:fake',
+    setupSharedSessionResources: async () => { setupCalled = true; return { ok: true }; },
+  });
+
+  assert.equal(result.phaseReached, 'classifier-stop');
+  assert.equal(result.captureFailure, true);
+  assert.equal(result.fatalErrorObserved, true, 'a capture failure must set fatalErrorObserved, never leave it undefined/falsy');
+  assert.equal(result.classifier, null);
+  assert.equal(setupCalled, false, 'Phase 2.5 must never run after a capture failure');
+  assert.equal(finalizeCalled, false, 'Phase 3 F3-finalize must never run after a capture failure');
+});
+
 test('runSetupThroughClassification: a Phase 2.5 setup-postcondition failure is fatal, F3 never runs', async () => {
   const captureFn = () => {};
   captureFn.__kind = 'captureFormatSignals';

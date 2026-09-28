@@ -1588,9 +1588,10 @@ function tokenEscalatesToUnresolvedOwnership({ tokenState, ownsF6MutableResource
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLASHTEST_DIR = path.join(REPO_ROOT, 'clashtest');
 
-// The plan's own §6.5 fixed default (this module has not previously named a value for it; picked
-// and documented here, per this stage's own design latitude, since the sections this stage reads
-// do not give CHECK_TIMEOUT_MS an exact number). Overridable per call.
+// The plan's own named value, plan §6.4 line 508's timeout table ("Each single-shot read-only
+// Fi (F1/F2/F5) | CHECK_TIMEOUT_MS = 30_000 per check") -- corrected citation (fix round 1,
+// Stage 3 review: this comment previously implied no plan section specifies it; §6.4 does).
+// Overridable per call.
 const CHECK_TIMEOUT_MS = 30_000;
 
 // ------------------------------------------------------------------------------------------
@@ -1627,6 +1628,14 @@ function resolveClashtestModulePath(requestPath, clashtestDir = CLASHTEST_DIR) {
  * `page.route('**\/clashtest/**', handleClashtestRoute)` call needs no changes here.
  * `statFn` mirrors T3's own existence check (`fs.promises.stat`), injectable for the same
  * reason as `readFileFn` elsewhere in this file.
+ *
+ * NOTE for whoever wires the real `page.route` call in a later stage (deferred, Stage 3
+ * review): T3's own handler additionally checks the request's origin against the harness's own
+ * `BASE_URL` before resolving the path (`clashtest-viewer-adapter.acceptance.mjs:933`,
+ * `if (url.origin !== new URL(BASE_URL).origin) return route.continue();`), so a cross-origin
+ * request matching the `**\/clashtest/**` glob is passed through rather than served by this
+ * handler. This function does not yet take a `baseUrl`/origin parameter to reproduce that
+ * check -- add one when wiring the real route registration, matching T3's own guard exactly.
  */
 async function handleClashtestRoute(route, { clashtestDir = CLASHTEST_DIR, statFn } = {}) {
   const url = new URL(route.request().url());
@@ -2170,13 +2179,21 @@ async function runSetupThroughClassification(deps) {
   const signalSnapshot = await pageEvaluate(captureFormatSignalsFn, { tokenId: loadDocumentNodeResult.token.id, gen: loadDocumentNodeResult.gen });
   let classifierResult;
   if (!signalSnapshot || signalSnapshot.ok !== true || signalSnapshot.isOTG === null || signalSnapshot.isSVF2 === null) {
-    // A capture failure (never silently treated as UNAVAILABLE, per buildFormatSignalShim's
-    // own contract) stops the sequence exactly like a classifier stop -- there is no
-    // trustworthy classifier decision to proceed past.
+    // A capture failure (never silently treated as UNAVAILABLE, per buildFormatSignalShim's/
+    // captureModelFormatSignals' own documented contract) is a genuinely broken/throwing
+    // isOTG()/isSVF2() -- a harness/runtime malfunction, not a benign "never confirmed SVF2"
+    // outcome. Fixed round-1 correction (Stage 3 review): this must set fatalErrorObserved,
+    // exactly like the structurally analogous Phase 2.5 postcondition-failure branch below --
+    // without it, a thrown isOTG()/isSVF2() was indistinguishable by shape from an ordinary,
+    // benign classifier-stop (CONFIRMED_NON_SVF2/CONTRADICTORY/INDETERMINATE_*), aside from the
+    // undocumented `captureFailure: true` marker, contradicting captureModelFormatSignals' own
+    // doc-comment: "A caller must route a capture error ... through its own fatal-error
+    // handling, never through the classifier."
     return {
       phaseReached: 'classifier-stop', docLoad, loadDocumentNode: loadDocumentNodeResult,
       classifier: null, formatSignals: signalSnapshot, phase25: null, checks: {},
       captureFailure: true,
+      fatalErrorObserved: true,
     };
   }
   classifierResult = readFormat(buildFormatSignalShim(signalSnapshot));
