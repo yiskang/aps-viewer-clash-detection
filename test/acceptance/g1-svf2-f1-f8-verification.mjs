@@ -5509,17 +5509,36 @@ function runInPageResourceCleanup({ sessionId }) {
     () => Boolean(world),
     () => world.dispose());
 
+  // Fix round 1 (Stage 8 review, CRITICAL): `checkOwnership: () => true` was ported unchanged
+  // from Stage 2's own runCleanup, where it was safe ONLY because THAT file's own step() helper
+  // calls checkOwnership exclusively on a throw path. THIS function's own step() helper (above)
+  // deliberately calls checkOwnership UNCONDITIONALLY, on both 'ran' and 'threw' outcomes --
+  // per this very stage's own codex-advisor consult finding #3 ("action reported success but
+  // the postcondition still fails" must ALSO be caught, never only "the action threw"). Under
+  // that unconditional semantics, a bare `() => true` fires on every SUCCESSFUL run too,
+  // unconditionally forcing cleanupUnresolvedOwnership = true -- making computeOverall's branch
+  // 1 fire on every run that reaches Phase 2.5 regardless of how clean the fixture actually is,
+  // making PASS structurally unreachable. Fixed: checkOwnership now genuinely RE-CHECKS the
+  // same postcondition the step's own action already checks (models still contains
+  // modelBefore/modelAfter), mirroring every other step's own checkOwnership pattern in this
+  // function -- true only when the postcondition ACTUALLY still fails, never unconditionally.
+  const modelSetStillNotEmpty = () => {
+    const models = viewer ? viewer.getAllModels() : [];
+    const stillHasBefore = modelBefore != null && models.includes(modelBefore);
+    const stillHasAfter = f6Ran && modelAfter != null && models.includes(modelAfter);
+    return stillHasBefore || stillHasAfter;
+  };
   step('verifyViewerModelSetEmpty',
     () => true,
     () => {
-      const models = viewer ? viewer.getAllModels() : [];
-      const stillHasBefore = modelBefore != null && models.includes(modelBefore);
-      const stillHasAfter = f6Ran && modelAfter != null && models.includes(modelAfter);
-      if (stillHasBefore || stillHasAfter) {
+      if (modelSetStillNotEmpty()) {
+        const models = viewer ? viewer.getAllModels() : [];
+        const stillHasBefore = modelBefore != null && models.includes(modelBefore);
+        const stillHasAfter = f6Ran && modelAfter != null && models.includes(modelAfter);
         throw new Error(`verifyViewerModelSetEmpty: viewer.getAllModels() still contains ${[stillHasBefore && 'modelBefore', stillHasAfter && 'modelAfter'].filter(Boolean).join(' and ')}`);
       }
     },
-    { checkOwnership: () => true });
+    { checkOwnership: modelSetStillNotEmpty });
 
   stepStatus.restoreAllControlPatches = 'not-applicable-this-stage';
 
@@ -5787,7 +5806,11 @@ async function runHarness(deps, config) {
   const nodeOnlyResources = { ...nodeCleanupResources, tokens };
   const nodeCleanup = await runCleanup(nodeOnlyResources, {});
 
-  const mergedStepStatus = { ...pageCleanup.stepStatus, ...nodeCleanup.stepStatus };
+  // Fix round 1 (Stage 8 review, Important): page-cleanup's own results for its 12 owned step
+  // names must be AUTHORITATIVE -- spread Node's own (vacuous/'skipped' for those same 12 names,
+  // since nodeOnlyResources never includes world/registry/viewer/modelBefore/modelAfter) FIRST,
+  // so pageCleanup's real per-step results win the merge, never silently overwritten.
+  const mergedStepStatus = { ...nodeCleanup.stepStatus, ...pageCleanup.stepStatus };
   cleanupFailures.push(...(pageCleanup.cleanupFailures || []), ...nodeCleanup.cleanupFailures);
   cleanupUnresolvedOwnership = cleanupUnresolvedOwnership || Boolean(pageCleanup.cleanupUnresolvedOwnership) || Boolean(nodeCleanup.cleanupUnresolvedOwnership);
 

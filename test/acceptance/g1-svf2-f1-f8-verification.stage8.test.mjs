@@ -16,6 +16,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +25,7 @@ import {
   createControlResult, TOKEN_STATE, LOAD_API,
   observeF1, scoreF1, observeF2, scoreF2, observeF4, scoreF4, scoreF5, observeF7, scoreF7,
   observeF8, scoreF8, scoreF6, buildStaleOldModelEventControlResult,
-  runHarness, validateResultSchema, main,
+  runHarness, validateResultSchema, main, runInPageResourceCleanup,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 const HARNESS_PATH = fileURLToPath(new URL('./g1-svf2-f1-f8-verification.mjs', import.meta.url));
@@ -499,4 +500,247 @@ test('validateResultSchema: rejects malformed errorLedger/cleanupFailures/overal
 test('validateResultSchema: rejects missing startedAt/finishedAt', () => {
   const r = fabricateValidResult(); delete r.startedAt;
   assert.equal(validateResultSchema(r).valid, false);
+});
+
+// ============================================================================================
+// Fix round 1 (Stage 8 review): direct node:vm-reconstructed tests of `runInPageResourceCleanup`
+// itself -- CRITICAL finding: every `runHarness`-level test above fakes this whole dependency
+// out (a canned stand-in, never the real function), which is exactly why the Critical bug
+// (`verifyViewerModelSetEmpty`'s `checkOwnership: () => true` unconditionally forcing
+// `cleanupUnresolvedOwnership = true` on every run, making PASS structurally unreachable) went
+// uncaught. These tests exercise the REAL, production `runInPageResourceCleanup` reconstructed
+// from its own source text via `node:vm` -- the same rigor every other in-page function in this
+// file already has (observeF1/observeF4/f6InstallUnloadWiring/etc.'s own test files), which this
+// one specifically lacked until now.
+// ============================================================================================
+
+const CLEANUP_IN_PAGE_FUNCTIONS = { runInPageResourceCleanup };
+
+function createCleanupPageRealm(initialWindow = {}) {
+  const context = vm.createContext({ window: initialWindow, performance, setTimeout, clearTimeout, console });
+  for (const [name, fn] of Object.entries(CLEANUP_IN_PAGE_FUNCTIONS)) {
+    vm.runInContext(`globalThis.${name} = (${fn.toString()})`, context);
+  }
+  return {
+    window: initialWindow,
+    call(fn, ...args) { return vm.runInContext(fn.name, context)(...args); },
+  };
+}
+
+function fakeCleanupWorld(overrides = {}) {
+  return { isModelLive: () => false, evictModel: () => {}, dispose: () => {}, ...overrides };
+}
+
+function fakeCleanupRegistry(overrides = {}) {
+  return { bindingFor: () => null, unregister: () => {}, ...overrides };
+}
+
+test('runInPageResourceCleanup: session-not-found -- every step skipped/not-applicable, no throw, cleanupUnresolvedOwnership false', async () => {
+  const realm = createCleanupPageRealm({ __g1: { sessions: {} }, __viewer: { getAllModels: () => [] } });
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 'missing' });
+  assert.equal(result.ok, true);
+  assert.equal(result.cleanupUnresolvedOwnership, false);
+  assert.equal(result.cleanupFailures.length, 0); // cross-realm array -- length check, not deepEqual (this file's own documented gotcha)
+  assert.equal(result.stepStatus.verifyViewerModelSetEmpty, 'skipped');
+  assert.equal(result.stepStatus.restoreAllControlPatches, 'not-applicable-this-stage');
+});
+
+test('runInPageResourceCleanup: THE CRITICAL REGRESSION -- healthy teardown (empty model set, no live model, null binding) -> cleanupUnresolvedOwnership MUST be false, not unconditionally true', async () => {
+  const modelBefore = { name: 'before' };
+  const viewer = { getAllModels: () => [], unloadModel: () => {}, addEventListener() {}, removeEventListener() {} };
+  const world = fakeCleanupWorld({ isModelLive: () => false });
+  const registry = fakeCleanupRegistry({ bindingFor: () => null });
+  const session = { world, registry, model: modelBefore, K: 'K1', f6: null };
+  const realm = createCleanupPageRealm({ __g1: { sessions: { s1: session } }, __viewer: viewer });
+
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 's1' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.cleanupFailures.length, 0); // cross-realm array -- length check, not deepEqual (this file's own documented gotcha)
+  assert.equal(result.stepStatus.verifyViewerModelSetEmpty, 'ran', 'the postcondition check itself succeeds (no throw)');
+  // This is the exact assertion that would have FAILED before the fix round: the old
+  // `checkOwnership: () => true` fired unconditionally on this SUCCESSFUL 'ran' outcome too
+  // (this function's own step() helper calls checkOwnership on both 'ran' and 'threw'), forcing
+  // cleanupUnresolvedOwnership = true even for a fully healthy teardown.
+  assert.equal(result.cleanupUnresolvedOwnership, false, 'a healthy teardown must never force cleanupUnresolvedOwnership -- this is THE Critical fix-round regression test');
+});
+
+test('runInPageResourceCleanup: a genuinely still-live model (viewer.getAllModels() still contains modelBefore after the unload attempt) -> verifyViewerModelSetEmpty threw AND cleanupUnresolvedOwnership true', async () => {
+  const modelBefore = { name: 'before' };
+  // unloadModel() is a deliberate no-op -- simulates a real-world failure where the Viewer's own
+  // unload call did not actually remove the model from getAllModels().
+  const viewer = { getAllModels: () => [modelBefore], unloadModel: () => {}, addEventListener() {}, removeEventListener() {} };
+  const world = fakeCleanupWorld({ isModelLive: () => true });
+  const registry = fakeCleanupRegistry({ bindingFor: () => ({ model: modelBefore }) });
+  const session = { world, registry, model: modelBefore, K: 'K1', f6: null };
+  const realm = createCleanupPageRealm({ __g1: { sessions: { s1: session } }, __viewer: viewer });
+
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 's1' });
+
+  assert.equal(result.stepStatus.verifyViewerModelSetEmpty, 'threw');
+  assert.ok(result.cleanupFailures.some((f) => f.step === 'verifyViewerModelSetEmpty'));
+  assert.equal(result.cleanupUnresolvedOwnership, true, 'a genuinely still-live model must set cleanupUnresolvedOwnership true');
+});
+
+test('runInPageResourceCleanup: unregisterModelBefore/evictModelBefore run when resources are present, and their own checkOwnership correctly reflects a genuinely-still-bound/still-live postcondition', async () => {
+  const modelBefore = { name: 'before' };
+  const viewer = { getAllModels: () => [], unloadModel: () => {}, addEventListener() {}, removeEventListener() {} };
+  // unregister()/evictModel() are deliberate no-ops -- the binding/liveness postcondition stays
+  // unresolved after the action "ran", proving checkOwnership genuinely RE-READS live state
+  // rather than trusting the action's own reported completion.
+  const world = fakeCleanupWorld({ isModelLive: () => true, evictModel: () => {} });
+  const registry = fakeCleanupRegistry({ bindingFor: () => ({ model: modelBefore }), unregister: () => {} });
+  const session = { world, registry, model: modelBefore, K: 'K1', f6: null };
+  const realm = createCleanupPageRealm({ __g1: { sessions: { s1: session } }, __viewer: viewer });
+
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 's1' });
+
+  assert.equal(result.stepStatus.unregisterModelBefore, 'ran');
+  assert.equal(result.stepStatus.evictModelBefore, 'ran');
+  assert.ok(result.cleanupUnresolvedOwnership, 'unregister/evict "ran" but left the binding/liveness postcondition genuinely unresolved');
+});
+
+test('runInPageResourceCleanup: disposeWorld/unloadModelBeforeFromViewer are skipped when their own guard resources are absent (no world, model already gone)', async () => {
+  const viewer = { getAllModels: () => [], unloadModel: () => {}, addEventListener() {}, removeEventListener() {} };
+  const session = { world: null, registry: null, model: null, K: 'K1', f6: null };
+  const realm = createCleanupPageRealm({ __g1: { sessions: { s1: session } }, __viewer: viewer });
+
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 's1' });
+
+  assert.equal(result.stepStatus.disposeWorld, 'skipped');
+  assert.equal(result.stepStatus.unloadModelBeforeFromViewer, 'skipped');
+  assert.equal(result.stepStatus.unregisterModelBefore, 'skipped');
+  assert.equal(result.stepStatus.evictModelBefore, 'skipped');
+  assert.equal(result.cleanupUnresolvedOwnership, false);
+});
+
+test('runInPageResourceCleanup: F6 fallback steps (probe/reload-probe listener removal, wiring disposal) run when never previously removed/disposed, and correctly report their own outcome', async () => {
+  const modelBefore = { name: 'before' };
+  const modelAfter = { name: 'after' };
+  const probeFn = () => {};
+  const reloadFn = () => {};
+  let probeRemoved = false;
+  let reloadRemoved = false;
+  const viewer = {
+    getAllModels: () => [],
+    unloadModel: () => {},
+    addEventListener() {},
+    removeEventListener: (eventName, fn) => {
+      if (fn === probeFn) probeRemoved = true;
+      if (fn === reloadFn) reloadRemoved = true;
+    },
+  };
+  const world = fakeCleanupWorld({ isModelLive: () => false });
+  const registry = fakeCleanupRegistry({ bindingFor: () => null });
+  const f6 = {
+    modelAfter,
+    probeListener: { eventName: 'beforeModelUnload', fn: probeFn, removed: false },
+    reloadProbe: { addedEventName: 'modelAdded', listener: reloadFn, removed: false },
+    wiringRef: { disposed: false },
+  };
+  f6.dispose = () => { f6.wiringRef.disposed = true; };
+  const session = { world, registry, model: modelBefore, K: 'K1', f6 };
+  const realm = createCleanupPageRealm({ __g1: { sessions: { s1: session } }, __viewer: viewer });
+
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 's1' });
+
+  assert.equal(result.stepStatus.removeF6ProbeListener, 'ran');
+  assert.equal(result.stepStatus.removeF6ReloadProbeListener, 'ran');
+  assert.equal(result.stepStatus.disposeF6Wiring, 'ran');
+  assert.equal(probeRemoved, true);
+  assert.equal(reloadRemoved, true);
+  assert.equal(f6.wiringRef.disposed, true);
+  assert.equal(result.cleanupUnresolvedOwnership, false, 'F6 fallback steps that genuinely succeeded must not force unresolved ownership');
+});
+
+test('runInPageResourceCleanup: F6 fallback steps are skipped when already removed/disposed (F6\'s own step 9 already ran normally)', async () => {
+  const modelBefore = { name: 'before' };
+  const modelAfter = { name: 'after' };
+  const viewer = { getAllModels: () => [], unloadModel: () => {}, addEventListener() {}, removeEventListener() {} };
+  const world = fakeCleanupWorld({ isModelLive: () => false });
+  const registry = fakeCleanupRegistry({ bindingFor: () => null });
+  const f6 = {
+    modelAfter,
+    probeListener: { eventName: 'beforeModelUnload', fn: () => {}, removed: true },
+    reloadProbe: { addedEventName: 'modelAdded', listener: () => {}, removed: true },
+    wiringRef: { disposed: true },
+    dispose: () => { throw new Error('should never be called -- already disposed'); },
+  };
+  const session = { world, registry, model: modelBefore, K: 'K1', f6 };
+  const realm = createCleanupPageRealm({ __g1: { sessions: { s1: session } }, __viewer: viewer });
+
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 's1' });
+
+  assert.equal(result.stepStatus.removeF6ProbeListener, 'skipped');
+  assert.equal(result.stepStatus.removeF6ReloadProbeListener, 'skipped');
+  assert.equal(result.stepStatus.disposeF6Wiring, 'skipped');
+  assert.equal(result.cleanupUnresolvedOwnership, false);
+});
+
+test('runInPageResourceCleanup: F3 listener fallback removal (session-independent -- installed before any session exists)', async () => {
+  const listenerFn = () => {};
+  let removed = false;
+  const viewer = {
+    getAllModels: () => [],
+    unloadModel: () => {},
+    addEventListener() {},
+    removeEventListener: (name, fn) => { if (fn === listenerFn) removed = true; },
+  };
+  const g = { f3Probe: { addedEventName: 'modelAdded', listener: listenerFn, removed: false } };
+  const realm = createCleanupPageRealm({ __g1: g, __viewer: viewer });
+
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 'missing' });
+
+  assert.equal(result.stepStatus.removeF3Listeners, 'ran');
+  assert.equal(removed, true);
+  assert.equal(g.f3Probe.removed, true);
+});
+
+test('runInPageResourceCleanup: an unloadModelAfterFromViewer/unregisterModelAfter/evictModelAfter step only runs when F6 actually ran (f6.modelAfter present)', async () => {
+  const modelBefore = { name: 'before' };
+  const viewer = { getAllModels: () => [], unloadModel: () => {}, addEventListener() {}, removeEventListener() {} };
+  const world = fakeCleanupWorld({ isModelLive: () => false });
+  const registry = fakeCleanupRegistry({ bindingFor: () => null });
+  // f6 exists but never reached re-registration (modelAfter still null) -- f6Ran must be false.
+  const session = { world, registry, model: modelBefore, K: 'K1', f6: { modelAfter: null } };
+  const realm = createCleanupPageRealm({ __g1: { sessions: { s1: session } }, __viewer: viewer });
+
+  const result = await realm.call(runInPageResourceCleanup, { sessionId: 's1' });
+
+  assert.equal(result.stepStatus.unloadModelAfterFromViewer, 'skipped');
+  assert.equal(result.stepStatus.unregisterModelAfter, 'skipped');
+  assert.equal(result.stepStatus.evictModelAfter, 'skipped');
+});
+
+// ============================================================================================
+// Fix round 1 (Stage 8 review): mergedStepStatus regression -- Important finding. Page-cleanup's
+// own real per-step results must be authoritative over Node-side runCleanup's own vacuous
+// 'skipped' results for the same 12 step names, never silently overwritten by spread order.
+// ============================================================================================
+
+test('runHarness: mergedStepStatus -- a page-owned step\'s real \'ran\' status survives the merge, never silently overwritten by Node\'s own vacuous \'skipped\'', async () => {
+  const tracker = callOrderTracker();
+  const deps = buildHappyDeps(tracker, {
+    pageEvaluateOverrides: {
+      ...withF6Handlers(),
+      runInPageResourceCleanup: () => ({
+        ok: true,
+        stepStatus: {
+          removeF3Listeners: 'ran', unregisterModelBefore: 'ran', evictModelBefore: 'ran',
+          disposeWorld: 'ran', verifyViewerModelSetEmpty: 'ran',
+        },
+        cleanupFailures: [], cleanupUnresolvedOwnership: false,
+      }),
+    },
+  });
+  const result = await runHarness(deps, HAPPY_CONFIG);
+
+  // Node's own runCleanup call (nodeOnlyResources, no registry/world/viewer/modelBefore) always
+  // reports 'skipped' for these same 12 step names -- before the fix, its spread came SECOND and
+  // silently overwrote the page-cleanup's own real 'ran' results.
+  assert.equal(result.cleanupStepStatus.unregisterModelBefore, 'ran', 'the REAL in-page result must win the merge');
+  assert.equal(result.cleanupStepStatus.evictModelBefore, 'ran');
+  assert.equal(result.cleanupStepStatus.disposeWorld, 'ran');
+  assert.equal(result.cleanupStepStatus.verifyViewerModelSetEmpty, 'ran');
+  assert.equal(result.cleanupStepStatus.removeF3Listeners, 'ran');
 });
