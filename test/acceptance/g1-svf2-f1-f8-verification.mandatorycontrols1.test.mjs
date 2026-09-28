@@ -22,6 +22,7 @@ import {
   IN_PAGE_FUNCTION_REGISTRY,
   acquireControlLease, releaseControlLease, recordControlPatch,
   mapControlAttemptOutcome, runBridgedControl,
+  selectAuthoritativeFragmentTarget, selectHiddenFragmentTarget,
   treeUnavailableControlInPage, wrongOwnerControlInPage, hiddenFragmentControlInPage,
   buildTreeUnavailableControlDep, buildWrongOwnerControlDep, buildHiddenFragmentControlDep,
 } from './g1-svf2-f1-f8-verification.mjs';
@@ -268,6 +269,72 @@ test('treeUnavailableControlInPage: non-interference proof -- session.artifacts 
 });
 
 // ============================================================================================
+// Task 17 (bounded H1-H3 remediation pass, H3): selectAuthoritativeFragmentTarget -- pure,
+// directly Node-testable (touches no `window` state). The shared selection rule both
+// wrongOwnerControlInPage/hiddenFragmentControlInPage now use instead of hard-coding fragId 0/1.
+// ============================================================================================
+
+test('selectAuthoritativeFragmentTarget: selects the numerically smallest fragId key, deterministically, regardless of Map insertion order', () => {
+  const outOfOrder = new Map([
+    [55, { ownerDbId: 900 }],
+    [7, { ownerDbId: 700 }],
+    [12, { ownerDbId: 1200 }],
+  ]);
+  const differentOrder = new Map([
+    [12, { ownerDbId: 1200 }],
+    [55, { ownerDbId: 900 }],
+    [7, { ownerDbId: 700 }],
+  ]);
+  assert.deepEqual(selectAuthoritativeFragmentTarget(outOfOrder), { fragId: 7, ownerDbId: 700 });
+  assert.deepEqual(selectAuthoritativeFragmentTarget(differentOrder), { fragId: 7, ownerDbId: 700 });
+});
+
+test('selectAuthoritativeFragmentTarget: sparse/large fragIds still select the numeric minimum -- correctness is not coincidentally tied to small numbers', () => {
+  const sparse = new Map([
+    [1000000, { ownerDbId: 9 }],
+    [3, { ownerDbId: 8 }],
+    [1000, { ownerDbId: 7 }],
+  ]);
+  assert.deepEqual(selectAuthoritativeFragmentTarget(sparse), { fragId: 3, ownerDbId: 8 });
+});
+
+test('selectAuthoritativeFragmentTarget: null/undefined/non-Map/empty all return null (fail-closed trigger); a record with no numeric ownerDbId yields ownerDbId: null rather than throwing', () => {
+  assert.equal(selectAuthoritativeFragmentTarget(null), null);
+  assert.equal(selectAuthoritativeFragmentTarget(undefined), null);
+  assert.equal(selectAuthoritativeFragmentTarget({}), null);
+  assert.equal(selectAuthoritativeFragmentTarget(new Map()), null);
+  assert.deepEqual(selectAuthoritativeFragmentTarget(new Map([[4, {}]])), { fragId: 4, ownerDbId: null });
+});
+
+// codex-review (code, medium effort, this task's own pre-commit review pass) High finding, fixed:
+// `selectHiddenFragmentTarget` intersects tree-reachability (f2TreeOwnerByFragId) with F1's own
+// class-'L' fragIds (f1PopulationClasses) BEFORE the numeric-minimum pick -- see its own doc
+// comment (main file) for the full reasoning and the review's own concrete repro.
+test('selectHiddenFragmentTarget: intersects tree-reachable fragIds with F1\'s own class-L fragIds -- a smaller but ineligible (non-L) fragId is skipped in favor of a larger eligible (L) one', () => {
+  const f2 = new Map([[5, { ownerDbId: 0, conflictingOwnerDbId: null }], [7, { ownerDbId: 0, conflictingOwnerDbId: null }]]);
+  const f1Classes = [{ fragId: 5, cls: 'N' }, { fragId: 7, cls: 'L' }];
+  assert.deepEqual(selectHiddenFragmentTarget(f2, f1Classes), { fragId: 7, ownerDbId: 0 });
+});
+
+test('selectHiddenFragmentTarget: returns null when the intersection is empty, even though EITHER input alone is non-empty', () => {
+  // f2 has fragId 5 (tree-reachable); f1Classes says fragId 5 is class N, never L -- no overlap.
+  assert.equal(selectHiddenFragmentTarget(new Map([[5, { ownerDbId: 0 }]]), [{ fragId: 5, cls: 'N' }]), null);
+  // f1Classes has a class-L fragId (9), but it is not present in f2 at all (never tree-reachable).
+  assert.equal(selectHiddenFragmentTarget(new Map([[5, { ownerDbId: 0 }]]), [{ fragId: 9, cls: 'L' }]), null);
+  // Neither input has any data at all.
+  assert.equal(selectHiddenFragmentTarget(new Map(), []), null);
+  assert.equal(selectHiddenFragmentTarget(null, null), null);
+  assert.equal(selectHiddenFragmentTarget(new Map([[5, { ownerDbId: 0 }]]), undefined), null);
+});
+
+test('selectHiddenFragmentTarget: deterministic minimum WITHIN the eligible intersection, regardless of input order', () => {
+  const f2 = new Map([[55, { ownerDbId: 1 }], [7, { ownerDbId: 2 }], [12, { ownerDbId: 3 }], [3, { ownerDbId: 4 }]]);
+  const f1Classes = [{ fragId: 55, cls: 'L' }, { fragId: 7, cls: 'N' }, { fragId: 12, cls: 'L' }, { fragId: 3, cls: 'U' }];
+  // Eligible intersection is {55, 12} (7 is class N, 3 is class U) -- the smaller of the two, 12.
+  assert.deepEqual(selectHiddenFragmentTarget(f2, f1Classes), { fragId: 12, ownerDbId: 3 });
+});
+
+// ============================================================================================
 // wrong-owner (Phase 4c) -- scratch session, no copyArtifactKeys
 // ============================================================================================
 
@@ -284,7 +351,18 @@ test('treeUnavailableControlInPage: non-interference proof -- session.artifacts 
 // `getFragmentList()`, a real accessor that returns the SAME stored object every call. This
 // fixture's own `fragmentList` is exactly that: one stable object, returned by `getFragmentList()`
 // every time, never a bare `model.fragList` property.
-function buildWrongOwnerRealm({ ownerMismatchCount = 0, roots = [{ dbId: 10, fragmentCount: 1, ownerDbIds: [10], subtreeDigest: 'd' }] } = {}) {
+// Task 17 (H3 fix) disposition note: `f1PopulationRecords` is now a REQUIRED precondition this
+// control's own new eligibility check reads BEFORE ever acquiring the lease (see
+// wrongOwnerControlInPage's own doc comment, main file) -- defaults to a Map containing exactly
+// fragId 0 -> ownerDbId 10 (matching this fixture's own pre-existing `roots`/`extractFragments`
+// convention, fragId 0/ownerDbId 10) so every EXISTING test using this builder's own default
+// keeps exercising fragId 0 as its selected target, unchanged in spirit, without needing its own
+// per-test edit -- adapted, not replaced.
+function buildWrongOwnerRealm({
+  ownerMismatchCount = 0,
+  roots = [{ dbId: 10, fragmentCount: 1, ownerDbIds: [10], subtreeDigest: 'd' }],
+  f1PopulationRecords = new Map([[0, { fragmentId: 0, ownerDbId: 10 }]]),
+} = {}) {
   const fragmentList = { getDbIds: (id) => 42, getCount: () => 0 };
   const model = {
     getFragmentList: () => fragmentList,
@@ -310,7 +388,7 @@ function buildWrongOwnerRealm({ ownerMismatchCount = 0, roots = [{ dbId: 10, fra
   const world = fakeWorld();
   const registry = fakeRegistry(model);
   const g = { __viewer: {} };
-  publishSession(g, { model, world, registry, artifacts: {}, mod });
+  publishSession(g, { model, world, registry, artifacts: { f1PopulationRecords }, mod });
   g.__g1.sessions.s1.binding = { model };
   g.__g1.sessions.s1.enumerator = enumerator;
   const realm = createPageRealm(g);
@@ -369,7 +447,10 @@ test('wrongOwnerControlInPage: TIMED_OUT -- observeF1 never resolves within inne
   const world = fakeWorld();
   const registry = fakeRegistry(model);
   const g = { __viewer: {} };
-  publishSession(g, { model, world, registry, artifacts: {}, mod });
+  // Task 17 (H3 fix) disposition: adapted -- f1PopulationRecords must be present so this test's
+  // own OUTER precondition (a genuinely hanging resolveRoots) is what's actually exercised, not
+  // the new eligibility check (which would otherwise short-circuit before the lease is ever taken).
+  publishSession(g, { model, world, registry, artifacts: { f1PopulationRecords: new Map([[0, { fragmentId: 0, ownerDbId: 10 }]]) }, mod });
   g.__g1.sessions.s1.binding = { model };
   g.__g1.sessions.s1.enumerator = enumerator;
   const realm = createPageRealm(g);
@@ -386,13 +467,24 @@ test('wrongOwnerControlInPage: TIMED_OUT -- observeF1 never resolves within inne
 test('wrongOwnerControlInPage: scratch-session isolation -- the REAL session\'s own artifacts.f1FragmentMapsByRoot/f1PopulationClasses/f1RootsLength/f1PopulationRecords are byte-for-byte unchanged after the control runs (observeF1 wrote only into the scratch session)', async () => {
   const { realm } = buildWrongOwnerRealm({ ownerMismatchCount: 1 });
   const session = realm.window.__g1.sessions.s1;
-  session.artifacts = { preexisting: 'untouched-marker' };
+  // Task 17 (H3 fix) disposition: adapted -- session.artifacts must retain f1PopulationRecords
+  // (now a required precondition read BEFORE lease acquisition, see wrongOwnerControlInPage's own
+  // doc comment) instead of being wholesale replaced with an artifacts object that omits it. The
+  // ORIGINAL version of this test replaced session.artifacts entirely with `{preexisting: ...}`,
+  // which under the fix would make the control return NOT_EXECUTABLE{reason:'no-eligible-fragment'}
+  // before ever creating a scratch session -- silently turning this into a vacuous non-interference
+  // proof (nothing runs, so trivially nothing is touched). Also strengthened with a reference-
+  // identity check on the Map itself, since JSON.stringify(session.artifacts) alone cannot detect
+  // a Map whose OWN entries were mutated in place (Map serializes to `{}`).
+  const originalF1PopulationRecords = new Map([[0, { fragmentId: 0, ownerDbId: 10 }]]);
+  session.artifacts = { preexisting: 'untouched-marker', f1PopulationRecords: originalF1PopulationRecords };
   const before = JSON.stringify(session.artifacts);
 
   await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
 
   const after = JSON.stringify(session.artifacts);
   assert.equal(after, before, 'the real session\'s own artifacts must never be touched by observeF1 re-running against the scratch session');
+  assert.equal(session.artifacts.f1PopulationRecords, originalF1PopulationRecords, 'the REAL f1PopulationRecords Map must remain the SAME reference (never reassigned/mutated by the scratch-scoped observeF1 re-run)');
   assert.equal('f1FragmentMapsByRoot' in session.artifacts, false, 'observeF1 (scratch-scoped) must never write into the REAL session\'s artifacts');
 });
 
@@ -402,6 +494,25 @@ test('wrongOwnerControlInPage: NOT_EXECUTABLE via acquireControlLease failure --
   const raw = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
   assert.equal(raw.ok, false);
   assert.equal(raw.reason, 'model-mismatch');
+});
+
+// codex-review (code, medium effort, this task's own pre-commit review pass) Medium finding,
+// fixed: this function's new pre-lease eligibility read used to be `g.sessions[sessionId]`
+// UNGUARDED (`g` itself could be `undefined` if `window.__g1` was never initialized) -- a thrown
+// TypeError instead of the intended structured `no-session` result. Guarded identically to
+// acquireControlLease's own established pattern.
+test('wrongOwnerControlInPage: NOT_EXECUTABLE -- window.__g1 entirely absent, structured no-session result, never a thrown exception (codex-review finding, Medium)', async () => {
+  const realm = createPageRealm({});
+  const raw = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, sessionId: 's1', controlId: 'wrong-owner' });
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-session');
+});
+
+test('wrongOwnerControlInPage: NOT_EXECUTABLE -- unknown sessionId (window.__g1 present but no matching session), structured no-session result, never a thrown exception', async () => {
+  const { realm } = buildWrongOwnerRealm();
+  const raw = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, sessionId: 'does-not-exist', controlId: 'wrong-owner' });
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-session');
 });
 
 // Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: this
@@ -437,7 +548,11 @@ test('wrongOwnerControlInPage: NOT_EXECUTABLE -- model exposes getFragmentList()
   const world = fakeWorld();
   const registry = fakeRegistry(model);
   const g = { __viewer: {} };
-  publishSession(g, { model, world, registry, artifacts: {}, mod });
+  // Task 17 (H3 fix) disposition: adapted -- f1PopulationRecords must be present so this test's
+  // own intended precondition (a genuinely absent getDbIds accessor) is what's actually exercised,
+  // not the new eligibility check (which would otherwise short-circuit first with a DIFFERENT
+  // reason and mask the accessor-unavailable case this test targets).
+  publishSession(g, { model, world, registry, artifacts: { f1PopulationRecords: new Map([[0, { fragmentId: 0, ownerDbId: 10 }]]) }, mod });
   g.__g1.sessions.s1.binding = { model };
   g.__g1.sessions.s1.enumerator = enumerator;
   const realm = createPageRealm(g);
@@ -462,7 +577,9 @@ test('wrongOwnerControlInPage: lease-lost-mid-flight -- abandons cleanly, never 
   const world = fakeWorld();
   const registry = fakeRegistry(model);
   const g = { __viewer: {} };
-  publishSession(g, { model, world, registry, artifacts: {}, mod });
+  // Task 17 (H3 fix) disposition: adapted -- f1PopulationRecords must be present so this test's
+  // own lease-lost-mid-flight race is what's actually exercised, not the new eligibility check.
+  publishSession(g, { model, world, registry, artifacts: { f1PopulationRecords: new Map([[0, { fragmentId: 0, ownerDbId: 10 }]]) }, mod });
   g.__g1.sessions.s1.binding = { model };
   g.__g1.sessions.s1.enumerator = enumerator;
   const realm = createPageRealm(g);
@@ -489,6 +606,70 @@ test('wrongOwnerControlInPage: lease-lost-mid-flight -- abandons cleanly, never 
 });
 
 // ============================================================================================
+// Task 17 (bounded H1-H3 remediation pass, H3): wrong-owner target selection is genuinely
+// population-driven, never a hard-coded fragId 0.
+// ============================================================================================
+
+test('wrongOwnerControlInPage: DETECTED_RESTORED with a population that does NOT include fragId 0 or 1 -- proves selection is genuinely population-driven, not still secretly assuming 0/1 exist', async () => {
+  // Inserted OUT OF NUMERIC ORDER to also prove selection never trusts Map insertion order.
+  const f1PopulationRecords = new Map([
+    [55, { fragmentId: 55, ownerDbId: 900 }],
+    [7, { fragmentId: 7, ownerDbId: 700 }],
+    [12, { fragmentId: 12, ownerDbId: 1200 }],
+  ]);
+  const { realm } = buildWrongOwnerRealm({ ownerMismatchCount: 1, f1PopulationRecords });
+
+  const result = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.detected, true);
+  assert.equal(result.restored, true);
+  assert.equal(result.selectedFragId, 7, 'the numerically smallest fragId -- never 0, which is not even in this population');
+  assert.equal(result.selectedOwnerDbId, 700, 'the real recorded owner for the selected fragId');
+  const mapped = mapControlAttemptOutcome('wrong-owner', result);
+  assert.equal(mapped.state, CONTROL_STATE.DETECTED_RESTORED);
+});
+
+test('wrongOwnerControlInPage: DETECTED_RESTORED with a large/sparse population {3, 1000, 1000000} -- correctness is not coincidentally tied to small numbers', async () => {
+  const f1PopulationRecords = new Map([
+    [1000000, { fragmentId: 1000000, ownerDbId: 55 }],
+    [3, { fragmentId: 3, ownerDbId: 33 }],
+    [1000, { fragmentId: 1000, ownerDbId: 66 }],
+  ]);
+  const { realm } = buildWrongOwnerRealm({ ownerMismatchCount: 1, f1PopulationRecords });
+
+  const result = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
+
+  assert.equal(result.detected, true);
+  assert.equal(result.restored, true);
+  assert.equal(result.selectedFragId, 3);
+  assert.equal(result.selectedOwnerDbId, 33);
+});
+
+test('wrongOwnerControlInPage: NOT_EXECUTABLE -- empty f1PopulationRecords, fail-closed with no-eligible-fragment, before ever acquiring a lease or creating a scratch session', async () => {
+  const { realm } = buildWrongOwnerRealm({ ownerMismatchCount: 1, f1PopulationRecords: new Map() });
+
+  const raw = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
+
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-eligible-fragment');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null, 'no lease was ever acquired');
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::wrong-owner'], undefined, 'no scratch session was ever created');
+});
+
+test('wrongOwnerControlInPage: NOT_EXECUTABLE -- f1PopulationRecords entirely absent from artifacts (F1 never ran for this session), fail-closed with no-eligible-fragment', async () => {
+  const { realm } = buildWrongOwnerRealm({ ownerMismatchCount: 1 });
+  delete realm.window.__g1.sessions.s1.artifacts.f1PopulationRecords;
+
+  const raw = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
+
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-eligible-fragment');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null, 'no lease was ever acquired');
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::wrong-owner'], undefined, 'no scratch session was ever created');
+});
+
+// ============================================================================================
 // hidden-fragment (Phase 5c) -- scratch session WITH copyArtifactKeys
 // ============================================================================================
 
@@ -500,7 +681,23 @@ function fakeTree({ children, fragmentsByNode }) {
   };
 }
 
-function buildHiddenFragmentRealm({ fragmentsByNode, populationClasses, fragListCount }) {
+// Task 17 (H3 fix) disposition note: `f2TreeOwnerByFragId` is now a REQUIRED precondition this
+// control's own new eligibility check reads BEFORE ever acquiring the lease (see
+// hiddenFragmentControlInPage's own doc comment, main file). Auto-derived from `fragmentsByNode`
+// when not explicitly passed (first-node-wins, mirroring observeF2's own real construction) --
+// every EXISTING test using this builder gets a plausible artifact for free, without its own
+// per-test edit -- adapted, not replaced.
+function deriveTreeOwnerByFragId(fragmentsByNode) {
+  const map = new Map();
+  for (const [node, frags] of fragmentsByNode.entries()) {
+    for (const fragId of frags) {
+      if (!map.has(fragId)) map.set(fragId, { ownerDbId: node, conflictingOwnerDbId: null });
+    }
+  }
+  return map;
+}
+
+function buildHiddenFragmentRealm({ fragmentsByNode, populationClasses, fragListCount, f2TreeOwnerByFragId }) {
   const tree = fakeTree({ children: new Map([[0, []]]), fragmentsByNode });
   const model = {
     tree,
@@ -513,15 +710,20 @@ function buildHiddenFragmentRealm({ fragmentsByNode, populationClasses, fragList
   const g = { __viewer: {} };
   publishSession(g, {
     model, world, registry,
-    artifacts: { f1PopulationClasses: populationClasses, f1RootsLength: 1 },
+    artifacts: {
+      f1PopulationClasses: populationClasses,
+      f1RootsLength: 1,
+      f2TreeOwnerByFragId: f2TreeOwnerByFragId || deriveTreeOwnerByFragId(fragmentsByNode),
+    },
   });
   const realm = createPageRealm(g);
   return { realm, model, tree, world, registry };
 }
 
-test('hiddenFragmentControlInPage: DETECTED_RESTORED -- patches tree.enumNodeFragments to drop fragId 1, observeF2 (via scratch session) reports loadedButUnreachableCount > 0, restores, releases lease, disposes scratch session', async () => {
+test('hiddenFragmentControlInPage: DETECTED_RESTORED -- patches tree.enumNodeFragments to drop the SELECTED fragId (Task 17 H3 fix: the numerically smallest fragId in f2TreeOwnerByFragId, fragId 0 for this fixture -- no longer a hard-coded 1), observeF2 (via scratch session) reports loadedButUnreachableCount > 0, restores, releases lease, disposes scratch session', async () => {
   // fragIds 0,1 are both class L and both tree-reachable BEFORE the patch; the patch drops
-  // fragId 1 from whichever node reports it, moving it to loaded-but-unreachable.
+  // whichever fragId selectAuthoritativeFragmentTarget selects (fragId 0, the smallest of {0,1}
+  // in this fixture's own auto-derived f2TreeOwnerByFragId), moving it to loaded-but-unreachable.
   const { realm, model, tree } = buildHiddenFragmentRealm({
     fragmentsByNode: new Map([[0, [0, 1]]]),
     populationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }],
@@ -541,18 +743,69 @@ test('hiddenFragmentControlInPage: DETECTED_RESTORED -- patches tree.enumNodeFra
   assert.equal(mapped.state, CONTROL_STATE.DETECTED_RESTORED);
 });
 
-test('hiddenFragmentControlInPage: NOT_DETECTED -- fragId 1 was never reachable anyway (dropping it changes nothing observable)', async () => {
-  const { realm, model, tree } = buildHiddenFragmentRealm({
-    fragmentsByNode: new Map([[0, [0]]]), // fragId 1 never enumerated by this node regardless
-    populationClasses: [{ fragId: 0, cls: 'L' }],
+// Task 17 (H3 fix) disposition: REPLACED twice over -- first adapted from the original hard-coded-
+// fragId-1 "was never reachable" premise (structurally impossible once selection is drawn from the
+// tree-reachable set), then REPLACED AGAIN after a codex-review pre-commit pass (High finding,
+// this task's own diff) found the first replacement's own fixture (a tree-reachable-but-non-L
+// fragId) is now itself NOT a legitimate NOT_DETECTED case: `selectHiddenFragmentTarget` (above)
+// was fixed to intersect tree-reachability WITH class 'L', so a population with only a non-L
+// tree-reachable fragId now correctly yields NOT_EXECUTABLE (no eligible fragment at all), never a
+// wasted DETECTED-oracle attempt. Genuine NOT_DETECTED is now essentially unreachable through
+// target-eligibility alone (a successfully SELECTED target is, by construction, both tree-reachable
+// and class 'L', which is exactly what `loadedButUnreachableCount` counts) -- NOT_DETECTED for this
+// control is retained only via the RESTORE_FAILED/precondition-style paths below, which do not
+// depend on target eligibility.
+test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- the ONLY tree-reachable fragId is not class L in F1\'s own population (no eligible intersection of tree-reachable AND class-L), fail-closed with no-eligible-fragment (codex-review finding, High)', async () => {
+  const { realm } = buildHiddenFragmentRealm({
+    fragmentsByNode: new Map([[0, [5]]]), // fragId 5 is tree-reachable, but NOT class L below
+    populationClasses: [{ fragId: 5, cls: 'N' }],
     fragListCount: 1,
   });
-  const originalEnumNodeFragments = tree.enumNodeFragments;
+  const raw = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-eligible-fragment');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null, 'no lease was ever acquired');
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::hidden-fragment'], undefined, 'no scratch session was ever created');
+});
+
+// codex-review (code, medium effort, this task's own pre-commit review pass) Testing Gaps,
+// addressed: the exact mixed-population scenario the review itself proposed as a regression proof
+// for the High finding above -- a SMALLER tree-reachable fragId that is NOT eligible (class N) must
+// never be selected merely because it is numerically smaller; a LARGER, genuinely eligible (class L)
+// fragId must be selected and correctly detected instead.
+test('hiddenFragmentControlInPage: DETECTED_RESTORED -- the numerically smallest tree-reachable fragId is class N (ineligible), a LARGER fragId is class L (eligible) -- selection correctly skips the ineligible one (codex-review finding, High)', async () => {
+  const { realm } = buildHiddenFragmentRealm({
+    fragmentsByNode: new Map([[0, [5, 7]]]), // 5 (smaller, class N) and 7 (larger, class L)
+    populationClasses: [{ fragId: 5, cls: 'N' }, { fragId: 7, cls: 'L' }],
+    fragListCount: 2,
+  });
   const result = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
-  assert.equal(result.detected, false);
-  assert.equal(model.tree.enumNodeFragments, originalEnumNodeFragments);
+  assert.equal(result.ok, true);
+  assert.equal(result.selectedFragId, 7, 'must skip fragId 5 (class N, ineligible) and select 7 (class L, eligible)');
+  assert.equal(result.detected, true);
+  assert.equal(result.restored, true);
   const mapped = mapControlAttemptOutcome('hidden-fragment', result);
-  assert.equal(mapped.state, CONTROL_STATE.NOT_DETECTED);
+  assert.equal(mapped.state, CONTROL_STATE.DETECTED_RESTORED);
+});
+
+// codex-review (code, medium effort, this task's own pre-commit review pass) Medium finding,
+// fixed: same class of bug as wrongOwnerControlInPage's own fix -- see that test's own comment.
+test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- window.__g1 entirely absent, structured no-session result, never a thrown exception (codex-review finding, Medium)', async () => {
+  const realm = createPageRealm({});
+  const raw = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, sessionId: 's1', controlId: 'hidden-fragment' });
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-session');
+});
+
+test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- unknown sessionId (window.__g1 present but no matching session), structured no-session result, never a thrown exception', async () => {
+  const { realm } = buildHiddenFragmentRealm({
+    fragmentsByNode: new Map([[0, [0, 1]]]),
+    populationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }],
+    fragListCount: 2,
+  });
+  const raw = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, sessionId: 'does-not-exist', controlId: 'hidden-fragment' });
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-session');
 });
 
 test('hiddenFragmentControlInPage: RESTORE_FAILED -- enumNodeFragments patches/restores cleanly, but the post-restoration liveness check fails (world.isModelLive -> false); lease left held for Phase 11', async () => {
@@ -572,18 +825,33 @@ test('hiddenFragmentControlInPage: RESTORE_FAILED -- enumNodeFragments patches/r
   assert.ok(realm.window.__g1.sessions.s1.activeControl, 'lease remains held on restore failure');
 });
 
-test('hiddenFragmentControlInPage: precondition -- observeF2 requires f1PopulationClasses; a session missing it never reaches DETECTED_RESTORED (observeF2-threw-equivalent path)', async () => {
+// Task 17 (H3 fix) disposition: REPLACED. `observeF2`'s own hard precondition on
+// `session.artifacts.f1PopulationClasses` being an array is unchanged, real, still-load-bearing
+// production-analog machinery (this control's own detection re-run depends on it). But this test's
+// ORIGINAL scenario -- the REAL session's own `f1PopulationClasses` genuinely `undefined`, so
+// `copyArtifactKeys` never copies it into the scratch session, so observeF2's OWN internal guard
+// trips for the SCRATCH session -- is now structurally unreachable THROUGH this control: the new
+// pre-lease eligibility check (`selectHiddenFragmentTarget`, above) ALSO requires the REAL
+// session's own `f1PopulationClasses` to be a valid array with at least one class-'L' entry
+// intersecting a tree-reachable fragId, and `createControlScratchSession`'s own copy semantics
+// (confirmed by direct read: `structuredClone(value)` for a defined value, skipped entirely when
+// `undefined`) mean the scratch session's own copy is ALWAYS exactly as valid as the real session's
+// own value whenever eligibility succeeds -- so observeF2's own precondition-failure branch can no
+// longer be reached with a genuinely-eligible population. Replaced with a test proving the NEW,
+// EARLIER, cheaper check now strictly subsumes the old exercised path (a missing/invalid REAL
+// `f1PopulationClasses` is caught before ever creating a scratch session at all, rather than being
+// caught one layer deeper by observeF2 itself).
+test('hiddenFragmentControlInPage: precondition -- a REAL session with missing/invalid f1PopulationClasses is now caught by the earlier pre-lease eligibility check (no-eligible-fragment), never reaching observeF2\'s own scratch-session precondition failure', async () => {
   const { realm } = buildHiddenFragmentRealm({
     fragmentsByNode: new Map([[0, [0, 1]]]),
-    populationClasses: undefined, // deliberately NOT an array -- observeF2's own hard precondition
+    populationClasses: undefined, // deliberately NOT an array
     fragListCount: 2,
   });
-  const result = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
-  // observeF2 returns {ok:false, reason:'f1-population-classes-not-available-run-observeF1-first'}
-  // for the SCRATCH session too (copyArtifactKeys never copied a non-array value) -- the control
-  // must treat this the same as any other non-ok check result: detected:false, still restored.
-  assert.equal(result.detected, false);
-  assert.equal(result.restored, true, 'the patch must still be restored even though observeF2 itself could not run');
+  const raw = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-eligible-fragment');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null, 'no lease was ever acquired');
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::hidden-fragment'], undefined, 'no scratch session was ever created -- observeF2 never even runs');
 });
 
 // Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: this
@@ -615,9 +883,18 @@ test('hiddenFragmentControlInPage: DETECTED_RESTORED -- model exposes ONLY getOb
   const world = fakeWorld();
   const registry = fakeRegistry(model);
   const g = { __viewer: {} };
+  // Task 17 (H3 fix) disposition: adapted -- f2TreeOwnerByFragId must be present (fragIds 0 and 1,
+  // both under node 0, matching this fixture's own tree shape) so the new eligibility check has a
+  // real population to select from; the SELECTED target is now the numerically smallest (0), not
+  // the old hard-coded 1, but detection is symmetric (dropping either 0 or 1 from this fixture's
+  // own two-fragment, single-node tree still makes it loaded-but-unreachable).
   publishSession(g, {
     model, world, registry,
-    artifacts: { f1PopulationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }], f1RootsLength: 1 },
+    artifacts: {
+      f1PopulationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }],
+      f1RootsLength: 1,
+      f2TreeOwnerByFragId: new Map([[0, { ownerDbId: 0, conflictingOwnerDbId: null }], [1, { ownerDbId: 0, conflictingOwnerDbId: null }]]),
+    },
   });
   const realm = createPageRealm(g);
   const originalEnumNodeFragments = tree.enumNodeFragments;
@@ -642,7 +919,20 @@ test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- model exposes NEITHER getOb
   const world = fakeWorld();
   const registry = fakeRegistry(model);
   const g = { __viewer: {} };
-  publishSession(g, { model, world, registry, artifacts: { f1PopulationClasses: [], f1RootsLength: 0 } });
+  // Task 17 (H3 fix) disposition: adapted -- f2TreeOwnerByFragId must be present, AND
+  // f1PopulationClasses must classify that same fragId 'L' (codex-review finding, High:
+  // selectHiddenFragmentTarget now intersects both -- see hiddenFragmentControlInPage's own doc
+  // comment), so this test's own intended precondition (a genuinely absent tree accessor) is what
+  // is actually exercised, not the new eligibility check (which would otherwise short-circuit
+  // first with a DIFFERENT reason).
+  publishSession(g, {
+    model, world, registry,
+    artifacts: {
+      f1PopulationClasses: [{ fragId: 0, cls: 'L' }],
+      f1RootsLength: 0,
+      f2TreeOwnerByFragId: new Map([[0, { ownerDbId: 0, conflictingOwnerDbId: null }]]),
+    },
+  });
   const realm = createPageRealm(g);
 
   const raw = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
@@ -653,11 +943,21 @@ test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- model exposes NEITHER getOb
   assert.equal(realm.window.__g1.sessions['s1::control-scratch::hidden-fragment'], undefined, 'the scratch session must be disposed, never left leaked');
 });
 
-test('hiddenFragmentControlInPage: scratch-session isolation -- the REAL session\'s own artifacts.f2TreeOwnerByFragId (and everything else) is byte-for-byte unchanged; only f1PopulationClasses/f1RootsLength were ever copied (read-only) into the scratch session', async () => {
+// Task 17 (H3 fix) disposition: adapted -- `f2TreeOwnerByFragId` is now a REQUIRED precondition
+// this control's own new eligibility check reads from the REAL session BEFORE lease acquisition
+// (see hiddenFragmentControlInPage's own doc comment), so it is no longer true that the REAL
+// session must never carry this key at all; instead, this test now proves the REAL
+// `f2TreeOwnerByFragId` Map ITSELF (reference and contents) is never mutated/reassigned by the
+// scratch-scoped `observeF2` re-run -- the same non-interference property, reconstructed for a
+// world where this artifact now legitimately pre-exists on the real session (representing the
+// genuinely-already-run real Phase 5 F2).
+test('hiddenFragmentControlInPage: scratch-session isolation -- the REAL session\'s own artifacts.f2TreeOwnerByFragId Map is the SAME reference, byte-for-byte unchanged; only f1PopulationClasses/f1RootsLength were ever copied (read-only) into the scratch session', async () => {
+  const originalF2TreeOwnerByFragId = new Map([[0, { ownerDbId: 0, conflictingOwnerDbId: null }], [1, { ownerDbId: 0, conflictingOwnerDbId: null }]]);
   const { realm } = buildHiddenFragmentRealm({
     fragmentsByNode: new Map([[0, [0, 1]]]),
     populationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }],
     fragListCount: 2,
+    f2TreeOwnerByFragId: originalF2TreeOwnerByFragId,
   });
   const session = realm.window.__g1.sessions.s1;
   const before = JSON.stringify({ f1PopulationClasses: session.artifacts.f1PopulationClasses, f1RootsLength: session.artifacts.f1RootsLength });
@@ -666,7 +966,8 @@ test('hiddenFragmentControlInPage: scratch-session isolation -- the REAL session
 
   const after = JSON.stringify({ f1PopulationClasses: session.artifacts.f1PopulationClasses, f1RootsLength: session.artifacts.f1RootsLength });
   assert.equal(after, before, 'the copied baseline fields must remain untouched (read-only copy into the scratch session)');
-  assert.equal('f2TreeOwnerByFragId' in session.artifacts, false, 'observeF2 (scratch-scoped) must never write into the REAL session\'s artifacts');
+  assert.equal(session.artifacts.f2TreeOwnerByFragId, originalF2TreeOwnerByFragId, 'the REAL f2TreeOwnerByFragId Map must remain the SAME reference (never reassigned/mutated by the scratch-scoped observeF2 re-run)');
+  assert.equal(originalF2TreeOwnerByFragId.size, 2, 'and its own contents must be untouched');
 });
 
 test('hiddenFragmentControlInPage: lease-lost-mid-flight -- abandons cleanly, never restores, never releases a lease it no longer holds', async () => {
@@ -679,7 +980,16 @@ test('hiddenFragmentControlInPage: lease-lost-mid-flight -- abandons cleanly, ne
   const world = fakeWorld();
   const registry = fakeRegistry(model);
   const g = { __viewer: {} };
-  publishSession(g, { model, world, registry, artifacts: { f1PopulationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }], f1RootsLength: 1 } });
+  // Task 17 (H3 fix) disposition: adapted -- f2TreeOwnerByFragId must be present so the new
+  // eligibility check does not short-circuit before this test's own lease-lost race ever begins.
+  publishSession(g, {
+    model, world, registry,
+    artifacts: {
+      f1PopulationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }],
+      f1RootsLength: 1,
+      f2TreeOwnerByFragId: new Map([[0, { ownerDbId: 0, conflictingOwnerDbId: null }], [1, { ownerDbId: 0, conflictingOwnerDbId: null }]]),
+    },
+  });
   const realm = createPageRealm(g);
   const originalEnumNodeFragments = tree.enumNodeFragments;
 
@@ -711,6 +1021,74 @@ test('hiddenFragmentControlInPage: lease-lost-mid-flight -- abandons cleanly, ne
   const mapped = mapControlAttemptOutcome('hidden-fragment', result);
   assert.equal(mapped.state, CONTROL_STATE.NOT_DETECTED);
   assert.notEqual(mapped.state, CONTROL_STATE.DETECTED_RESTORED);
+});
+
+// ============================================================================================
+// Task 17 (bounded H1-H3 remediation pass, H3): hidden-fragment target selection is genuinely
+// population-driven, never a hard-coded fragId 1.
+// ============================================================================================
+
+test('hiddenFragmentControlInPage: DETECTED_RESTORED with a population that does NOT include fragId 0 or 1 -- proves selection is genuinely population-driven, not still secretly assuming 0/1 exist', async () => {
+  const { realm } = buildHiddenFragmentRealm({
+    fragmentsByNode: new Map([[0, [7, 12, 55]]]),
+    populationClasses: [{ fragId: 7, cls: 'L' }, { fragId: 12, cls: 'L' }, { fragId: 55, cls: 'L' }],
+    fragListCount: 3,
+  });
+
+  const result = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.detected, true);
+  assert.equal(result.restored, true);
+  assert.equal(result.selectedFragId, 7, 'the numerically smallest fragId -- never 1, which is not even in this population');
+  const mapped = mapControlAttemptOutcome('hidden-fragment', result);
+  assert.equal(mapped.state, CONTROL_STATE.DETECTED_RESTORED);
+});
+
+test('hiddenFragmentControlInPage: DETECTED_RESTORED with a large/sparse tree-reachable population {3, 1000, 1000000} -- correctness is not coincidentally tied to small numbers', async () => {
+  const { realm } = buildHiddenFragmentRealm({
+    fragmentsByNode: new Map([[0, [1000000, 3, 1000]]]),
+    populationClasses: [{ fragId: 1000000, cls: 'L' }, { fragId: 3, cls: 'L' }, { fragId: 1000, cls: 'L' }],
+    fragListCount: 3,
+  });
+
+  const result = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
+
+  assert.equal(result.detected, true);
+  assert.equal(result.restored, true);
+  assert.equal(result.selectedFragId, 3);
+});
+
+test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- empty f2TreeOwnerByFragId, fail-closed with no-eligible-fragment, before ever acquiring a lease or creating a scratch session', async () => {
+  const { realm } = buildHiddenFragmentRealm({
+    fragmentsByNode: new Map([[0, []]]),
+    populationClasses: [],
+    fragListCount: 0,
+    f2TreeOwnerByFragId: new Map(),
+  });
+
+  const raw = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
+
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-eligible-fragment');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null, 'no lease was ever acquired');
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::hidden-fragment'], undefined, 'no scratch session was ever created');
+});
+
+test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- f2TreeOwnerByFragId entirely absent from artifacts (F2 never ran for this session), fail-closed with no-eligible-fragment', async () => {
+  const { realm } = buildHiddenFragmentRealm({
+    fragmentsByNode: new Map([[0, [0, 1]]]),
+    populationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }],
+    fragListCount: 2,
+  });
+  delete realm.window.__g1.sessions.s1.artifacts.f2TreeOwnerByFragId;
+
+  const raw = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
+
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-eligible-fragment');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null, 'no lease was ever acquired');
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::hidden-fragment'], undefined, 'no scratch session was ever created');
 });
 
 // ============================================================================================

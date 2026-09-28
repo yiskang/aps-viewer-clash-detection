@@ -3635,6 +3635,84 @@ function checkSessionLiveness(session, model) {
   return { worldLiveOk, bindingOk };
 }
 
+/**
+ * H3 fix (Task 17, bounded H1-H3 remediation pass). `selectAuthoritativeFragmentTarget
+ * (populationMap)` -- pure, in-page (also directly Node-testable: touches no `window` state).
+ * `wrongOwnerControlInPage`/`hiddenFragmentControlInPage` (below) used to perturb a hard-coded
+ * fragId (`0`/`1` respectively) without ever proving that fragId belonged to the model's own
+ * loaded population -- the independent implementation review's own H3 finding
+ * (`docs/reviews/2026-09-28-g1-svf2-f1-f8-harness-implementation-independent-review.md`, lines
+ * 58-66). This is the shared selection rule both controls now use instead: the numerically
+ * SMALLEST fragId key present in an authoritative per-fragment population `Map`
+ * (`session.artifacts.f1PopulationRecords` for wrong-owner, `session.artifacts.
+ * f2TreeOwnerByFragId` for hidden-fragment -- both `Map<fragId, {..., ownerDbId}>`, confirmed by
+ * direct read of `observeF1`/`observeF2` above), deterministic for a given population regardless
+ * of `Map` insertion order -- a single linear scan comparing numeric fragId values, never trusting
+ * iteration order and never an O(n log n) sort (codex-advisor consult, this task's own pre-
+ * implementation design review, finding 3). Returns `{fragId, ownerDbId}` (`ownerDbId: null` if
+ * the record has no numeric `ownerDbId` field) or `null` if the map is missing, not Map-shaped, or
+ * empty -- the caller's own fail-closed `NOT_EXECUTABLE` trigger. Mirrors the shape of the
+ * existing Node-side precedent for this same class of problem, `selectBoundsBeyondToleranceTarget`
+ * (below, F7/bounds-beyond-tolerance's own deterministic target selection from an already-retained
+ * population) -- but implemented IN-PAGE here, since F1/F2's own serializable `fields` output only
+ * ever carries counts, never a fragment-id list; the actual per-fragment data only ever exists
+ * in-page, on these two Maps.
+ */
+function selectAuthoritativeFragmentTarget(populationMap) {
+  if (!populationMap || typeof populationMap.forEach !== 'function') return null;
+  let bestFragId = null;
+  let bestRecord = null;
+  populationMap.forEach((record, key) => {
+    const fragId = Number(key);
+    if (bestFragId === null || fragId < bestFragId) {
+      bestFragId = fragId;
+      bestRecord = record;
+    }
+  });
+  if (bestFragId === null) return null;
+  const ownerDbId = bestRecord && typeof bestRecord.ownerDbId === 'number' ? bestRecord.ownerDbId : null;
+  return { fragId: bestFragId, ownerDbId };
+}
+
+/**
+ * H3 fix (Task 17), hidden-fragment-specific refinement -- codex-review (code, medium effort,
+ * this task's own pre-commit review pass) High finding, fixed: `selectAuthoritativeFragmentTarget`
+ * alone is NOT sufficient for `hiddenFragmentControlInPage`'s own detection oracle.
+ * `observeF2`'s `loadedButUnreachableCount` (above) is computed ONLY over F1's class-`'L'` rows
+ * (`classLRows`, confirmed by direct read) -- a fragId that is tree-reachable (present in
+ * `f2TreeOwnerByFragId`) but NOT class `'L'` in F1's own `f1PopulationClasses` (e.g. class `'N'`/
+ * `'U'`) can be selected by `selectAuthoritativeFragmentTarget`'s plain numeric-minimum rule yet
+ * can NEVER move `loadedButUnreachableCount` when hidden -- reproducing the exact false-
+ * `NOT_DETECTED` failure mode H3 exists to eliminate, one layer down (the review's own concrete
+ * repro: population `{5: class N, 7: class L}`, tree-reachable both, numeric-minimum picks `5`,
+ * hiding it changes nothing observable, forcing an unearned overall `FAIL`).
+ *
+ * `selectHiddenFragmentTarget(f2TreeOwnerByFragId, f1PopulationClasses)` fixes this: intersects
+ * `f2TreeOwnerByFragId` (tree-reachable, proving the hide is a real perturbation, never a no-op)
+ * with F1's own class-`'L'` fragIds (proving the hide is actually COUNTABLE by this control's own
+ * oracle) BEFORE handing the intersection to `selectAuthoritativeFragmentTarget` for the final
+ * deterministic numeric-minimum pick. Returns `null` (this function's own caller's fail-closed
+ * `no-eligible-fragment` trigger) only when that intersection is empty -- never when either input
+ * alone is non-empty. Both `f1PopulationClasses`/`f2TreeOwnerByFragId` are already guaranteed
+ * present on the REAL session by this point in `runHarness`'s own phase order (Phase 4 F1 runs
+ * before Phase 5 F2, which runs before Phase 5c hidden-fragment). Pure, in-page, directly
+ * Node-testable (touches no `window` state).
+ */
+function selectHiddenFragmentTarget(f2TreeOwnerByFragId, f1PopulationClasses) {
+  if (!f2TreeOwnerByFragId || typeof f2TreeOwnerByFragId.forEach !== 'function') return null;
+  const classLIds = new Set();
+  if (Array.isArray(f1PopulationClasses)) {
+    for (const row of f1PopulationClasses) {
+      if (row && row.cls === 'L') classLIds.add(row.fragId);
+    }
+  }
+  const eligible = new Map();
+  f2TreeOwnerByFragId.forEach((record, key) => {
+    if (classLIds.has(key) || classLIds.has(Number(key))) eligible.set(key, record);
+  });
+  return selectAuthoritativeFragmentTarget(eligible);
+}
+
 // ============================================================================================
 // Bounded completion pass, area 3 -- Task 11: bridged tree-unavailable/wrong-owner/hidden-
 // fragment controls, IN-PAGE half. Ports `runTreeUnavailableControl`/`runWrongOwnerControl`/
@@ -3848,14 +3926,53 @@ async function treeUnavailableControlInPage(arg) {
  * check logic below is unaffected -- it still patches a METHOD (`getDbIds`) on the object
  * `getFragmentList()` returns, never the property holding the reference to it. The original
  * Node-side `runWrongOwnerControl` is intentionally left unchanged (L1, not this fix wave's scope).
+ *
+ * Task 17 (H3, bounded H1-H3 remediation pass): the review's own H3 finding
+ * (`docs/reviews/2026-09-28-g1-svf2-f1-f8-harness-implementation-independent-review.md`, lines
+ * 58-66) -- this function used to hard-code `fragId === 0` unconditionally, never proving fragId
+ * `0` actually belonged to the loaded model's own population. Fixed: before ever acquiring the
+ * lease (cheapest check first, matching this function's own established discipline -- e.g. the
+ * `no-fragList-getDbIds` guard below), deterministically select a target fragId from the REAL
+ * session's own already-computed F1 population, `session.artifacts.f1PopulationRecords` (set by
+ * `observeF1`'s real earlier Phase 4 run against THIS session -- confirmed by direct read of
+ * `runHarness`'s own phase order: Phase 4 F1 always runs strictly before Phase 4c wrong-owner --
+ * never the scratch session created below, which observeF1 is re-run against for THIS control's
+ * own perturbed re-observation). `selectAuthoritativeFragmentTarget` (above) does the actual
+ * selection. No eligible fragment (map missing/empty) -> fail closed, `ok: false` (never `ok:
+ * true` with a non-boolean `restored` -- `runBridgedControl`'s own strict typing, below, requires
+ * every `ok: true` result's `detected`/`restored`/`timedOut` to be real booleans; `ok: false`
+ * mirrors this function's own existing `no-fragList-getDbIds` precedent exactly and is the only
+ * shape guaranteed to carry `reason` through to the final `ControlResult` unmodified -- codex-
+ * advisor consult, this task's own pre-implementation design review, findings 1/4). The corrupted
+ * `getDbIds` return is computed from the SELECTED fragId's own real recorded `ownerDbId`
+ * (defense-in-depth: guaranteed different from it, even in the pathological case the real owner
+ * IS the usual sentinel). The selected fragId and its real recorded ownerDbId are retained as
+ * additive raw-return evidence (`selectedFragId`/`selectedOwnerDbId`) on every settled outcome --
+ * diagnostic-only fields this file's own offline tests assert directly (calling this function via
+ * its own `node:vm` realm), never threaded through `createControlResult`/`mapControlAttemptOutcome`
+ * (confirmed unchanged, by direct read: both still only ever produce the fixed `ControlResult`
+ * shape) and never required by `runBridgedControl`'s own boolean-typing contract (unaffected).
  */
 async function wrongOwnerControlInPage(arg) {
   const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
+  const g = window.__g1;
+  // codex-review (code, medium effort, this task's own pre-commit review pass) Medium, fixed: this
+  // read used to be `g.sessions[sessionId]` UNGUARDED -- if `window.__g1` itself is absent (a
+  // genuinely reachable case: no session was ever set up, or this control is invoked before/after
+  // that window), `g` is `undefined` and `g.sessions` threw a TypeError OUTSIDE any handled path,
+  // instead of the intended structured `{ok:false, reason:'no-session'}` acquireControlLease
+  // already produces for exactly this precondition. Guarded identically to acquireControlLease's
+  // own established pattern (`g && g.sessions && g.sessions[sessionId]`).
+  const session = g && g.sessions && g.sessions[sessionId];
+
+  const target = session ? selectAuthoritativeFragmentTarget(session.artifacts && session.artifacts.f1PopulationRecords) : null;
+  if (session && !target) {
+    return { ok: false, reason: 'no-eligible-fragment' };
+  }
+
   const acquire = acquireControlLease({ sessionId, tokenId, gen, controlId });
   if (!acquire.ok) return { ok: false, reason: acquire.reason };
 
-  const g = window.__g1;
-  const session = g.sessions[sessionId];
   const stillMine = () => Boolean(session.activeControl) && session.activeControl.controlId === controlId;
 
   const scratch = createControlScratchSession(sessionId, { controlId, copyArtifactKeys: [] });
@@ -3888,6 +4005,12 @@ async function wrongOwnerControlInPage(arg) {
   const originalDescriptor = Object.getOwnPropertyDescriptor(fragList, property) || null;
   const originalGetDbIds = fragList[property];
 
+  // Task 17 (H3 fix, see this function's own doc comment above): patch the SELECTED fragId, never
+  // a hard-coded `0`. Defense-in-depth against the (real-Viewer-dbIds-are-non-negative, so
+  // currently unreachable) case the real recorded owner IS the usual sentinel.
+  const { fragId: targetFragId, ownerDbId: realOwnerDbId } = target;
+  const wrongOwnerDbId = realOwnerDbId === -999999 ? -999998 : -999999;
+
   let detected = null;
   let timedOut = false;
   let reason = null;
@@ -3895,7 +4018,7 @@ async function wrongOwnerControlInPage(arg) {
   let leaseLost = false;
 
   try {
-    fragList[property] = (fragId) => (fragId === 0 ? -999999 : originalGetDbIds.call(fragList, fragId));
+    fragList[property] = (fragId) => (fragId === targetFragId ? wrongOwnerDbId : originalGetDbIds.call(fragList, fragId));
     recordControlPatch(session, { target: fragList, property, originalDescriptor });
 
     try {
@@ -3942,11 +4065,13 @@ async function wrongOwnerControlInPage(arg) {
     }
   }
 
-  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
-  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
-  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
-  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
-  return { ok: true, detected: true, restored: true, timedOut: false, reason: null };
+  // Task 17 (H3 fix): every settled outcome below retains the SELECTED fragId and its real
+  // recorded ownerDbId as additive raw-return evidence (see this function's own doc comment above).
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight', selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed', selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
 }
 
 /**
@@ -3983,14 +4108,44 @@ async function wrongOwnerControlInPage(arg) {
  * target (`enumNodeFragments`, confirmed against the original Node-side `runHiddenFragmentControl`)
  * is unaffected; only how the tree object itself is obtained changed. The original Node-side
  * `runHiddenFragmentControl` is intentionally left unchanged (L1, not this fix wave's scope).
+ *
+ * Task 17 (H3, bounded H1-H3 remediation pass): the review's own H3 finding (see
+ * `wrongOwnerControlInPage`'s own doc comment above for the full citation) -- this function used
+ * to hard-code `fragId === 1` unconditionally, never proving fragId `1` was actually tree-
+ * reachable in the loaded model. Fixed: before ever acquiring the lease, deterministically select
+ * a target fragId via `selectHiddenFragmentTarget` (above) -- the intersection of the REAL
+ * session's own already-computed F2 population, `session.artifacts.f2TreeOwnerByFragId` (set by
+ * `observeF2`'s real earlier Phase 5 run against THIS session -- `runHarness`'s own phase order
+ * runs Phase 5 F2 strictly before Phase 5c hidden-fragment), with F1's own class-`'L'` fragIds
+ * (`session.artifacts.f1PopulationClasses`, set even earlier by Phase 4 F1). Both are required,
+ * not merely `f2TreeOwnerByFragId` alone (codex-review, code, medium effort, this task's own
+ * pre-commit review pass, High finding, fixed: `observeF2`'s own `loadedButUnreachableCount` is
+ * computed ONLY over class-`'L'` rows, so a tree-reachable-but-non-`'L'` fragId is eligible for
+ * plain tree-reachability but can NEVER move that count when hidden -- see
+ * `selectHiddenFragmentTarget`'s own doc comment for the full reasoning and the review's own
+ * concrete repro). No eligible fragment -> fail closed, `ok: false` (same reasoning as
+ * `wrongOwnerControlInPage`'s own doc comment: never `ok: true` with a non-boolean `restored`,
+ * since `runBridgedControl`'s own strict typing would silently downgrade the reason to
+ * `malformed-in-page-result`). The selected fragId and its recorded tree-owner dbId are retained
+ * as additive raw-return evidence (`selectedFragId`/`selectedTreeOwnerDbId`) on every settled
+ * outcome, same discipline as `wrongOwnerControlInPage`.
  */
 async function hiddenFragmentControlInPage(arg) {
   const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
+  const g = window.__g1;
+  // codex-review (code, medium effort, this task's own pre-commit review pass) Medium, fixed: same
+  // class of bug as wrongOwnerControlInPage's own fix above -- guarded identically, see that
+  // function's own doc comment for the full reasoning.
+  const session = g && g.sessions && g.sessions[sessionId];
+
+  const target = session ? selectHiddenFragmentTarget(session.artifacts && session.artifacts.f2TreeOwnerByFragId, session.artifacts && session.artifacts.f1PopulationClasses) : null;
+  if (session && !target) {
+    return { ok: false, reason: 'no-eligible-fragment' };
+  }
+
   const acquire = acquireControlLease({ sessionId, tokenId, gen, controlId });
   if (!acquire.ok) return { ok: false, reason: acquire.reason };
 
-  const g = window.__g1;
-  const session = g.sessions[sessionId];
   const stillMine = () => Boolean(session.activeControl) && session.activeControl.controlId === controlId;
 
   const scratch = createControlScratchSession(sessionId, { controlId, copyArtifactKeys: ['f1PopulationClasses', 'f1RootsLength'] });
@@ -4021,6 +4176,10 @@ async function hiddenFragmentControlInPage(arg) {
   const originalDescriptor = Object.getOwnPropertyDescriptor(tree, property) || null;
   const originalEnumNodeFragments = tree[property];
 
+  // Task 17 (H3 fix, see this function's own doc comment above): drop the SELECTED fragId, never
+  // a hard-coded `1`.
+  const { fragId: targetFragId, ownerDbId: treeOwnerDbId } = target;
+
   let detected = null;
   let timedOut = false;
   let reason = null;
@@ -4029,7 +4188,7 @@ async function hiddenFragmentControlInPage(arg) {
 
   try {
     tree[property] = function patchedEnumNodeFragments(node, callback, recursive) {
-      return originalEnumNodeFragments.call(this, node, (fragId) => { if (fragId !== 1) callback(fragId); }, recursive);
+      return originalEnumNodeFragments.call(this, node, (fragId) => { if (fragId !== targetFragId) callback(fragId); }, recursive);
     };
     recordControlPatch(session, { target: tree, property, originalDescriptor });
 
@@ -4067,11 +4226,13 @@ async function hiddenFragmentControlInPage(arg) {
     }
   }
 
-  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
-  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
-  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
-  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
-  return { ok: true, detected: true, restored: true, timedOut: false, reason: null };
+  // Task 17 (H3 fix): every settled outcome below retains the SELECTED fragId and its recorded
+  // tree-owner dbId as additive raw-return evidence (see this function's own doc comment above).
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight', selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed', selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
 }
 
 // ============================================================================================
@@ -8352,6 +8513,13 @@ const IN_PAGE_FUNCTION_REGISTRY = Object.freeze({
   // control below, Task 11's three retrofitted plus Task 12's own three), matching this file's
   // own established "declare shared helpers before their callers" bootstrap convention.
   raceWithInnerTimeout, checkSessionLiveness,
+  // Task 17 (bounded H1-H3 remediation pass, H3): `selectAuthoritativeFragmentTarget`/
+  // `selectHiddenFragmentTarget` -- must be registered BEFORE wrongOwnerControlInPage/
+  // hiddenFragmentControlInPage (below), which call them by free identifier, matching this file's
+  // own established "declare shared helpers before their callers" bootstrap convention.
+  // `selectHiddenFragmentTarget` itself calls `selectAuthoritativeFragmentTarget` by free
+  // identifier too, so ordering both together, in this order, satisfies both dependencies at once.
+  selectAuthoritativeFragmentTarget, selectHiddenFragmentTarget,
   // Task 11 (bounded completion pass, area 3): the three bridged in-page control functions
   // themselves -- `observeF1`/`observeF2` (already above) are called by free identifier from
   // `wrongOwnerControlInPage`/`hiddenFragmentControlInPage` respectively, so both must already
@@ -9274,6 +9442,8 @@ export {
   runHiddenFragmentControl,
   raceWithInnerTimeout,
   checkSessionLiveness,
+  selectAuthoritativeFragmentTarget,
+  selectHiddenFragmentTarget,
   treeUnavailableControlInPage,
   wrongOwnerControlInPage,
   hiddenFragmentControlInPage,
