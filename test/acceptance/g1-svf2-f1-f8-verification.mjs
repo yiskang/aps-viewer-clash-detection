@@ -3547,6 +3547,63 @@ async function runHiddenFragmentControl({ modelBefore, world, registry, registry
 }
 
 // ============================================================================================
+// Bounded completion pass, area 3, Task 12 -- shared in-page helpers extracted from Task 11's
+// own three bridged control functions (below), used by ALL SIX bridged controls (Task 11's
+// three, retrofitted onto these below, plus Task 12's own three). Task 11's reviewer (approved,
+// no blocking findings) flagged that an ~11-line inner-timeout race closure (`raceInner`) and
+// the post-restore liveness check (`worldLiveOk`/`bindingOk`) were duplicated VERBATIM across
+// all three of Task 11's functions -- extracted here ONCE rather than adding three more copies
+// for this task's own three controls. Both added to `IN_PAGE_FUNCTION_REGISTRY` (below) so they
+// share the same bootstrap IIFE scope as every in-page function that calls them by free
+// identifier, exactly like `recordControlPatch`/`observeF1`/`observeF2` already do for their own
+// callers.
+// ============================================================================================
+
+/**
+ * In-page. `raceWithInnerTimeout(promiseLike, ms)` -- Task 12 extraction of Task 11's own
+ * `raceInner` closure (byte-for-byte identical logic, previously duplicated once per bridged
+ * control function). Races `promiseLike` against an in-page `setTimeout(ms)`; on timeout,
+ * rejects with an `Error` tagged `{innerControlTimeout: true}` -- the SAME tag every bridged
+ * control's own `catch` block already checks for (`e && e.innerControlTimeout`) to distinguish a
+ * legitimate in-page timeout (restoration still runs in `finally`) from every other rejection
+ * shape. Never cancels `promiseLike` itself (JS promises are not cancellable) -- exactly the
+ * same "the timer fires, the original work may still be running" property `runBridgedControl`'s
+ * own OUTER timeout has, one layer up.
+ */
+function raceWithInnerTimeout(promiseLike, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error(`control timed out after ${ms}ms`);
+      err.innerControlTimeout = true;
+      reject(err);
+    }, ms);
+    Promise.resolve(promiseLike).then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+/**
+ * In-page. `checkSessionLiveness(session, model)` -- Task 12 extraction of Task 11's own
+ * duplicated `worldLiveOk`/`bindingOk` post-restore liveness check (byte-for-byte identical
+ * logic, previously duplicated once per bridged control function's own `finally` block). Returns
+ * `{worldLiveOk, bindingOk}` -- the SAME two booleans every bridged control ANDs together with
+ * its own `membersRestored` to derive its final `restored` verdict. `session.world`/
+ * `session.registry`/`session.K` are read from the SAME session object every bridged control
+ * already has in scope (never re-derived) -- `model` is passed explicitly (never read off
+ * `session.model`) because a control's own patch target is sometimes a nested member
+ * (`model.fragList`/`model.tree`), not `session.model` itself, so the caller's own already-
+ * resolved `model` reference is always used, matching each control's own pre-extraction inline
+ * check exactly.
+ */
+function checkSessionLiveness(session, model) {
+  const worldLiveOk = !session.world || session.world.isModelLive(model) === true;
+  const bindingOk = !session.registry || Boolean(session.registry.bindingFor(session.K) && session.registry.bindingFor(session.K).model === model);
+  return { worldLiveOk, bindingOk };
+}
+
+// ============================================================================================
 // Bounded completion pass, area 3 -- Task 11: bridged tree-unavailable/wrong-owner/hidden-
 // fragment controls, IN-PAGE half. Ports `runTreeUnavailableControl`/`runWrongOwnerControl`/
 // `runHiddenFragmentControl` (above -- unmodified, still the de facto behavioral spec: same
@@ -3554,6 +3611,11 @@ async function runHiddenFragmentControl({ modelBefore, world, registry, registry
 // boundary using Task 10's shared foundation (`acquireControlLease`/`releaseControlLease`/
 // `recordControlPatch`, `createControlScratchSession`/`disposeControlScratchSession`). See
 // `.superpowers/sdd/g1-f1-f8-harness/briefs/task-11-brief.md` for the full design.
+//
+// Task 12 retrofit: the inner-timeout race and post-restore liveness check below now call the
+// shared `raceWithInnerTimeout`/`checkSessionLiveness` helpers (just above) instead of each
+// function's own previously-local `raceInner` closure / inline `worldLiveOk`/`bindingOk` --
+// pure dedup, no behavioral change (see this task's own report for the retrofit verification).
 //
 // Lease-lost-mid-flight discipline (Task 10 review's own new hard requirement, adopted for this
 // task and Task 12): an OUTER Node-side watchdog timeout only stops NODE from waiting on
@@ -3626,20 +3688,6 @@ async function treeUnavailableControlInPage(arg) {
   const originalIsObjectTreeCreated = model.isObjectTreeCreated;
   const originalGetObjectTree = model.getObjectTree;
 
-  function raceInner(promiseLike, ms) {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const err = new Error(`control timed out after ${ms}ms`);
-        err.innerControlTimeout = true;
-        reject(err);
-      }, ms);
-      Promise.resolve(promiseLike).then(
-        (v) => { clearTimeout(timer); resolve(v); },
-        (e) => { clearTimeout(timer); reject(e); },
-      );
-    });
-  }
-
   function checkReadinessKernel(m) {
     return new Promise((resolve) => {
       try {
@@ -3676,7 +3724,7 @@ async function treeUnavailableControlInPage(arg) {
     recordControlPatch(session, { target: model, property: 'getObjectTree', originalDescriptor: getObjectTreeDescriptor });
 
     try {
-      const gateResult = await raceInner(checkReadinessKernel(model), innerTimeoutMs);
+      const gateResult = await raceWithInnerTimeout(checkReadinessKernel(model), innerTimeoutMs);
       if (!stillMine()) { leaseLost = true; } else {
         detected = Boolean(gateResult && gateResult.ready === false);
         if (!detected) reason = 'not-detected';
@@ -3702,8 +3750,7 @@ async function treeUnavailableControlInPage(arg) {
       } catch {
         membersRestored = false;
       }
-      const worldLiveOk = !session.world || session.world.isModelLive(model) === true;
-      const bindingOk = !session.registry || Boolean(session.registry.bindingFor(session.K) && session.registry.bindingFor(session.K).model === model);
+      const { worldLiveOk, bindingOk } = checkSessionLiveness(session, model);
       restored = membersRestored && worldLiveOk && bindingOk;
       if (restored) releaseControlLease({ sessionId, controlId });
     }
@@ -3767,20 +3814,6 @@ async function wrongOwnerControlInPage(arg) {
   const originalDescriptor = Object.getOwnPropertyDescriptor(fragList, property) || null;
   const originalGetDbIds = fragList[property];
 
-  function raceInner(promiseLike, ms) {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const err = new Error(`control timed out after ${ms}ms`);
-        err.innerControlTimeout = true;
-        reject(err);
-      }, ms);
-      Promise.resolve(promiseLike).then(
-        (v) => { clearTimeout(timer); resolve(v); },
-        (e) => { clearTimeout(timer); reject(e); },
-      );
-    });
-  }
-
   let detected = null;
   let timedOut = false;
   let reason = null;
@@ -3792,7 +3825,7 @@ async function wrongOwnerControlInPage(arg) {
     recordControlPatch(session, { target: fragList, property, originalDescriptor });
 
     try {
-      const r = await raceInner(observeF1(scratchSessionId), innerTimeoutMs);
+      const r = await raceWithInnerTimeout(observeF1(scratchSessionId), innerTimeoutMs);
       if (!stillMine()) { leaseLost = true; } else {
         detected = Boolean(r && r.ok === true && r.fields && r.fields.ownerMismatchCount > 0);
         if (!detected) reason = 'not-detected';
@@ -3816,8 +3849,7 @@ async function wrongOwnerControlInPage(arg) {
       } catch {
         membersRestored = false;
       }
-      const worldLiveOk = !session.world || session.world.isModelLive(model) === true;
-      const bindingOk = !session.registry || Boolean(session.registry.bindingFor(session.K) && session.registry.bindingFor(session.K).model === model);
+      const { worldLiveOk, bindingOk } = checkSessionLiveness(session, model);
       restored = membersRestored && worldLiveOk && bindingOk;
       if (restored) releaseControlLease({ sessionId, controlId });
       // codex-review (code, high effort, this task's own pre-commit review pass) Important #2,
@@ -3879,20 +3911,6 @@ async function hiddenFragmentControlInPage(arg) {
   const originalDescriptor = Object.getOwnPropertyDescriptor(tree, property) || null;
   const originalEnumNodeFragments = tree[property];
 
-  function raceInner(promiseLike, ms) {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const err = new Error(`control timed out after ${ms}ms`);
-        err.innerControlTimeout = true;
-        reject(err);
-      }, ms);
-      Promise.resolve(promiseLike).then(
-        (v) => { clearTimeout(timer); resolve(v); },
-        (e) => { clearTimeout(timer); reject(e); },
-      );
-    });
-  }
-
   let detected = null;
   let timedOut = false;
   let reason = null;
@@ -3906,7 +3924,7 @@ async function hiddenFragmentControlInPage(arg) {
     recordControlPatch(session, { target: tree, property, originalDescriptor });
 
     try {
-      const r = await raceInner(observeF2(scratchSessionId), innerTimeoutMs);
+      const r = await raceWithInnerTimeout(observeF2(scratchSessionId), innerTimeoutMs);
       if (!stillMine()) { leaseLost = true; } else {
         detected = Boolean(r && r.ok === true && r.fields && r.fields.loadedButUnreachableCount > 0);
         if (!detected) reason = 'not-detected';
@@ -3930,8 +3948,7 @@ async function hiddenFragmentControlInPage(arg) {
       } catch {
         membersRestored = false;
       }
-      const worldLiveOk = !session.world || session.world.isModelLive(model) === true;
-      const bindingOk = !session.registry || Boolean(session.registry.bindingFor(session.K) && session.registry.bindingFor(session.K).model === model);
+      const { worldLiveOk, bindingOk } = checkSessionLiveness(session, model);
       restored = membersRestored && worldLiveOk && bindingOk;
       if (restored) releaseControlLease({ sessionId, controlId });
       // codex-review Important #2 (see wrongOwnerControlInPage's own doc comment above for the
@@ -3941,6 +3958,494 @@ async function hiddenFragmentControlInPage(arg) {
   }
 
   if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null };
+}
+
+// ============================================================================================
+// Bounded completion pass, area 3 -- Task 12: bridged capacity-breach/invalid-bounds/bounds-
+// beyond-tolerance controls, IN-PAGE half. Ports `runCapacityBreachControl`/
+// `runInvalidBoundsControl`/`runBoundsBeyondToleranceControl` (below -- unmodified, still the de
+// facto behavioral spec) across the realm boundary using Task 10's shared foundation, mirroring
+// Task 11's own three functions (above) pattern-for-pattern -- including the lease-lost-mid-
+// flight discipline (re-check `stillMine()` immediately after the one `await`, before doing
+// anything else) and the two shared helpers extracted just above Task 11's own functions
+// (`raceWithInnerTimeout`/`checkSessionLiveness`), used here from the start. See
+// `.superpowers/sdd/g1-f1-f8-harness/briefs/task-12-brief.md` for the full design.
+// ============================================================================================
+
+/**
+ * In-page. `capacityBreachControlInPage({sessionId, tokenId, gen, controlId, innerTimeoutMs,
+ * capacityLimit})` -- bridged port of `runCapacityBreachControl` (below), Phase 7c. Scratch
+ * session with NO `copyArtifactKeys` -- structurally identical to `wrongOwnerControlInPage`'s
+ * own usage: `observeF1` is the first writer of `session.artifacts` and has no precondition
+ * beyond a valid session. Patches `session.model.fragList.getCount` to report a count over
+ * `capacityLimit`, the same perturbation `runCapacityBreachControl` (below) uses. Detection:
+ * re-run F1's own detection via `observeF1(scratchSessionId)`, expecting a
+ * `CapacityExceededError` -- confirmed by direct source read of `observeF1`'s own `resolveRoots`
+ * error handling (above): caught and returned as `{ok: false, error: {name:
+ * 'CapacityExceededError', ...}, reason: 'resolveRoots-threw'}`, NEVER thrown out of `observeF1`
+ * itself. `detected = Boolean(!r.ok && r.error && r.error.name === 'CapacityExceededError')`
+ * (mirroring `runCapacityBreachControl`'s own doc comment).
+ *
+ * `capacityLimit` is a plain, JSON-safe number, passed in by `buildCapacityBreachControlDep`
+ * (below), sourced from the REAL, imported `maxCollisionInstancesPerEpoch` Node-side constant --
+ * codex-review (code, high effort, this task's own pre-commit review pass) Medium finding: an
+ * earlier version of this function inlined a hardcoded `20_000` duplicate (the SAME
+ * Node-side-constant-cannot-cross-the-realm-as-a-free-variable constraint `observeF7`'s own
+ * `TOLERANCE_CONSTANTS` duplicate works around) -- since `maxCollisionInstancesPerEpoch` is
+ * explicitly documented as PROVISIONAL (`collision/constants.js`'s own comment: "value not yet
+ * chosen"), a hardcoded duplicate would silently drift out of sync with the real constant if it
+ * is ever changed, and this control would then breach the WRONG threshold. Passing it as a
+ * command-payload argument (a single plain number, no realm-crossing issue at all -- unlike
+ * `TOLERANCE_CONSTANTS`, which is a whole object of derived math constants `observeF7` itself
+ * needs to CONSTRUCT in-page from raw inputs, this is just one already-known Node-side number)
+ * removes the manual-lockstep residual entirely.
+ *
+ * codex-review Critical finding, fixed: an earlier version of this function read
+ * `model.fragList` UNGUARDED, immediately after scratch-session creation and BEFORE the
+ * try/finally that owns cleanup -- against a model shape exposing only `getFragmentList()` (no
+ * bare `.fragList` own property), `Object.getOwnPropertyDescriptor(undefined, 'getCount')`
+ * throws `TypeError` OUTSIDE the try/finally entirely, leaking the just-acquired lease
+ * (`session.activeControl` left set, zero recorded patches -- Phase 11's own fallback restore
+ * has nothing to restore, so it can never clear it) and the just-created scratch session
+ * (never disposed). Fixed by validating `fragList`/`fragList.getCount` BEFORE touching its
+ * descriptor, mirroring `invalidBoundsControlInPage`'s/`boundsBeyondToleranceControlInPage`'s
+ * own already-established tree-resolution-failure guard exactly (dispose scratch, release
+ * lease, return `{ok:false, reason}` -- never leak). This does NOT resolve the separate,
+ * already-disclosed `model.fragList` vs `model.getFragmentList()` accessor-fidelity question
+ * (Task 11's own review flagged the identical concern for `wrongOwnerControlInPage`'s
+ * `model.fragList.getDbIds`/`hiddenFragmentControlInPage`'s `model.tree.enumNodeFragments`,
+ * explicitly deferred to Task 13 as outside any single bounded task's own authorization to
+ * redesign the original Stage 4-6 perturbation target) -- it only ensures this control fails
+ * safely (NOT_EXECUTABLE, no leak) rather than leaking a lease when that pre-existing fidelity
+ * gap manifests as a genuinely absent `model.fragList`.
+ *
+ * codex-review-shaped fix applied FROM THE START (Task 11's own review found this exact gap in
+ * `wrongOwnerControlInPage` and fixed it after the fact -- applied here proactively rather than
+ * re-discovered): `observeF1`'s per-root loop unconditionally calls
+ * `session.artifacts.f1FragmentMapsByRoot.set(...)` for every root `resolveRoots` returns on the
+ * NOT-DETECTED path (the perturbation fails to actually breach capacity) -- so the scratch
+ * session's own `f1FragmentMapsByRoot` Map must be seeded as an empty, fresh write-target BEFORE
+ * calling `observeF1`, never left absent.
+ */
+async function capacityBreachControlInPage(arg) {
+  const { sessionId, tokenId, gen, controlId, innerTimeoutMs, capacityLimit } = arg || {};
+  const acquire = acquireControlLease({ sessionId, tokenId, gen, controlId });
+  if (!acquire.ok) return { ok: false, reason: acquire.reason };
+
+  const g = window.__g1;
+  const session = g.sessions[sessionId];
+  const stillMine = () => Boolean(session.activeControl) && session.activeControl.controlId === controlId;
+
+  const scratch = createControlScratchSession(sessionId, { controlId, copyArtifactKeys: [] });
+  if (!scratch.ok) {
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: `scratch-session-failed:${scratch.reason}` };
+  }
+  const scratchSessionId = scratch.scratchSessionId;
+  // See doc comment above: observeF1 needs this Map to already exist as an own artifact, purely
+  // as a write-target -- never copied from the real session (matches wrongOwnerControlInPage's
+  // own established fix for the identical gap).
+  g.sessions[scratchSessionId].artifacts.f1FragmentMapsByRoot = new Map();
+
+  const model = session.model;
+  const fragList = model.fragList;
+  const property = 'getCount';
+  // codex-review Critical fix (see doc comment above): validate BEFORE touching the descriptor --
+  // never let an absent/malformed fragList throw outside the try/finally that owns cleanup.
+  if (!fragList || typeof fragList[property] !== 'function' || typeof capacityLimit !== 'number' || !Number.isFinite(capacityLimit)) {
+    disposeControlScratchSession(scratchSessionId);
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: 'no-fragList-getCount' };
+  }
+  const originalDescriptor = Object.getOwnPropertyDescriptor(fragList, property) || null;
+  const originalGetCount = fragList[property];
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+  let restored = null;
+  let leaseLost = false;
+
+  try {
+    fragList[property] = () => capacityLimit + 1;
+    recordControlPatch(session, { target: fragList, property, originalDescriptor });
+
+    try {
+      const r = await raceWithInnerTimeout(observeF1(scratchSessionId), innerTimeoutMs);
+      if (!stillMine()) { leaseLost = true; } else {
+        detected = Boolean(r && r.ok === false && r.error && r.error.name === 'CapacityExceededError');
+        if (!detected) reason = 'not-detected';
+      }
+    } catch (e) {
+      if (!stillMine()) { leaseLost = true; } else if (e && e.innerControlTimeout) {
+        timedOut = true;
+        reason = 'perturbation-timeout';
+      } else {
+        detected = false;
+        reason = 'observeF1-threw';
+      }
+    }
+  } finally {
+    if (stillMine()) {
+      let membersRestored = false;
+      try {
+        if (originalDescriptor) Object.defineProperty(fragList, property, originalDescriptor);
+        else delete fragList[property];
+        membersRestored = fragList[property] === originalGetCount;
+      } catch {
+        membersRestored = false;
+      }
+      const { worldLiveOk, bindingOk } = checkSessionLiveness(session, model);
+      restored = membersRestored && worldLiveOk && bindingOk;
+      if (restored) releaseControlLease({ sessionId, controlId });
+      disposeControlScratchSession(scratchSessionId);
+    }
+  }
+
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null };
+}
+
+/**
+ * In-page. `invalidBoundsControlInPage({sessionId, tokenId, gen, controlId, innerTimeoutMs,
+ * targetDbId})` -- bridged port of `runInvalidBoundsControl` (below), Phase 8c (right after F7).
+ * `targetDbId` is selected ENTIRELY Node-side (`buildInvalidBoundsControlDep`, below, from the
+ * real, already-computed F7 result's own `censusedDbIds` -- "any censused dbId qualifies" per
+ * the original's own doc comment) and passed in as a plain number; this function never selects
+ * its own target.
+ *
+ * Scratch session WITH `copyArtifactKeys: ['f1FragmentMapsByRoot', 'f4Geometry',
+ * 'f4FragmentGeometryId', 'f4WorldMatricesByFragId']` -- `observeF7`'s own confirmed hard
+ * precondition (direct read, above: rejects with
+ * `f1-fragment-maps-by-root-not-available-run-observeF1-first` /
+ * `f4-artifacts-not-available-run-observeF4-first` if missing), all four copied read-only from
+ * the real session's own already-computed F1/F4 results (both already ran earlier in
+ * `runHarness`, this control runs strictly after both). `f1FragmentMapsByRoot` is a
+ * `Map<dbId, Map<fragId, ExtractedFragmentRecord>>` -- confirmed by direct read that `observeF7`
+ * only ever READS from it (`.get(dbId)`, `.keys()`), never mutates an inner Map, so Task 10's
+ * existing shallow-outer-Map copy (`new Map(value.entries())`) is sufficient for this control's
+ * own read-only usage. Also confirmed by direct read that `observeF7` never writes into
+ * `session.artifacts` at all -- no key needs excluding from the scratch copy, and no scratch-
+ * isolation hazard beyond the ordinary artifact-copy discipline Task 10 already provides.
+ *
+ * Patches the tree's `getNodeBox` (obtained via `model.getObjectTree()`/`getInstanceTree()`
+ * fallback -- confirmed by direct read of `clashpanel/viewer/viewerApi.js`'s own
+ * `getElementWorldBounds` that it resolves the tree the SAME way, so this patch is actually
+ * observed by `observeF7`'s own re-run through that real, unmodified production function) to
+ * fill the output buffer with `NaN` for `targetDbId` only -- the original's exact perturbation.
+ * Detection: re-run F7's own detection via `observeF7(scratchSessionId)`,
+ * `r.fields.boundsAgreement[targetDbId] === 'viewerApiNull'` (confirmed against `observeF7`'s
+ * current real output shape).
+ */
+async function invalidBoundsControlInPage(arg) {
+  const { sessionId, tokenId, gen, controlId, innerTimeoutMs, targetDbId } = arg || {};
+  const acquire = acquireControlLease({ sessionId, tokenId, gen, controlId });
+  if (!acquire.ok) return { ok: false, reason: acquire.reason };
+
+  const g = window.__g1;
+  const session = g.sessions[sessionId];
+  const stillMine = () => Boolean(session.activeControl) && session.activeControl.controlId === controlId;
+
+  const scratch = createControlScratchSession(sessionId, {
+    controlId,
+    copyArtifactKeys: ['f1FragmentMapsByRoot', 'f4Geometry', 'f4FragmentGeometryId', 'f4WorldMatricesByFragId'],
+  });
+  if (!scratch.ok) {
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: `scratch-session-failed:${scratch.reason}` };
+  }
+  const scratchSessionId = scratch.scratchSessionId;
+
+  const model = session.model;
+  let tree;
+  try {
+    tree = typeof model.getObjectTree === 'function' ? model.getObjectTree() : null;
+    if (!tree || typeof tree.getNodeBox !== 'function') tree = typeof model.getInstanceTree === 'function' ? model.getInstanceTree() : null;
+  } catch { tree = null; }
+  if (!tree || typeof tree.getNodeBox !== 'function') {
+    disposeControlScratchSession(scratchSessionId);
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: 'no-tree-getNodeBox' };
+  }
+
+  const property = 'getNodeBox';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(tree, property) || null;
+  const originalGetNodeBox = tree[property];
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+  let restored = null;
+  let leaseLost = false;
+
+  try {
+    tree[property] = (dbId, buffer) => {
+      if (dbId === targetDbId && buffer && buffer.length >= 6) {
+        for (let i = 0; i < 6; i += 1) buffer[i] = Number.NaN;
+        return undefined;
+      }
+      return originalGetNodeBox.call(tree, dbId, buffer);
+    };
+    recordControlPatch(session, { target: tree, property, originalDescriptor });
+
+    try {
+      const r = await raceWithInnerTimeout(observeF7(scratchSessionId), innerTimeoutMs);
+      if (!stillMine()) { leaseLost = true; } else {
+        const agreement = r && r.ok === true && r.fields && r.fields.boundsAgreement ? r.fields.boundsAgreement[targetDbId] : undefined;
+        detected = agreement === 'viewerApiNull';
+        if (!detected) reason = 'not-detected';
+      }
+    } catch (e) {
+      if (!stillMine()) { leaseLost = true; } else if (e && e.innerControlTimeout) {
+        timedOut = true;
+        reason = 'perturbation-timeout';
+      } else {
+        detected = false;
+        reason = 'observeF7-threw';
+      }
+    }
+  } finally {
+    if (stillMine()) {
+      let membersRestored = false;
+      try {
+        if (originalDescriptor) Object.defineProperty(tree, property, originalDescriptor);
+        else delete tree[property];
+        membersRestored = tree[property] === originalGetNodeBox;
+      } catch {
+        membersRestored = false;
+      }
+      const { worldLiveOk, bindingOk } = checkSessionLiveness(session, model);
+      restored = membersRestored && worldLiveOk && bindingOk;
+      if (restored) releaseControlLease({ sessionId, controlId });
+      disposeControlScratchSession(scratchSessionId);
+    }
+  }
+
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null };
+}
+
+/**
+ * In-page. `boundsBeyondToleranceControlInPage({sessionId, tokenId, gen, controlId,
+ * innerTimeoutMs, targetDbId, axisIndex, delta, nodeBoxPrimary})` -- bridged port of
+ * `runBoundsBeyondToleranceControl` (below), Phase 8c (right after invalid-bounds). The most
+ * numerically precise control in the whole plan.
+ *
+ * Target selection AND the delta/representability math (`selectBoundsBeyondToleranceTarget`,
+ * `refMin_a`/`nodeMin_a`/`S_a`/`delta = (refMin_a - nodeMin_a) + 2^-6*S_a`) are done ENTIRELY
+ * Node-side, in `buildBoundsBeyondToleranceControlDep` (below) -- they operate purely on
+ * `primaryF7Fields` (F7's own already-computed, already-serialized fields), need no live
+ * page/model access at all, and the brief's own explicit instruction is to short-circuit to
+ * `NOT_EXECUTABLE{reason:'perturbation-not-representable'}` WITHOUT ever entering the page when
+ * unrepresentable -- doing the arithmetic Node-side lets that short-circuit happen before any
+ * lease is ever acquired, exactly matching the ORIGINAL Node-side function's own behavior (no
+ * mutation attempted at all when unrepresentable), and keeps what crosses the realm boundary to
+ * the bare minimum: `targetDbId`/`axisIndex`/`delta`/`nodeBoxPrimary` (the primary-pass
+ * `elementWorldBounds[targetDbId]`, needed for the bit-exact restoration oracle below) -- all
+ * JSON-safe plain numbers/arrays, never the whole `primaryF7Fields` object.
+ *
+ * A SEPARATE, genuinely-runtime-only representability check remains in-page (mirroring the
+ * original exactly): whether the LIVE `getNodeBox` call's own buffer values, once shifted by the
+ * precomputed `delta`, stay finite and well-ordered can only be known at call time (the live
+ * buffer content is not knowable Node-side ahead of time) -- if not, the patched `getNodeBox`
+ * still calls through to the original unperturbed result and flags `perturbationRepresentable =
+ * false`, which this function surfaces as the same `NOT_EXECUTABLE{reason:
+ * 'perturbation-not-representable'}` outcome, AFTER unconditionally restoring/releasing/
+ * disposing in its own `finally` first (never skipping cleanup on this path).
+ *
+ * Scratch session: same four `copyArtifactKeys` as `invalidBoundsControlInPage` (`observeF7`'s
+ * own confirmed precondition, see that function's own doc comment -- identical reasoning,
+ * unrepeated here). Patches `tree.getNodeBox` for `targetDbId` ONLY: calls the original first,
+ * then -- if representable -- adds `delta` to both `dst[axisIndex]`/`dst[axisIndex+3]`.
+ * Detection: re-run F7's own detection via `observeF7(scratchSessionId)`,
+ * `checkResult.boundsAgreement === 'disagrees'` (never a weaker state, per the original's own
+ * doc comment: "never a weaker state").
+ *
+ * Restoration oracle (STRONGER than every other bridged control's own descriptor-based check,
+ * per the brief's explicit instruction -- not weakened to match the simpler pattern): after
+ * restoring `tree.getNodeBox` from its recorded descriptor, re-read `targetDbId`'s bounds via
+ * the REAL `getElementWorldBounds` (from `createViewerApi`, the SAME `window.__g1.mod` module
+ * reference and construction `observeF7` itself already uses -- never re-resolved a second way)
+ * and confirm bit-exact equality (`Object.is` per component) against the primary-pass
+ * `nodeBoxPrimary` -- not merely that the property descriptor was reinstalled.
+ *
+ * codex-review (code, high effort, this task's own pre-commit review pass) fix: `stillMine()` is
+ * now re-checked BEFORE interpreting `perturbationRepresentable` (both after the `await` and in
+ * the final return-priority ordering) -- an earlier version checked `perturbationRepresentable`
+ * first, which is a structural violation of the "check lease ownership immediately after await,
+ * before doing anything else" discipline even though it has no observable effect TODAY (confirmed:
+ * `observeF7` is fully synchronous, so `perturbationRepresentable`'s final value is always fully
+ * determined, in the SAME synchronous span, before this function's own `await` could possibly
+ * yield to any macrotask that could clear the lease -- but the ordering is corrected for
+ * consistency and in case a future, genuinely-async detection oracle changes that property).
+ *
+ * codex-review DISCLOSED, NOT fixed (Important finding, same disposition as Task 11's own
+ * disclosed residuals): when `perturbationRepresentable` is false AND this control's own
+ * post-restore liveness/bit-exact checks ALSO genuinely fail (e.g. `world.isModelLive()` returns
+ * false), the returned shape is still `{ok:false, reason:'perturbation-not-representable'}` --
+ * the SAME `NOT_EXECUTABLE{executed:false}` classification as an ordinary not-representable
+ * outcome, which does not surface that a lease was actually acquired, a patch was actually
+ * installed, and restoration actually failed (the lease is correctly left HELD in
+ * `session.activeControl` either way -- Phase 11's own fallback still sees and handles it
+ * directly, since it reads `session.activeControl`, never this function's return value -- so
+ * REAL cleanup safety is unaffected; only this function's own returned diagnostic is imprecise
+ * in this combined case). This is NOT a new defect: the ORIGINAL, already-accepted Node-side
+ * `runBoundsBeyondToleranceControl` (below) has the IDENTICAL characteristic for this exact path
+ * (it does not even attempt a liveness check when `!perturbationRepresentable`, confirmed by
+ * direct read) -- since NOT_EXECUTABLE and RESTORE_FAILED are equally PASS-blocking per the
+ * governing verdict precedence, this has no effect on the overall G1 gate. Resolving it precisely
+ * would require extending the `ControlResult`/command-result schema to represent "attempted,
+ * unrepresentable, AND restoration failed" as a distinct state -- a schema-boundary decision
+ * outside this bounded task's own authorization ("only the REALM changes, not the logic").
+ * Flagged explicitly for Task 13 or a dedicated schema review.
+ */
+async function boundsBeyondToleranceControlInPage(arg) {
+  const {
+    sessionId, tokenId, gen, controlId, innerTimeoutMs,
+    targetDbId, axisIndex, delta, nodeBoxPrimary,
+  } = arg || {};
+  const acquire = acquireControlLease({ sessionId, tokenId, gen, controlId });
+  if (!acquire.ok) return { ok: false, reason: acquire.reason };
+
+  const g = window.__g1;
+  const session = g.sessions[sessionId];
+  const stillMine = () => Boolean(session.activeControl) && session.activeControl.controlId === controlId;
+
+  const scratch = createControlScratchSession(sessionId, {
+    controlId,
+    copyArtifactKeys: ['f1FragmentMapsByRoot', 'f4Geometry', 'f4FragmentGeometryId', 'f4WorldMatricesByFragId'],
+  });
+  if (!scratch.ok) {
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: `scratch-session-failed:${scratch.reason}` };
+  }
+  const scratchSessionId = scratch.scratchSessionId;
+
+  const model = session.model;
+  let tree;
+  try {
+    tree = typeof model.getObjectTree === 'function' ? model.getObjectTree() : null;
+    if (!tree || typeof tree.getNodeBox !== 'function') tree = typeof model.getInstanceTree === 'function' ? model.getInstanceTree() : null;
+  } catch { tree = null; }
+  if (!tree || typeof tree.getNodeBox !== 'function') {
+    disposeControlScratchSession(scratchSessionId);
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: 'no-tree-getNodeBox' };
+  }
+
+  const property = 'getNodeBox';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(tree, property) || null;
+  const originalGetNodeBox = tree[property];
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+  let restored = null;
+  let leaseLost = false;
+  let perturbationRepresentable = true;
+
+  try {
+    tree[property] = (dbId, buffer) => {
+      const result = originalGetNodeBox.call(tree, dbId, buffer);
+      if (dbId === targetDbId && buffer && buffer.length >= 6) {
+        const shiftedMin = buffer[axisIndex] + delta;
+        const shiftedMax = buffer[axisIndex + 3] + delta;
+        if (!Number.isFinite(shiftedMin) || !Number.isFinite(shiftedMax) || shiftedMin > shiftedMax) {
+          perturbationRepresentable = false;
+          return result;
+        }
+        buffer[axisIndex] = shiftedMin;
+        buffer[axisIndex + 3] = shiftedMax;
+      }
+      return result;
+    };
+    recordControlPatch(session, { target: tree, property, originalDescriptor });
+
+    try {
+      const r = await raceWithInnerTimeout(observeF7(scratchSessionId), innerTimeoutMs);
+      // codex-review fix (code, high effort, this task's own pre-commit review pass): `stillMine()`
+      // is re-checked FIRST, immediately after the one `await`, before interpreting
+      // `perturbationRepresentable` -- matching the lease-lost-mid-flight hard requirement
+      // literally ("before doing anything else"), rather than the reverse order an earlier
+      // version of this function used. `observeF7` is fully synchronous (confirmed by direct
+      // source read, no internal `await`), so today this reordering is a no-op in practice (the
+      // whole synchronous span, including every point where `perturbationRepresentable` could be
+      // set, completes before ANY macrotask could interleave to clear the lease) -- but the
+      // ordering is corrected here for structural consistency with the stated discipline and to
+      // stay correct if `observeF7`/its equivalent ever gains a genuine internal `await`.
+      if (!stillMine()) {
+        leaseLost = true;
+      } else if (!perturbationRepresentable) {
+        // Handled after the finally block, below -- restoration must still run unconditionally.
+      } else {
+        const agreement = r && r.ok === true && r.fields && r.fields.boundsAgreement ? r.fields.boundsAgreement[targetDbId] : undefined;
+        detected = agreement === 'disagrees';
+        if (!detected) reason = 'not-detected';
+      }
+    } catch (e) {
+      if (!stillMine()) {
+        leaseLost = true;
+      } else if (!perturbationRepresentable) {
+        // Handled after the finally block, below.
+      } else if (e && e.innerControlTimeout) {
+        timedOut = true;
+        reason = 'perturbation-timeout';
+      } else {
+        detected = false;
+        reason = 'observeF7-threw';
+      }
+    }
+  } finally {
+    if (stillMine()) {
+      let membersRestored = false;
+      try {
+        if (originalDescriptor) Object.defineProperty(tree, property, originalDescriptor);
+        else delete tree[property];
+        membersRestored = tree[property] === originalGetNodeBox;
+      } catch {
+        membersRestored = false;
+      }
+      const { worldLiveOk, bindingOk } = checkSessionLiveness(session, model);
+
+      // Stronger restoration oracle (per the brief's explicit instruction): re-read via the REAL
+      // getElementWorldBounds and confirm bit-exact equality against the primary-pass value --
+      // not merely that the property descriptor was reinstalled.
+      let boundsBitExact = true;
+      try {
+        const mod = g.mod || {};
+        const { createViewerApi } = mod['/clashpanel/viewer/viewerApi.js'] || {};
+        if (typeof createViewerApi === 'function' && Array.isArray(nodeBoxPrimary)) {
+          const av = window.Autodesk && window.Autodesk.Viewing;
+          const events = { BEFORE_MODEL_UNLOAD: av ? av.BEFORE_MODEL_UNLOAD_EVENT : undefined, MODEL_REMOVED: av ? av.MODEL_REMOVED_EVENT : undefined };
+          const viewerApi = createViewerApi(window.__viewer, { events });
+          const reread = viewerApi.getElementWorldBounds(model, targetDbId);
+          boundsBitExact = Array.isArray(reread) && reread.length === nodeBoxPrimary.length
+            && reread.every((v, i) => Object.is(v, nodeBoxPrimary[i]));
+        }
+      } catch {
+        boundsBitExact = false;
+      }
+
+      restored = membersRestored && worldLiveOk && bindingOk && boundsBitExact;
+      if (restored) releaseControlLease({ sessionId, controlId });
+      disposeControlScratchSession(scratchSessionId);
+    }
+  }
+
+  // leaseLost takes priority over perturbationRepresentable, matching the corrected in-branch
+  // ordering above (codex-review fix).
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
+  if (!perturbationRepresentable) return { ok: false, reason: 'perturbation-not-representable' };
   if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
   if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
   if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
@@ -6611,6 +7116,106 @@ function buildHiddenFragmentControlDep({ pageEvaluate, sessionId, tokenId, gen }
   });
 }
 
+// ------------------------------------------------------------------------------------------
+// Bounded completion pass, area 3 -- Task 12: bridged capacity-breach/invalid-bounds/bounds-
+// beyond-tolerance controls, NODE-SIDE half. Same wrapper-factory shape Task 11 established
+// (closure-bound `sessionId`/`tokenId`/`gen`, `(ctx) => Promise<ControlResult>`), NOT wired into
+// `buildRealPageDeps` by this task (Task 13's own job).
+// ------------------------------------------------------------------------------------------
+
+/** Node-side. `buildCapacityBreachControlDep({pageEvaluate, sessionId, tokenId, gen,
+ * capacityLimit = maxCollisionInstancesPerEpoch})` -- see the banner above.
+ * `capacityLimit` defaults to the REAL, imported (this file's own top-of-file import)
+ * `maxCollisionInstancesPerEpoch` -- a plain JSON-safe number, threaded through to
+ * `capacityBreachControlInPage`'s own arg so its perturbation always tracks the real constant,
+ * never a hardcoded in-page duplicate (codex-review fix, see `capacityBreachControlInPage`'s own
+ * doc comment for the full reasoning). Not wired into `buildRealPageDeps` by this task. */
+function buildCapacityBreachControlDep({ pageEvaluate, sessionId, tokenId, gen, capacityLimit = maxCollisionInstancesPerEpoch }) {
+  return (ctx) => runBridgedControl({
+    pageEvaluate,
+    controlName: 'capacity-breach',
+    inPageFn: capacityBreachControlInPage,
+    arg: { sessionId, tokenId, gen, controlId: 'capacity-breach', capacityLimit },
+    innerTimeoutMs: ctx.controlTimeoutMs,
+  });
+}
+
+/**
+ * Node-side. `buildInvalidBoundsControlDep({pageEvaluate, sessionId, tokenId, gen,
+ * primaryF7Fields})` -- unlike every other bridged control's wrapper factory, this one needs
+ * `primaryF7Fields` (F7's own real, already-computed `fields`, e.g. `checks.F7.fields` --
+ * `runHarness`'s own job, Task 13, to supply) to select `targetDbId` -- the original Node-side
+ * `runInvalidBoundsControl`'s own doc comment: "any censused dbId qualifies", so the LOWEST
+ * sorted censused dbId (`primaryF7Fields.censusedDbIds[0]` -- `observeF7`'s own `censusedDbIds`
+ * field is already sorted ascending, confirmed by direct read, above) is a reasonable,
+ * deterministic choice, documented here per the brief's own explicit instruction to do so.
+ * `targetDbId` selection happens ENTIRELY Node-side, before the page is ever entered -- if no
+ * censused dbId exists at all, short-circuits to `NOT_EXECUTABLE{reason:'precondition-unmet'}`
+ * without acquiring a lease, matching the ORIGINAL Node-side function's own precondition-check
+ * shape (`targetDbId === undefined || targetDbId === null` -> `'precondition-unmet'`).
+ */
+function buildInvalidBoundsControlDep({ pageEvaluate, sessionId, tokenId, gen, primaryF7Fields }) {
+  const censused = (primaryF7Fields && Array.isArray(primaryF7Fields.censusedDbIds)) ? primaryF7Fields.censusedDbIds : [];
+  const targetDbId = censused.length > 0 ? censused[0] : null;
+  return (ctx) => {
+    if (targetDbId === null) {
+      return Promise.resolve(createControlResult('invalid-bounds', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'precondition-unmet' }));
+    }
+    return runBridgedControl({
+      pageEvaluate,
+      controlName: 'invalid-bounds',
+      inPageFn: invalidBoundsControlInPage,
+      arg: { sessionId, tokenId, gen, controlId: 'invalid-bounds', targetDbId },
+      innerTimeoutMs: ctx.controlTimeoutMs,
+    });
+  };
+}
+
+/**
+ * Node-side. `buildBoundsBeyondToleranceControlDep({pageEvaluate, sessionId, tokenId, gen,
+ * primaryF7Fields})` -- calls `selectBoundsBeyondToleranceTarget(primaryF7Fields)` (above,
+ * unchanged, pure, Node-side) FIRST; if it returns `null`, short-circuits immediately to
+ * `NOT_EXECUTABLE{reason:'perturbation-not-representable'}` WITHOUT ever entering the page
+ * (matching the original's own early-exit -- no lease needed if there's nothing to perturb, per
+ * the brief's own explicit instruction). If a target IS selected, ALSO computes the
+ * `refMin_a`/`nodeMin_a`/`S_a`/`delta` representability math here, Node-side (identical
+ * arithmetic to the original Node-side `runBoundsBeyondToleranceControl`'s own upfront checks,
+ * below) -- this is pure math over `primaryF7Fields`, needs no live page/model access, so doing
+ * it here (rather than inside the in-page function) lets an unrepresentable perturbation
+ * short-circuit before any lease is ever acquired too, and keeps what crosses the realm boundary
+ * to the bare minimum (`targetDbId`/`axisIndex`/`delta`/`nodeBoxPrimary` -- see
+ * `boundsBeyondToleranceControlInPage`'s own doc comment for the full reasoning).
+ */
+function buildBoundsBeyondToleranceControlDep({ pageEvaluate, sessionId, tokenId, gen, primaryF7Fields }) {
+  return (ctx) => {
+    const target = selectBoundsBeyondToleranceTarget(primaryF7Fields);
+    if (!target) {
+      return Promise.resolve(createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'perturbation-not-representable' }));
+    }
+    const { dbId: targetDbId, axis } = target;
+    const axisIndex = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
+    const f = primaryF7Fields || {};
+    const refBox = f.fragmentBoundsUnion && f.fragmentBoundsUnion[targetDbId];
+    const nodeBoxPrimary = f.elementWorldBounds && f.elementWorldBounds[targetDbId];
+    const S_a = f.boundsScalePerDbId && f.boundsScalePerDbId[targetDbId]
+      && f.boundsScalePerDbId[targetDbId][axis] && f.boundsScalePerDbId[targetDbId][axis].S_a;
+    if (!Array.isArray(refBox) || !Array.isArray(nodeBoxPrimary) || typeof S_a !== 'number' || !Number.isFinite(S_a)) {
+      return Promise.resolve(createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'perturbation-not-representable' }));
+    }
+    const delta = (refBox[axisIndex] - nodeBoxPrimary[axisIndex]) + (2 ** -6) * S_a;
+    if (!Number.isFinite(delta)) {
+      return Promise.resolve(createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'perturbation-not-representable' }));
+    }
+    return runBridgedControl({
+      pageEvaluate,
+      controlName: 'bounds-beyond-tolerance',
+      inPageFn: boundsBeyondToleranceControlInPage,
+      arg: { sessionId, tokenId, gen, controlId: 'bounds-beyond-tolerance', targetDbId, axisIndex, delta, nodeBoxPrimary },
+      innerTimeoutMs: ctx.controlTimeoutMs,
+    });
+  };
+}
+
 /**
  * Node-side. `runHarness(deps, config)` -- plan §6.1's COMPLETE Phase 0-11 sequence, composing
  * every stage's already-built function in order. Fully offline-testable: every Playwright-shaped
@@ -7512,11 +8117,23 @@ const IN_PAGE_FUNCTION_REGISTRY = Object.freeze({
   // calls it by name, exactly like `sessionErrOf` above.
   recordControlPatch, acquireControlLease, releaseControlLease,
   createControlScratchSession, disposeControlScratchSession,
+  // Task 12 (bounded completion pass, area 3): the two shared in-page helpers extracted from
+  // Task 11's own three bridged functions (`raceWithInnerTimeout`/`checkSessionLiveness`) --
+  // must be registered BEFORE any function that calls them by free identifier (every bridged
+  // control below, Task 11's three retrofitted plus Task 12's own three), matching this file's
+  // own established "declare shared helpers before their callers" bootstrap convention.
+  raceWithInnerTimeout, checkSessionLiveness,
   // Task 11 (bounded completion pass, area 3): the three bridged in-page control functions
   // themselves -- `observeF1`/`observeF2` (already above) are called by free identifier from
   // `wrongOwnerControlInPage`/`hiddenFragmentControlInPage` respectively, so both must already
   // share this same bootstrap IIFE scope (confirmed true, both already registered above).
   treeUnavailableControlInPage, wrongOwnerControlInPage, hiddenFragmentControlInPage,
+  // Task 12 (bounded completion pass, area 3): the three remaining bridged in-page control
+  // functions -- capacityBreachControlInPage/invalidBoundsControlInPage/
+  // boundsBeyondToleranceControlInPage (below). `observeF1`/`observeF7` (already above) are
+  // called by free identifier from these, so both must already share this same bootstrap IIFE
+  // scope (confirmed true, both already registered above).
+  capacityBreachControlInPage, invalidBoundsControlInPage, boundsBeyondToleranceControlInPage,
 });
 
 /**
@@ -8383,12 +9000,20 @@ export {
   scoreF2,
   runWrongOwnerControl,
   runHiddenFragmentControl,
+  raceWithInnerTimeout,
+  checkSessionLiveness,
   treeUnavailableControlInPage,
   wrongOwnerControlInPage,
   hiddenFragmentControlInPage,
   buildTreeUnavailableControlDep,
   buildWrongOwnerControlDep,
   buildHiddenFragmentControlDep,
+  capacityBreachControlInPage,
+  invalidBoundsControlInPage,
+  boundsBeyondToleranceControlInPage,
+  buildCapacityBreachControlDep,
+  buildInvalidBoundsControlDep,
+  buildBoundsBeyondToleranceControlDep,
   CENSUS_TIMEOUT_MS,
   classifyWeldResult,
   observeF4,
