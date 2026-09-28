@@ -299,10 +299,11 @@ test('Token: illegal transition timed-out -> completed is rejected', () => {
   assert.throws(() => transitionToken(token, TOKEN_STATE.COMPLETED), TokenTransitionError);
 });
 
-test('Token: illegal transition timed-out -> disposed is rejected', () => {
+test('Token: legal transition timed-out -> disposed succeeds (Stage 2 correction: plan §6.4a\'s drain mechanism requires this -- distinct from, and earlier than, timed-out -> abandoned; see TOKEN_TRANSITIONS\' own comment for the full citation trail)', () => {
   const token = createToken();
   transitionToken(token, TOKEN_STATE.TIMED_OUT);
-  assert.throws(() => transitionToken(token, TOKEN_STATE.DISPOSED), TokenTransitionError);
+  transitionToken(token, TOKEN_STATE.DISPOSED);
+  assert.equal(token.state, TOKEN_STATE.DISPOSED);
 });
 
 test('Token: illegal transition out of the terminal state abandoned is rejected', () => {
