@@ -26,7 +26,7 @@
 // ============================================================================================
 
 import { randomUUID, createHash } from 'node:crypto';
-import { readFile as nodeReadFile, writeFile as nodeWriteFile, rename as nodeRename, mkdir as nodeMkdir } from 'node:fs/promises';
+import { readFile as nodeReadFile, writeFile as nodeWriteFile, rename as nodeRename, mkdir as nodeMkdir, unlink as nodeUnlink } from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 // Stage 5: compactAndWeld/the collision engine's own limit constants are PURE, already-tested
@@ -1885,10 +1885,26 @@ const MODEL_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN
 // instead, dispatched through the real pageEvaluate wrapper, never a bespoke in-HTML helper.
 // `window.__g1Bootstrap.ready` is this page's own readiness flag, analogous to the diagnostic
 // script's `window.__diag.ready`.
+// Bounded completion pass, Part A: the import map required by SERVED_MODULE_ENTRY_POINTS's own
+// transitive module graph (several modules -- e.g. collision/CollisionWorld.js, reached via the
+// '/collision/index.js' entry point -- import the bare specifiers 'three'/'three-mesh-bvh',
+// which a browser cannot resolve without one). Copied VERBATIM from the already-accepted
+// production page, wwwroot/index.html:47-53 (read-only source; that file is never modified) --
+// exactly these three entries, no more, no fewer. Placed in <head>, before the Viewer <script>
+// tag's textual position (the tag itself is in <body>, but an import map anywhere earlier in
+// document order than the first module-resolving <script> still satisfies the spec's "must
+// appear before any module script" requirement, and <head> is the safe, conventional place).
 const BARE_PAGE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8">
 <link rel="stylesheet" href="${VIEWER_STYLE_URL}">
 <style>html,body,#preview{margin:0;height:100%;width:100%}</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/vendor/three/build/three.module.js",
+  "three-mesh-bvh": "/vendor/three-mesh-bvh/src/index.js",
+  "three/addons/utils/BufferGeometryUtils.js": "/vendor/three/examples/jsm/utils/BufferGeometryUtils.js"
+} }
+</script>
 </head><body>
 <div id="preview"></div>
 <script src="${VIEWER_SCRIPT_URL}"></script>
@@ -6283,12 +6299,29 @@ async function runHarness(deps, config) {
     checks,
     controls: controlResults,
     staleContinuationsDropped,
-    errorLedger: {
-      pageErrors: [], unhandledRejections: [], requiredResourceFailures: [], contextLoss: [],
-      consoleErrors: [], consoleWarnings: [], allowListedFingerprints: [],
-      fatalErrorObserved,
-      ...(errorLedger.summary ? errorLedger.summary() : {}),
-    },
+    // codex-review (medium, round 3, High): every event array is now passed through
+    // redactLedgerEventForEvidence (Part B's own redaction helper, built for the Phase 0 failure
+    // path this same round) -- previously ONLY the Phase 0 failure path redacted ledger events;
+    // this SUCCESS path spread `errorLedger.summary()` verbatim, so a raw secret-shaped `url`
+    // (required-resource-failure) or `text` (console) could reach a normal, successful run's own
+    // persisted evidence unredacted. Applying the SAME already-tested redaction function to both
+    // paths closes that asymmetry with no new logic. (`allowListedFingerprints` is never
+    // populated by `errorLedger.summary()` itself -- always `[]` -- so there is nothing to
+    // redact there.)
+    errorLedger: (() => {
+      const summary = errorLedger.summary ? errorLedger.summary() : {};
+      const redactArray = (arr) => (Array.isArray(arr) ? arr.map(redactLedgerEventForEvidence) : []);
+      return {
+        pageErrors: redactArray(summary.pageErrors),
+        unhandledRejections: redactArray(summary.unhandledRejections),
+        requiredResourceFailures: redactArray(summary.requiredResourceFailures),
+        contextLoss: redactArray(summary.contextLoss),
+        consoleErrors: redactArray(summary.consoleErrors),
+        consoleWarnings: redactArray(summary.consoleWarnings),
+        allowListedFingerprints: Array.isArray(summary.allowListedFingerprints) ? summary.allowListedFingerprints : [],
+        fatalErrorObserved,
+      };
+    })(),
     cleanupFailures, cleanupUnresolvedOwnership,
     overall,
     startedAt, finishedAt,
@@ -6579,6 +6612,319 @@ function parseLiveActivation({ argv, env } = {}) {
  * Never actually invoked anywhere in this stage's own code or tests (the brief's own strongest-
  * yet restatement of every prior stage's authorization boundary).
  */
+// ============================================================================================
+// Bounded completion pass, Part B -- durable evidence on a Phase 0 failure.
+//
+// Both functions below are Node-side, dependency-injected, and fully offline-testable (no
+// Playwright import, no real page/context/browser) -- exactly this file's own established
+// pattern of keeping production-shaped logic in pure/injectable functions and reserving `main()`
+// itself only for wiring real Playwright objects into them.
+// ============================================================================================
+
+// codex-review (medium, round 2, High): an unbounded `await target.close()` can hang forever
+// (e.g. an unresponsive browser process after a renderer crash) -- Phase 0 evidence would then
+// never be written at all, and main() would hang indefinitely instead of rethrowing the primary
+// failure. Each close() now races against this bound; a timeout is recorded as an ordinary
+// cleanup failure (never silently swallowed, never blocks the next resource).
+const CLOSE_TIMEOUT_MS = 10_000;
+
+/**
+ * `closeAllBestEffort({ page, context, browser, timeoutMs })` -- Part B's replacement for
+ * `main()`'s prior inline `bestEffortCloseAll`, which blanket-swallowed every close() failure via
+ * `.catch(() => {})`, discarding exactly the information the authorization requires ("cleanup
+ * failures must be recorded, not silently discarded"). Closes all three, best-effort (a failure
+ * OR TIMEOUT closing one never prevents attempting the next two, same as before), and returns
+ * which (if any) failed, each already passed through `describeError` (never a raw Error/live
+ * object). Works against any object exposing an async `close()` -- a real Playwright
+ * Page/BrowserContext/Browser in `main()`, or a plain fake in a test. `timeoutMs` (default
+ * `CLOSE_TIMEOUT_MS`) is overridable so a test can exercise the timeout path quickly rather than
+ * actually waiting out the real production bound.
+ *
+ * Note: `Promise.race` bounds how long THIS FUNCTION waits, not the underlying `close()` call
+ * itself -- Playwright's real API offers no cancellation, so a timed-out close() may still be
+ * running in the background after this function returns. This is the same limitation codex-
+ * review's own recommended fix accepts (racing each close against an independent deadline); it
+ * is still strictly better than blocking evidence-writing/rethrow indefinitely.
+ */
+async function closeAllBestEffort({ page, context, browser, timeoutMs = CLOSE_TIMEOUT_MS } = {}) {
+  const closeFailures = [];
+  const resources = [['page', page], ['context', context], ['browser', browser]];
+  for (const [resource, target] of resources) {
+    if (!target || typeof target.close !== 'function') continue;
+    let timer;
+    try {
+      await Promise.race([
+        target.close(),
+        new Promise((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error(`closeAllBestEffort: ${resource}.close() did not settle within ${timeoutMs}ms`)), timeoutMs);
+        }),
+      ]);
+    } catch (e) {
+      closeFailures.push({ resource, error: describeError(e) });
+    } finally {
+      // Clear the timer whichever branch won -- otherwise a successful close() still leaves a
+      // pending timer alive until it fires uselessly, which can keep the process/event loop
+      // alive longer than necessary.
+      clearTimeout(timer);
+    }
+  }
+  return { closeFailures };
+}
+
+// Part B: the exact, real catch sites in main()'s own Phase 0 sequence (below) -- `phase0Step`
+// is set immediately before each awaited call, never a guessed/invented category. codex-review
+// (medium, this pass): the original 3-step version only covered goto/bootstrap-ready/
+// module-install, leaving browser launch, context/page creation, and route/init-script
+// registration -- all genuine "harness assembly failure" per the authorization's own §2 list --
+// completely unguarded (a real failure there would leak the browser process and write no
+// evidence at all). Widened to cover the FULL Phase 0 sequence main() actually performs.
+const PHASE0_FAILURE_CATEGORIES = Object.freeze({
+  // codex-review (medium, round 2, High): 'harness-integrity' and 'playwright-import' added --
+  // the widened try block (main()) now covers these two steps too, which previously ran entirely
+  // unguarded, before any try/catch existed.
+  'harness-integrity': 'harness-integrity-compute-failed',
+  'playwright-import': 'playwright-import-failed',
+  'browser-launch': 'browser-launch-failed',
+  'context-create': 'context-create-failed',
+  'page-create': 'page-create-failed',
+  'route-setup': 'route-or-init-script-setup-failed',
+  goto: 'goto-failed',
+  'bootstrap-ready': 'bootstrap-ready-failed',
+  'module-install': 'module-install-failed',
+});
+
+// codex-review (medium, this pass): a hardcoded '-timeout' suffix for goto/bootstrap-ready
+// mislabels a genuine non-timeout failure (e.g. a real `net::ERR_CONNECTION_REFUSED` on
+// `page.goto`, or a page crash during `page.waitForFunction`) as a timeout, when neither call's
+// own explicit `timeout: 30_000` option was necessarily what actually fired. Only promotes the
+// category to the '-timeout' variant when the caught error is ACTUALLY a Playwright timeout
+// (`error.name === 'TimeoutError'`, Playwright's own documented name for this case) -- never
+// inferred from which step failed alone.
+const PHASE0_TIMEOUT_CAPABLE_STEPS = Object.freeze(new Set(['goto', 'bootstrap-ready']));
+function isPlaywrightTimeoutError(err) {
+  return Boolean(err) && (err.name === 'TimeoutError' || /\btimeout\b/i.test(String(err && err.message || '')));
+}
+function categorizePhase0Failure(step, err) {
+  const base = PHASE0_FAILURE_CATEGORIES[step] || 'phase-0-unknown-failure';
+  if (PHASE0_TIMEOUT_CAPABLE_STEPS.has(step) && isPlaywrightTimeoutError(err)) {
+    return base.replace(/-failed$/, '-timeout');
+  }
+  return base;
+}
+
+// codex-review (medium, round 2, High): the errorLedger events merged into Phase 0 evidence
+// (below) can carry RAW, unredacted strings -- a `required-resource-failure` event's `url` (a
+// failed request's full URL, which can carry a secret-shaped query parameter) and a `console`
+// event's `text` (arbitrary page-logged text, which can carry a secret-shaped header line). Every
+// OTHER string this file ever persists as evidence goes through `describeError`'s own
+// `redactString`/`truncateStringBytes` (Stage 1, already exhaustively tested); these two ledger
+// fields are the sole exception, because they were never passed through `describeError` at all
+// (they are plain listener-captured strings, not Error objects). `redactLedgerString` closes that
+// gap by reusing the EXACT SAME redactString/truncateStringBytes functions, given a small
+// throwaway state object, rather than inventing a second, independently-maintained redaction
+// regime.
+function redactLedgerString(str) {
+  if (typeof str !== 'string') return str;
+  const state = { truncated: false, redactions: [], totalBytes: 0 };
+  const redacted = redactString(str, 'ledgerEvent', state);
+  // Ledger text/url fields are free-form, comparably-sized strings to an error's own `stack`
+  // field -- reusing DESCRIBE_ERROR_MAX_STACK_BYTES as this field's own bound (not the larger
+  // whole-error DESCRIBE_ERROR_MAX_TOTAL_BYTES budget, which is per-error, not per-field).
+  const { value } = truncateStringBytes(redacted, DESCRIBE_ERROR_MAX_STACK_BYTES);
+  return value;
+}
+
+/** Applies `redactLedgerString` to the only two raw-string fields an errorLedger event can carry
+ * (`url` on a required-resource-failure event, `text` on a console event) -- every other field
+ * (e.g. a `pageerror` event's `error`) is already `describeError`-shaped at the SOURCE (main()'s
+ * own listener), so it is passed through unchanged here, never re-processed. Never mutates the
+ * input event. */
+function redactLedgerEventForEvidence(event) {
+  if (!event || typeof event !== 'object') return event;
+  const out = { ...event };
+  if (typeof out.url === 'string') out.url = redactLedgerString(out.url);
+  if (typeof out.text === 'string') out.text = redactLedgerString(out.text);
+  return out;
+}
+
+/**
+ * `handlePhase0Failure(...)` -- Part B: on any Phase 0 failure, builds a durable,
+ * schema-shaped-as-far-as-possible FAIL evidence object (reusing the SAME `computeOverall`,
+ * `buildCheckRecord`, `createControlResult`, `classifyViewerScriptIntegrity`, and `describeError`
+ * every other stage already uses -- never a hand-set `overall: 'FAIL'` literal, never a
+ * bespoke/unbounded error serialization), writes it through the injected `writeResultAtomically`
+ * (the SAME atomic write-temp-then-rename mechanism the success path uses, never a second
+ * evidence location), and returns without throwing (the caller, `main()`'s own catch block,
+ * remains solely responsible for rethrowing the PRIMARY Phase 0 error -- this function's own
+ * failure paths, e.g. a close() failure or a write failure, must never be promoted to primary or
+ * silently swallow it).
+ *
+ * `captureViewerScriptIntegrity` is safely callable here even though close (via `closeAllFn`)
+ * has just run -- it only awaits already-collected in-page listener state (see its own doc
+ * comment where `main()` constructs it), never re-touches the live page/context/browser.
+ *
+ * Ordering (deliberate, matches the authorization's own requirements): `closeAllFn` runs FIRST
+ * (cleanup should not be delayed further by evidence assembly), then Viewer-script identity is
+ * finalized, then evidence is assembled via `computeOverall`, then written. A write failure is
+ * captured and returned as `evidenceWriteError` (already `describeError`-shaped) rather than
+ * thrown from here, so it can never overwrite/obscure the primary Phase 0 error the caller is
+ * about to rethrow; the caller is expected to surface it distinctly (see `main()`, below).
+ */
+async function handlePhase0Failure({
+  error, failureCategory, startedAt, harnessIntegrityInput, runtimeEnvelope = {},
+  captureViewerScriptIntegrity, browserExisted = true, pageExisted = true, contextExisted = true,
+  closeAllFn, writeResultAtomically, consoleErrorFn = console.error,
+  // codex-review (medium, this pass): the page.on(pageerror/console/requestfailed) listeners
+  // main() already registers before Phase 0's own goto (existing code, unchanged) had genuinely
+  // observed events discarded by this function -- e.g. a required static resource's own
+  // requestfailed event, or a page error, that actually EXPLAINS why goto/bootstrap-ready timed
+  // out. `errorLedger` (main()'s own ledger object, exposing `.summary()` -- the SAME shape/
+  // method the success path already calls) is now merged in, never silently dropped. Optional --
+  // a test exercising handlePhase0Failure in isolation may omit it, and the merge degrades to
+  // empty arrays, exactly as before.
+  errorLedger = null,
+} = {}) {
+  const closeResult = typeof closeAllFn === 'function' ? await closeAllFn() : { closeFailures: [] };
+  const closeFailures = (closeResult && closeResult.closeFailures) || [];
+
+  // Viewer-script identity: same shape/finalization as runHarness's own Phase 11 (below),
+  // deliberately duplicated rather than shared, since runHarness's own copy runs strictly AFTER
+  // Phase 0 succeeds and is not itself callable from here without restructuring runHarness's own
+  // already-reviewed Phase 11 boundary (out of this task's minimal-refactor scope).
+  let viewerScriptIntegrity = INTEGRITY_RESULT.CAPTURE_UNAVAILABLE;
+  let integrityReason = 'capture-function-not-injected';
+  let viewerScriptCaptureRecord = null;
+  if (typeof captureViewerScriptIntegrity === 'function') {
+    try {
+      viewerScriptCaptureRecord = await captureViewerScriptIntegrity();
+      const classified = classifyViewerScriptIntegrity(viewerScriptCaptureRecord);
+      viewerScriptIntegrity = classified.integrityResult;
+      integrityReason = classified.reason;
+    } catch (captureErr) {
+      viewerScriptIntegrity = INTEGRITY_RESULT.CAPTURE_UNAVAILABLE;
+      integrityReason = 'capture-threw';
+      viewerScriptCaptureRecord = null;
+    }
+  }
+
+  // checks.F1-F8 / controls.* -- none ran (Phase 0 is strictly before Phase 1), so every entry
+  // is the SAME fail-closed "not reached" shape runHarness's own mid-sequence fatal-error branch
+  // already uses for exactly this situation (see runHarness's own `blockedBy: 'fatal-error'`
+  // usage) -- never a missing object (validateResultSchema's own "every check/control is always
+  // written" requirement).
+  const checks = {};
+  for (const name of F_CHECK_NAMES) {
+    checks[name] = buildCheckRecord({
+      verdict: CHECK_VERDICT.BLOCKED,
+      reason: `not-reached:phase-0-failure:${failureCategory}`,
+      evidence: { status: 'not-run', blockedBy: 'fatal-error' },
+    });
+  }
+  const controls = {};
+  for (const name of CONTROL_NAMES) {
+    controls[name] = createControlResult(name, {
+      state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null,
+      reason: `phase-0-failure:${failureCategory}`,
+    });
+  }
+
+  // computeOverall -- fatalErrorObserved:true alone forces branch 1 -> FAIL, regardless of every
+  // other input (plan §6.3's own reviewed precedence, "fatal runtime/page/console failure ->
+  // FAIL" -- a Phase 0 failure IS exactly this). classifier is honestly
+  // INDETERMINATE_UNAVAILABLE: Phase 0 never reaches the point where readFormat() could run.
+  const overall = computeOverall({
+    fatalErrorObserved: true,
+    cleanupUnresolvedOwnership: false, // Phase 0 never establishes any shared-session ownership.
+    viewerScriptIntegrity,
+    classifier: CLASSIFIER.INDETERMINATE_UNAVAILABLE,
+    checks: projectCheckVerdicts(checks),
+    controls,
+    cleanupFailures: closeFailures,
+  });
+
+  const finishedAt = new Date().toISOString();
+  const describedError = describeError(error);
+  const evidence = {
+    script: 'g1-svf2-f1-f8-verification.mjs',
+    phase: 'PHASE_0',
+    failureCategory,
+    error: describedError,
+    harnessIntegrity: {
+      ...(harnessIntegrityInput || {}),
+      remoteAssets: {
+        viewerScript: {
+          integrityResult: viewerScriptIntegrity, reason: integrityReason,
+          expectedSha256: EXPECTED_VIEWER_SHA256, requestedUrl: VIEWER_SCRIPT_URL,
+          capture: viewerScriptCaptureRecord,
+        },
+        viewerStyle: { identityScope: 'CAPTURE_UNAVAILABLE', identityGatesOverall: false },
+        otherObservedRemoteAssets: [],
+      },
+    },
+    runtimeEnvelope: {
+      viewerVersion: runtimeEnvelope.viewerVersion ?? null,
+      chromium: runtimeEnvelope.chromium ?? null,
+      node: runtimeEnvelope.node || process.version,
+      modelUrn: runtimeEnvelope.modelUrn ?? null,
+      initializer: runtimeEnvelope.initializer || {},
+    },
+    classifier: CLASSIFIER.INDETERMINATE_UNAVAILABLE,
+    runtime: { isOTG: null, isSVF2: null },
+    checks,
+    controls,
+    staleContinuationsDropped: [],
+    errorLedger: (() => {
+      const ledgerSummary = errorLedger && typeof errorLedger.summary === 'function' ? errorLedger.summary() : null;
+      // codex-review (medium, round 2, High): every already-observed event is passed through
+      // redactLedgerEventForEvidence before being persisted -- a raw `url`/`text` field could
+      // otherwise carry a secret-shaped query parameter or header line straight into the
+      // evidence file (verified by a direct synthetic check this round). The synthetic
+      // phase-0-failure entry itself is already describeError-shaped, so it is not re-processed.
+      const arr = (field) => (ledgerSummary && Array.isArray(ledgerSummary[field])
+        ? ledgerSummary[field].map(redactLedgerEventForEvidence)
+        : []);
+      return {
+        pageErrors: arr('pageErrors'),
+        unhandledRejections: arr('unhandledRejections'),
+        // The synthetic phase-0-failure entry is APPENDED after whatever was already genuinely
+        // observed -- never replaces it, and is always last (the primary failure, reported
+        // last/most-recently, same convention runHarness's own mid-sequence fatal path uses).
+        requiredResourceFailures: [...arr('requiredResourceFailures'), { kind: 'phase-0-failure', category: failureCategory, error: describedError }],
+        contextLoss: arr('contextLoss'),
+        consoleErrors: arr('consoleErrors'),
+        consoleWarnings: arr('consoleWarnings'),
+        allowListedFingerprints: arr('allowListedFingerprints'),
+        fatalErrorObserved: true,
+      };
+    })(),
+    cleanupFailures: closeFailures,
+    cleanupUnresolvedOwnership: false,
+    overall,
+    startedAt, finishedAt,
+    // Non-§8-named, additive diagnostic evidence (never gates anything, same convention as
+    // runHarness's own `cleanupStepStatus`/`viewerScriptIntegrityReason`): explicit record of
+    // which resources existed and that cleanup was attempted, per the authorization's own
+    // "record it as an explicit field, not an assumption" requirement.
+    resourcesExisted: { browser: Boolean(browserExisted), page: Boolean(pageExisted), context: Boolean(contextExisted) },
+    cleanupAttempted: true,
+    viewerScriptIntegrityReason: integrityReason,
+  };
+
+  let evidenceWriteError = null;
+  if (typeof writeResultAtomically === 'function') {
+    try {
+      await writeResultAtomically(evidence);
+    } catch (writeErr) {
+      evidenceWriteError = describeError(writeErr);
+      if (typeof consoleErrorFn === 'function') {
+        consoleErrorFn('g1-svf2-f1-f8-verification.mjs: FAILED to write Phase 0 failure evidence file (original Phase 0 failure below remains primary)', writeErr);
+      }
+    }
+  }
+
+  return { evidence, closeFailures, evidenceWriteError };
+}
+
 async function main() {
   // Step 1 -- activation interlock, checked FIRST, before anything else (including this
   // function's own step 2). Delegates its decision to parseLiveActivation (above); either
@@ -6595,32 +6941,53 @@ async function main() {
     );
   }
 
-  // Step 2 -- only past this point: dynamic import('playwright'), a real browser launch, and
-  // every other real side effect this file performs.
-  const { chromium } = await import('playwright');
+  // Part B: startedAt captured at the earliest point main() begins its own real work (matching
+  // runHarness's own convention of capturing `startedAt` at the very start of ITS own
+  // responsibility) -- reused as the Phase 0 failure evidence's own `startedAt` if Phase 0 never
+  // reaches runHarness at all.
+  const startedAt = new Date().toISOString();
 
-  // harnessIntegrity (plan §8): computed before any browser action -- git/hash/manifest fields
-  // only, never anything requiring a page. `servedModuleManifest` walks the SAME entry points
-  // the harness actually serves (SERVED_MODULE_ENTRY_POINTS, above), via the already-built, pure
-  // buildServedModuleManifest -- no new hashing logic here.
-  const harnessSha256 = createHash('sha256').update(await nodeReadFile(new URL(import.meta.url), 'utf8')).digest('hex');
-  const gitField = (args) => {
-    try { return execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' }).trim(); } catch { return null; }
-  };
-  const harnessIntegrity = {
-    path: 'test/acceptance/g1-svf2-f1-f8-verification.mjs',
-    sha256: harnessSha256,
-    // '' (never null) on a git-command failure -- validateResultSchema requires a string; an
-    // empty value is itself informative (git unavailable), never a missing/non-string field.
-    branch: gitField(['rev-parse', '--abbrev-ref', 'HEAD']) ?? '',
-    headSha: gitField(['rev-parse', 'HEAD']) ?? '',
-    gitStatusPorcelain: gitField(['status', '--porcelain']) ?? '',
-    servedModuleManifest: await buildServedModuleManifest(SERVED_MODULE_ENTRY_POINTS, {}),
+  // codex-review (medium, round 2, High): the evidence writer is now constructed HERE,
+  // immediately after activation succeeds and BEFORE anything else that could itself fail (the
+  // dynamic `import('playwright')`, harnessIntegrity computation, browser launch, etc.) -- it has
+  // no dependency on any of those, so it must be available for even the EARLIEST possible Phase 0
+  // failure. Previously this was constructed much later (after the playwright import and
+  // harnessIntegrity computation had already run, unguarded), so a failure in either of those had
+  // no writer available at all and produced no evidence whatsoever.
+  // Atomic write (plan §8): write-temp-then-rename to the existing, git-ignored
+  // test/acceptance/results/ convention (§5's own file table).
+  const resultPath = path.join(REPO_ROOT, 'test', 'acceptance', 'results', 'g1-svf2-f1-f8-verification-result.json');
+  const writeResultAtomically = async (result) => {
+    await nodeMkdir(path.dirname(resultPath), { recursive: true });
+    const tmpPath = `${resultPath}.tmp-${randomUUID()}`;
+    try {
+      await nodeWriteFile(tmpPath, JSON.stringify(result, null, 2), 'utf8');
+      await nodeRename(tmpPath, resultPath);
+    } catch (writeOrRenameErr) {
+      // codex-review (medium, round 1, Low): a failed write or rename previously left the temp
+      // file behind indefinitely (repeated failures would accumulate `.tmp-*` files in the
+      // results directory). Best-effort unlink here, then rethrow the ORIGINAL error unchanged --
+      // an unlink failure (including "never existed" if writeFile itself never got that far) is
+      // swallowed, since it must never mask the real failure being reported.
+      await nodeUnlink(tmpPath).catch(() => {});
+      throw writeOrRenameErr;
+    }
   };
 
-  const browser = await chromium.launch();
-  const context = await browser.newContext({ serviceWorkers: 'block' });
-  const page = await context.newPage();
+  // codex-review (medium, round 1, Critical; round 2, High): browser/context/page/
+  // harnessIntegrity are all nullable OUTER bindings, assigned inside the widened Phase 0 try
+  // block below (was: unguarded `const` declarations, and a harnessIntegrity computed entirely
+  // before any try/catch existed at all -- a `chromium.launch()`/`newContext()`/`newPage()`, an
+  // `import('playwright')`, or a `buildServedModuleManifest` rejection was entirely unguarded,
+  // leaking whatever partially launched and writing no evidence). `pageEvaluate`/
+  // `pageWaitForFunction` are nullable for the same reason (built from `page`, which may not
+  // exist yet on a failure this early).
+  let browser = null;
+  let context = null;
+  let page = null;
+  let pageEvaluate = null;
+  let pageWaitForFunction = null;
+  let harnessIntegrity = null;
 
   // Fix wave (final whole-branch review, Critical C1): best-effort outer cleanup guard.
   // codex-advisor (medium, this fix wave): a goto/readiness/module-install failure in the new
@@ -6629,11 +6996,12 @@ async function main() {
   // run for it -- without this guard a Phase 0 failure would leak the browser process. This does
   // NOT change runHarness's own cleanup contract; it only ensures a browser main() opened is
   // always closed even if main() never reaches the point of handing it to runHarness at all.
-  const bestEffortCloseAll = async () => {
-    await page.close().catch(() => {});
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
-  };
+  // Part B: now delegates to closeAllBestEffort (above), which reports which close(s) failed
+  // instead of blanket-swallowing every failure via `.catch(() => {})` -- required so a Phase 0
+  // failure's own evidence can record a genuine cleanup failure rather than silently discarding
+  // it. Reads `page`/`context`/`browser` at CALL time (closure over the `let` bindings above), so
+  // it correctly closes only whichever of the three actually got created, however far Phase 0 got.
+  const bestEffortCloseAll = () => closeAllBestEffort({ page, context, browser });
 
   const errorLedgerEvents = [];
   const errorLedger = {
@@ -6650,9 +7018,6 @@ async function main() {
       };
     },
   };
-  page.on('pageerror', (err) => errorLedger.record({ kind: 'pageerror', error: describeError(err) }));
-  page.on('console', (msg) => errorLedger.record({ kind: 'console', level: msg.type(), text: msg.text() }));
-  page.on('requestfailed', (request) => errorLedger.record({ kind: 'required-resource-failure', url: request.url() }));
 
   // Fix wave (C1): Viewer-script integrity capture state -- Node-side only, never re-evaluates
   // the page. runHarness's own Phase 11 calls `captureViewerScriptIntegrity` AFTER
@@ -6665,44 +7030,6 @@ async function main() {
     requestFailed: false, autodeskViewingDefined: false, attributableResponses: [], responseBodyTasks: [],
   };
   const RESPONSE_BODY_CAPTURE_TIMEOUT_MS = 10_000;
-  page.on('response', (response) => {
-    const request = response.request();
-    if (request.resourceType() !== 'script') return;
-    // Only the TERMINAL response of a possible redirect chain is attributable. codex-advisor
-    // (this fix wave): a 3xx redirect hop's own `response` event can fire before Playwright has
-    // populated that request's own `redirectedTo()`, so status-code filtering (never
-    // `redirectedTo()`) is what reliably distinguishes an intermediate hop from the final
-    // response; `walkRedirectRootUrl` (above) then confirms the chain traces back to the
-    // pinned Viewer script URL.
-    const status = response.status();
-    if (status >= 300 && status < 400) return;
-    if (walkRedirectRootUrl(request) !== VIEWER_SCRIPT_URL) return;
-    const record = {
-      status, redirectChainComplete: true, fromServiceWorker: response.fromServiceWorker(),
-      bodyOutcome: 'pending-at-close', decodedByteLength: null, sha256: null,
-    };
-    integrityState.attributableResponses.push(record);
-    // response.body() is async and page.on(...) never awaits its listener (EventEmitter
-    // semantics, codex-advisor's own finding) -- tracked here as a bounded (timeout-raced) task
-    // so `captureViewerScriptIntegrity` can safely await every task AFTER the page/context/
-    // browser have already closed, without itself depending on a live page.
-    const bodyTask = Promise.race([
-      response.body().then((buf) => {
-        record.bodyOutcome = buf.length > 0 ? 'captured' : 'empty';
-        record.decodedByteLength = buf.length;
-        if (buf.length > 0) record.sha256 = createHash('sha256').update(buf).digest('hex');
-      }).catch(() => { record.bodyOutcome = 'capture-failed'; }),
-      new Promise((resolve) => setTimeout(resolve, RESPONSE_BODY_CAPTURE_TIMEOUT_MS)),
-    ]);
-    integrityState.responseBodyTasks.push(bodyTask);
-  });
-  page.on('requestfailed', (request) => {
-    // Chain-based, exactly like the response listener above -- a failure can occur on any hop
-    // of a redirect chain, not only a request whose own url() is the pinned Viewer script URL.
-    if (request.resourceType() !== 'script') return;
-    if (walkRedirectRootUrl(request) !== VIEWER_SCRIPT_URL) return;
-    integrityState.requestFailed = true;
-  });
   const captureViewerScriptIntegrity = async () => {
     await Promise.allSettled(integrityState.responseBodyTasks);
     return {
@@ -6712,53 +7039,168 @@ async function main() {
     };
   };
 
-  // Fix wave (Minor M1): origin check applied to both routes below (T3's own guard,
-  // `clashtest-viewer-adapter.acceptance.mjs:933`, `handleClashtestRoute`'s own doc comment
-  // named this exact gap) -- a cross-origin request matching either glob is passed through via
-  // `route.continue()` rather than served by this harness.
-  await context.route('**/clashtest/**', (route) => handleClashtestRoute(route, { baseUrl: BASE_URL }));
-  // Stage 8 fix: F7's own observeF7 (Stage 6) reads window.__g1.mod['/clashpanel/viewer/
-  // viewerApi.js'] (createViewerApi) -- a module OUTSIDE clashtest/, which
-  // resolveClashtestModulePath/handleClashtestRoute (hardwired to CLASHTEST_DIR) cannot resolve.
-  // Mirrors the exact same security pattern (path-traversal + extension check, serve from disk,
-  // 404 on anything else) scoped to clashpanel/ instead, inline here since it is real-wiring-
-  // only and never exercised by any offline test (those fake pageEvaluate/window.__g1.mod
-  // directly, per every prior stage's own convention).
-  const clashpanelDir = path.join(REPO_ROOT, 'clashpanel');
-  await context.route('**/clashpanel/**', async (route) => {
-    const url = new URL(route.request().url());
-    if (url.origin !== new URL(BASE_URL).origin) return route.continue(); // fix wave M1
-    const rel = decodeURIComponent(url.pathname).replace(/^\/clashpanel\//, '');
-    const abs = path.resolve(clashpanelDir, rel);
-    if (!abs.startsWith(clashpanelDir + path.sep) || !abs.endsWith('.js')) {
-      return route.fulfill({ status: 404, body: 'not served by g1-svf2-f1-f8-verification' });
-    }
-    try {
-      await nodeReadFile(abs);
-    } catch {
-      return route.fulfill({ status: 404, body: 'not found' });
-    }
-    return route.fulfill({ path: abs, contentType: 'text/javascript' });
-  });
-  // Fix wave (C1): the harness's own bare synthetic page (mirrors
-  // g1-svf2-initializer-diagnostic.mjs's own `page.route('**/__g1-diagnostic__', ...)` pattern).
-  // Registered with the EXACT URL (no glob wildcard), per codex-advisor's own finding (this fix
-  // wave, "apply origin protection to the synthetic page too") -- Playwright matches a plain,
-  // wildcard-free string as a full-URL match, so this can only ever serve that one exact URL,
-  // never a cross-origin or path-varied request.
-  await page.route(`${BASE_URL}/__g1-f1f8__`, (route) => route.fulfill({ contentType: 'text/html', body: BARE_PAGE_HTML }));
-  await page.addInitScript({ content: buildBootstrapScriptSource() });
-
-  const { pageEvaluate, pageWaitForFunction } = buildRealPageDeps(page);
-
   // Fix wave (C1): the real Phase 0 navigation/readiness/module-install sequence -- previously
   // entirely absent (the reviewer's own finding: no page.goto, no Initializer/viewer.start()
   // call, no window.__g1.mod population). Wrapped in the outer best-effort cleanup guard above:
   // any failure here closes the browser before rethrowing, never a leaked process (codex-advisor,
-  // this fix wave). All route/addInitScript/page.on registration above already completed before
-  // this goto, per codex-advisor's own required ordering.
+  // this fix wave).
+  // codex-review (medium, round 1, Critical): WIDENED to cover browser launch, context/page
+  // creation, and every route/init-script registration too -- previously only goto/bootstrap-
+  // ready/module-install were guarded, so a browser-launch, context/page-creation, or route/
+  // init-script-registration rejection was entirely unguarded: no cleanup attempt, no evidence
+  // written, a genuine "harness assembly failure" (explicitly listed
+  // in the authorization's own §2 failure-category list) silently falling through this file's own
+  // safety net.
+  // codex-review (medium, round 2, High): FURTHER WIDENED to cover harnessIntegrity's own
+  // computation and the dynamic `import('playwright')` itself, now the very first two steps --
+  // previously BOTH ran entirely before any try/catch existed in this function, so a missing
+  // 'playwright' package, an unreadable harness file, or a `buildServedModuleManifest` failure (a
+  // genuinely possible "required module import failure" if a served module's own static import
+  // graph references a file that no longer exists on disk) reached only main()'s own top-level
+  // stderr `.catch`, with no durable evidence written at all.
+  // `phase0Step` is set immediately before each awaited call below, and is the ONLY source
+  // `categorizePhase0Failure` (above `main()`) uses to derive the failure's exact category --
+  // never a guess from the error's own message/type alone (it also inspects the caught error
+  // itself, to distinguish an actual timeout from e.g. a connection failure -- see
+  // `categorizePhase0Failure`'s own doc comment).
+  let phase0Step = 'harness-integrity';
   try {
+    // harnessIntegrity (plan §8): computed FIRST, before any browser/Playwright action --
+    // git/hash/manifest fields only, never anything requiring a page. `servedModuleManifest`
+    // walks the SAME entry points the harness actually serves (SERVED_MODULE_ENTRY_POINTS,
+    // above), via the already-built, pure buildServedModuleManifest -- no new hashing logic here.
+    // codex-review (medium, round 3, High): assigned INCREMENTALLY now (was: a single object
+    // literal assigned only once every field -- including the fallible buildServedModuleManifest
+    // walk -- had already succeeded). `buildServedModuleManifest` can genuinely throw (a served
+    // module's own static import graph referencing a file that no longer exists on disk, per its
+    // own doc comment) -- if it does, `harnessIntegrity` previously stayed entirely `null` even
+    // though `path`/`sha256`/`branch`/`headSha`/`gitStatusPorcelain` were already known,
+    // genuinely valid values by that point. Now every field is written into `harnessIntegrity` as
+    // soon as it is computed, so a manifest-walk failure (the realistic case) still leaves
+    // Phase 0 evidence schema-valid for every OTHER integrity field, with only
+    // `servedModuleManifest` honestly empty (`{}` -- itself schema-valid: an empty object,
+    // structurally never fails `validateResultSchema`'s per-key check, since there are no keys to
+    // check).
+    phase0Step = 'harness-integrity';
+    harnessIntegrity = {
+      path: 'test/acceptance/g1-svf2-f1-f8-verification.mjs',
+      sha256: null, branch: '', headSha: '', gitStatusPorcelain: '', servedModuleManifest: {},
+    };
+    const harnessSha256 = createHash('sha256').update(await nodeReadFile(new URL(import.meta.url), 'utf8')).digest('hex');
+    harnessIntegrity.sha256 = harnessSha256;
+    const gitField = (args) => {
+      try { return execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' }).trim(); } catch { return null; }
+    };
+    // '' (never null) on a git-command failure -- validateResultSchema requires a string; an
+    // empty value is itself informative (git unavailable), never a missing/non-string field.
+    harnessIntegrity.branch = gitField(['rev-parse', '--abbrev-ref', 'HEAD']) ?? '';
+    harnessIntegrity.headSha = gitField(['rev-parse', 'HEAD']) ?? '';
+    harnessIntegrity.gitStatusPorcelain = gitField(['status', '--porcelain']) ?? '';
+    harnessIntegrity.servedModuleManifest = await buildServedModuleManifest(SERVED_MODULE_ENTRY_POINTS, {});
+
+    // Only past this point: dynamic import('playwright'), a real browser launch, and every other
+    // real side effect this file performs.
+    phase0Step = 'playwright-import';
+    const { chromium } = await import('playwright');
+
+    phase0Step = 'browser-launch';
+    browser = await chromium.launch();
+    phase0Step = 'context-create';
+    context = await browser.newContext({ serviceWorkers: 'block' });
+    phase0Step = 'page-create';
+    page = await context.newPage();
+
+    page.on('pageerror', (err) => errorLedger.record({ kind: 'pageerror', error: describeError(err) }));
+    page.on('console', (msg) => errorLedger.record({ kind: 'console', level: msg.type(), text: msg.text() }));
+    page.on('requestfailed', (request) => errorLedger.record({ kind: 'required-resource-failure', url: request.url() }));
+
+    page.on('response', (response) => {
+      const request = response.request();
+      if (request.resourceType() !== 'script') return;
+      // Only the TERMINAL response of a possible redirect chain is attributable. codex-advisor
+      // (this fix wave): a 3xx redirect hop's own `response` event can fire before Playwright has
+      // populated that request's own `redirectedTo()`, so status-code filtering (never
+      // `redirectedTo()`) is what reliably distinguishes an intermediate hop from the final
+      // response; `walkRedirectRootUrl` (above) then confirms the chain traces back to the
+      // pinned Viewer script URL.
+      const status = response.status();
+      if (status >= 300 && status < 400) return;
+      if (walkRedirectRootUrl(request) !== VIEWER_SCRIPT_URL) return;
+      const record = {
+        status, redirectChainComplete: true, fromServiceWorker: response.fromServiceWorker(),
+        bodyOutcome: 'pending-at-close', decodedByteLength: null, sha256: null,
+      };
+      integrityState.attributableResponses.push(record);
+      // response.body() is async and page.on(...) never awaits its listener (EventEmitter
+      // semantics, codex-advisor's own finding) -- tracked here as a bounded (timeout-raced) task
+      // so `captureViewerScriptIntegrity` can safely await every task AFTER the page/context/
+      // browser have already closed, without itself depending on a live page.
+      // codex-review (medium, round 3, Low): the timeout timer is now cleared as soon as
+      // response.body() itself settles -- previously it stayed live for the full
+      // RESPONSE_BODY_CAPTURE_TIMEOUT_MS regardless, which could keep the event loop alive
+      // needlessly if Phase 0 fails shortly after a fast, successful capture.
+      let bodyTimeoutTimer;
+      const bodyTask = Promise.race([
+        response.body().then((buf) => {
+          record.bodyOutcome = buf.length > 0 ? 'captured' : 'empty';
+          record.decodedByteLength = buf.length;
+          if (buf.length > 0) record.sha256 = createHash('sha256').update(buf).digest('hex');
+        }).catch(() => { record.bodyOutcome = 'capture-failed'; }),
+        new Promise((resolve) => { bodyTimeoutTimer = setTimeout(resolve, RESPONSE_BODY_CAPTURE_TIMEOUT_MS); }),
+      ]).finally(() => clearTimeout(bodyTimeoutTimer));
+      integrityState.responseBodyTasks.push(bodyTask);
+    });
+    page.on('requestfailed', (request) => {
+      // Chain-based, exactly like the response listener above -- a failure can occur on any hop
+      // of a redirect chain, not only a request whose own url() is the pinned Viewer script URL.
+      if (request.resourceType() !== 'script') return;
+      if (walkRedirectRootUrl(request) !== VIEWER_SCRIPT_URL) return;
+      integrityState.requestFailed = true;
+    });
+
+    phase0Step = 'route-setup';
+    // Fix wave (Minor M1): origin check applied to both routes below (T3's own guard,
+    // `clashtest-viewer-adapter.acceptance.mjs:933`, `handleClashtestRoute`'s own doc comment
+    // named this exact gap) -- a cross-origin request matching either glob is passed through via
+    // `route.continue()` rather than served by this harness.
+    await context.route('**/clashtest/**', (route) => handleClashtestRoute(route, { baseUrl: BASE_URL }));
+    // Stage 8 fix: F7's own observeF7 (Stage 6) reads window.__g1.mod['/clashpanel/viewer/
+    // viewerApi.js'] (createViewerApi) -- a module OUTSIDE clashtest/, which
+    // resolveClashtestModulePath/handleClashtestRoute (hardwired to CLASHTEST_DIR) cannot resolve.
+    // Mirrors the exact same security pattern (path-traversal + extension check, serve from disk,
+    // 404 on anything else) scoped to clashpanel/ instead, inline here since it is real-wiring-
+    // only and never exercised by any offline test (those fake pageEvaluate/window.__g1.mod
+    // directly, per every prior stage's own convention).
+    const clashpanelDir = path.join(REPO_ROOT, 'clashpanel');
+    await context.route('**/clashpanel/**', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.origin !== new URL(BASE_URL).origin) return route.continue(); // fix wave M1
+      const rel = decodeURIComponent(url.pathname).replace(/^\/clashpanel\//, '');
+      const abs = path.resolve(clashpanelDir, rel);
+      if (!abs.startsWith(clashpanelDir + path.sep) || !abs.endsWith('.js')) {
+        return route.fulfill({ status: 404, body: 'not served by g1-svf2-f1-f8-verification' });
+      }
+      try {
+        await nodeReadFile(abs);
+      } catch {
+        return route.fulfill({ status: 404, body: 'not found' });
+      }
+      return route.fulfill({ path: abs, contentType: 'text/javascript' });
+    });
+    // Fix wave (C1): the harness's own bare synthetic page (mirrors
+    // g1-svf2-initializer-diagnostic.mjs's own `page.route('**/__g1-diagnostic__', ...)` pattern).
+    // Registered with the EXACT URL (no glob wildcard), per codex-advisor's own finding (this fix
+    // wave, "apply origin protection to the synthetic page too") -- Playwright matches a plain,
+    // wildcard-free string as a full-URL match, so this can only ever serve that one exact URL,
+    // never a cross-origin or path-varied request.
+    await page.route(`${BASE_URL}/__g1-f1f8__`, (route) => route.fulfill({ contentType: 'text/html', body: BARE_PAGE_HTML }));
+    await page.addInitScript({ content: buildBootstrapScriptSource() });
+
+    ({ pageEvaluate, pageWaitForFunction } = buildRealPageDeps(page));
+
+    phase0Step = 'goto';
     await page.goto(`${BASE_URL}/__g1-f1f8__`, { waitUntil: 'load', timeout: 30_000 });
+    phase0Step = 'bootstrap-ready';
     await page.waitForFunction(() => window.__g1Bootstrap && window.__g1Bootstrap.ready === true, { timeout: 30_000 });
     // Reaching bootstrap readiness requires Autodesk.Viewing to already be defined (its own
     // Initializer callback is what sets window.__g1Bootstrap.ready) -- the only reliable signal
@@ -6770,13 +7212,44 @@ async function main() {
     // (SERVED_MODULE_ENTRY_POINTS, above -- e.g. observeF7's own '/clashpanel/viewer/
     // viewerApi.js' read). codex-advisor (this fix wave): every result must be validated, never
     // merely awaited -- a failed import must not be allowed to continue silently into runHarness.
+    phase0Step = 'module-install';
     const moduleInstallResult = await pageEvaluate(installG1Modules, SERVED_MODULE_ENTRY_POINTS);
     const failedModules = Object.entries(moduleInstallResult || {}).filter(([, r]) => !r || r.ok !== true);
     if (failedModules.length > 0) {
       throw new Error(`g1-svf2-f1-f8-verification.mjs: installG1Modules failed for: ${failedModules.map(([spec]) => spec).join(', ')}`);
     }
   } catch (e) {
-    await bestEffortCloseAll();
+    // Part B: any Phase 0 failure now writes durable, schema-shaped FAIL evidence (via
+    // handlePhase0Failure, above) BEFORE rethrowing, through the exact same atomic-write
+    // mechanism the success path uses -- previously this branch only ran best-effort cleanup and
+    // rethrew, leaving nothing durable but a stderr stack trace.
+    const failureCategory = categorizePhase0Failure(phase0Step, e);
+    let chromiumVersion = null;
+    if (browser) {
+      try { chromiumVersion = browser.version(); } catch { /* browser may already be in a bad state; chromium stays null, never fabricated */ }
+    }
+    const { evidenceWriteError } = await handlePhase0Failure({
+      error: e, failureCategory, startedAt,
+      harnessIntegrityInput: harnessIntegrity,
+      runtimeEnvelope: {
+        viewerVersion: VIEWER_VERSION, chromium: chromiumVersion, node: process.version,
+        modelUrn: MODEL_URN, initializer: { env: 'AutodeskProduction2', api: 'streamingV2' },
+      },
+      captureViewerScriptIntegrity,
+      // codex-review (medium, this pass): previously hardcoded `true` for all three -- now the
+      // REAL existence state (a browser-launch failure, for instance, leaves all three false).
+      browserExisted: Boolean(browser), pageExisted: Boolean(page), contextExisted: Boolean(context),
+      closeAllFn: bestEffortCloseAll,
+      writeResultAtomically,
+      errorLedger,
+    });
+    // The primary Phase 0 failure (`e`) is rethrown unchanged, still the sole primary/reported
+    // failure -- an evidence-write failure is attached as a non-enumerable-shaped extra property
+    // (surfaced to main()'s own top-level `.catch` below, never silently dropped) rather than
+    // replacing or wrapping `e`.
+    if (evidenceWriteError) {
+      e.phase0EvidenceWriteError = evidenceWriteError;
+    }
     throw e;
   }
 
@@ -6796,17 +7269,6 @@ async function main() {
     // placeholder.
     viewerVersion: VIEWER_VERSION,
     chromium: browser.version(),
-  };
-
-  // Atomic write (plan §8): write-temp-then-rename to the existing, git-ignored
-  // test/acceptance/results/ convention (§5's own file table) -- called by runHarness itself,
-  // once, as its own last action (never mid-sequence, never partial).
-  const resultPath = path.join(REPO_ROOT, 'test', 'acceptance', 'results', 'g1-svf2-f1-f8-verification-result.json');
-  const writeResultAtomically = async (result) => {
-    await nodeMkdir(path.dirname(resultPath), { recursive: true });
-    const tmpPath = `${resultPath}.tmp-${randomUUID()}`;
-    await nodeWriteFile(tmpPath, JSON.stringify(result, null, 2), 'utf8');
-    await nodeRename(tmpPath, resultPath);
   };
 
   const result = await runHarness({
@@ -6840,6 +7302,15 @@ if (import.meta.url === `file://${process.argv[1]}` && !process.env.NODE_TEST_CO
 }
 
 export {
+  closeAllBestEffort,
+  CLOSE_TIMEOUT_MS,
+  PHASE0_FAILURE_CATEGORIES,
+  PHASE0_TIMEOUT_CAPABLE_STEPS,
+  isPlaywrightTimeoutError,
+  categorizePhase0Failure,
+  redactLedgerString,
+  redactLedgerEventForEvidence,
+  handlePhase0Failure,
   CLASSIFIER,
   CHECK_VERDICT,
   OVERALL_VERDICT,

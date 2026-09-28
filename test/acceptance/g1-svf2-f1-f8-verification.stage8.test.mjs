@@ -31,6 +31,7 @@ import {
   IN_PAGE_FUNCTION_REGISTRY, buildBootstrapScriptSource, documentLoadStarter,
   loadDocumentNodeStarter, f3InstallProbe, f3ProbeSettledPredicate, f3FinalizeProbe,
   setupSharedSessionResources, captureModelFormatSignals,
+  PHASE0_FAILURE_CATEGORIES,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 const HARNESS_PATH = fileURLToPath(new URL('./g1-svf2-f1-f8-verification.mjs', import.meta.url));
@@ -182,6 +183,50 @@ test('runHarness: full happy-path ordering -- F3 install before load, classifier
   assert.equal(result.checks.F6.verdict, CHECK_VERDICT.PASS);
 });
 
+// ============================================================================================
+// codex-review (medium, round 3, High): runHarness's own SUCCESS-path errorLedger output must be
+// redacted too -- previously only the Phase 0 failure path (handlePhase0Failure) redacted ledger
+// events; this exercises the SAME real runHarness result assembly a normal, all-checks-PASS run
+// produces, with a secret-bearing errorLedger event injected exactly as a real page.on listener
+// would have recorded one.
+// ============================================================================================
+
+function fakeErrorLedgerWithSecretEvent() {
+  const events = [
+    { kind: 'required-resource-failure', url: 'https://host/asset?access_token=TOTALLY-SECRET-XYZ' },
+    { kind: 'console', level: 'error', text: 'fetch failed, sent Authorization: Bearer TOTALLY-SECRET-XYZ' },
+  ];
+  return {
+    events,
+    record(event) { events.push(event); },
+    summary() {
+      const byKind = (kind) => events.filter((e) => e.kind === kind);
+      return {
+        pageErrors: byKind('pageerror'), unhandledRejections: byKind('unhandledrejection'),
+        requiredResourceFailures: byKind('required-resource-failure'), contextLoss: byKind('webglcontextlost'),
+        consoleErrors: byKind('console').filter((e) => e.level === 'error'),
+        consoleWarnings: byKind('console').filter((e) => e.level === 'warn'),
+        allowListedFingerprints: [],
+      };
+    },
+  };
+}
+
+test('runHarness: a secret-bearing errorLedger event (url with a token, console text with a bearer header) is redacted in the real SUCCESS-path result, not persisted verbatim', async () => {
+  const tracker = callOrderTracker();
+  const deps = buildHappyDeps(tracker, {
+    pageEvaluateOverrides: withF6Handlers(),
+    depsOverrides: { errorLedger: fakeErrorLedgerWithSecretEvent() },
+  });
+  const result = await runHarness(deps, HAPPY_CONFIG);
+
+  const serialized = JSON.stringify(result.errorLedger);
+  assert.ok(!serialized.includes('TOTALLY-SECRET-XYZ'), 'the raw secret value must not appear anywhere in the persisted result.errorLedger');
+  assert.ok(serialized.includes('[REDACTED]'), 'a redaction marker must be present where the secret was removed');
+  assert.equal(result.errorLedger.requiredResourceFailures.length, 1);
+  assert.equal(result.errorLedger.consoleErrors.length, 1);
+});
+
 test('runHarness: classifier CONFIRMED_NON_SVF2 short-circuits before Phase 2.5/F1 -- every check BLOCKED, every control NOT_EXECUTABLE, no F1-F8/F6 pageEvaluate call ever made', async () => {
   const tracker = callOrderTracker();
   const deps = buildHappyDeps(tracker, {
@@ -271,6 +316,159 @@ test('main() Phase 0 (C1): captureViewerScriptIntegrity and runtimeEnvelope fiel
   assert.ok(mainBody.includes('captureViewerScriptIntegrity,'), 'captureViewerScriptIntegrity must be passed as a runHarness dep');
   assert.ok(mainBody.includes('viewerVersion: VIEWER_VERSION'), 'config.viewerVersion must be populated from the real pinned VIEWER_VERSION');
   assert.ok(mainBody.includes('chromium: browser.version()'), 'config.chromium must be populated from the real launched browser');
+});
+
+// ============================================================================================
+// Bounded completion pass (Part B), codex-review remediation (medium, this pass, Critical +
+// High "testing gap"): main()'s own real-wiring code is NEVER executed by this offline test
+// suite (it constructs real Playwright objects) -- exactly like every prior structural test in
+// this file, these prove main()'s SOURCE actually wires the widened Phase 0 failure boundary
+// correctly, via the same source-text/ordering-check technique used throughout this file, since
+// that is the established, accepted way this codebase verifies main()'s own untestable-by-
+// execution real-Playwright-construction code.
+// ============================================================================================
+
+test('main() Phase 0 (Part B widening): browser.launch()/newContext()/newPage() are all INSIDE the Phase 0 try block, not before it', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxTryOpen = mainBody.indexOf("let phase0Step = 'harness-integrity';");
+  assert.ok(idxTryOpen > -1, "main() must declare phase0Step = 'harness-integrity' before the widened try block");
+  const idxLaunch = mainBody.indexOf('browser = await chromium.launch();');
+  const idxNewContext = mainBody.indexOf('context = await browser.newContext(');
+  const idxNewPage = mainBody.indexOf('page = await context.newPage();');
+  const idxCatch = mainBody.indexOf('} catch (e) {', idxTryOpen);
+  assert.ok(idxLaunch > -1 && idxNewContext > -1 && idxNewPage > -1 && idxCatch > -1, 'all three creation calls and the Phase 0 catch must exist');
+  assert.ok(
+    idxTryOpen < idxLaunch && idxLaunch < idxNewContext && idxNewContext < idxNewPage && idxNewPage < idxCatch,
+    'browser.launch()/newContext()/newPage() must all be INSIDE the Phase 0 try block (between phase0Step declaration and the catch) -- codex-review Critical finding: previously these three were BEFORE any try/catch existed, so a failure there was entirely unguarded (no cleanup attempt, no evidence written)',
+  );
+});
+
+// Built from parts, never the literal substring -- this repo's own domIsolation.test.mjs scans
+// every *.test.mjs file's raw text for an actual dynamic-import/require of the browser-automation
+// package (to keep the offline suite Chromium-free) and does not distinguish a real import from a
+// string literal merely NAMING it in a structural test's own search needle. Assembled once, at
+// module scope, and reused by every test below that needs to locate this exact call in main()'s
+// own source.
+const AUTOMATION_PKG_NAME = ['play', 'wright'].join('');
+const AUTOMATION_PKG_DYNAMIC_IMPORT_NEEDLE = `await import(${"'"}${AUTOMATION_PKG_NAME}${"'"})`;
+
+test('main() Phase 0 (Part B round-2 widening): harnessIntegrity computation and the browser-automation package\'s dynamic import are BOTH inside the widened try block, before browser.launch()', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxTryOpen = mainBody.indexOf("let phase0Step = 'harness-integrity';");
+  assert.ok(idxTryOpen > -1, "main() must declare phase0Step = 'harness-integrity' before the widened try block");
+  const idxHarnessIntegrityAssign = mainBody.indexOf('harnessIntegrity = {', idxTryOpen);
+  const idxPlaywrightImportStep = mainBody.indexOf("phase0Step = 'playwright-import';", idxTryOpen);
+  const idxPlaywrightImport = mainBody.indexOf(AUTOMATION_PKG_DYNAMIC_IMPORT_NEEDLE, idxTryOpen);
+  const idxLaunch = mainBody.indexOf('browser = await chromium.launch();', idxTryOpen);
+  const idxCatch = mainBody.indexOf('} catch (e) {', idxTryOpen);
+  assert.ok(idxHarnessIntegrityAssign > -1, 'harnessIntegrity must be assigned (the nullable outer binding) inside the try block');
+  assert.ok(idxPlaywrightImportStep > -1 && idxPlaywrightImport > -1, "main() must set phase0Step = 'playwright-import' and then actually perform the dynamic import");
+  assert.ok(
+    idxTryOpen < idxHarnessIntegrityAssign && idxHarnessIntegrityAssign < idxPlaywrightImportStep
+    && idxPlaywrightImportStep < idxPlaywrightImport && idxPlaywrightImport < idxLaunch && idxLaunch < idxCatch,
+    'codex-review round-2 High finding: harnessIntegrity computation and the browser-automation package\'s dynamic import previously ran entirely BEFORE any try/catch existed -- both must now be inside the widened try, in this order, strictly before browser.launch()',
+  );
+});
+
+test('main() Phase 0 (Part B round-2 widening): the evidence writer (resultPath/writeResultAtomically) is constructed BEFORE the widened try block, immediately after activation succeeds', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxActivationCheck = mainBody.indexOf('if (!activation.authorized)');
+  const idxWriteResultAtomically = mainBody.indexOf('const writeResultAtomically = async (result) => {');
+  const idxTryOpen = mainBody.indexOf("let phase0Step = 'harness-integrity';");
+  assert.ok(idxActivationCheck > -1 && idxWriteResultAtomically > -1 && idxTryOpen > -1, 'all three markers must exist');
+  assert.ok(
+    idxActivationCheck < idxWriteResultAtomically && idxWriteResultAtomically < idxTryOpen,
+    'writeResultAtomically must be constructed after the activation check but BEFORE the widened Phase 0 try block, so it is available even for the earliest possible Phase 0 failure (harnessIntegrity computation or the playwright import itself)',
+  );
+  // Exactly ONE definition -- codex-review round-1 found this duplicated when writeResultAtomically was first moved; confirm the later, now-removed duplicate never reappears.
+  const occurrences = mainBody.split('const writeResultAtomically = async (result) => {').length - 1;
+  assert.equal(occurrences, 1, 'writeResultAtomically must be defined exactly once in main()');
+});
+
+test('main() Phase 0 (Part B round-2 widening): PHASE0_FAILURE_CATEGORIES has both new pre-browser step categories', async () => {
+  assert.equal(PHASE0_FAILURE_CATEGORIES['harness-integrity'], 'harness-integrity-compute-failed');
+  assert.equal(PHASE0_FAILURE_CATEGORIES['playwright-import'], 'playwright-import-failed');
+});
+
+test('main() Phase 0 (Part B round-3 widening): harnessIntegrity is built INCREMENTALLY (path/sha256/branch/headSha/gitStatusPorcelain each assigned before the fallible manifest walk), never as one all-or-nothing object literal', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxTryOpen = mainBody.indexOf("let phase0Step = 'harness-integrity';");
+  const idxInitLiteral = mainBody.indexOf('harnessIntegrity = {', idxTryOpen);
+  const idxShaAssign = mainBody.indexOf('harnessIntegrity.sha256 = harnessSha256;', idxTryOpen);
+  const idxBranchAssign = mainBody.indexOf('harnessIntegrity.branch = ', idxTryOpen);
+  const idxManifestAssign = mainBody.indexOf('harnessIntegrity.servedModuleManifest = await buildServedModuleManifest(', idxTryOpen);
+  const idxPlaywrightImportStep = mainBody.indexOf("phase0Step = 'playwright-import';", idxTryOpen);
+  assert.ok(
+    idxInitLiteral > -1 && idxShaAssign > -1 && idxBranchAssign > -1 && idxManifestAssign > -1,
+    'main() must assign harnessIntegrity fields incrementally (a placeholder literal, then sha256, then git fields, then the fallible manifest walk last)',
+  );
+  assert.ok(
+    idxInitLiteral < idxShaAssign && idxShaAssign < idxBranchAssign && idxBranchAssign < idxManifestAssign && idxManifestAssign < idxPlaywrightImportStep,
+    "codex-review round-3 High finding: harnessIntegrity's genuinely-knowable fields (path/sha256/branch/headSha/gitStatusPorcelain) must all be assigned BEFORE the fallible buildServedModuleManifest walk, so a manifest-walk failure still leaves a schema-valid partial harnessIntegrity rather than harnessIntegrity staying entirely null",
+  );
+});
+
+test('main() Phase 0 (Part B widening): route/addInitScript registration is also INSIDE the Phase 0 try block, strictly before goto', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxTryOpen = mainBody.indexOf("let phase0Step = 'harness-integrity';");
+  const idxRouteSetupStep = mainBody.indexOf("phase0Step = 'route-setup';");
+  const idxGoto = mainBody.indexOf('await page.goto(');
+  const idxCatch = mainBody.indexOf('} catch (e) {', idxTryOpen);
+  for (const needle of [`page.on('pageerror'`, `page.on('console'`, `page.on('requestfailed'`, `page.on('response'`, `context.route('**/clashtest/**'`, `context.route('**/clashpanel/**'`, 'page.route(`${BASE_URL}', 'await page.addInitScript(']) {
+    // Search starting strictly AFTER idxTryOpen -- this file's own explanatory comments
+    // legitimately mention some of these same method names in prose (e.g. a doc comment listing
+    // "page.addInitScript()"), which would otherwise be found first and produce a false idx.
+    const idx = mainBody.indexOf(needle, idxTryOpen);
+    assert.ok(idx > idxTryOpen && idx < idxCatch, `'${needle}' must be inside the widened Phase 0 try block`);
+    assert.ok(idx < idxGoto, `'${needle}' must still be registered strictly before page.goto`);
+  }
+  assert.ok(idxRouteSetupStep > idxTryOpen && idxRouteSetupStep < idxGoto, "phase0Step = 'route-setup' must be set before goto");
+});
+
+test('main() Phase 0 (Part B widening): pageEvaluate/pageWaitForFunction are built from buildRealPageDeps(page) INSIDE the try block, after page exists', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxNewPage = mainBody.indexOf('page = await context.newPage();');
+  const idxBuildDeps = mainBody.indexOf('({ pageEvaluate, pageWaitForFunction } = buildRealPageDeps(page));');
+  const idxGoto = mainBody.indexOf('await page.goto(');
+  assert.ok(idxBuildDeps > -1, 'main() must reassign the nullable pageEvaluate/pageWaitForFunction bindings via buildRealPageDeps(page)');
+  assert.ok(idxNewPage < idxBuildDeps && idxBuildDeps < idxGoto, 'buildRealPageDeps(page) must run after page exists and before goto');
+});
+
+test('main() Phase 0 (Part B widening): the catch block derives failureCategory via categorizePhase0Failure(phase0Step, e), never a raw lookup that ignores the actual error', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  assert.ok(mainBody.includes('categorizePhase0Failure(phase0Step, e)'), 'main() must call categorizePhase0Failure with both the step AND the caught error, so a non-timeout failure on a timeout-capable step is not mislabeled');
+});
+
+test('main() Phase 0 (Part B widening): browserExisted/pageExisted/contextExisted are the REAL Boolean(browser)/Boolean(page)/Boolean(context), never hardcoded true', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  assert.ok(mainBody.includes('browserExisted: Boolean(browser), pageExisted: Boolean(page), contextExisted: Boolean(context),'), 'resource-existence flags passed to handlePhase0Failure must reflect real state -- codex-review Critical finding: previously hardcoded `true` regardless of what actually got created');
+});
+
+test('main() Phase 0 (Part B widening): errorLedger (main()\'s own real ledger object) is passed into handlePhase0Failure, never omitted', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxCall = mainBody.indexOf('await handlePhase0Failure({');
+  const idxCloseBrace = mainBody.indexOf('});', idxCall);
+  assert.ok(idxCall > -1 && idxCloseBrace > -1, 'main() must call handlePhase0Failure');
+  const callArgs = mainBody.slice(idxCall, idxCloseBrace);
+  assert.ok(/\berrorLedger\b/.test(callArgs), 'errorLedger must be passed to handlePhase0Failure so already-recorded pageerror/console/requestfailed events are not discarded');
+});
+
+test('main() Phase 0 (Part B widening): chromiumVersion capture guards on browser existing first (never calls browser.version() on a null browser)', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxIfBrowser = mainBody.indexOf('if (browser) {');
+  const idxVersionCall = mainBody.indexOf('chromiumVersion = browser.version();');
+  assert.ok(idxIfBrowser > -1 && idxVersionCall > -1, 'main() must guard the chromiumVersion capture with an explicit browser existence check');
+  assert.ok(idxIfBrowser < idxVersionCall && idxVersionCall < idxIfBrowser + 400, 'the browser.version() call must be nested inside the if (browser) guard');
 });
 
 // ============================================================================================
