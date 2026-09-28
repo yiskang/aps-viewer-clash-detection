@@ -47,6 +47,15 @@ import {
   CLEANUP_STEP_NAMES,
   runCleanup,
   tokenEscalatesToUnresolvedOwnership,
+  CLOSE_TIMEOUT_MS,
+  computeOverall,
+  OVERALL_VERDICT,
+  CLASSIFIER,
+  INTEGRITY_RESULT,
+  CHECK_VERDICT,
+  CONTROL_STATE,
+  CONTROL_NAMES,
+  createControlResult,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 // ============================================================================================
@@ -709,6 +718,116 @@ test('runCleanup: opts.injectFailureAt forces a failure AFTER the real action al
   const result = await runCleanup(resources, { injectFailureAt: 'clearOwnedTimers' });
   assert.equal(realCallMade, true, 'the real clear() call must have happened before the injected failure');
   assert.ok(result.cleanupFailures.some((f) => f.step === 'clearOwnedTimers'));
+});
+
+// ============================================================================================
+// Task 16 (bounded H1-H3 remediation pass, H2): closePage/closeContext/closeBrowser are bounded
+// -- reusing closeAllBestEffort's own Promise.race-against-a-rejecting-timer technique inside
+// runCleanup's own `step()` helper, opt-in via `timeoutMs` (only these three steps pass it; every
+// other step stays unbounded, unchanged). A real Playwright close() is never awaited here -- a
+// plain fake whose close() never settles stands in for a wedged renderer/browser process, exactly
+// like closeAllBestEffort's own existing tests (g1-svf2-f1-f8-verification.phase0evidence.test.mjs)
+// do. `opts.closeTimeoutMs` is a TEST-ONLY override (default: production's own CLOSE_TIMEOUT_MS,
+// 10s) so these tests never wait out the real bound. `{ timeout: 2000 }` on each test that uses a
+// never-settling fake is a defensive per-test ceiling (node:test's own option), not a real sleep --
+// it is never actually reached once the fix is in place (the bounded close settles in ~20ms); it
+// exists so a FUTURE regression that reintroduces an unbounded await fails this one test fast and
+// legibly instead of silently cancelling every other test in this file (node:test's own behavior
+// when a truly-unresolved promise is left pending as the event loop otherwise drains -- confirmed
+// empirically while building this test).
+// ============================================================================================
+
+function neverSettlingCloseTarget() {
+  // A close() that never resolves/rejects -- simulates an unresponsive browser/renderer.
+  // Mirrors phase0evidence.test.mjs's own neverSettlingCloseTarget() helper for closeAllBestEffort.
+  return { close: () => new Promise(() => {}) };
+}
+
+test('runCleanup: closePage step is bounded -- a wedged page.close() times out, is recorded in cleanupFailures, stepStatus threw (not ran)', { timeout: 2000 }, async () => {
+  const resources = minimalResources({ page: neverSettlingCloseTarget() });
+  const result = await runCleanup(resources, { closeTimeoutMs: 20 });
+  assert.equal(result.stepStatus.closePage, 'threw');
+  const failure = result.cleanupFailures.find((f) => f.step === 'closePage');
+  assert.ok(failure, 'a closePage timeout must be recorded in cleanupFailures');
+  assert.match(failure.error.message, /did not settle within 20ms/);
+});
+
+test('runCleanup: closeContext step is bounded -- a wedged context.close() times out, is recorded in cleanupFailures, stepStatus threw (not ran)', { timeout: 2000 }, async () => {
+  const resources = minimalResources({ context: neverSettlingCloseTarget() });
+  const result = await runCleanup(resources, { closeTimeoutMs: 20 });
+  assert.equal(result.stepStatus.closeContext, 'threw');
+  const failure = result.cleanupFailures.find((f) => f.step === 'closeContext');
+  assert.ok(failure, 'a closeContext timeout must be recorded in cleanupFailures');
+  assert.match(failure.error.message, /did not settle within 20ms/);
+});
+
+test('runCleanup: closeBrowser step is bounded -- a wedged browser.close() times out, is recorded in cleanupFailures, stepStatus threw (not ran)', { timeout: 2000 }, async () => {
+  const resources = minimalResources({ browser: neverSettlingCloseTarget() });
+  const result = await runCleanup(resources, { closeTimeoutMs: 20 });
+  assert.equal(result.stepStatus.closeBrowser, 'threw');
+  const failure = result.cleanupFailures.find((f) => f.step === 'closeBrowser');
+  assert.ok(failure, 'a closeBrowser timeout must be recorded in cleanupFailures');
+  assert.match(failure.error.message, /did not settle within 20ms/);
+});
+
+test('runCleanup: a wedged closePage does not prevent closeContext/closeBrowser/httpServerOwnership/evidenceWriterState from still running', { timeout: 2000 }, async () => {
+  const ranCalls = [];
+  const context = { close: async () => { ranCalls.push('context'); } };
+  const browser = { close: async () => { ranCalls.push('browser'); } };
+  const httpServer = { verify: async () => { ranCalls.push('httpServerOwnership'); } };
+  const resources = minimalResources({ page: neverSettlingCloseTarget(), context, browser, httpServer });
+
+  const result = await runCleanup(resources, { closeTimeoutMs: 20 });
+
+  assert.equal(result.stepStatus.closePage, 'threw');
+  assert.equal(result.stepStatus.closeContext, 'ran');
+  assert.equal(result.stepStatus.closeBrowser, 'ran');
+  assert.equal(result.stepStatus.httpServerOwnership, 'ran');
+  assert.equal(result.stepStatus.evidenceWriterState, 'ran');
+  assert.deepEqual(ranCalls, ['context', 'browser', 'httpServerOwnership'], 'every later step must still be attempted after the wedged close step');
+});
+
+test('runCleanup: resolves quickly and returns a well-formed {cleanupFailures, cleanupUnresolvedOwnership, stepStatus} even with a wedged close (Phase 11/evidence can still proceed)', { timeout: 2000 }, async () => {
+  const resources = minimalResources({ page: neverSettlingCloseTarget() });
+  const startedAt = Date.now();
+  const result = await runCleanup(resources, { closeTimeoutMs: 20 });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.ok(elapsedMs < 1000, `runCleanup must resolve well within its bounded close timeout, not hang (took ${elapsedMs}ms)`);
+  assert.ok(Array.isArray(result.cleanupFailures));
+  assert.equal(typeof result.cleanupUnresolvedOwnership, 'boolean');
+  assert.deepEqual(Object.keys(result.stepStatus).sort(), [...CLEANUP_STEP_NAMES].sort(), 'every one of the 22 step names still has a status -- a wedged close does not leave later steps silently absent');
+});
+
+test('runCleanup: the default closeTimeoutMs is production\'s own CLOSE_TIMEOUT_MS when opts.closeTimeoutMs is not overridden', () => {
+  // Confirms the exported constant this fix reuses (never a second/drifted timeout value) --
+  // does not itself wait out the real bound.
+  assert.equal(typeof CLOSE_TIMEOUT_MS, 'number');
+  assert.equal(CLOSE_TIMEOUT_MS, 10_000);
+});
+
+test('computeOverall: PASS is impossible when cleanupFailures contains a close-timeout entry, even with every other check/control clean', () => {
+  const cleanChecks = () => ({ F1: CHECK_VERDICT.PASS, F2: CHECK_VERDICT.PASS, F3: CHECK_VERDICT.PASS, F4: CHECK_VERDICT.PASS, F5: CHECK_VERDICT.PASS, F6: CHECK_VERDICT.PASS, F7: CHECK_VERDICT.PASS, F8: CHECK_VERDICT.PASS });
+  const cleanControls = () => {
+    const controls = {};
+    for (const name of CONTROL_NAMES) {
+      controls[name] = createControlResult(name, { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true });
+    }
+    return controls;
+  };
+  const closeTimeoutFailure = { step: 'closePage', error: { name: 'Error', message: "runCleanup: step 'closePage' did not settle within 20ms" } };
+
+  const overall = computeOverall({
+    fatalErrorObserved: false,
+    cleanupUnresolvedOwnership: false,
+    viewerScriptIntegrity: INTEGRITY_RESULT.VERIFIED,
+    classifier: CLASSIFIER.CONFIRMED_SVF2,
+    checks: cleanChecks(),
+    controls: cleanControls(),
+    cleanupFailures: [closeTimeoutFailure],
+  });
+
+  assert.notEqual(overall, OVERALL_VERDICT.PASS, 'an unresolved close-timeout cleanupFailures entry must block PASS (existing cleanupFailuresEmpty gate, verified here rather than reimplemented)');
 });
 
 // -- token-row escalation rule (standalone predicate, per the brief -- F6 doesn't exist yet) --

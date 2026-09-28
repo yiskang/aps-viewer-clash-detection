@@ -1467,7 +1467,16 @@ async function runCleanup(resources = {}, opts = {}) {
   const stepStatus = {};
   let cleanupUnresolvedOwnership = false;
 
-  const step = async (name, guard, fn, { checkOwnership } = {}) => {
+  // Task 16 (bounded H1-H3 remediation pass, H2): `step()`'s own optional bounded-timeout mode
+  // -- an opt-in `timeoutMs` racing `fn(resources)` against a rejecting timer, reusing the EXACT
+  // `Promise.race`/`finally`-cleared-timer technique `closeAllBestEffort` (below) already uses,
+  // never a second/parallel timeout primitive. Every existing step that does NOT pass
+  // `timeoutMs` behaves exactly as before (unbounded `await fn(resources)`) -- this is a
+  // scope-minimal opt-in, not a blanket policy change for every step. A timeout rejection flows
+  // through the SAME catch block every other thrown error already takes below, so it is recorded
+  // in `cleanupFailures`, leaves `stepStatus[name] = 'threw'` (never `'ran'`), and still runs
+  // `checkOwnership` -- no parallel/second recording mechanism.
+  const step = async (name, guard, fn, { checkOwnership, timeoutMs } = {}) => {
     let shouldRun;
     try {
       shouldRun = Boolean(guard(resources));
@@ -1479,7 +1488,23 @@ async function runCleanup(resources = {}, opts = {}) {
     }
     if (!shouldRun) { stepStatus[name] = 'skipped'; return; }
     try {
-      await fn(resources);
+      if (timeoutMs != null) {
+        let timer;
+        try {
+          await Promise.race([
+            fn(resources),
+            new Promise((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error(`runCleanup: step '${name}' did not settle within ${timeoutMs}ms`)), timeoutMs);
+            }),
+          ]);
+        } finally {
+          // Same as closeAllBestEffort: clear the timer whichever branch won, so a successful
+          // fn(resources) doesn't leave a pending timer alive until it fires uselessly.
+          clearTimeout(timer);
+        }
+      } else {
+        await fn(resources);
+      }
       if (opts.injectFailureAt === name) {
         throw new Error(`runCleanup test injection: forced failure at step '${name}' (after its real action already ran)`);
       }
@@ -1613,20 +1638,27 @@ async function runCleanup(resources = {}, opts = {}) {
     },
     { checkOwnership: () => true });
 
+  // Task 16 (bounded H1-H3 remediation pass, H2): these three steps are the only ones that opt
+  // into step()'s bounded-timeout mode (above) -- a wedged renderer/browser process can no
+  // longer hang runCleanup (and therefore Phase 11's later steps/evidence write) forever.
+  // `opts.closeTimeoutMs` is a TEST-ONLY override; production always uses the SAME
+  // `CLOSE_TIMEOUT_MS` constant closeAllBestEffort already uses (never a second/drifted value).
+  const closeTimeoutMs = opts.closeTimeoutMs ?? CLOSE_TIMEOUT_MS;
+
   await step('closePage',
     (r) => Boolean(r.page),
     (r) => r.page.close(),
-    { checkOwnership: (r) => Boolean(r.page && typeof r.page.confirmStillAlive === 'function' && r.page.confirmStillAlive() === true) });
+    { checkOwnership: (r) => Boolean(r.page && typeof r.page.confirmStillAlive === 'function' && r.page.confirmStillAlive() === true), timeoutMs: closeTimeoutMs });
 
   await step('closeContext',
     (r) => Boolean(r.context),
     (r) => r.context.close(),
-    { checkOwnership: (r) => Boolean(r.context && typeof r.context.confirmStillAlive === 'function' && r.context.confirmStillAlive() === true) });
+    { checkOwnership: (r) => Boolean(r.context && typeof r.context.confirmStillAlive === 'function' && r.context.confirmStillAlive() === true), timeoutMs: closeTimeoutMs });
 
   await step('closeBrowser',
     (r) => Boolean(r.browser),
     (r) => r.browser.close(),
-    { checkOwnership: (r) => Boolean(r.browser && typeof r.browser.confirmStillAlive === 'function' && r.browser.confirmStillAlive() === true) });
+    { checkOwnership: (r) => Boolean(r.browser && typeof r.browser.confirmStillAlive === 'function' && r.browser.confirmStillAlive() === true), timeoutMs: closeTimeoutMs });
 
   // Verify-only; the harness never owned this resource, so a failed verification is recorded
   // but deliberately carries NO checkOwnership -- it can never set cleanupUnresolvedOwnership.

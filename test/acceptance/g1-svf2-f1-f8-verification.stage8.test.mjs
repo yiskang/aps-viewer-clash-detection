@@ -22,7 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   CHECK_VERDICT, CLASSIFIER, OVERALL_VERDICT, CONTROL_STATE, INTEGRITY_RESULT, CONTROL_NAMES,
-  createControlResult, TOKEN_STATE, LOAD_API,
+  createControlResult, TOKEN_STATE, LOAD_API, computeOverall,
   observeF1, scoreF1, observeF2, scoreF2, observeF4, scoreF4, scoreF5, observeF7, scoreF7,
   observeF8, scoreF8, scoreF6, buildStaleOldModelEventControlResult,
   runHarness, validateResultSchema, main, runInPageResourceCleanup,
@@ -732,6 +732,29 @@ test('validateResultSchema: a fully synthetic, fabricated-but-schema-valid resul
   const { valid, errors } = validateResultSchema(fabricateValidResult());
   assert.deepEqual(errors, []);
   assert.equal(valid, true);
+});
+
+// Task 16 (bounded H1-H3 remediation pass, H2): a runCleanup close-step timeout is recorded in
+// cleanupFailures using the SAME {step, error} shape every other cleanup failure already uses --
+// confirms it round-trips through validateResultSchema (no new/parallel evidence shape) and that
+// the resulting overall (computed via the real, unchanged computeOverall) is never PASS.
+test('validateResultSchema: a cleanupFailures entry recording a bounded closePage timeout (H2 fix) round-trips as schema-valid, and computeOverall never reports PASS for it', () => {
+  const result = fabricateValidResult();
+  result.cleanupFailures = [{ step: 'closePage', error: { name: 'Error', message: "runCleanup: step 'closePage' did not settle within 20ms" } }];
+  result.overall = computeOverall({
+    fatalErrorObserved: result.errorLedger.fatalErrorObserved,
+    cleanupUnresolvedOwnership: result.cleanupUnresolvedOwnership,
+    viewerScriptIntegrity: result.harnessIntegrity.remoteAssets.viewerScript.integrityResult,
+    classifier: result.classifier,
+    checks: projectCheckVerdicts(result.checks),
+    controls: result.controls,
+    cleanupFailures: result.cleanupFailures,
+  });
+
+  const { valid, errors } = validateResultSchema(result);
+  assert.deepEqual(errors, []);
+  assert.equal(valid, true, 'a close-timeout cleanupFailures entry must not itself break schema validity');
+  assert.notEqual(result.overall, OVERALL_VERDICT.PASS, 'an unresolved close-timeout cleanupFailures entry must make PASS impossible');
 });
 
 test('validateResultSchema: rejects a non-object result', () => {
