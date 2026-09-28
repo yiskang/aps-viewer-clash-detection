@@ -398,6 +398,41 @@ test('wrongOwnerControlInPage: NOT_EXECUTABLE via acquireControlLease failure --
   assert.equal(raw.reason, 'model-mismatch');
 });
 
+// Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: this
+// control used to read `model.fragList[property]`/`Object.getOwnPropertyDescriptor(fragList,
+// property)` UNGUARDED, before the try/finally that owns lease release and scratch-session
+// disposal -- a model exposing only `getFragmentList()` (no bare `.fragList` own property, the
+// SAME production-realistic shape `capacityBreachControlInPage`'s own already-approved fix
+// guards against, Task 12) threw a TypeError OUTSIDE any cleanup path, leaking the lease and
+// scratch session. This test proves the fix, mirroring capacityBreachControlInPage's own
+// identical regression test in mandatorycontrols2.test.mjs.
+test('wrongOwnerControlInPage: NOT_EXECUTABLE -- model exposes only getFragmentList() (no bare .fragList own property, matching a production-realistic model shape); lease released and scratch session disposed, no leak (Task 13 codex-review fix)', async () => {
+  const model = {
+    // deliberately NO .fragList own property -- getFragmentList() only, as a real Viewer Model
+    // conventionally exposes.
+    getFragmentList: () => ({ getCount: () => 0 }),
+  };
+  const enumerator = { resolveRoots: async () => ({ roots: [], ownerMismatch: { count: 0 }, unreachable: { count: 0 }, population: { count: 0, digest: 'd' } }) };
+  const mod = {
+    '/collision/viewer/ViewerModelAdapter.js': { extractFragments: async () => new Map(), extractAllFragments: async () => ({ records: new Map(), diagnostics: [] }) },
+    '/clashtest/planning/scopeDigest.js': { digestSubtree: async () => ({ digest: 'x' }), digestPopulation: async () => ({ digest: 'd' }) },
+  };
+  const world = fakeWorld();
+  const registry = fakeRegistry(model);
+  const g = { __viewer: {} };
+  publishSession(g, { model, world, registry, artifacts: {}, mod });
+  g.__g1.sessions.s1.binding = { model };
+  g.__g1.sessions.s1.enumerator = enumerator;
+  const realm = createPageRealm(g);
+
+  const raw = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
+
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-fragList-getDbIds');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null, 'the lease must be released, never left leaked');
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::wrong-owner'], undefined, 'the scratch session must be disposed, never left leaked');
+});
+
 test('wrongOwnerControlInPage: lease-lost-mid-flight -- abandons cleanly, never restores, never releases a lease it no longer holds', async () => {
   const model = { fragList: { getDbIds: (id) => 42 }, getFragmentList: () => ({ getCount: () => 0 }) };
   let resolveRoots;
@@ -531,6 +566,34 @@ test('hiddenFragmentControlInPage: precondition -- observeF2 requires f1Populati
   // must treat this the same as any other non-ok check result: detected:false, still restored.
   assert.equal(result.detected, false);
   assert.equal(result.restored, true, 'the patch must still be restored even though observeF2 itself could not run');
+});
+
+// Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: same class
+// of bug as wrongOwnerControlInPage's own fix above -- this control used to read
+// `model.tree[property]`/`Object.getOwnPropertyDescriptor(tree, property)` UNGUARDED, before the
+// try/finally that owns lease release and scratch-session disposal, so a model exposing only
+// `getObjectTree()` (no bare `.tree` own property, a production-realistic shape) threw a
+// TypeError outside any cleanup path and leaked both. This test proves the fix.
+test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- model exposes only getObjectTree() (no bare .tree own property, matching a production-realistic model shape); lease released and scratch session disposed, no leak (Task 13 codex-review fix)', async () => {
+  const model = {
+    // deliberately NO .tree own property -- getObjectTree() only, as a real Viewer Model
+    // conventionally exposes.
+    getObjectTree: () => ({ getRootId: () => 0, enumNodeChildren: () => {}, enumNodeFragments: () => {} }),
+    isObjectTreeCreated: () => true,
+    getFragmentList: () => ({ getCount: () => 0 }),
+  };
+  const world = fakeWorld();
+  const registry = fakeRegistry(model);
+  const g = { __viewer: {} };
+  publishSession(g, { model, world, registry, artifacts: { f1PopulationClasses: [], f1RootsLength: 0 } });
+  const realm = createPageRealm(g);
+
+  const raw = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
+
+  assert.equal(raw.ok, false);
+  assert.equal(raw.reason, 'no-tree-enumNodeFragments');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null, 'the lease must be released, never left leaked');
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::hidden-fragment'], undefined, 'the scratch session must be disposed, never left leaked');
 });
 
 test('hiddenFragmentControlInPage: scratch-session isolation -- the REAL session\'s own artifacts.f2TreeOwnerByFragId (and everything else) is byte-for-byte unchanged; only f1PopulationClasses/f1RootsLength were ever copied (read-only) into the scratch session', async () => {

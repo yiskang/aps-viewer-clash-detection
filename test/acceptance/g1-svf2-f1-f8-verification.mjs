@@ -3788,6 +3788,18 @@ async function treeUnavailableControlInPage(arg) {
  * session -- a fresh, empty `Map` seeded directly onto the scratch session's own `artifacts`
  * (below) is both correct and the smallest fix, matching exactly what
  * `setupSharedSessionResources` itself seeds for a brand-new real session.
+ *
+ * Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: this
+ * function used to read `model.fragList[property]`/`Object.getOwnPropertyDescriptor(fragList,
+ * property)` UNGUARDED, before entering the `try`/`finally` that owns lease release and scratch-
+ * session disposal -- a model exposing only `getFragmentList()` (no bare `.fragList` own
+ * property, the SAME production-realistic shape `capacityBreachControlInPage`'s own doc comment
+ * already documents and guards against, Task 12) threw a `TypeError` OUTSIDE any cleanup path,
+ * leaking the just-acquired lease (so every later control in the same run permanently fails with
+ * `lease-already-held`) and the just-created scratch session -- reproduced directly by codex-
+ * review's own accessor-only-model fixture. Fixed identically to `capacityBreachControlInPage`'s
+ * own already-approved fix: validate BEFORE touching the descriptor, and on failure, dispose the
+ * scratch session and release the lease before returning `ok:false`.
  */
 async function wrongOwnerControlInPage(arg) {
   const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
@@ -3811,6 +3823,13 @@ async function wrongOwnerControlInPage(arg) {
   const model = session.model;
   const fragList = model.fragList;
   const property = 'getDbIds';
+  // Task 13 codex-review fix (see doc comment above): validate BEFORE touching the descriptor --
+  // never let an absent/malformed fragList throw outside the try/finally that owns cleanup.
+  if (!fragList || typeof fragList[property] !== 'function') {
+    disposeControlScratchSession(scratchSessionId);
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: 'no-fragList-getDbIds' };
+  }
   const originalDescriptor = Object.getOwnPropertyDescriptor(fragList, property) || null;
   const originalGetDbIds = fragList[property];
 
@@ -3888,6 +3907,13 @@ async function wrongOwnerControlInPage(arg) {
  * confirms the brief's own transcription of the exact and complete key set. Patches
  * `session.model.tree.enumNodeFragments`. Detection: `r.fields.loadedButUnreachableCount > 0`
  * (confirmed against `observeF2`'s current real `fields` shape, this file).
+ *
+ * Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: same class
+ * of bug as `wrongOwnerControlInPage`'s own fix above -- `model.tree[property]`/
+ * `Object.getOwnPropertyDescriptor(tree, property)` used to be read UNGUARDED, before the
+ * `try`/`finally` that owns lease release and scratch-session disposal, so a model exposing only
+ * `getObjectTree()` (no bare `.tree` own property) threw a `TypeError` outside any cleanup path
+ * and leaked both. Fixed identically: validate BEFORE touching the descriptor.
  */
 async function hiddenFragmentControlInPage(arg) {
   const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
@@ -3908,6 +3934,13 @@ async function hiddenFragmentControlInPage(arg) {
   const model = session.model;
   const tree = model.tree;
   const property = 'enumNodeFragments';
+  // Task 13 codex-review fix (see doc comment above): validate BEFORE touching the descriptor --
+  // never let an absent/malformed tree throw outside the try/finally that owns cleanup.
+  if (!tree || typeof tree[property] !== 'function') {
+    disposeControlScratchSession(scratchSessionId);
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: 'no-tree-enumNodeFragments' };
+  }
   const originalDescriptor = Object.getOwnPropertyDescriptor(tree, property) || null;
   const originalEnumNodeFragments = tree[property];
 
@@ -7075,13 +7108,17 @@ async function runBridgedControl({ pageEvaluate, controlName, inPageFn, arg = {}
 // `wrongOwner`/`hiddenFragment` call sites, above). `sessionId`/`tokenId`/`gen` are bound via
 // CLOSURE at factory-construction time (never read from `ctx`, which only ever carries
 // `controlTimeoutMs`) -- `runHarness` itself only establishes `sessionId` dynamically, inside
-// its own Phase 2.5, so a real wiring caller must build these closures once that value is known
-// (Task 13's own job: final integration into `buildRealPageDeps`'s `controls: {}`, NOT built or
-// wired here, per this task's own explicit non-goal).
+// its own Phase 2.5, so a real wiring caller must build these closures once that value is known.
+// Task 13 (bounded completion pass, area 3 final integration): `main()`'s own `buildRealControls`
+// (below `runHarness`) is that real wiring caller -- it rebuilds each of these factories fresh on
+// every control invocation, reading `sessionId`/`tokenId`/`gen` off the `ctx` `runHarness` itself
+// passes through (see `runControlSafely`'s own doc comment). These factory functions themselves
+// are UNCHANGED by Task 13 -- still closure-bound, never reading from `ctx` directly.
 // ------------------------------------------------------------------------------------------
 
 /** Node-side. `buildTreeUnavailableControlDep({pageEvaluate, sessionId, tokenId, gen})` -- see
- * the banner above. Not wired into `buildRealPageDeps` by this task. */
+ * the banner above. Wired into `main()`'s real `deps.controls` via `buildRealControls` (Task 13,
+ * below `runHarness`). */
 function buildTreeUnavailableControlDep({ pageEvaluate, sessionId, tokenId, gen }) {
   return (ctx) => runBridgedControl({
     pageEvaluate,
@@ -7093,7 +7130,7 @@ function buildTreeUnavailableControlDep({ pageEvaluate, sessionId, tokenId, gen 
 }
 
 /** Node-side. `buildWrongOwnerControlDep({pageEvaluate, sessionId, tokenId, gen})` -- see the
- * banner above. Not wired into `buildRealPageDeps` by this task. */
+ * banner above. Wired into `main()`'s real `deps.controls` via `buildRealControls` (Task 13). */
 function buildWrongOwnerControlDep({ pageEvaluate, sessionId, tokenId, gen }) {
   return (ctx) => runBridgedControl({
     pageEvaluate,
@@ -7105,7 +7142,7 @@ function buildWrongOwnerControlDep({ pageEvaluate, sessionId, tokenId, gen }) {
 }
 
 /** Node-side. `buildHiddenFragmentControlDep({pageEvaluate, sessionId, tokenId, gen})` -- see
- * the banner above. Not wired into `buildRealPageDeps` by this task. */
+ * the banner above. Wired into `main()`'s real `deps.controls` via `buildRealControls` (Task 13). */
 function buildHiddenFragmentControlDep({ pageEvaluate, sessionId, tokenId, gen }) {
   return (ctx) => runBridgedControl({
     pageEvaluate,
@@ -7119,8 +7156,9 @@ function buildHiddenFragmentControlDep({ pageEvaluate, sessionId, tokenId, gen }
 // ------------------------------------------------------------------------------------------
 // Bounded completion pass, area 3 -- Task 12: bridged capacity-breach/invalid-bounds/bounds-
 // beyond-tolerance controls, NODE-SIDE half. Same wrapper-factory shape Task 11 established
-// (closure-bound `sessionId`/`tokenId`/`gen`, `(ctx) => Promise<ControlResult>`), NOT wired into
-// `buildRealPageDeps` by this task (Task 13's own job).
+// (closure-bound `sessionId`/`tokenId`/`gen`, `(ctx) => Promise<ControlResult>`). Task 13: all
+// three wired into `main()`'s real `deps.controls` via `buildRealControls` (below `runHarness`),
+// same mechanism as Task 11's three above -- unchanged by this task.
 // ------------------------------------------------------------------------------------------
 
 /** Node-side. `buildCapacityBreachControlDep({pageEvaluate, sessionId, tokenId, gen,
@@ -7129,7 +7167,8 @@ function buildHiddenFragmentControlDep({ pageEvaluate, sessionId, tokenId, gen }
  * `maxCollisionInstancesPerEpoch` -- a plain JSON-safe number, threaded through to
  * `capacityBreachControlInPage`'s own arg so its perturbation always tracks the real constant,
  * never a hardcoded in-page duplicate (codex-review fix, see `capacityBreachControlInPage`'s own
- * doc comment for the full reasoning). Not wired into `buildRealPageDeps` by this task. */
+ * doc comment for the full reasoning). Wired into `main()`'s real `deps.controls` via
+ * `buildRealControls` (Task 13). */
 function buildCapacityBreachControlDep({ pageEvaluate, sessionId, tokenId, gen, capacityLimit = maxCollisionInstancesPerEpoch }) {
   return (ctx) => runBridgedControl({
     pageEvaluate,
@@ -7225,23 +7264,34 @@ function buildBoundsBeyondToleranceControlDep({ pageEvaluate, sessionId, tokenId
  * I/O directly. NEVER invoked with real dependencies anywhere in this stage's own code or tests
  * (see `main()`, below, for the ONLY place that happens, gated behind the activation interlock).
  *
- * **Disclosed scope boundary (see this stage's own report for the full reasoning):** six of the
- * nine mandatory controls (`tree-unavailable`/`wrong-owner`/`hidden-fragment`/`capacity-breach`/
- * `invalid-bounds`/`bounds-beyond-tolerance`) still take live `modelBefore`/`world`/`registry`
- * as direct Node-side parameters (Stages 4-6's own design, predating this stage's own discovery
- * -- confirmed by direct source read of `setupSharedSessionResources`'s own doc comment -- that
- * these are page-owned and structurally cannot cross a real Playwright realm boundary as live
- * Node-side references). `runHarness` therefore takes each of those six controls' own invocation
- * as an OPAQUE INJECTED FUNCTION (`deps.controls.<name>(ctx) => Promise<ControlResult>`) --
- * exactly the same pattern Stage 3 already established for `installF3Probe`/`finalizeF3Probe`
- * before Stage 7 had to build F6's own real, in-page-bridged version for F6 specifically.
- * Building the real in-page-bridged versions of these six wrappers is explicitly OUT OF SCOPE
- * for this stage, not silently deferred. `invalid-geometry-consumer` (synthetic-input-only) and
- * `late-completion-after-timeout` (isolated synthetic, Node-side token/checkpoint bookkeeping
- * only) are already realm-safe by construction and ARE genuinely composed for real, below;
- * `stale-old-model-event` is F6's own step 6, already fully real (Stage 7); F1/F2/F4/F5/F7/F8
- * are genuinely real (in-page, called via `pageEvaluate`, realm-safe by construction since Stage
- * 4-7 built them that way from the start).
+ * **Six mandatory model-data controls, now real (Task 13, bounded completion pass area 3 final
+ * integration):** the original Stages 4-6 design took `modelBefore`/`world`/`registry` as direct
+ * Node-side parameters for `tree-unavailable`/`wrong-owner`/`hidden-fragment`/`capacity-breach`/
+ * `invalid-bounds`/`bounds-beyond-tolerance` -- discovered (this pass) to be structurally
+ * impossible for a real run, since those objects are page-owned and cannot cross a real
+ * Playwright realm boundary as live Node-side references (confirmed by direct source read of
+ * `setupSharedSessionResources`'s own doc comment). `runHarness` therefore takes each of those
+ * six controls' own invocation as an OPAQUE INJECTED FUNCTION
+ * (`deps.controls.<name>(ctx) => Promise<ControlResult>`) -- exactly the same pattern Stage 3
+ * already established for `installF3Probe`/`finalizeF3Probe` before Stage 7 had to build F6's own
+ * real, in-page-bridged version for F6 specifically. Tasks 10-12 built the real in-page-bridged
+ * ports (`treeUnavailableControlInPage`/`wrongOwnerControlInPage`/`hiddenFragmentControlInPage`/
+ * `capacityBreachControlInPage`/`invalidBoundsControlInPage`/`boundsBeyondToleranceControlInPage`,
+ * plus their Node-side wrapper factories `buildXControlDep`); this task wires them into `main()`'s
+ * own real `deps.controls` (via `buildRealControls`, above `main()`) and threads `sessionId`/
+ * `tokenId`/`gen`/`primaryF7Fields` through to each `controls.<name>` call site below via
+ * `runControlSafely`'s own `extraCtx` third argument and this function's own `controlCtx()`
+ * helper (Phase 2.5, below) -- `deps.controls` itself remains an injected, offline-fakeable
+ * dependency; only `main()`'s own REAL construction of it changed. `invalid-geometry-consumer`
+ * (synthetic-input-only) and `late-completion-after-timeout` (isolated synthetic, Node-side
+ * token/checkpoint bookkeeping only) are already realm-safe by construction and ARE genuinely
+ * composed for real, below; `stale-old-model-event` is F6's own step 6, already fully real (Stage
+ * 7); F1/F2/F4/F5/F7/F8 are genuinely real (in-page, called via `pageEvaluate`, realm-safe by
+ * construction since Stage 4-7 built them that way from the start). Every `checks.F*` and
+ * `controls.*` entry is therefore genuinely real for a live run; the only remaining disclosed
+ * items are the accessor-fidelity and synchronous-detection-oracle notes this task's own report
+ * documents (not fixed here, out of this bounded pass's authorization -- see `docs/reviews/` for
+ * the persisted write-up).
  *
  * `deps` shape:
  * {
@@ -7334,10 +7384,30 @@ async function runHarness(deps, config) {
 
   const notExecutable = (name, reason) => createControlResult(name, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason });
   const blockedControl = (name, classifierState) => createControlResult(name, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: `classifier:${classifierState}` });
-  const runControlSafely = async (name, fn) => {
+  // Task 13 (bounded completion pass, area 3 final integration): `runControlSafely` now accepts an
+  // optional THIRD argument, `extraCtx` -- additive only, never changes the existing `{
+  // controlTimeoutMs }` shape every prior offline test's own fake control fn already receives and
+  // ignores (confirmed by direct re-read of every existing `deps.controls.*` fake across
+  // `.controlbridge.test.mjs`/`.mandatorycontrols1/2.test.mjs`: none inspect `ctx` beyond
+  // `controlTimeoutMs`, so widening it is behavior-preserving for every already-passing test).
+  // This is what lets the REAL six bridged controls' own Node-side wrapper factories
+  // (`buildTreeUnavailableControlDep` et al., Tasks 11/12, unmodified) receive `sessionId`/
+  // `tokenId`/`gen` (and, for invalid-bounds/bounds-beyond-tolerance, `primaryF7Fields`) despite
+  // `main()` needing to construct `deps.controls.*` BEFORE any of those values exist -- those
+  // values are only ever known INSIDE `runHarness` itself (`sessionId` from Phase 2.5,
+  // `tokenId`/`gen` from Phase 2, `primaryF7Fields` from Phase 8's own `checks.F7.fields`), never
+  // by `main()` upfront. `main()`'s own real `controls.<name>` entries (see `main()`, below) are
+  // therefore thin per-call adapters that re-invoke the (closure-bound, unmodified) factory
+  // functions fresh on every call, reading `sessionId`/`tokenId`/`gen`/`primaryF7Fields` off THIS
+  // `ctx` -- exactly the "values runHarness already has in scope at each control's own call site"
+  // the authorization's own Task 13 brief requires, without touching the already-reviewed,
+  // already-tested `buildXControlDep({pageEvaluate, sessionId, tokenId, gen, ...})` closure-bound
+  // contract itself (`mandatorycontrols1.test.mjs`/`mandatorycontrols2.test.mjs` assert that
+  // contract directly and must keep passing unmodified).
+  const runControlSafely = async (name, fn, extraCtx = {}) => {
     if (typeof fn !== 'function') return notExecutable(name, 'control-not-injected');
     try {
-      return await fn({ controlTimeoutMs });
+      return await fn({ controlTimeoutMs, ...extraCtx });
     } catch (e) {
       if (e && e.outerWatchdogTimeout === true) {
         // Task 10, deliverable 4: still return a well-formed ControlResult for THIS control
@@ -7415,6 +7485,24 @@ async function runHarness(deps, config) {
     } else {
       sessionId = phase25.sessionId;
 
+      // Task 13 (bounded completion pass, area 3 final integration): the six mandatory
+      // model-data controls' own real Node-side wrapper factories (Tasks 11/12) are
+      // closure-bound to `{pageEvaluate, sessionId, tokenId, gen}` at BUILD time (their own
+      // already-reviewed, already-tested contract -- see `runControlSafely`'s own doc comment,
+      // above). `main()` cannot build those closures before calling `runHarness` (it does not yet
+      // know `sessionId`, established only just above), so `main()`'s own `deps.controls.<name>`
+      // entries are instead thin per-call adapters that rebuild the (unmodified) factory fresh on
+      // every invocation, reading `sessionId`/`tokenId`/`gen` off the `ctx` `runControlSafely`
+      // passes through. `tokenId`/`gen` are the CURRENT load's own token identity -- the same
+      // `loadDocumentNodeResult.token.id`/`tokenGens.get(...)` pair `setupSharedSessionResources`
+      // itself used to seed `session.tokenId`/`session.tokenGen` (Phase 2.5, above) -- and stay
+      // constant for every control call site below (no control creates a NEW load token; F6,
+      // Phase 10, runs strictly AFTER every control in Phases 3c-8c). `controlCtx(extra)` builds
+      // the per-call-site `extraCtx` `runControlSafely`'s own third argument expects.
+      const controlTokenId = loadDocumentNodeResult.token.id;
+      const controlGen = tokenGens.get(controlTokenId);
+      const controlCtx = (extra = {}) => ({ sessionId, tokenId: controlTokenId, gen: controlGen, ...extra });
+
       // Phase 3 -- F3 finalize: remove the listener NOW, read out the timeline, score F3.
       let f3TimedOut = false;
       try {
@@ -7442,7 +7530,7 @@ async function runHarness(deps, config) {
 
       // Phase 3c -- tree-unavailable control, immediately after F3.
       if (!sessionTainted) {
-        controlResults['tree-unavailable'] = await runControlSafely('tree-unavailable', controls && controls.treeUnavailable);
+        controlResults['tree-unavailable'] = await runControlSafely('tree-unavailable', controls && controls.treeUnavailable, controlCtx());
       }
 
       // Phase 4 -- F1.
@@ -7477,7 +7565,7 @@ async function runHarness(deps, config) {
       // unlike wrong-owner) -- runHarness calls it directly, never through deps.controls, since
       // only it (not main()) has checks.F1 in scope to build f1SnapshotBefore/readCurrentF1 from.
       if (!sessionTainted) {
-        controlResults['wrong-owner'] = await runControlSafely('wrong-owner', controls && controls.wrongOwner);
+        controlResults['wrong-owner'] = await runControlSafely('wrong-owner', controls && controls.wrongOwner, controlCtx());
       }
       if (!sessionTainted) {
         controlResults['late-completion-after-timeout'] = await runLateCompletionAfterTimeoutControl({
@@ -7498,7 +7586,7 @@ async function runHarness(deps, config) {
 
       // Phase 5c -- hidden-fragment control.
       if (!sessionTainted) {
-        controlResults['hidden-fragment'] = await runControlSafely('hidden-fragment', controls && controls.hiddenFragment);
+        controlResults['hidden-fragment'] = await runControlSafely('hidden-fragment', controls && controls.hiddenFragment, controlCtx());
       }
 
       // Phase 6 -- F4.
@@ -7538,7 +7626,7 @@ async function runHarness(deps, config) {
 
       // Phase 7c -- capacity-breach control.
       if (!sessionTainted) {
-        controlResults['capacity-breach'] = await runControlSafely('capacity-breach', controls && controls.capacityBreach);
+        controlResults['capacity-breach'] = await runControlSafely('capacity-breach', controls && controls.capacityBreach, controlCtx());
       }
 
       // Phase 8 -- F7.
@@ -7554,10 +7642,10 @@ async function runHarness(deps, config) {
 
       // Phase 8c -- invalid-bounds, then bounds-beyond-tolerance.
       if (!sessionTainted) {
-        controlResults['invalid-bounds'] = await runControlSafely('invalid-bounds', controls && controls.invalidBounds);
+        controlResults['invalid-bounds'] = await runControlSafely('invalid-bounds', controls && controls.invalidBounds, controlCtx({ primaryF7Fields: checks.F7.fields }));
       }
       if (!sessionTainted) {
-        controlResults['bounds-beyond-tolerance'] = await runControlSafely('bounds-beyond-tolerance', controls && controls.boundsBeyondTolerance);
+        controlResults['bounds-beyond-tolerance'] = await runControlSafely('bounds-beyond-tolerance', controls && controls.boundsBeyondTolerance, controlCtx({ primaryF7Fields: checks.F7.fields }));
       }
 
       // Phase 9 -- F8 (built entirely from F1/F2's own already-computed fields, never re-derived).
@@ -8172,6 +8260,46 @@ function buildRealPageDeps(page, registry = IN_PAGE_FUNCTION_REGISTRY) {
   return {
     pageEvaluate: (fn, arg) => page.evaluate(({ key, arg: a }) => window.__g1HarnessFns[key](a), { key: resolveKey(fn), arg }),
     pageWaitForFunction: (fn, arg, opts) => page.waitForFunction(({ key, arg: a }) => window.__g1HarnessFns[key](a), { key: resolveKey(fn), arg }, opts),
+  };
+}
+
+/**
+ * Node-side. Task 13 (bounded completion pass, area 3 final integration). Builds `runHarness`'s
+ * `deps.controls` object for a REAL run -- the six mandatory model-data controls Tasks 11/12
+ * already ported into the browser realm (`treeUnavailableControlInPage`/`wrongOwnerControlInPage`/
+ * `hiddenFragmentControlInPage`/`capacityBreachControlInPage`/`invalidBoundsControlInPage`/
+ * `boundsBeyondToleranceControlInPage`, plus their own Node-side wrapper factories
+ * `buildTreeUnavailableControlDep`/`buildWrongOwnerControlDep`/`buildHiddenFragmentControlDep`/
+ * `buildCapacityBreachControlDep`/`buildInvalidBoundsControlDep`/
+ * `buildBoundsBeyondToleranceControlDep`, ALL unmodified by this task).
+ *
+ * Why this is a factory of THIN PER-CALL ADAPTERS, not a directly-built object of already-bound
+ * dep functions: every one of the six `buildXControlDep` factories is closure-bound to
+ * `{sessionId, tokenId, gen}` (and, for the two F7-dependent controls, `primaryF7Fields`) AT BUILD
+ * TIME -- confirmed by direct re-read of Tasks 11/12's own code and asserted directly by
+ * `mandatorycontrols1.test.mjs`/`mandatorycontrols2.test.mjs` ("sessionId/tokenId/gen are
+ * closure-bound, controlTimeoutMs comes from ctx"), a contract this task must not disturb. But
+ * `main()` (the only real caller of this function) constructs `deps` and calls `runHarness` ONCE,
+ * BEFORE any of those values exist -- `sessionId` is established only at `runHarness`'s own Phase
+ * 2.5 (`setupSharedSessionResources`), `primaryF7Fields` only at Phase 8 (`checks.F7.fields`).
+ * `runHarness` itself is therefore the only place that ever genuinely HAS these values, and it
+ * already forwards them through `runControlSafely`'s own (Task 13 addition) `extraCtx` third
+ * argument -- see `runControlSafely`'s own doc comment for the full reasoning. Each adapter below
+ * simply reads `ctx.sessionId`/`ctx.tokenId`/`ctx.gen`/`ctx.primaryF7Fields` and rebuilds the
+ * (unmodified) factory fresh on every call -- cheap (a handful of object-literal closures), and
+ * correct, since a real run only ever invokes any one control exactly once.
+ *
+ * `pageEvaluate` is the only value genuinely known upfront (bound once, here, at `main()`-call
+ * time via `buildRealPageDeps`) -- passed through unchanged to every one of the six factories.
+ */
+function buildRealControls(pageEvaluate) {
+  return {
+    treeUnavailable: (ctx) => buildTreeUnavailableControlDep({ pageEvaluate, sessionId: ctx.sessionId, tokenId: ctx.tokenId, gen: ctx.gen })(ctx),
+    wrongOwner: (ctx) => buildWrongOwnerControlDep({ pageEvaluate, sessionId: ctx.sessionId, tokenId: ctx.tokenId, gen: ctx.gen })(ctx),
+    hiddenFragment: (ctx) => buildHiddenFragmentControlDep({ pageEvaluate, sessionId: ctx.sessionId, tokenId: ctx.tokenId, gen: ctx.gen })(ctx),
+    capacityBreach: (ctx) => buildCapacityBreachControlDep({ pageEvaluate, sessionId: ctx.sessionId, tokenId: ctx.tokenId, gen: ctx.gen })(ctx),
+    invalidBounds: (ctx) => buildInvalidBoundsControlDep({ pageEvaluate, sessionId: ctx.sessionId, tokenId: ctx.tokenId, gen: ctx.gen, primaryF7Fields: ctx.primaryF7Fields })(ctx),
+    boundsBeyondTolerance: (ctx) => buildBoundsBeyondToleranceControlDep({ pageEvaluate, sessionId: ctx.sessionId, tokenId: ctx.tokenId, gen: ctx.gen, primaryF7Fields: ctx.primaryF7Fields })(ctx),
   };
 }
 
@@ -8879,10 +9007,13 @@ async function main() {
     installF3Probe: () => pageEvaluate(f3InstallProbe, undefined),
     finalizeF3Probe: (arg) => pageEvaluate(f3FinalizeProbe, arg),
     setupSharedSessionResources: (tokenId) => pageEvaluate(setupSharedSessionResources, tokenId),
-    controls: {}, // real in-page-bridged control wrappers for the 6 model-data controls: out of
-                  // this stage's own disclosed scope boundary, see runHarness's own doc comment.
-                  // invalid-geometry-consumer/late-completion-after-timeout need no entry here --
-                  // runHarness calls them directly (see its own Phase 4c/6c comments).
+    // Task 13 (bounded completion pass, area 3 final integration): the 6 real in-page-bridged
+    // model-data control wrappers (previously `{}`, the disclosed scope boundary Tasks 9-12 left
+    // open -- see `buildRealControls`'s own doc comment for why this is a factory of per-call
+    // adapters, not a directly-built object). invalid-geometry-consumer/late-completion-
+    // after-timeout need no entry here -- runHarness calls them directly (see its own Phase 4c/6c
+    // comments), unchanged.
+    controls: buildRealControls(pageEvaluate),
     nodeCleanupResources: { page, context, browser },
     // Fix wave (C1): previously not passed at all -- runHarness's own Phase 11
     // viewerScriptIntegrity finalization silently defaulted to CAPTURE_UNAVAILABLE /
@@ -9060,6 +9191,7 @@ export {
   IN_PAGE_FUNCTION_REGISTRY,
   buildBootstrapScriptSource,
   buildRealPageDeps,
+  buildRealControls,
   parseLiveActivation,
   main,
 };
