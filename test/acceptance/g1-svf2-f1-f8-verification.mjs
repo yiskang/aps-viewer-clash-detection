@@ -7441,13 +7441,21 @@ async function runHarness(deps, config) {
   // from `fatalErrorObserved` -- deliberately never reused/overloaded for this narrower meaning
   // (second codex-advisor consult, request 20260928-180527-75769-27344: "Preserve the existing
   // error-ledger recording and fatalErrorObserved = true; sessionTainted must not replace
-  // either"). Set ONLY when a control's own OUTER watchdog fires (`runBridgedControl`'s
-  // `outerWatchdogTimeout`-tagged rejection, below) -- i.e. Node gave up waiting on the page and
-  // has no idea what state it's in, as opposed to an ordinary thrown error (which already sets
-  // `fatalErrorObserved` via this same `runControlSafely`'s existing generic catch branch,
-  // unchanged). Once true, every REMAINING Phase 3c-10 step (every Fi check AND every control)
-  // short-circuits -- see the `if (!sessionTainted)` gates below -- rather than risking another
-  // `pageEvaluate` call against a possibly-wedged page.
+  // either"). Set whenever a control's OWN attempt leaves the session in a state where a further
+  // `pageEvaluate` call against the same page/model can no longer be trusted: a control's own
+  // OUTER watchdog firing (`runBridgedControl`'s `outerWatchdogTimeout`-tagged rejection, below,
+  // where Node gave up waiting on the page and has no idea what state it's in); the control's own
+  // settled `ControlResult` being TIMED_OUT/RESTORE_FAILED/`executed && !restored` (`tainted()`,
+  // below); OR (Task 15, bounded H1-H3 remediation pass, fix for the final bounded-pass review's
+  // H1 finding) a GENERIC exception thrown by the control fn itself (the generic catch branch,
+  // below) -- that throw may have happened after the control already acquired a lease, patched
+  // Viewer state, or created a scratch session, so the session is no more trustworthy than an
+  // outer-watchdog timeout is. `controls.<name>.reason` and the error ledger (`control-threw:*`,
+  // `control-outer-watchdog-timeout:*`, etc.) always record the SPECIFIC cause; this flag itself
+  // deliberately does not distinguish which one fired. Once true, every REMAINING Phase 3c-10
+  // step (every Fi check AND every control) short-circuits -- see the `if (!sessionTainted)`
+  // gates below -- rather than risking another `pageEvaluate` call against a possibly-wedged or
+  // mid-mutation page.
   let sessionTainted = false;
 
   const notExecutable = (name, reason) => createControlResult(name, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason });
@@ -7512,6 +7520,7 @@ async function runHarness(deps, config) {
       }
       errorLedger.record({ kind: 'required-resource-failure', reason: `control-threw:${name}`, error: describeError(e) });
       fatalErrorObserved = true;
+      sessionTainted = true;
       return notExecutable(name, 'control-threw');
     }
     // Task 14 fix wave (M1, see this const's own doc comment above): an in-page-only inner
@@ -7827,12 +7836,15 @@ async function runHarness(deps, config) {
   const claimedTokenIds = tokens.filter((t) => t.state === TOKEN_STATE.COMPLETED).map((t) => t.id);
   // Task 10 (bounded completion pass, area 3 shared foundation): per the second, task-sanity-
   // check codex-advisor consult (request 20260928-180527-75769-27344), finding 5 -- when the
-  // session is already tainted (an outer watchdog fired; the page may be hung/wedged), issuing
-  // MORE unprotected page RPCs (sealLoadRecords/drainLoadToken, both un-watchdogged) before ever
-  // reaching the one call this task DOES protect (`pageEvaluate(runInPageResourceCleanup, ...)`,
-  // below) would defeat the whole point of the outer watchdog: `runHarness` could still hang
-  // here, before ever reaching the protected call. Skip both when tainted and go straight to the
-  // protected page-cleanup attempt -- any token left non-terminal as a result is still correctly
+  // session is already tainted (the page may be hung/wedged, or a control was left mid-mutation
+  // by an in-page timeout, restore failure, or generic throw -- see `sessionTainted`'s own doc
+  // comment above for the full set of taint causes, Task 15 added the generic-throw case),
+  // issuing MORE unprotected page RPCs (sealLoadRecords/drainLoadToken, both un-watchdogged)
+  // before ever reaching the one call this task DOES protect
+  // (`pageEvaluate(runInPageResourceCleanup, ...)`, below) would defeat the whole point of the
+  // outer watchdog: `runHarness` could still hang here, before ever reaching the protected call.
+  // Skip both when tainted and go straight to the protected page-cleanup attempt -- any token
+  // left non-terminal as a result is still correctly
   // accounted for by the existing per-token escalation loop below (`finalizeLoadTokens`/
   // `tokenEscalatesToUnresolvedOwnership`), unchanged.
   if (!sessionTainted) {
@@ -8070,13 +8082,15 @@ async function runHarness(deps, config) {
     cleanupStepStatus: mergedStepStatus,
     viewerScriptIntegrityReason: integrityReason,
     // Task 10 addition, same "additive diagnostic evidence" category as the two fields above:
-    // whether an outer-watchdog-timed-out control ever tainted this run (`runControlSafely`'s
-    // own catch, above) -- the causing control's OWN `controls.<name>.reason` already says
-    // `'outer-watchdog-timeout'`; this top-level field makes it possible to see AT A GLANCE,
-    // without hunting through every control, whether the remainder of the Phase 3c-10 sequence
-    // was ever short-circuited for this reason (as opposed to an ordinary fatal error, which
-    // `errorLedger.fatalErrorObserved`, above, already covers). Never gates `overall` itself
-    // beyond what `fatalErrorObserved || sessionTainted` already fed `computeOverall`, above.
+    // whether ANY control-taint cause (`sessionTainted`'s own doc comment, above, lists the full
+    // set: outer-watchdog timeout, in-page TIMED_OUT/RESTORE_FAILED, `executed && !restored`, or
+    // -- Task 15 -- a generic control-fn throw) ever tainted this run (`runControlSafely`'s own
+    // catches, above) -- the causing control's OWN `controls.<name>.reason` and the error ledger
+    // already record the SPECIFIC cause (`'outer-watchdog-timeout'`, `'control-threw'`, etc.);
+    // this top-level field makes it possible to see AT A GLANCE, without hunting through every
+    // control, whether the remainder of the Phase 3c-10 sequence was ever short-circuited for ANY
+    // of those reasons. Never gates `overall` itself beyond what `fatalErrorObserved ||
+    // sessionTainted` already fed `computeOverall`, above.
     sessionTainted,
   };
 

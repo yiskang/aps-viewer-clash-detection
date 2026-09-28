@@ -680,8 +680,12 @@ test('runControlSafely + sessionTainted: an EARLY outer-watchdog timeout (Phase 
   assert.equal(result.overall, OVERALL_VERDICT.FAIL);
 });
 
-test('runControlSafely: an ORDINARY control throw (not outer-watchdog-tagged) does NOT taint the session -- subsequent steps still run, matching pre-existing behavior', async () => {
+test('runControlSafely + sessionTainted (Task 15, H1 fix): a GENERIC control throw (not outer-watchdog-tagged) ALSO taints the session and short-circuits every REMAINING step, while every EARLIER step ran normally, overall stays FAIL, and Phase 11 cleanup/evidence-write still run', async () => {
   const tracker = callOrderTracker();
+  // capacity-breach is Phase 7c -- squarely between F5 (Phase 7) and F7 (Phase 8), mirroring the
+  // sibling outer-watchdog test above exactly, but for a plain (non-outer-watchdog-tagged) throw:
+  // the review's own explicit instruction (H1) was to replace the old
+  // `sessionTainted === false` assertion with proof that later phases do not execute.
   const deps = buildHappyDeps(tracker, {
     controlsOverrides: {
       capacityBreach: async () => { throw new Error('ordinary bug, not a watchdog timeout'); },
@@ -689,14 +693,51 @@ test('runControlSafely: an ORDINARY control throw (not outer-watchdog-tagged) do
   });
   const result = await runHarness(deps, HAPPY_CONFIG);
 
-  assert.equal(result.sessionTainted, false, 'an ordinary throw must never set sessionTainted');
+  // (1) A generic control throw now taints the session too.
+  assert.equal(result.sessionTainted, true, 'a generic control throw must taint the session (H1 fix)');
   assert.equal(result.controls['capacity-breach'].state, CONTROL_STATE.NOT_EXECUTABLE);
   assert.equal(result.controls['capacity-breach'].reason, 'control-threw');
-  // F7/F8/F6 (everything after) still ran for real -- the pre-existing "one control's own throw
-  // does not stop the rest of the sequence" behavior is unchanged by this task.
-  assert.equal(result.checks.F7.verdict, CHECK_VERDICT.PASS);
-  assert.equal(result.checks.F8.verdict, CHECK_VERDICT.PASS);
-  assert.equal(result.checks.F6.verdict, CHECK_VERDICT.PASS);
+
+  // Steps BEFORE the throwing control (Phase 3c through Phase 7 inclusive) ran for real --
+  // provable "earlier phases ran".
+  assert.equal(result.checks.F1.verdict, CHECK_VERDICT.PASS);
+  assert.equal(result.checks.F2.verdict, CHECK_VERDICT.PASS);
+  assert.equal(result.checks.F4.verdict, CHECK_VERDICT.PASS);
+  assert.equal(result.checks.F5.verdict, CHECK_VERDICT.PASS);
+  assert.equal(result.controls['tree-unavailable'].state, CONTROL_STATE.DETECTED_RESTORED);
+  assert.equal(result.controls['wrong-owner'].state, CONTROL_STATE.DETECTED_RESTORED);
+  assert.equal(result.controls['hidden-fragment'].state, CONTROL_STATE.DETECTED_RESTORED);
+
+  // (2) Later phases cannot execute -- provable "later phases don't run", mirroring the sibling
+  // outer-watchdog test's own assertion pattern exactly.
+  assert.equal(result.checks.F7.verdict, CHECK_VERDICT.BLOCKED);
+  assert.equal(result.checks.F7.reason, 'not-reached:fatal-error');
+  assert.equal(result.checks.F8.verdict, CHECK_VERDICT.BLOCKED);
+  assert.equal(result.checks.F8.reason, 'not-reached:fatal-error');
+  assert.equal(result.checks.F6.verdict, CHECK_VERDICT.BLOCKED);
+  assert.equal(result.checks.F6.reason, 'not-reached:fatal-error');
+  assert.equal(result.controls['invalid-bounds'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['invalid-bounds'].reason, 'not-reached:fatal-error');
+  assert.equal(result.controls['bounds-beyond-tolerance'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['bounds-beyond-tolerance'].reason, 'not-reached:fatal-error');
+  assert.equal(result.controls['stale-old-model-event'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['stale-old-model-event'].reason, 'not-reached:fatal-error');
+
+  assert.equal(tracker.order.includes('pageEvaluate:observeF7'), false, 'F7 must NEVER actually be observed once tainted');
+  assert.equal(tracker.order.includes('pageEvaluate:observeF8'), false, 'F8 must NEVER actually be observed once tainted');
+  assert.equal(tracker.order.includes('pageEvaluate:f6InstallUnloadWiring'), false, 'F6 must NEVER actually run once tainted');
+
+  // (5) Phase 11 cleanup still ran regardless (the "ALWAYS runs" guarantee, unchanged), and the
+  // evidence write path is unaffected by a mid-sequence generic throw -- (4) durable evidence.
+  assert.equal(tracker.order.includes('pageEvaluate:runInPageResourceCleanup'), true);
+  assert.equal(tracker.order.includes('writeResultAtomically'), true);
+
+  // (3) Overall verdict remains FAIL -- already true via fatalErrorObserved, asserted explicitly.
+  assert.equal(result.overall, OVERALL_VERDICT.FAIL);
+
+  // (4) Durable evidence: schema-valid despite the mid-sequence generic throw + short-circuit.
+  const { valid, errors } = validateResultSchema(result);
+  assert.equal(valid, true, `expected a schema-valid result, got errors: ${JSON.stringify(errors)}`);
 });
 
 test('sessionTainted: happy path (no watchdog timeout anywhere) -- explicitly false in the persisted result, schema-valid', async () => {
