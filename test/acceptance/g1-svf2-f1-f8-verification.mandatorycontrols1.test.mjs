@@ -279,10 +279,15 @@ test('treeUnavailableControlInPage: non-interference proof -- session.artifacts 
 // this fixture now defaults to ONE real root specifically so every test using it (not just a
 // single dedicated regression test) exercises the `.set()` path, per the review's own
 // recommendation.
+// Task 14 fix wave (H1, see wrongOwnerControlInPage's own doc comment in the main file): a real
+// Viewer 7.124.2 Model has no bare `.fragList` own property -- fragments are only reachable via
+// `getFragmentList()`, a real accessor that returns the SAME stored object every call. This
+// fixture's own `fragmentList` is exactly that: one stable object, returned by `getFragmentList()`
+// every time, never a bare `model.fragList` property.
 function buildWrongOwnerRealm({ ownerMismatchCount = 0, roots = [{ dbId: 10, fragmentCount: 1, ownerDbIds: [10], subtreeDigest: 'd' }] } = {}) {
+  const fragmentList = { getDbIds: (id) => 42, getCount: () => 0 };
   const model = {
-    fragList: { getDbIds: (id) => 42 },
-    getFragmentList: () => ({ getCount: () => 0 }),
+    getFragmentList: () => fragmentList,
   };
   const enumerator = {
     resolveRoots: async () => ({
@@ -309,19 +314,19 @@ function buildWrongOwnerRealm({ ownerMismatchCount = 0, roots = [{ dbId: 10, fra
   g.__g1.sessions.s1.binding = { model };
   g.__g1.sessions.s1.enumerator = enumerator;
   const realm = createPageRealm(g);
-  return { realm, model, world, registry };
+  return { realm, model, fragmentList, world, registry };
 }
 
-test('wrongOwnerControlInPage: DETECTED_RESTORED -- patches fragList.getDbIds, observeF1 (via scratch session) reports ownerMismatchCount > 0, restores, releases lease, disposes scratch session', async () => {
-  const { realm, model } = buildWrongOwnerRealm({ ownerMismatchCount: 1 });
-  const originalGetDbIds = model.fragList.getDbIds;
+test('wrongOwnerControlInPage: DETECTED_RESTORED -- patches getFragmentList().getDbIds (Task 14 fix wave, H1), observeF1 (via scratch session) reports ownerMismatchCount > 0, restores, releases lease, disposes scratch session', async () => {
+  const { realm, fragmentList } = buildWrongOwnerRealm({ ownerMismatchCount: 1 });
+  const originalGetDbIds = fragmentList.getDbIds;
 
   const result = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
 
   assert.equal(result.ok, true);
   assert.equal(result.detected, true);
   assert.equal(result.restored, true);
-  assert.equal(model.fragList.getDbIds, originalGetDbIds, 'restored to the original reference');
+  assert.equal(fragmentList.getDbIds, originalGetDbIds, 'restored to the original reference');
   assert.equal(realm.window.__g1.sessions.s1.activeControl, null);
   assert.equal(realm.window.__g1.sessions['s1::control-scratch::wrong-owner'], undefined, 'scratch session disposed');
   const mapped = mapControlAttemptOutcome('wrong-owner', result);
@@ -329,17 +334,17 @@ test('wrongOwnerControlInPage: DETECTED_RESTORED -- patches fragList.getDbIds, o
 });
 
 test('wrongOwnerControlInPage: NOT_DETECTED -- observeF1 reports zero ownerMismatchCount, patch still restored', async () => {
-  const { realm, model } = buildWrongOwnerRealm({ ownerMismatchCount: 0 });
-  const originalGetDbIds = model.fragList.getDbIds;
+  const { realm, fragmentList } = buildWrongOwnerRealm({ ownerMismatchCount: 0 });
+  const originalGetDbIds = fragmentList.getDbIds;
   const result = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
   assert.equal(result.detected, false);
-  assert.equal(model.fragList.getDbIds, originalGetDbIds);
+  assert.equal(fragmentList.getDbIds, originalGetDbIds);
   const mapped = mapControlAttemptOutcome('wrong-owner', result);
   assert.equal(mapped.state, CONTROL_STATE.NOT_DETECTED);
 });
 
 test('wrongOwnerControlInPage: RESTORE_FAILED -- getDbIds patches/restores cleanly, but the post-restoration liveness check fails (world.isModelLive -> false); lease left held for Phase 11', async () => {
-  const { realm, model } = buildWrongOwnerRealm({ ownerMismatchCount: 1 });
+  const { realm } = buildWrongOwnerRealm({ ownerMismatchCount: 1 });
   realm.window.__g1.sessions.s1.world = fakeWorld({ isModelLive: () => false });
 
   const result = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner' });
@@ -354,7 +359,8 @@ test('wrongOwnerControlInPage: RESTORE_FAILED -- getDbIds patches/restores clean
 });
 
 test('wrongOwnerControlInPage: TIMED_OUT -- observeF1 never resolves within innerTimeoutMs, patch still restored', async () => {
-  const model = { fragList: { getDbIds: (id) => 42 }, getFragmentList: () => ({ getCount: () => 0 }) };
+  const fragmentList = { getDbIds: (id) => 42, getCount: () => 0 };
+  const model = { getFragmentList: () => fragmentList };
   const enumerator = { resolveRoots: () => new Promise(() => {}) }; // never resolves
   const mod = {
     '/collision/viewer/ViewerModelAdapter.js': { extractFragments: async () => new Map(), extractAllFragments: async () => ({ records: new Map(), diagnostics: [] }) },
@@ -367,14 +373,14 @@ test('wrongOwnerControlInPage: TIMED_OUT -- observeF1 never resolves within inne
   g.__g1.sessions.s1.binding = { model };
   g.__g1.sessions.s1.enumerator = enumerator;
   const realm = createPageRealm(g);
-  const originalGetDbIds = model.fragList.getDbIds;
+  const originalGetDbIds = fragmentList.getDbIds;
 
   const result = await realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner', innerTimeoutMs: 15 });
 
   assert.equal(result.timedOut, true);
   const mapped = mapControlAttemptOutcome('wrong-owner', result);
   assert.equal(mapped.state, CONTROL_STATE.TIMED_OUT);
-  assert.equal(model.fragList.getDbIds, originalGetDbIds, 'restored despite the timeout');
+  assert.equal(fragmentList.getDbIds, originalGetDbIds, 'restored despite the timeout');
 });
 
 test('wrongOwnerControlInPage: scratch-session isolation -- the REAL session\'s own artifacts.f1FragmentMapsByRoot/f1PopulationClasses/f1RootsLength/f1PopulationRecords are byte-for-byte unchanged after the control runs (observeF1 wrote only into the scratch session)', async () => {
@@ -401,15 +407,26 @@ test('wrongOwnerControlInPage: NOT_EXECUTABLE via acquireControlLease failure --
 // Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: this
 // control used to read `model.fragList[property]`/`Object.getOwnPropertyDescriptor(fragList,
 // property)` UNGUARDED, before the try/finally that owns lease release and scratch-session
-// disposal -- a model exposing only `getFragmentList()` (no bare `.fragList` own property, the
-// SAME production-realistic shape `capacityBreachControlInPage`'s own already-approved fix
-// guards against, Task 12) threw a TypeError OUTSIDE any cleanup path, leaking the lease and
-// scratch session. This test proves the fix, mirroring capacityBreachControlInPage's own
-// identical regression test in mandatorycontrols2.test.mjs.
-test('wrongOwnerControlInPage: NOT_EXECUTABLE -- model exposes only getFragmentList() (no bare .fragList own property, matching a production-realistic model shape); lease released and scratch session disposed, no leak (Task 13 codex-review fix)', async () => {
+// disposal -- a model exposing only `getFragmentList()` threw a TypeError OUTSIDE any cleanup
+// path, leaking the lease and scratch session.
+//
+// Task 14 fix wave (H1, REQUIRED, final bounded-pass review): the final reviewer verified against
+// the actual pinned Viewer 7.124.2 bundle that NO real Model class exposes a bare `.fragList`
+// property at all -- only `getFragmentList()`. This test's own fixture was already
+// (coincidentally) the genuinely-unavailable case even before Task 14 -- `getFragmentList()`
+// returns an object with NO `getDbIds` at all, so it still correctly reaches `NOT_EXECUTABLE`
+// with the SAME reason string post-fix, now exercising the NEW `model.getFragmentList()` code
+// path's own guard rather than the old bare-property read. Retitled to remove the stale Task 13
+// framing and "production-realistic model shape" claim (a real FragmentList always has
+// `getDbIds` -- this fixture's absence of it is the genuinely-unavailable case, not the
+// production-realistic one). The genuinely-accessor-only POSITIVE case (a working
+// `getFragmentList().getDbIds`, what a REAL Viewer 7.124.2 Model actually looks like) is already
+// covered by the `DETECTED_RESTORED` test above, via `buildWrongOwnerRealm`'s own now-
+// accessor-only fixture -- no separate positive test needed here.
+test('wrongOwnerControlInPage: NOT_EXECUTABLE -- model exposes getFragmentList() but the returned object has no getDbIds (fragment-owner accessor genuinely unavailable); lease released and scratch session disposed, no leak', async () => {
   const model = {
-    // deliberately NO .fragList own property -- getFragmentList() only, as a real Viewer Model
-    // conventionally exposes.
+    // getFragmentList() present, but the object it returns has no getDbIds at all -- the
+    // genuinely-unavailable case, distinct from H1's bare-`.fragList` bug (see doc comment above).
     getFragmentList: () => ({ getCount: () => 0 }),
   };
   const enumerator = { resolveRoots: async () => ({ roots: [], ownerMismatch: { count: 0 }, unreachable: { count: 0 }, population: { count: 0, digest: 'd' } }) };
@@ -434,7 +451,8 @@ test('wrongOwnerControlInPage: NOT_EXECUTABLE -- model exposes only getFragmentL
 });
 
 test('wrongOwnerControlInPage: lease-lost-mid-flight -- abandons cleanly, never restores, never releases a lease it no longer holds', async () => {
-  const model = { fragList: { getDbIds: (id) => 42 }, getFragmentList: () => ({ getCount: () => 0 }) };
+  const fragmentList = { getDbIds: (id) => 42, getCount: () => 0 };
+  const model = { getFragmentList: () => fragmentList };
   let resolveRoots;
   const enumerator = { resolveRoots: () => new Promise((resolve) => { resolveRoots = resolve; }) };
   const mod = {
@@ -448,7 +466,7 @@ test('wrongOwnerControlInPage: lease-lost-mid-flight -- abandons cleanly, never 
   g.__g1.sessions.s1.binding = { model };
   g.__g1.sessions.s1.enumerator = enumerator;
   const realm = createPageRealm(g);
-  const originalGetDbIds = model.fragList.getDbIds;
+  const originalGetDbIds = fragmentList.getDbIds;
 
   const resultPromise = realm.call(wrongOwnerControlInPage, { ...BASE_ARG, controlId: 'wrong-owner', innerTimeoutMs: 500 });
   await new Promise((resolve) => setTimeout(resolve, 5));
@@ -458,7 +476,7 @@ test('wrongOwnerControlInPage: lease-lost-mid-flight -- abandons cleanly, never 
   const result = await resultPromise;
   assert.equal(result.ok, true);
   assert.equal(result.reason, 'lease-lost-mid-flight');
-  assert.notEqual(model.fragList.getDbIds, originalGetDbIds, 'the abandoned continuation must never restore the patch itself');
+  assert.notEqual(fragmentList.getDbIds, originalGetDbIds, 'the abandoned continuation must never restore the patch itself');
   // codex-review (code, high effort, this task's own pre-commit review pass) Important #2: the
   // abandoned continuation must never dispose a scratch session it can no longer prove it still
   // owns -- confirmed here: the scratch session remains present after abandonment (a disclosed,
@@ -568,17 +586,56 @@ test('hiddenFragmentControlInPage: precondition -- observeF2 requires f1Populati
   assert.equal(result.restored, true, 'the patch must still be restored even though observeF2 itself could not run');
 });
 
-// Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: same class
-// of bug as wrongOwnerControlInPage's own fix above -- this control used to read
-// `model.tree[property]`/`Object.getOwnPropertyDescriptor(tree, property)` UNGUARDED, before the
-// try/finally that owns lease release and scratch-session disposal, so a model exposing only
-// `getObjectTree()` (no bare `.tree` own property, a production-realistic shape) threw a
-// TypeError outside any cleanup path and leaked both. This test proves the fix.
-test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- model exposes only getObjectTree() (no bare .tree own property, matching a production-realistic model shape); lease released and scratch session disposed, no leak (Task 13 codex-review fix)', async () => {
+// Task 13 (bounded completion pass, area 3 final integration) codex-review fix, High: this
+// control used to read `model.tree[property]`/`Object.getOwnPropertyDescriptor(tree, property)`
+// UNGUARDED, before the try/finally that owns lease release and scratch-session disposal, so a
+// model exposing only `getObjectTree()` (no bare `.tree` own property) threw a TypeError outside
+// any cleanup path and leaked both.
+//
+// Task 14 fix wave (H1, REQUIRED, final bounded-pass review): the final reviewer verified against
+// the actual pinned Viewer 7.124.2 bundle that NO real Model class defines a bare `.tree`
+// property at all -- only `getObjectTree()`/`getInstanceTree()`. The test below used to assert
+// `NOT_EXECUTABLE` for exactly this accessor-only shape, encoding the H1 bug (bare `model.tree`
+// read, always `undefined` against a real model) as CORRECT behavior. Flipped: an accessor-only
+// model is what a REAL Viewer 7.124.2 Model actually looks like, so it must now reach
+// `DETECTED_RESTORED` (proving `hiddenFragmentControlInPage`'s Task 14 fix -- resolving `tree` via
+// `getObjectTree()`/`getInstanceTree()`, mirroring `invalidBoundsControlInPage` -- genuinely
+// works end to end against this shape). The genuinely-tree-unavailable case (neither accessor
+// present) is kept as its own separate test immediately below, still correctly reaching
+// `NOT_EXECUTABLE` -- proving the guard still fails closed when the tree is truly absent.
+test('hiddenFragmentControlInPage: DETECTED_RESTORED -- model exposes ONLY getObjectTree() (no bare .tree own property, the REAL Viewer 7.124.2 Model shape); patches the resolved tree\'s enumNodeFragments, detects, restores, releases lease, disposes scratch session (Task 14 fix wave, H1)', async () => {
+  const tree = fakeTree({ children: new Map([[0, []]]), fragmentsByNode: new Map([[0, [0, 1]]]) });
   const model = {
-    // deliberately NO .tree own property -- getObjectTree() only, as a real Viewer Model
-    // conventionally exposes.
-    getObjectTree: () => ({ getRootId: () => 0, enumNodeChildren: () => {}, enumNodeFragments: () => {} }),
+    // deliberately NO bare .tree own property -- getObjectTree() only, the REAL Viewer 7.124.2
+    // Model shape (verified against the pinned bundle by the final bounded-pass review).
+    getObjectTree: () => tree,
+    isObjectTreeCreated: () => true,
+    getFragmentList: () => ({ getCount: () => 2 }),
+  };
+  const world = fakeWorld();
+  const registry = fakeRegistry(model);
+  const g = { __viewer: {} };
+  publishSession(g, {
+    model, world, registry,
+    artifacts: { f1PopulationClasses: [{ fragId: 0, cls: 'L' }, { fragId: 1, cls: 'L' }], f1RootsLength: 1 },
+  });
+  const realm = createPageRealm(g);
+  const originalEnumNodeFragments = tree.enumNodeFragments;
+
+  const result = await realm.call(hiddenFragmentControlInPage, { ...BASE_ARG, controlId: 'hidden-fragment' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.detected, true);
+  assert.equal(result.restored, true);
+  assert.equal(tree.enumNodeFragments, originalEnumNodeFragments, 'restored to the original reference');
+  assert.equal(realm.window.__g1.sessions.s1.activeControl, null);
+  assert.equal(realm.window.__g1.sessions['s1::control-scratch::hidden-fragment'], undefined, 'scratch session disposed');
+  const mapped = mapControlAttemptOutcome('hidden-fragment', result);
+  assert.equal(mapped.state, CONTROL_STATE.DETECTED_RESTORED);
+});
+
+test('hiddenFragmentControlInPage: NOT_EXECUTABLE -- model exposes NEITHER getObjectTree() nor getInstanceTree() (tree genuinely unavailable); lease released and scratch session disposed, no leak', async () => {
+  const model = {
     isObjectTreeCreated: () => true,
     getFragmentList: () => ({ getCount: () => 0 }),
   };

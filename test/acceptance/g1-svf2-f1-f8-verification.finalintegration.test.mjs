@@ -107,7 +107,7 @@ function nodeBoxFiller(box) {
 // a SHARED, SINGLE real session rather than each only ever having been proven in isolation).
 // `capacityLimit` defaults to the REAL, imported `maxCollisionInstancesPerEpoch` (never a
 // hardcoded duplicate, matching `buildCapacityBreachControlDep`'s own established convention) --
-// the fixture's own baseline `fragList.getCount()` (5) stays far under it; only
+// the fixture's own baseline `getFragmentList().getCount()` (2) stays far under it; only
 // `capacityBreachControlInPage`'s own patch (installed/restored entirely inside its own in-page
 // execution window) ever pushes it over.
 function buildSharedFixture({ capacityLimit = maxCollisionInstancesPerEpoch } = {}) {
@@ -130,17 +130,24 @@ function buildSharedFixture({ capacityLimit = maxCollisionInstancesPerEpoch } = 
     // convention, reused verbatim).
     getNodeBox: nodeBoxFiller([0, 0, 0, 10, 10, 0]),
   };
+  // Task 14 fix wave (H1, see g1-svf2-f1-f8-verification.mjs's own wrongOwnerControlInPage/
+  // hiddenFragmentControlInPage/capacityBreachControlInPage doc comments): a real Viewer 7.124.2
+  // Model exposes fragments ONLY via `getFragmentList()` (no bare `.fragList` own property) and
+  // has no bare `.tree` property at all (only `getObjectTree()`/`getInstanceTree()`). This fixture
+  // used to also expose bare `model.fragList`/`model.tree` properties that were a DIFFERENT object
+  // from what the accessors returned, and the fake enumerator below used to read the bare property
+  // directly -- both masked H1 entirely (the bridged controls patched one object, the enumerator
+  // read a different, unpatched one, so detection "worked" for the wrong reason). Fixed: exactly
+  // ONE stable `fragmentList` object backs `getFragmentList()` (a real accessor returns the same
+  // stored object every call, confirmed by the final reviewer against the pinned bundle), and the
+  // fake enumerator now reads through `model.getFragmentList()`, matching how the REAL
+  // `ViewerElementEnumerator.js` (`scanPopulation(model.getFragmentList(), ...)`, around line 92)
+  // actually reads it. No bare `.fragList`/`.tree` property remains on this fixture's model -- a
+  // production-realistic (accessor-only) shape, since nothing in the fixed harness code reads them
+  // anymore.
+  const fragmentList = { getCount: () => 2, getGeometryId: () => 1, getDbIds: () => ROOT_DB_ID };
   const model = {
-    // wrong-owner's own patch target (bare property, matching the ORIGINAL Node-side function's
-    // own convention -- this task's own accessor-fidelity investigation, see this file's report,
-    // documents but does not change this).
-    fragList: { getCount: () => 5, getDbIds: () => ROOT_DB_ID },
-    getFragmentList: () => ({ getCount: () => 2, getGeometryId: () => 1, getDbIds: () => ROOT_DB_ID }),
-    // hidden-fragment's own patch target (bare `model.tree`, matching the ORIGINAL's own
-    // convention) -- the SAME tree object `getObjectTree()` returns, so a patch through either
-    // path is visible to the other (exactly like a real Viewer Model, where both would resolve to
-    // the same underlying InstanceTree).
-    tree,
+    getFragmentList: () => fragmentList,
     isObjectTreeCreated: () => true,
     getObjectTree: () => tree,
     getUnitScale: () => 1,
@@ -149,14 +156,16 @@ function buildSharedFixture({ capacityLimit = maxCollisionInstancesPerEpoch } = 
     getPlacementTransform: () => null,
   };
   const enumerator = {
-    // Genuinely reads `binding.model.fragList` at CALL time (unlike mandatorycontrols1.test.mjs's
-    // own per-control fixtures, which return a fixed canned count/mismatch regardless of the
-    // model's actual state) -- this is what lets wrong-owner's and capacity-breach's own bridged
-    // patches genuinely change what the REAL observeF1 (re-run via their own scratch sessions)
-    // reports, proving the patch takes effect through the same enumerator the outer Phase 4 F1
-    // check also uses, rather than each being independently faked to "just work".
+    // Genuinely reads `binding.model.getFragmentList()` at CALL time (unlike
+    // mandatorycontrols1.test.mjs's own per-control fixtures, which return a fixed canned
+    // count/mismatch regardless of the model's actual state) -- this is what lets wrong-owner's
+    // and capacity-breach's own bridged patches genuinely change what the REAL observeF1 (re-run
+    // via their own scratch sessions) reports, proving the patch takes effect through the same
+    // enumerator the outer Phase 4 F1 check also uses, rather than each being independently faked
+    // to "just work". Task 14 fix wave (H1): now reads through `getFragmentList()`, matching the
+    // real `ViewerElementEnumerator.js` -- see the fixture-level doc comment above.
     resolveRoots: async (binding) => {
-      const fl = binding.model.fragList;
+      const fl = binding.model.getFragmentList();
       const count = fl.getCount();
       if (count > capacityLimit) {
         const err = new Error(`capacity exceeded: ${count} > ${capacityLimit}`);
@@ -449,31 +458,25 @@ test('taint mid-sequence: an outer-watchdog-timed-out control aborts every remai
 });
 
 // ============================================================================================
-// 2b. RESTORE_FAILED (a non-taint-signaling PASS-blocking control result -- distinct from the
-//     outer-watchdog case above) still forces the overall verdict to FAIL, even though the
-//     CURRENT design (Task 10's own original, unmodified `sessionTainted` scope -- only an
-//     outer-watchdog rejection sets it) does not itself abort the remaining phase sequence for
-//     this case. A codex-review pass on this task's own diff (request
-//     20260928-203739-39767-8933) raised this as a High finding, recommending an early-abort
-//     redesign of `sessionTainted`/`runControlSafely` for ANY non-restored control outcome, not
-//     only an outer-watchdog timeout. That redesign is a genuine, real architectural question --
-//     but it is a change to Task 10's own cross-cutting mechanism (the SAME class of concern as
-//     Task 11/12's own already-disclosed finding (B), which `progress.md` already explicitly
-//     routed to Task 13 as "document, don't unilaterally redesign"), and this task's own brief
-//     explicitly scopes the synchronous-timeout/taint-scope question to "document as an accepted
-//     tradeoff, do NOT fix" (see this task's own report, section 5). This test does not implement
-//     the proposed redesign; it instead makes the CURRENT tradeoff's own safety property
-//     explicit and verified: `computeOverall`'s own reviewed precedence ALREADY guarantees FAIL
-//     the instant a mandatory control is non-PASS-compatible (RESTORE_FAILED included, ranked
-//     ABOVE any later Fi failure in the precedence order) -- so continuing to run later phase
-//     steps after a RESTORE_FAILED control can never silently produce a false PASS, even without
-//     an early abort. The lease is ALSO correctly left held (per every one of the six in-page
-//     controls' own established "only release on a fully-verified restore" discipline), so
-//     Phase 11's `restoreAllControlPatches` fallback still gets a real chance to find and record
-//     it, unaffected by whatever ran in between.
+// 2b. RESTORE_FAILED now ALSO taints the session and aborts the remaining phase sequence -- Task
+//     14 fix wave (M1, recommended, final bounded-pass review). A codex-review pass on Task 13's
+//     own diff (request 20260928-203739-39767-8933) raised this as a High finding: `sessionTainted`
+//     used to be set ONLY on an outer-watchdog rejection, so later steps kept running against a
+//     possibly-still-perturbed model after a RESTORE_FAILED (or in-page TIMED_OUT) control. Three
+//     prior deferrals left this as a documented tradeoff; the final bounded-pass review's own
+//     independent judgment was to stop deferring and fix it now (M1), reusing the EXACT SAME
+//     `sessionTainted` short-circuit `runControlSafely` already had for the outer-watchdog case
+//     (`tainted(result)`, this file's own main source, additive only -- the outer-watchdog trigger
+//     is unchanged). This test replaces the old "documented tradeoff" test: RESTORE_FAILED now
+//     aborts every remaining step exactly like an outer-watchdog timeout does, and the overall
+//     verdict is still correctly forced to FAIL (this was ALREADY guaranteed by `computeOverall`'s
+//     own reviewed precedence before this fix -- M1 only changes how far the run continues after
+//     the fact, never the final verdict for a run that already reached this state). The lease is
+//     ALSO still correctly left held (RESTORE_FAILED never releases it), so Phase 11's
+//     `restoreAllControlPatches` fallback still gets a real chance to find and record it.
 // ============================================================================================
 
-test('RESTORE_FAILED mid-sequence (not an outer-watchdog taint): later Fi checks/controls DO still run (current, documented, brief-scoped behavior -- not fixed by this task), but the overall verdict is still correctly forced to FAIL and the lease is correctly left held for Phase 11', async () => {
+test('RESTORE_FAILED mid-sequence taints the session (Task 14 fix wave, M1): aborts every remaining step INCLUDING remaining real controls, overall verdict still correctly forced to FAIL, lease correctly left held for Phase 11', async () => {
   const { realm, model } = buildSharedFixture();
   const tracker = callOrderTracker();
   const deps = buildStagedDeps({
@@ -488,22 +491,85 @@ test('RESTORE_FAILED mid-sequence (not an outer-watchdog taint): later Fi checks
 
   const result = await runHarness(deps, STAGED_CONFIG);
 
-  // sessionTainted stays false -- ONLY an outer-watchdog rejection sets it, per Task 10's own
-  // original, unmodified design (confirmed, not merely assumed).
-  assert.equal(result.sessionTainted, false);
+  // Task 14 fix wave (M1): sessionTainted is now true for a RESTORE_FAILED control result too,
+  // not only an outer-watchdog rejection.
+  assert.equal(result.sessionTainted, true);
   assert.equal(result.controls['hidden-fragment'].state, CONTROL_STATE.RESTORE_FAILED);
 
-  // Current documented behavior: later steps (capacity-breach, Phase 7c, and beyond) DO still
-  // run -- this is the property codex-review's own finding #2 flagged as worth reconsidering, and
-  // which this task's own brief explicitly scopes to "document, not fix" (see report section 5).
-  assert.equal(result.controls['capacity-breach'].state, CONTROL_STATE.DETECTED_RESTORED);
-  assert.equal(result.controls['invalid-bounds'].state, CONTROL_STATE.DETECTED_RESTORED);
-  assert.equal(result.controls['bounds-beyond-tolerance'].state, CONTROL_STATE.DETECTED_RESTORED);
+  // Every remaining control (capacity-breach, Phase 7c, and beyond -- strictly AFTER the tainting
+  // control) is now a fail-closed placeholder, NEVER actually invoked -- mirroring the
+  // outer-watchdog taint test's own required property, above.
+  assert.equal(result.controls['capacity-breach'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['capacity-breach'].reason, 'not-reached:fatal-error');
+  assert.equal(result.controls['invalid-bounds'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['invalid-bounds'].reason, 'not-reached:fatal-error');
+  assert.equal(result.controls['bounds-beyond-tolerance'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['bounds-beyond-tolerance'].reason, 'not-reached:fatal-error');
+  assert.equal(tracker.order.includes('pageEvaluate:capacityBreachControlInPage'), false, 'capacity-breach must NEVER actually be invoked once tainted');
+  assert.equal(tracker.order.includes('pageEvaluate:invalidBoundsControlInPage'), false, 'invalid-bounds must NEVER actually be invoked once tainted');
+  assert.equal(tracker.order.includes('pageEvaluate:boundsBeyondToleranceControlInPage'), false, 'bounds-beyond-tolerance must NEVER actually be invoked once tainted');
+  assert.equal(tracker.order.includes('pageEvaluate:observeF7'), false, 'F7 must NEVER actually be observed once tainted');
 
-  // But the overall verdict is STILL correctly forced to FAIL -- computeOverall's own reviewed
-  // precedence (unchanged, unaffected by this task) treats ANY mandatory-control non-PASS-
-  // compatible state (RESTORE_FAILED included) as PASS-blocking, ranked above a later Fi
-  // failure -- so this can never silently produce a false PASS regardless of what ran afterward.
+  // Phase 11 cleanup still ran regardless (the "ALWAYS runs" guarantee, unaffected by this fix).
+  assert.equal(tracker.order.includes('pageEvaluate:runInPageResourceCleanup'), true);
+  assert.equal(tracker.order.includes('writeResultAtomically'), true);
+
+  // The overall verdict is STILL correctly forced to FAIL -- computeOverall's own reviewed
+  // precedence (unchanged) treats ANY mandatory-control non-PASS-compatible state (RESTORE_FAILED
+  // included) as PASS-blocking, and `fatalErrorObserved || sessionTainted` also feeds branch 1 --
+  // so this can never silently produce a false PASS either before or after this fix.
+  assert.equal(result.overall, OVERALL_VERDICT.FAIL);
+
+  const { valid, errors } = validateResultSchema(result);
+  assert.equal(valid, true, `expected a schema-valid result, got errors: ${JSON.stringify(errors)}`);
+});
+
+// ============================================================================================
+// 2c. An in-page-only inner timeout (NOT the outer Node-side watchdog) also taints the session --
+//     Task 14 fix wave (M1). Distinct from test 2's own outer-watchdog case: here the control's
+//     own `runBridgedControl` call RESOLVES (never rejects) with a well-formed
+//     `ControlResult{state: TIMED_OUT}`, produced by the in-page `raceWithInnerTimeout` racing
+//     `observeF1`'s own genuine `await` chain -- exactly the scenario M1 describes (the abandoned
+//     detection continuation may still be reading the live model after this control's own
+//     `finally` already restored/released). `runControlSafely`'s own `tainted(result)` check
+//     (this file's own main source) must catch this via `result.state === CONTROL_STATE.TIMED_OUT`
+//     on the RESOLVED path, not just the outer-watchdog rejection path tested above.
+// ============================================================================================
+
+test('in-page inner-timeout TIMED_OUT mid-sequence also taints the session (Task 14 fix wave, M1): aborts every remaining step, overall verdict still correctly forced to FAIL', async () => {
+  const { realm, model } = buildSharedFixture();
+  const tracker = callOrderTracker();
+  const deps = buildStagedDeps({
+    realm, model, tracker,
+    controlsOverrides: {
+      // A RESOLVED ControlResult (never a rejection) -- distinct from outerWatchdogTimeoutError,
+      // which THROWS. This is exactly what runBridgedControl returns when the in-page control's
+      // own raceWithInnerTimeout wins the race against a genuinely-awaiting observeF1/F2/F7.
+      wrongOwner: async () => createControlResult('wrong-owner', {
+        state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null,
+        reason: 'perturbation-timeout',
+      }),
+    },
+  });
+
+  const result = await runHarness(deps, STAGED_CONFIG);
+
+  assert.equal(result.sessionTainted, true);
+  assert.equal(result.controls['wrong-owner'].state, CONTROL_STATE.TIMED_OUT);
+  assert.equal(result.controls['wrong-owner'].reason, 'perturbation-timeout');
+
+  // Every remaining control (hidden-fragment, Phase 5c, and beyond -- strictly AFTER wrong-owner)
+  // is a fail-closed placeholder, NEVER actually invoked.
+  assert.equal(result.controls['hidden-fragment'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['hidden-fragment'].reason, 'not-reached:fatal-error');
+  assert.equal(result.controls['capacity-breach'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['invalid-bounds'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.controls['bounds-beyond-tolerance'].state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(tracker.order.includes('pageEvaluate:hiddenFragmentControlInPage'), false, 'hidden-fragment must NEVER actually be invoked once tainted');
+
+  assert.equal(tracker.order.includes('pageEvaluate:runInPageResourceCleanup'), true);
+  assert.equal(tracker.order.includes('writeResultAtomically'), true);
+
   assert.equal(result.overall, OVERALL_VERDICT.FAIL);
 
   const { valid, errors } = validateResultSchema(result);
@@ -575,12 +641,17 @@ test('realm-boundary, all six in-page control functions together: none ever retu
   const g = realm.window.__g1;
   g.loads = { tok: { gen: 1, status: 'completed', api: 'loadDocumentNode' } };
   g.models = { tok: realm.window.__g1.mod && null }; // placeholder, overwritten below
+  // Task 14 fix wave (H1, see g1-svf2-f1-f8-verification.mjs's own wrongOwnerControlInPage/
+  // hiddenFragmentControlInPage/capacityBreachControlInPage doc comments): no bare `.fragList`/
+  // `.tree` own property -- ONE stable `fragmentList` object backs `getFragmentList()`, matching
+  // a real Viewer 7.124.2 Model exactly (this file's own `buildSharedFixture`, above, carries the
+  // identical reasoning).
+  const tree = { getRootId: () => 0, enumNodeChildren: () => {}, enumNodeFragments: () => {}, getNodeBox: nodeBoxFiller([0, 0, 0, 10, 10, 0]) };
+  const fragmentList = { getCount: () => 1, getDbIds: () => ROOT_DB_ID };
   const model = {
-    fragList: { getCount: () => 5, getDbIds: () => ROOT_DB_ID },
-    getFragmentList: () => ({ getCount: () => 1 }),
-    tree: { getRootId: () => 0, enumNodeChildren: () => {}, enumNodeFragments: () => {}, getNodeBox: nodeBoxFiller([0, 0, 0, 10, 10, 0]) },
+    getFragmentList: () => fragmentList,
     isObjectTreeCreated: () => true,
-    getObjectTree: () => model.tree,
+    getObjectTree: () => tree,
     getUnitScale: () => 1, getUnitString: () => null, getGlobalOffset: () => [0, 0, 0], getPlacementTransform: () => null,
   };
   g.models.tok = model;
@@ -601,8 +672,12 @@ test('realm-boundary, all six in-page control functions together: none ever retu
   for (const [fn, arg] of invocations) {
     // Reset the lease between each call -- a fresh, minimal correctness precondition only (each
     // in-page function is independently responsible for its own acquire/release discipline,
-    // already proven per-control in mandatorycontrols1/2.test.mjs; this loop only needs each call
-    // to at least be EXECUTABLE so its return shape can be checked).
+    // already proven per-control in mandatorycontrols1/2.test.mjs; this loop's own job is only to
+    // check the JSON-safe return-shape discipline below, regardless of whether a given call
+    // reaches ok:true (wrong-owner/hidden-fragment/capacity-breach now DO, post-Task-14-H1-fix,
+    // against this fixture's own accessor-only model; invalid-bounds/bounds-beyond-tolerance may
+    // still report ok:false via their own observeF7 preconditions, since this minimal fixture
+    // never seeds F4 artifacts -- immaterial to what this specific test proves).
     g.sessions.s1.activeControl = null;
     const result = await realm.call(fn, arg);
     assertJsonSafeControlResult(result);

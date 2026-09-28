@@ -104,18 +104,24 @@ class FakeCapacityExceededError extends Error {
   }
 }
 
+// Task 14 fix wave (H1, see capacityBreachControlInPage's own doc comment in the main file): a
+// real Viewer 7.124.2 Model has no bare `.fragList` own property -- fragments are only reachable
+// via `getFragmentList()`, a real accessor that returns the SAME stored object every call. This
+// fixture's own `fragmentList` is exactly that: one stable object, returned by `getFragmentList()`
+// every time, never a bare `model.fragList` property. The fake enumerator now reads through
+// `getFragmentList()` too, matching the real `ViewerElementEnumerator.js`.
 function buildCapacityBreachRealm({
   enforceLimit = true, limit = 20000,
   roots = [{ dbId: 10, fragmentCount: 1, ownerDbIds: [10], subtreeDigest: 'd' }],
   resolveRootsOverride = null,
 } = {}) {
+  const fragmentList = { getCount: () => 5 };
   const model = {
-    fragList: { getCount: () => 5 },
-    getFragmentList: () => ({ getCount: () => 0 }),
+    getFragmentList: () => fragmentList,
   };
   const enumerator = {
     resolveRoots: resolveRootsOverride || (async (binding) => {
-      const count = binding.model.fragList.getCount();
+      const count = binding.model.getFragmentList().getCount();
       if (enforceLimit && count > limit) throw new FakeCapacityExceededError(limit, count);
       return { roots, ownerMismatch: { count: 0 }, unreachable: { count: 0 }, population: { count: 0, digest: 'd' } };
     }),
@@ -137,19 +143,19 @@ function buildCapacityBreachRealm({
   g.__g1.sessions.s1.binding = { model };
   g.__g1.sessions.s1.enumerator = enumerator;
   const realm = createPageRealm(g);
-  return { realm, model, world, registry };
+  return { realm, model, fragmentList, world, registry };
 }
 
-test('capacityBreachControlInPage: DETECTED_RESTORED -- patches fragList.getCount over the limit, observeF1 (via scratch session) reports resolveRoots-threw with a CapacityExceededError, restores, releases lease, disposes scratch session', async () => {
-  const { realm, model } = buildCapacityBreachRealm({ enforceLimit: true, limit: 20000 });
-  const originalGetCount = model.fragList.getCount;
+test('capacityBreachControlInPage: DETECTED_RESTORED -- patches getFragmentList().getCount over the limit (Task 14 fix wave, H1), observeF1 (via scratch session) reports resolveRoots-threw with a CapacityExceededError, restores, releases lease, disposes scratch session', async () => {
+  const { realm, fragmentList } = buildCapacityBreachRealm({ enforceLimit: true, limit: 20000 });
+  const originalGetCount = fragmentList.getCount;
 
   const result = await realm.call(capacityBreachControlInPage, { ...BASE_ARG, ...CAPACITY_ARG });
 
   assert.equal(result.ok, true);
   assert.equal(result.detected, true);
   assert.equal(result.restored, true);
-  assert.equal(model.fragList.getCount, originalGetCount, 'restored to the original reference');
+  assert.equal(fragmentList.getCount, originalGetCount, 'restored to the original reference');
   assert.equal(realm.window.__g1.sessions.s1.activeControl, null);
   assert.equal(realm.window.__g1.sessions['s1::control-scratch::capacity-breach'], undefined, 'scratch session disposed');
   const mapped = mapControlAttemptOutcome('capacity-breach', result);
@@ -157,11 +163,11 @@ test('capacityBreachControlInPage: DETECTED_RESTORED -- patches fragList.getCoun
 });
 
 test('capacityBreachControlInPage: NOT_DETECTED -- enforcement never fires (fixture does not actually enforce the limit), patch still restored', async () => {
-  const { realm, model } = buildCapacityBreachRealm({ enforceLimit: false });
-  const originalGetCount = model.fragList.getCount;
+  const { realm, fragmentList } = buildCapacityBreachRealm({ enforceLimit: false });
+  const originalGetCount = fragmentList.getCount;
   const result = await realm.call(capacityBreachControlInPage, { ...BASE_ARG, ...CAPACITY_ARG });
   assert.equal(result.detected, false);
-  assert.equal(model.fragList.getCount, originalGetCount);
+  assert.equal(fragmentList.getCount, originalGetCount);
   const mapped = mapControlAttemptOutcome('capacity-breach', result);
   assert.equal(mapped.state, CONTROL_STATE.NOT_DETECTED);
 });
@@ -181,15 +187,15 @@ test('capacityBreachControlInPage: RESTORE_FAILED -- getCount patches/restores c
 });
 
 test('capacityBreachControlInPage: TIMED_OUT -- observeF1 (via resolveRoots) never resolves within innerTimeoutMs, patch still restored', async () => {
-  const { realm, model } = buildCapacityBreachRealm({ resolveRootsOverride: () => new Promise(() => {}) });
-  const originalGetCount = model.fragList.getCount;
+  const { realm, fragmentList } = buildCapacityBreachRealm({ resolveRootsOverride: () => new Promise(() => {}) });
+  const originalGetCount = fragmentList.getCount;
 
   const result = await realm.call(capacityBreachControlInPage, { ...BASE_ARG, ...CAPACITY_ARG, innerTimeoutMs: 15 });
 
   assert.equal(result.timedOut, true);
   const mapped = mapControlAttemptOutcome('capacity-breach', result);
   assert.equal(mapped.state, CONTROL_STATE.TIMED_OUT);
-  assert.equal(model.fragList.getCount, originalGetCount, 'restored despite the timeout');
+  assert.equal(fragmentList.getCount, originalGetCount, 'restored despite the timeout');
 });
 
 test('capacityBreachControlInPage: scratch-session isolation -- the REAL session\'s own artifacts are byte-for-byte unchanged after the control runs (observeF1 wrote only into the scratch session)', async () => {
@@ -215,10 +221,10 @@ test('capacityBreachControlInPage: NOT_EXECUTABLE via acquireControlLease failur
 
 test('capacityBreachControlInPage: lease-lost-mid-flight -- abandons cleanly, never restores, never releases a lease it no longer holds', async () => {
   let resolveRoots;
-  const { realm, model } = buildCapacityBreachRealm({
+  const { realm, fragmentList } = buildCapacityBreachRealm({
     resolveRootsOverride: () => new Promise((resolve) => { resolveRoots = resolve; }),
   });
-  const originalGetCount = model.fragList.getCount;
+  const originalGetCount = fragmentList.getCount;
 
   const resultPromise = realm.call(capacityBreachControlInPage, { ...BASE_ARG, ...CAPACITY_ARG, innerTimeoutMs: 500 });
   await new Promise((resolve) => setTimeout(resolve, 5));
@@ -228,7 +234,7 @@ test('capacityBreachControlInPage: lease-lost-mid-flight -- abandons cleanly, ne
   const result = await resultPromise;
   assert.equal(result.ok, true);
   assert.equal(result.reason, 'lease-lost-mid-flight');
-  assert.notEqual(model.fragList.getCount, originalGetCount, 'the abandoned continuation must never restore the patch itself');
+  assert.notEqual(fragmentList.getCount, originalGetCount, 'the abandoned continuation must never restore the patch itself');
   assert.ok(realm.window.__g1.sessions['s1::control-scratch::capacity-breach'], 'the abandoned continuation must NOT dispose the scratch session it can no longer prove it owns');
   const mapped = mapControlAttemptOutcome('capacity-breach', result);
   assert.equal(mapped.state, CONTROL_STATE.NOT_DETECTED);
@@ -238,15 +244,27 @@ test('capacityBreachControlInPage: lease-lost-mid-flight -- abandons cleanly, ne
 // codex-review Critical finding, fixed -- see capacityBreachControlInPage's own doc comment in
 // g1-svf2-f1-f8-verification.mjs for the full reasoning: an earlier version read `model.fragList`
 // unguarded, BEFORE the try/finally that owns cleanup, so a model shape exposing only
-// `getFragmentList()` (no bare `.fragList` own property -- a production-realistic shape, per the
-// review) threw a TypeError OUTSIDE any cleanup path, leaking the just-acquired lease (zero
-// recorded patches, so Phase 11's own fallback restore has nothing to act on) and the just-created
-// scratch session. This test proves the fix: the SAME missing-fragList shape now fails safely.
-test('capacityBreachControlInPage: NOT_EXECUTABLE -- model exposes only getFragmentList() (no bare .fragList own property, matching a production-realistic model shape); lease released and scratch session disposed, no leak (codex-review Critical fix)', async () => {
+// `getFragmentList()` threw a TypeError OUTSIDE any cleanup path, leaking the just-acquired lease
+// (zero recorded patches, so Phase 11's own fallback restore has nothing to act on) and the
+// just-created scratch session.
+//
+// Task 14 fix wave (H1, REQUIRED, final bounded-pass review): the final reviewer verified against
+// the actual pinned Viewer 7.124.2 bundle that NO real Model class exposes a bare `.fragList`
+// property at all -- only `getFragmentList()`. The test below used to assert `NOT_EXECUTABLE` for
+// exactly an accessor-only model exposing a WORKING `getFragmentList().getCount`, encoding the H1
+// bug (bare `model.fragList` read, always `undefined` against a real model) as CORRECT behavior.
+// Flipped: an accessor-only model with a working `getCount` is what a REAL Viewer 7.124.2 Model
+// actually looks like, so it must now reach `DETECTED_RESTORED` (this is exactly
+// `buildCapacityBreachRealm`'s own now-accessor-only shape, so this scenario is already fully
+// covered by the DETECTED_RESTORED test above -- no separate positive test needed here). The
+// genuinely-unavailable case (the returned object has no `getCount` at all) is kept as its own
+// test immediately below, still correctly reaching `NOT_EXECUTABLE` -- proving the guard still
+// fails closed when the fragment-count accessor is truly absent.
+test('capacityBreachControlInPage: NOT_EXECUTABLE -- model exposes getFragmentList() but the returned object has no getCount (fragment-count accessor genuinely unavailable); lease released and scratch session disposed, no leak', async () => {
   const model = {
-    // deliberately NO .fragList own property -- getFragmentList() only, as a real Viewer Model
-    // conventionally exposes.
-    getFragmentList: () => ({ getCount: () => 5 }),
+    // getFragmentList() present, but the object it returns has no getCount at all -- the
+    // genuinely-unavailable case, distinct from H1's bare-`.fragList` bug (see doc comment above).
+    getFragmentList: () => ({}),
   };
   const enumerator = { resolveRoots: async () => ({ roots: [], ownerMismatch: { count: 0 }, unreachable: { count: 0 }, population: { count: 0, digest: 'd' } }) };
   const mod = {

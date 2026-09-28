@@ -3800,6 +3800,22 @@ async function treeUnavailableControlInPage(arg) {
  * review's own accessor-only-model fixture. Fixed identically to `capacityBreachControlInPage`'s
  * own already-approved fix: validate BEFORE touching the descriptor, and on failure, dispose the
  * scratch session and release the lease before returning `ok:false`.
+ *
+ * Task 14 fix wave (H1, REQUIRED, final bounded-pass review): the original Stage 4-6 Node-side
+ * `runWrongOwnerControl` (below, unmodified, still historical/dead reference code per L1) patches
+ * a bare `model.fragList` property. This function used to do the same. The final reviewer
+ * verified against the actual pinned Viewer 7.124.2 bundle (SHA-256-confirmed identical to
+ * `EXPECTED_VIEWER_SHA256`) that no real Model class exposes `.fragList` as an own or prototype
+ * property at all -- fragments live in a private field only reachable via `getFragmentList()`.
+ * Against a real model, the bare-property read above was always `undefined`, so this control's
+ * own guard (below) always returned `NOT_EXECUTABLE`, making PASS structurally unreachable on any
+ * live run. This is a deliberate, VERIFIED deviation from the original Node-side function's own
+ * pattern, not an inconsistency: `fragList` is now resolved via `model.getFragmentList()` --
+ * `RenderModel`'s real accessor, confirmed to return the SAME stored object on every call (a
+ * simple field accessor, not a constructor), so the existing descriptor-capture/restore/identity-
+ * check logic below is unaffected -- it still patches a METHOD (`getDbIds`) on the object
+ * `getFragmentList()` returns, never the property holding the reference to it. The original
+ * Node-side `runWrongOwnerControl` is intentionally left unchanged (L1, not this fix wave's scope).
  */
 async function wrongOwnerControlInPage(arg) {
   const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
@@ -3821,7 +3837,14 @@ async function wrongOwnerControlInPage(arg) {
   g.sessions[scratchSessionId].artifacts.f1FragmentMapsByRoot = new Map();
 
   const model = session.model;
-  const fragList = model.fragList;
+  // Task 14 fix wave (H1, see this function's own doc comment above): resolved via
+  // getFragmentList() -- a real Viewer 7.124.2 Model has no bare `.fragList` own property.
+  // Wrapped in try/catch, mirroring invalidBoundsControlInPage's own tree-resolution pattern --
+  // never let a hostile accessor throw outside the guard below.
+  let fragList;
+  try {
+    fragList = typeof model.getFragmentList === 'function' ? model.getFragmentList() : null;
+  } catch { fragList = null; }
   const property = 'getDbIds';
   // Task 13 codex-review fix (see doc comment above): validate BEFORE touching the descriptor --
   // never let an absent/malformed fragList throw outside the try/finally that owns cleanup.
@@ -3914,6 +3937,20 @@ async function wrongOwnerControlInPage(arg) {
  * `try`/`finally` that owns lease release and scratch-session disposal, so a model exposing only
  * `getObjectTree()` (no bare `.tree` own property) threw a `TypeError` outside any cleanup path
  * and leaked both. Fixed identically: validate BEFORE touching the descriptor.
+ *
+ * Task 14 fix wave (H1, REQUIRED, final bounded-pass review): the original Stage 4-6 Node-side
+ * `runHiddenFragmentControl` (below, unmodified, still historical/dead reference code per L1)
+ * patches a bare `model.tree` property. This function used to do the same. The final reviewer
+ * verified against the actual pinned Viewer 7.124.2 bundle (SHA-256-confirmed identical to
+ * `EXPECTED_VIEWER_SHA256`) that no real Model class defines a `.tree` property at all. Against a
+ * real model, the bare-property read above was always `undefined`, so this control's own guard
+ * (below) always returned `NOT_EXECUTABLE`, making PASS structurally unreachable on any live run.
+ * This is a deliberate, VERIFIED deviation from the original Node-side function's own pattern, not
+ * an inconsistency: `tree` is now resolved through the SAME `getObjectTree()`/`getInstanceTree()`
+ * fallback sequence `invalidBoundsControlInPage` (below) already uses -- the still-correct patch
+ * target (`enumNodeFragments`, confirmed against the original Node-side `runHiddenFragmentControl`)
+ * is unaffected; only how the tree object itself is obtained changed. The original Node-side
+ * `runHiddenFragmentControl` is intentionally left unchanged (L1, not this fix wave's scope).
  */
 async function hiddenFragmentControlInPage(arg) {
   const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
@@ -3932,7 +3969,15 @@ async function hiddenFragmentControlInPage(arg) {
   const scratchSessionId = scratch.scratchSessionId;
 
   const model = session.model;
-  const tree = model.tree;
+  // Task 14 fix wave (H1, see this function's own doc comment above): resolved via
+  // getObjectTree()/getInstanceTree() fallback, mirroring invalidBoundsControlInPage's own
+  // already-correct pattern exactly -- a real Viewer 7.124.2 Model has no bare `.tree` own
+  // property.
+  let tree;
+  try {
+    tree = typeof model.getObjectTree === 'function' ? model.getObjectTree() : null;
+    if (!tree || typeof tree.enumNodeFragments !== 'function') tree = typeof model.getInstanceTree === 'function' ? model.getInstanceTree() : null;
+  } catch { tree = null; }
   const property = 'enumNodeFragments';
   // Task 13 codex-review fix (see doc comment above): validate BEFORE touching the descriptor --
   // never let an absent/malformed tree throw outside the try/finally that owns cleanup.
@@ -4063,6 +4108,22 @@ async function hiddenFragmentControlInPage(arg) {
  * NOT-DETECTED path (the perturbation fails to actually breach capacity) -- so the scratch
  * session's own `f1FragmentMapsByRoot` Map must be seeded as an empty, fresh write-target BEFORE
  * calling `observeF1`, never left absent.
+ *
+ * Task 14 fix wave (H1, REQUIRED, final bounded-pass review): the original Stage 4-6 Node-side
+ * `runCapacityBreachControl` (below, unmodified, still historical/dead reference code per L1)
+ * patches a bare `model.fragList` property. This function used to do the same -- the exact same
+ * "already-disclosed accessor-fidelity question" this doc comment's own earlier paragraphs
+ * (above) referred to as deferred. The final reviewer verified against the actual pinned Viewer
+ * 7.124.2 bundle (SHA-256-confirmed identical to `EXPECTED_VIEWER_SHA256`) that no real Model
+ * class exposes `.fragList` as an own or prototype property at all. Against a real model, the
+ * bare-property read above was always `undefined`, so this control's own guard (below) always
+ * returned `NOT_EXECUTABLE`, making PASS structurally unreachable on any live run. This is a
+ * deliberate, VERIFIED deviation from the original Node-side function's own pattern, not an
+ * inconsistency: `fragList` is now resolved via `model.getFragmentList()`, identically to
+ * `wrongOwnerControlInPage`'s own Task 14 fix (same accessor, same stability guarantee, same
+ * unaffected descriptor-capture/restore logic below -- only `getCount` is patched, a method on
+ * the returned object, never the property holding the reference to it). The original Node-side
+ * `runCapacityBreachControl` is intentionally left unchanged (L1, not this fix wave's scope).
  */
 async function capacityBreachControlInPage(arg) {
   const { sessionId, tokenId, gen, controlId, innerTimeoutMs, capacityLimit } = arg || {};
@@ -4085,7 +4146,14 @@ async function capacityBreachControlInPage(arg) {
   g.sessions[scratchSessionId].artifacts.f1FragmentMapsByRoot = new Map();
 
   const model = session.model;
-  const fragList = model.fragList;
+  // Task 14 fix wave (H1, see this function's own doc comment above): resolved via
+  // getFragmentList() -- a real Viewer 7.124.2 Model has no bare `.fragList` own property.
+  // Wrapped in try/catch, mirroring invalidBoundsControlInPage's own tree-resolution pattern --
+  // never let a hostile accessor throw outside the guard below.
+  let fragList;
+  try {
+    fragList = typeof model.getFragmentList === 'function' ? model.getFragmentList() : null;
+  } catch { fragList = null; }
   const property = 'getCount';
   // codex-review Critical fix (see doc comment above): validate BEFORE touching the descriptor --
   // never let an absent/malformed fragList throw outside the try/finally that owns cleanup.
@@ -7404,10 +7472,33 @@ async function runHarness(deps, config) {
   // already-tested `buildXControlDep({pageEvaluate, sessionId, tokenId, gen, ...})` closure-bound
   // contract itself (`mandatorycontrols1.test.mjs`/`mandatorycontrols2.test.mjs` assert that
   // contract directly and must keep passing unmodified).
+  // Task 14 fix wave (M1, recommended, final bounded-pass review): `sessionTainted` used to be set
+  // ONLY on an outer-watchdog rejection (below). But `observeF1`/`observeF2`/`observeF7` genuinely
+  // `await` internally, so an IN-PAGE inner timeout can fire before that, causing the control's
+  // own `finally` to restore its patch and release its lease WHILE an abandoned detection
+  // continuation may still be reading the live model -- a subsequent control could then acquire a
+  // lease and patch the same model while that stale continuation is still active. Reusing the
+  // EXACT SAME `sessionTainted` short-circuit (never a second, parallel mechanism), the taint
+  // condition below is now ADDITIVELY broadened -- never replacing the outer-watchdog trigger --
+  // to also fire on the control's own settled `ControlResult`: `TIMED_OUT` (the control's own
+  // in-page inner timeout, distinct from the outer-watchdog TIMED_OUT already produced in the
+  // catch block below), `RESTORE_FAILED`, or (checked independently of `state`, since
+  // `mapControlAttemptOutcome` classifies a `!detected` result as `NOT_DETECTED` even when its own
+  // restore also failed) any `executed:true` result with `restored === false`. Every one of these
+  // states was ALREADY PASS-blocking (`computeOverall` branch 3) before this fix -- this only stops
+  // `runHarness`'s own remaining sequence from continuing to talk to a possibly-still-perturbed
+  // model, never changes the final verdict for a run that reaches this point.
+  const tainted = (result) => Boolean(result) && (
+    result.state === CONTROL_STATE.TIMED_OUT
+    || result.state === CONTROL_STATE.RESTORE_FAILED
+    || (result.executed === true && result.restored === false)
+  );
+
   const runControlSafely = async (name, fn, extraCtx = {}) => {
     if (typeof fn !== 'function') return notExecutable(name, 'control-not-injected');
+    let result;
     try {
-      return await fn({ controlTimeoutMs, ...extraCtx });
+      result = await fn({ controlTimeoutMs, ...extraCtx });
     } catch (e) {
       if (e && e.outerWatchdogTimeout === true) {
         // Task 10, deliverable 4: still return a well-formed ControlResult for THIS control
@@ -7423,6 +7514,10 @@ async function runHarness(deps, config) {
       fatalErrorObserved = true;
       return notExecutable(name, 'control-threw');
     }
+    // Task 14 fix wave (M1, see this const's own doc comment above): an in-page-only inner
+    // timeout/restore-failure taints the session too, using the identical flag/short-circuit.
+    if (tainted(result)) sessionTainted = true;
+    return result;
   };
 
   let signalSnapshot = null;
