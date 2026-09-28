@@ -30,7 +30,10 @@
 //  Playwright/browser/F1-F8 execution.
 // ============================================================================================
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { readFile as nodeReadFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ------------------------------------------------------------------------------------------
 // Verdict / state enums -- exported constants matching the plan's own vocabulary verbatim.
@@ -1568,6 +1571,653 @@ function tokenEscalatesToUnresolvedOwnership({ tokenState, ownsF6MutableResource
   return !isTerminal && ownsF6MutableResource === true;
 }
 
+// ============================================================================================
+// STAGE 3 -- Runtime-shell slice: page routing, the served-module manifest, Viewer response-
+// body identity capture, the error ledger, F3's listener install/finalize, the
+// tree-unavailable control, and Phase 0-3 orchestration (plan §5, §6.1/§6.1a, §6.3,
+// §6.3a/§6.5's tree-unavailable row, §6.6, §7.3, §4.4, §8).
+//
+// AUTHORIZATION BOUNDARY (binding for this stage, second-opinion-confirmed): no real Chromium
+// is launched anywhere in this stage's own code or tests, for any reason. Every function below
+// that would eventually receive a real Playwright route/request/response/page object accepts
+// that object (or the specific methods it calls) as an injected parameter, exactly like Stage
+// 2's pageEvaluate/pageWaitForFunction pattern -- so a plain fake stands in for it here, and a
+// LATER, separately-authorized stage wires the real Playwright objects through unchanged.
+// ============================================================================================
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const CLASHTEST_DIR = path.join(REPO_ROOT, 'clashtest');
+
+// The plan's own §6.5 fixed default (this module has not previously named a value for it; picked
+// and documented here, per this stage's own design latitude, since the sections this stage reads
+// do not give CHECK_TIMEOUT_MS an exact number). Overridable per call.
+const CHECK_TIMEOUT_MS = 30_000;
+
+// ------------------------------------------------------------------------------------------
+// §5 harness architecture -- /clashtest/** route resolution (matches T3's own accepted
+// pattern exactly, clashtest-viewer-adapter.acceptance.mjs:925-938: resolve the request path
+// against CLASHTEST_DIR, confirm the resolved absolute path stays inside that directory AND
+// ends in .js, 404 otherwise). server.js already serves /collision statically and does NOT
+// serve /clashtest (confirmed by reading server.js directly), so this route only ever needs to
+// handle /clashtest/**; /collision/** reaches the real running server unmodified, same as T3.
+// ------------------------------------------------------------------------------------------
+
+/**
+ * `resolveClashtestModulePath(requestPath, clashtestDir = CLASHTEST_DIR)` -- pure, no
+ * Playwright/filesystem I/O (never reads the file itself; a thin adapter does that, below).
+ * `requestPath` is a URL pathname (e.g. `/clashtest/viewer/index.js`), exactly what
+ * `new URL(route.request().url()).pathname` would give T3's own handler. Returns
+ * `{ ok: true, absolutePath }` or `{ ok: false, status: 404, reason }`. `clashtestDir` is
+ * injectable so tests never depend on this repo's own real `clashtest/` contents.
+ */
+function resolveClashtestModulePath(requestPath, clashtestDir = CLASHTEST_DIR) {
+  const rel = decodeURIComponent(requestPath).replace(/^\/clashtest\//, '');
+  const abs = path.resolve(clashtestDir, rel);
+  if (!abs.startsWith(clashtestDir + path.sep) || !abs.endsWith('.js')) {
+    return { ok: false, status: 404, reason: 'path-traversal-or-invalid-extension' };
+  }
+  return { ok: true, absolutePath: abs };
+}
+
+/**
+ * `handleClashtestRoute(route, { clashtestDir, statFn } = {})` -- the thin Playwright adapter
+ * around `resolveClashtestModulePath`. Per the authorization boundary above, this is fine to
+ * leave UNTESTED against a real `route` object in this stage; it accepts `route` as a
+ * parameter (never constructs one) so a later, separately-authorized stage's real
+ * `page.route('**\/clashtest/**', handleClashtestRoute)` call needs no changes here.
+ * `statFn` mirrors T3's own existence check (`fs.promises.stat`), injectable for the same
+ * reason as `readFileFn` elsewhere in this file.
+ */
+async function handleClashtestRoute(route, { clashtestDir = CLASHTEST_DIR, statFn } = {}) {
+  const url = new URL(route.request().url());
+  const resolved = resolveClashtestModulePath(url.pathname, clashtestDir);
+  if (!resolved.ok) {
+    return route.fulfill({ status: resolved.status, body: 'not served by g1-svf2-f1-f8-verification' });
+  }
+  try {
+    await (statFn || defaultStat)(resolved.absolutePath);
+  } catch {
+    return route.fulfill({ status: 404, body: 'not found' });
+  }
+  return route.fulfill({ path: resolved.absolutePath, contentType: 'text/javascript' });
+}
+
+async function defaultStat(absPath) {
+  const { stat } = await import('node:fs/promises');
+  return stat(absPath);
+}
+
+// ------------------------------------------------------------------------------------------
+// §8 servedModuleManifest -- a deterministic, generated manifest built by walking the
+// harness's own actual import graph at run time (never a fixed, hand-maintained list).
+// ------------------------------------------------------------------------------------------
+
+// The plan's §5 "reused, not duplicated" module list -- the entry points this manifest starts
+// walking from. Repo-relative paths, leading slash, matching the plan's own listing exactly.
+const SERVED_MODULE_ENTRY_POINTS = Object.freeze([
+  '/clashtest/viewer/index.js',
+  '/clashtest/index.js',
+  '/collision/viewer/ViewerModelAdapter.js',
+  '/collision/viewer/ViewerGeometryAdapter.js',
+  '/clashtest/planning/scopeDigest.js',
+  '/collision/index.js',
+  '/collision/constants.js',
+]);
+
+// Matches `... from '<specifier>'` -- covers `import X from '...'`, `import {a,b} from '...'`,
+// `import * as ns from '...'`, `export {a} from '...'`, `export * from '...'`.
+const IMPORT_EXPORT_FROM_SPECIFIER_RE = /\bfrom\s*['"]([^'"]+)['"]/g;
+// Matches a bare side-effect import: `import '<specifier>';` (no `from`).
+const BARE_IMPORT_SPECIFIER_RE = /(?:^|[^.\w])import\s*['"]([^'"]+)['"]/g;
+
+/**
+ * `buildServedModuleManifest(entrySpecifiers, { rootDir, readFileFn })` -- plan §8's
+ * `servedModuleManifest`: walks the *static* `import`/`export ... from` specifiers of each
+ * module transitively, starting from `entrySpecifiers` (repo-relative paths, leading slash),
+ * and returns `{ [repoRelativePath]: sha256Hex }` for every module discovered.
+ *
+ * Approach, honestly documented (never a full JS parser): two regexes scan each module's raw
+ * source text for `from '<spec>'` (covers every named/default/namespace/re-export form) and
+ * bare `import '<spec>';` (side-effect only, no `from`). Only RELATIVE specifiers (starting
+ * `./` or `../`) are followed -- a bare package specifier (e.g. `'three'`) is skipped, since
+ * it resolves into `node_modules`, not a repository-relative file this manifest can/should
+ * hash. This does NOT understand dynamic `import()` calls (a later stage's concern, listed
+ * separately in plan §6.6's own required-resource-failure list, not this manifest), does NOT
+ * understand conditional/computed specifiers, and can be fooled by a specifier-shaped string
+ * inside a comment or an unrelated string literal (accepted false-positive risk for a
+ * test-only evidence manifest over known, well-formed repository ES modules under our own
+ * control -- not a production security boundary).
+ *
+ * `readFileFn` defaults to `node:fs/promises`'s `readFile`, overridable in tests so this
+ * stage's own tests never depend on production file contents (brief's own instruction) --
+ * exercised only against small fixture files under a scratch/temp directory. `rootDir`
+ * defaults to `REPO_ROOT` and MUST be supplied in tests (never the real repo root) for the
+ * same reason.
+ *
+ * A specifier discovered but unreadable (the file does not exist, or `readFileFn` rejects) is
+ * treated as a genuine defect in the manifest's own completeness guarantee -- this function
+ * THROWS rather than silently omitting it, since a manifest that's supposed to make "every
+ * repository module actually served" byte-comparable can never afford a silent gap.
+ */
+async function buildServedModuleManifest(entrySpecifiers, { rootDir = REPO_ROOT, readFileFn = nodeReadFile } = {}) {
+  const manifest = {};
+  const visited = new Set();
+  const queue = [...entrySpecifiers];
+
+  const toRepoRelative = (absPath) => `/${path.relative(rootDir, absPath).split(path.sep).join('/')}`;
+
+  while (queue.length > 0) {
+    const specifier = queue.shift();
+    const absPath = path.resolve(rootDir, specifier.replace(/^\//, ''));
+    const repoRelative = toRepoRelative(absPath);
+    if (visited.has(repoRelative)) continue;
+    visited.add(repoRelative);
+
+    let contents;
+    try {
+      contents = await readFileFn(absPath, 'utf8');
+    } catch (e) {
+      throw new Error(`buildServedModuleManifest: cannot read discovered module '${repoRelative}' (from specifier '${specifier}'): ${e && e.message}`);
+    }
+    manifest[repoRelative] = createHash('sha256').update(contents, 'utf8').digest('hex');
+
+    const discovered = new Set();
+    for (const match of contents.matchAll(IMPORT_EXPORT_FROM_SPECIFIER_RE)) discovered.add(match[1]);
+    for (const match of contents.matchAll(BARE_IMPORT_SPECIFIER_RE)) discovered.add(match[1]);
+
+    for (const spec of discovered) {
+      if (!spec.startsWith('./') && !spec.startsWith('../')) continue; // skip bare package specifiers
+      const resolvedAbs = path.resolve(path.dirname(absPath), spec);
+      const resolvedRepoRelative = toRepoRelative(resolvedAbs);
+      if (!visited.has(resolvedRepoRelative)) queue.push(resolvedRepoRelative);
+    }
+  }
+
+  return manifest;
+}
+
+// ------------------------------------------------------------------------------------------
+// §6.3 Viewer response-body identity classification
+// ------------------------------------------------------------------------------------------
+
+// Source: plan line 1169 / docs/research/2026-09-26-viewer-clash-panel-viewer-api-evidence.md
+// (the decoded-bundle digest for the pinned Viewer 7.124.2 viewer3D.js, 10,948,159 decoded
+// bytes).
+const EXPECTED_VIEWER_SHA256 = '12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e';
+
+/**
+ * `classifyViewerScriptIntegrity(captureRecord)` -- plan §6.3's 5-row `integrityResult` table
+ * (lines 702-712), classified exactly once, first matching row wins in the table's own order:
+ * `FETCH_FAILED`, `MISMATCH`, `PROVENANCE_AMBIGUOUS`, `CAPTURE_UNAVAILABLE`, `VERIFIED`.
+ *
+ * `captureRecord` shape (this stage's own documented design; a later, separately-authorized
+ * stage's real `page.on('response')` listener builds this from Playwright's own
+ * Request/Response objects -- attributing a final response by `resourceType() === 'script'`
+ * plus a `request().redirectedFrom()` chain, per plan §8's "Capture:" paragraph):
+ * {
+ *   requestFailed: boolean,           // a `requestfailed` event fired for the Viewer script request
+ *   autodeskViewingDefined: boolean,  // whether `Autodesk.Viewing` became defined in-page at all
+ *   attributableResponses: [{
+ *     status: number,
+ *     redirectChainComplete: boolean, // this response's own chain fully reconstructed to requestedUrl
+ *     fromServiceWorker: boolean,
+ *     bodyOutcome: 'captured' | 'capture-failed' | 'empty' | 'pending-at-close',
+ *     decodedByteLength: number | null,
+ *     sha256: string | null,          // SHA-256 of the decoded body, only when bodyOutcome === 'captured'
+ *   }],
+ * }
+ *
+ * Returns `{ integrityResult, reason }` -- `reason` is a short diagnostic string, never used
+ * for gating (only `integrityResult`, fed into Stage 1's `computeOverall`, gates anything).
+ */
+function classifyViewerScriptIntegrity(captureRecord) {
+  const record = captureRecord || {};
+  const responses = Array.isArray(record.attributableResponses) ? record.attributableResponses : [];
+
+  // FETCH_FAILED: a requestfailed event; or a final status >= 400; or no response ever
+  // observed AND Autodesk.Viewing never became defined.
+  if (record.requestFailed === true
+      || responses.some((r) => r.status >= 400)
+      || (responses.length === 0 && record.autodeskViewingDefined !== true)) {
+    return { integrityResult: INTEGRITY_RESULT.FETCH_FAILED, reason: 'fetch-failed' };
+  }
+
+  // MISMATCH: at least one attributable final response's body captured non-empty and its
+  // SHA-256 != expected.
+  const mismatched = responses.find((r) => r.bodyOutcome === 'captured' && r.decodedByteLength > 0 && r.sha256 !== EXPECTED_VIEWER_SHA256);
+  if (mismatched) {
+    return { integrityResult: INTEGRITY_RESULT.MISMATCH, reason: 'decoded-body-sha256-mismatch' };
+  }
+
+  // PROVENANCE_AMBIGUOUS: the script executed but no attributable response was observed; or a
+  // redirect chain could not be fully reconstructed; or more than one attributable response
+  // exists and not every one was captured and matched.
+  const noAttributableButExecuted = responses.length === 0 && record.autodeskViewingDefined === true;
+  const chainIncomplete = responses.some((r) => r.redirectChainComplete !== true);
+  const multipleNotAllMatched = responses.length > 1
+    && !responses.every((r) => r.bodyOutcome === 'captured' && r.sha256 === EXPECTED_VIEWER_SHA256);
+  if (noAttributableButExecuted || chainIncomplete || multipleNotAllMatched) {
+    return {
+      integrityResult: INTEGRITY_RESULT.PROVENANCE_AMBIGUOUS,
+      reason: noAttributableButExecuted ? 'no-attributable-response' : chainIncomplete ? 'redirect-chain-incomplete' : 'multiple-responses-not-all-matched',
+    };
+  }
+
+  // CAPTURE_UNAVAILABLE: attributable response(s) exist, but the body was not captured
+  // (rejected/empty/still-pending-at-close), or the final status is non-200 below 400 (e.g.
+  // 304/206) -- status >= 400 was already claimed by FETCH_FAILED above, so any remaining
+  // non-200 here is necessarily below 400.
+  const captureIssue = responses.some((r) => r.bodyOutcome !== 'captured' || r.status !== 200);
+  if (captureIssue) {
+    return { integrityResult: INTEGRITY_RESULT.CAPTURE_UNAVAILABLE, reason: 'body-not-captured-or-non-200' };
+  }
+
+  // VERIFIED: every attributable final response is status 200, a fully reconstructed redirect
+  // chain, a captured non-empty decoded body, and SHA-256 === expected.
+  const allVerified = responses.length > 0 && responses.every((r) => r.status === 200
+    && r.redirectChainComplete === true && r.bodyOutcome === 'captured'
+    && r.decodedByteLength > 0 && r.sha256 === EXPECTED_VIEWER_SHA256);
+  if (allVerified) {
+    return { integrityResult: INTEGRITY_RESULT.VERIFIED, reason: null };
+  }
+
+  // Defensive fallback -- the five rows above are exhaustive over this captureRecord shape, so
+  // this should be unreachable; fail closed to the weaker BLOCKED-class value rather than ever
+  // return something out of INTEGRITY_RESULT's enum (computeOverall's own fail-closed clause,
+  // Stage 1, already treats a missing/out-of-enum value as fatal -- this avoids handing it
+  // anything worse than CAPTURE_UNAVAILABLE).
+  return { integrityResult: INTEGRITY_RESULT.CAPTURE_UNAVAILABLE, reason: 'unclassified-fallback' };
+}
+
+// ------------------------------------------------------------------------------------------
+// §6.6 Console/page/runtime error ledger
+// ------------------------------------------------------------------------------------------
+
+// No allow-listed console.error fingerprint exists at plan time (plan §6.6's own text) --
+// deliberately empty, extensible only by an exact string/regex fingerprint tied to phase,
+// source, and Viewer version, each with a one-line justification recorded alongside it. Never
+// pre-populate this with a guess.
+const CONSOLE_ERROR_ALLOWLIST = [];
+
+function matchesConsoleErrorAllowlistEntry(entry, event) {
+  if (entry.pattern instanceof RegExp) return entry.pattern.test(event.message || '');
+  return entry.pattern === event.message;
+}
+
+/**
+ * `classifyLedgerEvent(event, { closeIntent })` -- plan §6.6's always-fatal list and the
+ * `closeIntent`-gated crash/close exception.
+ *
+ * `event` shape (this stage's own documented design; a later stage's real `page.on(...)`/
+ * `context.on(...)`/`browser.on(...)` listeners build these): `{ kind: 'pageerror' |
+ * 'unhandledrejection' | 'required-resource-failure' | 'webglcontextlost' | 'crash' | 'close' |
+ * 'console', level?, message? }`. `level` (`'error'|'warn'|'info'|'log'`) and `message` apply
+ * only to `kind: 'console'`.
+ *
+ * `closeIntent` -- `undefined`/`null` (its initial, unset value) or `'cleanup'` (set
+ * immediately before each of `page.close()`/`context.close()`/`browser.close()`, per §6.6).
+ * Only meaningful for `crash`/`close` events.
+ *
+ * Returns `{ fatal: boolean, reason }`. Never throws for a recognized `kind`; throws for an
+ * unrecognized one (a harness-side programming error, not a runtime event, so failing loudly
+ * here is correct -- fail-closed classification logic must never silently pass an event kind
+ * it doesn't understand).
+ */
+function classifyLedgerEvent(event, { closeIntent } = {}) {
+  switch (event && event.kind) {
+    case 'pageerror':
+      return { fatal: true, reason: 'pageerror' };
+    case 'unhandledrejection':
+      return { fatal: true, reason: 'unhandledrejection' };
+    case 'required-resource-failure':
+      return { fatal: true, reason: 'required-resource-failure' };
+    case 'webglcontextlost':
+      return { fatal: true, reason: 'webglcontextlost' };
+    case 'crash':
+    case 'close': {
+      const expectedTeardown = closeIntent === 'cleanup';
+      return { fatal: !expectedTeardown, reason: expectedTeardown ? 'expected-teardown' : `${event.kind}-while-closeIntent-unset` };
+    }
+    case 'console': {
+      if (event.level !== 'error') return { fatal: false, reason: `console-${event.level}-never-fatal` };
+      const allowed = CONSOLE_ERROR_ALLOWLIST.some((entry) => matchesConsoleErrorAllowlistEntry(entry, event));
+      return { fatal: !allowed, reason: allowed ? 'allow-listed' : 'console-error-not-allow-listed' };
+    }
+    default:
+      throw new Error(`classifyLedgerEvent: unrecognized event kind '${event && event.kind}'`);
+  }
+}
+
+// ------------------------------------------------------------------------------------------
+// §7.3 F3 readiness scoring
+// ------------------------------------------------------------------------------------------
+
+/**
+ * `scoreF3Readiness(timeline)` -- plan §7.3's exact success/failure criteria, pure.
+ *
+ * `timeline` shape (this stage's own documented design; the real in-page F3 probe -- listener
+ * install + the throwaway-binding `resolveRoots` call it issues at `MODEL_ADDED_EVENT` time --
+ * is an INJECTED, opaque dependency per this stage's authorization boundary, not built here;
+ * `finalizeF3Probe()` in `runSetupThroughClassification`'s `deps` is what produces this shape):
+ * {
+ *   modelAddedObserved: boolean,
+ *   tModelAdded: number | null,
+ *   atInvocation: { isObjectTreeCreated, instanceTreeInData, isLoadDone } | null,
+ *   resolveRootsOutcome: 'resolved' | 'rejected' | 'timed-out' | null,
+ *   atSettlement: { isObjectTreeCreated, instanceTreeInData, isLoadDone } | null,
+ *   elapsedMs: number | null,
+ *   rejectionError: unknown | null,   // raw error; this function passes it through describeError
+ * }
+ *
+ * Returns `{ verdict, reason, fields, error? }` -- `verdict` is one of Stage 1's `CHECK_VERDICT`
+ * values.
+ */
+function scoreF3Readiness(timeline) {
+  const t = timeline || {};
+  if (t.modelAddedObserved !== true) {
+    return { verdict: CHECK_VERDICT.FAIL, reason: 'model-added-never-observed', fields: t };
+  }
+  if (t.resolveRootsOutcome === 'timed-out') {
+    return { verdict: CHECK_VERDICT.FAIL, reason: 'readiness-never-settled', fields: t };
+  }
+  if (t.resolveRootsOutcome === 'rejected') {
+    return { verdict: CHECK_VERDICT.FAIL, reason: 'resolve-roots-rejected', fields: t, error: t.rejectionError ? describeError(t.rejectionError) : null };
+  }
+  if (t.resolveRootsOutcome === 'resolved') {
+    return { verdict: CHECK_VERDICT.PASS, reason: null, fields: t, readinessGateSufficient: true };
+  }
+  // Any other/missing outcome is fail-closed -- never a silent PASS for an unrecognized state.
+  return { verdict: CHECK_VERDICT.FAIL, reason: 'unrecognized-resolveRootsOutcome', fields: t };
+}
+
+// ------------------------------------------------------------------------------------------
+// §4.1 -- in-page format-signal capture, and the Node-side shim readFormat runs against.
+//
+// Per codex-advisor consult (this stage's design boundary): the live Model this needs to call
+// isOTG()/isSVF2() on only ever exists at window.__g1.models[tokenId] (Stage 2's own "no live
+// object crosses realms" rule). This in-page function captures the RAW signals once each,
+// JSON-safe; the CLASSIFICATION decision itself still runs entirely in Node, via Stage 1's
+// real, unmodified readFormat(), against a plain shim object built from this capture --
+// readFormat is never handed the live Model, and is never itself run in-page.
+// ------------------------------------------------------------------------------------------
+
+/**
+ * In-page. `captureModelFormatSignals({ tokenId, gen })` -- references only its own argument
+ * and `window.__g1`. Requires a matching token id AND generation, and a `loadDocumentNode`
+ * record that reached `'completed'` (anything else means there is no trustworthy live Model to
+ * read). Invokes `isOTG()`/`isSVF2()` at most once each. Distinguishes "the method is absent"
+ * (`'UNAVAILABLE'`, matching `readFormat`'s own sentinel) from "the method is present but
+ * threw" (`null`, plus a `captureErrors` entry) -- a throw is NEVER silently downgraded to
+ * `'UNAVAILABLE'`, since that would change `readFormat(realModel)`'s own semantics (where
+ * `'UNAVAILABLE'` specifically means "the API is absent from this Viewer version", not "the
+ * API is broken"). A caller must route a capture error (`isOTG`/`isSVF2 === null`) through its
+ * own fatal-error handling, never through the classifier.
+ */
+function captureModelFormatSignals({ tokenId, gen }) {
+  const g = window.__g1;
+  const r = g && g.loads[tokenId];
+  if (!r || r.gen !== gen) return { ok: false, reason: 'missing-or-generation-mismatch' };
+  if (r.status !== 'completed' || r.api !== 'loadDocumentNode') {
+    return { ok: false, reason: 'no-completed-loadDocumentNode-record' };
+  }
+  const model = g.models[tokenId];
+  if (!model) return { ok: false, reason: 'model-not-found' };
+
+  const errOf = (e) => (e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? ''), code: e.code, reason: e.reason }
+    : { primitive: typeof e, value: String(e) });
+
+  const result = { ok: true, isOTG: 'UNAVAILABLE', isSVF2: 'UNAVAILABLE', captureErrors: [] };
+  if (typeof model.isOTG === 'function') {
+    try { result.isOTG = model.isOTG(); } catch (e) { result.isOTG = null; result.captureErrors.push({ signal: 'isOTG', error: errOf(e) }); }
+  }
+  if (typeof model.isSVF2 === 'function') {
+    try { result.isSVF2 = model.isSVF2(); } catch (e) { result.isSVF2 = null; result.captureErrors.push({ signal: 'isSVF2', error: errOf(e) }); }
+  }
+  return result;
+}
+
+/**
+ * Node-side. `buildFormatSignalShim(snapshot)` -- builds a plain object from
+ * `captureModelFormatSignals`'s JSON-safe snapshot for Stage 1's `readFormat(model)` to run
+ * against. A signal of `'UNAVAILABLE'` omits that method entirely (mirroring a real absent
+ * API); a captured boolean becomes a method returning exactly that value once. Throws --
+ * rather than silently building a shim `readFormat` would misreport as `'UNAVAILABLE'` -- if
+ * the capture itself failed (`snapshot.ok !== true`) or either signal is `null` (a genuine
+ * in-page capture error, not an absence); the caller must handle that case before ever calling
+ * this.
+ */
+function buildFormatSignalShim(snapshot) {
+  if (!snapshot || snapshot.ok !== true) {
+    throw new Error(`buildFormatSignalShim: cannot build a shim from an unsuccessful capture (reason: ${snapshot && snapshot.reason})`);
+  }
+  if (snapshot.isOTG === null || snapshot.isSVF2 === null) {
+    throw new Error('buildFormatSignalShim: a format-signal capture error occurred in-page (isOTG/isSVF2 threw) -- route this through fatal-error handling, never silently treat it as UNAVAILABLE');
+  }
+  const shim = {};
+  if (snapshot.isOTG !== 'UNAVAILABLE') shim.isOTG = () => snapshot.isOTG;
+  if (snapshot.isSVF2 !== 'UNAVAILABLE') shim.isSVF2 = () => snapshot.isSVF2;
+  return shim;
+}
+
+// ------------------------------------------------------------------------------------------
+// §6.5/§6.3a -- the `tree-unavailable` control
+// ------------------------------------------------------------------------------------------
+
+function withControlTimeout(promiseLike, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error(`control timed out after ${ms}ms`);
+      err.controlTimeout = true;
+      reject(err);
+    }, ms);
+    Promise.resolve(promiseLike).then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
+/**
+ * `runTreeUnavailableControl({ modelBefore, world, registry, registryKey, checkReadiness,
+ * controlTimeoutMs })` -- plan §6.5's `tree-unavailable` row + §6.3a's classification (run at
+ * Phase 3c, right after F3). Patches `modelBefore.isObjectTreeCreated`/`getObjectTree` to fail,
+ * confirms `checkReadiness` (an injected stand-in for F3's real readiness gate -- see
+ * `scoreF3Readiness`'s own doc for why the real gate is out of this stage's scope) classifies
+ * this as a readiness failure rather than a silent pass, restores in `finally`, then verifies
+ * restoration via the plan's own oracle: each patched member re-read and confirmed identical
+ * to its pre-patch original, plus `world.isModelLive(modelBefore)` and
+ * `registry.bindingFor(registryKey).model === modelBefore`.
+ *
+ * `restorationRequired` is taken from Stage 1's own `CONTROL_RESTORATION_REQUIRED['tree-
+ * unavailable']` via `createControlResult` -- never hardcoded here, so this control can never
+ * silently drift from Stage 1's already-committed, plan-line-843-cross-checked value (`true`).
+ */
+async function runTreeUnavailableControl({ modelBefore, world, registry, registryKey, checkReadiness, controlTimeoutMs = CHECK_TIMEOUT_MS }) {
+  if (!modelBefore || typeof modelBefore !== 'object' || typeof checkReadiness !== 'function') {
+    return createControlResult('tree-unavailable', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'precondition-unmet' });
+  }
+
+  const hasOwnIsObjectTreeCreated = Object.prototype.hasOwnProperty.call(modelBefore, 'isObjectTreeCreated');
+  const hasOwnGetObjectTree = Object.prototype.hasOwnProperty.call(modelBefore, 'getObjectTree');
+  const originalIsObjectTreeCreated = modelBefore.isObjectTreeCreated;
+  const originalGetObjectTree = modelBefore.getObjectTree;
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+
+  try {
+    modelBefore.isObjectTreeCreated = () => false;
+    modelBefore.getObjectTree = (onSuccess, onError) => { if (onError) onError(new Error('tree-unavailable control: simulated failure')); };
+
+    const gateResult = await withControlTimeout(checkReadiness(modelBefore), controlTimeoutMs);
+    detected = Boolean(gateResult && gateResult.ready === false);
+    if (!detected) reason = 'not-detected';
+  } catch (e) {
+    if (e && e.controlTimeout) {
+      timedOut = true;
+      reason = 'perturbation-timeout';
+    } else {
+      detected = false;
+      reason = 'checkReadiness-threw';
+    }
+  } finally {
+    if (hasOwnIsObjectTreeCreated) modelBefore.isObjectTreeCreated = originalIsObjectTreeCreated;
+    else delete modelBefore.isObjectTreeCreated;
+    if (hasOwnGetObjectTree) modelBefore.getObjectTree = originalGetObjectTree;
+    else delete modelBefore.getObjectTree;
+  }
+
+  if (timedOut) {
+    return createControlResult('tree-unavailable', { state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null, reason });
+  }
+
+  const membersRestored = modelBefore.isObjectTreeCreated === originalIsObjectTreeCreated
+    && modelBefore.getObjectTree === originalGetObjectTree;
+  const worldLiveOk = !world || world.isModelLive(modelBefore) === true;
+  const bindingOk = !registry || Boolean(registry.bindingFor(registryKey) && registry.bindingFor(registryKey).model === modelBefore);
+  const restored = membersRestored && worldLiveOk && bindingOk;
+
+  if (!detected) {
+    return createControlResult('tree-unavailable', { state: CONTROL_STATE.NOT_DETECTED, executed: true, detected: false, restored, reason });
+  }
+  if (!restored) {
+    return createControlResult('tree-unavailable', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: reason || 'restore-assertion-failed' });
+  }
+  return createControlResult('tree-unavailable', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
+// ------------------------------------------------------------------------------------------
+// §6.1/§6.1a -- Phase 0-3 orchestration
+// ------------------------------------------------------------------------------------------
+
+/**
+ * `runSetupThroughClassification(deps)` -- Phase 0-3 (plan §6.1's phase table, through Phase 3
+ * only; see the EXTENSION POINT comment at the bottom of this function for Phase 4/F1 onward).
+ * Every page-interaction dependency is injected -- reusing Stage 2's own `pageEvaluate`/
+ * `pageWaitForFunction` shape plus three stage-3-specific opaque contracts, per the
+ * codex-advisor consult: real F3-probe wiring (listener install + the real, throwaway-binding
+ * `resolveRoots` call §7.3 requires) and real Phase 2.5 session construction (`world`/
+ * `registry`/`binding`, requiring the real repo modules running against a live Viewer) are
+ * both out of this stage's authorization/scope -- their REAL implementations are a later,
+ * separately-authorized stage's job. This function owns only the ORCHESTRATION SEQUENCE and
+ * how it interprets each dependency's result.
+ *
+ * `deps` shape:
+ * {
+ *   installF3Probe: () => Promise<void>,        // Phase 1 (§4.4) -- BEFORE Document.load. Real
+ *                                                 // contract: install the MODEL_ADDED_EVENT
+ *                                                 // listener AND issue the real
+ *                                                 // resolveRoots(throwawayBinding, 'whole', ctx)
+ *                                                 // call at MODEL_ADDED_EVENT time (§7.3) --
+ *                                                 // page-owned state, nothing returned to Node.
+ *   finalizeF3Probe: () => Promise<F3Timeline>,  // Phase 3 -- removes the listener, returns the
+ *                                                 // timeline scoreF3Readiness reads (its own doc).
+ *   pageEvaluate, pageWaitForFunction,            // Stage 2's own injected shape, reused verbatim.
+ *   loadStarter: { documentLoad, loadDocumentNode }, // opaque in-page starter fn references
+ *                                                 // Stage 2's startLoad() itself takes as `starter`.
+ *   captureFormatSignalsFn = captureModelFormatSignals, // overridable for testing only.
+ *   loadTimeoutMs: number,
+ *   urn: string,
+ *   setupSharedSessionResources: (tokenId) => Promise<{
+ *     ok: boolean, sessionId: string | null,
+ *     postconditions: { registryWorldMatches, bindingModelMatches, worldModelIsLive } | null,
+ *     error: unknown | null,
+ *   }>,   // Phase 2.5 (§6.1a) -- injected/opaque per the codex-advisor consult: the real
+ *         // implementation stores world/registry/binding/model under page-owned state (e.g.
+ *         // window.__g1.session) and returns only this JSON-safe receipt; Node owns just
+ *         // `sessionId` plus the receipt, never a live resource reference.
+ * }
+ *
+ * Returns `{ phaseReached, docLoad, loadDocumentNode, classifier, formatSignals, phase25,
+ * checks, fatalErrorObserved? }`. `phaseReached` is one of `'load' | 'classifier-stop' |
+ * 'phase2.5-setup-failed' | 'phase3'`, telling a caller/test exactly how far the sequence got.
+ * `checks` only ever contains `F3` this stage (F1/F2/F4-F8 are later stages' own additions).
+ */
+async function runSetupThroughClassification(deps) {
+  const {
+    installF3Probe, finalizeF3Probe, pageEvaluate, pageWaitForFunction,
+    loadStarter, captureFormatSignalsFn = captureModelFormatSignals,
+    loadTimeoutMs, urn, setupSharedSessionResources,
+  } = deps;
+
+  // Phase 1 -- F3 probe install, strictly before Phase 2's load call (§4.4).
+  await installF3Probe();
+
+  // Phase 2 -- load: Document.load, then (only if that token completed) loadDocumentNode. The
+  // two-stage linkage (loadDocumentNode's token is only minted once Document.load's own token
+  // reaches 'completed') is this function's own sequencing -- Stage 2's startLoad() itself
+  // handles a single call's reconciliation, not the linkage between two calls.
+  const docLoad = await startLoad({
+    pageEvaluate, starter: loadStarter.documentLoad, api: LOAD_API.DOCUMENT_LOAD, urn, loadTimeoutMs,
+  });
+  if (docLoad.token.state !== TOKEN_STATE.COMPLETED) {
+    return { phaseReached: 'load', docLoad, loadDocumentNode: null, classifier: null, formatSignals: null, phase25: null, checks: {} };
+  }
+
+  const loadDocumentNodeResult = await startLoad({
+    pageEvaluate, starter: loadStarter.loadDocumentNode, api: LOAD_API.LOAD_DOCUMENT_NODE,
+    docTokenId: docLoad.token.id, loadTimeoutMs,
+  });
+  if (loadDocumentNodeResult.token.state !== TOKEN_STATE.COMPLETED) {
+    return { phaseReached: 'load', docLoad, loadDocumentNode: loadDocumentNodeResult, classifier: null, formatSignals: null, phase25: null, checks: {} };
+  }
+
+  // Classifier -- run once, immediately after load-done, before any F1-F8 check (§4.1). Only
+  // the raw signal CAPTURE happens in-page (captureFormatSignalsFn); the classification
+  // decision itself runs here, in Node, through Stage 1's real readFormat().
+  const signalSnapshot = await pageEvaluate(captureFormatSignalsFn, { tokenId: loadDocumentNodeResult.token.id, gen: loadDocumentNodeResult.gen });
+  let classifierResult;
+  if (!signalSnapshot || signalSnapshot.ok !== true || signalSnapshot.isOTG === null || signalSnapshot.isSVF2 === null) {
+    // A capture failure (never silently treated as UNAVAILABLE, per buildFormatSignalShim's
+    // own contract) stops the sequence exactly like a classifier stop -- there is no
+    // trustworthy classifier decision to proceed past.
+    return {
+      phaseReached: 'classifier-stop', docLoad, loadDocumentNode: loadDocumentNodeResult,
+      classifier: null, formatSignals: signalSnapshot, phase25: null, checks: {},
+      captureFailure: true,
+    };
+  }
+  classifierResult = readFormat(buildFormatSignalShim(signalSnapshot));
+
+  if (classifierResult.classifier !== CLASSIFIER.CONFIRMED_SVF2) {
+    return {
+      phaseReached: 'classifier-stop', docLoad, loadDocumentNode: loadDocumentNodeResult,
+      classifier: classifierResult, formatSignals: signalSnapshot, phase25: null, checks: {},
+    };
+  }
+
+  // Phase 2.5 -- shared session resources + setup postconditions (§6.1a). Injected/opaque --
+  // see this function's own doc for why.
+  const phase25 = await setupSharedSessionResources(loadDocumentNodeResult.token.id);
+  if (!phase25 || phase25.ok !== true) {
+    return {
+      phaseReached: 'phase2.5-setup-failed', docLoad, loadDocumentNode: loadDocumentNodeResult,
+      classifier: classifierResult, formatSignals: signalSnapshot, phase25, checks: {},
+      // A Phase-2.5 setup-postcondition failure is fatal (§6.1a: "a failure here is a
+      // Phase-2.5 setup failure ... fatal per §6.6"), never an individual Fi's BLOCKED.
+      fatalErrorObserved: true,
+    };
+  }
+
+  // Phase 3 -- F3 finalize: remove the listener NOW (not at final cleanup, fixes I3), read out
+  // the timeline, score F3.
+  const f3Timeline = await finalizeF3Probe();
+  const f3Score = scoreF3Readiness(f3Timeline);
+
+  return {
+    phaseReached: 'phase3', docLoad, loadDocumentNode: loadDocumentNodeResult,
+    classifier: classifierResult, formatSignals: signalSnapshot, phase25,
+    checks: { F3: f3Score },
+    // ==== EXTENSION POINT for later stages ====
+    // A later stage inserts Phase 3c (the tree-unavailable control, via
+    // runTreeUnavailableControl above) and Phase 4 (F1) onward HERE, immediately after this
+    // return point, reusing this same `deps`-style injection pattern and the `phase25`
+    // session receipt already built above -- it must not rebuild Phase 0-3 to add Phase 4.
+  };
+}
+
 // ------------------------------------------------------------------------------------------
 // Guarded entrypoint stub (item 8) -- a later stage replaces main()'s body.
 // ------------------------------------------------------------------------------------------
@@ -1630,5 +2280,21 @@ export {
   AggregateCleanupError,
   runCleanup,
   tokenEscalatesToUnresolvedOwnership,
+  REPO_ROOT,
+  CLASHTEST_DIR,
+  CHECK_TIMEOUT_MS,
+  resolveClashtestModulePath,
+  handleClashtestRoute,
+  SERVED_MODULE_ENTRY_POINTS,
+  buildServedModuleManifest,
+  EXPECTED_VIEWER_SHA256,
+  classifyViewerScriptIntegrity,
+  CONSOLE_ERROR_ALLOWLIST,
+  classifyLedgerEvent,
+  scoreF3Readiness,
+  captureModelFormatSignals,
+  buildFormatSignalShim,
+  runTreeUnavailableControl,
+  runSetupThroughClassification,
   main,
 };
