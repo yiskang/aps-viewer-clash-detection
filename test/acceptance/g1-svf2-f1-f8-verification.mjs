@@ -1668,24 +1668,28 @@ function resolveClashtestModulePath(requestPath, clashtestDir = CLASHTEST_DIR) {
 }
 
 /**
- * `handleClashtestRoute(route, { clashtestDir, statFn } = {})` -- the thin Playwright adapter
- * around `resolveClashtestModulePath`. Per the authorization boundary above, this is fine to
- * leave UNTESTED against a real `route` object in this stage; it accepts `route` as a
+ * `handleClashtestRoute(route, { clashtestDir, statFn, baseUrl } = {})` -- the thin Playwright
+ * adapter around `resolveClashtestModulePath`. Per the authorization boundary above, this is
+ * fine to leave UNTESTED against a real `route` object in this stage; it accepts `route` as a
  * parameter (never constructs one) so a later, separately-authorized stage's real
  * `page.route('**\/clashtest/**', handleClashtestRoute)` call needs no changes here.
  * `statFn` mirrors T3's own existence check (`fs.promises.stat`), injectable for the same
  * reason as `readFileFn` elsewhere in this file.
  *
- * NOTE for whoever wires the real `page.route` call in a later stage (deferred, Stage 3
- * review): T3's own handler additionally checks the request's origin against the harness's own
- * `BASE_URL` before resolving the path (`clashtest-viewer-adapter.acceptance.mjs:933`,
- * `if (url.origin !== new URL(BASE_URL).origin) return route.continue();`), so a cross-origin
- * request matching the `**\/clashtest/**` glob is passed through rather than served by this
- * handler. This function does not yet take a `baseUrl`/origin parameter to reproduce that
- * check -- add one when wiring the real route registration, matching T3's own guard exactly.
+ * `baseUrl` -- fix wave (final whole-branch review, Minor M1), the origin check this doc
+ * comment previously deferred: T3's own handler additionally checks the request's origin
+ * against the harness's own `BASE_URL` before resolving the path
+ * (`clashtest-viewer-adapter.acceptance.mjs:933`, `if (url.origin !== new URL(BASE_URL).origin)
+ * return route.continue();`), so a cross-origin request matching the `**\/clashtest/**` glob is
+ * passed through rather than served by this handler, matching T3's own guard exactly. Omitting
+ * `baseUrl` skips the check (this stage's own existing offline tests never pass one, and never
+ * need to -- they construct `route` fakes directly, never a real cross-origin request).
  */
-async function handleClashtestRoute(route, { clashtestDir = CLASHTEST_DIR, statFn } = {}) {
+async function handleClashtestRoute(route, { clashtestDir = CLASHTEST_DIR, statFn, baseUrl } = {}) {
   const url = new URL(route.request().url());
+  if (baseUrl && url.origin !== new URL(baseUrl).origin) {
+    return route.continue();
+  }
   const resolved = resolveClashtestModulePath(url.pathname, clashtestDir);
   if (!resolved.ok) {
     return route.fulfill({ status: resolved.status, body: 'not served by g1-svf2-f1-f8-verification' });
@@ -1806,6 +1810,78 @@ async function buildServedModuleManifest(entrySpecifiers, { rootDir = REPO_ROOT,
 // (the decoded-bundle digest for the pinned Viewer 7.124.2 viewer3D.js, 10,948,159 decoded
 // bytes).
 const EXPECTED_VIEWER_SHA256 = '12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e';
+
+// Fix wave (final whole-branch review, Critical C1): main()'s own Phase 0 constants -- pinned
+// Viewer version/URLs matching EXPECTED_VIEWER_SHA256 above and test/acceptance/
+// g1-svf2-initializer-diagnostic.mjs's own already-reviewed values exactly (confirmed by direct
+// read of that file), PORT/BASE_URL matching that same script's own convention. codex-advisor
+// (medium, this fix wave): hardcoding the reviewed fixture URN here (rather than importing it
+// from the diagnostic script) is correct -- that script statically imports 'playwright' at
+// module scope, which this harness must never do before its own activation interlock runs.
+const PORT = process.env.PORT || 8080;
+const BASE_URL = `http://localhost:${PORT}`;
+const VIEWER_VERSION = '7.124.2';
+const VIEWER_SCRIPT_URL = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VERSION}/viewer3D.js`;
+const VIEWER_STYLE_URL = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VERSION}/style.css`;
+// Same fixture as g1-svf2-initializer-diagnostic.mjs:49 (Room Locator model, single SVF2 3D
+// derivative, already-reviewed) -- copied, not imported, per the codex-advisor note above.
+const MODEL_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ';
+
+// Fix wave (C1): the bare synthetic page main() serves at Phase 0 -- mirrors
+// g1-svf2-initializer-diagnostic.mjs's own DIAGNOSTIC_HTML exactly (viewer3D.js script tag,
+// getAccessToken fetching the existing, unmodified GET /api/auth/token endpoint, Initializer
+// with the corrected env:'AutodeskProduction2'/api:'streamingV2' options, GuiViewer3D
+// construction + viewer.start(), window.__viewer = viewer) -- WITHOUT that script's own
+// window.__loadModel helper, since this harness's own documentLoadStarter/loadDocumentNodeStarter
+// (already built, installed via buildBootstrapScriptSource()'s addInitScript) do that job
+// instead, dispatched through the real pageEvaluate wrapper, never a bespoke in-HTML helper.
+// `window.__g1Bootstrap.ready` is this page's own readiness flag, analogous to the diagnostic
+// script's `window.__diag.ready`.
+const BARE_PAGE_HTML = `<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="${VIEWER_STYLE_URL}">
+<style>html,body,#preview{margin:0;height:100%;width:100%}</style>
+</head><body>
+<div id="preview"></div>
+<script src="${VIEWER_SCRIPT_URL}"></script>
+<script>
+async function getAccessToken(callback) {
+  const resp = await fetch('/api/auth/token');
+  if (!resp.ok) throw new Error(await resp.text());
+  const { access_token, expires_in } = await resp.json();
+  callback(access_token, expires_in);
+}
+window.__g1Bootstrap = { ready: false, error: null };
+try {
+  Autodesk.Viewing.Initializer(
+    { env: 'AutodeskProduction2', api: 'streamingV2', getAccessToken },
+    function () {
+      const viewer = new Autodesk.Viewing.GuiViewer3D(document.getElementById('preview'), {});
+      viewer.start();
+      window.__viewer = viewer;
+      window.__g1Bootstrap.ready = true;
+    },
+  );
+} catch (e) {
+  window.__g1Bootstrap.error = String(e && e.message || e);
+}
+</script>
+</body></html>`;
+
+/**
+ * `walkRedirectRootUrl(request)` -- fix wave (C1), Node-side, real-Playwright-`Request`-shaped
+ * (never itself imports playwright). Walks a real Playwright `Request`'s own
+ * `redirectedFrom()` chain back to its origin and returns that origin's `url()`. Used by
+ * `main()`'s own Viewer-script response/requestfailed attribution (below) to identify which
+ * hop of a possible redirect chain a given response/failure belongs to, per codex-advisor's
+ * own finding (this fix wave): filtering by exact URL equality alone misses a redirected final
+ * response (Playwright mints a NEW `Request` per redirect hop, each with its own `url()`).
+ */
+function walkRedirectRootUrl(request) {
+  let r = request;
+  while (r.redirectedFrom()) r = r.redirectedFrom();
+  return r.url();
+}
 
 /**
  * `classifyViewerScriptIntegrity(captureRecord)` -- plan §6.3's 5-row `integrityResult` table
@@ -5711,6 +5787,14 @@ async function runHarness(deps, config) {
   const tokenGens = new Map();
   const f6TokenIds = new Set();
   let classifierResult = null;
+  // Fix wave (final whole-branch review, C1's own codex-advisor consult finding #4, independently
+  // re-verified against this function's own source): hoisted out of Phase 1/2 below, which is now
+  // wrapped in its own try/catch -- these two must stay assignable from outside that try so the
+  // `if (classifierConfirmed) {...} else {...}` branch immediately below it (unchanged) keeps
+  // working when Phase 1/2 aborts partway through. Both default fail-closed (never confirmed /
+  // never loaded), matching this file's existing default-fails-closed discipline throughout.
+  let classifierConfirmed = false;
+  let loadDocumentNodeResult = null;
   let sessionId = null;
   let fatalErrorObserved = false;
   let cleanupUnresolvedOwnership = false;
@@ -5730,34 +5814,50 @@ async function runHarness(deps, config) {
     }
   };
 
-  // Phase 1 -- F3 probe install, strictly before Phase 2's load call (§4.4).
-  await installF3Probe();
-
-  // Phase 2 -- load: Document.load, then (only if that token completed) loadDocumentNode.
-  const docLoad = await startLoad({ pageEvaluate, starter: loadStarter.documentLoad, api: LOAD_API.DOCUMENT_LOAD, urn, loadTimeoutMs });
-  tokens.push(docLoad.token);
-  tokenGens.set(docLoad.token.id, docLoad.gen);
-  let loadDocumentNodeResult = null;
-  if (docLoad.token.state === TOKEN_STATE.COMPLETED) {
-    loadDocumentNodeResult = await startLoad({ pageEvaluate, starter: loadStarter.loadDocumentNode, api: LOAD_API.LOAD_DOCUMENT_NODE, docTokenId: docLoad.token.id, loadTimeoutMs });
-    tokens.push(loadDocumentNodeResult.token);
-    tokenGens.set(loadDocumentNodeResult.token.id, loadDocumentNodeResult.gen);
-  }
-
-  const loadReachedCompleted = loadDocumentNodeResult && loadDocumentNodeResult.token.state === TOKEN_STATE.COMPLETED;
-
   let signalSnapshot = null;
-  if (loadReachedCompleted) {
-    signalSnapshot = await pageEvaluate(captureFormatSignalsFn, { tokenId: loadDocumentNodeResult.token.id, gen: loadDocumentNodeResult.gen });
-    if (!signalSnapshot || signalSnapshot.ok !== true || signalSnapshot.isOTG === null || signalSnapshot.isSVF2 === null) {
-      fatalErrorObserved = true;
-    } else {
-      classifierResult = readFormat(buildFormatSignalShim(signalSnapshot));
-    }
-  }
+  // Fix wave (C1, codex-advisor consult finding #4): Phase 1/2 wrapped in try/catch, matching
+  // Phase 2.5-10's own "nothing early-returns past cleanup" guarantee (its own doc comment,
+  // immediately below) -- previously unguarded: a real installF3Probe()/
+  // pageEvaluate(captureFormatSignalsFn, ...) rejection (e.g. page.evaluate rejecting on a page
+  // crash) would have propagated straight out of runHarness, bypassing Phase 11 cleanup and the
+  // atomic write entirely, contradicting that documented invariant. startLoad itself already
+  // catches its own pageEvaluate call internally and never rethrows (Stage 2/3's own §6.4a Case D
+  // handling), so it needs no additional guard here -- only the two calls that bypass startLoad's
+  // protection do.
+  try {
+    // Phase 1 -- F3 probe install, strictly before Phase 2's load call (§4.4).
+    await installF3Probe();
 
-  // Only CONFIRMED_SVF2 proceeds past the classifier (§4.1) into Phase 2.5 and F1-F8/F6/controls.
-  const classifierConfirmed = classifierResult && classifierResult.classifier === CLASSIFIER.CONFIRMED_SVF2;
+    // Phase 2 -- load: Document.load, then (only if that token completed) loadDocumentNode.
+    const docLoad = await startLoad({ pageEvaluate, starter: loadStarter.documentLoad, api: LOAD_API.DOCUMENT_LOAD, urn, loadTimeoutMs });
+    tokens.push(docLoad.token);
+    tokenGens.set(docLoad.token.id, docLoad.gen);
+    if (docLoad.token.state === TOKEN_STATE.COMPLETED) {
+      loadDocumentNodeResult = await startLoad({ pageEvaluate, starter: loadStarter.loadDocumentNode, api: LOAD_API.LOAD_DOCUMENT_NODE, docTokenId: docLoad.token.id, loadTimeoutMs });
+      tokens.push(loadDocumentNodeResult.token);
+      tokenGens.set(loadDocumentNodeResult.token.id, loadDocumentNodeResult.gen);
+    }
+
+    const loadReachedCompleted = loadDocumentNodeResult && loadDocumentNodeResult.token.state === TOKEN_STATE.COMPLETED;
+
+    if (loadReachedCompleted) {
+      signalSnapshot = await pageEvaluate(captureFormatSignalsFn, { tokenId: loadDocumentNodeResult.token.id, gen: loadDocumentNodeResult.gen });
+      if (!signalSnapshot || signalSnapshot.ok !== true || signalSnapshot.isOTG === null || signalSnapshot.isSVF2 === null) {
+        fatalErrorObserved = true;
+      } else {
+        classifierResult = readFormat(buildFormatSignalShim(signalSnapshot));
+      }
+    }
+
+    // Only CONFIRMED_SVF2 proceeds past the classifier (§4.1) into Phase 2.5 and F1-F8/F6/controls.
+    classifierConfirmed = classifierResult && classifierResult.classifier === CLASSIFIER.CONFIRMED_SVF2;
+  } catch (e) {
+    fatalErrorObserved = true;
+    errorLedger.record({ kind: 'required-resource-failure', reason: 'runHarness-phase1-2-sequence-threw', error: describeError(e) });
+    // classifierConfirmed stays false (its hoisted default) -- the classifier-stop branch below
+    // still runs and fills every checks.F*/controls.* placeholder, then Phase 11 cleanup and the
+    // atomic write still happen, exactly like every other mid-sequence throw this file guards.
+  }
 
   if (classifierConfirmed) {
     // Phase 2.5 -- shared session resources + setup postconditions (§6.1a).
@@ -5790,6 +5890,19 @@ async function runHarness(deps, config) {
       const f1Result = await pageEvaluate(observeF1, sessionId);
       const f1Score = scoreF1(f1Result.fields || {});
       checks.F1 = f1Result.ok === true ? f1Score.verdict : CHECK_VERDICT.BLOCKED;
+      // Fix wave (final whole-branch review, Minor M3, treated as a real bug): captured HERE,
+      // immediately after F1 is computed -- never inline at the control call site below. The
+      // prior `f1SnapshotBefore: checks.F1` / `readCurrentF1: () => checks.F1` both ultimately
+      // read the SAME Node-side variable, evaluated back-to-back at the same call site, with
+      // nothing this oracle could ever observe changing in between -- a comparison against
+      // itself, incapable of ever detecting a real leak. `f1Snapshot` now genuinely predates
+      // every control that runs before this oracle (wrong-owner, immediately below), matching
+      // the pre-control-snapshot pattern the review named. `structuredClone` (never a bare
+      // assignment): `checks.F1` is a primitive string today, but a future I4 change (evidence-
+      // shape tightening, this same fix wave's own remaining item) turns it into an object --
+      // a bare assignment would then alias the SAME object `readCurrentF1()` re-reads, silently
+      // reintroducing this exact self-comparison bug the moment that lands.
+      const f1Snapshot = structuredClone(checks.F1);
 
       // Phase 4c -- wrong-owner, then late-completion-after-timeout, both before Phase 5.
       // late-completion-after-timeout is synthetic/Node-only (no realm bridging needed at all,
@@ -5797,7 +5910,7 @@ async function runHarness(deps, config) {
       // only it (not main()) has checks.F1 in scope to build f1SnapshotBefore/readCurrentF1 from.
       controlResults['wrong-owner'] = await runControlSafely('wrong-owner', controls && controls.wrongOwner);
       controlResults['late-completion-after-timeout'] = await runLateCompletionAfterTimeoutControl({
-        f1SnapshotBefore: checks.F1, readCurrentF1: () => checks.F1,
+        f1SnapshotBefore: f1Snapshot, readCurrentF1: () => checks.F1,
       });
 
       // Phase 5 -- F2.
@@ -5812,12 +5925,18 @@ async function runHarness(deps, config) {
       const f4Result = await pageEvaluate(observeF4, sessionId);
       const f4Score = scoreF4(f4Result.fields || {});
       checks.F4 = f4Result.ok === true ? f4Score.verdict : CHECK_VERDICT.BLOCKED;
+      // Fix wave (final whole-branch review, Minor M3, treated as a real bug): same fix as
+      // f1Snapshot above -- captured immediately after F4 is computed, never inline at the
+      // control call site (where it previously ran with truly nothing at all in between,
+      // making it the most direct of the two self-comparisons the review found). Deep-cloned
+      // for the same forward-compatibility reason as f1Snapshot above.
+      const f4Snapshot = structuredClone(checks.F4);
 
       // Phase 6c -- invalid-geometry-consumer control (synthetic-only, already realm-safe).
       // Same reasoning as late-completion-after-timeout above: called directly, never through
       // deps.controls, since only runHarness has checks.F4 in scope at this point.
       controlResults['invalid-geometry-consumer'] = await runInvalidGeometryConsumerControl({
-        f4SnapshotBefore: checks.F4, readCurrentF4: () => checks.F4, controlTimeoutMs,
+        f4SnapshotBefore: f4Snapshot, readCurrentF4: () => checks.F4, controlTimeoutMs,
       });
 
       // Phase 7 -- F5 (its own corrected dependency: consumes F1's outcome directly, §7.5/I5).
@@ -5937,16 +6056,35 @@ async function runHarness(deps, config) {
   // timed-out -- plan §4.3 step 20a, Node-only, no page access. Previously built
   // (finalizeLoadTokens/tokenEscalatesToUnresolvedOwnership) but never called anywhere in the
   // assembled runHarness.
-  const finalizeResult = finalizeLoadTokens({
+  // finalizeLoadTokens mutates every still-TIMED_OUT token to ABANDONED in place (when the realm
+  // is confirmed destroyed) -- its return value is intentionally unused below; the escalation
+  // loop re-reads each token's own (now-final) `.state` directly rather than the function's own
+  // `stillTimedOut` list. Fix (self-check during this fix wave, independently re-verified
+  // against tokenEscalatesToUnresolvedOwnership's own doc comment and async.test.mjs's own
+  // "abandoned is non-terminal for this rule's purposes -- still escalates if it owns an F6
+  // resource" test): the escalation predicate must be applied to EVERY non-terminal token, not
+  // only ones still TIMED_OUT after finalizeLoadTokens runs. An F6 token that just became
+  // ABANDONED (the common case -- realm successfully destroyed) is explicitly non-terminal for
+  // this rule and must still escalate if it owns an F6 mutable resource; an earlier version of
+  // this loop iterated only the function's own `stillTimedOut` list, silently skipping every
+  // such token (the ordinary case, not the exceptional one).
+  finalizeLoadTokens({
     tokens,
     pageIsClosed: nodeCleanup.stepStatus.closePage === 'ran',
     contextCloseSucceeded: nodeCleanup.stepStatus.closeContext === 'ran',
     browserCloseSucceeded: nodeCleanup.stepStatus.closeBrowser === 'ran',
   });
-  for (const token of finalizeResult.stillTimedOut) {
-    cleanupFailures.push({ step: 'finalizeLoadTokens', tokenId: token.id, reason: 'realm-not-confirmed-destroyed' });
+  for (const token of tokens) {
+    if (token.state === TOKEN_STATE.COMPLETED || token.state === TOKEN_STATE.DISPOSED) continue;
+    const stillTimedOut = token.state === TOKEN_STATE.TIMED_OUT;
+    if (stillTimedOut) {
+      cleanupFailures.push({ step: 'finalizeLoadTokens', tokenId: token.id, reason: 'realm-not-confirmed-destroyed' });
+    }
     if (tokenEscalatesToUnresolvedOwnership({ tokenState: token.state, ownsF6MutableResource: f6TokenIds.has(token.id) })) {
       cleanupUnresolvedOwnership = true;
+      if (!stillTimedOut) {
+        cleanupFailures.push({ step: 'finalizeLoadTokens', tokenId: token.id, reason: 'abandoned-f6-token-ownership-never-confirmed-clean' });
+      }
     }
   }
 
@@ -6335,6 +6473,19 @@ async function main() {
   const context = await browser.newContext({ serviceWorkers: 'block' });
   const page = await context.newPage();
 
+  // Fix wave (final whole-branch review, Critical C1): best-effort outer cleanup guard.
+  // codex-advisor (medium, this fix wave): a goto/readiness/module-install failure in the new
+  // Phase 0 sequence below happens strictly BEFORE runHarness is ever called, so runHarness's
+  // own Phase 11 cleanup (which only guards its own Phase 1-10 sequence, once entered) can never
+  // run for it -- without this guard a Phase 0 failure would leak the browser process. This does
+  // NOT change runHarness's own cleanup contract; it only ensures a browser main() opened is
+  // always closed even if main() never reaches the point of handing it to runHarness at all.
+  const bestEffortCloseAll = async () => {
+    await page.close().catch(() => {});
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  };
+
   const errorLedgerEvents = [];
   const errorLedger = {
     events: errorLedgerEvents,
@@ -6354,7 +6505,69 @@ async function main() {
   page.on('console', (msg) => errorLedger.record({ kind: 'console', level: msg.type(), text: msg.text() }));
   page.on('requestfailed', (request) => errorLedger.record({ kind: 'required-resource-failure', url: request.url() }));
 
-  await context.route('**/clashtest/**', (route) => handleClashtestRoute(route, {}));
+  // Fix wave (C1): Viewer-script integrity capture state -- Node-side only, never re-evaluates
+  // the page. runHarness's own Phase 11 calls `captureViewerScriptIntegrity` AFTER
+  // page/context/browser are already closed (confirmed by direct read of runHarness's own Phase
+  // 11 ordering, this file), so this state must be fully populated by these listeners alone,
+  // all registered before `page.goto` below (codex-advisor's own required ordering, this fix
+  // wave: "All registration must precede goto; relative registration order otherwise does not
+  // matter").
+  const integrityState = {
+    requestFailed: false, autodeskViewingDefined: false, attributableResponses: [], responseBodyTasks: [],
+  };
+  const RESPONSE_BODY_CAPTURE_TIMEOUT_MS = 10_000;
+  page.on('response', (response) => {
+    const request = response.request();
+    if (request.resourceType() !== 'script') return;
+    // Only the TERMINAL response of a possible redirect chain is attributable. codex-advisor
+    // (this fix wave): a 3xx redirect hop's own `response` event can fire before Playwright has
+    // populated that request's own `redirectedTo()`, so status-code filtering (never
+    // `redirectedTo()`) is what reliably distinguishes an intermediate hop from the final
+    // response; `walkRedirectRootUrl` (above) then confirms the chain traces back to the
+    // pinned Viewer script URL.
+    const status = response.status();
+    if (status >= 300 && status < 400) return;
+    if (walkRedirectRootUrl(request) !== VIEWER_SCRIPT_URL) return;
+    const record = {
+      status, redirectChainComplete: true, fromServiceWorker: response.fromServiceWorker(),
+      bodyOutcome: 'pending-at-close', decodedByteLength: null, sha256: null,
+    };
+    integrityState.attributableResponses.push(record);
+    // response.body() is async and page.on(...) never awaits its listener (EventEmitter
+    // semantics, codex-advisor's own finding) -- tracked here as a bounded (timeout-raced) task
+    // so `captureViewerScriptIntegrity` can safely await every task AFTER the page/context/
+    // browser have already closed, without itself depending on a live page.
+    const bodyTask = Promise.race([
+      response.body().then((buf) => {
+        record.bodyOutcome = buf.length > 0 ? 'captured' : 'empty';
+        record.decodedByteLength = buf.length;
+        if (buf.length > 0) record.sha256 = createHash('sha256').update(buf).digest('hex');
+      }).catch(() => { record.bodyOutcome = 'capture-failed'; }),
+      new Promise((resolve) => setTimeout(resolve, RESPONSE_BODY_CAPTURE_TIMEOUT_MS)),
+    ]);
+    integrityState.responseBodyTasks.push(bodyTask);
+  });
+  page.on('requestfailed', (request) => {
+    // Chain-based, exactly like the response listener above -- a failure can occur on any hop
+    // of a redirect chain, not only a request whose own url() is the pinned Viewer script URL.
+    if (request.resourceType() !== 'script') return;
+    if (walkRedirectRootUrl(request) !== VIEWER_SCRIPT_URL) return;
+    integrityState.requestFailed = true;
+  });
+  const captureViewerScriptIntegrity = async () => {
+    await Promise.allSettled(integrityState.responseBodyTasks);
+    return {
+      requestFailed: integrityState.requestFailed,
+      autodeskViewingDefined: integrityState.autodeskViewingDefined,
+      attributableResponses: integrityState.attributableResponses,
+    };
+  };
+
+  // Fix wave (Minor M1): origin check applied to both routes below (T3's own guard,
+  // `clashtest-viewer-adapter.acceptance.mjs:933`, `handleClashtestRoute`'s own doc comment
+  // named this exact gap) -- a cross-origin request matching either glob is passed through via
+  // `route.continue()` rather than served by this harness.
+  await context.route('**/clashtest/**', (route) => handleClashtestRoute(route, { baseUrl: BASE_URL }));
   // Stage 8 fix: F7's own observeF7 (Stage 6) reads window.__g1.mod['/clashpanel/viewer/
   // viewerApi.js'] (createViewerApi) -- a module OUTSIDE clashtest/, which
   // resolveClashtestModulePath/handleClashtestRoute (hardwired to CLASHTEST_DIR) cannot resolve.
@@ -6365,6 +6578,7 @@ async function main() {
   const clashpanelDir = path.join(REPO_ROOT, 'clashpanel');
   await context.route('**/clashpanel/**', async (route) => {
     const url = new URL(route.request().url());
+    if (url.origin !== new URL(BASE_URL).origin) return route.continue(); // fix wave M1
     const rel = decodeURIComponent(url.pathname).replace(/^\/clashpanel\//, '');
     const abs = path.resolve(clashpanelDir, rel);
     if (!abs.startsWith(clashpanelDir + path.sep) || !abs.endsWith('.js')) {
@@ -6377,17 +6591,62 @@ async function main() {
     }
     return route.fulfill({ path: abs, contentType: 'text/javascript' });
   });
+  // Fix wave (C1): the harness's own bare synthetic page (mirrors
+  // g1-svf2-initializer-diagnostic.mjs's own `page.route('**/__g1-diagnostic__', ...)` pattern).
+  // Registered with the EXACT URL (no glob wildcard), per codex-advisor's own finding (this fix
+  // wave, "apply origin protection to the synthetic page too") -- Playwright matches a plain,
+  // wildcard-free string as a full-URL match, so this can only ever serve that one exact URL,
+  // never a cross-origin or path-varied request.
+  await page.route(`${BASE_URL}/__g1-f1f8__`, (route) => route.fulfill({ contentType: 'text/html', body: BARE_PAGE_HTML }));
   await page.addInitScript({ content: buildBootstrapScriptSource() });
 
   const { pageEvaluate, pageWaitForFunction } = buildRealPageDeps(page);
 
+  // Fix wave (C1): the real Phase 0 navigation/readiness/module-install sequence -- previously
+  // entirely absent (the reviewer's own finding: no page.goto, no Initializer/viewer.start()
+  // call, no window.__g1.mod population). Wrapped in the outer best-effort cleanup guard above:
+  // any failure here closes the browser before rethrowing, never a leaked process (codex-advisor,
+  // this fix wave). All route/addInitScript/page.on registration above already completed before
+  // this goto, per codex-advisor's own required ordering.
+  try {
+    await page.goto(`${BASE_URL}/__g1-f1f8__`, { waitUntil: 'load', timeout: 30_000 });
+    await page.waitForFunction(() => window.__g1Bootstrap && window.__g1Bootstrap.ready === true, { timeout: 30_000 });
+    // Reaching bootstrap readiness requires Autodesk.Viewing to already be defined (its own
+    // Initializer callback is what sets window.__g1Bootstrap.ready) -- the only reliable signal
+    // available Node-side, since the page cannot be re-queried once closed (see
+    // captureViewerScriptIntegrity's own doc comment above).
+    integrityState.autodeskViewingDefined = true;
+
+    // Fix wave (C1): populates window.__g1.mod for every module F1-F8 checks read via it
+    // (SERVED_MODULE_ENTRY_POINTS, above -- e.g. observeF7's own '/clashpanel/viewer/
+    // viewerApi.js' read). codex-advisor (this fix wave): every result must be validated, never
+    // merely awaited -- a failed import must not be allowed to continue silently into runHarness.
+    const moduleInstallResult = await pageEvaluate(installG1Modules, SERVED_MODULE_ENTRY_POINTS);
+    const failedModules = Object.entries(moduleInstallResult || {}).filter(([, r]) => !r || r.ok !== true);
+    if (failedModules.length > 0) {
+      throw new Error(`g1-svf2-f1-f8-verification.mjs: installG1Modules failed for: ${failedModules.map(([spec]) => spec).join(', ')}`);
+    }
+  } catch (e) {
+    await bestEffortCloseAll();
+    throw e;
+  }
+
   const config = {
-    urn: process.env.G1_F1_F8_URN || '',
+    // Fix wave (C1): the already-reviewed fixture URN (MODEL_URN, above), replacing the prior
+    // env-var-derived fallback (empty string when unset), which would have run every check
+    // against an empty/undefined URN on any real invocation -- this file's own activation
+    // interlock made that categorically unreachable, but the config itself was still wrong.
+    urn: MODEL_URN,
     loadTimeoutMs: 60_000,
     unloadEventName: 'beforeModelUnload',
     addedEventName: 'modelAdded',
     initializer: { env: 'AutodeskProduction2', api: 'streamingV2' },
     node: process.version,
+    // Fix wave (Important I4): previously both null -- runtimeEnvelope must record the actual
+    // pinned Viewer version and the real launched Chromium's own version string, never a
+    // placeholder.
+    viewerVersion: VIEWER_VERSION,
+    chromium: browser.version(),
   };
 
   // Atomic write (plan §8): write-temp-then-rename to the existing, git-ignored
@@ -6412,6 +6671,10 @@ async function main() {
                   // invalid-geometry-consumer/late-completion-after-timeout need no entry here --
                   // runHarness calls them directly (see its own Phase 4c/6c comments).
     nodeCleanupResources: { page, context, browser },
+    // Fix wave (C1): previously not passed at all -- runHarness's own Phase 11
+    // viewerScriptIntegrity finalization silently defaulted to CAPTURE_UNAVAILABLE /
+    // 'capture-function-not-injected' on every real invocation.
+    captureViewerScriptIntegrity,
     errorLedger,
     harnessIntegrity,
     writeResultAtomically,
@@ -6482,6 +6745,14 @@ export {
   SERVED_MODULE_ENTRY_POINTS,
   buildServedModuleManifest,
   EXPECTED_VIEWER_SHA256,
+  PORT,
+  BASE_URL,
+  VIEWER_VERSION,
+  VIEWER_SCRIPT_URL,
+  VIEWER_STYLE_URL,
+  MODEL_URN,
+  BARE_PAGE_HTML,
+  walkRedirectRootUrl,
   classifyViewerScriptIntegrity,
   CONSOLE_ERROR_ALLOWLIST,
   classifyLedgerEvent,
@@ -6533,6 +6804,8 @@ export {
   f3InstallProbe,
   f3ProbeSettledPredicate,
   f3FinalizeProbe,
+  installG1Modules,
+  f11DrainOwnershipCleanPredicate,
   documentLoadStarter,
   loadDocumentNodeStarter,
   runInPageResourceCleanup,

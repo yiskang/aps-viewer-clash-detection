@@ -26,6 +26,7 @@ import {
   observeF1, scoreF1, observeF2, scoreF2, observeF4, scoreF4, scoreF5, observeF7, scoreF7,
   observeF8, scoreF8, scoreF6, buildStaleOldModelEventControlResult,
   runHarness, validateResultSchema, main, runInPageResourceCleanup,
+  walkRedirectRootUrl,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 const HARNESS_PATH = fileURLToPath(new URL('./g1-svf2-f1-f8-verification.mjs', import.meta.url));
@@ -211,6 +212,74 @@ test('main() bootstrap: page.on(pageerror/console/requestfailed) listeners and t
   assert.ok(idxPageError > -1 && idxConsole > -1 && idxRequestFailed > -1 && idxAddInitScript > -1, 'all four listeners/init-script calls exist in main()');
   assert.ok(idxPageError < idxRunHarness && idxConsole < idxRunHarness && idxRequestFailed < idxRunHarness && idxAddInitScript < idxRunHarness,
     'every listener and the bootstrap init script are registered strictly before runHarness (and therefore before any load) is ever called');
+});
+
+// ============================================================================================
+// Fix wave (final whole-branch review, Critical C1): main()'s own Phase 0 structural/source-
+// order checks. codex-advisor's own finding (this fix wave): the ordering requirement that
+// actually matters is relative to `page.goto` (addInitScript only takes effect on the NEXT
+// navigation -- registering it after goto would never initialize the current document), and the
+// prior test above (registration-before-runHarness) would not have caught that regression. This
+// is a NEW, separate check, kept alongside the existing one above rather than replacing it.
+// ============================================================================================
+
+test('main() Phase 0 (C1): every page.on/page.route/addInitScript registration happens strictly before page.goto, and goto happens strictly before runHarness', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  const idxGoto = mainBody.indexOf('await page.goto(');
+  assert.ok(idxGoto > -1, 'main() must call page.goto');
+
+  const registrationCalls = [
+    `page.on('pageerror'`, `page.on('console'`, `page.on('requestfailed'`, `page.on('response'`,
+    `context.route('**/clashtest/**'`, `context.route('**/clashpanel/**'`, 'page.route(`${BASE_URL}',
+    'page.addInitScript(',
+  ];
+  for (const needle of registrationCalls) {
+    const idx = mainBody.indexOf(needle);
+    assert.ok(idx > -1, `main() must contain a registration call matching '${needle}'`);
+    assert.ok(idx < idxGoto, `'${needle}' must be registered strictly BEFORE page.goto, never after (addInitScript only takes effect on the NEXT navigation)`);
+  }
+
+  const idxWaitForBootstrap = mainBody.indexOf('__g1Bootstrap');
+  const idxInstallModules = mainBody.indexOf('installG1Modules');
+  const idxRunHarness = mainBody.indexOf('await runHarness(');
+  assert.ok(idxGoto < idxWaitForBootstrap, 'goto strictly before waiting on __g1Bootstrap.ready');
+  assert.ok(idxWaitForBootstrap < idxInstallModules, 'bootstrap readiness strictly before installG1Modules');
+  assert.ok(idxInstallModules < idxRunHarness, 'installG1Modules strictly before runHarness');
+});
+
+test('main() Phase 0 (C1): the config passed to runHarness uses the hardcoded MODEL_URN, never process.env.G1_F1_F8_URN', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  assert.ok(mainBody.includes('urn: MODEL_URN'), 'config.urn must be the hardcoded MODEL_URN constant');
+  // Checks for the live CODE pattern only (never a comment mentioning the old name for
+  // documentation purposes, which this fix wave's own explanatory comment legitimately does).
+  assert.ok(!mainBody.includes('process.env.G1_F1_F8_URN'), 'the old process.env.G1_F1_F8_URN fallback must be fully removed from main()\'s live code');
+});
+
+test('main() Phase 0 (C1): captureViewerScriptIntegrity and runtimeEnvelope fields (viewerVersion/chromium) are actually passed into runHarness', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  assert.ok(mainBody.includes('captureViewerScriptIntegrity,'), 'captureViewerScriptIntegrity must be passed as a runHarness dep');
+  assert.ok(mainBody.includes('viewerVersion: VIEWER_VERSION'), 'config.viewerVersion must be populated from the real pinned VIEWER_VERSION');
+  assert.ok(mainBody.includes('chromium: browser.version()'), 'config.chromium must be populated from the real launched browser');
+});
+
+// ============================================================================================
+// Fix wave (C1): walkRedirectRootUrl -- pure, offline-testable against fake Playwright Request-
+// shaped objects (never a real Playwright Request).
+// ============================================================================================
+
+test('walkRedirectRootUrl: a request with no redirect history returns its own url', () => {
+  const req = { url: () => 'https://example.test/viewer3D.js', redirectedFrom: () => null };
+  assert.equal(walkRedirectRootUrl(req), 'https://example.test/viewer3D.js');
+});
+
+test('walkRedirectRootUrl: walks a multi-hop redirect chain back to the ORIGIN request\'s url, never an intermediate hop\'s', () => {
+  const root = { url: () => 'https://example.test/viewer3D.js', redirectedFrom: () => null };
+  const hop1 = { url: () => 'https://example.test/redirect1', redirectedFrom: () => root };
+  const hop2 = { url: () => 'https://cdn.example.test/viewer3D.js', redirectedFrom: () => hop1 };
+  assert.equal(walkRedirectRootUrl(hop2), 'https://example.test/viewer3D.js');
 });
 
 // ============================================================================================
@@ -850,4 +919,100 @@ test('runHarness Phase 11 wiring (I3): sealLoadRecords and drainLoadToken are ac
 
   const droppedIds = result.staleContinuationsDropped.map((d) => d.tokenId);
   assert.ok(!droppedIds.includes(starterTokenIds.loadDocumentNode), 'a successfully drained (disposed) token must never show up in staleContinuationsDropped');
+});
+
+// ============================================================================================
+// Fix wave (self-check during this same fix wave): step 20a's escalation loop must apply
+// tokenEscalatesToUnresolvedOwnership to a token that became ABANDONED (realm successfully
+// destroyed), not only one still TIMED_OUT -- an earlier version of the fix only checked
+// finalizeLoadTokens' own `stillTimedOut` list, silently skipping the ordinary (realm-destroyed)
+// case entirely. This test drives a real F6 reload token to TIMED_OUT (its own drain genuinely
+// times out), confirms page/context/browser all close successfully (so finalizeLoadTokens moves
+// it to ABANDONED, not leaving it TIMED_OUT), and asserts cleanupUnresolvedOwnership is still
+// set and overall is FAIL -- proving escalation fired for the ABANDONED case specifically.
+// ============================================================================================
+
+test('runHarness Phase 11 step 20a: an ABANDONED F6 token (realm destroyed, drain never completed) still escalates cleanupUnresolvedOwnership -- not only a still-TIMED_OUT one', async () => {
+  let loadDocumentNodeCallCount = 0;
+  const pageEvaluate = async (fn, arg) => {
+    const name = typeof fn === 'string' ? fn : fn.name;
+    switch (name) {
+      case 'f3InstallProbe': return { ok: true };
+      case 'f3FinalizeProbe': return { ok: true, modelAddedObserved: true, tModelAdded: 1, atInvocation: {}, resolveRootsOutcome: 'resolved', atSettlement: {}, elapsedMs: 5, rejectionError: null };
+      case 'documentLoadStarter':
+        return { present: true, gen: 1, status: 'completed', transitions: [], handlerErrors: [], lateModelsStillPresent: false };
+      case 'loadDocumentNodeStarter': {
+        loadDocumentNodeCallCount += 1;
+        // 1st call: the initial Phase 2 load -- completes normally. 2nd call: F6's own reload --
+        // deliberately times out, leaving its own Node-side token TIMED_OUT going into Phase 11.
+        if (loadDocumentNodeCallCount === 1) {
+          return { present: true, gen: 1, status: 'completed', transitions: [], handlerErrors: [], lateModelsStillPresent: false };
+        }
+        return { present: true, gen: 2, status: 'timed-out', transitions: [], handlerErrors: [], lateModelsStillPresent: false };
+      }
+      case 'captureModelFormatSignals': return { ok: true, isOTG: true, isSVF2: true, captureErrors: [] };
+      case 'setupSharedSessionResources': return { ok: true, sessionId: 's1', postconditions: { registryWorldMatches: true, bindingModelMatches: true, worldModelIsLive: true }, error: null };
+      case 'observeF1': return { ok: true, fields: { ownerMismatchCount: 0, unreachableCount: 0, populationCount: 1, rootsLength: 1, rootsCompared: 1, sizeMismatch: 0, ownersMismatch: 0, subtreeDigestMismatch: 0, populationDigestEqual: true, maxRootFragmentCount: 1, sumRootFragmentCount: 1, maxPerDbIdFragmentCount: 1 } };
+      case 'observeF2': return { ok: true, fields: { isObjectTreeCreated: true, treeReachableCount: 1, classL: 1, classN: 0, classU: 0, loadedButUnreachableCount: 0, fragListCount: 1, rootsLength: 1, accountingBalanced: true, maxChildrenPerNode: 0 } };
+      case 'observeF4': return { ok: true, fields: { libraryThrew: 0, libOwnerDiffersFromFragList: 0, droppedDiagnosticsCount: { 'geometry-id-undefined': 0, 'geometry-id-threw': 0 }, distinctGeometryCount: 1, renderProxyFailures: 0, geometryAdapterFailures: 0, geometriesWithNullIndex: 0, weldConsumerFailures: 0, weldConsumerSuccessCount: 1, maxActiveTriangleCount: 1, oversizedGeometryCount: 0 } };
+      case 'observeF7': return { ok: true, fields: { boundsAgreement: {}, unitScalePlausible: true, unitStringPlausible: true, hiddenNodesPlausible: true, placementNotInvertible: false, nonFiniteAxisDbIds: [] } };
+      case 'observeF8': return { ok: true, fields: { censusedRootCount: 1, censusedFragmentCount: 1, treeCheckedFragmentCount: 1, ownershipDivergenceCount: 0, treeDivergenceCount: 0, divergenceCount: 0, coverageEquationsClosed: true } };
+      case 'f6InstallUnloadWiring': return { ok: true };
+      case 'f6TriggerUnload': return { ok: true };
+      case 'f6UnloadSettledPredicate': return true;
+      case 'f6ReadUnloadSnapshot': return { ok: true, unloadProbeFired: true, unloadEventModelMatchesModelBefore: true, unregisterBeforeEvict: true, bindingNullAfterUnload: true };
+      case 'f6InstallReloadProbe': return { ok: true };
+      case 'f6ReloadProbeSettledPredicate': return true;
+      case 'f6FinalizeReloadProbe': return { ok: true, modelAddedObserved: true, tModelAdded: 1, atInvocation: {}, resolveRootsOutcome: 'resolved', atSettlement: {}, elapsedMs: 1, rejectionError: null, modelMatchesReloadToken: true };
+      case 'f6Cleanup': return { ok: true, disposed: true, probeRemoved: true, wiringDisposed: true };
+      case 'sealLoads': return {};
+      case 'runInPageResourceCleanup': return { ok: true, stepStatus: { removeF3Listeners: 'ran' }, cleanupFailures: [], cleanupUnresolvedOwnership: false };
+      default:
+        throw new Error(`unexpected pageEvaluate call for this test: '${name}'`);
+    }
+  };
+  const pageWaitForFunction = async (fn, arg, opts) => {
+    const name = typeof fn === 'string' ? fn : fn.name;
+    if (name === 'f11DrainOwnershipCleanPredicate' && arg && arg.gen === 2) {
+      // The F6 reload's own token (gen 2) never drains -- a genuine, realistic drain timeout.
+      throw new Error('simulated drain timeout');
+    }
+    return undefined; // every other predicate (f3ProbeSettledPredicate, f6*SettledPredicate, and the gen-1 drain) settles immediately
+  };
+
+  const deps = {
+    pageEvaluate, pageWaitForFunction,
+    loadStarter: { documentLoad: 'documentLoadStarter', loadDocumentNode: 'loadDocumentNodeStarter' },
+    installF3Probe: () => pageEvaluate({ name: 'f3InstallProbe' }, undefined),
+    finalizeF3Probe: (arg) => pageEvaluate({ name: 'f3FinalizeProbe' }, arg),
+    setupSharedSessionResources: (tokenId) => pageEvaluate({ name: 'setupSharedSessionResources' }, tokenId),
+    controls: {
+      treeUnavailable: async () => createControlResult('tree-unavailable', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+      wrongOwner: async () => createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+      hiddenFragment: async () => createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+      capacityBreach: async () => createControlResult('capacity-breach', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+      invalidBounds: async () => createControlResult('invalid-bounds', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+      boundsBeyondTolerance: async () => createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+    },
+    f6Deps: {},
+    // Real close() fakes -- all three succeed, so finalizeLoadTokens sees the realm as
+    // confirmed destroyed and moves the still-TIMED_OUT F6 reload token to ABANDONED, never
+    // leaving it TIMED_OUT (the case the OTHER Phase-11 wiring test already covers).
+    nodeCleanupResources: {
+      page: { close: async () => {} }, context: { close: async () => {} }, browser: { close: async () => {} },
+    },
+    captureViewerScriptIntegrity: async () => ({ requestFailed: false, autodeskViewingDefined: true, attributableResponses: [{ status: 200, redirectChainComplete: true, fromServiceWorker: false, bodyOutcome: 'captured', decodedByteLength: 1, sha256: '12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e' }] }),
+    errorLedger: { events: [], record() {} },
+    harnessIntegrity: { path: HARNESS_PATH, sha256: 'a'.repeat(64), branch: 'main', headSha: 'deadbeef', gitStatusPorcelain: '', servedModuleManifest: {}, remoteAssets: { viewerScript: { integrityResult: INTEGRITY_RESULT.VERIFIED }, viewerStyle: { identityGatesOverall: false }, otherObservedRemoteAssets: [] } },
+    writeResultAtomically: async () => {},
+  };
+
+  const result = await runHarness(deps, HAPPY_CONFIG);
+
+  assert.equal(result.cleanupUnresolvedOwnership, true, 'an ABANDONED F6 token whose ownership was never confirmed clean must still set cleanupUnresolvedOwnership');
+  assert.ok(
+    result.cleanupFailures.some((f) => f.step === 'finalizeLoadTokens' && f.reason === 'abandoned-f6-token-ownership-never-confirmed-clean'),
+    'cleanupFailures must record the specific abandoned-F6-token reason, not just the still-timed-out one',
+  );
+  assert.equal(result.overall, OVERALL_VERDICT.FAIL, 'cleanupUnresolvedOwnership true must fail the run via branch 1');
 });
