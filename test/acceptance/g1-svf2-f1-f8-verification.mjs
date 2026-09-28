@@ -3311,6 +3311,840 @@ function scoreF5({ f1Result, f2Fields, f4Fields }) {
 }
 
 // ------------------------------------------------------------------------------------------
+// §7.7 F7 -- Viewer API bounds/unit/visibility behavior (world-space correctness oracle)
+// ------------------------------------------------------------------------------------------
+
+/** Tolerance constants for F7's bounds bracket (plan §7.7 lines 1045-1048; "Discipline": these
+ * may never be tuned against a live run's own observations). `u` is float32 unit roundoff for
+ * round-to-nearest; `passFactor`/`grossRelative` give the declared PASS allowance and the
+ * FAIL boundary; `sFloor` is the smallest normal float32, `S_a`'s own floor. */
+const F7_TOLERANCE_CONSTANTS = Object.freeze({ u: 2 ** -24, passFactor: 16, grossRelative: 2 ** -10, sFloor: 2 ** -126 });
+
+/**
+ * In-page. `observeF7(sessionId)` -- plan §7.7's full independent bounds algorithm plus the
+ * unit-metadata/visibility subchecks, run once per censused dbId. Census domain is F1's own
+ * per-root `extractFragments` maps, `session.artifacts.f1FragmentMapsByRoot` (keys = root
+ * dbIds, values = `Map<fragId, ExtractedFragmentRecord>`) -- NOT `resolveRoots`'s aggregate
+ * output and NOT the flat `f1PopulationRecords`, mirroring F8's own R1 discussion (plan §7.8)
+ * of which source is the genuine per-fragment-per-owning-root evidence.
+ *
+ * MUST run after observeF1 and observeF4 for the same session -- reuses F4's retained
+ * `session.artifacts.f4Geometry`/`f4FragmentGeometryId`/`f4WorldMatricesByFragId` verbatim,
+ * never recomputing `getRenderProxy`/`adaptViewerGeometry`/world matrices (plan's own "reuse,
+ * never recompute" convention, restated for F7 by this stage's brief).
+ *
+ * codex-advisor consult (medium, before implementation) on the S_a/tolerance-bracket math
+ * confirmed: (a) the placement-substitution (line 1040) replaces only each of the three
+ * 3x3-block-derived per-axis-k coefficients -- the `L_k` multiplication stays OUTSIDE the
+ * substitution, applied once per k; (b) all four residual quantities (`rMin`, `rMax`, `eMin`,
+ * `eMax`) share ONE uniform sign convention -- positive means the containment/envelope
+ * requirement is VIOLATED, never the reverse (this file's first draft of this question had the
+ * envelope sign backwards; corrected here), and raw signed values (never `abs()`) are compared
+ * with strict `>`; (c) classification is a global reduction over all 6 independent containment
+ * components (never per-axis-pair-together) in the stated precedence order, with
+ * `envelope-incomplete` preceding `exceeds-envelope` even when both would otherwise apply; (d)
+ * equality at `T_pass` passes, equality at `T_gross` is `near-tolerance` (not `disagrees`) --
+ * both boundaries are strict `>`; (e) F4's frozen retained-artifact shape means an ABSENT
+ * `f4FragmentGeometryId`/`f4Geometry` entry is the only signal available for a fragment F4
+ * itself dropped, and per the consult this is correctly reported under the plan's own
+ * `unsupported` reason vocabulary (§7.7 names no other reason for this), with an additional
+ * non-plan `origin` field retained alongside it so the concrete absence source (missing
+ * fragment mapping vs. missing geometry snapshot) is never silently lost; (f) every `S_a`/
+ * residual/matrix-inverse computation is explicitly finite-gated before classification, since a
+ * non-finite value would otherwise make every `> threshold` comparison false and silently fall
+ * through to `agrees` -- this file never lets that happen (see `nonFiniteAxisDbIds` below).
+ *
+ * A non-invertible placement transform (only possible when `P`'s 3x3 block is non-identity) is
+ * a genuine computation impossibility the plan does not itself resolve to a verdict (flagged by
+ * the same consult as an open uncertainty); this file's own resolution, stated explicitly here
+ * rather than guessed silently: `placementNotInvertible`/`nonFiniteAxisDbIds` are recorded as
+ * harness-level evidence and `scoreF7` treats either as forcing `NOT_EVIDENCED` (never PASS,
+ * never a fabricated FAIL) -- "we could not tell," exactly the same discipline the plan already
+ * applies to the `(T_pass, T_gross]` calibration band.
+ */
+async function observeF7(sessionId) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session) return { ok: false, reason: 'session-not-found' };
+  if (!session.artifacts || !session.artifacts.f1FragmentMapsByRoot) {
+    return { ok: false, reason: 'f1-fragment-maps-by-root-not-available-run-observeF1-first' };
+  }
+  if (!session.artifacts.f4Geometry || !session.artifacts.f4FragmentGeometryId || !session.artifacts.f4WorldMatricesByFragId) {
+    return { ok: false, reason: 'f4-artifacts-not-available-run-observeF4-first' };
+  }
+
+  const { model } = session;
+  const viewer = window.__viewer;
+  const mod = g.mod || {};
+  const { createViewerApi } = mod['/clashpanel/viewer/viewerApi.js'] || {};
+  const errOf = (e) => (e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? ''), reason: e.reason ?? null }
+    : { primitive: typeof e, value: String(e) });
+
+  if (typeof createViewerApi !== 'function') {
+    return { ok: false, reason: 'createViewerApi-module-not-available' };
+  }
+
+  let viewerApi;
+  try {
+    const av = window.Autodesk && window.Autodesk.Viewing;
+    const events = {
+      BEFORE_MODEL_UNLOAD: av ? av.BEFORE_MODEL_UNLOAD_EVENT : undefined,
+      MODEL_REMOVED: av ? av.MODEL_REMOVED_EVENT : undefined,
+    };
+    viewerApi = createViewerApi(viewer, { events });
+  } catch (e) {
+    return { ok: false, reason: 'createViewerApi-threw', error: errOf(e) };
+  }
+
+  const { f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId } = session.artifacts;
+
+  // Inlined duplicate of the Node-side F7_TOLERANCE_CONSTANTS -- an in-page function cannot
+  // reference a module-level Node-side const (this file's own established constraint: it would
+  // be a free variable once this function's source is reconstructed inside a page realm, e.g.
+  // via node:vm in this file's own offline tests); kept in exact lockstep with
+  // F7_TOLERANCE_CONSTANTS, which the exported constant and scoreF7/tests use.
+  const TOLERANCE_CONSTANTS = { u: 2 ** -24, passFactor: 16, grossRelative: 2 ** -10, sFloor: 2 ** -126 };
+
+  // -------- Self-contained numeric helpers (in-page function -- may reference only its own
+  // argument and page globals, per this file's own established constraint; nested helpers with
+  // no free variables outside window/their own params are the established way around that,
+  // e.g. observeF4's inlined classifyWeldResult duplicate). --------
+  function isFiniteVec16(e) {
+    if (!e || e.length !== 16) return false;
+    for (let i = 0; i < 16; i += 1) if (!Number.isFinite(e[i])) return false;
+    return true;
+  }
+  function isAffine(e) { return e[3] === 0 && e[7] === 0 && e[11] === 0 && e[15] === 1; }
+  function is3x3Identity(e) {
+    return e[0] === 1 && e[1] === 0 && e[2] === 0
+      && e[4] === 0 && e[5] === 1 && e[6] === 0
+      && e[8] === 0 && e[9] === 0 && e[10] === 1;
+  }
+  function identity16() { return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; }
+  // Gauss-Jordan inversion of a column-major 4x4 (e[col*4+row]) with partial pivoting. Returns
+  // a plain 16-element column-major array, or null if singular/non-finite.
+  function invert4x4ColumnMajor(e) {
+    if (!isFiniteVec16(e)) return null;
+    const a = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+    const inv = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+    for (let c = 0; c < 4; c += 1) for (let r = 0; r < 4; r += 1) a[r][c] = e[c * 4 + r];
+    for (let col = 0; col < 4; col += 1) {
+      let pivotRow = col;
+      let pivotMag = Math.abs(a[col][col]);
+      for (let r = col + 1; r < 4; r += 1) {
+        const m = Math.abs(a[r][col]);
+        if (m > pivotMag) { pivotMag = m; pivotRow = r; }
+      }
+      if (pivotMag < 1e-300) return null;
+      if (pivotRow !== col) {
+        const tmpA = a[col]; a[col] = a[pivotRow]; a[pivotRow] = tmpA;
+        const tmpI = inv[col]; inv[col] = inv[pivotRow]; inv[pivotRow] = tmpI;
+      }
+      const pivot = a[col][col];
+      for (let k = 0; k < 4; k += 1) { a[col][k] /= pivot; inv[col][k] /= pivot; }
+      for (let r = 0; r < 4; r += 1) {
+        if (r === col) continue;
+        const factor = a[r][col];
+        if (factor === 0) continue;
+        for (let k = 0; k < 4; k += 1) { a[r][k] -= factor * a[col][k]; inv[r][k] -= factor * inv[col][k]; }
+      }
+    }
+    const out = new Array(16);
+    for (let c = 0; c < 4; c += 1) for (let r = 0; r < 4; r += 1) out[c * 4 + r] = inv[r][c];
+    return isFiniteVec16(out) ? out : null;
+  }
+  function matMulColumnMajor4x4(A, B) {
+    const out = new Array(16).fill(0);
+    for (let col = 0; col < 4; col += 1) {
+      for (let row = 0; row < 4; row += 1) {
+        let sum = 0;
+        for (let k = 0; k < 4; k += 1) sum += A[k * 4 + row] * B[col * 4 + k];
+        out[col * 4 + row] = sum;
+      }
+    }
+    return out;
+  }
+  function readAxisComponent(v, axisIndex) {
+    if (v === null || v === undefined) return 0;
+    if (Array.isArray(v) || typeof v.length === 'number') return v[axisIndex];
+    const key = axisIndex === 0 ? 'x' : axisIndex === 1 ? 'y' : 'z';
+    return v[key];
+  }
+
+  // -------- Model-scoped placement/offset (read once) --------
+  let G = null;
+  let P = null;
+  try { G = typeof model.getGlobalOffset === 'function' ? model.getGlobalOffset() : null; } catch { G = null; }
+  try { P = typeof model.getPlacementTransform === 'function' ? model.getPlacementTransform() : null; } catch { P = null; }
+  const Pelements = P && P.elements ? Array.from(P.elements) : identity16();
+  const placementIsIdentity = is3x3Identity(Pelements) && Pelements[12] === 0 && Pelements[13] === 0 && Pelements[14] === 0;
+  let PInv = null;
+  let placementNotInvertible = false;
+  if (!is3x3Identity(Pelements)) {
+    PInv = invert4x4ColumnMajor(Pelements);
+    if (PInv === null) placementNotInvertible = true;
+  }
+  const Gvec = [readAxisComponent(G, 0) || 0, readAxisComponent(G, 1) || 0, readAxisComponent(G, 2) || 0];
+
+  // -------- Unit metadata (once, model-scoped; plan: "not per-dbId") --------
+  let unitScale = null;
+  let unitScaleThrew = false;
+  try { unitScale = model.getUnitScale(); } catch { unitScaleThrew = true; }
+  const unitScalePlausible = !unitScaleThrew && typeof unitScale === 'number' && Number.isFinite(unitScale) && unitScale > 0;
+
+  let unitString = null;
+  let unitStringThrew = false;
+  try { unitString = model.getUnitString(); } catch { unitStringThrew = true; }
+  const unitStringPlausible = !unitStringThrew && (unitString === null || (typeof unitString === 'string' && unitString.length > 0));
+
+  // -------- Visibility: getAggregateHiddenNodes (once, model-scoped) --------
+  let hiddenNodesRaw = null;
+  let hiddenNodesThrew = false;
+  try { hiddenNodesRaw = viewerApi.getAggregateHiddenNodes(); } catch { hiddenNodesThrew = true; }
+  const hiddenNodesPlausible = !hiddenNodesThrew && Array.isArray(hiddenNodesRaw);
+
+  // -------- visibilityBranch characterization (never gates -- plan's own explicit rule) --------
+  let visibilityBranch = 'undetermined';
+  try {
+    const fragList = typeof model.getFragmentList === 'function' ? model.getFragmentList() : null;
+    if (fragList && fragList.db2ThemingColor !== undefined) visibilityBranch = 'FragmentList';
+    else if (model.instanceCollection !== undefined || (fragList && fragList.instanceCollection !== undefined)) visibilityBranch = 'InstanceCollection3D';
+  } catch { /* stays 'undetermined' */ }
+
+  const censusedDbIds = [...session.artifacts.f1FragmentMapsByRoot.keys()].sort((x, y) => x - y);
+  const censusCount = censusedDbIds.length;
+  const axisNames = ['x', 'y', 'z'];
+
+  const elementWorldBounds = {};
+  const fragmentBoundsUnion = {};
+  const conservativeEnvelopeUnion = {};
+  const boundsAgreement = {};
+  const skippedFragments = {};
+  const boundsScalePerDbId = {};
+  const boundsResiduals = {};
+  const placementOmissionExplains = {};
+  const positionsArrayType = {};
+  const worldMatrixElementType = {};
+  const visibilityResults = {};
+  const nonFiniteAxisDbIds = [];
+  let nonFiniteTransformedVertexCount = 0;
+
+  for (const dbId of censusedDbIds) {
+    // (a) getElementWorldBounds -- read first, per plan's own observation-sequence order.
+    const nodeBox = viewerApi.getElementWorldBounds(model, dbId);
+    elementWorldBounds[dbId] = nodeBox;
+
+    // visibility (d): membership check against the ONE model-scoped hiddenNodesRaw snapshot.
+    let hiddenByDefault = false;
+    if (Array.isArray(hiddenNodesRaw)) {
+      for (const entry of hiddenNodesRaw) {
+        if (entry && typeof entry === 'object' && Array.isArray(entry.ids) && entry.model === model && entry.ids.includes(dbId)) {
+          hiddenByDefault = true;
+          break;
+        }
+      }
+    }
+    visibilityResults[dbId] = { hiddenByDefault };
+
+    // (b) independent computation -- F1's own per-root extractFragments map is the authoritative
+    // per-fragment-per-owning-root evidence (never resolveRoots' aggregate, never the flat
+    // f1PopulationRecords -- see this function's own doc comment).
+    const fragMap = session.artifacts.f1FragmentMapsByRoot.get(dbId);
+    const fragIds = fragMap ? [...fragMap.keys()] : [];
+    const dbSkips = [];
+    let envelopeIncomplete = false;
+    const envelopeFragments = [];
+    const tightRefFragments = [];
+
+    for (const fragId of fragIds) {
+      const geometryId = f4FragmentGeometryId.get(fragId);
+      if (geometryId === undefined) {
+        dbSkips.push({ fragmentId: fragId, reason: 'unsupported', origin: 'missing-fragment-geometry-mapping' });
+        envelopeIncomplete = true;
+        continue;
+      }
+      const geomEntry = f4Geometry.get(geometryId);
+      if (!geomEntry) {
+        dbSkips.push({ fragmentId: fragId, reason: 'unsupported', origin: 'missing-geometry-snapshot' });
+        envelopeIncomplete = true;
+        continue;
+      }
+      if (geomEntry.unsupported === true) {
+        dbSkips.push({ fragmentId: fragId, reason: 'unsupported', origin: 'geometry-marked-unsupported' });
+        envelopeIncomplete = true;
+        continue;
+      }
+      const e = f4WorldMatricesByFragId.get(fragId);
+      if (!e) {
+        dbSkips.push({ fragmentId: fragId, reason: 'unsupported', origin: 'missing-world-matrix' });
+        envelopeIncomplete = true;
+        continue;
+      }
+      const positions = geomEntry.positions;
+      // Object.prototype.toString.call, never `instanceof` -- this file's own established
+      // cross-realm gotcha (documented elsewhere in this file): `instanceof` against a realm-
+      // specific built-in constructor (Float32Array/Float64Array) always fails across a
+      // node:vm realm boundary even for a genuine same-shape typed array, exactly like the
+      // Map/Set `instanceof` gotcha this file already worked around.
+      const positionsTag = Object.prototype.toString.call(positions);
+      if (positionsTag !== '[object Float32Array]' && positionsTag !== '[object Float64Array]') {
+        dbSkips.push({ fragmentId: fragId, reason: 'non-float-positions' });
+        envelopeIncomplete = true;
+        continue;
+      }
+      if (!isFiniteVec16(e) || !isAffine(e)) {
+        dbSkips.push({ fragmentId: fragId, reason: 'non-affine-world-matrix' });
+        envelopeIncomplete = true;
+        continue;
+      }
+
+      positionsArrayType[fragId] = Object.prototype.toString.call(positions);
+      worldMatrixElementType[fragId] = Object.prototype.toString.call(e);
+
+      // Step 3b: all-vertex local AABB -- used for the envelope AND S_a's own L_k terms, for
+      // every fragment reaching this point (including no-active-triangles ones).
+      const stride = geomEntry.positionStride;
+      const offset = geomEntry.positionOffset;
+      const vertexCount = Math.floor(positions.length / stride);
+      let loX = Infinity; let loY = Infinity; let loZ = Infinity;
+      let hiX = -Infinity; let hiY = -Infinity; let hiZ = -Infinity;
+      for (let i = 0; i < vertexCount; i += 1) {
+        const x = positions[i * stride + offset];
+        const y = positions[i * stride + offset + 1];
+        const z = positions[i * stride + offset + 2];
+        if (x < loX) loX = x; if (x > hiX) hiX = x;
+        if (y < loY) loY = y; if (y > hiY) hiY = y;
+        if (z < loZ) loZ = z; if (z > hiZ) hiZ = z;
+      }
+
+      const frag = {
+        e, positions, positionStride: stride, positionOffset: offset,
+        index: geomEntry.index, ranges: geomEntry.ranges,
+        localLo: [loX, loY, loZ], localHi: [hiX, hiY, hiZ], F: null,
+      };
+      envelopeFragments.push(frag);
+
+      if (geomEntry.activeTriangleCount === 0) {
+        dbSkips.push({ fragmentId: fragId, reason: 'no-active-triangles' });
+        // kept in envelope (already pushed above); excluded from tight ref only -- this is the
+        // FOURTH skip reason, which does NOT mark envelopeIncomplete (only the first three do).
+        continue;
+      }
+      tightRefFragments.push(frag);
+    }
+    skippedFragments[dbId] = dbSkips;
+
+    // Precompute F = P^-1*e once per envelope-eligible fragment (axis-independent).
+    if (!is3x3Identity(Pelements) && PInv !== null) {
+      for (const frag of envelopeFragments) {
+        const F = matMulColumnMajor4x4(PInv, frag.e);
+        frag.F = isFiniteVec16(F) ? F : null;
+      }
+    }
+
+    // Tight reference (fragmentBoundsUnion): only vertex indices inside adaptViewerGeometry's
+    // own `ranges`, resolved through `index` when indexed (step 3/4/5).
+    let refLoX = Infinity; let refLoY = Infinity; let refLoZ = Infinity;
+    let refHiX = -Infinity; let refHiY = -Infinity; let refHiZ = -Infinity;
+    let anyRefPoint = false;
+    for (const frag of tightRefFragments) {
+      const { e, positions, positionStride: stride, positionOffset: offset, index, ranges } = frag;
+      for (const range of ranges) {
+        for (let k = 0; k < range.count; k += 1) {
+          const pos = range.start + k;
+          const vid = index ? index[pos] : pos;
+          const x = positions[vid * stride + offset];
+          const y = positions[vid * stride + offset + 1];
+          const z = positions[vid * stride + offset + 2];
+          const wx = e[0] * x + e[4] * y + e[8] * z + e[12];
+          const wy = e[1] * x + e[5] * y + e[9] * z + e[13];
+          const wz = e[2] * x + e[6] * y + e[10] * z + e[14];
+          if (!Number.isFinite(wx) || !Number.isFinite(wy) || !Number.isFinite(wz)) {
+            nonFiniteTransformedVertexCount += 1;
+            continue; // step 5: "reject (record, do not silently drop)" -- recorded above,
+                      // just this one coordinate excluded from accumulation, never the whole
+                      // fragment/dbId (step 7's own "zero valid finite points" already covers
+                      // the degenerate all-non-finite case).
+          }
+          anyRefPoint = true;
+          if (wx < refLoX) refLoX = wx; if (wx > refHiX) refHiX = wx;
+          if (wy < refLoY) refLoY = wy; if (wy > refHiY) refHiY = wy;
+          if (wz < refLoZ) refLoZ = wz; if (wz > refHiZ) refHiZ = wz;
+        }
+      }
+    }
+
+    // Envelope (conservativeEnvelopeUnion): transform the 8 corners of each envelope-eligible
+    // fragment's local AABB (step 6).
+    let envLoX = Infinity; let envLoY = Infinity; let envLoZ = Infinity;
+    let envHiX = -Infinity; let envHiY = -Infinity; let envHiZ = -Infinity;
+    let anyEnvPoint = false;
+    for (const frag of envelopeFragments) {
+      const { e, localLo, localHi } = frag;
+      for (let cx = 0; cx < 2; cx += 1) {
+        for (let cy = 0; cy < 2; cy += 1) {
+          for (let cz = 0; cz < 2; cz += 1) {
+            const x = cx === 0 ? localLo[0] : localHi[0];
+            const y = cy === 0 ? localLo[1] : localHi[1];
+            const z = cz === 0 ? localLo[2] : localHi[2];
+            const wx = e[0] * x + e[4] * y + e[8] * z + e[12];
+            const wy = e[1] * x + e[5] * y + e[9] * z + e[13];
+            const wz = e[2] * x + e[6] * y + e[10] * z + e[14];
+            if (!Number.isFinite(wx) || !Number.isFinite(wy) || !Number.isFinite(wz)) continue;
+            anyEnvPoint = true;
+            if (wx < envLoX) envLoX = wx; if (wx > envHiX) envHiX = wx;
+            if (wy < envLoY) envLoY = wy; if (wy > envHiY) envHiY = wy;
+            if (wz < envLoZ) envLoZ = wz; if (wz > envHiZ) envHiZ = wz;
+          }
+        }
+      }
+    }
+    if (!anyEnvPoint) envelopeIncomplete = true;
+
+    if (!anyRefPoint) {
+      // Step 7: every fragment excluded from the tight reference, or zero valid finite points.
+      fragmentBoundsUnion[dbId] = null;
+      conservativeEnvelopeUnion[dbId] = anyEnvPoint ? [envLoX, envLoY, envLoZ, envHiX, envHiY, envHiZ] : null;
+      boundsAgreement[dbId] = 'no-reference-geometry';
+      continue;
+    }
+    const refBox = [refLoX, refLoY, refLoZ, refHiX, refHiY, refHiZ];
+    fragmentBoundsUnion[dbId] = refBox;
+    conservativeEnvelopeUnion[dbId] = anyEnvPoint ? [envLoX, envLoY, envLoZ, envHiX, envHiY, envHiZ] : null;
+
+    if (nodeBox === null) {
+      boundsAgreement[dbId] = 'viewerApiNull';
+      continue;
+    }
+
+    const refMin = [refLoX, refLoY, refLoZ];
+    const refMax = [refHiX, refHiY, refHiZ];
+    const nodeMin = [nodeBox[0], nodeBox[1], nodeBox[2]];
+    const nodeMax = [nodeBox[3], nodeBox[4], nodeBox[5]];
+    const envMin = [envLoX, envLoY, envLoZ];
+    const envMax = [envHiX, envHiY, envHiZ];
+
+    const scale = {};
+    const residuals = {};
+    let anyDisagrees = false;
+    let anyNearTolerance = false;
+    let anyExceedsEnvelope = false;
+    let anyNonFiniteAxis = false;
+
+    for (let a = 0; a < 3; a += 1) {
+      let maxSaFragmentsOnly = 0;
+      for (const frag of envelopeFragments) {
+        const { e, localLo, localHi } = frag;
+        const L = [Math.max(Math.abs(localLo[0]), Math.abs(localHi[0])),
+          Math.max(Math.abs(localLo[1]), Math.abs(localHi[1])),
+          Math.max(Math.abs(localLo[2]), Math.abs(localHi[2]))];
+        let sAf;
+        if (is3x3Identity(Pelements)) {
+          sAf = Math.abs(e[a]) * L[0] + Math.abs(e[a + 4]) * L[1] + Math.abs(e[a + 8]) * L[2];
+        } else if (!frag.F) {
+          sAf = NaN;
+        } else {
+          const F = frag.F;
+          let sum = 0;
+          for (let k = 0; k < 3; k += 1) {
+            let coeff = 0;
+            for (let j = 0; j < 3; j += 1) coeff += Math.abs(Pelements[a + 4 * j]) * Math.abs(F[j + 4 * k]);
+            sum += coeff * L[k];
+          }
+          sAf = sum;
+        }
+        sAf += Math.abs(e[a + 12]);
+        if (!Number.isFinite(sAf)) { anyNonFiniteAxis = true; continue; }
+        if (sAf > maxSaFragmentsOnly) maxSaFragmentsOnly = sAf;
+      }
+      const maxSaWithConst = maxSaFragmentsOnly + Math.abs(Gvec[a]) + Math.abs(Pelements[a + 12]);
+      const S_a = Math.max(
+        maxSaWithConst,
+        Math.abs(refMin[a]), Math.abs(refMax[a]),
+        Math.abs(nodeMin[a]), Math.abs(nodeMax[a]),
+        TOLERANCE_CONSTANTS.sFloor,
+      );
+
+      const rMin = nodeMin[a] - refMin[a];
+      const rMax = refMax[a] - nodeMax[a];
+      const eMin = envMin[a] - nodeMin[a];
+      const eMax = nodeMax[a] - envMax[a];
+      const T_pass = TOLERANCE_CONSTANTS.passFactor * TOLERANCE_CONSTANTS.u * S_a;
+      const T_gross = TOLERANCE_CONSTANTS.grossRelative * S_a;
+      scale[axisNames[a]] = { S_a, T_pass, T_gross };
+      residuals[axisNames[a]] = { rMin, rMax, eMin, eMax };
+
+      if (!Number.isFinite(S_a) || !Number.isFinite(rMin) || !Number.isFinite(rMax)) {
+        anyNonFiniteAxis = true;
+        continue;
+      }
+      const maxContainmentResidual = Math.max(rMin, rMax);
+      if (maxContainmentResidual > T_gross) anyDisagrees = true;
+      else if (maxContainmentResidual > T_pass) anyNearTolerance = true;
+      if (Number.isFinite(eMin) && eMin > T_pass) anyExceedsEnvelope = true;
+      if (Number.isFinite(eMax) && eMax > T_pass) anyExceedsEnvelope = true;
+    }
+
+    boundsScalePerDbId[dbId] = scale;
+    boundsResiduals[dbId] = residuals;
+    if (anyNonFiniteAxis) nonFiniteAxisDbIds.push(dbId);
+
+    let state;
+    if (anyDisagrees) state = 'disagrees';
+    else if (anyNearTolerance) state = 'near-tolerance';
+    else if (envelopeIncomplete) state = 'envelope-incomplete';
+    else if (anyExceedsEnvelope) state = 'exceeds-envelope';
+    else if (anyNonFiniteAxis) state = 'envelope-incomplete'; // conservative fallback -- never
+                                                                // silently 'agrees' on NaN.
+    else state = 'agrees';
+    boundsAgreement[dbId] = state;
+
+    if (state === 'disagrees' && !placementIsIdentity) {
+      // Diagnostic only (plan line 1051): does the classic-SVF-predicted cause (nodeBox
+      // omitting placement) explain the disagreement? Recompute the tight reference using
+      // F = P^-1*e instead of e, and check containment within T_pass on every axis.
+      let altLoX = Infinity; let altLoY = Infinity; let altLoZ = Infinity;
+      let altHiX = -Infinity; let altHiY = -Infinity; let altHiZ = -Infinity;
+      let anyAltPoint = false;
+      for (const frag of tightRefFragments) {
+        const F = frag.F;
+        if (!F) continue;
+        const { positions, positionStride: stride, positionOffset: offset, index, ranges } = frag;
+        for (const range of ranges) {
+          for (let k = 0; k < range.count; k += 1) {
+            const pos = range.start + k;
+            const vid = index ? index[pos] : pos;
+            const x = positions[vid * stride + offset];
+            const y = positions[vid * stride + offset + 1];
+            const z = positions[vid * stride + offset + 2];
+            const wx = F[0] * x + F[4] * y + F[8] * z + F[12];
+            const wy = F[1] * x + F[5] * y + F[9] * z + F[13];
+            const wz = F[2] * x + F[6] * y + F[10] * z + F[14];
+            if (!Number.isFinite(wx) || !Number.isFinite(wy) || !Number.isFinite(wz)) continue;
+            anyAltPoint = true;
+            if (wx < altLoX) altLoX = wx; if (wx > altHiX) altHiX = wx;
+            if (wy < altLoY) altLoY = wy; if (wy > altHiY) altHiY = wy;
+            if (wz < altLoZ) altLoZ = wz; if (wz > altHiZ) altHiZ = wz;
+          }
+        }
+      }
+      if (anyAltPoint) {
+        const altMin = [altLoX, altLoY, altLoZ];
+        const altMax = [altHiX, altHiY, altHiZ];
+        let explains = true;
+        for (let a = 0; a < 3; a += 1) {
+          const altRMin = nodeMin[a] - altMin[a];
+          const altRMax = altMax[a] - nodeMax[a];
+          const T_pass_a = scale[axisNames[a]].T_pass;
+          if (!(altRMin <= T_pass_a) || !(altRMax <= T_pass_a)) { explains = false; break; }
+        }
+        placementOmissionExplains[dbId] = explains;
+      } else {
+        placementOmissionExplains[dbId] = false;
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    fields: {
+      censusedDbIds,
+      censusCount,
+      elementWorldBounds,
+      fragmentBoundsUnion,
+      boundsAgreement,
+      conservativeEnvelopeUnion,
+      skippedFragments,
+      boundsToleranceConstants: TOLERANCE_CONSTANTS,
+      boundsScalePerDbId,
+      boundsResiduals,
+      placementOmissionExplains,
+      modelGlobalOffset: G === null ? null : Gvec,
+      modelPlacementTransform: P && P.elements ? Pelements : null,
+      placementIsIdentity,
+      positionsArrayType,
+      worldMatrixElementType,
+      visibilityResults,
+      visibilityBranch,
+      unitScale,
+      unitString,
+      unitScalePlausible,
+      unitStringPlausible,
+      hiddenNodesPlausible,
+      placementNotInvertible,
+      nonFiniteAxisDbIds,
+      nonFiniteTransformedVertexCount,
+    },
+  };
+}
+
+/**
+ * `scoreF7(fields)` -- plan §7.7's exact success/failure/NOT_EVIDENCED criteria, pure,
+ * Node-side. `FAIL` iff any censused dbId (excluding `no-reference-geometry` exclusions)
+ * classifies `disagrees` or `viewerApiNull`, OR any of `getUnitScale`/`getUnitString`/
+ * `getAggregateHiddenNodes` threw or returned an implausible value (plan's own flat Failure
+ * criteria list places these in the SAME tier as a bounds disagreement -- never a softer
+ * verdict). `NOT_EVIDENCED` iff not `FAIL` and any dbId is `near-tolerance`/`exceeds-envelope`/
+ * `envelope-incomplete`, OR this file's own harness-level `placementNotInvertible`/
+ * `nonFiniteAxisDbIds` safety gate fired (a genuine computation impossibility the plan itself
+ * does not resolve to a verdict -- see `observeF7`'s own doc comment -- never invented as PASS
+ * or FAIL). `PASS` iff every censused, non-excluded dbId `agrees` and every subcheck is
+ * plausible.
+ */
+function scoreF7(fields) {
+  const f = fields || {};
+  const agreement = f.boundsAgreement || {};
+  const states = Object.values(agreement);
+
+  const anyDisagrees = states.includes('disagrees');
+  const anyViewerApiNull = states.includes('viewerApiNull');
+  const subcheckFailed = f.unitScalePlausible !== true || f.unitStringPlausible !== true || f.hiddenNodesPlausible !== true;
+
+  if (anyDisagrees || anyViewerApiNull || subcheckFailed) {
+    const reason = anyDisagrees ? 'f7-bounds-disagrees'
+      : anyViewerApiNull ? 'f7-viewer-api-returned-null-for-valid-geometry'
+        : 'f7-unit-or-visibility-subcheck-implausible';
+    return { verdict: CHECK_VERDICT.FAIL, reason, fields: f };
+  }
+
+  const anyCalibrationGated = states.includes('near-tolerance') || states.includes('exceeds-envelope') || states.includes('envelope-incomplete');
+  const harnessComputationGate = f.placementNotInvertible === true || (Array.isArray(f.nonFiniteAxisDbIds) && f.nonFiniteAxisDbIds.length > 0);
+
+  if (anyCalibrationGated || harnessComputationGate) {
+    const reason = harnessComputationGate ? 'f7-placement-not-invertible-or-non-finite-scale' : 'f7-calibration-gated-state-present';
+    return { verdict: CHECK_VERDICT.NOT_EVIDENCED, reason, fields: f };
+  }
+
+  return { verdict: CHECK_VERDICT.PASS, reason: null, fields: f };
+}
+
+/**
+ * `selectBoundsBeyondToleranceTarget(f7Fields)` -- plan §6.5's `bounds-beyond-tolerance` row's
+ * own target-selection rule (line 672): the LOWEST sorted censused dbId whose PRIMARY F7 result
+ * was `agrees`, using the FIRST axis (x, then y, then z) whose `S_a` is finite, normal (`>=
+ * 2^-126`, the same smallest-normal-float32 threshold `sFloor` already uses), and positive.
+ * Returns `{dbId, axis}` or `null` if none qualifies (the control's own
+ * `NOT_EXECUTABLE{reason:'perturbation-not-representable'}` case). Pure, Node-side, so this
+ * selection rule and the control that uses it can be tested independently of any page-realm
+ * state.
+ */
+function selectBoundsBeyondToleranceTarget(f7Fields) {
+  const f = f7Fields || {};
+  const agreement = f.boundsAgreement || {};
+  const scale = f.boundsScalePerDbId || {};
+  const axisOrder = ['x', 'y', 'z'];
+  const sortedDbIds = Object.keys(agreement).map(Number).sort((a, b) => a - b);
+  for (const dbId of sortedDbIds) {
+    if (agreement[dbId] !== 'agrees') continue;
+    const perAxis = scale[dbId];
+    if (!perAxis) continue;
+    for (const axis of axisOrder) {
+      const s = perAxis[axis] && perAxis[axis].S_a;
+      if (typeof s === 'number' && Number.isFinite(s) && s >= 2 ** -126 && s > 0) {
+        return { dbId, axis };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * `runInvalidBoundsControl({modelBefore, world, registry, registryKey, checkBoundsForDbId,
+ * targetDbId, controlTimeoutMs})` -- plan §6.5's `invalid-bounds` row (8c, right after F7).
+ * Patches `modelBefore`'s tree `getNodeBox` (the same tree `viewerApi.js:63-64` itself
+ * resolves) to fill the output buffer with `NaN` for ONE censused dbId (`targetDbId`,
+ * caller-selected -- any censused dbId qualifies, since the perturbation exercises
+ * `viewerApi.js`'s own non-finite-box guard independent of that dbId's primary-pass state),
+ * confirms `checkBoundsForDbId` (injected -- a later live-run stage wires it as `(m, dbId) =>
+ * pageEvaluate(observeF7,{sessionId}).then((r) => ({boundsAgreement:
+ * r.fields.boundsAgreement[dbId]}))`) reports `viewerApiNull` for that dbId, restores in
+ * `finally`.
+ */
+async function runInvalidBoundsControl({ modelBefore, world, registry, registryKey, checkBoundsForDbId, targetDbId, controlTimeoutMs = CHECK_TIMEOUT_MS }) {
+  if (!modelBefore || typeof checkBoundsForDbId !== 'function' || targetDbId === undefined || targetDbId === null) {
+    return createControlResult('invalid-bounds', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'precondition-unmet' });
+  }
+
+  let tree;
+  try {
+    tree = typeof modelBefore.getObjectTree === 'function' ? modelBefore.getObjectTree() : null;
+    if (!tree || typeof tree.getNodeBox !== 'function') tree = typeof modelBefore.getInstanceTree === 'function' ? modelBefore.getInstanceTree() : null;
+  } catch { tree = null; }
+  if (!tree || typeof tree.getNodeBox !== 'function') {
+    return createControlResult('invalid-bounds', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'no-tree-getNodeBox' });
+  }
+
+  const hasOwnGetNodeBox = Object.prototype.hasOwnProperty.call(tree, 'getNodeBox');
+  const originalGetNodeBox = tree.getNodeBox;
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+
+  try {
+    tree.getNodeBox = (dbId, buffer) => {
+      if (dbId === targetDbId && buffer && buffer.length >= 6) {
+        for (let i = 0; i < 6; i += 1) buffer[i] = Number.NaN;
+        return undefined;
+      }
+      return originalGetNodeBox.call(tree, dbId, buffer);
+    };
+
+    const checkResult = await withControlTimeout(checkBoundsForDbId(modelBefore, targetDbId), controlTimeoutMs);
+    detected = Boolean(checkResult && checkResult.boundsAgreement === 'viewerApiNull');
+    if (!detected) reason = 'not-detected';
+  } catch (e) {
+    if (e && e.controlTimeout) { timedOut = true; reason = 'perturbation-timeout'; } else { detected = false; reason = 'checkBoundsForDbId-threw'; }
+  } finally {
+    if (hasOwnGetNodeBox) tree.getNodeBox = originalGetNodeBox;
+    else delete tree.getNodeBox;
+  }
+
+  if (timedOut) {
+    return createControlResult('invalid-bounds', { state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null, reason });
+  }
+
+  const membersRestored = tree.getNodeBox === originalGetNodeBox;
+  const worldLiveOk = !world || world.isModelLive(modelBefore) === true;
+  const bindingOk = !registry || Boolean(registry.bindingFor(registryKey) && registry.bindingFor(registryKey).model === modelBefore);
+  const restored = membersRestored && worldLiveOk && bindingOk;
+
+  if (!detected) {
+    return createControlResult('invalid-bounds', { state: CONTROL_STATE.NOT_DETECTED, executed: true, detected: false, restored, reason });
+  }
+  if (!restored) {
+    return createControlResult('invalid-bounds', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: reason || 'restore-assertion-failed' });
+  }
+  return createControlResult('invalid-bounds', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
+/**
+ * `runBoundsBeyondToleranceControl({modelBefore, world, registry, registryKey, primaryF7Fields,
+ * checkBoundsForDbId, viewerApiGetElementWorldBounds, model, controlTimeoutMs})` -- plan §6.5's
+ * `bounds-beyond-tolerance` row (8c, right after `invalid-bounds`), the most numerically
+ * precise control in the plan. Selects its target via `selectBoundsBeyondToleranceTarget`
+ * against F7's OWN already-computed `primaryF7Fields` (reused, never recomputed); if none
+ * qualifies, `NOT_EXECUTABLE{reason:'perturbation-not-representable'}` (the plan's own escape
+ * hatch, line 102 of this stage's brief / line 672 of the plan).
+ *
+ * Wraps `tree.getNodeBox` for the target dbId only: calls the original first, then adds
+ * `Δ = (refMin_a − nodeMin_a) + 2^-6·S_a` to BOTH `dst[a]` and `dst[a+3]` -- shifting the whole
+ * box by Δ on one axis, keeping it finite/well-ordered so `viewerApi.js`'s own guard does not
+ * fire (exercising the containment/tolerance path, unlike `invalid-bounds`). `refMin_a`/
+ * `nodeMin_a`/`S_a` all come from the target's own RETAINED primary-pass values.
+ *
+ * Detects: `checkBoundsForDbId`, re-run for the target dbId, reports `disagrees` (never a
+ * weaker state). Restoration confirms the target dbId's re-read via the real
+ * `getElementWorldBounds` is bit-exact (all six Float32 values) against its own primary-pass
+ * `elementWorldBounds` (plan line 848) -- not merely that the property descriptor was
+ * reinstalled.
+ */
+async function runBoundsBeyondToleranceControl({
+  modelBefore, world, registry, registryKey, primaryF7Fields, checkBoundsForDbId,
+  viewerApiGetElementWorldBounds, model, controlTimeoutMs = CHECK_TIMEOUT_MS,
+}) {
+  const target = selectBoundsBeyondToleranceTarget(primaryF7Fields);
+  if (!target || !modelBefore || typeof checkBoundsForDbId !== 'function') {
+    return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'perturbation-not-representable' });
+  }
+
+  const { dbId: targetDbId, axis } = target;
+  const axisIndex = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
+  const refBox = primaryF7Fields.fragmentBoundsUnion && primaryF7Fields.fragmentBoundsUnion[targetDbId];
+  const nodeBoxPrimary = primaryF7Fields.elementWorldBounds && primaryF7Fields.elementWorldBounds[targetDbId];
+  const S_a = primaryF7Fields.boundsScalePerDbId && primaryF7Fields.boundsScalePerDbId[targetDbId]
+    && primaryF7Fields.boundsScalePerDbId[targetDbId][axis] && primaryF7Fields.boundsScalePerDbId[targetDbId][axis].S_a;
+
+  if (!Array.isArray(refBox) || !Array.isArray(nodeBoxPrimary) || typeof S_a !== 'number' || !Number.isFinite(S_a)) {
+    return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'perturbation-not-representable' });
+  }
+
+  const refMin_a = refBox[axisIndex];
+  const nodeMin_a = nodeBoxPrimary[axisIndex];
+  const delta = (refMin_a - nodeMin_a) + (2 ** -6) * S_a;
+  if (!Number.isFinite(delta)) {
+    return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'perturbation-not-representable' });
+  }
+
+  let tree;
+  try {
+    tree = typeof modelBefore.getObjectTree === 'function' ? modelBefore.getObjectTree() : null;
+    if (!tree || typeof tree.getNodeBox !== 'function') tree = typeof modelBefore.getInstanceTree === 'function' ? modelBefore.getInstanceTree() : null;
+  } catch { tree = null; }
+  if (!tree || typeof tree.getNodeBox !== 'function') {
+    return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'perturbation-not-representable' });
+  }
+
+  const hasOwnGetNodeBox = Object.prototype.hasOwnProperty.call(tree, 'getNodeBox');
+  const originalGetNodeBox = tree.getNodeBox;
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+  let perturbationRepresentable = true;
+
+  try {
+    tree.getNodeBox = (dbId, buffer) => {
+      const result = originalGetNodeBox.call(tree, dbId, buffer);
+      if (dbId === targetDbId && buffer && buffer.length >= 6) {
+        const shiftedMin = buffer[axisIndex] + delta;
+        const shiftedMax = buffer[axisIndex + 3] + delta;
+        if (!Number.isFinite(shiftedMin) || !Number.isFinite(shiftedMax) || shiftedMin > shiftedMax) {
+          perturbationRepresentable = false;
+          return result;
+        }
+        buffer[axisIndex] = shiftedMin;
+        buffer[axisIndex + 3] = shiftedMax;
+      }
+      return result;
+    };
+
+    if (!perturbationRepresentable) throw Object.assign(new Error('perturbation-not-representable'), { notRepresentable: true });
+    const checkResult = await withControlTimeout(checkBoundsForDbId(modelBefore, targetDbId), controlTimeoutMs);
+    if (!perturbationRepresentable) throw Object.assign(new Error('perturbation-not-representable'), { notRepresentable: true });
+    detected = Boolean(checkResult && checkResult.boundsAgreement === 'disagrees');
+    if (!detected) reason = 'not-detected';
+  } catch (e) {
+    if (e && e.notRepresentable) { /* handled after finally, below */ } else if (e && e.controlTimeout) { timedOut = true; reason = 'perturbation-timeout'; } else { detected = false; reason = 'checkBoundsForDbId-threw'; }
+  } finally {
+    if (hasOwnGetNodeBox) tree.getNodeBox = originalGetNodeBox;
+    else delete tree.getNodeBox;
+  }
+
+  if (!perturbationRepresentable) {
+    return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'perturbation-not-representable' });
+  }
+  if (timedOut) {
+    return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null, reason });
+  }
+
+  const membersRestored = tree.getNodeBox === originalGetNodeBox;
+  const worldLiveOk = !world || world.isModelLive(modelBefore) === true;
+  const bindingOk = !registry || Boolean(registry.bindingFor(registryKey) && registry.bindingFor(registryKey).model === modelBefore);
+
+  // Plan line 848's own restoration oracle: re-read via the REAL getElementWorldBounds and
+  // confirm bit-exact against the primary-pass elementWorldBounds -- stronger than "the
+  // property was reinstalled."
+  let boundsBitExact = true;
+  if (typeof viewerApiGetElementWorldBounds === 'function' && model) {
+    let reread;
+    try { reread = viewerApiGetElementWorldBounds(model, targetDbId); } catch { reread = null; }
+    boundsBitExact = Array.isArray(reread) && reread.length === 6
+      && reread.every((v, i) => Object.is(v, nodeBoxPrimary[i]));
+  }
+  const restored = membersRestored && worldLiveOk && bindingOk && boundsBitExact;
+
+  if (!detected) {
+    return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.NOT_DETECTED, executed: true, detected: false, restored, reason });
+  }
+  if (!restored) {
+    return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: reason || 'restore-assertion-failed' });
+  }
+  return createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
+// ------------------------------------------------------------------------------------------
 // §6.5/§6.3a -- `invalid-geometry-consumer` (6c, right after F4, `restorationRequired: false`
 // -- an isolated synthetic perturbation, the non-interference oracle, never touches shared
 // state -- and `capacity-breach` (7c, right after F5, `restorationRequired: true`, the same
@@ -3608,5 +4442,11 @@ export {
   jsonDeepEqual,
   runInvalidGeometryConsumerControl,
   runCapacityBreachControl,
+  F7_TOLERANCE_CONSTANTS,
+  observeF7,
+  scoreF7,
+  selectBoundsBeyondToleranceTarget,
+  runInvalidBoundsControl,
+  runBoundsBeyondToleranceControl,
   main,
 };

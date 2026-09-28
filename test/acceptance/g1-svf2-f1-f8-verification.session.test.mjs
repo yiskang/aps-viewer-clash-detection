@@ -29,6 +29,7 @@ import vm from 'node:vm';
 import { adaptViewerGeometry } from '../../collision/viewer/ViewerGeometryAdapter.js';
 import { compactAndWeld as realCompactAndWeld } from '../../collision/geometry/activeRangeCompaction.js';
 import { createGeometryIdentity } from '../../collision/geometry/GeometryIdentity.js';
+import { createViewerApi } from '../../clashpanel/viewer/viewerApi.js';
 import {
   CONTROL_STATE,
   CONTROL_RESTORATION_REQUIRED,
@@ -51,6 +52,12 @@ import {
   jsonDeepEqual,
   runInvalidGeometryConsumerControl,
   runCapacityBreachControl,
+  F7_TOLERANCE_CONSTANTS,
+  observeF7,
+  scoreF7,
+  selectBoundsBeyondToleranceTarget,
+  runInvalidBoundsControl,
+  runBoundsBeyondToleranceControl,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 // ============================================================================================
@@ -60,7 +67,7 @@ import {
 // the one function it's given, never a function that function calls).
 // ============================================================================================
 
-const IN_PAGE_FUNCTIONS = { sessionErrOf, setupSharedSessionResources, observeF1, observeF2, observeF4 };
+const IN_PAGE_FUNCTIONS = { sessionErrOf, setupSharedSessionResources, observeF1, observeF2, observeF4, observeF7 };
 
 function createPageRealm(initialWindow = {}) {
   const context = vm.createContext({ window: initialWindow, performance, setTimeout, clearTimeout, console });
@@ -1142,4 +1149,606 @@ test('capacity-breach control: restorationRequired cross-checked against Stage 1
     checkCapacity: async () => ({ capacityExceededDetected: true }),
   });
   assert.equal(result.restorationRequired, CONTROL_RESTORATION_REQUIRED['capacity-breach']);
+});
+
+// ============================================================================================
+// Stage 6 -- F7 (observeF7/scoreF7), selectBoundsBeyondToleranceTarget, and its two controls
+// (invalid-bounds, bounds-beyond-tolerance). `observeF7` is in-page (added to IN_PAGE_FUNCTIONS
+// above) and uses the REAL `createViewerApi` from clashpanel/viewer/viewerApi.js (never a fake
+// for it -- same "reuse the real production function" convention F1/F4 already established for
+// extractFragments/adaptViewerGeometry/compactAndWeld), wired into window.__g1.mod exactly like
+// those. `scoreF7`, `selectBoundsBeyondToleranceTarget`, and both controls are pure/plain
+// Node-side functions (never touch `window`), so their own tests need no vm page-realm at all --
+// mirroring how runCapacityBreachControl's own tests use plain fake objects.
+// ============================================================================================
+
+function fakeF7Mod() {
+  return { '/clashpanel/viewer/viewerApi.js': { createViewerApi } };
+}
+
+const FAKE_AUTODESK_EVENTS = { Viewing: { BEFORE_MODEL_UNLOAD_EVENT: 'beforeModelUnload', MODEL_REMOVED_EVENT: 'modelRemoved' } };
+
+const IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+function fakeF7Viewer(overrides = {}) {
+  return { overlays: {}, getAggregateHiddenNodes: () => [], ...overrides };
+}
+
+// One simple non-indexed triangle geometry entry (F4's own frozen per-geometry snapshot shape)
+// -- vertices (0,0,0),(10,0,0),(0,10,0), so under an identity world matrix its own local AABB
+// and world-space bounds are both exactly [0,0,0,10,10,0].
+function triangleGeometryEntry({ activeTriangleCount = 1 } = {}) {
+  return {
+    unsupported: false,
+    positions: new Float32Array([0, 0, 0, 10, 0, 0, 0, 10, 0]),
+    positionStride: 3,
+    positionOffset: 0,
+    index: null,
+    ranges: [{ start: 0, count: 3 }],
+    activeTriangleCount,
+    representativeFragId: 0,
+  };
+}
+
+function nodeBoxFiller(box) {
+  return (dbId, buffer) => { for (let i = 0; i < 6; i += 1) buffer[i] = box[i]; };
+}
+
+function buildF7Session({
+  rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl,
+  getUnitScale = () => 1, getUnitString = () => null,
+  getGlobalOffset = () => [0, 0, 0], getPlacementTransform = () => null,
+} = {}) {
+  const model = {
+    getUnitScale,
+    getUnitString,
+    getGlobalOffset,
+    getPlacementTransform,
+    getFragmentList: () => ({}),
+    getObjectTree: () => ({ getNodeBox: getNodeBoxImpl }),
+  };
+  return {
+    model,
+    artifacts: { f1FragmentMapsByRoot: rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId },
+  };
+}
+
+// Cross-realm gotcha (documented elsewhere in this file, Stage 5's fix round): any array/object
+// LITERAL constructed inside observeF7's own source text (reconstructed via vm.runInContext,
+// per this file's own createPageRealm) carries that vm realm's own Array/Object prototype, so
+// this file's strict `assert.deepEqual` spuriously fails on an otherwise-identical value even
+// though every element/field matches (e.g. censusedDbIds, fragmentBoundsUnion[dbId],
+// conservativeEnvelopeUnion[dbId], boundsToleranceConstants, modelPlacementTransform, every
+// skippedFragments[dbId] entry). A value returned by a REAL, already-imported Node-realm
+// function called FROM INSIDE observeF7 (e.g. viewerApi.js's own `Array.from(box)` inside
+// getElementWorldBounds) keeps that function's OWN closure realm and is unaffected, but these
+// two helpers are used uniformly below rather than tracking that distinction per field.
+function assertArrEq(actual, expected, message) {
+  assert.equal(actual.length, expected.length, message);
+  for (let i = 0; i < expected.length; i += 1) assert.equal(actual[i], expected[i], message);
+}
+function assertObjEq(actual, expected, message) {
+  assert.deepEqual(Object.keys(actual).sort(), Object.keys(expected).sort(), message);
+  for (const k of Object.keys(expected)) assert.equal(actual[k], expected[k], `${message || ''} key=${k}`);
+}
+
+test('observeF7: session-not-found', async () => {
+  const realm = createPageRealm({ __g1: { sessions: {}, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+  const result = await realm.call(observeF7, 'missing');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'session-not-found');
+});
+
+test('observeF7: refuses to run before F1 has populated f1FragmentMapsByRoot', async () => {
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: { model: {}, artifacts: {} } }, mod: fakeF7Mod() },
+    __viewer: fakeF7Viewer(),
+    Autodesk: FAKE_AUTODESK_EVENTS,
+  });
+  const result = await realm.call(observeF7, 's1');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'f1-fragment-maps-by-root-not-available-run-observeF1-first');
+});
+
+test('observeF7: refuses to run before F4 has populated its retained artifacts', async () => {
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: { model: {}, artifacts: { f1FragmentMapsByRoot: new Map() } } }, mod: fakeF7Mod() },
+    __viewer: fakeF7Viewer(),
+    Autodesk: FAKE_AUTODESK_EVENTS,
+  });
+  const result = await realm.call(observeF7, 's1');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'f4-artifacts-not-available-run-observeF4-first');
+});
+
+test('observeF7: single dbId, single healthy fragment, node box exactly matches the independent computation -> agrees', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.ok, true);
+  assertArrEq(result.fields.censusedDbIds, [100]);
+  assert.equal(result.fields.censusCount, 1);
+  assert.equal(result.fields.boundsAgreement[100], 'agrees');
+  assertArrEq(result.fields.elementWorldBounds[100], [0, 0, 0, 10, 10, 0]);
+  assertArrEq(result.fields.fragmentBoundsUnion[100], [0, 0, 0, 10, 10, 0]);
+  assertArrEq(result.fields.conservativeEnvelopeUnion[100], [0, 0, 0, 10, 10, 0]);
+  assert.equal(result.fields.skippedFragments[100].length, 0);
+  assert.equal(result.fields.placementIsIdentity, true);
+  assertObjEq(result.fields.boundsToleranceConstants, F7_TOLERANCE_CONSTANTS);
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('observeF7: censusedDbIds is the sorted list of F1 root dbIds (f1FragmentMapsByRoot keys)', async () => {
+  const rootFragments = new Map([[300, new Map([[2, {}]])], [100, new Map([[0, {}]])], [200, new Map([[1, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1], [1, 1], [2, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX], [1, IDENTITY_MATRIX], [2, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assertArrEq(result.fields.censusedDbIds, [100, 200, 300]);
+  assert.equal(result.fields.censusCount, 3);
+});
+
+test('observeF7: node box misses containment by more than T_gross -> disagrees, F7 FAIL', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([1, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.boundsAgreement[100], 'disagrees');
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.FAIL);
+  assert.equal(scoreF7(result.fields).reason, 'f7-bounds-disagrees');
+});
+
+test('observeF7: node box misses containment by a residual inside (T_pass, T_gross] -> near-tolerance, F7 NOT_EVIDENCED', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([2 ** -10, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.boundsAgreement[100], 'near-tolerance');
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.NOT_EVIDENCED);
+});
+
+test('observeF7: containment holds but node box exceeds the conservative envelope beyond T_pass -> exceeds-envelope, F7 NOT_EVIDENCED', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10 + 2 ** -10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.boundsAgreement[100], 'exceeds-envelope');
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.NOT_EVIDENCED);
+});
+
+test('observeF7: getElementWorldBounds returning null (via the non-finite-box guard) for a dbId with valid reference geometry -> viewerApiNull, F7 FAIL', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: () => {} });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.elementWorldBounds[100], null);
+  assert.equal(result.fields.boundsAgreement[100], 'viewerApiNull');
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.FAIL);
+  assert.equal(scoreF7(result.fields).reason, 'f7-viewer-api-returned-null-for-valid-geometry');
+});
+
+test('observeF7: a fragment with no f4FragmentGeometryId mapping is skipped (unsupported/missing-fragment-geometry-mapping), marks envelope-incomplete', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}], [1, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]); // fragId 1 deliberately missing
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.boundsAgreement[100], 'envelope-incomplete');
+  assert.equal(result.fields.skippedFragments[100].length, 1);
+  assert.equal(result.fields.skippedFragments[100][0].fragmentId, 1);
+  assert.equal(result.fields.skippedFragments[100][0].reason, 'unsupported');
+  assert.equal(result.fields.skippedFragments[100][0].origin, 'missing-fragment-geometry-mapping');
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.NOT_EVIDENCED);
+});
+
+test('observeF7: a fragment whose geometryId has no f4Geometry snapshot is skipped (unsupported/missing-geometry-snapshot)', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map(); // deliberately empty -- geometryId 1 has no snapshot
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.skippedFragments[100][0].origin, 'missing-geometry-snapshot');
+  assert.equal(result.fields.boundsAgreement[100], 'no-reference-geometry');
+});
+
+test('observeF7: a non-affine world matrix (e[15] !== 1) is skipped (non-affine-world-matrix)', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const badMatrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]; // e[15] = 0, not 1
+  const f4WorldMatricesByFragId = new Map([[0, badMatrix]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.skippedFragments[100][0].reason, 'non-affine-world-matrix');
+  assert.equal(result.fields.boundsAgreement[100], 'no-reference-geometry');
+});
+
+test('observeF7: positions that are neither Float32Array nor Float64Array are skipped (non-float-positions)', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const badGeom = { ...triangleGeometryEntry(), positions: [0, 0, 0, 10, 0, 0, 0, 10, 0] }; // plain Array
+  const f4Geometry = new Map([[1, badGeom]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.skippedFragments[100][0].reason, 'non-float-positions');
+});
+
+test('observeF7: activeTriangleCount === 0 excludes the fragment from the tight reference only -- the only fragment -> no-reference-geometry (envelope still populated), F7 PASS', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry({ activeTriangleCount: 0 })]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.boundsAgreement[100], 'no-reference-geometry');
+  assert.equal(result.fields.fragmentBoundsUnion[100], null);
+  assertArrEq(result.fields.conservativeEnvelopeUnion[100], [0, 0, 0, 10, 10, 0]);
+  assert.equal(result.fields.skippedFragments[100].length, 1);
+  assert.equal(result.fields.skippedFragments[100][0].reason, 'no-active-triangles');
+  // no-reference-geometry excludes this dbId from comparison entirely -- never counted as
+  // agree/disagree (plan step 7) -- so F7 as a whole still PASSes.
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('observeF7: non-identity placement (pure 2x scale on X) -- the S_a substitution path computes without crashing, agrees when the node box matches', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const scaledMatrix = [2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  const f4WorldMatricesByFragId = new Map([[0, scaledMatrix]]);
+  const fakePlacement = { elements: scaledMatrix };
+  const session = buildF7Session({
+    rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId,
+    getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 20, 10, 0]),
+    getPlacementTransform: () => fakePlacement,
+  });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.placementIsIdentity, false);
+  assertArrEq(result.fields.modelPlacementTransform, scaledMatrix);
+  assert.equal(result.fields.boundsAgreement[100], 'agrees');
+  assert.equal(Number.isFinite(result.fields.boundsScalePerDbId[100].x.S_a), true);
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('observeF7: getUnitScale throwing -> unitScalePlausible false, F7 FAIL even with a fully agreeing bounds census', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({
+    rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId,
+    getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]),
+    getUnitScale: () => { throw new Error('boom'); },
+  });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.unitScalePlausible, false);
+  assert.equal(result.fields.boundsAgreement[100], 'agrees'); // bounds oracle itself unaffected
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.FAIL);
+  assert.equal(scoreF7(result.fields).reason, 'f7-unit-or-visibility-subcheck-implausible');
+});
+
+test('observeF7: getUnitScale() === 1 (the documented "unity if unknown" default) is plausible, never a failure', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]), getUnitScale: () => 1 });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.unitScalePlausible, true);
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('observeF7: getUnitString() === null (the documented "null if unknown" default) is plausible', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]), getUnitString: () => null });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.unitStringPlausible, true);
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('observeF7: getAggregateHiddenNodes returning a non-array -> hiddenNodesPlausible false, F7 FAIL', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF7Mod() },
+    __viewer: fakeF7Viewer({ getAggregateHiddenNodes: () => 'not-an-array' }),
+    Autodesk: FAKE_AUTODESK_EVENTS,
+  });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.hiddenNodesPlausible, false);
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.FAIL);
+});
+
+test('observeF7: a censused dbId appearing in getAggregateHiddenNodes is recorded as hiddenByDefault -- never itself a failure', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  const { model } = session;
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF7Mod() },
+    __viewer: fakeF7Viewer({ getAggregateHiddenNodes: () => [{ model, ids: [100] }] }),
+    Autodesk: FAKE_AUTODESK_EVENTS,
+  });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.visibilityResults[100].hiddenByDefault, true);
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.PASS, 'hidden-by-default is never itself a failure');
+});
+
+test('observeF7: visibilityBranch characterization -- FragmentList detected via db2ThemingColor, never gates the verdict', async () => {
+  const rootFragments = new Map([[100, new Map([[0, {}]])]]);
+  const f4Geometry = new Map([[1, triangleGeometryEntry()]]);
+  const f4FragmentGeometryId = new Map([[0, 1]]);
+  const f4WorldMatricesByFragId = new Map([[0, IDENTITY_MATRIX]]);
+  const session = buildF7Session({ rootFragments, f4Geometry, f4FragmentGeometryId, f4WorldMatricesByFragId, getNodeBoxImpl: nodeBoxFiller([0, 0, 0, 10, 10, 0]) });
+  session.model.getFragmentList = () => ({ db2ThemingColor: {} });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: fakeF7Mod() }, __viewer: fakeF7Viewer(), Autodesk: FAKE_AUTODESK_EVENTS });
+
+  const result = await realm.call(observeF7, 's1');
+
+  assert.equal(result.fields.visibilityBranch, 'FragmentList');
+  assert.equal(scoreF7(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('scoreF7: placementNotInvertible forces NOT_EVIDENCED even when every censused dbId agrees', () => {
+  const fields = {
+    boundsAgreement: { 100: 'agrees' },
+    unitScalePlausible: true, unitStringPlausible: true, hiddenNodesPlausible: true,
+    placementNotInvertible: true, nonFiniteAxisDbIds: [],
+  };
+  assert.equal(scoreF7(fields).verdict, CHECK_VERDICT.NOT_EVIDENCED);
+  assert.equal(scoreF7(fields).reason, 'f7-placement-not-invertible-or-non-finite-scale');
+});
+
+test('scoreF7: nonFiniteAxisDbIds non-empty forces NOT_EVIDENCED, never a silent PASS', () => {
+  const fields = {
+    boundsAgreement: { 100: 'agrees' },
+    unitScalePlausible: true, unitStringPlausible: true, hiddenNodesPlausible: true,
+    placementNotInvertible: false, nonFiniteAxisDbIds: [100],
+  };
+  assert.equal(scoreF7(fields).verdict, CHECK_VERDICT.NOT_EVIDENCED);
+});
+
+test('scoreF7: PASS requires every subcheck plausible and every dbId agrees (no-reference-geometry dbIds excluded from the requirement)', () => {
+  const fields = {
+    boundsAgreement: { 100: 'agrees', 200: 'no-reference-geometry' },
+    unitScalePlausible: true, unitStringPlausible: true, hiddenNodesPlausible: true,
+    placementNotInvertible: false, nonFiniteAxisDbIds: [],
+  };
+  assert.equal(scoreF7(fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('selectBoundsBeyondToleranceTarget: picks the lowest sorted dbId whose primary result was agrees, first qualifying axis', () => {
+  const fields = {
+    boundsAgreement: { 300: 'agrees', 100: 'disagrees', 200: 'agrees' },
+    boundsScalePerDbId: {
+      100: { x: { S_a: 5 }, y: { S_a: 5 }, z: { S_a: 5 } },
+      200: { x: { S_a: 0 }, y: { S_a: 7 }, z: { S_a: 7 } }, // x disqualified (S_a === 0, not > 0)
+      300: { x: { S_a: 9 }, y: { S_a: 9 }, z: { S_a: 9 } },
+    },
+  };
+  const target = selectBoundsBeyondToleranceTarget(fields);
+  assert.deepEqual(target, { dbId: 200, axis: 'y' });
+});
+
+test('selectBoundsBeyondToleranceTarget: returns null when no dbId agrees', () => {
+  const fields = { boundsAgreement: { 100: 'disagrees' }, boundsScalePerDbId: { 100: { x: { S_a: 5 } } } };
+  assert.equal(selectBoundsBeyondToleranceTarget(fields), null);
+});
+
+test('selectBoundsBeyondToleranceTarget: returns null when the only agreeing dbId has no finite/normal/positive S_a on any axis', () => {
+  const fields = {
+    boundsAgreement: { 100: 'agrees' },
+    boundsScalePerDbId: { 100: { x: { S_a: NaN }, y: { S_a: 0 }, z: { S_a: -1 } } },
+  };
+  assert.equal(selectBoundsBeyondToleranceTarget(fields), null);
+});
+
+function fakeModelForBoundsControl(getNodeBoxImpl) {
+  // getObjectTree() must return the SAME tree object every call (as a real Model's cached
+  // InstanceTree would) -- both the control's own patch and a later checkBoundsForDbId/
+  // viewerApiGetElementWorldBounds re-read must observe the SAME patched (or restored)
+  // getNodeBox, never a fresh unpatched object each call.
+  const tree = { getNodeBox: getNodeBoxImpl };
+  return { getObjectTree: () => tree };
+}
+
+test('invalid-bounds control: DETECTED_RESTORED -- F7 (fake) correctly reports viewerApiNull for the NaN-filled box, restored after', async () => {
+  const stored = [0, 0, 0, 10, 10, 0];
+  const model = fakeModelForBoundsControl((dbId, buffer) => { for (let i = 0; i < 6; i += 1) buffer[i] = stored[i]; });
+  const result = await runInvalidBoundsControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    targetDbId: 100,
+    checkBoundsForDbId: async (m, dbId) => {
+      const buffer = new Float32Array(6).fill(Number.NaN);
+      model.getObjectTree().getNodeBox(dbId, buffer);
+      const finite = Array.from(buffer).every(Number.isFinite);
+      return { boundsAgreement: finite ? 'agrees' : 'viewerApiNull' };
+    },
+  });
+  assert.equal(result.state, CONTROL_STATE.DETECTED_RESTORED);
+  assert.equal(result.restorationRequired, CONTROL_RESTORATION_REQUIRED['invalid-bounds']);
+
+  const freshBuffer = new Float32Array(6);
+  model.getObjectTree().getNodeBox(100, freshBuffer);
+  assert.deepEqual(Array.from(freshBuffer), stored, 'restored to the original after the control');
+});
+
+test('invalid-bounds control: NOT_DETECTED -- F7 (fake) fails to reject the NaN box', async () => {
+  const model = fakeModelForBoundsControl(() => {});
+  const result = await runInvalidBoundsControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    targetDbId: 100,
+    checkBoundsForDbId: async () => ({ boundsAgreement: 'agrees' }), // wrong -- should have been viewerApiNull
+  });
+  assert.equal(result.state, CONTROL_STATE.NOT_DETECTED);
+});
+
+test('invalid-bounds control: RESTORE_FAILED -- detected, but post-restoration liveness check fails', async () => {
+  const model = fakeModelForBoundsControl((dbId, buffer) => { buffer[0] = 0; });
+  const result = await runInvalidBoundsControl({
+    modelBefore: model, world: { isModelLive: () => false }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    targetDbId: 100,
+    checkBoundsForDbId: async () => ({ boundsAgreement: 'viewerApiNull' }),
+  });
+  assert.equal(result.state, CONTROL_STATE.RESTORE_FAILED);
+});
+
+test('invalid-bounds control: TIMED_OUT', async () => {
+  const model = fakeModelForBoundsControl(() => {});
+  const result = await runInvalidBoundsControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    targetDbId: 100,
+    checkBoundsForDbId: () => new Promise(() => {}),
+    controlTimeoutMs: 20,
+  });
+  assert.equal(result.state, CONTROL_STATE.TIMED_OUT);
+});
+
+test('invalid-bounds control: NOT_EXECUTABLE -- no modelBefore', async () => {
+  const result = await runInvalidBoundsControl({ modelBefore: null, checkBoundsForDbId: async () => ({}), targetDbId: 100 });
+  assert.equal(result.state, CONTROL_STATE.NOT_EXECUTABLE);
+});
+
+function boundsCheckerFromRefAndScale(model, refBox, sA, tGross, tPass) {
+  return async (m, dbId) => {
+    const buffer = new Float32Array(6);
+    model.getObjectTree().getNodeBox(dbId, buffer);
+    const rMin = buffer[0] - refBox[0];
+    const rMax = refBox[3] - buffer[3];
+    const maxResidual = Math.max(rMin, rMax);
+    const state = maxResidual > tGross ? 'disagrees' : (maxResidual > tPass ? 'near-tolerance' : 'agrees');
+    return { boundsAgreement: state };
+  };
+}
+
+test('bounds-beyond-tolerance control: DETECTED_RESTORED -- perturbed dbId reports disagrees, restoration is bit-exact', async () => {
+  const current = [0, 0, 0, 10, 10, 0];
+  const model = fakeModelForBoundsControl((dbId, buffer) => { for (let i = 0; i < 6; i += 1) buffer[i] = current[i]; });
+  const S_a = 10;
+  const primaryF7Fields = {
+    boundsAgreement: { 100: 'agrees' },
+    boundsScalePerDbId: { 100: { x: { S_a }, y: { S_a }, z: { S_a } } },
+    fragmentBoundsUnion: { 100: [0, 0, 0, 10, 10, 0] },
+    elementWorldBounds: { 100: [0, 0, 0, 10, 10, 0] },
+  };
+  const viewerApiGetElementWorldBounds = (m, dbId) => {
+    const buf = new Float32Array(6);
+    model.getObjectTree().getNodeBox(dbId, buf);
+    return Array.from(buf);
+  };
+
+  const result = await runBoundsBeyondToleranceControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    primaryF7Fields,
+    checkBoundsForDbId: boundsCheckerFromRefAndScale(model, [0, 0, 0, 10, 10, 0], S_a, (2 ** -10) * S_a, 16 * (2 ** -24) * S_a),
+    viewerApiGetElementWorldBounds,
+    model,
+  });
+
+  assert.equal(result.state, CONTROL_STATE.DETECTED_RESTORED);
+  assert.equal(result.restorationRequired, CONTROL_RESTORATION_REQUIRED['bounds-beyond-tolerance']);
+
+  const freshBuffer = new Float32Array(6);
+  model.getObjectTree().getNodeBox(100, freshBuffer);
+  assert.deepEqual(Array.from(freshBuffer), [0, 0, 0, 10, 10, 0], 'getNodeBox restored, unwrapped, after the control');
+});
+
+test('bounds-beyond-tolerance control: NOT_EXECUTABLE -- no dbId agreed in the primary pass', async () => {
+  const model = fakeModelForBoundsControl(() => {});
+  const result = await runBoundsBeyondToleranceControl({
+    modelBefore: model,
+    primaryF7Fields: { boundsAgreement: { 100: 'disagrees' }, boundsScalePerDbId: {} },
+    checkBoundsForDbId: async () => ({ boundsAgreement: 'disagrees' }),
+  });
+  assert.equal(result.state, CONTROL_STATE.NOT_EXECUTABLE);
+  assert.equal(result.reason, 'perturbation-not-representable');
+});
+
+test('bounds-beyond-tolerance control: NOT_DETECTED -- perturbed dbId reports a weaker state than disagrees', async () => {
+  const current = [0, 0, 0, 10, 10, 0];
+  const model = fakeModelForBoundsControl((dbId, buffer) => { for (let i = 0; i < 6; i += 1) buffer[i] = current[i]; });
+  const primaryF7Fields = {
+    boundsAgreement: { 100: 'agrees' },
+    boundsScalePerDbId: { 100: { x: { S_a: 10 } } },
+    fragmentBoundsUnion: { 100: [0, 0, 0, 10, 10, 0] },
+    elementWorldBounds: { 100: [0, 0, 0, 10, 10, 0] },
+  };
+  const result = await runBoundsBeyondToleranceControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    primaryF7Fields,
+    checkBoundsForDbId: async () => ({ boundsAgreement: 'near-tolerance' }), // wrong -- expected disagrees
+  });
+  assert.equal(result.state, CONTROL_STATE.NOT_DETECTED);
 });
