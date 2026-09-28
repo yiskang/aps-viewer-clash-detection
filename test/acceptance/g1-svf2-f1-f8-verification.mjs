@@ -156,6 +156,15 @@ const DESCRIBE_ERROR_MAX_STACK_BYTES = 2048;
 const DESCRIBE_ERROR_MAX_DEPTH = 4;
 const DESCRIBE_ERROR_MAX_ARRAY_ITEMS = 20;
 const DESCRIBE_ERROR_MAX_OBJECT_KEYS = 20;
+// Depth x breadth alone only loosely bounds the worst case (a maximally-wide tree up to
+// DESCRIBE_ERROR_MAX_DEPTH deep, each level fanning out to DESCRIBE_ERROR_MAX_ARRAY_ITEMS /
+// DESCRIBE_ERROR_MAX_OBJECT_KEYS children, is ~168k nodes) -- NOT a fixed byte cap the way
+// DESCRIBE_ERROR_MAX_STACK_BYTES bounds the stack field alone. This is the running
+// total-serialized-size cap plan §4.2 itself requires ("cap ... total serialized size per
+// error"), independent of depth/breadth: a wide-but-shallow structure (many small siblings,
+// each individually within every per-level cap) can still blow past this before either the
+// depth or the breadth cap ever fires.
+const DESCRIBE_ERROR_MAX_TOTAL_BYTES = 8192;
 const DESCRIBE_ERROR_REDACTION_PLACEHOLDER = '[REDACTED]';
 
 // Only these top-level scalar fields are allowlisted; everything else at the top level is
@@ -214,6 +223,24 @@ function redactSensitiveQueryParams(str, markRedacted) {
   });
 }
 
+/** true once the running total-serialized-size charge (state.totalBytes) has exceeded
+ * DESCRIBE_ERROR_MAX_TOTAL_BYTES -- checked before doing any further work on a node. */
+function overTotalBudget(state) {
+  return state.totalBytes > DESCRIBE_ERROR_MAX_TOTAL_BYTES;
+}
+
+/** Adds an approximate serialized-byte charge for `value` to the running per-error total.
+ * Deliberately a cheap proportional estimate (raw UTF-8 byte length of the primitive, or of
+ * a small pre-built marker object's JSON form) rather than re-serializing the whole
+ * in-progress result on every leaf, which would make an already-bounded walk quadratic. */
+function chargeBytes(state, value) {
+  let size;
+  if (typeof value === 'string') size = Buffer.byteLength(value, 'utf8');
+  else if (typeof value === 'object' && value !== null) size = Buffer.byteLength(JSON.stringify(value) || '', 'utf8');
+  else size = Buffer.byteLength(String(value), 'utf8');
+  state.totalBytes += size;
+}
+
 function redactString(str, path, state) {
   if (typeof str !== 'string') return str;
   let result = str;
@@ -231,11 +258,20 @@ function redactString(str, path, state) {
 
 function normalizeScalar(value, path, state) {
   if (value === undefined || value === null) return null;
-  if (typeof value === 'string') return redactString(value, path, state);
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const redacted = redactString(value, path, state);
+    chargeBytes(state, redacted);
+    return redacted;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    chargeBytes(state, value);
+    return value;
+  }
   // Unexpected shape in a scalar slot (e.g. a non-Error `reason` object) -- stringify
   // defensively rather than throwing or silently dropping it.
-  return redactString(String(value), path, state);
+  const stringified = redactString(String(value), path, state);
+  chargeBytes(state, stringified);
+  return stringified;
 }
 
 function normalizeStack(stack, state) {
@@ -244,6 +280,7 @@ function normalizeStack(stack, state) {
   const redacted = redactString(str, 'stack', state);
   const { value, truncated } = truncateStringBytes(redacted, DESCRIBE_ERROR_MAX_STACK_BYTES);
   if (truncated) state.truncated = true;
+  chargeBytes(state, value);
   return value;
 }
 
@@ -286,17 +323,55 @@ function normalizeErrorLike(value, path, state) {
 }
 
 function normalizeValue(value, path, depth, visited, state) {
-  if (value === null || value === undefined) return value === undefined ? null : null;
-  if (typeof value === 'string') return redactString(value, path, state);
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
-  if (typeof value === 'function') return { unsupportedType: 'function' };
+  // Running total-serialized-size cap (DESCRIBE_ERROR_MAX_TOTAL_BYTES), checked before doing
+  // any further work on this node: once prior siblings/ancestors have already charged past the
+  // budget, every subsequent node -- at any depth, in any container -- is truncated on entry.
+  // Combined with the mid-loop check below (which stops a container from even starting to
+  // process further children once the budget tips over mid-walk), this bounds total output
+  // size independently of the depth/breadth caps, which only bound per-level fan-out.
+  if (overTotalBudget(state)) {
+    state.truncated = true;
+    return { truncated: true };
+  }
 
-  if (isTypedArray(value)) return normalizeTypedArray(value);
-  if (value instanceof DataView) return { unsupportedType: 'DataView', byteLength: value.byteLength };
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const redacted = redactString(value, path, state);
+    chargeBytes(state, redacted);
+    return redacted;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    chargeBytes(state, value);
+    return value;
+  }
+  if (typeof value === 'function') {
+    const marker = { unsupportedType: 'function' };
+    chargeBytes(state, marker);
+    return marker;
+  }
 
-  if (typeof value !== 'object') return redactString(String(value), path, state);
+  if (isTypedArray(value)) {
+    const marker = normalizeTypedArray(value);
+    chargeBytes(state, marker);
+    return marker;
+  }
+  if (value instanceof DataView) {
+    const marker = { unsupportedType: 'DataView', byteLength: value.byteLength };
+    chargeBytes(state, marker);
+    return marker;
+  }
 
-  if (visited.has(value)) return { circular: true };
+  if (typeof value !== 'object') {
+    const stringified = redactString(String(value), path, state);
+    chargeBytes(state, stringified);
+    return stringified;
+  }
+
+  if (visited.has(value)) {
+    const marker = { circular: true };
+    chargeBytes(state, marker);
+    return marker;
+  }
 
   if (depth >= DESCRIBE_ERROR_MAX_DEPTH) {
     state.truncated = true;
@@ -307,7 +382,15 @@ function normalizeValue(value, path, depth, visited, state) {
   try {
     if (Array.isArray(value)) {
       const limited = value.slice(0, DESCRIBE_ERROR_MAX_ARRAY_ITEMS);
-      const items = limited.map((item, i) => normalizeValue(item, `${path}[${i}]`, depth + 1, visited, state));
+      const items = [];
+      for (let i = 0; i < limited.length; i += 1) {
+        if (overTotalBudget(state)) {
+          state.truncated = true;
+          items.push({ truncated: true });
+          break;
+        }
+        items.push(normalizeValue(limited[i], `${path}[${i}]`, depth + 1, visited, state));
+      }
       if (value.length > DESCRIBE_ERROR_MAX_ARRAY_ITEMS) state.truncated = true;
       return items;
     }
@@ -320,6 +403,11 @@ function normalizeValue(value, path, depth, visited, state) {
     const keys = allKeys.slice(0, DESCRIBE_ERROR_MAX_OBJECT_KEYS);
     const result = {};
     for (const key of keys) {
+      if (overTotalBudget(state)) {
+        state.truncated = true;
+        result.truncated = true;
+        break;
+      }
       result[key] = normalizeValue(value[key], `${path}.${key}`, depth + 1, visited, state);
     }
     if (allKeys.length > DESCRIBE_ERROR_MAX_OBJECT_KEYS) {
@@ -343,9 +431,13 @@ function normalizeValue(value, path, depth, visited, state) {
  *    DESCRIBE_ERROR_MAX_STACK_BYTES) plus a bounded, depth-capped walk of the four named
  *    structured fields (`errors`, `details`, `limit`, `requested`) -- never an unbounded
  *    generic walk of the top-level error object;
- *  - caps recursion depth (DESCRIBE_ERROR_MAX_DEPTH) and per-object breadth
- *    (DESCRIBE_ERROR_MAX_ARRAY_ITEMS / DESCRIBE_ERROR_MAX_OBJECT_KEYS); anything beyond a cap
- *    is replaced with a `{ truncated: true }` marker (or an object gains `truncated: true`)
+ *  - caps recursion depth (DESCRIBE_ERROR_MAX_DEPTH), per-object breadth
+ *    (DESCRIBE_ERROR_MAX_ARRAY_ITEMS / DESCRIBE_ERROR_MAX_OBJECT_KEYS), AND the running total
+ *    serialized size of the whole output (DESCRIBE_ERROR_MAX_TOTAL_BYTES) -- the depth/breadth
+ *    caps alone only bound per-level fan-out, not a wide-but-shallow tree's cumulative size, so
+ *    the total-bytes cap is tracked independently and can truncate the walk even when neither
+ *    the depth nor the breadth cap has individually fired; anything beyond any of these caps is
+ *    replaced with a `{ truncated: true }` marker (or an object/array gains `truncated: true`)
  *    and the top-level `truncated` flag is set -- informational loss is always visible, never
  *    silent;
  *  - detects and breaks circular references via a `WeakSet`-tracked visited-node guard,
@@ -363,16 +455,18 @@ function normalizeValue(value, path, depth, visited, state) {
  * `requested` are present only if the input error object had that field defined.
  */
 function describeError(e) {
-  const state = { truncated: false, redactions: [] };
+  const state = { truncated: false, redactions: [], totalBytes: 0 };
 
   if (e === null || e === undefined) {
     return { name: null, message: String(e), code: null, reason: null, stack: null, truncated: false, redactions: [] };
   }
 
   if (typeof e !== 'object' && typeof e !== 'function') {
+    const message = redactString(String(e), 'message', state);
+    chargeBytes(state, message);
     return {
       name: null,
-      message: redactString(String(e), 'message', state),
+      message,
       code: null,
       reason: null,
       stack: null,
@@ -695,6 +789,7 @@ export {
   DESCRIBE_ERROR_MAX_DEPTH,
   DESCRIBE_ERROR_MAX_ARRAY_ITEMS,
   DESCRIBE_ERROR_MAX_OBJECT_KEYS,
+  DESCRIBE_ERROR_MAX_TOTAL_BYTES,
   describeError,
   createToken,
   transitionToken,

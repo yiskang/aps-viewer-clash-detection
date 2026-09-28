@@ -18,6 +18,8 @@ import {
   TOKEN_STATE,
   readFormat,
   DESCRIBE_ERROR_MAX_DEPTH,
+  DESCRIBE_ERROR_MAX_OBJECT_KEYS,
+  DESCRIBE_ERROR_MAX_TOTAL_BYTES,
   describeError,
   createToken,
   transitionToken,
@@ -135,6 +137,50 @@ test('describeError: a deeply nested object is truncated at the documented depth
   assert.equal(result.truncated, true, 'top-level truncated flag must be set');
   assert.equal(JSON.stringify(result).includes('LEAF_SHOULD_NOT_APPEAR'), false, 'the marker beyond the depth cap must never appear');
   assert.equal(JSON.stringify(result).includes('"truncated":true'), true, 'a truncated:true marker must appear at the cap boundary, not a silent drop');
+});
+
+test('describeError: a wide-but-shallow structure that satisfies every depth/breadth cap is still truncated by the total-serialized-size cap', () => {
+  // Exactly DESCRIBE_ERROR_MAX_OBJECT_KEYS keys (at, not over, the per-level breadth cap --
+  // "allKeys.length > DESCRIBE_ERROR_MAX_OBJECT_KEYS" never fires), depth 1 (well under
+  // DESCRIBE_ERROR_MAX_DEPTH), so neither the depth cap nor the breadth cap is ever triggered
+  // by this shape on its own. Each value is individually small (500 bytes), but
+  // DESCRIBE_ERROR_MAX_OBJECT_KEYS * 500 bytes comfortably exceeds
+  // DESCRIBE_ERROR_MAX_TOTAL_BYTES, so only the new running total-size cap can catch this.
+  const bigValue = 'x'.repeat(500);
+  const wide = {};
+  for (let i = 0; i < DESCRIBE_ERROR_MAX_OBJECT_KEYS; i += 1) wide[`key${i}`] = bigValue;
+  assert.ok(
+    DESCRIBE_ERROR_MAX_OBJECT_KEYS * 500 > DESCRIBE_ERROR_MAX_TOTAL_BYTES,
+    'test precondition: the wide object must be large enough to exceed the total-bytes cap while staying at the breadth-cap boundary',
+  );
+
+  const err = { name: 'WideError', message: 'wide', details: wide };
+  const result = describeError(err);
+
+  assert.equal(result.truncated, true, 'top-level truncated flag must be set by the total-size cap');
+  assert.equal(result.details.truncated, true, 'the wide object itself must carry a truncated:true marker');
+
+  const capturedKeys = Object.keys(result.details).filter((k) => k !== 'truncated');
+  assert.ok(
+    capturedKeys.length < DESCRIBE_ERROR_MAX_OBJECT_KEYS,
+    `expected fewer than all ${DESCRIBE_ERROR_MAX_OBJECT_KEYS} keys to be captured once the total-size cap tripped mid-walk, got ${capturedKeys.length}`,
+  );
+});
+
+test('describeError: a Cookie: header-shaped string is redacted', () => {
+  const err = new Error('failed request; Cookie: session=abc123; other=xyz');
+  const result = describeError(err);
+  assert.equal(result.message.includes('session=abc123'), false);
+  assert.ok(result.message.includes('Cookie: [REDACTED]'));
+  assert.ok(result.redactions.length >= 1);
+});
+
+test('describeError: a signed URL with a sensitive query param (signature) is redacted', () => {
+  const err = { name: 'UrlError', message: 'https://example.com/derivative?path=x&signature=SECRETVALUE123' };
+  const result = describeError(err);
+  assert.equal(result.message.includes('SECRETVALUE123'), false);
+  assert.ok(result.message.includes('signature=%5BREDACTED%5D') || result.message.includes('signature=[REDACTED]'));
+  assert.ok(result.redactions.length >= 1);
 });
 
 test('describeError: Document.load-style rejection ({code, message, errors}) retains structured detail', () => {
