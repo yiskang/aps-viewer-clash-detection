@@ -2235,6 +2235,579 @@ async function runSetupThroughClassification(deps) {
   };
 }
 
+// ============================================================================================
+// STAGE 4 -- Canonical-observation slice: Phase 2.5's real construction (the FROZEN shared
+// session-state contract F4/F5/F7/F8/F6 all reuse verbatim), F1, F2, and their two immediate
+// mandatory controls (plan §6.1a, §6.1 Phase 4/4c/5/5c, §7.1, §7.2, §6.5/§6.3a's wrong-owner
+// and hidden-fragment rows).
+//
+// Per codex-advisor consult (medium, before implementation -- this stage's own explicit
+// invitation, given how foundational this contract is): (1) test the real in-page construction
+// function via the SAME node:vm reconstruction Stage 2 established (createPageRealm-style),
+// not a plain globalThis.window fake -- a plain fake would not catch an accidental Node-module
+// closure reference the way reconstructing the function from its own source text does; (2)
+// window.__g1.mod[specifier] is the correct way to reference dynamically-imported repo modules
+// from an in-page function (matches this repo's own accepted INSTALL_T3 precedent,
+// clashtest-viewer-adapter.acceptance.mjs:181-185) -- never pass a module namespace/class as a
+// page.evaluate argument, since functions are not structured-cloneable across that boundary;
+// (3) CRITICAL, confirmed by reading clashtest/identity/ModelRegistry.js:143,225-236 directly:
+// `registry.bindingFor(K)` LAZILY calls `world.admitModel(model)` the first time it is read --
+// so by the time a Phase-2.5 postcondition is even checked, the model may already be admitted
+// into the world. "Never store a partial session on failure" is therefore insufficient by
+// itself; every failure path (after `world` exists) must ALSO best-effort
+// `registry.unregister(model)` / `world.evictModel(model)` / `world.dispose()` before
+// returning, since Node never learns about this in-page-only world/registry otherwise (Stage
+// 2's own 22-step cleanup executor only ever sees `resources.world`/`resources.registry` if a
+// later stage's real wiring populates them from a SUCCESSFUL Phase 2.5 receipt) -- adopted
+// verbatim; (4) the receipt's JSON shape must normalize every field explicitly (no `undefined`,
+// which disappears during serialization) and use `registry.registrySessionId` (a real,
+// already-validated non-empty string getter, `ModelRegistry.js:58`) as the session id rather
+// than inventing one -- adopted verbatim; (5) the page-owned artifacts slot F8 will need
+// (`f1FragmentMapsByRoot`) must be a real `Map`, not a plain object frozen to string-keyed
+// semantics before F1 (this same stage) even exists -- adopted verbatim.
+// ============================================================================================
+
+const SESSION_K = 'g1-f1f8-verification';
+const SESSION_MODEL_VERSION = 'g1-live-1';
+
+/** In-page. Small, self-contained error shape, mirrors the pattern used throughout this file's
+ * other in-page functions (pageErrOf, captureModelFormatSignals' own inline errOf). Duplicated
+ * intentionally rather than shared, per this file's own documented bundling-note discipline
+ * (Stage 2) -- each in-page function stays independently reconstructable from its own source. */
+function sessionErrOf(e) {
+  return e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? ''), reason: e.reason ?? null }
+    : { primitive: typeof e, value: String(e) };
+}
+
+/**
+ * In-page. `setupSharedSessionResources(tokenId)` -- plan §6.1a's real construction sequence,
+ * the FROZEN shared session-state contract every later stage (F4/F5/F7/F8, and F6 last) reuses
+ * verbatim without renegotiation. This is the real implementation of the dependency Stage 3's
+ * `runSetupThroughClassification` already names and calls as an injected `deps.
+ * setupSharedSessionResources(tokenId)` -- a later, separately-authorized live-run stage wires
+ * `deps.setupSharedSessionResources = (tokenId) => pageEvaluate(setupSharedSessionResources,
+ * {tokenId})` unchanged.
+ *
+ * References only its own argument and window.__g1/window.__viewer. Reads the already-
+ * dynamically-imported repo modules it needs from `window.__g1.mod[specifier]` (a later stage's
+ * own separate import-installation page.evaluate call populates this, mirroring INSTALL_T3 --
+ * this function does not perform those imports itself).
+ *
+ * Construction sequence (plan §6.1a): `world = await CollisionWorld.fromViewer(viewer, {})`;
+ * `registry = createModelRegistry({world})`; `enumerator = createViewerElementEnumerator()`;
+ * `registry.register(K, model, {modelVersion})` then `binding = registry.bindingFor(K)`;
+ * setup postconditions `registry.world === world`, `binding.model === model`,
+ * `world.isModelLive(model) === true`. `K`/`modelVersion` are the plan's own fixed, harness-
+ * local values (`SESSION_K`/`SESSION_MODEL_VERSION`), never fed into any other derivation.
+ *
+ * On ANY failure after `world` exists, best-effort cleans up whatever was actually constructed
+ * (`registry.unregister(model)`, `world.evictModel(model)`, `world.dispose()`, each in its own
+ * try/catch, never masking the original error) before returning -- see the codex-advisor
+ * section above for why this is required, not optional.
+ *
+ * On success, stores `{tokenId, world, registry, enumerator, binding, model, K, modelVersion,
+ * artifacts: {f1FragmentMapsByRoot: new Map()}}` under `window.__g1.sessions[sessionId]`
+ * (page-owned, NEVER returned to Node) and returns the JSON-safe receipt `{ok: true, sessionId,
+ * postconditions, error: null, cleanup: null}`. `sessionId` is `registry.registrySessionId`
+ * (already a validated non-empty string the registry itself generates) -- rejects (and cleans
+ * up) rather than overwriting an existing key of the same id.
+ *
+ * On failure, returns `{ok: false, sessionId: null, postconditions: <partial|null>,
+ * error: {phase, name, message, reason}, cleanup: {attempted, failures} | null}`. `phase` is
+ * one of `'precondition' | 'world' | 'registry' | 'enumerator' | 'register' | 'postconditions'
+ * | 'publish'`.
+ */
+async function setupSharedSessionResources(tokenId) {
+  const g = window.__g1;
+  const r = g && g.loads[tokenId];
+  if (!r || r.status !== 'completed' || r.api !== 'loadDocumentNode') {
+    return { ok: false, sessionId: null, postconditions: null, error: { phase: 'precondition', name: null, message: 'no-completed-loadDocumentNode-record', reason: null }, cleanup: null };
+  }
+  const model = g.models[tokenId];
+  if (!model) {
+    return { ok: false, sessionId: null, postconditions: null, error: { phase: 'precondition', name: null, message: 'model-not-found', reason: null }, cleanup: null };
+  }
+
+  const mod = g.mod || {};
+  let world = null;
+  let registry = null;
+  let enumerator = null;
+  let binding = null;
+
+  const cleanup = { attempted: [], failures: [] };
+  const bestEffortCleanup = () => {
+    if (registry && model) {
+      try { registry.unregister(model); cleanup.attempted.push('registry.unregister'); }
+      catch (e) { cleanup.failures.push({ step: 'registry.unregister', error: sessionErrOf(e) }); }
+    }
+    if (world && model) {
+      try { world.evictModel(model); cleanup.attempted.push('world.evictModel'); }
+      catch (e) { cleanup.failures.push({ step: 'world.evictModel', error: sessionErrOf(e) }); }
+    }
+    if (world) {
+      try { world.dispose(); cleanup.attempted.push('world.dispose'); }
+      catch (e) { cleanup.failures.push({ step: 'world.dispose', error: sessionErrOf(e) }); }
+    }
+  };
+
+  try {
+    const { CollisionWorld } = mod['/collision/index.js'];
+    world = await CollisionWorld.fromViewer(window.__viewer, {});
+  } catch (e) {
+    return { ok: false, sessionId: null, postconditions: null, error: { phase: 'world', ...sessionErrOf(e) }, cleanup: null };
+  }
+
+  try {
+    const { createModelRegistry } = mod['/clashtest/index.js'];
+    registry = createModelRegistry({ world });
+  } catch (e) {
+    bestEffortCleanup();
+    return { ok: false, sessionId: null, postconditions: null, error: { phase: 'registry', ...sessionErrOf(e) }, cleanup };
+  }
+
+  try {
+    const { createViewerElementEnumerator } = mod['/clashtest/viewer/index.js'];
+    enumerator = createViewerElementEnumerator();
+  } catch (e) {
+    bestEffortCleanup();
+    return { ok: false, sessionId: null, postconditions: null, error: { phase: 'enumerator', ...sessionErrOf(e) }, cleanup };
+  }
+
+  try {
+    // Literal strings, not the module-level SESSION_K/SESSION_MODEL_VERSION constants -- this
+    // is an in-page function and may reference only its own argument and page globals (Stage 2's
+    // established constraint; a module-level constant is neither). Fix-round correction, caught
+    // by the node:vm test harness exactly as designed: MUST stay byte-identical to SESSION_K/
+    // SESSION_MODEL_VERSION above -- a dedicated test asserts both the literal values here AND
+    // that a published session's own K/modelVersion fields equal the exported constants.
+    registry.register('g1-f1f8-verification', model, { modelVersion: 'g1-live-1' });
+    binding = registry.bindingFor('g1-f1f8-verification');
+  } catch (e) {
+    bestEffortCleanup();
+    return { ok: false, sessionId: null, postconditions: null, error: { phase: 'register', ...sessionErrOf(e) }, cleanup };
+  }
+
+  const postconditions = {
+    registryWorldMatches: registry.world === world,
+    bindingModelMatches: Boolean(binding) && binding.model === model,
+    worldModelIsLive: (() => { try { return world.isModelLive(model) === true; } catch { return false; } })(),
+  };
+  const ok = postconditions.registryWorldMatches && postconditions.bindingModelMatches && postconditions.worldModelIsLive;
+
+  if (!ok) {
+    bestEffortCleanup();
+    return { ok: false, sessionId: null, postconditions, error: { phase: 'postconditions', name: null, message: 'setup-postcondition-failed', reason: null }, cleanup };
+  }
+
+  const sessionId = registry.registrySessionId;
+  g.sessions = g.sessions || {};
+  if (g.sessions[sessionId]) {
+    bestEffortCleanup();
+    return { ok: false, sessionId: null, postconditions, error: { phase: 'publish', name: null, message: 'session-id-already-exists', reason: null }, cleanup };
+  }
+
+  g.sessions[sessionId] = {
+    tokenId, world, registry, enumerator, binding, model,
+    K: 'g1-f1f8-verification', modelVersion: 'g1-live-1',
+    artifacts: { f1FragmentMapsByRoot: new Map() },
+  };
+
+  return { ok: true, sessionId, postconditions, error: null, cleanup: null };
+}
+
+// ------------------------------------------------------------------------------------------
+// §7.1 F1 -- fragment->owner mapping
+// ------------------------------------------------------------------------------------------
+
+/**
+ * In-page. `observeF1(sessionId)` -- plan §7.1's exact observation sequence, run against the
+ * shared Phase 2.5 session -- "F1 is the first consumer of the shared session resources" (plan
+ * line 893), never a separately-fabricated binding. References only its own argument and
+ * window.__g1/window.THREE. Reads `extractFragments`/`extractAllFragments`
+ * (`/collision/viewer/ViewerModelAdapter.js`) and `digestSubtree`/`digestPopulation`
+ * (`/clashtest/planning/scopeDigest.js`) from `window.__g1.mod`, same convention as
+ * `setupSharedSessionResources`.
+ *
+ * Sequence: `resolveRoots(binding, 'whole', ctx)` -> for each root, `extractFragments(model,
+ * [root.dbId], 0, {THREE})`, compared against the root's own `fragmentCount`/`ownerDbIds`/
+ * `subtreeDigest` (mirrors T3's own `MEASURE_ADAPTER` §(a)/(b) exactly,
+ * `clashtest-viewer-adapter.acceptance.mjs:268-330`) -> one whole-population
+ * `extractAllFragments` vs `resolveRoots`'s own population digest.
+ *
+ * Plan's own "reuse, never recompute" rule starts here: stores each root's own `extractFragments`
+ * `Map` into `session.artifacts.f1FragmentMapsByRoot` (keyed by root `dbId`) for F8 (a later
+ * stage) to reuse verbatim, and stores the population's L/N/U classification rows plus
+ * `roots.length` into `session.artifacts.f1PopulationClasses`/`f1RootsLength` for F2 (this same
+ * stage) to reuse rather than re-walking `extractAllFragments` a second time.
+ *
+ * Returns a JSON-safe `{ok, fields, first20Mismatches}` (or `{ok:false, reason}`) -- never a
+ * `Map`, never a live object. `fields` names every machine-readable field plan §7.1 lists.
+ *
+ * Known, documented simplification: uses a plain `ctx = {checkpoint(){}}`, not the operation-
+ * scoped, token-aware checkpoint plan §6.1a names for F1's own primary operation -- wiring a
+ * live per-operation token (§6.4a) into this in-page call is a later stage's own concern (this
+ * stage's deliverables do not ask for it), and this plain ctx already matches Phase 2.5's own
+ * documented carve-out shape for every OTHER call.
+ */
+async function observeF1(sessionId) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session) return { ok: false, reason: 'session-not-found' };
+
+  const { binding, model, enumerator } = session;
+  const mod = g.mod || {};
+  const { extractFragments, extractAllFragments } = mod['/collision/viewer/ViewerModelAdapter.js'] || {};
+  const { digestSubtree, digestPopulation } = mod['/clashtest/planning/scopeDigest.js'] || {};
+  const THREE = window.THREE;
+  const ctx = { checkpoint() {} };
+  const ascending = (a, b) => a - b;
+
+  let rr;
+  try {
+    rr = await enumerator.resolveRoots(binding, 'whole', ctx);
+  } catch (e) {
+    return { ok: false, reason: 'resolveRoots-threw', error: sessionErrOf(e) };
+  }
+
+  const first20Mismatches = [];
+  let rootsCompared = 0;
+  let sizeMismatch = 0;
+  let ownersMismatch = 0;
+  let subtreeDigestMismatch = 0;
+
+  for (const root of rr.roots) {
+    rootsCompared += 1;
+    let lib;
+    try {
+      lib = await extractFragments(model, [root.dbId], 0, { THREE });
+    } catch (e) {
+      // extractFragments itself throwing is never silently skipped -- counted as a mismatch
+      // (nothing to compare) and recorded in the bounded evidence.
+      sizeMismatch += 1;
+      if (first20Mismatches.length < 20) first20Mismatches.push({ dbId: root.dbId, extractFragmentsThrew: sessionErrOf(e) });
+      continue;
+    }
+    session.artifacts.f1FragmentMapsByRoot.set(root.dbId, lib);
+    const owners = [...new Set([...lib.values()].map((rec) => rec.ownerDbId))].sort(ascending);
+    const rows = [...lib.values()].map((rec) => ({ fragId: rec.fragmentId, ownerDbId: rec.ownerDbId }));
+    let libDigest = null;
+    try { libDigest = (await digestSubtree(rows)).digest; } catch { /* libDigest stays null -> digestOk below is false */ }
+    const sizeOk = lib.size === root.fragmentCount;
+    const ownersOk = JSON.stringify(owners) === JSON.stringify(root.ownerDbIds);
+    const digestOk = libDigest !== null && libDigest === root.subtreeDigest;
+    if (!sizeOk) sizeMismatch += 1;
+    if (!ownersOk) ownersMismatch += 1;
+    if (!digestOk) subtreeDigestMismatch += 1;
+    if ((!sizeOk || !ownersOk || !digestOk) && first20Mismatches.length < 20) {
+      first20Mismatches.push({ dbId: root.dbId, adapter: { fragmentCount: root.fragmentCount, ownerDbIds: root.ownerDbIds }, library: { size: lib.size, owners } });
+    }
+  }
+
+  let populationDigestEqual = false;
+  const populationClasses = [];
+  try {
+    const { records, diagnostics } = await extractAllFragments(model, 0, { THREE });
+    const dropped = new Map(diagnostics.map((d) => [d.fragment.fragId, d.reason === 'fragment-not-loaded' ? 'N' : 'U']));
+    const fragList = model.getFragmentList();
+    const rows = [];
+    for (let f = 0; f < fragList.getCount(); f += 1) {
+      if (dropped.has(f)) {
+        const cls = dropped.get(f);
+        rows.push({ fragId: f, cls });
+        populationClasses.push({ fragId: f, cls });
+      } else {
+        const rec = records.get(f);
+        rows.push({ fragId: f, cls: 'L', ownerDbId: rec.ownerDbId });
+        populationClasses.push({ fragId: f, cls: 'L' });
+      }
+    }
+    const expected = await digestPopulation({ count: fragList.getCount(), records: rows });
+    populationDigestEqual = expected.digest === rr.population.digest;
+  } catch {
+    populationDigestEqual = false;
+  }
+
+  session.artifacts.f1PopulationClasses = populationClasses;
+  session.artifacts.f1RootsLength = rr.roots.length;
+
+  return {
+    ok: true,
+    fields: {
+      ownerMismatchCount: rr.ownerMismatch.count,
+      unreachableCount: rr.unreachable.count,
+      populationCount: rr.population.count,
+      rootsLength: rr.roots.length,
+      rootsCompared,
+      sizeMismatch,
+      ownersMismatch,
+      subtreeDigestMismatch,
+      populationDigestEqual,
+    },
+    first20Mismatches,
+  };
+}
+
+/**
+ * `scoreF1(fields)` -- plan §7.1's exact success/failure criteria, pure. Success:
+ * `ownerMismatchCount === 0`, `unreachableCount === 0`, every compared root's size/owners/digest
+ * match, and the population digest is equal. Any of those violated is `FAIL` -- never a silent
+ * PASS for a missing/malformed field (fail-closed on `undefined`/non-zero-looking values too,
+ * since a strict `> 0`/`!== true` comparison already treats `undefined` as failing).
+ */
+function scoreF1(fields) {
+  const f = fields || {};
+  const failed = f.ownerMismatchCount > 0 || f.unreachableCount > 0
+    || f.sizeMismatch > 0 || f.ownersMismatch > 0 || f.subtreeDigestMismatch > 0
+    || f.populationDigestEqual !== true;
+  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason: failed ? 'f1-mismatch-or-digest-disagreement' : null, fields: f };
+}
+
+// ------------------------------------------------------------------------------------------
+// §7.2 F2 -- tree/fragment population and whole-model roots
+// ------------------------------------------------------------------------------------------
+
+/**
+ * In-page. `observeF2(sessionId)` -- plan §7.2's corrected reconciliation (never a raw-count-
+ * compare). MUST run after `observeF1` for the same session (reuses F1's already-computed
+ * population classification and `roots.length` from `session.artifacts` -- "reuse, don't
+ * recompute" -- never re-calls `extractAllFragments`/`resolveRoots` itself).
+ *
+ * Confirms `model.isObjectTreeCreated()`; walks the tree once via a bounded, non-recursive
+ * stack walk starting at `tree.getRootId()` (mirrors T3's own `RECORD_WHOLE` walk style,
+ * `clashtest-viewer-adapter.acceptance.mjs:494-513`, but from the tree's actual root rather
+ * than per-declared-root, since F2 characterizes the WHOLE tree) to collect tree-reachable
+ * fragment ids; reconciles against F1's L/N/U classes: every tree-reachable id must be in `L`
+ * (a violation here is what actually breaks `accountingBalanced` -- not merely present N/U
+ * classes, which are legitimately excluded); every `L` id not tree-reachable is bucketed as
+ * `loadedButUnreachableCount` (a named, visible count, never a failure by itself).
+ *
+ * Returns a JSON-safe `{ok, fields}` (or `{ok:false, reason}` if F1 hasn't run for this session
+ * yet). `fields` names every machine-readable field plan §7.2 lists.
+ */
+function observeF2(sessionId) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session) return { ok: false, reason: 'session-not-found' };
+  if (!session.artifacts || !Array.isArray(session.artifacts.f1PopulationClasses)) {
+    return { ok: false, reason: 'f1-population-classes-not-available-run-observeF1-first' };
+  }
+
+  const { model } = session;
+  const fragListCount = model.getFragmentList().getCount();
+  const rootsLength = session.artifacts.f1RootsLength;
+
+  let isObjectTreeCreated;
+  try {
+    isObjectTreeCreated = model.isObjectTreeCreated() === true;
+  } catch {
+    isObjectTreeCreated = false;
+  }
+
+  if (!isObjectTreeCreated) {
+    return {
+      ok: true,
+      fields: {
+        isObjectTreeCreated: false, treeReachableCount: 0,
+        classL: 0, classN: 0, classU: 0, loadedButUnreachableCount: 0,
+        fragListCount, rootsLength, accountingBalanced: false,
+      },
+    };
+  }
+
+  let tree;
+  try {
+    tree = model.getObjectTree();
+  } catch {
+    return {
+      ok: true,
+      fields: {
+        isObjectTreeCreated: true, treeReachableCount: 0,
+        classL: 0, classN: 0, classU: 0, loadedButUnreachableCount: 0,
+        fragListCount, rootsLength, accountingBalanced: false,
+      },
+    };
+  }
+
+  const reachable = new Set();
+  const seen = new Set();
+  const stack = [tree.getRootId()];
+  while (stack.length > 0) {
+    const n = stack.pop();
+    if (seen.has(n)) continue;
+    seen.add(n);
+    tree.enumNodeFragments(n, (f) => { reachable.add(f); }, false);
+    tree.enumNodeChildren(n, (ch) => { stack.push(ch); return false; }, false);
+  }
+
+  const classLRows = session.artifacts.f1PopulationClasses.filter((row) => row.cls === 'L');
+  const classN = session.artifacts.f1PopulationClasses.filter((row) => row.cls === 'N').length;
+  const classU = session.artifacts.f1PopulationClasses.filter((row) => row.cls === 'U').length;
+  const classLIds = new Set(classLRows.map((row) => row.fragId));
+
+  let loadedButUnreachableCount = 0;
+  for (const row of classLRows) {
+    if (!reachable.has(row.fragId)) loadedButUnreachableCount += 1;
+  }
+
+  let unaccountedReachable = 0;
+  for (const id of reachable) {
+    if (!classLIds.has(id)) unaccountedReachable += 1;
+  }
+
+  const treeReachableCount = reachable.size;
+  const sumBalanced = (treeReachableCount + classN + classU + loadedButUnreachableCount) === fragListCount;
+  const accountingBalanced = unaccountedReachable === 0 && sumBalanced;
+
+  return {
+    ok: true,
+    fields: {
+      isObjectTreeCreated: true,
+      treeReachableCount,
+      classL: classLRows.length,
+      classN,
+      classU,
+      loadedButUnreachableCount,
+      fragListCount,
+      rootsLength,
+      accountingBalanced,
+    },
+  };
+}
+
+/**
+ * `scoreF2(fields)` -- plan §7.2's exact success/failure criteria, pure. Success: tree
+ * accessible AND the reconciliation accounting balances. Failure: tree not accessible after
+ * load-done, OR the accounting does not balance (a fragment id unaccounted for or double-
+ * counted) -- never a raw size mismatch.
+ */
+function scoreF2(fields) {
+  const f = fields || {};
+  const failed = f.isObjectTreeCreated !== true || f.accountingBalanced !== true;
+  const reason = !failed ? null : (f.isObjectTreeCreated !== true ? 'tree-not-accessible' : 'accounting-not-balanced');
+  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason, fields: f };
+}
+
+// ------------------------------------------------------------------------------------------
+// §6.5/§6.3a -- `wrong-owner` (4c, right after F1) and `hidden-fragment` (5c, right after F2)
+// ------------------------------------------------------------------------------------------
+
+/**
+ * `runWrongOwnerControl({modelBefore, world, registry, registryKey, checkF1, controlTimeoutMs})`
+ * -- plan §6.5's `wrong-owner` row, run immediately after F1 (phase 4c), against the SAME
+ * `modelBefore` instance F1 just used. Patches `modelBefore.fragList.getDbIds` so fragment 0
+ * reports a bogus owner dbId, confirms `checkF1` (an injected stand-in for re-running F1's own
+ * detection -- a later live-run stage implements it as `(m) => pageEvaluate(observeF1,
+ * {sessionId}).then((r) => ({ownerMismatchDetected: r.fields.ownerMismatchCount > 0}))`)
+ * reports the mismatch, restores in `finally`, verifies restoration via the same oracle as
+ * `runTreeUnavailableControl` (member identity + `world.isModelLive`/`registry.bindingFor`
+ * liveness). `restorationRequired` comes from Stage 1's `CONTROL_RESTORATION_REQUIRED['wrong-
+ * owner']` via `createControlResult` (plan line 844: `true`, cross-checked, never hardcoded).
+ */
+async function runWrongOwnerControl({ modelBefore, world, registry, registryKey, checkF1, controlTimeoutMs = CHECK_TIMEOUT_MS }) {
+  if (!modelBefore || !modelBefore.fragList || typeof checkF1 !== 'function') {
+    return createControlResult('wrong-owner', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'precondition-unmet' });
+  }
+
+  const fragList = modelBefore.fragList;
+  const hasOwnGetDbIds = Object.prototype.hasOwnProperty.call(fragList, 'getDbIds');
+  const originalGetDbIds = fragList.getDbIds;
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+
+  try {
+    fragList.getDbIds = (fragId) => (fragId === 0 ? -999999 : originalGetDbIds.call(fragList, fragId));
+    const checkResult = await withControlTimeout(checkF1(modelBefore), controlTimeoutMs);
+    detected = Boolean(checkResult && checkResult.ownerMismatchDetected === true);
+    if (!detected) reason = 'not-detected';
+  } catch (e) {
+    if (e && e.controlTimeout) { timedOut = true; reason = 'perturbation-timeout'; }
+    else { detected = false; reason = 'checkF1-threw'; }
+  } finally {
+    if (hasOwnGetDbIds) fragList.getDbIds = originalGetDbIds;
+    else delete fragList.getDbIds;
+  }
+
+  if (timedOut) {
+    return createControlResult('wrong-owner', { state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null, reason });
+  }
+
+  const membersRestored = fragList.getDbIds === originalGetDbIds;
+  const worldLiveOk = !world || world.isModelLive(modelBefore) === true;
+  const bindingOk = !registry || Boolean(registry.bindingFor(registryKey) && registry.bindingFor(registryKey).model === modelBefore);
+  const restored = membersRestored && worldLiveOk && bindingOk;
+
+  if (!detected) {
+    return createControlResult('wrong-owner', { state: CONTROL_STATE.NOT_DETECTED, executed: true, detected: false, restored, reason });
+  }
+  if (!restored) {
+    return createControlResult('wrong-owner', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: reason || 'restore-assertion-failed' });
+  }
+  return createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
+/**
+ * `runHiddenFragmentControl({modelBefore, world, registry, registryKey, checkF2,
+ * controlTimeoutMs})` -- plan §6.5's `hidden-fragment` row, run immediately after F2 (phase
+ * 5c), against the SAME `modelBefore` instance F2 just used. Patches `modelBefore.tree.
+ * enumNodeFragments` to drop exactly one fragment id (`1`) from whichever node reports it,
+ * confirms `checkF2` (an injected stand-in for re-running F2's own reconciliation -- a later
+ * live-run stage implements it as `(m) => pageEvaluate(observeF2, {sessionId}).then((r) =>
+ * ({hiddenFragmentDetected: r.fields.loadedButUnreachableCount > 0}))`, per `observeF2`'s own
+ * doc: hiding a fragment moves it from "reachable" to "loaded-but-unreachable", a visible,
+ * named count -- NOT itself an `accountingBalanced` failure) reports the fragment as noticed,
+ * restores in `finally`, same restoration discipline as `wrong-owner`.
+ * `restorationRequired` comes from Stage 1's `CONTROL_RESTORATION_REQUIRED['hidden-fragment']`
+ * (plan line 845: `true`).
+ */
+async function runHiddenFragmentControl({ modelBefore, world, registry, registryKey, checkF2, controlTimeoutMs = CHECK_TIMEOUT_MS }) {
+  if (!modelBefore || !modelBefore.tree || typeof checkF2 !== 'function') {
+    return createControlResult('hidden-fragment', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'precondition-unmet' });
+  }
+
+  const tree = modelBefore.tree;
+  const hasOwnEnumNodeFragments = Object.prototype.hasOwnProperty.call(tree, 'enumNodeFragments');
+  const originalEnumNodeFragments = tree.enumNodeFragments;
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+
+  try {
+    tree.enumNodeFragments = function patchedEnumNodeFragments(node, callback, recursive) {
+      return originalEnumNodeFragments.call(this, node, (fragId) => { if (fragId !== 1) callback(fragId); }, recursive);
+    };
+    const checkResult = await withControlTimeout(checkF2(modelBefore), controlTimeoutMs);
+    detected = Boolean(checkResult && checkResult.hiddenFragmentDetected === true);
+    if (!detected) reason = 'not-detected';
+  } catch (e) {
+    if (e && e.controlTimeout) { timedOut = true; reason = 'perturbation-timeout'; }
+    else { detected = false; reason = 'checkF2-threw'; }
+  } finally {
+    if (hasOwnEnumNodeFragments) tree.enumNodeFragments = originalEnumNodeFragments;
+    else delete tree.enumNodeFragments;
+  }
+
+  if (timedOut) {
+    return createControlResult('hidden-fragment', { state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null, reason });
+  }
+
+  const membersRestored = tree.enumNodeFragments === originalEnumNodeFragments;
+  const worldLiveOk = !world || world.isModelLive(modelBefore) === true;
+  const bindingOk = !registry || Boolean(registry.bindingFor(registryKey) && registry.bindingFor(registryKey).model === modelBefore);
+  const restored = membersRestored && worldLiveOk && bindingOk;
+
+  if (!detected) {
+    return createControlResult('hidden-fragment', { state: CONTROL_STATE.NOT_DETECTED, executed: true, detected: false, restored, reason });
+  }
+  if (!restored) {
+    return createControlResult('hidden-fragment', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: reason || 'restore-assertion-failed' });
+  }
+  return createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
 // ------------------------------------------------------------------------------------------
 // Guarded entrypoint stub (item 8) -- a later stage replaces main()'s body.
 // ------------------------------------------------------------------------------------------
@@ -2313,5 +2886,15 @@ export {
   buildFormatSignalShim,
   runTreeUnavailableControl,
   runSetupThroughClassification,
+  SESSION_K,
+  SESSION_MODEL_VERSION,
+  sessionErrOf,
+  setupSharedSessionResources,
+  observeF1,
+  scoreF1,
+  observeF2,
+  scoreF2,
+  runWrongOwnerControl,
+  runHiddenFragmentControl,
   main,
 };
