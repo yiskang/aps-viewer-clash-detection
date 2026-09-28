@@ -1219,6 +1219,21 @@ async function startLoad({ pageEvaluate, starter, api, urn, docTokenId, loadTime
  * shared with the in-page predicate above). An elapsed drain window is NEVER treated as a
  * terminal signal -- on any failure/timeout the token is left exactly as the caller passed it
  * in (still `timed-out`), never force-transitioned.
+ *
+ * **Never passes an empty/omitted claim context to `isOwnershipClean`** (fix round 1 on this
+ * stage's own review): every token `drainLoadToken` is ever asked to drain is, by construction,
+ * one whose Node-side state is already `timed-out` -- i.e. never `completed`-and-claimed (a
+ * claimed token is disposed of via ordinary drain of a `sealed`/`late-*` status, never observed
+ * `completed` here at all). Plan §6.4a "The record": "A record is ownership-clean if and only
+ * if its status is one of: `completed` **(and claimed by Node, below)** ...". Explicitly passes
+ * `{ claimedTokenIds: [] }` (never `{}`, which would make `isOwnershipClean` treat ANY
+ * `completed` status as clean with no claim check at all -- a real gap for exactly plan §6.4a
+ * Case D: a transient `pageEvaluate`/`START_LOAD` failure reconciles the Node token to
+ * `timed-out` while the in-page record actually settled `completed`, unclaimed. An unclaimed
+ * `completed` record must go through sealing's own "treat as late" rule first -- never become
+ * clean by direct observation of `completed` alone, since only the late-arrival disposition
+ * actually calls `viewer.unloadModel()` for an unclaimed `loadDocumentNode` record's live
+ * `Model`).
  */
 async function drainLoadToken({ token, pageWaitForFunction, pageEvaluate, ownershipCleanPredicate, readRecordFn, tokenId, gen, drainTimeoutMs = DRAIN_TIMEOUT_MS }) {
   try {
@@ -1234,7 +1249,10 @@ async function drainLoadToken({ token, pageWaitForFunction, pageEvaluate, owners
     return { token, drained: false, reason: 'read-record-failed' };
   }
 
-  if (snapshot && snapshot.present && snapshot.gen === gen && isOwnershipClean({ status: snapshot.status, tokenId, api: token.meta && token.meta.api }, {})) {
+  const clean = snapshot && snapshot.present && snapshot.gen === gen
+    && isOwnershipClean({ status: snapshot.status, tokenId, api: token.meta && token.meta.api }, { claimedTokenIds: [] });
+
+  if (clean) {
     transitionToken(token, TOKEN_STATE.DISPOSED);
     return { token, drained: true, snapshot };
   }

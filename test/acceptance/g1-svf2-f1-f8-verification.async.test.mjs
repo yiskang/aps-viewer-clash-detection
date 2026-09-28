@@ -534,6 +534,35 @@ test('Case D: a malformed snapshot (missing gen) also reconciles to Case D, neve
   assert.equal(token.state, TOKEN_STATE.TIMED_OUT);
 });
 
+test('drainLoadToken fix round 1 regression: an UNCLAIMED completed snapshot (Case D -- a transient pageEvaluate failure reconciled the token to timed-out while the in-page record actually settled completed) must NEVER be treated as ownership-clean/drained', async () => {
+  // Reviewer's exact repro against the pre-fix module: a timed-out token (never claimed --
+  // exactly Case D) whose drained snapshot reports status:'completed' was incorrectly treated
+  // as ownership-clean because drainLoadToken passed {} (not {claimedTokenIds:[]}) to
+  // isOwnershipClean, so its "completed (and claimed by Node)" qualifier (plan §6.4a "The
+  // record") was silently skipped -- ANY completed status short-circuited to clean. For a
+  // loadDocumentNode record this is a real contamination risk: the live Model behind an
+  // unclaimed "completed" record never gets routed through sealing's own late-arrival
+  // disposition (the only path that actually calls viewer.unloadModel() for it), yet the token
+  // would end up marked disposed -- implying resolved ownership -- while the Model could remain
+  // silently loaded into a later phase's world/registry/Viewer reads.
+  const token = createToken({ operation: 'load', api: LOAD_API.LOAD_DOCUMENT_NODE });
+  transitionToken(token, TOKEN_STATE.TIMED_OUT); // Case D: never claimed
+
+  const result = await drainLoadToken({
+    token,
+    pageWaitForFunction: async () => true,
+    pageEvaluate: async () => ({ present: true, gen: 1, status: LOAD_RECORD_STATUS.COMPLETED }),
+    ownershipCleanPredicate: () => true,
+    readRecordFn: () => {},
+    tokenId: 'x',
+    gen: 1,
+  });
+
+  assert.equal(result.drained, false, 'an unclaimed completed snapshot must never be treated as drained');
+  assert.equal(result.reason, 'not-ownership-clean');
+  assert.equal(token.state, TOKEN_STATE.TIMED_OUT, 'the token must stay timed-out, never disposed, from this path alone');
+});
+
 test('finalizeLoadTokens: destruction NOT confirmed -> token stays timed-out, recorded in stillTimedOut', () => {
   const token = createToken({ operation: 'load' });
   transitionToken(token, TOKEN_STATE.TIMED_OUT);
