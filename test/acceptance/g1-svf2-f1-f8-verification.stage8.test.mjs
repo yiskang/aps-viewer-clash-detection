@@ -55,6 +55,17 @@ function buildHappyPageEvaluate(tracker, overrides = {}) {
     observeF4: () => ({ ok: true, fields: { libraryThrew: 0, libOwnerDiffersFromFragList: 0, droppedDiagnosticsCount: { 'geometry-id-undefined': 0, 'geometry-id-threw': 0 }, distinctGeometryCount: 1, renderProxyFailures: 0, geometryAdapterFailures: 0, geometriesWithNullIndex: 0, weldConsumerFailures: 0, weldConsumerSuccessCount: 1, maxActiveTriangleCount: 1, oversizedGeometryCount: 0 } }),
     observeF7: () => ({ ok: true, fields: { boundsAgreement: {}, unitScalePlausible: true, unitStringPlausible: true, hiddenNodesPlausible: true, placementNotInvertible: false, nonFiniteAxisDbIds: [] } }),
     observeF8: () => ({ ok: true, fields: { censusedRootCount: 1, censusedFragmentCount: 1, treeCheckedFragmentCount: 1, ownershipDivergenceCount: 0, treeDivergenceCount: 0, divergenceCount: 0, coverageEquationsClosed: true } }),
+    // Fix wave (final whole-branch review, Important I3): sealLoadRecords/drainLoadToken are now
+    // actually wired into runHarness's Phase 11 (steps 1a/1b), so this fake's pageEvaluate must
+    // handle their own dispatched in-page function names too, exactly like every other handler
+    // here -- their real in-page counterparts read/mutate `window.__g1`, which this fixture has
+    // no fake `window` for, so the snapshot contents are unused by the (also new) callers: the
+    // production `sealLoadRecords` return value is never read by `runHarness`, and no token in
+    // this happy-path fixture is ever left TIMED_OUT (every startLoad fake below returns
+    // `status: 'completed'`), so `readLoadRecordSnapshot` is never reached by the happy-path
+    // tests in this file, but IS reached by any test that leaves a token TIMED_OUT.
+    sealLoads: () => ({}),
+    readLoadRecordSnapshot: () => ({ present: false }),
     runInPageResourceCleanup: () => ({ ok: true, stepStatus: { removeF3Listeners: 'ran' }, cleanupFailures: [], cleanupUnresolvedOwnership: false }),
     ...overrides,
   };
@@ -743,4 +754,100 @@ test('runHarness: mergedStepStatus -- a page-owned step\'s real \'ran\' status s
   assert.equal(result.cleanupStepStatus.disposeWorld, 'ran');
   assert.equal(result.cleanupStepStatus.verifyViewerModelSetEmpty, 'ran');
   assert.equal(result.cleanupStepStatus.removeF3Listeners, 'ran');
+});
+
+// ============================================================================================
+// Fix wave (final whole-branch review, Important I3/I5): a genuine wiring test proving
+// sealLoadRecords (step 1a) and drainLoadToken (step 1b) are actually called during Phase 11,
+// with the REAL argument shapes (`sealLoads` receiving the bare claimed-tokenIds array,
+// `readLoadRecordSnapshot` receiving the bare tokenId string) -- never a fake that smooths over
+// a shape mismatch the way async.test.mjs's OLD fakes did (see that file's own fix-wave
+// comments). This is the same class of test-methodology fix already applied for I2: the
+// assertions below would fail if either call site regressed back to the `{claimed: ...}` /
+// `{tokenId: ...}` wrapper this fix wave removed from production code, or if the drain loop's
+// per-token gen/predicate wiring were ever silently dropped.
+// ============================================================================================
+
+test('runHarness Phase 11 wiring (I3): sealLoadRecords and drainLoadToken are actually called, with the real bare-array/bare-string argument shapes, and a drained token is excluded from staleContinuationsDropped', async () => {
+  const tracker = callOrderTracker();
+  const starterTokenIds = {};
+  let sealLoadsCall = null;
+  let readRecordCall = null;
+  let waitForDrainPredicateCall = null;
+
+  const pageEvaluate = async (fn, arg) => {
+    const name = typeof fn === 'string' ? fn : fn.name;
+    tracker.record(`pageEvaluate:${name}`);
+    if (name === 'documentLoadStarter') {
+      starterTokenIds.documentLoad = arg.tokenId;
+      return { present: true, gen: 1, status: 'completed', transitions: [], handlerErrors: [], lateModelsStillPresent: false };
+    }
+    if (name === 'loadDocumentNodeStarter') {
+      starterTokenIds.loadDocumentNode = arg.tokenId;
+      // Deliberately times out -- this is the token Phase 11 must drain. Its Node-side token
+      // never reaches COMPLETED, so classifierConfirmed stays false and the run short-circuits
+      // straight to Phase 11 (the classifier-stop branch), keeping this fixture minimal.
+      return { present: true, gen: 2, status: 'timed-out', transitions: [], handlerErrors: [], lateModelsStillPresent: false };
+    }
+    if (name === 'sealLoads') {
+      sealLoadsCall = arg; // must be the BARE claimed-tokenIds array (fix wave, I3) -- never {claimed: [...]}
+      return {};
+    }
+    if (name === 'readLoadRecordSnapshot') {
+      readRecordCall = arg; // must be the BARE tokenId string (fix wave, I3) -- never {tokenId: ...}
+      return { present: true, gen: 2, status: 'late-unloaded', transitions: [], handlerErrors: [], lateModelsStillPresent: false };
+    }
+    if (name === 'runInPageResourceCleanup') {
+      return { ok: true, stepStatus: { removeF3Listeners: 'ran' }, cleanupFailures: [], cleanupUnresolvedOwnership: false };
+    }
+    throw new Error(`unexpected pageEvaluate call for this test: '${name}'`);
+  };
+  const pageWaitForFunction = async (fn, arg, opts) => {
+    const name = typeof fn === 'string' ? fn : fn.name;
+    tracker.record(`pageWaitForFunction:${name}`);
+    if (name === 'f11DrainOwnershipCleanPredicate') {
+      waitForDrainPredicateCall = arg; // must carry {tokenId, gen} matching the drained token
+      return;
+    }
+    throw new Error(`unexpected pageWaitForFunction call for this test: '${name}'`);
+  };
+
+  const deps = {
+    pageEvaluate, pageWaitForFunction,
+    loadStarter: { documentLoad: 'documentLoadStarter', loadDocumentNode: 'loadDocumentNodeStarter' },
+    installF3Probe: () => pageEvaluate({ name: 'f3InstallProbe' }, undefined).catch(() => {}),
+    finalizeF3Probe: async () => ({ ok: true }),
+    setupSharedSessionResources: async () => ({ ok: false }),
+    controls: {},
+    f6Deps: {}, nodeCleanupResources: {},
+    captureViewerScriptIntegrity: async () => ({ requestFailed: false, autodeskViewingDefined: true, attributableResponses: [] }),
+    errorLedger: { events: [], record() {} },
+    harnessIntegrity: { path: HARNESS_PATH, sha256: 'a'.repeat(64), branch: 'main', headSha: 'deadbeef', gitStatusPorcelain: '', servedModuleManifest: {}, remoteAssets: { viewerScript: { integrityResult: INTEGRITY_RESULT.VERIFIED }, viewerStyle: { identityGatesOverall: false }, otherObservedRemoteAssets: [] } },
+    writeResultAtomically: async () => {},
+  };
+  // installF3Probe above deliberately swallows its own "no handler" case (f3InstallProbe is
+  // never registered in this minimal fixture's pageEvaluate) since it is called unconditionally
+  // at Phase 1, strictly before this test's actual concern (Phase 11) -- everything this test
+  // asserts on happens after that point regardless of its outcome.
+  deps.installF3Probe = async () => {};
+
+  const result = await runHarness(deps, HAPPY_CONFIG);
+
+  assert.ok(tracker.order.includes('pageEvaluate:sealLoads'), 'sealLoadRecords (step 1a) must actually be called');
+  assert.ok(tracker.order.includes('pageEvaluate:readLoadRecordSnapshot'), 'drainLoadToken (step 1b) must actually be called');
+  assert.ok(tracker.order.indexOf('pageEvaluate:sealLoads') < tracker.order.indexOf('pageEvaluate:readLoadRecordSnapshot'), 'seal (1a) strictly before drain (1b)');
+  assert.ok(tracker.order.indexOf('pageEvaluate:sealLoads') < tracker.order.indexOf('pageEvaluate:runInPageResourceCleanup'), 'seal+drain (1a/1b) strictly before the rest of cleanup');
+
+  assert.ok(Array.isArray(sealLoadsCall), 'sealLoads must receive the bare claimed-tokenIds ARRAY directly, never a {claimed: ...} wrapper');
+  assert.deepEqual(sealLoadsCall, [starterTokenIds.documentLoad], 'only the COMPLETED documentLoad token is claimed -- the timed-out loadDocumentNode token is not');
+
+  assert.equal(typeof readRecordCall, 'string', 'readLoadRecordSnapshot must receive the bare tokenId STRING directly, never a {tokenId: ...} wrapper');
+  assert.equal(readRecordCall, starterTokenIds.loadDocumentNode, 'the token actually drained must be the one left timed-out');
+
+  assert.ok(waitForDrainPredicateCall, 'drainLoadToken must wait on f11DrainOwnershipCleanPredicate');
+  assert.equal(waitForDrainPredicateCall.tokenId, starterTokenIds.loadDocumentNode);
+  assert.equal(waitForDrainPredicateCall.gen, 2, 'the predicate must be given the SAME gen startLoad recorded for this token, not null/undefined');
+
+  const droppedIds = result.staleContinuationsDropped.map((d) => d.tokenId);
+  assert.ok(!droppedIds.includes(starterTokenIds.loadDocumentNode), 'a successfully drained (disposed) token must never show up in staleContinuationsDropped');
 });

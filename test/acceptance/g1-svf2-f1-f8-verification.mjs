@@ -1219,6 +1219,27 @@ async function startLoad({ pageEvaluate, starter, api, urn, docTokenId, loadTime
 }
 
 /**
+ * In-page. `f11DrainOwnershipCleanPredicate({ tokenId, gen })` -- fix wave (final whole-branch
+ * review, Important I3): the `ownershipCleanPredicate` `drainLoadToken` below passes to
+ * `pageWaitForFunction`. Playwright's real `page.waitForFunction(pageFunction, arg)`
+ * re-stringifies `pageFunction` and evaluates it in-page directly (independent of
+ * `buildBootstrapScriptSource`'s `addInitScript` registry), so -- like every other in-page
+ * function in this file -- it may reference only its own argument and page globals, never a
+ * Node-side sibling such as `isOwnershipClean`. It therefore duplicates `isOwnershipClean`'s
+ * exact logic inline, always with an empty claimed set (matching `drainLoadToken`'s own
+ * `{claimedTokenIds: []}` call below -- see that function's doc comment for why: every token
+ * reaching drain is already Node-side `timed-out`, never `completed`-and-claimed).
+ */
+function f11DrainOwnershipCleanPredicate({ tokenId, gen }) {
+  const g = window.__g1;
+  const r = g && g.loads[tokenId];
+  if (!r || r.gen !== gen) return false;
+  if (r.status === 'late-discarded' || r.status === 'late-unloaded') return true;
+  if (r.status === 'sealed' && r.api === 'Document.load') return true;
+  return false; // 'completed' (unclaimed here by construction) and every other status: not clean
+}
+
+/**
  * `drainLoadToken({ token, pageWaitForFunction, pageEvaluate, ownershipCleanPredicate,
  * readRecordFn, tokenId, gen, drainTimeoutMs })` -- plan §6.4a "Drain (Node, value only --
  * `drainLoadToken`)". Awaits `pageWaitForFunction(ownershipCleanPredicate, {tokenId, gen},
@@ -1253,7 +1274,12 @@ async function drainLoadToken({ token, pageWaitForFunction, pageEvaluate, owners
 
   let snapshot;
   try {
-    snapshot = await pageEvaluate(readRecordFn, { tokenId });
+    // Fix wave (final whole-branch review, Important I3): `readLoadRecordSnapshot(tokenId)`
+    // takes the bare tokenId string directly -- the prior `{ tokenId }` wrapper meant
+    // `g.loads[tokenId]` (an object key lookup) always missed, since `g.loads[[object Object]]`
+    // is never a real key. Never previously called anywhere in the assembled runHarness, so
+    // this went uncaught.
+    snapshot = await pageEvaluate(readRecordFn, tokenId);
   } catch {
     return { token, drained: false, reason: 'read-record-failed' };
   }
@@ -1271,8 +1297,10 @@ async function drainLoadToken({ token, pageWaitForFunction, pageEvaluate, owners
 /**
  * `sealLoadRecords({ tokens, pageEvaluate, sealFn, claimedTokenIds })` -- plan §4.3 step 1a:
  * Node first moves any load token still `active` to `timed-out` ("cleanup-preempted"), THEN
- * calls `pageEvaluate(sealFn, { claimed: claimedTokenIds })` (matching `SEAL_LOADS`'s own
- * argument shape) and returns the per-record snapshots.
+ * calls `pageEvaluate(sealFn, claimedTokenIds)` (`sealLoads(claimed)`'s own bare-array argument
+ * shape -- fix wave, final whole-branch review, Important I3: a prior `{ claimed:
+ * claimedTokenIds }` wrapper here silently defeated `sealLoads`'s own `Array.isArray(claimed)`
+ * check) and returns the per-record snapshots.
  */
 async function sealLoadRecords({ tokens, pageEvaluate, sealFn, claimedTokenIds = [] }) {
   for (const token of tokens) {
@@ -1280,7 +1308,12 @@ async function sealLoadRecords({ tokens, pageEvaluate, sealFn, claimedTokenIds =
       transitionToken(token, TOKEN_STATE.TIMED_OUT);
     }
   }
-  const snapshots = await pageEvaluate(sealFn, { claimed: claimedTokenIds });
+  // Fix wave (final whole-branch review, Important I3): `sealLoads(claimed)` takes the claimed-
+  // tokenIds array DIRECTLY (checks `Array.isArray(claimed)` on its own bare argument) -- the
+  // prior `{ claimed: claimedTokenIds }` wrapper meant `Array.isArray` always saw a plain object,
+  // never the array, so `claimedSet` was always empty regardless of what was actually claimed.
+  // Never previously called anywhere in the assembled runHarness, so this went uncaught.
+  const snapshots = await pageEvaluate(sealFn, claimedTokenIds);
   return { tokens, snapshots };
 }
 
@@ -2846,7 +2879,16 @@ function scoreF2(fields) {
  * Returns a JSON-safe `{ok, fields, firstDivergences}` (or `{ok:false, reason}` if F1/F2 haven't
  * run for this session yet, or `f1Fields`/`f2Fields` weren't supplied).
  */
-function observeF8(sessionId, { f1Fields, f2Fields } = {}) {
+// Fix wave (final whole-branch review, Important I1): single combined argument object, matching
+// every other in-page function's own established convention (observeF1/observeF2/observeF4/
+// observeF7 all take `sessionId` alone; F6's own multi-value in-page functions all take one
+// combined object) -- Playwright's real `page.evaluate(fn, arg)` forwards exactly ONE
+// serializable argument. `pageEvaluate(observeF8, sessionId, {f1Fields, f2Fields})` (three
+// arguments to `pageEvaluate` itself) silently dropped the third argument against the REAL
+// `buildRealPageDeps` wrapper (which only ever forwards `(fn, arg)`), making F8 always BLOCKED
+// live -- caught only by the final whole-branch review, since the offline `stage8.test.mjs` fake
+// ignored the extra argument instead of enforcing Playwright's real one-argument contract.
+function observeF8({ sessionId, f1Fields, f2Fields } = {}) {
   const g = window.__g1;
   const session = g && g.sessions && g.sessions[sessionId];
   if (!session) return { ok: false, reason: 'session-not-found' };
@@ -5187,6 +5229,44 @@ function buildStaleOldModelEventControlResult(f6Fields) {
 // ============================================================================================
 
 /**
+ * In-page, async. Fix wave (final whole-branch review, CRITICAL C1): populates
+ * `window.__g1.mod` with the REAL, actually-imported repository modules F1/F2/F4/F5/F7/F8/F6's
+ * own in-page functions all read via `g.mod['/path']` -- without this, every one of those
+ * `mod['/...']` lookups resolves to `undefined` on a real page, and every check that depends on
+ * one (all of them) would throw or misbehave immediately. Mirrors T3's own `INSTALL_T3` pattern
+ * exactly (`clashtest-viewer-adapter.acceptance.mjs:180-222`, confirmed by direct source read):
+ * one `await import(spec)` per entry point, storing the resulting module namespace into
+ * `g.mod[spec]`, using this file's own already-established `SERVED_MODULE_ENTRY_POINTS` list
+ * (the exact plan-§5-plus-Stage-8's-own-genuine-gap-fix set) as `specs` -- never a second,
+ * independently-maintained list. `/collision/**` resolves through the REAL, already-running,
+ * unmodified server (`server.js` already serves it via `express.static('collision')`, confirmed
+ * by direct source read -- never a page.route interception for that directory); `/clashtest/**`
+ * and `/clashpanel/**` resolve through `main()`'s own synthetic route registrations (below),
+ * mirroring T3's own "server.js serves /collision only" comment exactly. Returns a per-spec
+ * `{ok, missing, exports}` / `{ok:false, error}` summary (never throws) so a real run's own
+ * evidence retains exactly which modules failed to import and why, rather than a single opaque
+ * failure.
+ */
+async function installG1Modules(specs) {
+  const g = (window.__g1 = window.__g1 || { closing: false, nextGen: 1, loads: {}, docs: {}, models: {} });
+  g.mod = g.mod || {};
+  const errOf = (e) => (e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? '') }
+    : { primitive: typeof e, value: String(e) });
+  const out = {};
+  for (const spec of specs || []) {
+    try {
+      const m = await import(spec);
+      g.mod[spec] = m;
+      out[spec] = { ok: true, exports: Object.keys(m).sort() };
+    } catch (e) {
+      out[spec] = { ok: false, error: errOf(e) };
+    }
+  }
+  return out;
+}
+
+/**
  * In-page. Plan §7.3/§4.4's real F3 probe: install the `MODEL_ADDED_EVENT` listener
  * IMMEDIATELY after `viewer.start()`, before `Document.load` is ever called. No `sessionId`
  * exists yet at this point (Phase 2.5 has not run) -- state lives in the fixed, singleton
@@ -5623,6 +5703,13 @@ async function runHarness(deps, config) {
   const checks = {};
   const controlResults = {};
   const tokens = [];
+  // Fix wave (final whole-branch review, Important I3): per-token `gen` and F6-ownership
+  // tracking, needed so Phase 11 step 1b (drainLoadToken) can pass the right generation and
+  // step 20a's tokenEscalatesToUnresolvedOwnership can tell an F6 unload/reload-wait token
+  // (escalates if left non-terminal) from an initial-load token (never escalates) -- plan
+  // §4.3's own resource-ownership table, "per-operation tokens/generations" row.
+  const tokenGens = new Map();
+  const f6TokenIds = new Set();
   let classifierResult = null;
   let sessionId = null;
   let fatalErrorObserved = false;
@@ -5649,10 +5736,12 @@ async function runHarness(deps, config) {
   // Phase 2 -- load: Document.load, then (only if that token completed) loadDocumentNode.
   const docLoad = await startLoad({ pageEvaluate, starter: loadStarter.documentLoad, api: LOAD_API.DOCUMENT_LOAD, urn, loadTimeoutMs });
   tokens.push(docLoad.token);
+  tokenGens.set(docLoad.token.id, docLoad.gen);
   let loadDocumentNodeResult = null;
   if (docLoad.token.state === TOKEN_STATE.COMPLETED) {
     loadDocumentNodeResult = await startLoad({ pageEvaluate, starter: loadStarter.loadDocumentNode, api: LOAD_API.LOAD_DOCUMENT_NODE, docTokenId: docLoad.token.id, loadTimeoutMs });
     tokens.push(loadDocumentNodeResult.token);
+    tokenGens.set(loadDocumentNodeResult.token.id, loadDocumentNodeResult.gen);
   }
 
   const loadReachedCompleted = loadDocumentNodeResult && loadDocumentNodeResult.token.state === TOKEN_STATE.COMPLETED;
@@ -5748,7 +5837,7 @@ async function runHarness(deps, config) {
       controlResults['bounds-beyond-tolerance'] = await runControlSafely('bounds-beyond-tolerance', controls && controls.boundsBeyondTolerance);
 
       // Phase 9 -- F8 (built entirely from F1/F2's own already-computed fields, never re-derived).
-      const f8Result = await pageEvaluate(observeF8, sessionId, { f1Fields: f1Result.fields, f2Fields: f2Result.fields });
+      const f8Result = await pageEvaluate(observeF8, { sessionId, f1Fields: f1Result.fields, f2Fields: f2Result.fields });
       const f8Score = scoreF8(f8Result.fields || {});
       checks.F8 = f8Result.ok === true ? f8Score.verdict : CHECK_VERDICT.BLOCKED;
 
@@ -5762,8 +5851,16 @@ async function runHarness(deps, config) {
       });
       const f6Score = scoreF6(f6Result.fields || {});
       checks.F6 = f6Result.ok === true ? f6Score.verdict : CHECK_VERDICT.BLOCKED;
-      if (f6Result.loadDocumentNode && f6Result.loadDocumentNode.token) tokens.push(f6Result.loadDocumentNode.token);
-      if (f6Result.docLoad && f6Result.docLoad.token) tokens.push(f6Result.docLoad.token);
+      if (f6Result.loadDocumentNode && f6Result.loadDocumentNode.token) {
+        tokens.push(f6Result.loadDocumentNode.token);
+        tokenGens.set(f6Result.loadDocumentNode.token.id, f6Result.loadDocumentNode.gen);
+        f6TokenIds.add(f6Result.loadDocumentNode.token.id);
+      }
+      if (f6Result.docLoad && f6Result.docLoad.token) {
+        tokens.push(f6Result.docLoad.token);
+        tokenGens.set(f6Result.docLoad.token.id, f6Result.docLoad.gen);
+        f6TokenIds.add(f6Result.docLoad.token.id);
+      }
       controlResults['stale-old-model-event'] = buildStaleOldModelEventControlResult(f6Result.fields || {});
     }
     } catch (e) {
@@ -5796,6 +5893,35 @@ async function runHarness(deps, config) {
   // via runInPageResourceCleanup while the page is still alive, THEN Node-owned steps via the
   // existing, frozen, unmodified `runCleanup` (Stage 2) -- page/context/browser close strictly
   // AFTER the in-page half, regardless of that half's own outcome.
+  // Phase 11 steps 1a/1b (fix wave, final whole-branch review, Important I3): seal, then drain,
+  // load tokens BEFORE the rest of cleanup -- plan §4.3/§6.4a's own ordering ("Sealing (in-page,
+  // Phase 11 step 1a)" precedes the rest of cleanup; drain is step 1b). Previously built
+  // (sealLoadRecords/drainLoadToken) but never called anywhere in the assembled runHarness.
+  const claimedTokenIds = tokens.filter((t) => t.state === TOKEN_STATE.COMPLETED).map((t) => t.id);
+  try {
+    await sealLoadRecords({ tokens, pageEvaluate, sealFn: sealLoads, claimedTokenIds });
+  } catch (e) {
+    cleanupFailures.push({ step: 'sealLoadRecords', error: describeError(e) });
+    cleanupUnresolvedOwnership = true; // whole seal RPC failed while page presumed alive -- ownership unknown, same reasoning as the pageCleanup catch below
+  }
+  for (const token of tokens) {
+    if (token.state !== TOKEN_STATE.TIMED_OUT) continue; // sealLoadRecords already moved every ACTIVE token to timed-out above; only those are ever drained (drainLoadToken's own doc comment)
+    try {
+      const drainResult = await drainLoadToken({
+        token, pageWaitForFunction, pageEvaluate,
+        ownershipCleanPredicate: f11DrainOwnershipCleanPredicate,
+        readRecordFn: readLoadRecordSnapshot,
+        tokenId: token.id, gen: tokenGens.get(token.id),
+      });
+      if (!drainResult.drained) {
+        cleanupFailures.push({ step: 'drainPendingTokens', tokenId: token.id, reason: drainResult.reason });
+      }
+    } catch (e) {
+      cleanupFailures.push({ step: 'drainPendingTokens', tokenId: token.id, error: describeError(e) });
+      cleanupUnresolvedOwnership = cleanupUnresolvedOwnership || f6TokenIds.has(token.id);
+    }
+  }
+
   let pageCleanup = { ok: false, stepStatus: {}, cleanupFailures: [], cleanupUnresolvedOwnership: false };
   try {
     pageCleanup = await pageEvaluate(runInPageResourceCleanup, { sessionId });
@@ -5805,6 +5931,24 @@ async function runHarness(deps, config) {
   }
   const nodeOnlyResources = { ...nodeCleanupResources, tokens };
   const nodeCleanup = await runCleanup(nodeOnlyResources, {});
+
+  // Phase 11 step 20a (fix wave, final whole-branch review, Important I3): after Node-owned
+  // page/context/browser close (steps 18-20, just above), finalize any load token still
+  // timed-out -- plan §4.3 step 20a, Node-only, no page access. Previously built
+  // (finalizeLoadTokens/tokenEscalatesToUnresolvedOwnership) but never called anywhere in the
+  // assembled runHarness.
+  const finalizeResult = finalizeLoadTokens({
+    tokens,
+    pageIsClosed: nodeCleanup.stepStatus.closePage === 'ran',
+    contextCloseSucceeded: nodeCleanup.stepStatus.closeContext === 'ran',
+    browserCloseSucceeded: nodeCleanup.stepStatus.closeBrowser === 'ran',
+  });
+  for (const token of finalizeResult.stillTimedOut) {
+    cleanupFailures.push({ step: 'finalizeLoadTokens', tokenId: token.id, reason: 'realm-not-confirmed-destroyed' });
+    if (tokenEscalatesToUnresolvedOwnership({ tokenState: token.state, ownsF6MutableResource: f6TokenIds.has(token.id) })) {
+      cleanupUnresolvedOwnership = true;
+    }
+  }
 
   // Fix round 1 (Stage 8 review, Important): page-cleanup's own results for its 12 owned step
   // names must be AUTHORITATIVE -- spread Node's own (vacuous/'skipped' for those same 12 names,
@@ -6056,9 +6200,17 @@ function validateResultSchema(result) {
  * verbatim), not because either is looked up through the registry object itself.
  */
 const IN_PAGE_FUNCTION_REGISTRY = Object.freeze({
+  // Fix wave (final whole-branch review, Important I2): `sessionErrOf` was missing here --
+  // `setupSharedSessionResources` and `observeF1` both call it as a free identifier, which
+  // reproduces as a genuine ReferenceError once `buildBootstrapScriptSource()` is actually used
+  // (confirmed: the old `session.test.mjs` realm hand-injected `sessionErrOf` into its own test
+  // context instead of building it from the SAME bootstrap the real code uses, which is exactly
+  // what hid this).
+  sessionErrOf,
   pageErrOf, pushLoadTransition, isLateModelsAllGone, createLoadRecord, onDeadline, onSuccess,
   onError, disposeLateArrival, sealLoads, isOwnershipClean, readLoadRecordSnapshot,
-  captureModelFormatSignals, setupSharedSessionResources,
+  f11DrainOwnershipCleanPredicate,
+  captureModelFormatSignals, setupSharedSessionResources, installG1Modules,
   observeF1, observeF2, observeF4, observeF7, observeF8,
   f6InstallUnloadWiring, f6TriggerUnload, f6UnloadSettledPredicate, f6ReadUnloadSnapshot,
   f6InstallReloadProbe, f6ReloadProbeSettledPredicate, f6FinalizeReloadProbe, f6Reregister,

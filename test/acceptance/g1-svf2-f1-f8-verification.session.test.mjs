@@ -36,6 +36,7 @@ import {
   CHECK_VERDICT,
   SESSION_K,
   SESSION_MODEL_VERSION,
+  IN_PAGE_FUNCTION_REGISTRY,
   sessionErrOf,
   setupSharedSessionResources,
   observeF1,
@@ -63,13 +64,20 @@ import {
 } from './g1-svf2-f1-f8-verification.mjs';
 
 // ============================================================================================
-// Page-realm test harness (node:vm-backed) -- see file banner above. `sessionErrOf` is a
-// sibling helper `setupSharedSessionResources`/`observeF1` both call -- bundled here exactly
-// like Stage 2's own IN_PAGE_FUNCTIONS bundling note describes (page.evaluate only serializes
-// the one function it's given, never a function that function calls).
+// Page-realm test harness (node:vm-backed) -- see file banner above.
+//
+// Fix wave (final whole-branch review, Important I2): this file's own `IN_PAGE_FUNCTIONS`
+// bundle previously hand-listed a subset of what a real page bootstrap installs, which is
+// exactly why a genuine gap (`sessionErrOf` missing from the REAL `IN_PAGE_FUNCTION_REGISTRY`)
+// went uncaught -- this test realm silently provided something the real bootstrap didn't.
+// Derived directly from `IN_PAGE_FUNCTION_REGISTRY` (the production file's own single source of
+// truth for "every function a real page bootstrap installs") rather than a second, independently
+// -maintained list, so the two can never again silently diverge -- a missing/renamed production
+// registry entry now surfaces here automatically, the next time any test in this file exercises
+// it, rather than being masked by a hand-picked subset that happened to include it.
 // ============================================================================================
 
-const IN_PAGE_FUNCTIONS = { sessionErrOf, setupSharedSessionResources, observeF1, observeF2, observeF4, observeF7, observeF8 };
+const IN_PAGE_FUNCTIONS = IN_PAGE_FUNCTION_REGISTRY;
 
 function createPageRealm(initialWindow = {}) {
   const context = vm.createContext({ window: initialWindow, performance, setTimeout, clearTimeout, console });
@@ -1769,14 +1777,14 @@ function buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds })
 
 test('observeF8: session-not-found', async () => {
   const realm = createPageRealm({ __g1: { sessions: {}, mod: {} } });
-  const result = await realm.call(observeF8, 'missing', { f1Fields: {}, f2Fields: {} });
+  const result = await realm.call(observeF8, { sessionId: 'missing', f1Fields: {}, f2Fields: {} });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'session-not-found');
 });
 
 test('observeF8: refuses to run before F1 has populated f1FragmentMapsByRoot', async () => {
   const realm = createPageRealm({ __g1: { sessions: { s1: { model: {}, artifacts: {} } }, mod: {} } });
-  const result = await realm.call(observeF8, 's1', { f1Fields: {}, f2Fields: {} });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields: {}, f2Fields: {} });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'f1-fragment-maps-by-root-not-available-run-observeF1-first');
 });
@@ -1788,7 +1796,7 @@ test('observeF8: refuses to run before F2 has populated f2TreeOwnerByFragId', as
     getDbIds: () => 100,
   });
   const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
-  const result = await realm.call(observeF8, 's1', { f1Fields: { rootsLength: 1 }, f2Fields: {} });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields: { rootsLength: 1 }, f2Fields: {} });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'f2-tree-owner-by-frag-id-not-available-run-observeF2-first');
 });
@@ -1800,7 +1808,7 @@ test('observeF8: refuses to run without f1Fields/f2Fields supplied', async () =>
     getDbIds: () => 100,
   });
   const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
-  const result = await realm.call(observeF8, 's1', {});
+  const result = await realm.call(observeF8, { sessionId: 's1' });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'f1Fields-and-f2Fields-required');
 });
@@ -1819,7 +1827,7 @@ test('observeF8: healthy census -- R1/R2 agree, all five coverage equations clos
   const f1Fields = { rootsLength: 2 };
   const f2Fields = { fragListCount: 3, classL: 2, classN: 1, classU: 0, treeReachableCount: 2, loadedButUnreachableCount: 0 };
 
-  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields, f2Fields });
 
   assert.equal(result.ok, true);
   assert.equal(result.fields.censusedRootCount, 2);
@@ -1840,7 +1848,7 @@ test('observeF8: R1 divergence -- a fresh getDbIds() disagrees with F1\'s own re
   const f1Fields = { rootsLength: 1 };
   const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
 
-  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields, f2Fields });
 
   assert.equal(result.fields.ownershipDivergenceCount, 1);
   assert.equal(result.fields.divergenceCount, 1);
@@ -1858,7 +1866,7 @@ test('observeF8: R1 -- getDbIds() throwing counts as a divergence, never silentl
   const f1Fields = { rootsLength: 1 };
   const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
 
-  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields, f2Fields });
 
   assert.equal(result.fields.ownershipDivergenceCount, 1);
   assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.FAIL);
@@ -1872,7 +1880,7 @@ test('observeF8: R2 divergence -- fragId missing from f2TreeOwnerByFragId (F2 ne
   const f1Fields = { rootsLength: 1 };
   const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
 
-  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields, f2Fields });
 
   assert.equal(result.fields.treeDivergenceCount, 1);
   assert.equal(result.firstDivergences.some((d) => d.relation === 'R2'), true);
@@ -1887,7 +1895,7 @@ test('observeF8: R2 divergence -- a recorded conflictingOwnerDbId (F2\'s walk fo
   const f1Fields = { rootsLength: 1 };
   const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
 
-  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields, f2Fields });
 
   assert.equal(result.fields.treeDivergenceCount, 1);
   assert.equal(result.fields.ownershipDivergenceCount, 0, 'R1 itself still agrees -- only R2 is flagged');
@@ -1903,7 +1911,7 @@ test('observeF8: coverage equation 1 fails (classL+classN+classU !== fragListCou
   // classL+classN+classU = 1+0+0 = 1, but fragListCount claims 5 -- a silent population drop.
   const f2Fields = { fragListCount: 5, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
 
-  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields, f2Fields });
 
   assert.equal(result.fields.ownershipDivergenceCount, 0);
   assert.equal(result.fields.treeDivergenceCount, 0);
@@ -1922,7 +1930,7 @@ test('observeF8: coverage equation 5 fails (censusedRootCount !== rootsLength) -
   const f1Fields = { rootsLength: 2 };
   const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
 
-  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields, f2Fields });
 
   assert.equal(result.fields.censusedRootCount, 1);
   assert.equal(result.fields.rootsLengthReference, 2);
@@ -1940,7 +1948,7 @@ test('observeF8: a loaded-but-unreachable class-L fragment is a named exclusion 
   const f1Fields = { rootsLength: 1 };
   const f2Fields = { fragListCount: 2, classL: 2, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 1 };
 
-  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+  const result = await realm.call(observeF8, { sessionId: 's1', f1Fields, f2Fields });
 
   assert.equal(result.fields.censusedFragmentCount, 1, 'only the tree-reachable fragment is censused');
   assert.equal(result.fields.ownershipDivergenceCount, 0);

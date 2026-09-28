@@ -401,7 +401,7 @@ test('Case A: timeout before Document.load settles -> in-page sealed (ownership-
 
   const sealResult = await sealLoadRecords({
     tokens: [token],
-    pageEvaluate: async (fn, args) => realm.call(fn, args.claimed),
+    pageEvaluate: async (fn, args) => realm.call(fn, args), // args IS the bare claimed array now (fix wave: sealLoadRecords passes it unwrapped)
     sealFn: sealLoads,
     claimedTokenIds: [],
   });
@@ -410,7 +410,7 @@ test('Case A: timeout before Document.load settles -> in-page sealed (ownership-
   const drainResult = await drainLoadToken({
     token,
     pageWaitForFunction: async () => true, // ownership-clean immediately -- Document.load sealed is clean
-    pageEvaluate: async (fn, args) => realm.call(fn, args.tokenId),
+    pageEvaluate: async (fn, args) => realm.call(fn, args), // args IS the bare tokenId string now (fix wave: drainLoadToken passes it unwrapped)
     ownershipCleanPredicate: () => true,
     readRecordFn: readLoadRecordSnapshot,
     tokenId,
@@ -435,7 +435,7 @@ test('Case B: late Document after timeout -> late-discarded, Node token disposed
   const drainResult = await drainLoadToken({
     token,
     pageWaitForFunction: async () => true,
-    pageEvaluate: async (fn, args) => realm.call(fn, args.tokenId),
+    pageEvaluate: async (fn, args) => realm.call(fn, args), // args IS the bare tokenId string now (fix wave: drainLoadToken passes it unwrapped)
     ownershipCleanPredicate: () => true,
     readRecordFn: readLoadRecordSnapshot,
     tokenId,
@@ -465,7 +465,7 @@ test('Case C: loadDocumentNode timeout then late Model -> late-unloaded -> Node 
   const drainResult = await drainLoadToken({
     token,
     pageWaitForFunction: async () => true,
-    pageEvaluate: async (fn, args) => realm.call(fn, args.tokenId),
+    pageEvaluate: async (fn, args) => realm.call(fn, args), // args IS the bare tokenId string now (fix wave: drainLoadToken passes it unwrapped)
     ownershipCleanPredicate: () => true,
     readRecordFn: readLoadRecordSnapshot,
     tokenId,
