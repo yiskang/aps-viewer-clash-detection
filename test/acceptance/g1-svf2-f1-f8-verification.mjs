@@ -3547,6 +3547,407 @@ async function runHiddenFragmentControl({ modelBefore, world, registry, registry
 }
 
 // ============================================================================================
+// Bounded completion pass, area 3 -- Task 11: bridged tree-unavailable/wrong-owner/hidden-
+// fragment controls, IN-PAGE half. Ports `runTreeUnavailableControl`/`runWrongOwnerControl`/
+// `runHiddenFragmentControl` (above -- unmodified, still the de facto behavioral spec: same
+// perturbation, same detection field, same restoration/liveness oracle) across the realm
+// boundary using Task 10's shared foundation (`acquireControlLease`/`releaseControlLease`/
+// `recordControlPatch`, `createControlScratchSession`/`disposeControlScratchSession`). See
+// `.superpowers/sdd/g1-f1-f8-harness/briefs/task-11-brief.md` for the full design.
+//
+// Lease-lost-mid-flight discipline (Task 10 review's own new hard requirement, adopted for this
+// task and Task 12): an OUTER Node-side watchdog timeout only stops NODE from waiting on
+// `pageEvaluate` -- it does NOT cancel this in-page continuation. After the ONE `await` each of
+// these three functions has (the raced detection call), and BEFORE doing anything else
+// (restoring a patch, deriving `detected` from the check result, releasing the lease, disposing
+// the scratch session), each function re-checks `session.activeControl && session.activeControl.
+// controlId === controlId` via a small `stillMine()` closure. If that is no longer true (Phase
+// 11's own `restoreAllControlPatches` fallback already ran, or is running concurrently on this
+// same single-threaded page realm), this continuation abandons: it never restores anything
+// itself, never releases a lease it no longer holds, and returns `{ok: true, detected: false,
+// restored: false, timedOut: false, reason: 'lease-lost-mid-flight'}`. That shape is a
+// DELIBERATE choice, not the brief's own literal `detected: null, restored: null` suggestion --
+// `runBridgedControl` (Task 10, unmodified) strictly requires `detected`/`restored`/`timedOut`
+// to be REAL booleans before ever calling `mapControlAttemptOutcome`; a `null` value would be
+// rejected by that check as `'malformed-in-page-result'` (still PASS-blocking, but bypassing
+// `mapControlAttemptOutcome` entirely, which the brief explicitly asks this task to confirm
+// through). Real `false` values pass that check and flow into `mapControlAttemptOutcome`
+// (`!detected` -> `NOT_DETECTED`), producing a well-formed, schema-valid, PASS-blocking
+// `ControlResult` whose `reason` still names the real cause -- confirmed by direct read of both
+// `runBridgedControl` and `mapControlAttemptOutcome`, not guessed.
+//
+// Own-`finally` restore-failure discipline (this task's own design decision, beyond what the
+// brief states explicitly): if this control's OWN restoration attempt (patch-descriptor
+// restore + `world.isModelLive`/`registry.bindingFor` liveness check) does NOT fully succeed,
+// the lease is deliberately left HELD (never released) so Phase 11's `restoreAllControlPatches`
+// fallback still sees `session.activeControl` and gets a real chance to retry/flag it via its
+// own `cleanupFailures`/`cleanupUnresolvedOwnership` machinery -- releasing the lease on a
+// failed restore would silently hide a genuinely broken page/model from that fallback and from
+// `cleanupUnresolvedOwnership` entirely. The lease is released ONLY on a fully-verified restore.
+// ============================================================================================
+
+/**
+ * In-page. `treeUnavailableControlInPage({sessionId, tokenId, gen, controlId, innerTimeoutMs})`
+ * -- bridged port of `runTreeUnavailableControl` (above), Phase 3c. No scratch session (per the
+ * brief: this control never touches `session.artifacts`, so nothing needs isolating -- see the
+ * non-interference test for this control, which proves exactly that).
+ *
+ * Patches `session.model.isObjectTreeCreated`/`getObjectTree` (two independent patches, both
+ * recorded via `recordControlPatch` so Task 10's Phase 11 fallback can restore either one
+ * independently if this control's own `finally` never runs). Detection oracle: a small, LOCAL
+ * readiness-check kernel (`checkReadinessKernel`, this function's own nested closure -- per the
+ * brief, deliberately NOT `clashtest/viewer/readiness.js`'s own `awaitObjectTree`, which needs a
+ * cancellation `ctx` this harness's F3 doesn't have) -- mirrors the same "fast path else
+ * `getObjectTree(onSuccess, onError)`" shape used in `collision/CollisionWorld.js`/
+ * `clashtest/viewer/readiness.js`.
+ *
+ * Non-interference proof (this control's own required oracle, since it has no scratch session):
+ * `checks.F3` (Node-side, computed by `runHarness` strictly BEFORE Phase 3c ever runs) has no
+ * page-owned counterpart in `session.artifacts` at all -- F3's own timeline/result never crosses
+ * into `window.__g1` in the first place, so the only way this control could possibly corrupt
+ * F3's retained result is if it touched `session.artifacts` (it does not -- confirmed by direct
+ * read of this function's own body, which references only `session.model`/`session.world`/
+ * `session.registry`/`session.K`) or `session` identity itself (it does not replace `session`,
+ * only two `model` members). Proven at the in-page-function level (this file's own dedicated
+ * test file, Task 11): `session.artifacts` is snapshotted before/after and asserted unchanged.
+ */
+async function treeUnavailableControlInPage(arg) {
+  const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
+  const acquire = acquireControlLease({ sessionId, tokenId, gen, controlId });
+  if (!acquire.ok) return { ok: false, reason: acquire.reason };
+
+  const g = window.__g1;
+  const session = g.sessions[sessionId];
+  const stillMine = () => Boolean(session.activeControl) && session.activeControl.controlId === controlId;
+
+  const model = session.model;
+  const isObjectTreeCreatedDescriptor = Object.getOwnPropertyDescriptor(model, 'isObjectTreeCreated') || null;
+  const getObjectTreeDescriptor = Object.getOwnPropertyDescriptor(model, 'getObjectTree') || null;
+  const originalIsObjectTreeCreated = model.isObjectTreeCreated;
+  const originalGetObjectTree = model.getObjectTree;
+
+  function raceInner(promiseLike, ms) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const err = new Error(`control timed out after ${ms}ms`);
+        err.innerControlTimeout = true;
+        reject(err);
+      }, ms);
+      Promise.resolve(promiseLike).then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
+  }
+
+  function checkReadinessKernel(m) {
+    return new Promise((resolve) => {
+      try {
+        if (typeof m.isObjectTreeCreated === 'function' && m.isObjectTreeCreated() === true) {
+          resolve({ ready: true });
+          return;
+        }
+      } catch {
+        resolve({ ready: false });
+        return;
+      }
+      try {
+        let settled = false;
+        m.getObjectTree(
+          () => { if (!settled) { settled = true; resolve({ ready: true }); } },
+          () => { if (!settled) { settled = true; resolve({ ready: false }); } },
+        );
+      } catch {
+        resolve({ ready: false });
+      }
+    });
+  }
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+  let restored = null;
+  let leaseLost = false;
+
+  try {
+    model.isObjectTreeCreated = () => false;
+    recordControlPatch(session, { target: model, property: 'isObjectTreeCreated', originalDescriptor: isObjectTreeCreatedDescriptor });
+    model.getObjectTree = (onSuccess, onError) => { if (onError) onError(new Error('tree-unavailable control: simulated failure')); };
+    recordControlPatch(session, { target: model, property: 'getObjectTree', originalDescriptor: getObjectTreeDescriptor });
+
+    try {
+      const gateResult = await raceInner(checkReadinessKernel(model), innerTimeoutMs);
+      if (!stillMine()) { leaseLost = true; } else {
+        detected = Boolean(gateResult && gateResult.ready === false);
+        if (!detected) reason = 'not-detected';
+      }
+    } catch (e) {
+      if (!stillMine()) { leaseLost = true; } else if (e && e.innerControlTimeout) {
+        timedOut = true;
+        reason = 'perturbation-timeout';
+      } else {
+        detected = false;
+        reason = 'checkReadiness-threw';
+      }
+    }
+  } finally {
+    if (stillMine()) {
+      let membersRestored = false;
+      try {
+        if (getObjectTreeDescriptor) Object.defineProperty(model, 'getObjectTree', getObjectTreeDescriptor);
+        else delete model.getObjectTree;
+        if (isObjectTreeCreatedDescriptor) Object.defineProperty(model, 'isObjectTreeCreated', isObjectTreeCreatedDescriptor);
+        else delete model.isObjectTreeCreated;
+        membersRestored = model.isObjectTreeCreated === originalIsObjectTreeCreated && model.getObjectTree === originalGetObjectTree;
+      } catch {
+        membersRestored = false;
+      }
+      const worldLiveOk = !session.world || session.world.isModelLive(model) === true;
+      const bindingOk = !session.registry || Boolean(session.registry.bindingFor(session.K) && session.registry.bindingFor(session.K).model === model);
+      restored = membersRestored && worldLiveOk && bindingOk;
+      if (restored) releaseControlLease({ sessionId, controlId });
+    }
+  }
+
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null };
+}
+
+/**
+ * In-page. `wrongOwnerControlInPage({sessionId, tokenId, gen, controlId, innerTimeoutMs})` --
+ * bridged port of `runWrongOwnerControl` (above), Phase 4c. Scratch session with NO
+ * `copyArtifactKeys` (`observeF1` is the first writer of `session.artifacts` and has no
+ * precondition beyond a valid session -- confirmed by direct read: `observeF1`'s only guard is
+ * `if (!session) return {ok:false, reason:'session-not-found'}`). Patches
+ * `session.model.fragList.getDbIds`. Detection: `r.fields.ownerMismatchCount > 0` (confirmed
+ * against `observeF1`'s current real `fields` shape, this file, `ownerMismatchCount:
+ * rr.ownerMismatch.count` -- matches the brief's own transcription exactly).
+ *
+ * codex-review (code, high effort, this task's own pre-commit review pass) Critical #1, fixed:
+ * `createControlScratchSession`'s generic mechanism (Task 10, unchanged) only seeds
+ * `artifacts` with the keys named in `copyArtifactKeys` -- an empty array (as above) yields a
+ * genuinely EMPTY `artifacts` object, `{}`. `observeF1` (this file, its own per-root loop)
+ * unconditionally calls `session.artifacts.f1FragmentMapsByRoot.set(root.dbId, lib)` for every
+ * root `resolveRoots` returns -- on any real model with at least one root, this threw
+ * `TypeError: Cannot read properties of undefined (reading 'set')`, caught by this function's
+ * own try/catch and misreported as `NOT_DETECTED` (`reason: 'observeF1-threw'`) rather than a
+ * genuine detection outcome -- reproduced directly by the review with a one-root fixture; this
+ * task's own original fixture used `roots: []`, which never entered the loop and hid the bug.
+ * `f1FragmentMapsByRoot` is purely a WRITE-target for `observeF1` (confirmed by direct re-read:
+ * nothing in `observeF1` ever READS it as an input), so it needs no copied data from the real
+ * session -- a fresh, empty `Map` seeded directly onto the scratch session's own `artifacts`
+ * (below) is both correct and the smallest fix, matching exactly what
+ * `setupSharedSessionResources` itself seeds for a brand-new real session.
+ */
+async function wrongOwnerControlInPage(arg) {
+  const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
+  const acquire = acquireControlLease({ sessionId, tokenId, gen, controlId });
+  if (!acquire.ok) return { ok: false, reason: acquire.reason };
+
+  const g = window.__g1;
+  const session = g.sessions[sessionId];
+  const stillMine = () => Boolean(session.activeControl) && session.activeControl.controlId === controlId;
+
+  const scratch = createControlScratchSession(sessionId, { controlId, copyArtifactKeys: [] });
+  if (!scratch.ok) {
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: `scratch-session-failed:${scratch.reason}` };
+  }
+  const scratchSessionId = scratch.scratchSessionId;
+  // codex-review Critical #1 (see doc comment above): observeF1 needs this Map to already exist
+  // as an own artifact, purely as a write-target -- never copied from the real session.
+  g.sessions[scratchSessionId].artifacts.f1FragmentMapsByRoot = new Map();
+
+  const model = session.model;
+  const fragList = model.fragList;
+  const property = 'getDbIds';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(fragList, property) || null;
+  const originalGetDbIds = fragList[property];
+
+  function raceInner(promiseLike, ms) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const err = new Error(`control timed out after ${ms}ms`);
+        err.innerControlTimeout = true;
+        reject(err);
+      }, ms);
+      Promise.resolve(promiseLike).then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
+  }
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+  let restored = null;
+  let leaseLost = false;
+
+  try {
+    fragList[property] = (fragId) => (fragId === 0 ? -999999 : originalGetDbIds.call(fragList, fragId));
+    recordControlPatch(session, { target: fragList, property, originalDescriptor });
+
+    try {
+      const r = await raceInner(observeF1(scratchSessionId), innerTimeoutMs);
+      if (!stillMine()) { leaseLost = true; } else {
+        detected = Boolean(r && r.ok === true && r.fields && r.fields.ownerMismatchCount > 0);
+        if (!detected) reason = 'not-detected';
+      }
+    } catch (e) {
+      if (!stillMine()) { leaseLost = true; } else if (e && e.innerControlTimeout) {
+        timedOut = true;
+        reason = 'perturbation-timeout';
+      } else {
+        detected = false;
+        reason = 'observeF1-threw';
+      }
+    }
+  } finally {
+    if (stillMine()) {
+      let membersRestored = false;
+      try {
+        if (originalDescriptor) Object.defineProperty(fragList, property, originalDescriptor);
+        else delete fragList[property];
+        membersRestored = fragList[property] === originalGetDbIds;
+      } catch {
+        membersRestored = false;
+      }
+      const worldLiveOk = !session.world || session.world.isModelLive(model) === true;
+      const bindingOk = !session.registry || Boolean(session.registry.bindingFor(session.K) && session.registry.bindingFor(session.K).model === model);
+      restored = membersRestored && worldLiveOk && bindingOk;
+      if (restored) releaseControlLease({ sessionId, controlId });
+      // codex-review (code, high effort, this task's own pre-commit review pass) Important #2,
+      // fixed: disposal must be gated on `stillMine()` too, exactly like restore/release --
+      // moved inside this block (was previously unconditional). An abandoned (lease-lost)
+      // continuation must never delete ANYTHING keyed by this control's own deterministic
+      // scratch-session id, since it can no longer prove it still owns that key (per the hard
+      // requirement's own "touch nothing you don't provably still own" discipline, extended here
+      // from patch-restore/lease-release to scratch-session disposal). This is a real, if
+      // currently unreachable-in-practice, gap given `runHarness` never retries a control -- see
+      // this function's own report for the disclosed residual (an abandoned scratch session is
+      // then never disposed by anyone, since Phase 11's own `restoreAllControlPatches` has no
+      // scratch-session-awareness either -- a pre-existing gap Task 10's own report already
+      // flagged as "explicitly undecided," not newly introduced here).
+      disposeControlScratchSession(scratchSessionId);
+    }
+  }
+
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null };
+}
+
+/**
+ * In-page. `hiddenFragmentControlInPage({sessionId, tokenId, gen, controlId, innerTimeoutMs})`
+ * -- bridged port of `runHiddenFragmentControl` (above), Phase 5c. Scratch session WITH
+ * `copyArtifactKeys: ['f1PopulationClasses', 'f1RootsLength']` -- `observeF2` has a hard
+ * precondition on `session.artifacts.f1PopulationClasses` being an array (confirmed by direct
+ * read: `if (!session.artifacts || !Array.isArray(session.artifacts.f1PopulationClasses))
+ * return {ok:false, reason:'f1-population-classes-not-available-run-observeF1-first'}`) and also
+ * reads `session.artifacts.f1RootsLength` for its own `rootsLength` output field (not a hard
+ * precondition check, but still required for a correct, non-`undefined` result) -- both copied
+ * from the REAL session's own already-computed F1 result, a read-only baseline snapshot; this
+ * confirms the brief's own transcription of the exact and complete key set. Patches
+ * `session.model.tree.enumNodeFragments`. Detection: `r.fields.loadedButUnreachableCount > 0`
+ * (confirmed against `observeF2`'s current real `fields` shape, this file).
+ */
+async function hiddenFragmentControlInPage(arg) {
+  const { sessionId, tokenId, gen, controlId, innerTimeoutMs } = arg || {};
+  const acquire = acquireControlLease({ sessionId, tokenId, gen, controlId });
+  if (!acquire.ok) return { ok: false, reason: acquire.reason };
+
+  const g = window.__g1;
+  const session = g.sessions[sessionId];
+  const stillMine = () => Boolean(session.activeControl) && session.activeControl.controlId === controlId;
+
+  const scratch = createControlScratchSession(sessionId, { controlId, copyArtifactKeys: ['f1PopulationClasses', 'f1RootsLength'] });
+  if (!scratch.ok) {
+    releaseControlLease({ sessionId, controlId });
+    return { ok: false, reason: `scratch-session-failed:${scratch.reason}` };
+  }
+  const scratchSessionId = scratch.scratchSessionId;
+
+  const model = session.model;
+  const tree = model.tree;
+  const property = 'enumNodeFragments';
+  const originalDescriptor = Object.getOwnPropertyDescriptor(tree, property) || null;
+  const originalEnumNodeFragments = tree[property];
+
+  function raceInner(promiseLike, ms) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const err = new Error(`control timed out after ${ms}ms`);
+        err.innerControlTimeout = true;
+        reject(err);
+      }, ms);
+      Promise.resolve(promiseLike).then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
+  }
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+  let restored = null;
+  let leaseLost = false;
+
+  try {
+    tree[property] = function patchedEnumNodeFragments(node, callback, recursive) {
+      return originalEnumNodeFragments.call(this, node, (fragId) => { if (fragId !== 1) callback(fragId); }, recursive);
+    };
+    recordControlPatch(session, { target: tree, property, originalDescriptor });
+
+    try {
+      const r = await raceInner(observeF2(scratchSessionId), innerTimeoutMs);
+      if (!stillMine()) { leaseLost = true; } else {
+        detected = Boolean(r && r.ok === true && r.fields && r.fields.loadedButUnreachableCount > 0);
+        if (!detected) reason = 'not-detected';
+      }
+    } catch (e) {
+      if (!stillMine()) { leaseLost = true; } else if (e && e.innerControlTimeout) {
+        timedOut = true;
+        reason = 'perturbation-timeout';
+      } else {
+        detected = false;
+        reason = 'observeF2-threw';
+      }
+    }
+  } finally {
+    if (stillMine()) {
+      let membersRestored = false;
+      try {
+        if (originalDescriptor) Object.defineProperty(tree, property, originalDescriptor);
+        else delete tree[property];
+        membersRestored = tree[property] === originalEnumNodeFragments;
+      } catch {
+        membersRestored = false;
+      }
+      const worldLiveOk = !session.world || session.world.isModelLive(model) === true;
+      const bindingOk = !session.registry || Boolean(session.registry.bindingFor(session.K) && session.registry.bindingFor(session.K).model === model);
+      restored = membersRestored && worldLiveOk && bindingOk;
+      if (restored) releaseControlLease({ sessionId, controlId });
+      // codex-review Important #2 (see wrongOwnerControlInPage's own doc comment above for the
+      // full reasoning): disposal gated on `stillMine()`, moved inside this block.
+      disposeControlScratchSession(scratchSessionId);
+    }
+  }
+
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight' };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed' };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null };
+}
+
+// ============================================================================================
 // STAGE 5 -- Geometry-and-limits slice: F4 (collision-layer per-fragment/geometry reads, the
 // most complex single check in the whole plan), F5 (existing limits under SVF2), and their
 // two mandatory controls (invalid-geometry-consumer, capacity-breach) (plan §6.1 Phase 6/6c/
@@ -6161,6 +6562,55 @@ async function runBridgedControl({ pageEvaluate, controlName, inPageFn, arg = {}
   return mapControlAttemptOutcome(controlName, raw);
 }
 
+// ------------------------------------------------------------------------------------------
+// Bounded completion pass, area 3 -- Task 11: bridged tree-unavailable/wrong-owner/hidden-
+// fragment controls, NODE-SIDE half. One thin wrapper-factory per control, each returning the
+// `(ctx) => runBridgedControl({...})` shape `runHarness`'s own `runControlSafely` already calls
+// as `fn({controlTimeoutMs})` (unchanged, this file's existing `controls.treeUnavailable`/
+// `wrongOwner`/`hiddenFragment` call sites, above). `sessionId`/`tokenId`/`gen` are bound via
+// CLOSURE at factory-construction time (never read from `ctx`, which only ever carries
+// `controlTimeoutMs`) -- `runHarness` itself only establishes `sessionId` dynamically, inside
+// its own Phase 2.5, so a real wiring caller must build these closures once that value is known
+// (Task 13's own job: final integration into `buildRealPageDeps`'s `controls: {}`, NOT built or
+// wired here, per this task's own explicit non-goal).
+// ------------------------------------------------------------------------------------------
+
+/** Node-side. `buildTreeUnavailableControlDep({pageEvaluate, sessionId, tokenId, gen})` -- see
+ * the banner above. Not wired into `buildRealPageDeps` by this task. */
+function buildTreeUnavailableControlDep({ pageEvaluate, sessionId, tokenId, gen }) {
+  return (ctx) => runBridgedControl({
+    pageEvaluate,
+    controlName: 'tree-unavailable',
+    inPageFn: treeUnavailableControlInPage,
+    arg: { sessionId, tokenId, gen, controlId: 'tree-unavailable' },
+    innerTimeoutMs: ctx.controlTimeoutMs,
+  });
+}
+
+/** Node-side. `buildWrongOwnerControlDep({pageEvaluate, sessionId, tokenId, gen})` -- see the
+ * banner above. Not wired into `buildRealPageDeps` by this task. */
+function buildWrongOwnerControlDep({ pageEvaluate, sessionId, tokenId, gen }) {
+  return (ctx) => runBridgedControl({
+    pageEvaluate,
+    controlName: 'wrong-owner',
+    inPageFn: wrongOwnerControlInPage,
+    arg: { sessionId, tokenId, gen, controlId: 'wrong-owner' },
+    innerTimeoutMs: ctx.controlTimeoutMs,
+  });
+}
+
+/** Node-side. `buildHiddenFragmentControlDep({pageEvaluate, sessionId, tokenId, gen})` -- see
+ * the banner above. Not wired into `buildRealPageDeps` by this task. */
+function buildHiddenFragmentControlDep({ pageEvaluate, sessionId, tokenId, gen }) {
+  return (ctx) => runBridgedControl({
+    pageEvaluate,
+    controlName: 'hidden-fragment',
+    inPageFn: hiddenFragmentControlInPage,
+    arg: { sessionId, tokenId, gen, controlId: 'hidden-fragment' },
+    innerTimeoutMs: ctx.controlTimeoutMs,
+  });
+}
+
 /**
  * Node-side. `runHarness(deps, config)` -- plan §6.1's COMPLETE Phase 0-11 sequence, composing
  * every stage's already-built function in order. Fully offline-testable: every Playwright-shaped
@@ -7062,6 +7512,11 @@ const IN_PAGE_FUNCTION_REGISTRY = Object.freeze({
   // calls it by name, exactly like `sessionErrOf` above.
   recordControlPatch, acquireControlLease, releaseControlLease,
   createControlScratchSession, disposeControlScratchSession,
+  // Task 11 (bounded completion pass, area 3): the three bridged in-page control functions
+  // themselves -- `observeF1`/`observeF2` (already above) are called by free identifier from
+  // `wrongOwnerControlInPage`/`hiddenFragmentControlInPage` respectively, so both must already
+  // share this same bootstrap IIFE scope (confirmed true, both already registered above).
+  treeUnavailableControlInPage, wrongOwnerControlInPage, hiddenFragmentControlInPage,
 });
 
 /**
@@ -7928,6 +8383,12 @@ export {
   scoreF2,
   runWrongOwnerControl,
   runHiddenFragmentControl,
+  treeUnavailableControlInPage,
+  wrongOwnerControlInPage,
+  hiddenFragmentControlInPage,
+  buildTreeUnavailableControlDep,
+  buildWrongOwnerControlDep,
+  buildHiddenFragmentControlDep,
   CENSUS_TIMEOUT_MS,
   classifyWeldResult,
   observeF4,
