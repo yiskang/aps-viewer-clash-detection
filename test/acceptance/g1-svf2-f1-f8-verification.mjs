@@ -33,6 +33,16 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { readFile as nodeReadFile } from 'node:fs/promises';
 import path from 'node:path';
+// Stage 5: compactAndWeld/the collision engine's own limit constants are PURE, already-tested
+// production code with no live-Viewer/browser dependency at all (confirmed by direct source
+// read -- see the Stage 5 report) -- imported here for genuine, real (never faked/simulated)
+// Node-side use by the invalid-geometry-consumer/capacity-breach controls and F5's own scoring.
+// This is a Node-side-only import; no in-page function may reference it directly (the
+// established "in-page functions reference only their own argument and page globals"
+// constraint) -- an in-page function instead reads the SAME production module from
+// window.__g1.mod, exactly like observeF1 already does for extractFragments/digestSubtree.
+import { compactAndWeld } from '../../collision/geometry/activeRangeCompaction.js';
+import { maxCollisionInstancesPerEpoch, maxSyncTriangleCount, maxFragmentsPerDbId, maxChildrenPerNode as MAX_CHILDREN_PER_NODE_LIMIT } from '../../collision/constants.js';
 import { fileURLToPath } from 'node:url';
 
 // ------------------------------------------------------------------------------------------
@@ -1594,6 +1604,14 @@ const CLASHTEST_DIR = path.join(REPO_ROOT, 'clashtest');
 // Overridable per call.
 const CHECK_TIMEOUT_MS = 30_000;
 
+// Stage 5's own named value: plan §7.4's own text ("F4's full geometry-buffer census runs
+// under CENSUS_TIMEOUT_MS (120s), not the generic 30s CHECK_TIMEOUT_MS") and the plan's §6.4
+// timeout table row ("F4/F7/F8 full-census work... CENSUS_TIMEOUT_MS = 120_000 per check").
+// Named/exported for a later, live-run-wiring stage's own chunked deadline-check-and-yield
+// discipline (§6.4a) -- this stage's own observeF4 does not itself implement that chunking
+// loop (a documented, deliberate simplification; see observeF4's own doc comment).
+const CENSUS_TIMEOUT_MS = 120_000;
+
 // ------------------------------------------------------------------------------------------
 // §5 harness architecture -- /clashtest/** route resolution (matches T3's own accepted
 // pattern exactly, clashtest-viewer-adapter.acceptance.mjs:925-938: resolve the request path
@@ -2467,7 +2485,27 @@ async function observeF1(sessionId) {
   try {
     rr = await enumerator.resolveRoots(binding, 'whole', ctx);
   } catch (e) {
-    return { ok: false, reason: 'resolveRoots-threw', error: sessionErrOf(e) };
+    // Stage 5 addition: F5 (§7.5's corrected dependency) reads a typed CapacityExceededError/
+    // EnumerationBoundExceededError's own limit/requested fields directly -- sessionErrOf's own
+    // {name, message, reason} shape drops them, so they are captured here explicitly (additive,
+    // never changes sessionErrOf itself, which stays shared with setupSharedSessionResources).
+    // CapacityExceededError: Object.assign(this, {limit, requested, ...}) (collision/errors.js) --
+    // `limit`/`requested` read directly. EnumerationBoundExceededError: `bound` names WHICH limit
+    // (`'maxFragmentsPerDbId'|'maxChildrenPerNode'`), `detail` carries context
+    // ({dbId,tally}|{dbId,root,count}) -- no literal limit/requested pair on the error itself;
+    // both are retained raw here, F5's own scoreF5 maps them to {limit, requested} per error kind.
+    return {
+      ok: false,
+      reason: 'resolveRoots-threw',
+      error: {
+        ...sessionErrOf(e),
+        kind: e && e.kind !== undefined ? e.kind : null,
+        limit: e && e.limit !== undefined ? e.limit : null,
+        requested: e && e.requested !== undefined ? e.requested : null,
+        bound: e && e.bound !== undefined ? e.bound : null,
+        detail: e && e.detail !== undefined ? e.detail : null,
+      },
+    };
   }
 
   const first20Mismatches = [];
@@ -2524,12 +2562,41 @@ async function observeF1(sessionId) {
     }
     const expected = await digestPopulation({ count: fragList.getCount(), records: rows });
     populationDigestEqual = expected.digest === rr.population.digest;
+    // Stage 5 addition: retain the FULL extractAllFragments records Map -- each
+    // ExtractedFragmentRecord already carries {fragmentId, geometryIdentity, worldMatrix,
+    // worldBounds, ownerDbId} for every loaded (class-L) fragment in the WHOLE tested
+    // population (collision/viewer/ViewerModelAdapter.js:253-268), and worldMatrix/worldBounds
+    // are already plain, copied-out owned data (never a live THREE object -- confirmed by this
+    // repo's own accepted test convention, test/geometry/activeRangeCompaction.test.mjs's
+    // "Item A" cases). F4 (this same stage) reuses this verbatim for its own per-geometry-id
+    // grouping and per-fragment world matrices -- never re-extracting or re-calling
+    // getGeometryId()/readWorldMatrix() a second time.
+    session.artifacts.f1PopulationRecords = records;
   } catch {
     populationDigestEqual = false;
   }
 
   session.artifacts.f1PopulationClasses = populationClasses;
   session.artifacts.f1RootsLength = rr.roots.length;
+
+  // Stage 5 addition: F5 (§7.5) needs max(roots[].fragmentCount)/sum(...) and
+  // max(per-dbId fragment count) -- computed here, from data F1 already has in scope, rather
+  // than F5 re-deriving them from a second pass.
+  let maxRootFragmentCount = 0;
+  let sumRootFragmentCount = 0;
+  for (const root of rr.roots) {
+    if (root.fragmentCount > maxRootFragmentCount) maxRootFragmentCount = root.fragmentCount;
+    sumRootFragmentCount += root.fragmentCount;
+  }
+  const perDbIdCounts = new Map();
+  for (const row of populationClasses) {
+    if (row.cls !== 'L') continue;
+    perDbIdCounts.set(row.ownerDbId, (perDbIdCounts.get(row.ownerDbId) || 0) + 1);
+  }
+  let maxPerDbIdFragmentCount = 0;
+  for (const count of perDbIdCounts.values()) {
+    if (count > maxPerDbIdFragmentCount) maxPerDbIdFragmentCount = count;
+  }
 
   return {
     ok: true,
@@ -2543,6 +2610,9 @@ async function observeF1(sessionId) {
       ownersMismatch,
       subtreeDigestMismatch,
       populationDigestEqual,
+      maxRootFragmentCount,
+      sumRootFragmentCount,
+      maxPerDbIdFragmentCount,
     },
     first20Mismatches,
   };
@@ -2610,7 +2680,7 @@ function observeF2(sessionId) {
       fields: {
         isObjectTreeCreated: false, treeReachableCount: 0,
         classL: 0, classN: 0, classU: 0, loadedButUnreachableCount: 0,
-        fragListCount, rootsLength, accountingBalanced: false,
+        fragListCount, rootsLength, accountingBalanced: false, maxChildrenPerNode: 0,
       },
     };
   }
@@ -2624,7 +2694,7 @@ function observeF2(sessionId) {
       fields: {
         isObjectTreeCreated: true, treeReachableCount: 0,
         classL: 0, classN: 0, classU: 0, loadedButUnreachableCount: 0,
-        fragListCount, rootsLength, accountingBalanced: false,
+        fragListCount, rootsLength, accountingBalanced: false, maxChildrenPerNode: 0,
       },
     };
   }
@@ -2632,12 +2702,17 @@ function observeF2(sessionId) {
   const reachable = new Set();
   const seen = new Set();
   const stack = [tree.getRootId()];
+  // Stage 5 addition: F5 (§7.5) needs max(children per node) -- tracked during this SAME tree
+  // walk (never a second pass).
+  let maxChildrenPerNode = 0;
   while (stack.length > 0) {
     const n = stack.pop();
     if (seen.has(n)) continue;
     seen.add(n);
     tree.enumNodeFragments(n, (f) => { reachable.add(f); }, false);
-    tree.enumNodeChildren(n, (ch) => { stack.push(ch); return false; }, false);
+    let childCount = 0;
+    tree.enumNodeChildren(n, (ch) => { childCount += 1; stack.push(ch); return false; }, false);
+    if (childCount > maxChildrenPerNode) maxChildrenPerNode = childCount;
   }
 
   const classLRows = session.artifacts.f1PopulationClasses.filter((row) => row.cls === 'L');
@@ -2671,6 +2746,7 @@ function observeF2(sessionId) {
       fragListCount,
       rootsLength,
       accountingBalanced,
+      maxChildrenPerNode,
     },
   };
 }
@@ -2808,6 +2884,566 @@ async function runHiddenFragmentControl({ modelBefore, world, registry, registry
   return createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
 }
 
+// ============================================================================================
+// STAGE 5 -- Geometry-and-limits slice: F4 (collision-layer per-fragment/geometry reads, the
+// most complex single check in the whole plan), F5 (existing limits under SVF2), and their
+// two mandatory controls (invalid-geometry-consumer, capacity-breach) (plan §6.1 Phase 6/6c/
+// 7/7c, §7.4, §7.5, §6.5/§6.3a's invalid-geometry-consumer and capacity-breach rows).
+//
+// Per codex-advisor consult (medium, before implementing F4 specifically -- explicitly
+// sanctioned by this stage's own brief given F4's complexity and its dependence on exact
+// compactAndWeld/activeRangeCompaction.js semantics): (1) keep `getRenderProxy ->
+// adaptViewerGeometry -> compactAndWeld` together inside ONE synchronous in-page span per
+// geometry -- the production path (ViewerGeometryAdapter.js's own header comment,
+// CollisionWorld.js, createGeometryRegistry.js) deliberately never lets an await/yield land
+// between adaptation and welding, because the adapter returns LIVE REFERENCES into Viewer-
+// owned buffers; a cross-realm "raw capture, adapt in Node" split was rejected as the WEAKEST
+// option -- it would make the capture function an unreviewed second geometry adapter, since
+// adaptViewerGeometry makes priority-sensitive decisions from property presence/truthiness/
+// Array.isArray/undefined/Infinity that a JSON-safe capture could silently alter; (2) retain,
+// for F7 (a later stage), a synchronous DEEP SNAPSHOT of the adapter's own (pre-weld) result
+// shape -- never the live adapter output (its arrays are live references), never the welded
+// output (F7 needs the adapter's original active ranges/vertex stream; welding remaps indices,
+// converts to Float32, and filters degenerate triangles); (3) store geometry data ONCE per
+// distinct geometry id (many fragments legitimately share one), with per-fragment records
+// carrying only `{geometryId, worldMatrix}` plus a key into the shared geometry snapshot --
+// never duplicating the geometry buffers per fragment; (4) keep `scoreF4`/evidence-shaping/
+// verdict-reduction in ordinary Node code, and reuse the SAME Node-side weld-result classifier
+// for both F4's own scoring and the invalid-geometry-consumer control, so the control exercises
+// the exact same finiteness/failure classification F4 itself uses, not a second, separately-
+// reasoned copy. All adopted verbatim.
+//
+// `adaptViewerGeometry`/`compactAndWeld` were confirmed PURE (no live-Viewer/browser
+// dependency) by direct source read of both production files -- `compactAndWeld` is imported
+// for real, Node-side use at the top of this file (see that import's own comment); ONLY
+// `viewer.impl.getRenderProxy(model, fragId)` is genuinely live-browser-only. Offline tests
+// reconstruct `observeF4` in the same `node:vm` realm used throughout this file, populating
+// `window.__g1.mod` with the REAL imported `adaptViewerGeometry`/`compactAndWeld` (never fakes
+// for these two) alongside a fake `viewer.impl.getRenderProxy` (the one thing that must be
+// faked) -- exercising the real production functions without a browser.
+// ============================================================================================
+
+/** Node-side. Shared weld-result classifier -- the SAME logic both `scoreF4`'s own evidence
+ * shaping (via `observeF4`'s in-page duplicate, since an in-page function cannot call a
+ * Node-side helper -- see this file's own established bundling-note discipline) and
+ * `runInvalidGeometryConsumerControl` use to turn one `compactAndWeld` return value into an
+ * outcome, per plan §7.4's exact success/failure split: `{oversized:true,
+ * reason:'geometry-too-large-for-sync-build'}` is informational only, never a failure (F5 owns
+ * the limit-conformance verdict); `{oversized:true, reason:'index-references-invalid-vertex'}`
+ * is a genuine F4/control failure; a successful weld with every `position` component finite is
+ * success; a successful weld with a non-finite `position` component is F4's OWN added
+ * finiteness assertion firing (the gap `compactAndWeld` itself does not close, confirmed by
+ * source read: `findOutOfRangeVertexId` only checks range membership, never
+ * `Number.isFinite`). */
+function classifyWeldResult(weldResult) {
+  if (!weldResult) return { outcome: 'threw' };
+  if (weldResult.oversized === true) {
+    if (weldResult.reason === 'geometry-too-large-for-sync-build') return { outcome: 'oversized-informational', activeTriangleCount: weldResult.activeTriangleCount };
+    if (weldResult.reason === 'index-references-invalid-vertex') return { outcome: 'index-references-invalid-vertex' };
+    return { outcome: 'unrecognized-oversized-reason', reason: weldResult.reason };
+  }
+  const position = weldResult.position;
+  let allFinite = true;
+  if (position) {
+    for (let i = 0; i < position.length; i += 1) {
+      if (!Number.isFinite(position[i])) { allFinite = false; break; }
+    }
+  } else {
+    allFinite = false;
+  }
+  return allFinite ? { outcome: 'success', triangleCount: weldResult.triangleCount } : { outcome: 'non-finite-position' };
+}
+
+// ------------------------------------------------------------------------------------------
+// §7.4 F4 -- collision-layer per-fragment/geometry reads
+// ------------------------------------------------------------------------------------------
+
+/**
+ * In-page. `observeF4(sessionId)` -- plan §7.4's full observation sequence, the most complex
+ * single check in the whole plan, run as ONE synchronous-per-geometry-id chain (per the
+ * codex-advisor consult above). References only its own argument and
+ * window.__g1/window.__viewer/window.THREE. Reads the real `adaptViewerGeometry`/
+ * `compactAndWeld` from `window.__g1.mod`, same convention as `observeF1`.
+ *
+ * MUST run after `observeF1` for the same session -- reuses `session.artifacts.
+ * f1PopulationRecords` (every loaded fragment's already-extracted `{geometryIdentity,
+ * worldMatrix, ownerDbId}`, populated by `observeF1`'s own `extractAllFragments` call) to
+ * derive the distinct-geometry-id set and every fragment's own world matrix -- NEVER calling
+ * `fragList.getGeometryId()`/`readWorldMatrix()` a second time.
+ *
+ * For every distinct geometry id: `viewer.impl.getRenderProxy(model, representativeFragId)`
+ * for one representative fragment -> `adaptViewerGeometry(proxy.geometry)` -> (for every
+ * `unsupported: false` result) `compactAndWeld(adapted, {getUnitScale: () =>
+ * model.getUnitScale()})` -- deliberately omits `maxSyncTriangleCount` so `compactAndWeld`'s
+ * own internal default (imported from `/collision/constants.js` inside that file) applies,
+ * and deliberately never reimplements `resolveWeldEpsilon`'s own fallback logic itself --
+ * calling the real function with the real option shape `CollisionWorld` itself uses IS the
+ * correct reproduction of that formula, not a second transcription of it.
+ *
+ * Retains, per geometry id, a synchronous deep snapshot of the ADAPTER's own (pre-weld) result
+ * -- `{unsupported:false, positions, positionStride, positionOffset, index, ranges,
+ * activeTriangleCount, representativeFragId}`, every typed array `.slice()`d (never the live
+ * adapter output) -- into `session.artifacts.f4Geometry` (`Map<geometryId, snapshot>`), plus
+ * `session.artifacts.f4FragmentGeometryId` (`Map<fragId, geometryId>`, covering every loaded
+ * fragment) and `session.artifacts.f4WorldMatricesByFragId` (`Map<fragId, number[]>`, reused
+ * directly from `f1PopulationRecords`, never re-read from the Viewer) -- F7 (a later stage)
+ * reuses all three verbatim.
+ *
+ * Returns a JSON-safe `{ok, fields, first20RenderProxyFailures, first20GeometryAdapterFailures,
+ * first20WeldConsumerFailures}`. `fields` names every machine-readable field plan §7.4 lists,
+ * plus `oversizedGeometryCount` (the TRUE, never-bounded count backing F5's own copy -- plan
+ * §7.4's own text: "the count itself is never bounded").
+ *
+ * Known, documented simplification (matching F1's own §6.1a checkpoint carve-out and F3's own
+ * probe-boundary precedent from Stages 3-4): does not implement the full `CENSUS_TIMEOUT_MS`
+ * absolute-deadline-check-and-macrotask-yield chunking discipline plan §6.4a names for F4's
+ * census -- that is genuinely separate async-timing work a later, live-run-wiring stage owns;
+ * `CENSUS_TIMEOUT_MS` is exported here only as a named, documented constant for that stage to
+ * use, never silently baked into this function's own control flow.
+ */
+async function observeF4(sessionId) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session) return { ok: false, reason: 'session-not-found' };
+  if (!session.artifacts || !session.artifacts.f1PopulationRecords) {
+    return { ok: false, reason: 'f1-population-records-not-available-run-observeF1-first' };
+  }
+
+  const { model } = session;
+  const mod = g.mod || {};
+  const { adaptViewerGeometry } = mod['/collision/viewer/ViewerGeometryAdapter.js'] || {};
+  const { compactAndWeld: weld } = mod['/collision/geometry/activeRangeCompaction.js'] || {};
+  const viewer = window.__viewer;
+  const errOf = (e) => (e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? ''), reason: e.reason ?? null }
+    : { primitive: typeof e, value: String(e) });
+
+  const geometryIdToRepresentativeFragId = new Map();
+  const fragmentGeometryId = new Map();
+  const worldMatricesByFragId = new Map();
+  for (const [fragId, record] of session.artifacts.f1PopulationRecords) {
+    const geometryId = record.geometryIdentity ? record.geometryIdentity.geometryIndex : undefined;
+    if (geometryId === undefined) continue;
+    fragmentGeometryId.set(fragId, geometryId);
+    worldMatricesByFragId.set(fragId, record.worldMatrix);
+    if (!geometryIdToRepresentativeFragId.has(geometryId)) geometryIdToRepresentativeFragId.set(geometryId, fragId);
+  }
+
+  const distinctGeometryCount = geometryIdToRepresentativeFragId.size;
+  const renderProxyFailures = [];
+  const geometryAdapterFailures = [];
+  const weldConsumerFailures = [];
+  let geometriesWithNullIndex = 0;
+  let weldConsumerSuccessCount = 0;
+  let maxActiveTriangleCount = 0;
+  const oversizedGeometryIds = [];
+  let oversizedGeometryCount = 0;
+  const geometrySnapshots = new Map();
+
+  for (const [geometryId, representativeFragId] of geometryIdToRepresentativeFragId) {
+    let proxy;
+    try {
+      proxy = viewer.impl.getRenderProxy(model, representativeFragId);
+    } catch (e) {
+      renderProxyFailures.push({ geometryId, fragId: representativeFragId, error: errOf(e) });
+      continue;
+    }
+    if (!proxy) {
+      renderProxyFailures.push({ geometryId, fragId: representativeFragId, error: { message: 'getRenderProxy returned a falsy value' } });
+      continue;
+    }
+
+    let adapted;
+    try {
+      adapted = adaptViewerGeometry(proxy.geometry);
+    } catch (e) {
+      geometryAdapterFailures.push({ geometryId, fragId: representativeFragId, error: errOf(e) });
+      continue;
+    }
+    if (!adapted || adapted.unsupported === true) {
+      geometryAdapterFailures.push({ geometryId, fragId: representativeFragId, reason: adapted ? adapted.reason : 'adapter-returned-falsy' });
+      continue;
+    }
+
+    if (adapted.index === null || adapted.index === undefined) geometriesWithNullIndex += 1;
+    if (adapted.activeTriangleCount > maxActiveTriangleCount) maxActiveTriangleCount = adapted.activeTriangleCount;
+
+    geometrySnapshots.set(geometryId, {
+      unsupported: false,
+      positions: adapted.positions.slice(),
+      positionStride: adapted.positionStride,
+      positionOffset: adapted.positionOffset,
+      index: adapted.index == null ? null : adapted.index.slice(),
+      ranges: adapted.ranges.map((r) => ({ start: r.start, count: r.count })),
+      activeTriangleCount: adapted.activeTriangleCount,
+      representativeFragId,
+    });
+
+    let weldResult;
+    try {
+      weldResult = weld(adapted, { getUnitScale: () => model.getUnitScale() });
+    } catch (e) {
+      weldConsumerFailures.push({ geometryId, error: errOf(e) });
+      continue;
+    }
+
+    // Inlined duplicate of classifyWeldResult's own logic -- an in-page function cannot call a
+    // Node-side helper (this file's own established constraint); kept in exact lockstep with
+    // classifyWeldResult, which Node-side scoreF4/the invalid-geometry-consumer control use.
+    if (weldResult.oversized === true) {
+      if (weldResult.reason === 'geometry-too-large-for-sync-build') {
+        oversizedGeometryCount += 1;
+        if (oversizedGeometryIds.length < 20) oversizedGeometryIds.push(geometryId);
+      } else {
+        weldConsumerFailures.push({ geometryId, reason: weldResult.reason });
+      }
+      continue;
+    }
+    let allFinite = true;
+    if (weldResult.position) {
+      for (let i = 0; i < weldResult.position.length; i += 1) {
+        if (!Number.isFinite(weldResult.position[i])) { allFinite = false; break; }
+      }
+    } else {
+      allFinite = false;
+    }
+    if (!allFinite) {
+      weldConsumerFailures.push({ geometryId, nonFiniteComponent: true });
+      continue;
+    }
+    weldConsumerSuccessCount += 1;
+  }
+
+  session.artifacts.f4Geometry = geometrySnapshots;
+  session.artifacts.f4FragmentGeometryId = fragmentGeometryId;
+  session.artifacts.f4WorldMatricesByFragId = worldMatricesByFragId;
+
+  return {
+    ok: true,
+    fields: {
+      distinctGeometryCount,
+      renderProxyFailures: renderProxyFailures.length,
+      geometryAdapterFailures: geometryAdapterFailures.length,
+      geometriesWithNullIndex,
+      weldConsumerFailures: weldConsumerFailures.length,
+      weldConsumerSuccessCount,
+      maxActiveTriangleCount,
+      oversizedGeometryCount,
+    },
+    first20RenderProxyFailures: renderProxyFailures.slice(0, 20),
+    first20GeometryAdapterFailures: geometryAdapterFailures.slice(0, 20),
+    first20WeldConsumerFailures: weldConsumerFailures.slice(0, 20),
+    oversizedGeometryIds,
+  };
+}
+
+/**
+ * `scoreF4(fields)` -- plan §7.4's exact success/failure criteria, pure, Node-side. `FAIL` iff
+ * any render-proxy failure, any geometry-adapter failure (an `unsupported:true` result for a
+ * geometry F1 confirmed populated), or any weld-consumer failure (`index-references-invalid-
+ * vertex` or a non-finite `position` component) occurred. `geometriesWithNullIndex` and
+ * `oversizedGeometryCount` are NEVER failure conditions here (a `null` index is an explicit
+ * PASS for that geometry; an oversized-for-sync-build geometry is F5's own limit-conformance
+ * finding, never an F4 collision-compatibility regression).
+ */
+function scoreF4(fields) {
+  const f = fields || {};
+  const failed = f.renderProxyFailures > 0 || f.geometryAdapterFailures > 0 || f.weldConsumerFailures > 0;
+  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason: failed ? 'f4-render-proxy-adapter-or-weld-consumer-failure' : null, fields: f };
+}
+
+// ------------------------------------------------------------------------------------------
+// §7.5 F5 -- existing limits under SVF2
+// ------------------------------------------------------------------------------------------
+
+/** Node-side, pure. Maps a typed capacity error to `{limit, requested}` per plan §7.5's
+ * corrected dependency. `CapacityExceededError` (`Object.assign(this, {limit, requested,
+ * ...})`, `collision/errors.js`) is read directly; `EnumerationBoundExceededError` (`bound`
+ * names which limit, `detail` carries `{dbId,tally}`/`{dbId,root,count}` context, never a
+ * literal `limit`/`requested` pair) is mapped via this file's own imported constants. */
+function deriveOrganicBreach(error) {
+  if (!error) return null;
+  if (error.name === 'CapacityExceededError') {
+    return { limit: error.limit ?? null, requested: error.requested ?? null };
+  }
+  if (error.name === 'EnumerationBoundExceededError') {
+    const limitByBound = { maxFragmentsPerDbId, maxChildrenPerNode: MAX_CHILDREN_PER_NODE_LIMIT };
+    const detail = error.detail || {};
+    const requested = detail.tally !== undefined ? detail.tally : (detail.count !== undefined ? detail.count : null);
+    return { limit: (error.bound && limitByBound[error.bound]) ?? null, requested };
+  }
+  return null;
+}
+
+/**
+ * `scoreF5({f1Result, f2Fields, f4Fields})` -- plan §7.5's corrected dependency and organic-
+ * breach rule, pure, Node-side. `f1Result` is `observeF1`'s own raw return
+ * (`{ok:true,fields}` or `{ok:false,reason,error}`).
+ *
+ * - F1 failed with a typed `CapacityExceededError`/`EnumerationBoundExceededError`: `FAIL`,
+ *   `withinLimits:false`, `enforcementObserved:true` (never `PASS` for an organic breach, even
+ *   though enforcement fired correctly -- the corrected rule plan §7.5 explicitly warns
+ *   against reintroducing).
+ * - F1 failed with anything else: `BLOCKED`, `reason:'F1-failed-non-capacity'`.
+ * - F1 succeeded: `PASS` iff F2's accounting balances (fully enumerated) AND
+ *   `oversizedGeometryCount === 0` (F4's own count, copied verbatim) -- otherwise `FAIL`.
+ */
+function scoreF5({ f1Result, f2Fields, f4Fields }) {
+  if (!f1Result || f1Result.ok !== true) {
+    const err = f1Result && f1Result.error;
+    const isCapacityError = Boolean(err && (err.name === 'CapacityExceededError' || err.name === 'EnumerationBoundExceededError'));
+    if (isCapacityError) {
+      return {
+        verdict: CHECK_VERDICT.FAIL,
+        reason: 'organic-capacity-breach',
+        fields: {
+          maxRootFragmentCount: null, maxPerDbIdFragmentCount: null, maxChildrenPerNode: null,
+          sumRootFragmentCount: null, wholePopulationCount: null,
+          maxActiveTriangleCount: null, oversizedGeometryCount: null,
+          withinLimits: false, fullyEnumerated: false, enforcementObserved: true,
+          organicBreach: deriveOrganicBreach(err),
+        },
+      };
+    }
+    return {
+      verdict: CHECK_VERDICT.BLOCKED,
+      reason: 'F1-failed-non-capacity',
+      fields: {
+        maxRootFragmentCount: null, maxPerDbIdFragmentCount: null, maxChildrenPerNode: null,
+        sumRootFragmentCount: null, wholePopulationCount: null,
+        maxActiveTriangleCount: null, oversizedGeometryCount: null,
+        withinLimits: null, fullyEnumerated: null, enforcementObserved: false, organicBreach: null,
+      },
+    };
+  }
+
+  const f1 = f1Result.fields || {};
+  const f2 = f2Fields || {};
+  const f4 = f4Fields || {};
+  const fullyEnumerated = f2.accountingBalanced === true;
+  const oversizedGeometryCount = f4.oversizedGeometryCount ?? 0;
+  const withinLimits = fullyEnumerated && oversizedGeometryCount === 0;
+
+  return {
+    verdict: withinLimits ? CHECK_VERDICT.PASS : CHECK_VERDICT.FAIL,
+    reason: withinLimits ? null : (!fullyEnumerated ? 'not-fully-enumerated' : 'oversized-geometry-present'),
+    fields: {
+      maxRootFragmentCount: f1.maxRootFragmentCount ?? null,
+      maxPerDbIdFragmentCount: f1.maxPerDbIdFragmentCount ?? null,
+      maxChildrenPerNode: f2.maxChildrenPerNode ?? null,
+      sumRootFragmentCount: f1.sumRootFragmentCount ?? null,
+      wholePopulationCount: f1.populationCount ?? null,
+      maxActiveTriangleCount: f4.maxActiveTriangleCount ?? null,
+      oversizedGeometryCount,
+      withinLimits,
+      fullyEnumerated,
+      enforcementObserved: false,
+      organicBreach: null,
+    },
+  };
+}
+
+// ------------------------------------------------------------------------------------------
+// §6.5/§6.3a -- `invalid-geometry-consumer` (6c, right after F4, `restorationRequired: false`
+// -- an isolated synthetic perturbation, the non-interference oracle, never touches shared
+// state -- and `capacity-breach` (7c, right after F5, `restorationRequired: true`, the same
+// shared-state restoration discipline as prior controls).
+// ------------------------------------------------------------------------------------------
+
+/** Canonical/stable JSON stringification -- recursively sorts object keys before
+ * stringifying, so two structurally-identical JSON-safe values compare equal regardless of
+ * property insertion order. A bare `JSON.stringify(a) === JSON.stringify(b)` is key-order-
+ * SENSITIVE (`{a:1,b:2}` and `{b:2,a:1}` stringify to different strings despite being
+ * structurally identical), which would make `jsonDeepEqual` capable of a false positive
+ * `RESTORE_FAILED` report for `invalid-geometry-consumer` -- flagging leakage that never
+ * actually happened, purely because of an incidental key-ordering difference between the
+ * "before" snapshot and the "after" re-read. Never used for anything beyond this file's own
+ * JSON-safe evidence objects (never a value containing a function, a circular reference, or a
+ * non-JSON-safe type -- those are describeError's own job, §4.2). */
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function jsonDeepEqual(a, b) {
+  return stableStringify(a) === stableStringify(b);
+}
+
+function buildSyntheticOutOfRangeTriangleView() {
+  // Three vertices, one triangle; index deliberately references vertex 99, which does not
+  // exist (only 0, 1, 2 do) -- compactAndWeld's own existing, already-accepted contract
+  // (activeRangeCompaction.js's findOutOfRangeVertexId) rejects this.
+  return {
+    unsupported: false,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    positionStride: 3,
+    positionOffset: 0,
+    index: new Uint32Array([0, 1, 99]),
+    ranges: [{ start: 0, count: 3 }],
+    activeTriangleCount: 1,
+  };
+}
+
+function buildSyntheticNonFinitePositionTriangleView() {
+  // Two well-separated triangles (indexed), the second one carrying a non-finite (NaN) Y
+  // component at an otherwise IN-RANGE index. compactAndWeld itself never rejects this
+  // (confirmed gap, plan §7.4) -- only the finiteness assertion this control exists to prove
+  // catches it. Empirically verified (not just reasoned about): a SINGLE triangle whose only
+  // NaN vertex has no other vertex to weld against gets silently collapsed into a degenerate
+  // (then filtered) triangle by mergeVertices' own hash-based dedup, which would make the NaN
+  // vanish from the output entirely and defeat this control's whole purpose -- two triangles,
+  // far enough apart that no cross-triangle welding occurs, reliably keeps the NaN component in
+  // the final `position` array for the finiteness assertion to actually observe.
+  return {
+    unsupported: false,
+    positions: new Float32Array([
+      0, 0, 0, 10, 0, 0, 0, 10, 0,
+      1000, 1000, 0, 1001, 1000, 0, 1000, NaN, 0,
+    ]),
+    positionStride: 3,
+    positionOffset: 0,
+    index: new Uint32Array([0, 1, 2, 3, 4, 5]),
+    ranges: [{ start: 0, count: 6 }],
+    activeTriangleCount: 2,
+  };
+}
+
+/**
+ * `runInvalidGeometryConsumerControl({f4SnapshotBefore, readCurrentF4, controlTimeoutMs})` --
+ * plan §6.5's `invalid-geometry-consumer` row, run immediately after F4 (phase 6c). Entirely
+ * Node-side -- unlike every other control, its input is ENTIRELY synthetic and harness-local
+ * (never touches `modelBefore`/shared state), and `compactAndWeld` is genuinely Node-importable
+ * (the real, module-level import at the top of this file), so no in-page component is needed
+ * at all.
+ *
+ * Feeds two synthetic `triangleGeometryView`-shaped objects directly into the REAL, unmodified
+ * `compactAndWeld` -- an out-of-range index (must be rejected via `compactAndWeld`'s own
+ * existing contract, already proven by `test/geometry/activeRangeCompaction.test.mjs`'s own
+ * "Finding 3" case -- this control only confirms the harness's own call site observes that
+ * same rejection) and a non-finite position at an in-range index (must be rejected by the SAME
+ * `classifyWeldResult` Node-side classifier `scoreF4` itself uses -- proving that assertion
+ * actually fires, not merely present in the plan's prose).
+ *
+ * `restorationRequired: false` (Stage 1's `CONTROL_RESTORATION_REQUIRED['invalid-geometry-
+ * consumer']`, cross-checked, never hardcoded) -- the non-interference oracle per §6.3a,
+ * mirroring the `late-completion-after-timeout` control's own `f1Snapshot` pattern (plan
+ * §6.4a): `f4SnapshotBefore` (a deep copy of `checks.F4`, captured by the CALLER before this
+ * control runs) must `jsonDeepEqual` whatever `readCurrentF4()` (an injected callable, re-
+ * reading the current `checks.F4` AFTER both `compactAndWeld` calls settle) returns -- proving
+ * the synthetic input never leaked into any shared result field. `detected` requires BOTH
+ * synthetic cases correctly classified; ANY failure (either case misclassified, or leakage
+ * into `checks.F4`) is `RESTORE_FAILED`, per §6.3a's own per-control table for this control.
+ */
+async function runInvalidGeometryConsumerControl({ f4SnapshotBefore, readCurrentF4, controlTimeoutMs = CHECK_TIMEOUT_MS }) {
+  if (typeof readCurrentF4 !== 'function') {
+    return createControlResult('invalid-geometry-consumer', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'precondition-unmet' });
+  }
+
+  let outOfRangeResult = null;
+  let nonFiniteResult = null;
+  let timedOut = false;
+  let reason = null;
+
+  try {
+    await withControlTimeout((async () => {
+      outOfRangeResult = compactAndWeld(buildSyntheticOutOfRangeTriangleView());
+      nonFiniteResult = compactAndWeld(buildSyntheticNonFinitePositionTriangleView());
+    })(), controlTimeoutMs);
+  } catch (e) {
+    if (e && e.controlTimeout) { timedOut = true; reason = 'perturbation-timeout'; }
+    else { reason = 'compactAndWeld-threw-unexpectedly'; }
+  }
+
+  if (timedOut) {
+    return createControlResult('invalid-geometry-consumer', { state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null, reason });
+  }
+
+  const outOfRangeClassified = classifyWeldResult(outOfRangeResult);
+  const nonFiniteClassified = classifyWeldResult(nonFiniteResult);
+  const outOfRangeDetected = outOfRangeClassified.outcome === 'index-references-invalid-vertex';
+  const nonFiniteDetected = nonFiniteClassified.outcome === 'non-finite-position';
+  const detected = outOfRangeDetected && nonFiniteDetected;
+  if (!detected) reason = reason || 'not-detected';
+
+  let currentF4;
+  try {
+    currentF4 = await readCurrentF4();
+  } catch (e) {
+    return createControlResult('invalid-geometry-consumer', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected, restored: false, reason: 'readCurrentF4-threw' });
+  }
+  const restored = detected && jsonDeepEqual(f4SnapshotBefore, currentF4);
+
+  if (!detected) {
+    return createControlResult('invalid-geometry-consumer', { state: CONTROL_STATE.NOT_DETECTED, executed: true, detected: false, restored, reason });
+  }
+  if (!restored) {
+    return createControlResult('invalid-geometry-consumer', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: 'checks-F4-diverged-from-snapshot' });
+  }
+  return createControlResult('invalid-geometry-consumer', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
+/**
+ * `runCapacityBreachControl({modelBefore, world, registry, registryKey, checkCapacity,
+ * controlTimeoutMs})` -- plan §6.5's `capacity-breach` row, run immediately after F5 (phase
+ * 7c), against the SAME `modelBefore` F5's own dependency (F1) read. Patches
+ * `modelBefore.fragList.getCount` to report a count over `maxCollisionInstancesPerEpoch`
+ * (this file's own real, imported constant -- never a hardcoded duplicate), confirms
+ * `checkCapacity` (an injected stand-in for re-running F1's `resolveRoots` and confirming the
+ * expected `CapacityExceededError` fires -- a later live-run stage implements it as `(m) =>
+ * pageEvaluate(observeF1, {sessionId}).then((r) => ({capacityExceededDetected: !r.ok &&
+ * r.error && r.error.name === 'CapacityExceededError'}))`) reports the enforcement fired,
+ * restores in `finally`, same restoration discipline as `wrong-owner`/`hidden-fragment`/
+ * `tree-unavailable`. `restorationRequired` comes from Stage 1's
+ * `CONTROL_RESTORATION_REQUIRED['capacity-breach']` (plan line 846: `true`).
+ */
+async function runCapacityBreachControl({ modelBefore, world, registry, registryKey, checkCapacity, controlTimeoutMs = CHECK_TIMEOUT_MS }) {
+  if (!modelBefore || !modelBefore.fragList || typeof checkCapacity !== 'function') {
+    return createControlResult('capacity-breach', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'precondition-unmet' });
+  }
+
+  const fragList = modelBefore.fragList;
+  const hasOwnGetCount = Object.prototype.hasOwnProperty.call(fragList, 'getCount');
+  const originalGetCount = fragList.getCount;
+
+  let detected = null;
+  let timedOut = false;
+  let reason = null;
+
+  try {
+    fragList.getCount = () => maxCollisionInstancesPerEpoch + 1;
+    const checkResult = await withControlTimeout(checkCapacity(modelBefore), controlTimeoutMs);
+    detected = Boolean(checkResult && checkResult.capacityExceededDetected === true);
+    if (!detected) reason = 'not-detected';
+  } catch (e) {
+    if (e && e.controlTimeout) { timedOut = true; reason = 'perturbation-timeout'; }
+    else { detected = false; reason = 'checkCapacity-threw'; }
+  } finally {
+    if (hasOwnGetCount) fragList.getCount = originalGetCount;
+    else delete fragList.getCount;
+  }
+
+  if (timedOut) {
+    return createControlResult('capacity-breach', { state: CONTROL_STATE.TIMED_OUT, executed: true, detected: null, restored: null, reason });
+  }
+
+  const membersRestored = fragList.getCount === originalGetCount;
+  const worldLiveOk = !world || world.isModelLive(modelBefore) === true;
+  const bindingOk = !registry || Boolean(registry.bindingFor(registryKey) && registry.bindingFor(registryKey).model === modelBefore);
+  const restored = membersRestored && worldLiveOk && bindingOk;
+
+  if (!detected) {
+    return createControlResult('capacity-breach', { state: CONTROL_STATE.NOT_DETECTED, executed: true, detected: false, restored, reason });
+  }
+  if (!restored) {
+    return createControlResult('capacity-breach', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: reason || 'restore-assertion-failed' });
+  }
+  return createControlResult('capacity-breach', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
 // ------------------------------------------------------------------------------------------
 // Guarded entrypoint stub (item 8) -- a later stage replaces main()'s body.
 // ------------------------------------------------------------------------------------------
@@ -2896,5 +3532,14 @@ export {
   scoreF2,
   runWrongOwnerControl,
   runHiddenFragmentControl,
+  CENSUS_TIMEOUT_MS,
+  classifyWeldResult,
+  observeF4,
+  scoreF4,
+  deriveOrganicBreach,
+  scoreF5,
+  jsonDeepEqual,
+  runInvalidGeometryConsumerControl,
+  runCapacityBreachControl,
   main,
 };

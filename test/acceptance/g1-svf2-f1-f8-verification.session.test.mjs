@@ -1,23 +1,34 @@
 // test/acceptance/g1-svf2-f1-f8-verification.session.test.mjs
 //
-// Offline, browser-free unit tests for Stage 4 of test/acceptance/g1-svf2-f1-f8-verification.mjs
-// (Phase 2.5's real shared session-state construction -- the FROZEN contract F4/F5/F7/F8/F6
-// reuse verbatim -- plus F1, F2, and their two immediate mandatory controls). New sibling file,
-// same rationale as Stages 2/3's own splits: this stage's concerns (session construction,
-// fragment/tree observation, two more controls) are independent enough to warrant their own
-// file. Auto-discovered by scripts/run-tests.mjs (`*.test.mjs`).
+// Offline, browser-free unit tests for Stage 4 (Phase 2.5's real shared session-state
+// construction -- the FROZEN contract F4/F5/F7/F8/F6 reuse verbatim -- plus F1, F2, and their
+// two immediate mandatory controls) AND Stage 5 (F4, F5, and their two mandatory controls) of
+// test/acceptance/g1-svf2-f1-f8-verification.mjs. Stage 5 extends this file rather than adding
+// a new sibling: observeF4 needs to run in the SAME node:vm page-realm harness this file
+// already built, and genuinely benefits from building on a real F1-produced session (it reads
+// session.artifacts.f1PopulationRecords, which only observeF1 populates) -- splitting F4's
+// tests into a separate file would mean either duplicating this harness or awkwardly importing
+// across test files. Auto-discovered by scripts/run-tests.mjs (`*.test.mjs`).
 //
 // AUTHORIZATION BOUNDARY: this file NEVER launches a real Chromium browser, NEVER imports
-// playwright, and NEVER executes main(). Per the codex-advisor consult (see the main module's
-// own Stage 4 banner comment), the in-page functions here (setupSharedSessionResources,
-// observeF1, observeF2) are tested by reconstructing them from their own source text inside an
-// isolated node:vm context -- reusing Stage 2's own createPageRealm pattern -- rather than a
-// plain `globalThis.window` fake, so an accidental Node-module closure reference would surface
-// as a ReferenceError here exactly as it would if handed to a real page.evaluate.
+// playwright, and NEVER executes main(). Per the codex-advisor consults for both stages, the
+// in-page functions here (setupSharedSessionResources, observeF1, observeF2, observeF4) are
+// tested by reconstructing them from their own source text inside an isolated node:vm context
+// -- reusing Stage 2's own createPageRealm pattern -- rather than a plain `globalThis.window`
+// fake, so an accidental Node-module closure reference would surface as a ReferenceError here
+// exactly as it would if handed to a real page.evaluate. Per Stage 5's own codex-advisor
+// consult, observeF4's own tests populate window.__g1.mod with the REAL, actually-imported
+// `adaptViewerGeometry`/`compactAndWeld` (never fakes for these two -- both are pure,
+// already-tested production functions with no live-Viewer dependency, confirmed by direct
+// source read) alongside a FAKE `viewer.impl.getRenderProxy` -- the one piece that genuinely
+// needs a live browser.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import { adaptViewerGeometry } from '../../collision/viewer/ViewerGeometryAdapter.js';
+import { compactAndWeld as realCompactAndWeld } from '../../collision/geometry/activeRangeCompaction.js';
+import { createGeometryIdentity } from '../../collision/geometry/GeometryIdentity.js';
 import {
   CONTROL_STATE,
   CONTROL_RESTORATION_REQUIRED,
@@ -32,6 +43,14 @@ import {
   scoreF2,
   runWrongOwnerControl,
   runHiddenFragmentControl,
+  classifyWeldResult,
+  observeF4,
+  scoreF4,
+  deriveOrganicBreach,
+  scoreF5,
+  jsonDeepEqual,
+  runInvalidGeometryConsumerControl,
+  runCapacityBreachControl,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 // ============================================================================================
@@ -41,7 +60,7 @@ import {
 // the one function it's given, never a function that function calls).
 // ============================================================================================
 
-const IN_PAGE_FUNCTIONS = { sessionErrOf, setupSharedSessionResources, observeF1, observeF2 };
+const IN_PAGE_FUNCTIONS = { sessionErrOf, setupSharedSessionResources, observeF1, observeF2, observeF4 };
 
 function createPageRealm(initialWindow = {}) {
   const context = vm.createContext({ window: initialWindow, performance, setTimeout, clearTimeout, console });
@@ -640,4 +659,376 @@ test('createControlResult validates both controls\' produced records', async () 
     checkF2: async () => ({ hiddenFragmentDetected: true }),
   });
   assert.equal(hiddenResult.restorationRequired, CONTROL_RESTORATION_REQUIRED['hidden-fragment']);
+});
+
+// ============================================================================================
+// Stage 5 -- F4 (observeF4/scoreF4), F5 (scoreF5), and their two controls
+// ============================================================================================
+
+function fakeF4Mod() {
+  return {
+    '/collision/viewer/ViewerGeometryAdapter.js': { adaptViewerGeometry },
+    '/collision/geometry/activeRangeCompaction.js': { compactAndWeld: realCompactAndWeld },
+  };
+}
+
+function fakePopulationRecord(fragId, geometryIndex, { worldMatrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], ownerDbId = 100 } = {}) {
+  return [fragId, { fragmentId: fragId, geometryIdentity: createGeometryIdentity(0, geometryIndex), worldMatrix, ownerDbId }];
+}
+
+function buildF4Session(populationRecordsEntries, { getUnitScale = () => 1 } = {}) {
+  const model = { getUnitScale };
+  return {
+    model,
+    artifacts: { f1PopulationRecords: new Map(populationRecordsEntries) },
+  };
+}
+
+// Standard non-interleaved BufferAttribute shape (adaptViewerGeometry's own Priority 3) --
+// simplest well-supported geometry layout, matching this repo's own existing offline test
+// convention (test/geometry/activeRangeCompaction.test.mjs).
+function fakeGeometryProxy(positionsArray, indexArray) {
+  return {
+    geometry: {
+      attributes: { position: { array: new Float32Array(positionsArray), itemSize: 3 } },
+      index: indexArray ? { array: new Uint32Array(indexArray) } : undefined,
+    },
+  };
+}
+
+// A small, valid, weldable-with-nothing-to-weld triangle (three distinct vertices).
+const VALID_TRIANGLE_POSITIONS = [0, 0, 0, 10, 0, 0, 0, 10, 0];
+const VALID_TRIANGLE_INDEX = [0, 1, 2];
+
+test('observeF4: a fully healthy census -- one geometry, render proxy/adapter/weld all succeed', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1)]);
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => fakeGeometryProxy(VALID_TRIANGLE_POSITIONS, VALID_TRIANGLE_INDEX) } },
+  });
+
+  const result = await realm.call(observeF4, 's1');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.fields.distinctGeometryCount, 1);
+  assert.equal(result.fields.renderProxyFailures, 0);
+  assert.equal(result.fields.geometryAdapterFailures, 0);
+  assert.equal(result.fields.weldConsumerFailures, 0);
+  assert.equal(result.fields.weldConsumerSuccessCount, 1);
+  assert.equal(result.fields.geometriesWithNullIndex, 0);
+  assert.equal(result.fields.oversizedGeometryCount, 0);
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.PASS);
+
+  // F7 reuse artifacts.
+  const g = realm.window.__g1;
+  const session2 = g.sessions.s1;
+  assert.equal(Object.prototype.toString.call(session2.artifacts.f4Geometry), '[object Map]');
+  assert.equal(session2.artifacts.f4Geometry.size, 1);
+  const snapshot = session2.artifacts.f4Geometry.get(1);
+  assert.equal(snapshot.unsupported, false);
+  assert.equal(snapshot.activeTriangleCount, 1);
+  assert.equal(session2.artifacts.f4FragmentGeometryId.get(0), 1);
+  assert.deepEqual(session2.artifacts.f4WorldMatricesByFragId.get(0), [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+});
+
+test('observeF4: many fragments sharing ONE geometry id -> distinctGeometryCount stays 1, getRenderProxy called once', async () => {
+  let getRenderProxyCalls = 0;
+  const session = buildF4Session([
+    fakePopulationRecord(0, 1),
+    fakePopulationRecord(1, 1),
+    fakePopulationRecord(2, 1),
+  ]);
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => { getRenderProxyCalls += 1; return fakeGeometryProxy(VALID_TRIANGLE_POSITIONS, VALID_TRIANGLE_INDEX); } } },
+  });
+
+  const result = await realm.call(observeF4, 's1');
+
+  assert.equal(result.fields.distinctGeometryCount, 1);
+  assert.equal(getRenderProxyCalls, 1, 'only one representative fragment per distinct geometry id is ever proxied');
+});
+
+test('observeF4: getRenderProxy throws -> renderProxyFailures, FAIL', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1)]);
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => { throw new Error('getRenderProxy failed'); } } },
+  });
+  const result = await realm.call(observeF4, 's1');
+  assert.equal(result.fields.renderProxyFailures, 1);
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.FAIL);
+});
+
+test('observeF4: adaptViewerGeometry returns unsupported:true -> geometryAdapterFailures, FAIL', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1)]);
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    // offsets-shaped layout is explicitly rejected by the REAL adaptViewerGeometry.
+    __viewer: { impl: { getRenderProxy: () => ({ geometry: { offsets: [{ start: 0, count: 3, index: 0 }] } }) } },
+  });
+  const result = await realm.call(observeF4, 's1');
+  assert.equal(result.fields.geometryAdapterFailures, 1);
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.FAIL);
+});
+
+test('observeF4: a null index on an otherwise unsupported:false result is a PASS for that geometry, never a failure', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1)]);
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => fakeGeometryProxy(VALID_TRIANGLE_POSITIONS, null) } }, // non-indexed
+  });
+  const result = await realm.call(observeF4, 's1');
+  assert.equal(result.fields.geometriesWithNullIndex, 1);
+  assert.equal(result.fields.geometryAdapterFailures, 0);
+  assert.equal(result.fields.weldConsumerFailures, 0);
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.PASS, 'a null index must never fail F4');
+});
+
+test('observeF4: compactAndWeld index-references-invalid-vertex -> weldConsumerFailures, FAIL (real production function, no fake)', async () => {
+  const session = buildF4Session([fakePopulationRecord(0, 1)]);
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: { impl: { getRenderProxy: () => fakeGeometryProxy(VALID_TRIANGLE_POSITIONS, [0, 1, 99]) } }, // 99 out of range
+  });
+  const result = await realm.call(observeF4, 's1');
+  assert.equal(result.fields.weldConsumerFailures, 1);
+  assert.equal(result.first20WeldConsumerFailures[0].reason, 'index-references-invalid-vertex');
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.FAIL);
+});
+
+test('observeF4: geometry-too-large-for-sync-build is informational only, never an F4 failure', async () => {
+  // A triangleCount well above maxSyncTriangleCount (12_000), non-indexed so the streaming
+  // vertex count matches the range directly.
+  const bigCount = 12_001 * 3;
+  const positions = new Float32Array(bigCount * 3);
+  for (let i = 0; i < bigCount; i += 1) { positions[i * 3] = i; positions[i * 3 + 1] = 0; positions[i * 3 + 2] = 0; }
+  const session = buildF4Session([fakePopulationRecord(0, 1)]);
+  const realm = createPageRealm({
+    __g1: { sessions: { s1: session }, mod: fakeF4Mod() },
+    __viewer: {
+      impl: {
+        getRenderProxy: () => ({
+          geometry: { attributes: { position: { array: positions, itemSize: 3 } } }, // non-indexed
+        }),
+      },
+    },
+  });
+  const result = await realm.call(observeF4, 's1');
+  assert.equal(result.fields.oversizedGeometryCount, 1);
+  assert.equal(result.fields.weldConsumerFailures, 0, 'oversized-for-sync-build must never be counted as a weld-consumer failure');
+  assert.equal(scoreF4(result.fields).verdict, CHECK_VERDICT.PASS, 'F4 itself must never fail on an oversized-for-sync-build geometry -- that is F5\'s own finding');
+});
+
+test('observeF4: refuses to run before F1 has populated f1PopulationRecords', async () => {
+  const realm = createPageRealm({ __g1: { sessions: { s1: { model: {}, artifacts: {} } }, mod: fakeF4Mod() }, __viewer: {} });
+  const result = await realm.call(observeF4, 's1');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'f1-population-records-not-available-run-observeF1-first');
+});
+
+// -- classifyWeldResult (Node-side, shared by scoreF4's own evidence and the control) --
+
+test('classifyWeldResult: classifies all documented outcomes correctly', () => {
+  assert.equal(classifyWeldResult({ oversized: true, reason: 'geometry-too-large-for-sync-build' }).outcome, 'oversized-informational');
+  assert.equal(classifyWeldResult({ oversized: true, reason: 'index-references-invalid-vertex' }).outcome, 'index-references-invalid-vertex');
+  assert.equal(classifyWeldResult({ position: new Float32Array([1, 2, 3]), index: new Uint32Array([0]), triangleCount: 1 }).outcome, 'success');
+  assert.equal(classifyWeldResult({ position: new Float32Array([1, NaN, 3]), index: new Uint32Array([0]), triangleCount: 1 }).outcome, 'non-finite-position');
+  assert.equal(classifyWeldResult(null).outcome, 'threw');
+});
+
+// ============================================================================================
+// F5 -- existing limits under SVF2
+// ============================================================================================
+
+test('deriveOrganicBreach: CapacityExceededError reads limit/requested directly', () => {
+  const err = { name: 'CapacityExceededError', limit: 20000, requested: 25000 };
+  const breach = deriveOrganicBreach(err);
+  assert.deepEqual(breach, { limit: 20000, requested: 25000 });
+});
+
+test('deriveOrganicBreach: EnumerationBoundExceededError(maxFragmentsPerDbId) maps detail.tally to requested', () => {
+  const err = { name: 'EnumerationBoundExceededError', bound: 'maxFragmentsPerDbId', detail: { dbId: 7, tally: 6000 } };
+  const breach = deriveOrganicBreach(err);
+  assert.equal(breach.requested, 6000);
+  assert.equal(typeof breach.limit, 'number');
+});
+
+test('deriveOrganicBreach: EnumerationBoundExceededError(maxChildrenPerNode) maps detail.count to requested', () => {
+  const err = { name: 'EnumerationBoundExceededError', bound: 'maxChildrenPerNode', detail: { dbId: 7, root: 1, count: 11000 } };
+  const breach = deriveOrganicBreach(err);
+  assert.equal(breach.requested, 11000);
+  assert.equal(typeof breach.limit, 'number');
+});
+
+test('deriveOrganicBreach: an unrecognized error name returns null', () => {
+  assert.equal(deriveOrganicBreach({ name: 'SomeOtherError' }), null);
+  assert.equal(deriveOrganicBreach(null), null);
+});
+
+test('scoreF5: F1 succeeded, F2 balanced, F4 no oversized geometry -> PASS', () => {
+  const result = scoreF5({
+    f1Result: { ok: true, fields: { maxRootFragmentCount: 5, sumRootFragmentCount: 10, maxPerDbIdFragmentCount: 3, populationCount: 20 } },
+    f2Fields: { accountingBalanced: true, maxChildrenPerNode: 4 },
+    f4Fields: { maxActiveTriangleCount: 100, oversizedGeometryCount: 0 },
+  });
+  assert.equal(result.verdict, CHECK_VERDICT.PASS);
+  assert.equal(result.fields.withinLimits, true);
+  assert.equal(result.fields.enforcementObserved, false);
+});
+
+test('scoreF5: F1 succeeded but F2 did not balance -> FAIL, reason not-fully-enumerated', () => {
+  const result = scoreF5({
+    f1Result: { ok: true, fields: { populationCount: 20 } },
+    f2Fields: { accountingBalanced: false },
+    f4Fields: { oversizedGeometryCount: 0 },
+  });
+  assert.equal(result.verdict, CHECK_VERDICT.FAIL);
+  assert.equal(result.reason, 'not-fully-enumerated');
+});
+
+test('scoreF5: F1 succeeded, F2 balanced, but F4 reports an oversized geometry -> FAIL, reason oversized-geometry-present', () => {
+  const result = scoreF5({
+    f1Result: { ok: true, fields: { populationCount: 20 } },
+    f2Fields: { accountingBalanced: true },
+    f4Fields: { oversizedGeometryCount: 1 },
+  });
+  assert.equal(result.verdict, CHECK_VERDICT.FAIL);
+  assert.equal(result.reason, 'oversized-geometry-present');
+});
+
+test('scoreF5: F1 failed with a typed CapacityExceededError -> FAIL, never PASS, even though enforcement fired correctly', () => {
+  const result = scoreF5({
+    f1Result: { ok: false, error: { name: 'CapacityExceededError', limit: 20000, requested: 25000 } },
+  });
+  assert.equal(result.verdict, CHECK_VERDICT.FAIL);
+  assert.equal(result.fields.withinLimits, false);
+  assert.equal(result.fields.enforcementObserved, true, 'enforcement firing is recorded, but never lets this become PASS');
+  assert.deepEqual(result.fields.organicBreach, { limit: 20000, requested: 25000 });
+});
+
+test('scoreF5: F1 failed with a typed EnumerationBoundExceededError -> FAIL, enforcementObserved true', () => {
+  const result = scoreF5({
+    f1Result: { ok: false, error: { name: 'EnumerationBoundExceededError', bound: 'maxFragmentsPerDbId', detail: { tally: 6000 } } },
+  });
+  assert.equal(result.verdict, CHECK_VERDICT.FAIL);
+  assert.equal(result.fields.enforcementObserved, true);
+});
+
+test('scoreF5: F1 failed with a non-capacity error -> BLOCKED, reason F1-failed-non-capacity', () => {
+  const result = scoreF5({
+    f1Result: { ok: false, error: { name: 'TypeError', message: 'boom' } },
+  });
+  assert.equal(result.verdict, CHECK_VERDICT.BLOCKED);
+  assert.equal(result.reason, 'F1-failed-non-capacity');
+  assert.equal(result.fields.enforcementObserved, false);
+});
+
+// ============================================================================================
+// invalid-geometry-consumer / capacity-breach controls
+// ============================================================================================
+
+test('CONTROL_RESTORATION_REQUIRED cross-check: invalid-geometry-consumer is false, capacity-breach is true (plan lines 846, 851)', () => {
+  assert.equal(CONTROL_RESTORATION_REQUIRED['invalid-geometry-consumer'], false);
+  assert.equal(CONTROL_RESTORATION_REQUIRED['capacity-breach'], true);
+});
+
+test('jsonDeepEqual: structural equality regardless of key order', () => {
+  assert.equal(jsonDeepEqual({ a: 1, b: 2 }, { b: 2, a: 1 }), true);
+  assert.equal(jsonDeepEqual({ a: 1 }, { a: 2 }), false);
+});
+
+test('invalid-geometry-consumer control: DETECTED_RESTORED -- both synthetic cases correctly rejected, checks.F4 unchanged (uses the REAL compactAndWeld, no fake)', async () => {
+  const f4Snapshot = { verdict: 'PASS', fields: { weldConsumerFailures: 0 } };
+  const result = await runInvalidGeometryConsumerControl({
+    f4SnapshotBefore: f4Snapshot,
+    readCurrentF4: async () => ({ verdict: 'PASS', fields: { weldConsumerFailures: 0 } }), // structurally identical, fresh object
+  });
+  assert.equal(result.state, CONTROL_STATE.DETECTED_RESTORED);
+  assert.equal(result.restorationRequired, false);
+});
+
+test('invalid-geometry-consumer control: RESTORE_FAILED -- checks.F4 diverged from its snapshot (leakage)', async () => {
+  const result = await runInvalidGeometryConsumerControl({
+    f4SnapshotBefore: { verdict: 'PASS' },
+    readCurrentF4: async () => ({ verdict: 'FAIL' }), // leaked/mutated
+  });
+  assert.equal(result.state, CONTROL_STATE.RESTORE_FAILED);
+});
+
+test('invalid-geometry-consumer control: NOT_EXECUTABLE -- no readCurrentF4 dependency', async () => {
+  const result = await runInvalidGeometryConsumerControl({ f4SnapshotBefore: {} });
+  assert.equal(result.state, CONTROL_STATE.NOT_EXECUTABLE);
+});
+
+test('invalid-geometry-consumer control: TIMED_OUT -- the synthetic compactAndWeld pass does not settle inside the deadline', async () => {
+  // withControlTimeout races an already-started synchronous IIFE against the timeout; to
+  // reliably trigger TIMED_OUT here we pass an absurdly small timeout instead of trying to
+  // make compactAndWeld itself hang (it never does -- it's synchronous).
+  const result = await runInvalidGeometryConsumerControl({
+    f4SnapshotBefore: {},
+    readCurrentF4: async () => ({}),
+    controlTimeoutMs: -1,
+  });
+  // A negative timeout fires the timer on the very next tick, racing the synchronous work --
+  // assert it resolves to one of the two legitimate terminal outcomes for this race, never an
+  // exception escaping the control itself.
+  assert.ok([CONTROL_STATE.TIMED_OUT, CONTROL_STATE.DETECTED_RESTORED].includes(result.state));
+});
+
+function fakeModelForCapacityControl() {
+  return { fragList: { getCount: () => 100 } };
+}
+
+test('capacity-breach control: DETECTED_RESTORED -- getCount patched over the limit, enforcement observed', async () => {
+  const model = fakeModelForCapacityControl();
+  const result = await runCapacityBreachControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    checkCapacity: async (m) => ({ capacityExceededDetected: m.fragList.getCount() > 20000 }),
+  });
+  assert.equal(result.state, CONTROL_STATE.DETECTED_RESTORED);
+  assert.equal(result.restorationRequired, true);
+  assert.equal(model.fragList.getCount(), 100, 'restored to the original after the control');
+});
+
+test('capacity-breach control: NOT_DETECTED -- enforcement never fires', async () => {
+  const model = fakeModelForCapacityControl();
+  const result = await runCapacityBreachControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    checkCapacity: async () => ({ capacityExceededDetected: false }),
+  });
+  assert.equal(result.state, CONTROL_STATE.NOT_DETECTED);
+});
+
+test('capacity-breach control: RESTORE_FAILED -- detected, but post-restoration liveness check fails', async () => {
+  const model = fakeModelForCapacityControl();
+  const result = await runCapacityBreachControl({
+    modelBefore: model, world: { isModelLive: () => false }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    checkCapacity: async () => ({ capacityExceededDetected: true }),
+  });
+  assert.equal(result.state, CONTROL_STATE.RESTORE_FAILED);
+});
+
+test('capacity-breach control: TIMED_OUT', async () => {
+  const model = fakeModelForCapacityControl();
+  const result = await runCapacityBreachControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    checkCapacity: () => new Promise(() => {}),
+    controlTimeoutMs: 20,
+  });
+  assert.equal(result.state, CONTROL_STATE.TIMED_OUT);
+});
+
+test('capacity-breach control: NOT_EXECUTABLE -- no modelBefore', async () => {
+  const result = await runCapacityBreachControl({ modelBefore: null, checkCapacity: async () => ({ capacityExceededDetected: true }) });
+  assert.equal(result.state, CONTROL_STATE.NOT_EXECUTABLE);
+});
+
+test('capacity-breach control: restorationRequired cross-checked against Stage 1\'s own constant', async () => {
+  const model = fakeModelForCapacityControl();
+  const result = await runCapacityBreachControl({
+    modelBefore: model, world: { isModelLive: () => true }, registry: { bindingFor: () => ({ model }) }, registryKey: 'K',
+    checkCapacity: async () => ({ capacityExceededDetected: true }),
+  });
+  assert.equal(result.restorationRequired, CONTROL_RESTORATION_REQUIRED['capacity-breach']);
 });
