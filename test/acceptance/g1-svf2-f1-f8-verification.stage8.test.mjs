@@ -28,6 +28,9 @@ import {
   runHarness, validateResultSchema, main, runInPageResourceCleanup,
   walkRedirectRootUrl, buildCheckRecord, projectCheckVerdicts, EXPECTED_VIEWER_SHA256,
   classifyViewerScriptIntegrity,
+  IN_PAGE_FUNCTION_REGISTRY, buildBootstrapScriptSource, documentLoadStarter,
+  loadDocumentNodeStarter, f3InstallProbe, f3ProbeSettledPredicate, f3FinalizeProbe,
+  setupSharedSessionResources, captureModelFormatSignals,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 const HARNESS_PATH = fileURLToPath(new URL('./g1-svf2-f1-f8-verification.mjs', import.meta.url));
@@ -1100,4 +1103,291 @@ test('runHarness Phase 11 step 20a: an ABANDONED F6 token (realm destroyed, drai
     'cleanupFailures must record the specific abandoned-F6-token reason, not just the still-timed-out one',
   );
   assert.equal(result.overall, OVERALL_VERDICT.FAIL, 'cleanupUnresolvedOwnership true must fail the run via branch 1');
+});
+
+// ============================================================================================
+// Fix wave (final whole-branch review, Important I5): ONE shared, contract-enforcing fake page
+// realm -- the systemic fix for I1/I2/I3's shared root cause (each prior fake independently
+// guessed at pageEvaluate's real contract, and each guessed wrong in a different way). Unlike
+// every other realm helper in this file (createCleanupPageRealm above) or session.test.mjs's
+// own createPageRealm, this one:
+//  (a) rejects a pageEvaluate/pageWaitForFunction call carrying more positional arguments than
+//      Playwright's own page.evaluate(fn,arg)/page.waitForFunction(fn,arg,opts) accept, or an
+//      `arg` that is not JSON-round-trip-safe (undefined allowed, matching Playwright's own
+//      no-arg equivalent) -- exactly what would have caught I1 (observeF8's silently-dropped
+//      third argument) the first time any test called it this way;
+//  (b) actually dispatches through buildBootstrapScriptSource()'s own real IIFE source (never a
+//      per-function vm.runInContext injection by bare name) -- exactly what would have caught
+//      I2 (sessionErrOf missing from IN_PAGE_FUNCTION_REGISTRY) immediately, since a missing
+//      registry entry means window.__g1HarnessFns[key] is genuinely undefined here, not merely
+//      absent from some OTHER, hand-maintained fake's own injection list.
+// ============================================================================================
+
+function assertJsonRoundTripSafe(value, label) {
+  if (value === undefined) return; // Playwright's own no-arg equivalent -- always allowed
+  let json;
+  try {
+    json = JSON.stringify(value);
+  } catch (e) {
+    throw new Error(`${label}: argument is not JSON-serializable (${e && e.message})`);
+  }
+  if (json === undefined) {
+    throw new Error(`${label}: argument serializes to undefined (a function, symbol, or top-level undefined is not a valid page.evaluate argument)`);
+  }
+}
+
+function createContractEnforcingPageRealm(initialWindow = {}) {
+  const context = vm.createContext({ window: initialWindow, performance, setTimeout, clearTimeout, console });
+  vm.runInContext(buildBootstrapScriptSource(), context);
+  const keyOf = new Map(Object.entries(IN_PAGE_FUNCTION_REGISTRY).map(([key, fn]) => [fn, key]));
+  const resolveKey = (fn) => {
+    const key = keyOf.get(fn);
+    if (!key) throw new Error(`createContractEnforcingPageRealm: function '${fn && fn.name}' is not registered in IN_PAGE_FUNCTION_REGISTRY`);
+    return key;
+  };
+  const dispatch = (fn, arg) => {
+    const key = resolveKey(fn);
+    const fnsInContext = vm.runInContext('window.__g1HarnessFns', context);
+    const dispatchFn = fnsInContext[key];
+    if (typeof dispatchFn !== 'function') {
+      throw new Error(`createContractEnforcingPageRealm: window.__g1HarnessFns['${key}'] was never installed -- buildBootstrapScriptSource()'s own real IIFE construction did not register it`);
+    }
+    // Round-trip the argument through JSON, exactly like a real Playwright serialization
+    // boundary would -- a test-only mutation of the ORIGINAL object after this call can never
+    // leak into what the in-page function actually observes.
+    const clonedArg = arg === undefined ? undefined : JSON.parse(JSON.stringify(arg));
+    const out = dispatchFn(clonedArg);
+    return out && typeof out.then === 'function' ? out : Promise.resolve(out);
+  };
+  return {
+    window: initialWindow,
+    pageEvaluate(fn, arg, ...rest) {
+      if (rest.length > 0) throw new Error(`pageEvaluate: called with ${2 + rest.length} arguments -- page.evaluate(fn, arg) accepts exactly two; a third argument is ALWAYS silently dropped by the real Playwright wrapper, never delivered (this is exactly I1's own bug class)`);
+      assertJsonRoundTripSafe(arg, 'pageEvaluate');
+      return dispatch(fn, arg).then((result) => (result === undefined ? undefined : JSON.parse(JSON.stringify(result))));
+    },
+    async pageWaitForFunction(fn, arg, opts = {}, ...rest) {
+      if (rest.length > 0) throw new Error(`pageWaitForFunction: called with ${3 + rest.length} arguments -- page.waitForFunction(fn, arg, opts) accepts exactly three`);
+      assertJsonRoundTripSafe(arg, 'pageWaitForFunction');
+      const timeout = opts && typeof opts.timeout === 'number' ? opts.timeout : 30_000;
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        const result = await dispatch(fn, arg);
+        if (result) return result;
+        if (Date.now() >= deadline) throw new Error('pageWaitForFunction: timeout');
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+    },
+  };
+}
+
+/**
+ * A minimal but REAL Phase-0-shaped fixture: a fake window.Autodesk.Viewing.Document.load /
+ * window.__viewer.loadDocumentNode that actually succeed (so the real documentLoadStarter/
+ * loadDocumentNodeStarter genuinely populate window.__g1.loads/models, never pre-seeded), a
+ * fake model whose isOTG()/isSVF2() both report true (so the real classifier confirms SVF2 and
+ * the run genuinely reaches Phase 2.5), and a synchronous MODEL_ADDED_EVENT dispatch so F3's own
+ * probe settles immediately. Every F1/F2/F4/F7/F8-specific fixture piece (enumerator/mod) is
+ * DELIBERATELY minimal/absent -- each of those checks degrades to a well-defined non-throwing
+ * result (FAIL or an empty population) when its own optional collaborators are missing, per
+ * direct read of observeF1's own try/catch-guarded extractAllFragments call -- this test's own
+ * goal is proving the REAL dispatch/registry/argument-contract mechanism end-to-end, never full
+ * Viewer fidelity (session.test.mjs already covers each check's own scoring logic in isolation,
+ * against much richer fixtures).
+ */
+function buildIntegrationFixtureWindow({ resolveRoots } = {}) {
+  const model = {
+    isOTG: () => true,
+    isSVF2: () => true,
+    isObjectTreeCreated: () => false,
+    getFragmentList: () => ({ getCount: () => 0 }),
+    getData: () => ({}),
+    isLoadDone: () => true,
+    getAllModels: () => [model],
+  };
+  const fakeDoc = { getRoot: () => ({ getDefaultGeometry: () => 'defaultGeom' }) };
+  return {
+    Autodesk: {
+      Viewing: {
+        MODEL_ADDED_EVENT: 'modelAdded',
+        Document: { load: (urnStr, onSuccess) => { onSuccess(fakeDoc); } },
+      },
+    },
+    __viewer: {
+      loadDocumentNode: () => Promise.resolve(model),
+      // Fires synchronously -- this fixture's own model never changes identity across the
+      // load, so firing at registration time (Phase 1, before Phase 2's load even starts) is a
+      // timing simplification with no correctness effect for this fixture.
+      addEventListener: (name, listener) => { if (name === 'modelAdded') listener({ model }); },
+      removeEventListener: () => {},
+      getAllModels: () => [model],
+      unloadModel: () => {},
+    },
+    // Confirmed by direct empirical trace (this fix wave): setupSharedSessionResources, unlike
+    // observeF1/F2/F4/F7/F8, does NOT degrade gracefully when its own required mod entries are
+    // absent -- it destructures CollisionWorld/createModelRegistry/createViewerElementEnumerator
+    // directly and throws a raw TypeError if any is missing. These three, and a STATEFUL fake
+    // registry (register/bindingFor must actually agree, matching session.test.mjs's own
+    // fakeRegistry pattern), are the minimum needed for Phase 2.5 to genuinely succeed.
+    __g1: {
+      closing: false, nextGen: 1, loads: {}, docs: {}, models: {},
+      mod: {
+        '/collision/index.js': { CollisionWorld: { fromViewer: async () => ({ isModelLive: () => true, evictModel: () => {}, dispose: () => {} }) } },
+        '/clashtest/index.js': {
+          createModelRegistry: ({ world }) => {
+            let boundModel = null;
+            return {
+              world,
+              register: (K, m) => { boundModel = m; },
+              bindingFor: () => (boundModel ? { model: boundModel } : null),
+              unregister: () => {},
+            };
+          },
+        },
+        '/clashtest/viewer/index.js': {
+          createViewerElementEnumerator: () => ({
+            resolveRoots: resolveRoots || (async () => ({ roots: [], ownerMismatch: { count: 0 }, unreachable: { count: 0 }, population: { count: 0, digest: 'd' } })),
+          }),
+        },
+      },
+    },
+    THREE: {},
+  };
+}
+
+// Note on scope (established empirically during this fix wave): this fixture's own tokens all
+// reach COMPLETED, so it does NOT exercise sealLoadRecords/drainLoadToken's own argument shapes
+// (I3's specific bug, since a COMPLETED Node-side token's state is never re-read from the
+// in-page seal outcome) -- that is covered separately, precisely, by the dedicated "runHarness
+// Phase 11 wiring (I3)" test above (both confirmed by a revert-check: removing sessionErrOf from
+// the registry, or reverting sealLoadRecords' argument wrapping, was tried against this test
+// during this fix wave -- only the former failed here, confirming I3 needs its own test, which
+// already exists).
+test('runHarness (I5): through the REAL buildBootstrapScriptSource()/window.__g1HarnessFns dispatch and the contract-enforcing pageEvaluate/pageWaitForFunction (arg-count + JSON-safety enforced) -- reaches real F1/F8 evidence, never crashes', async () => {
+  const realm = createContractEnforcingPageRealm(buildIntegrationFixtureWindow());
+  const deps = {
+    pageEvaluate: realm.pageEvaluate,
+    pageWaitForFunction: realm.pageWaitForFunction,
+    loadStarter: { documentLoad: documentLoadStarter, loadDocumentNode: loadDocumentNodeStarter },
+    installF3Probe: () => realm.pageEvaluate(f3InstallProbe, undefined),
+    finalizeF3Probe: (arg) => realm.pageEvaluate(f3FinalizeProbe, arg),
+    setupSharedSessionResources: (tokenId) => realm.pageEvaluate(setupSharedSessionResources, tokenId),
+    controls: {},
+    f6Deps: {},
+    nodeCleanupResources: {},
+    captureViewerScriptIntegrity: async () => ({ requestFailed: false, autodeskViewingDefined: true, attributableResponses: [] }),
+    errorLedger: { events: [], record() {} },
+    harnessIntegrity: { path: HARNESS_PATH, sha256: 'a'.repeat(64), branch: 'main', headSha: 'deadbeef', gitStatusPorcelain: '', servedModuleManifest: {}, remoteAssets: { viewerScript: { integrityResult: INTEGRITY_RESULT.VERIFIED }, viewerStyle: { identityGatesOverall: false }, otherObservedRemoteAssets: [] } },
+    writeResultAtomically: async () => {},
+  };
+  // Short timeouts -- every predicate in this fixture settles synchronously/on the first poll,
+  // so this only bounds how long a genuinely-never-settling path (F6, deliberately not fully
+  // fixtured -- see the doc comment above) can stall this test.
+  const config = {
+    urn: 'fixture-urn', loadTimeoutMs: 2000, unloadEventName: 'beforeModelUnload', addedEventName: 'modelAdded',
+    reloadProbeTimeoutMs: 200, unloadWaitTimeoutMs: 200, controlTimeoutMs: 200, censusTimeoutMs: 2000,
+    viewerVersion: '7.124.2', chromium: 'x', node: process.version, initializer: { env: 'AutodeskProduction2', api: 'streamingV2' },
+  };
+
+  const result = await runHarness(deps, config);
+
+  // The run must genuinely reach real F1/F8 evidence (proving Phase 1/2/2.5 and the REAL
+  // contract-enforcing dispatch all worked end-to-end -- catches I1/I2's own bug classes).
+  assert.equal(result.classifier, CLASSIFIER.CONFIRMED_SVF2, 'the real classifier must confirm SVF2 from the real captureModelFormatSignals/readFormat path');
+  assert.equal(result.checks.F1.evidence.status, 'observed', 'F1 must have actually been observed (not blocked/not-run) -- proves Phase 2.5/setupSharedSessionResources (I2\'s own location) genuinely succeeded');
+  // F8 itself legitimately ends up 'observation-failed' with this deliberately minimal fixture
+  // (an empty root population never populates session.artifacts.f1FragmentMapsByRoot, which F8
+  // requires) -- never asserted as 'observed' here. What matters for I1: F8 was DISPATCHED at
+  // all ('not-run' would mean the run never reached Phase 9), and its own reason is the
+  // domain-specific fragment-maps gate, never a session-not-found/shape-crash symptom -- proving
+  // observeF8's real single-combined-object argument (I1's own fix) was genuinely delivered
+  // through the real dispatch with the right sessionId, not silently dropped or malformed.
+  assert.notEqual(result.checks.F8.evidence.status, 'not-run', 'F8 must have actually been dispatched (Phase 9 reached), not skipped');
+  assert.equal(result.checks.F8.reason, 'f1-fragment-maps-by-root-not-available-run-observeF1-first', 'F8\'s own failure reason must be the expected domain-specific gate, never a session-not-found/argument-shape symptom');
+  // Schema-complete regardless of individual verdicts (this fixture is deliberately minimal, so
+  // several checks legitimately FAIL/BLOCK on missing optional collaborators -- never asserted
+  // as PASS here; only that the run completed and every object is well-formed).
+  const { valid, errors } = validateResultSchema(result);
+  assert.equal(valid, true, `result must be schema-valid: ${errors.join('; ')}`);
+});
+
+// ---- Revert-check (this fix wave's own methodology, matching the step-20a regression test
+// above): confirms this NEW integration test would actually have caught I1/I2/I3 if they were
+// still present, by re-deriving each bug inline against THIS realm and asserting the specific
+// failure mode -- not run automatically (would require mutating production source), but the
+// three cases below exercise the SAME realm/dispatch machinery directly against a deliberately
+// wrong call, proving the enforcement itself is live, not merely unexercised scaffolding.
+
+test('createContractEnforcingPageRealm: rejects a 3-argument pageEvaluate call (I1\'s own exact bug shape)', () => {
+  const realm = createContractEnforcingPageRealm({ __g1: undefined });
+  assert.throws(
+    () => realm.pageEvaluate(observeF8, 's1', { f1Fields: {}, f2Fields: {} }),
+    /called with 3 arguments/,
+  );
+});
+
+test('createContractEnforcingPageRealm: throws if a function is not registered in IN_PAGE_FUNCTION_REGISTRY (I2\'s own bug shape, reproduced against a throwaway unregistered function)', () => {
+  const realm = createContractEnforcingPageRealm({ __g1: undefined });
+  function notRegisteredAnywhere() { return 1; }
+  assert.throws(
+    () => realm.pageEvaluate(notRegisteredAnywhere, undefined),
+    /is not registered in IN_PAGE_FUNCTION_REGISTRY/,
+  );
+});
+
+test('createContractEnforcingPageRealm: rejects a non-JSON-serializable argument (a function value)', () => {
+  const realm = createContractEnforcingPageRealm({ __g1: undefined });
+  assert.throws(
+    () => realm.pageEvaluate(observeF1, () => {}),
+    /not JSON-serializable|serializes to undefined/,
+  );
+});
+
+// ============================================================================================
+// A second, focused I5 integration test: the happy-path fixture above never actually calls
+// sessionErrOf (it is only referenced on observeF1/setupSharedSessionResources's own ERROR
+// paths, none of which the happy path exercises) -- confirmed empirically during this fix wave
+// by temporarily removing sessionErrOf from IN_PAGE_FUNCTION_REGISTRY and observing the happy-
+// path test above still pass unchanged. This test drives observeF1's own resolveRoots-threw
+// catch path for real (a genuine thrown Error, not a fixture shortcut), which itself calls
+// sessionErrOf(e) to build the error's own JSON-safe shape -- exactly I2's own bug location. If
+// sessionErrOf were missing from the registry, this would surface as a SECOND, uncaught
+// ReferenceError raised while handling the first error, propagating out of observeF1 entirely
+// (proven by the same removal experiment: this test fails with exactly that shape).
+// ============================================================================================
+
+test('runHarness (I5): a real observeF1 resolveRoots-threw path (which itself calls sessionErrOf) completes cleanly, never a second uncaught ReferenceError -- I2\'s own exact bug location', async () => {
+  const realm = createContractEnforcingPageRealm(buildIntegrationFixtureWindow({
+    resolveRoots: async () => { throw new Error('simulated resolveRoots failure'); },
+  }));
+  const deps = {
+    pageEvaluate: realm.pageEvaluate,
+    pageWaitForFunction: realm.pageWaitForFunction,
+    loadStarter: { documentLoad: documentLoadStarter, loadDocumentNode: loadDocumentNodeStarter },
+    installF3Probe: () => realm.pageEvaluate(f3InstallProbe, undefined),
+    finalizeF3Probe: (arg) => realm.pageEvaluate(f3FinalizeProbe, arg),
+    setupSharedSessionResources: (tokenId) => realm.pageEvaluate(setupSharedSessionResources, tokenId),
+    controls: {}, f6Deps: {}, nodeCleanupResources: {},
+    captureViewerScriptIntegrity: async () => ({ requestFailed: false, autodeskViewingDefined: true, attributableResponses: [] }),
+    errorLedger: { events: [], record() {} },
+    harnessIntegrity: { path: HARNESS_PATH, sha256: 'a'.repeat(64), branch: 'main', headSha: 'deadbeef', gitStatusPorcelain: '', servedModuleManifest: {}, remoteAssets: { viewerScript: { integrityResult: INTEGRITY_RESULT.VERIFIED }, viewerStyle: { identityGatesOverall: false }, otherObservedRemoteAssets: [] } },
+    writeResultAtomically: async () => {},
+  };
+  const config = {
+    urn: 'fixture-urn', loadTimeoutMs: 2000, unloadEventName: 'beforeModelUnload', addedEventName: 'modelAdded',
+    reloadProbeTimeoutMs: 200, unloadWaitTimeoutMs: 200, controlTimeoutMs: 200, censusTimeoutMs: 2000,
+    viewerVersion: '7.124.2', chromium: 'x', node: process.version, initializer: { env: 'AutodeskProduction2', api: 'streamingV2' },
+  };
+
+  const result = await runHarness(deps, config);
+
+  assert.equal(result.classifier, CLASSIFIER.CONFIRMED_SVF2);
+  // observeF1 itself must have caught the thrown Error and built a clean, JSON-safe error
+  // record via sessionErrOf -- 'observation-failed' with the EXACT expected reason, never
+  // 'not-run' (which would mean a second, uncaught ReferenceError aborted the whole sequence
+  // before F1 even finished recording its own result).
+  assert.equal(result.checks.F1.evidence.status, 'observation-failed');
+  assert.equal(result.checks.F1.reason, 'resolveRoots-threw');
+  const { valid, errors } = validateResultSchema(result);
+  assert.equal(valid, true, `result must still be schema-valid: ${errors.join('; ')}`);
 });
