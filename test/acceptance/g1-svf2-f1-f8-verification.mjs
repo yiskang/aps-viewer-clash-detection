@@ -731,6 +731,54 @@ const F_CHECK_NAMES = Object.freeze(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', '
 const VALID_INTEGRITY_VALUES = new Set(Object.values(INTEGRITY_RESULT));
 
 /**
+ * `buildCheckRecord({verdict, reason, fields, evidence})` -- fix wave (final whole-branch
+ * review, Important I4). Plan §8's own JSON sketch (line 1199): every `checks.F*` entry is a
+ * full `{verdict, reason, fields, evidence}` record, never a bare verdict string. `fields` is
+ * each check's own already-observed raw field set (exactly what its `scoreF*`/`observeF*`
+ * already returns); `evidence` is execution PROVENANCE ONLY (never a duplicate of `fields`):
+ * `{status: 'observed'|'observation-failed'|'not-run', error, blockedBy}` --
+ * `status: 'observed'` means the check's own scoring logic actually ran against real observed
+ * fields; `'observation-failed'` means the in-page observe call itself returned `ok: false` (or
+ * F6's own equivalent), so `fields` is `{}` and `verdict` is fail-closed `BLOCKED`;
+ * `'not-run'` means this check's own phase was never reached at all this run (`blockedBy`
+ * names why: `'classifier'` for a classifier-stop, `'fatal-error'` for a mid-sequence abort).
+ * `error`, when present, has already passed through `describeError` (JSON-safe, secret-
+ * redacted) -- never a raw Error/live object.
+ *
+ * Deliberately does NOT change what `computeOverall` consumes (Stage 1's own frozen, pure,
+ * extensively-tested `checks[name] === CHECK_VERDICT.FAIL/PASS` bare-string contract, confirmed
+ * unchanged by direct read) -- `runHarness` derives a separate bare-string projection via
+ * `projectCheckVerdicts` (below) purely for that one call, and this richer record is what
+ * actually gets persisted into the result's own `checks` field. codex-advisor (medium, this fix
+ * wave): confirmed this is the correct design -- computeOverall's own documented/implemented
+ * string-input contract must never be reopened for this, and a single canonical `checks` object
+ * (never two independently-maintained maps) avoids a realistic drift failure between them.
+ */
+function buildCheckRecord({ verdict, reason = null, fields = {}, evidence = {} }) {
+  return {
+    verdict,
+    reason,
+    fields: fields || {},
+    evidence: {
+      status: evidence.status || 'observed',
+      error: evidence.error || null,
+      blockedBy: evidence.blockedBy || null,
+    },
+  };
+}
+
+/** `projectCheckVerdicts(checks)` -- the bare-string `{F1: 'PASS', ...}` shape computeOverall's
+ * own unchanged contract requires, derived from the canonical rich `checks` records above. */
+function projectCheckVerdicts(checks) {
+  const out = {};
+  for (const name of F_CHECK_NAMES) {
+    const record = checks[name];
+    out[name] = record && typeof record === 'object' ? record.verdict : record;
+  }
+  return out;
+}
+
+/**
  * computeOverall(input) -- the six-branch precedence function from plan §6.3, evaluated in
  * exact order; first matching branch wins.
  *
@@ -5881,7 +5929,12 @@ async function runHarness(deps, config) {
       } catch { f3TimedOut = true; }
       const f3Timeline = await finalizeF3Probe({ timedOut: f3TimedOut });
       const f3Score = scoreF3Readiness(f3Timeline);
-      checks.F3 = f3Score.verdict;
+      // Fix wave (Important I4): full {verdict, reason, fields, evidence} record, never a bare
+      // verdict string -- see buildCheckRecord's own doc comment.
+      checks.F3 = buildCheckRecord({
+        verdict: f3Score.verdict, reason: f3Score.reason, fields: f3Score.fields,
+        evidence: { status: 'observed', error: f3Score.error || null },
+      });
 
       // Phase 3c -- tree-unavailable control, immediately after F3.
       controlResults['tree-unavailable'] = await runControlSafely('tree-unavailable', controls && controls.treeUnavailable);
@@ -5889,7 +5942,12 @@ async function runHarness(deps, config) {
       // Phase 4 -- F1.
       const f1Result = await pageEvaluate(observeF1, sessionId);
       const f1Score = scoreF1(f1Result.fields || {});
-      checks.F1 = f1Result.ok === true ? f1Score.verdict : CHECK_VERDICT.BLOCKED;
+      // Fix wave (Important I4): see buildCheckRecord's own doc comment. An observation
+      // failure (f1Result.ok !== true) never fabricates fields/a scored reason from an empty
+      // observation -- fields stays {}, reason/evidence.error name the actual observe failure.
+      checks.F1 = f1Result.ok === true
+        ? buildCheckRecord({ verdict: f1Score.verdict, reason: f1Score.reason, fields: f1Score.fields, evidence: { status: 'observed' } })
+        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f1Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
       // Fix wave (final whole-branch review, Minor M3, treated as a real bug): captured HERE,
       // immediately after F1 is computed -- never inline at the control call site below. The
       // prior `f1SnapshotBefore: checks.F1` / `readCurrentF1: () => checks.F1` both ultimately
@@ -5916,7 +5974,10 @@ async function runHarness(deps, config) {
       // Phase 5 -- F2.
       const f2Result = await pageEvaluate(observeF2, sessionId);
       const f2Score = scoreF2(f2Result.fields || {});
-      checks.F2 = f2Result.ok === true ? f2Score.verdict : CHECK_VERDICT.BLOCKED;
+      // Fix wave (Important I4): see F1's own comment above -- same pattern.
+      checks.F2 = f2Result.ok === true
+        ? buildCheckRecord({ verdict: f2Score.verdict, reason: f2Score.reason, fields: f2Score.fields, evidence: { status: 'observed' } })
+        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f2Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
 
       // Phase 5c -- hidden-fragment control.
       controlResults['hidden-fragment'] = await runControlSafely('hidden-fragment', controls && controls.hiddenFragment);
@@ -5924,7 +5985,10 @@ async function runHarness(deps, config) {
       // Phase 6 -- F4.
       const f4Result = await pageEvaluate(observeF4, sessionId);
       const f4Score = scoreF4(f4Result.fields || {});
-      checks.F4 = f4Result.ok === true ? f4Score.verdict : CHECK_VERDICT.BLOCKED;
+      // Fix wave (Important I4): see F1's own comment above -- same pattern.
+      checks.F4 = f4Result.ok === true
+        ? buildCheckRecord({ verdict: f4Score.verdict, reason: f4Score.reason, fields: f4Score.fields, evidence: { status: 'observed' } })
+        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f4Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
       // Fix wave (final whole-branch review, Minor M3, treated as a real bug): same fix as
       // f1Snapshot above -- captured immediately after F4 is computed, never inline at the
       // control call site (where it previously ran with truly nothing at all in between,
@@ -5941,7 +6005,9 @@ async function runHarness(deps, config) {
 
       // Phase 7 -- F5 (its own corrected dependency: consumes F1's outcome directly, §7.5/I5).
       const f5Score = scoreF5({ f1Result, f2Fields: f2Result.fields, f4Fields: f4Result.fields });
-      checks.F5 = f5Score.verdict;
+      // Fix wave (Important I4): F5 is pure/always-executes (no pageEvaluate ok-gate) -- see
+      // buildCheckRecord's own doc comment.
+      checks.F5 = buildCheckRecord({ verdict: f5Score.verdict, reason: f5Score.reason, fields: f5Score.fields, evidence: { status: 'observed' } });
 
       // Phase 7c -- capacity-breach control.
       controlResults['capacity-breach'] = await runControlSafely('capacity-breach', controls && controls.capacityBreach);
@@ -5949,7 +6015,10 @@ async function runHarness(deps, config) {
       // Phase 8 -- F7.
       const f7Result = await pageEvaluate(observeF7, sessionId);
       const f7Score = scoreF7(f7Result.fields || {});
-      checks.F7 = f7Result.ok === true ? f7Score.verdict : CHECK_VERDICT.BLOCKED;
+      // Fix wave (Important I4): see F1's own comment above -- same pattern.
+      checks.F7 = f7Result.ok === true
+        ? buildCheckRecord({ verdict: f7Score.verdict, reason: f7Score.reason, fields: f7Score.fields, evidence: { status: 'observed' } })
+        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f7Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
 
       // Phase 8c -- invalid-bounds, then bounds-beyond-tolerance.
       controlResults['invalid-bounds'] = await runControlSafely('invalid-bounds', controls && controls.invalidBounds);
@@ -5958,7 +6027,10 @@ async function runHarness(deps, config) {
       // Phase 9 -- F8 (built entirely from F1/F2's own already-computed fields, never re-derived).
       const f8Result = await pageEvaluate(observeF8, { sessionId, f1Fields: f1Result.fields, f2Fields: f2Result.fields });
       const f8Score = scoreF8(f8Result.fields || {});
-      checks.F8 = f8Result.ok === true ? f8Score.verdict : CHECK_VERDICT.BLOCKED;
+      // Fix wave (Important I4): see F1's own comment above -- same pattern.
+      checks.F8 = f8Result.ok === true
+        ? buildCheckRecord({ verdict: f8Score.verdict, reason: f8Score.reason, fields: f8Score.fields, evidence: { status: 'observed' } })
+        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f8Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
 
       // Phase 10 -- F6 (MUTATES state; must run last of all checks; includes its own
       // stale-old-model-event control, copied -- never re-run -- into the controls manifest).
@@ -5969,7 +6041,12 @@ async function runHarness(deps, config) {
         ...f6Deps,
       });
       const f6Score = scoreF6(f6Result.fields || {});
-      checks.F6 = f6Result.ok === true ? f6Score.verdict : CHECK_VERDICT.BLOCKED;
+      // Fix wave (Important I4): see F1's own comment above -- same pattern (F6's own "ok" gate
+      // is runF6UnloadReload's own wiring-install-failed early return, not a pageEvaluate-shaped
+      // {ok, reason}, but the same never-fabricate-fields-on-failure discipline applies).
+      checks.F6 = f6Result.ok === true
+        ? buildCheckRecord({ verdict: f6Score.verdict, reason: f6Score.reason, fields: f6Score.fields, evidence: { status: 'observed' } })
+        : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f6Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
       if (f6Result.loadDocumentNode && f6Result.loadDocumentNode.token) {
         tokens.push(f6Result.loadDocumentNode.token);
         tokenGens.set(f6Result.loadDocumentNode.token.id, f6Result.loadDocumentNode.gen);
@@ -5992,7 +6069,12 @@ async function runHarness(deps, config) {
     // branch below already does -- never a missing object (plan §8), regardless of where the
     // sequence actually stopped.
     for (const name of F_CHECK_NAMES) {
-      if (!(name in checks)) checks[name] = CHECK_VERDICT.BLOCKED;
+      // Fix wave (Important I4): full record, never a bare verdict string -- see
+      // buildCheckRecord's own doc comment ('not-run'/'fatal-error', matching this branch's own
+      // 'not-reached:fatal-error' controls reason immediately below for consistency).
+      if (!(name in checks)) {
+        checks[name] = buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: 'not-reached:fatal-error', evidence: { status: 'not-run', blockedBy: 'fatal-error' } });
+      }
     }
     for (const name of CONTROL_NAMES) {
       if (!(name in controlResults)) controlResults[name] = notExecutable(name, 'not-reached:fatal-error');
@@ -6002,7 +6084,10 @@ async function runHarness(deps, config) {
     // this point" branch): every check and control is still written, per plan §8's own "no
     // missing objects" discipline -- never a silently-absent object.
     const classifierState = classifierResult ? classifierResult.classifier : 'unavailable';
-    for (const name of F_CHECK_NAMES) checks[name] = CHECK_VERDICT.BLOCKED;
+    // Fix wave (Important I4): full record, never a bare verdict string.
+    for (const name of F_CHECK_NAMES) {
+      checks[name] = buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: `classifier:${classifierState}`, evidence: { status: 'not-run', blockedBy: 'classifier' } });
+    }
     for (const name of CONTROL_NAMES) controlResults[name] = blockedControl(name, classifierState);
   }
 
@@ -6109,15 +6194,24 @@ async function runHarness(deps, config) {
   // AFTER cleanup (Phase 11) has completed, BEFORE computeOverall.
   let viewerScriptIntegrity = INTEGRITY_RESULT.CAPTURE_UNAVAILABLE;
   let integrityReason = 'capture-function-not-injected';
+  // Fix wave (Important I4): the full capture record is now RETAINED (not just its classified
+  // {integrityResult, reason}), so a future independent run-review can recompute
+  // classifyViewerScriptIntegrity from the retained digest/status/chain fields and reject the
+  // run's evidence if the recomputation disagrees -- plan §8's own explicit requirement.
+  // `null` here means capture never ran at all (no function injected, or it threw before
+  // returning) -- nothing to recompute FROM, as distinct from a captureRecord that ran and
+  // legitimately observed zero attributable responses.
+  let viewerScriptCaptureRecord = null;
   if (typeof captureViewerScriptIntegrity === 'function') {
     try {
-      const captureRecord = await captureViewerScriptIntegrity();
-      const classified = classifyViewerScriptIntegrity(captureRecord);
+      viewerScriptCaptureRecord = await captureViewerScriptIntegrity();
+      const classified = classifyViewerScriptIntegrity(viewerScriptCaptureRecord);
       viewerScriptIntegrity = classified.integrityResult;
       integrityReason = classified.reason;
     } catch (e) {
       viewerScriptIntegrity = INTEGRITY_RESULT.CAPTURE_UNAVAILABLE;
       integrityReason = 'capture-threw';
+      viewerScriptCaptureRecord = null;
       errorLedger.record({ kind: 'required-resource-failure', reason: 'viewer-script-integrity-capture-threw', error: describeError(e) });
     }
   }
@@ -6131,10 +6225,18 @@ async function runHarness(deps, config) {
   // finalization AND cleanup have both completed (plan §8's own explicit ordering requirement,
   // enforced here structurally: neither viewerScriptIntegrity nor cleanupFailures/
   // cleanupUnresolvedOwnership could have been computed before this line).
+  // Fix wave (Important I4): computeOverall's own input contract is Stage 1's frozen, pure,
+  // extensively-tested bare-string `checks[name] === CHECK_VERDICT.FAIL/PASS` comparison --
+  // confirmed unchanged by direct read, deliberately never reopened (codex-advisor, medium,
+  // this fix wave: "Do not change computeOverall... Passing records would silently corrupt
+  // overall verdict computation"). `checks` itself is now the canonical rich-record structure
+  // (persisted into the result below); `projectCheckVerdicts` derives the bare-string shape
+  // ONLY for this one call, from a single source of truth, never a second independently-
+  // maintained map.
   const overall = computeOverall({
     fatalErrorObserved, cleanupUnresolvedOwnership, viewerScriptIntegrity,
     classifier: classifierResult ? classifierResult.classifier : null,
-    checks, controls: controlResults, cleanupFailures,
+    checks: projectCheckVerdicts(checks), controls: controlResults, cleanupFailures,
   });
 
   // Merge the just-finalized remote-asset identity into harnessIntegrity (plan §8: "remoteAssets
@@ -6148,7 +6250,20 @@ async function runHarness(deps, config) {
   const finalizedHarnessIntegrity = {
     ...(harnessIntegrityInput || {}),
     remoteAssets: {
-      viewerScript: { integrityResult: viewerScriptIntegrity, reason: integrityReason },
+      // Fix wave (Important I4): expectedSha256/requestedUrl/capture added -- previously only
+      // {integrityResult, reason}, which a future independent reviewer could read but never
+      // independently recompute or audit against (plan §8's own explicit requirement). Known,
+      // disclosed gap (not fixed in this fix wave -- see task-8-report.md): `capture`'s own
+      // per-response records (built in main()'s Phase 0) retain `redirectChainComplete` as a
+      // boolean, never the actual requestedUrl/finalUrl/redirect-hop array plan §8's fuller
+      // sketch names -- sufficient to recompute classifyViewerScriptIntegrity's own verdict
+      // (which is all validateResultSchema's own new recompute-check, below, needs), but not a
+      // full independent audit of the reconstructed chain itself.
+      viewerScript: {
+        integrityResult: viewerScriptIntegrity, reason: integrityReason,
+        expectedSha256: EXPECTED_VIEWER_SHA256, requestedUrl: VIEWER_SCRIPT_URL,
+        capture: viewerScriptCaptureRecord,
+      },
       viewerStyle: { identityScope: 'CAPTURE_UNAVAILABLE', identityGatesOverall: false },
       otherObservedRemoteAssets: [],
     },
@@ -6245,8 +6360,31 @@ function validateResultSchema(result) {
       const vs = ra.viewerScript;
       if (!vs || typeof vs !== 'object') {
         fail("'harnessIntegrity.remoteAssets.viewerScript' must be an object");
-      } else if (!VALID_INTEGRITY_VALUES.has(vs.integrityResult)) {
-        fail(`'harnessIntegrity.remoteAssets.viewerScript.integrityResult' must be one of ${[...VALID_INTEGRITY_VALUES].join('|')}`);
+      } else {
+        if (!VALID_INTEGRITY_VALUES.has(vs.integrityResult)) {
+          fail(`'harnessIntegrity.remoteAssets.viewerScript.integrityResult' must be one of ${[...VALID_INTEGRITY_VALUES].join('|')}`);
+        }
+        if (vs.reason !== null && typeof vs.reason !== 'string') fail("'harnessIntegrity.remoteAssets.viewerScript.reason' must be null or a string");
+        // Fix wave (Important I4): expectedSha256/requestedUrl now required; capture (when
+        // non-null) must actually reproduce the recorded classification when recomputed through
+        // the SAME pure classifier -- plan §8's own explicit requirement ("the future
+        // independent run-review must recompute viewerScript.integrityResult from the retained
+        // digest/status/chain fields and reject the run's evidence if the recomputation
+        // disagrees with the recorded value").
+        if (typeof vs.expectedSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(vs.expectedSha256)) {
+          fail("'harnessIntegrity.remoteAssets.viewerScript.expectedSha256' must be a 64-hex-char SHA-256 string");
+        }
+        if (typeof vs.requestedUrl !== 'string' || vs.requestedUrl === '') {
+          fail("'harnessIntegrity.remoteAssets.viewerScript.requestedUrl' must be a non-empty string");
+        }
+        if (vs.capture !== null && (typeof vs.capture !== 'object' || Array.isArray(vs.capture))) {
+          fail("'harnessIntegrity.remoteAssets.viewerScript.capture' must be null or an object");
+        } else if (vs.capture !== null) {
+          const recomputed = classifyViewerScriptIntegrity(vs.capture);
+          if (recomputed.integrityResult !== vs.integrityResult || recomputed.reason !== vs.reason) {
+            fail("'harnessIntegrity.remoteAssets.viewerScript' classification disagrees with recomputing classifyViewerScriptIntegrity from its own retained 'capture' record");
+          }
+        }
       }
       if (!ra.viewerStyle || typeof ra.viewerStyle !== 'object') fail("'harnessIntegrity.remoteAssets.viewerStyle' must be an object");
       else if (ra.viewerStyle.identityGatesOverall !== false) fail("'harnessIntegrity.remoteAssets.viewerStyle.identityGatesOverall' must be exactly false");
@@ -6269,20 +6407,31 @@ function validateResultSchema(result) {
   if (!VALID_CLASSIFIER_VALUES.has(result.classifier)) fail(`'classifier' must be one of ${[...VALID_CLASSIFIER_VALUES].join('|')}`);
   if (!result.runtime || typeof result.runtime !== 'object') fail("'runtime' must be an object");
 
-  // checks.F1-F8
-  if (!result.checks || typeof result.checks !== 'object') {
+  // checks.F1-F8 -- fix wave (final whole-branch review, Important I4): tightened to REQUIRE
+  // the full `{verdict, reason, fields, evidence}` record (plan §8's own JSON sketch); the
+  // prior bare-verdict-string fallback is removed now that runHarness's own output was brought
+  // up to match (never the schema loosened to paper over the weaker shape -- the review's own
+  // explicit framing of this gap).
+  if (!result.checks || typeof result.checks !== 'object' || Array.isArray(result.checks)) {
     fail("'checks' must be an object");
   } else {
     for (const name of F_CHECK_NAMES) {
       const c = result.checks[name];
       if (c === undefined || c === null) { fail(`'checks.${name}' is missing (plan §8: every check is always written, never a missing object)`); continue; }
-      // checks[*] may be recorded either as a bare verdict string (this stage's own retained
-      // shape, matching computeOverall's own `checks` input) or as a full
-      // `{verdict, reason, fields, evidence}` record (plan §8's own JSON sketch) -- both are
-      // accepted here; only the verdict itself is schema-checked, since `fields`/`evidence` are
-      // each check's own, already-validated-elsewhere shape (F1-F8's own scoreFn tests).
-      const verdict = typeof c === 'string' ? c : c.verdict;
-      if (!Object.values(CHECK_VERDICT).includes(verdict)) fail(`'checks.${name}' verdict must be one of ${Object.values(CHECK_VERDICT).join('|')}`);
+      if (typeof c !== 'object' || Array.isArray(c)) { fail(`'checks.${name}' must be a {verdict, reason, fields, evidence} object, never a bare string/array`); continue; }
+      if (!Object.values(CHECK_VERDICT).includes(c.verdict)) fail(`'checks.${name}.verdict' must be one of ${Object.values(CHECK_VERDICT).join('|')}`);
+      if (c.reason !== null && typeof c.reason !== 'string') fail(`'checks.${name}.reason' must be null or a string`);
+      if (!c.fields || typeof c.fields !== 'object' || Array.isArray(c.fields)) fail(`'checks.${name}.fields' must be an object`);
+      if (!c.evidence || typeof c.evidence !== 'object' || Array.isArray(c.evidence)) {
+        fail(`'checks.${name}.evidence' must be an object`);
+      } else {
+        if (!['observed', 'observation-failed', 'not-run'].includes(c.evidence.status)) {
+          fail(`'checks.${name}.evidence.status' must be one of observed|observation-failed|not-run`);
+        }
+        if (c.evidence.blockedBy !== null && !['classifier', 'fatal-error'].includes(c.evidence.blockedBy)) {
+          fail(`'checks.${name}.evidence.blockedBy' must be null, 'classifier', or 'fatal-error'`);
+        }
+      }
     }
   }
 
@@ -6812,6 +6961,8 @@ export {
   runLateCompletionAfterTimeoutControl,
   runHarness,
   validateResultSchema,
+  buildCheckRecord,
+  projectCheckVerdicts,
   IN_PAGE_FUNCTION_REGISTRY,
   buildBootstrapScriptSource,
   buildRealPageDeps,

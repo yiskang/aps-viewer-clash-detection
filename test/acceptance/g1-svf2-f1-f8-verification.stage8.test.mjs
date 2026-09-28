@@ -26,7 +26,8 @@ import {
   observeF1, scoreF1, observeF2, scoreF2, observeF4, scoreF4, scoreF5, observeF7, scoreF7,
   observeF8, scoreF8, scoreF6, buildStaleOldModelEventControlResult,
   runHarness, validateResultSchema, main, runInPageResourceCleanup,
-  walkRedirectRootUrl,
+  walkRedirectRootUrl, buildCheckRecord, projectCheckVerdicts, EXPECTED_VIEWER_SHA256,
+  classifyViewerScriptIntegrity,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 const HARNESS_PATH = fileURLToPath(new URL('./g1-svf2-f1-f8-verification.mjs', import.meta.url));
@@ -172,8 +173,10 @@ test('runHarness: full happy-path ordering -- F3 install before load, classifier
   assert.ok(idx('writeResultAtomically') === tracker.order.length - 1, 'the atomic write is the LAST thing runHarness does');
 
   assert.equal(result.overall, OVERALL_VERDICT.PASS);
-  assert.equal(result.checks.F1, CHECK_VERDICT.PASS);
-  assert.equal(result.checks.F6, CHECK_VERDICT.PASS);
+  // Fix wave (Important I4): checks.F* is now a full {verdict, reason, fields, evidence}
+  // record -- read .verdict, never compare the record itself to a bare string.
+  assert.equal(result.checks.F1.verdict, CHECK_VERDICT.PASS);
+  assert.equal(result.checks.F6.verdict, CHECK_VERDICT.PASS);
 });
 
 test('runHarness: classifier CONFIRMED_NON_SVF2 short-circuits before Phase 2.5/F1 -- every check BLOCKED, every control NOT_EXECUTABLE, no F1-F8/F6 pageEvaluate call ever made', async () => {
@@ -187,7 +190,9 @@ test('runHarness: classifier CONFIRMED_NON_SVF2 short-circuits before Phase 2.5/
   assert.ok(!tracker.order.includes('pageEvaluate:setupSharedSessionResources'), 'Phase 2.5 never attempted');
   assert.ok(!tracker.order.includes('pageEvaluate:observeF1'), 'F1 never attempted');
   for (const name of ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8']) {
-    assert.equal(result.checks[name], CHECK_VERDICT.BLOCKED, `checks.${name} must be BLOCKED, never missing`);
+    // Fix wave (Important I4): checks.F* is now a full record -- read .verdict.
+    assert.equal(result.checks[name].verdict, CHECK_VERDICT.BLOCKED, `checks.${name}.verdict must be BLOCKED, never missing`);
+    assert.equal(result.checks[name].evidence.blockedBy, 'classifier', `checks.${name}.evidence.blockedBy must name the classifier stop`);
   }
   for (const name of CONTROL_NAMES) {
     assert.ok(result.controls[name], `controls['${name}'] must be present, never missing`);
@@ -298,11 +303,12 @@ test('runHarness: a thrown Fi (observeF1 pageEvaluate rejects) still reaches cle
   await assert.doesNotReject(async () => { result = await runHarness(deps, HAPPY_CONFIG); }, 'runHarness itself must never throw -- a check failure is data, not a thrown exception out of runHarness');
   assert.ok(tracker.order.includes('pageEvaluate:runInPageResourceCleanup'), 'Phase 11 in-page cleanup still ran despite the F1 phase throwing');
   assert.ok(tracker.order.includes('writeResultAtomically'), 'the atomic write still happened');
-  assert.equal(result.checks.F1, CHECK_VERDICT.BLOCKED, 'F1 itself is BLOCKED, never silently missing or falsely PASS');
+  // Fix wave (Important I4): checks.F* is now a full record -- read .verdict.
+  assert.equal(result.checks.F1.verdict, CHECK_VERDICT.BLOCKED, 'F1 itself is BLOCKED, never silently missing or falsely PASS');
   // Every LATER check the sequence never reached (F2 onward) is still present, fail-closed --
   // never a missing object (plan §8's own "no missing objects" discipline).
   for (const name of ['F2', 'F4', 'F5', 'F6', 'F7', 'F8']) {
-    assert.equal(result.checks[name], CHECK_VERDICT.BLOCKED, `checks.${name} must be BLOCKED, never missing, since the sequence never reached it`);
+    assert.equal(result.checks[name].verdict, CHECK_VERDICT.BLOCKED, `checks.${name}.verdict must be BLOCKED, never missing, since the sequence never reached it`);
   }
   assert.equal(result.overall, OVERALL_VERDICT.FAIL, 'fatalErrorObserved forces FAIL');
 });
@@ -407,16 +413,26 @@ test('main(): activation guard throws SYNCHRONOUSLY, before any dynamic import o
 });
 
 test('main(): activation guard also throws when only ONE of the two conditions is present (flag without env, and env without flag)', async () => {
+  // Fix wave (final whole-branch review, Minor M2): previously asserted only "it rejects" --
+  // tightened to assert the EXACT underlying reason (parseLiveActivation's own reason enum),
+  // so this test cannot pass against a guard that rejects for the wrong cause (e.g. some other,
+  // unrelated exception being mistaken for the activation guard's own throw).
   const originalArgv = [...process.argv];
   const originalEnv = process.env.G1_F1_F8_LIVE_AUTHORIZED;
   try {
     process.argv = [...process.argv.filter((a) => a !== '--execute-live-f1-f8'), '--execute-live-f1-f8'];
     delete process.env.G1_F1_F8_LIVE_AUTHORIZED;
-    await assert.rejects(() => main());
+    await assert.rejects(
+      () => main(),
+      (err) => { assert.match(err.message, /\(env-missing\)$/, 'flag present, env absent -> reason must be exactly env-missing'); return true; },
+    );
 
     process.argv = originalArgv.filter((a) => a !== '--execute-live-f1-f8');
     process.env.G1_F1_F8_LIVE_AUTHORIZED = 'YES';
-    await assert.rejects(() => main());
+    await assert.rejects(
+      () => main(),
+      (err) => { assert.match(err.message, /\(flag-missing\)$/, 'env present, flag absent -> reason must be exactly flag-missing'); return true; },
+    );
   } finally {
     process.argv = originalArgv;
     if (originalEnv === undefined) delete process.env.G1_F1_F8_LIVE_AUTHORIZED;
@@ -486,7 +502,9 @@ function fabricateValidResult() {
       path: HARNESS_PATH, sha256: 'a'.repeat(64), branch: 'main', headSha: 'b'.repeat(40), gitStatusPorcelain: '',
       servedModuleManifest: { '/collision/index.js': 'c'.repeat(64) },
       remoteAssets: {
-        viewerScript: { integrityResult: INTEGRITY_RESULT.VERIFIED },
+        // Fix wave (Important I4): expectedSha256/requestedUrl/capture now required.
+        // `capture: null` (never ran) is schema-valid and skips the recompute-match check.
+        viewerScript: { integrityResult: INTEGRITY_RESULT.VERIFIED, reason: null, expectedSha256: EXPECTED_VIEWER_SHA256, requestedUrl: 'https://example.test/viewer3D.js', capture: null },
         viewerStyle: { identityGatesOverall: false },
         otherObservedRemoteAssets: [],
       },
@@ -494,7 +512,9 @@ function fabricateValidResult() {
     runtimeEnvelope: { viewerVersion: '7.124.2', chromium: '120', node: process.version, modelUrn: 'urn:x', initializer: { env: 'AutodeskProduction2', api: 'streamingV2' } },
     classifier: CLASSIFIER.CONFIRMED_SVF2,
     runtime: { isOTG: true, isSVF2: true },
-    checks: { F1: CHECK_VERDICT.PASS, F2: CHECK_VERDICT.PASS, F3: CHECK_VERDICT.PASS, F4: CHECK_VERDICT.PASS, F5: CHECK_VERDICT.PASS, F6: CHECK_VERDICT.PASS, F7: CHECK_VERDICT.PASS, F8: CHECK_VERDICT.PASS },
+    // Fix wave (Important I4): full {verdict, reason, fields, evidence} records via the real
+    // buildCheckRecord, never a bare verdict string.
+    checks: Object.fromEntries(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8'].map((name) => [name, buildCheckRecord({ verdict: CHECK_VERDICT.PASS, fields: {}, evidence: { status: 'observed' } })])),
     controls,
     staleContinuationsDropped: [],
     errorLedger: { pageErrors: [], unhandledRejections: [], requiredResourceFailures: [], contextLoss: [], consoleErrors: [], consoleWarnings: [], allowListedFingerprints: [], fatalErrorObserved: false },
@@ -549,6 +569,71 @@ test('validateResultSchema: rejects a missing checks.F* entry (never a silently-
 
 test('validateResultSchema: rejects an out-of-enum checks.F* verdict', () => {
   const r = fabricateValidResult(); r.checks.F1 = 'NOT_A_REAL_VERDICT';
+  assert.equal(validateResultSchema(r).valid, false);
+});
+
+// ============================================================================================
+// Fix wave (final whole-branch review, Important I4): focused rejection tests for the tightened
+// checks.F*/remoteAssets.viewerScript schema (codex-advisor's own explicit recommendation,
+// medium, this fix wave: "add focused rejection tests for bare strings, missing record members,
+// malformed attributable responses, and classification mismatch").
+// ============================================================================================
+
+test('validateResultSchema: rejects a bare verdict string in place of a checks.F* record (the exact pre-I4 shape)', () => {
+  const r = fabricateValidResult(); r.checks.F3 = CHECK_VERDICT.PASS; // a valid ENUM value, but the wrong SHAPE
+  const { valid, errors } = validateResultSchema(r);
+  assert.equal(valid, false);
+  assert.ok(errors.some((e) => e.includes('checks.F3') && e.includes('object')));
+});
+
+test('validateResultSchema: rejects a checks.F* record missing fields/evidence', () => {
+  const r1 = fabricateValidResult(); delete r1.checks.F2.fields;
+  assert.equal(validateResultSchema(r1).valid, false);
+
+  const r2 = fabricateValidResult(); delete r2.checks.F2.evidence;
+  assert.equal(validateResultSchema(r2).valid, false);
+
+  const r3 = fabricateValidResult(); r3.checks.F2.evidence.status = 'not-a-real-status';
+  assert.equal(validateResultSchema(r3).valid, false);
+
+  const r4 = fabricateValidResult(); r4.checks.F2.evidence.blockedBy = 'not-a-real-reason';
+  assert.equal(validateResultSchema(r4).valid, false);
+});
+
+test('validateResultSchema: rejects remoteAssets.viewerScript missing expectedSha256/requestedUrl', () => {
+  const r1 = fabricateValidResult(); delete r1.harnessIntegrity.remoteAssets.viewerScript.expectedSha256;
+  assert.equal(validateResultSchema(r1).valid, false);
+
+  const r2 = fabricateValidResult(); r2.harnessIntegrity.remoteAssets.viewerScript.requestedUrl = '';
+  assert.equal(validateResultSchema(r2).valid, false);
+});
+
+test('validateResultSchema: rejects remoteAssets.viewerScript whose recorded classification disagrees with recomputing classifyViewerScriptIntegrity from its own retained capture record', () => {
+  const r = fabricateValidResult();
+  // A genuinely VERIFIED capture record (recomputes to VERIFIED/null) -- confirms the HAPPY
+  // path (a real, non-null capture that DOES match) is itself schema-valid first.
+  const verifiedCapture = {
+    requestFailed: false, autodeskViewingDefined: true,
+    attributableResponses: [{ status: 200, redirectChainComplete: true, fromServiceWorker: false, bodyOutcome: 'captured', decodedByteLength: 1, sha256: EXPECTED_VIEWER_SHA256 }],
+  };
+  r.harnessIntegrity.remoteAssets.viewerScript.capture = verifiedCapture;
+  assert.equal(validateResultSchema(r).valid, true, 'a real capture record that DOES match its own recorded classification must still pass');
+  assert.deepEqual(classifyViewerScriptIntegrity(verifiedCapture), { integrityResult: r.harnessIntegrity.remoteAssets.viewerScript.integrityResult, reason: r.harnessIntegrity.remoteAssets.viewerScript.reason });
+
+  // Now corrupt ONLY the recorded integrityResult, leaving the retained capture record
+  // (evidence of what actually happened) untouched -- this is exactly the class of defect the
+  // recompute check exists to catch: a run whose PERSISTED verdict silently disagrees with its
+  // own retained evidence.
+  const r2 = fabricateValidResult();
+  r2.harnessIntegrity.remoteAssets.viewerScript.capture = verifiedCapture;
+  r2.harnessIntegrity.remoteAssets.viewerScript.integrityResult = INTEGRITY_RESULT.MISMATCH;
+  const { valid, errors } = validateResultSchema(r2);
+  assert.equal(valid, false);
+  assert.ok(errors.some((e) => e.includes('disagrees with recomputing')));
+});
+
+test('validateResultSchema: rejects a non-null, non-object remoteAssets.viewerScript.capture', () => {
+  const r = fabricateValidResult(); r.harnessIntegrity.remoteAssets.viewerScript.capture = 'not-an-object';
   assert.equal(validateResultSchema(r).valid, false);
 });
 
