@@ -58,6 +58,8 @@ import {
   selectBoundsBeyondToleranceTarget,
   runInvalidBoundsControl,
   runBoundsBeyondToleranceControl,
+  observeF8,
+  scoreF8,
 } from './g1-svf2-f1-f8-verification.mjs';
 
 // ============================================================================================
@@ -67,7 +69,7 @@ import {
 // the one function it's given, never a function that function calls).
 // ============================================================================================
 
-const IN_PAGE_FUNCTIONS = { sessionErrOf, setupSharedSessionResources, observeF1, observeF2, observeF4, observeF7 };
+const IN_PAGE_FUNCTIONS = { sessionErrOf, setupSharedSessionResources, observeF1, observeF2, observeF4, observeF7, observeF8 };
 
 function createPageRealm(initialWindow = {}) {
   const context = vm.createContext({ window: initialWindow, performance, setTimeout, clearTimeout, console });
@@ -1751,4 +1753,203 @@ test('bounds-beyond-tolerance control: NOT_DETECTED -- perturbed dbId reports a 
     checkBoundsForDbId: async () => ({ boundsAgreement: 'near-tolerance' }), // wrong -- expected disagrees
   });
   assert.equal(result.state, CONTROL_STATE.NOT_DETECTED);
+});
+
+// ============================================================================================
+// Stage 7 -- F8 (observeF8/scoreF8), read-only, built entirely from F1/F2's already-frozen data.
+// `observeF8` is in-page (added to IN_PAGE_FUNCTIONS above); `scoreF8` is pure Node-side.
+// ============================================================================================
+
+function buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds }) {
+  return {
+    model: { getFragmentList: () => ({ getDbIds }) },
+    artifacts: { f1FragmentMapsByRoot, f2TreeOwnerByFragId },
+  };
+}
+
+test('observeF8: session-not-found', async () => {
+  const realm = createPageRealm({ __g1: { sessions: {}, mod: {} } });
+  const result = await realm.call(observeF8, 'missing', { f1Fields: {}, f2Fields: {} });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'session-not-found');
+});
+
+test('observeF8: refuses to run before F1 has populated f1FragmentMapsByRoot', async () => {
+  const realm = createPageRealm({ __g1: { sessions: { s1: { model: {}, artifacts: {} } }, mod: {} } });
+  const result = await realm.call(observeF8, 's1', { f1Fields: {}, f2Fields: {} });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'f1-fragment-maps-by-root-not-available-run-observeF1-first');
+});
+
+test('observeF8: refuses to run before F2 has populated f2TreeOwnerByFragId', async () => {
+  const session = buildF8Session({
+    f1FragmentMapsByRoot: new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]),
+    f2TreeOwnerByFragId: undefined,
+    getDbIds: () => 100,
+  });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const result = await realm.call(observeF8, 's1', { f1Fields: { rootsLength: 1 }, f2Fields: {} });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'f2-tree-owner-by-frag-id-not-available-run-observeF2-first');
+});
+
+test('observeF8: refuses to run without f1Fields/f2Fields supplied', async () => {
+  const session = buildF8Session({
+    f1FragmentMapsByRoot: new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]),
+    f2TreeOwnerByFragId: new Map([[0, { ownerDbId: 100, conflictingOwnerDbId: null }]]),
+    getDbIds: () => 100,
+  });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const result = await realm.call(observeF8, 's1', {});
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'f1Fields-and-f2Fields-required');
+});
+
+test('observeF8: healthy census -- R1/R2 agree, all five coverage equations close, PASS', async () => {
+  const f1FragmentMapsByRoot = new Map([
+    [100, new Map([[0, { ownerDbId: 100 }]])],
+    [200, new Map([[1, { ownerDbId: 200 }]])],
+  ]);
+  const f2TreeOwnerByFragId = new Map([
+    [0, { ownerDbId: 100, conflictingOwnerDbId: null }],
+    [1, { ownerDbId: 200, conflictingOwnerDbId: null }],
+  ]);
+  const session = buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds: (fragId) => (fragId === 0 ? 100 : 200) });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const f1Fields = { rootsLength: 2 };
+  const f2Fields = { fragListCount: 3, classL: 2, classN: 1, classU: 0, treeReachableCount: 2, loadedButUnreachableCount: 0 };
+
+  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.fields.censusedRootCount, 2);
+  assert.equal(result.fields.censusedFragmentCount, 2);
+  assert.equal(result.fields.treeCheckedFragmentCount, 2);
+  assert.equal(result.fields.ownershipDivergenceCount, 0);
+  assert.equal(result.fields.treeDivergenceCount, 0);
+  assert.equal(result.fields.divergenceCount, 0);
+  assert.equal(result.fields.coverageEquationsClosed, true);
+  assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('observeF8: R1 divergence -- a fresh getDbIds() disagrees with F1\'s own recorded ownerDbId, FAIL', async () => {
+  const f1FragmentMapsByRoot = new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]);
+  const f2TreeOwnerByFragId = new Map([[0, { ownerDbId: 100, conflictingOwnerDbId: null }]]);
+  const session = buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds: () => 999 }); // disagrees
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const f1Fields = { rootsLength: 1 };
+  const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
+
+  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+
+  assert.equal(result.fields.ownershipDivergenceCount, 1);
+  assert.equal(result.fields.divergenceCount, 1);
+  assert.equal(result.firstDivergences[0].relation, 'R1');
+  assert.equal(result.firstDivergences[0].fragId, 0);
+  assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.FAIL);
+  assert.equal(scoreF8(result.fields).reason, 'f8-dbid-divergence');
+});
+
+test('observeF8: R1 -- getDbIds() throwing counts as a divergence, never silently skipped', async () => {
+  const f1FragmentMapsByRoot = new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]);
+  const f2TreeOwnerByFragId = new Map([[0, { ownerDbId: 100, conflictingOwnerDbId: null }]]);
+  const session = buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds: () => { throw new Error('boom'); } });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const f1Fields = { rootsLength: 1 };
+  const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
+
+  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+
+  assert.equal(result.fields.ownershipDivergenceCount, 1);
+  assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.FAIL);
+});
+
+test('observeF8: R2 divergence -- fragId missing from f2TreeOwnerByFragId (F2 never discovered it), FAIL', async () => {
+  const f1FragmentMapsByRoot = new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]);
+  const f2TreeOwnerByFragId = new Map(); // deliberately empty
+  const session = buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds: () => 100 });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const f1Fields = { rootsLength: 1 };
+  const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
+
+  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+
+  assert.equal(result.fields.treeDivergenceCount, 1);
+  assert.equal(result.firstDivergences.some((d) => d.relation === 'R2'), true);
+  assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.FAIL);
+});
+
+test('observeF8: R2 divergence -- a recorded conflictingOwnerDbId (F2\'s walk found the fragment under two nodes) always counts as divergent, even if ownerDbId itself agrees with F1', async () => {
+  const f1FragmentMapsByRoot = new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]);
+  const f2TreeOwnerByFragId = new Map([[0, { ownerDbId: 100, conflictingOwnerDbId: 200 }]]); // ambiguous
+  const session = buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds: () => 100 });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const f1Fields = { rootsLength: 1 };
+  const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
+
+  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+
+  assert.equal(result.fields.treeDivergenceCount, 1);
+  assert.equal(result.fields.ownershipDivergenceCount, 0, 'R1 itself still agrees -- only R2 is flagged');
+  assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.FAIL);
+});
+
+test('observeF8: coverage equation 1 fails (classL+classN+classU !== fragListCount) -- coverageEquationsClosed false, FAIL, even with zero divergences', async () => {
+  const f1FragmentMapsByRoot = new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]);
+  const f2TreeOwnerByFragId = new Map([[0, { ownerDbId: 100, conflictingOwnerDbId: null }]]);
+  const session = buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds: () => 100 });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const f1Fields = { rootsLength: 1 };
+  // classL+classN+classU = 1+0+0 = 1, but fragListCount claims 5 -- a silent population drop.
+  const f2Fields = { fragListCount: 5, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
+
+  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+
+  assert.equal(result.fields.ownershipDivergenceCount, 0);
+  assert.equal(result.fields.treeDivergenceCount, 0);
+  assert.equal(result.fields.coverageEquationsClosed, false);
+  assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.FAIL);
+  assert.equal(scoreF8(result.fields).reason, 'f8-coverage-equations-not-closed');
+});
+
+test('observeF8: coverage equation 5 fails (censusedRootCount !== rootsLength) -- an F1 root missing its own extractFragments map', async () => {
+  // Only ONE root's map survived (e.g. the other F1 root's extractFragments call threw and was
+  // never stored) -- censusedRootCount (1) must disagree with the reference rootsLength (2).
+  const f1FragmentMapsByRoot = new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]);
+  const f2TreeOwnerByFragId = new Map([[0, { ownerDbId: 100, conflictingOwnerDbId: null }]]);
+  const session = buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds: () => 100 });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const f1Fields = { rootsLength: 2 };
+  const f2Fields = { fragListCount: 1, classL: 1, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 0 };
+
+  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+
+  assert.equal(result.fields.censusedRootCount, 1);
+  assert.equal(result.fields.rootsLengthReference, 2);
+  assert.equal(result.fields.coverageEquationsClosed, false);
+  assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.FAIL);
+});
+
+test('observeF8: a loaded-but-unreachable class-L fragment is a named exclusion -- never discovered by any F1 root, never a false R1/R2 divergence, coverage still closes via equation 2', async () => {
+  // classL=2 total, but only 1 fragment is tree-reachable (the census domain) -- the other is
+  // loadedButUnreachableCount=1, retained via equation 2, never iterated by R1/R2 at all.
+  const f1FragmentMapsByRoot = new Map([[100, new Map([[0, { ownerDbId: 100 }]])]]);
+  const f2TreeOwnerByFragId = new Map([[0, { ownerDbId: 100, conflictingOwnerDbId: null }]]);
+  const session = buildF8Session({ f1FragmentMapsByRoot, f2TreeOwnerByFragId, getDbIds: () => 100 });
+  const realm = createPageRealm({ __g1: { sessions: { s1: session }, mod: {} } });
+  const f1Fields = { rootsLength: 1 };
+  const f2Fields = { fragListCount: 2, classL: 2, classN: 0, classU: 0, treeReachableCount: 1, loadedButUnreachableCount: 1 };
+
+  const result = await realm.call(observeF8, 's1', { f1Fields, f2Fields });
+
+  assert.equal(result.fields.censusedFragmentCount, 1, 'only the tree-reachable fragment is censused');
+  assert.equal(result.fields.ownershipDivergenceCount, 0);
+  assert.equal(result.fields.treeDivergenceCount, 0);
+  assert.equal(result.fields.coverageEquationsClosed, true);
+  assert.equal(scoreF8(result.fields).verdict, CHECK_VERDICT.PASS);
+});
+
+test('scoreF8: fails closed on missing coverageEquationsClosed evidence (undefined, never silently PASS)', () => {
+  const fields = { ownershipDivergenceCount: 0, treeDivergenceCount: 0 };
+  assert.equal(scoreF8(fields).verdict, CHECK_VERDICT.FAIL);
 });

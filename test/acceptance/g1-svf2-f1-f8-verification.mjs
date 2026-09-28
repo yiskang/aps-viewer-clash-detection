@@ -2705,15 +2705,39 @@ function observeF2(sessionId) {
   // Stage 5 addition: F5 (§7.5) needs max(children per node) -- tracked during this SAME tree
   // walk (never a second pass).
   let maxChildrenPerNode = 0;
+  // Stage 7 addition (F8's own R2 relationship, §7.8): retains WHICH tree node (dbId)
+  // enumerated each fragment -- F2's own walk previously only tracked membership (`reachable`),
+  // discarding the owning node. Zero new Viewer API calls, zero change to F2's own existing
+  // fields/behavior/traversal order (this repo's own frozen-artifact discipline: an additive
+  // capture during the SAME existing walk, never a second pass, never a reordering -- matching
+  // the precedent already set for maxChildrenPerNode above and F1's own f1PopulationRecords).
+  // codex-advisor consult (Stage 7, before implementing F8): flagged that a fragment could in
+  // principle be enumerated under more than one tree node during a single walk (the repository
+  // does not establish that a real Viewer InstanceTree always assigns exactly one owner per
+  // fragment) -- a plain `Map<fragId, dbId>` overwrite would silently lose that ambiguity. Fixed:
+  // first-discovered-wins (in whatever order THIS walk already visits nodes -- order-independent
+  // correctness, since a genuine multi-owner conflict is flagged regardless of which owner is
+  // "first"), with any later disagreement recorded as `conflictingOwnerDbId` rather than
+  // silently overwritten or silently dropped.
+  const f2TreeOwnerByFragId = new Map();
   while (stack.length > 0) {
     const n = stack.pop();
     if (seen.has(n)) continue;
     seen.add(n);
-    tree.enumNodeFragments(n, (f) => { reachable.add(f); }, false);
+    tree.enumNodeFragments(n, (f) => {
+      reachable.add(f);
+      const existing = f2TreeOwnerByFragId.get(f);
+      if (!existing) {
+        f2TreeOwnerByFragId.set(f, { ownerDbId: n, conflictingOwnerDbId: null });
+      } else if (existing.ownerDbId !== n && existing.conflictingOwnerDbId === null) {
+        existing.conflictingOwnerDbId = n;
+      }
+    }, false);
     let childCount = 0;
     tree.enumNodeChildren(n, (ch) => { childCount += 1; stack.push(ch); return false; }, false);
     if (childCount > maxChildrenPerNode) maxChildrenPerNode = childCount;
   }
+  session.artifacts.f2TreeOwnerByFragId = f2TreeOwnerByFragId;
 
   const classLRows = session.artifacts.f1PopulationClasses.filter((row) => row.cls === 'L');
   const classN = session.artifacts.f1PopulationClasses.filter((row) => row.cls === 'N').length;
@@ -2761,6 +2785,175 @@ function scoreF2(fields) {
   const f = fields || {};
   const failed = f.isObjectTreeCreated !== true || f.accountingBalanced !== true;
   const reason = !failed ? null : (f.isObjectTreeCreated !== true ? 'tree-not-accessible' : 'accounting-not-balanced');
+  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason, fields: f };
+}
+
+// ------------------------------------------------------------------------------------------
+// §7.8 F8 -- dbId consistency across SVF2 data surfaces (read-only, built entirely from F1/F2's
+// already-frozen data)
+// ------------------------------------------------------------------------------------------
+
+/**
+ * In-page. `observeF8(sessionId, {f1Fields, f2Fields})` -- plan §7.8's corrected R1/R2/R3
+ * relationships and all five coverage/exclusion equations, built ENTIRELY from F1/F2's already-
+ * frozen data -- no new Viewer/Adapter calls beyond `model.getFragmentList().getDbIds(fragId)`
+ * (R1's own required fresh read, explicitly named by the plan's evidence-source text) and one
+ * `session.artifacts` read. `f1Fields`/`f2Fields` are F1/F2's own already-computed `.fields`
+ * (the caller's own copies of their scalar outputs, e.g. `rootsLength`/`classL`/`classN`/
+ * `classU`/`treeReachableCount`/`loadedButUnreachableCount`/`fragListCount`) -- an in-page
+ * function may reference only its own argument and page globals (this file's own established
+ * constraint), and F1/F2's scalar fields are never themselves persisted into `session.artifacts`
+ * (only their `Map`-shaped retained data is), so the caller must copy them in explicitly. This
+ * is exactly "F8 checks each [equation] from its own copied values, never by trusting F2's
+ * `accountingBalanced` flag blindly" (plan line 1124) -- copied here, at the boundary, not
+ * re-derived.
+ *
+ * **R1/R2 census domain (codex-advisor-confirmed, Stage 7 consult):** the deduplicated union of
+ * every key across ALL of F1's own per-root `extractFragments` maps
+ * (`session.artifacts.f1FragmentMapsByRoot`) -- the concrete realization of "the set of
+ * fragments for which an F1 `extractFragments` call retained an ownership mapping, i.e.
+ * `treeReachableCount`" (plan line 1107). `censusedFragmentCount` is this union's own size,
+ * checked against `treeReachableReference` by equation 3 below -- never merely assumed equal;
+ * a missing per-root map (a caught F1 extraction failure) legitimately shrinks the union and
+ * correctly fails that equation, never silently passing.
+ *
+ * **R1** (fragment ownership): a FRESH `model.getFragmentList().getDbIds(fragId)` read compared
+ * against F1's own already-recorded `ownerDbId` for that fragment (never `resolveRoots`'s
+ * aggregate output, never F4/Stage-5's independent geometry-id re-verification -- a different
+ * check, not conflated here per this stage's own brief).
+ *
+ * **R2** (tree agreement): `session.artifacts.f2TreeOwnerByFragId` (this stage's own additive
+ * extension to `observeF2`, see its own comment there) compared against the SAME F1-recorded
+ * `ownerDbId` -- a missing entry OR a recorded `conflictingOwnerDbId` both count as an R2
+ * divergence (never silently resolved to "the first one wins").
+ *
+ * **R3** (root coverage): `censusedRootCount` (`f1FragmentMapsByRoot.size`) vs. `rootsLength`
+ * (`f1Fields.rootsLength`).
+ *
+ * A loaded-but-unreachable class-L fragment is a NAMED EXCLUSION for both R1 and R2 (plan line
+ * 1110) -- it is never discovered by any F1 root's `extractFragments` walk (by definition of
+ * "unreachable"), so it never appears in the census domain above at all, never a false
+ * divergence and never silently dropped (its count is already retained via the copied
+ * `loadedButUnreachableReference` field and cross-checked by equation 2).
+ *
+ * Returns a JSON-safe `{ok, fields, firstDivergences}` (or `{ok:false, reason}` if F1/F2 haven't
+ * run for this session yet, or `f1Fields`/`f2Fields` weren't supplied).
+ */
+function observeF8(sessionId, { f1Fields, f2Fields } = {}) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session) return { ok: false, reason: 'session-not-found' };
+  if (!session.artifacts || !session.artifacts.f1FragmentMapsByRoot || session.artifacts.f1FragmentMapsByRoot.size === 0) {
+    return { ok: false, reason: 'f1-fragment-maps-by-root-not-available-run-observeF1-first' };
+  }
+  if (!session.artifacts.f2TreeOwnerByFragId) {
+    return { ok: false, reason: 'f2-tree-owner-by-frag-id-not-available-run-observeF2-first' };
+  }
+  if (!f1Fields || !f2Fields) {
+    return { ok: false, reason: 'f1Fields-and-f2Fields-required' };
+  }
+
+  const { model } = session;
+  const fragList = model.getFragmentList();
+  const { f1FragmentMapsByRoot, f2TreeOwnerByFragId } = session.artifacts;
+  const errOf = (e) => (e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? ''), reason: e.reason ?? null }
+    : { primitive: typeof e, value: String(e) });
+
+  const censusFragIds = new Map(); // fragId -> F1's own recorded ownerDbId
+  for (const [, fragMap] of f1FragmentMapsByRoot) {
+    for (const [fragId, record] of fragMap) {
+      if (!censusFragIds.has(fragId)) censusFragIds.set(fragId, record.ownerDbId);
+    }
+  }
+
+  let ownershipDivergenceCount = 0;
+  let treeDivergenceCount = 0;
+  const divergentFragIds = new Set();
+  const firstDivergences = [];
+
+  for (const [fragId, f1OwnerDbId] of censusFragIds) {
+    let freshOwnerDbId;
+    let r1Diverged;
+    try {
+      freshOwnerDbId = fragList.getDbIds(fragId);
+      r1Diverged = freshOwnerDbId !== f1OwnerDbId;
+    } catch (e) {
+      r1Diverged = true;
+      freshOwnerDbId = { getDbIdsThrew: errOf(e) };
+    }
+    if (r1Diverged) {
+      ownershipDivergenceCount += 1;
+      divergentFragIds.add(fragId);
+      if (firstDivergences.length < 20) firstDivergences.push({ relation: 'R1', fragId, f1OwnerDbId, freshOwnerDbId });
+    }
+
+    const treeOwnerEntry = f2TreeOwnerByFragId.get(fragId);
+    const treeDbId = treeOwnerEntry ? treeOwnerEntry.ownerDbId : null;
+    const treeConflict = treeOwnerEntry ? treeOwnerEntry.conflictingOwnerDbId : null;
+    const r2Diverged = !treeOwnerEntry || treeDbId !== f1OwnerDbId || treeConflict !== null;
+    if (r2Diverged) {
+      treeDivergenceCount += 1;
+      divergentFragIds.add(fragId);
+      if (firstDivergences.length < 20) firstDivergences.push({ relation: 'R2', fragId, f1OwnerDbId, treeDbId, treeConflict });
+    }
+  }
+
+  const censusedFragmentCount = censusFragIds.size;
+  // Same iterated domain for both relationships (plan's own R1/R2 table: identical denominator,
+  // treeReachableCount) -- never a second, separately-derived count.
+  const treeCheckedFragmentCount = censusedFragmentCount;
+  const censusedRootCount = f1FragmentMapsByRoot.size;
+
+  const fragListCountReference = f2Fields.fragListCount;
+  const classLReference = f2Fields.classL;
+  const classNExcluded = f2Fields.classN;
+  const classUExcluded = f2Fields.classU;
+  const treeReachableReference = f2Fields.treeReachableCount;
+  const loadedButUnreachableReference = f2Fields.loadedButUnreachableCount;
+  const rootsLengthReference = f1Fields.rootsLength;
+
+  const eq1 = (classLReference + classNExcluded + classUExcluded) === fragListCountReference;
+  const eq2 = (treeReachableReference + loadedButUnreachableReference) === classLReference;
+  const eq3 = censusedFragmentCount === treeReachableReference;
+  const eq4 = treeCheckedFragmentCount === treeReachableReference;
+  const eq5 = censusedRootCount === rootsLengthReference;
+  const coverageEquationsClosed = eq1 && eq2 && eq3 && eq4 && eq5;
+
+  return {
+    ok: true,
+    fields: {
+      censusedRootCount,
+      censusedFragmentCount,
+      treeCheckedFragmentCount,
+      ownershipDivergenceCount,
+      treeDivergenceCount,
+      divergenceCount: divergentFragIds.size,
+      fragListCountReference,
+      classLReference,
+      classNExcluded,
+      classUExcluded,
+      treeReachableReference,
+      loadedButUnreachableReference,
+      rootsLengthReference,
+      coverageEquationsClosed,
+    },
+    firstDivergences,
+  };
+}
+
+/**
+ * `scoreF8(fields)` -- plan §7.8's exact success/failure criteria, pure. `FAIL` iff any
+ * divergence exists (R1 or R2, recorded with the exact dbId/fragment pair via
+ * `firstDivergences`, never silently reconciled) OR `coverageEquationsClosed !== true` (a silent
+ * population drop or double-count, distinct from a data-value divergence) -- both are named,
+ * independent failure triggers per the plan's own flat Failure criteria.
+ */
+function scoreF8(fields) {
+  const f = fields || {};
+  const anyDivergence = f.ownershipDivergenceCount > 0 || f.treeDivergenceCount > 0;
+  const failed = anyDivergence || f.coverageEquationsClosed !== true;
+  const reason = !failed ? null : (anyDivergence ? 'f8-dbid-divergence' : 'f8-coverage-equations-not-closed');
   return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason, fields: f };
 }
 
@@ -4346,6 +4539,466 @@ async function runCapacityBreachControl({ modelBefore, world, registry, registry
 }
 
 // ------------------------------------------------------------------------------------------
+// §7.6 F6 -- unload/reload behavior (the ONLY mutating check; must run last) plus the
+// `stale-old-model-event` control (line 674/849: F6's own step 6, copied, never re-run)
+// ------------------------------------------------------------------------------------------
+
+/**
+ * In-page. Installs F6's unload wiring (plan §7.6 step 2): a probe listener for
+ * `BEFORE_MODEL_UNLOAD_EVENT` installed BEFORE the real `wireModelUnload` (dispatch-order-
+ * sensitive, per T3's own comment), a T3-style `eventTarget` recorder that captures the wiring's
+ * own handler function for direct invocation later (step 6), and an eviction-ordering shim on
+ * `world.evictModel` (T3's own `H_STEP1_ASSERT` pattern) that records whether the registry
+ * binding was ALREADY null at the moment eviction is invoked -- proving unregister-before-evict
+ * ordering, never assumed. Stores everything under page-owned `session.f6` scratch state
+ * (function references included -- never returned to Node directly, only JSON-safe snapshots
+ * are, via the other in-page functions below).
+ */
+function f6InstallUnloadWiring({ sessionId, unloadEventName }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session) return { ok: false, reason: 'session-not-found' };
+  const { world, registry, model } = session;
+  const viewer = window.__viewer;
+  const mod = g.mod || {};
+  const { wireModelUnload } = mod['/clashtest/viewer/index.js'] || {};
+  if (typeof wireModelUnload !== 'function') return { ok: false, reason: 'wireModelUnload-not-available' };
+
+  const f6 = {
+    modelBefore: model, modelAfter: null, capturedHandler: null,
+    unloadProbeFired: false, unloadEventModel: null, unregisterBeforeEvict: null,
+    reloadProbe: null, dispose: null,
+  };
+
+  const probe = (event) => {
+    f6.unloadProbeFired = true;
+    f6.unloadEventModel = event && event.model !== undefined ? event.model : null;
+  };
+  viewer.addEventListener(unloadEventName, probe);
+
+  const originalEvictModel = world.evictModel;
+  world.evictModel = (m) => {
+    if (f6.unregisterBeforeEvict === null) {
+      f6.unregisterBeforeEvict = registry.bindingFor(session.K) === null;
+    }
+    return originalEvictModel.call(world, m);
+  };
+
+  const recorder = {
+    addEventListener(n, fn) { f6.capturedHandler = fn; viewer.addEventListener(n, fn); },
+    removeEventListener(n, fn) { viewer.removeEventListener(n, fn); },
+  };
+  const wiring = wireModelUnload({ world, registry, eventTarget: recorder, eventName: unloadEventName });
+
+  f6.dispose = () => {
+    try { viewer.removeEventListener(unloadEventName, probe); } catch { /* best-effort */ }
+    world.evictModel = originalEvictModel;
+    try { wiring.dispose(); } catch { /* best-effort */ }
+  };
+
+  session.f6 = f6;
+  return { ok: true };
+}
+
+/** In-page. Plan §7.6 step 3: `viewer.unloadModel(modelBefore)`. */
+function f6TriggerUnload({ sessionId }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.f6) return { ok: false, reason: 'f6-not-installed' };
+  window.__viewer.unloadModel(session.f6.modelBefore);
+  return { ok: true };
+}
+
+/** In-page predicate (for the Node-side `pageWaitForFunction` bounded wait, Stage 2's own
+ * shape). Plan §7.6 step 3: "wait ... for it to leave `viewer.getAllModels()`". */
+function f6UnloadSettledPredicate({ sessionId }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.f6) return false;
+  const viewer = window.__viewer;
+  const models = typeof viewer.getAllModels === 'function' ? viewer.getAllModels() : [];
+  return !models.includes(session.f6.modelBefore);
+}
+
+/** In-page. Reads out the unload-phase evidence plan §7.6 step 3 names, once the bounded wait
+ * above has settled (or timed out -- the Node orchestrator reads this regardless, since a
+ * `false` probe/binding result is itself evidence, never silently dropped). */
+function f6ReadUnloadSnapshot({ sessionId }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.f6) return { ok: false, reason: 'f6-not-installed' };
+  const f6 = session.f6;
+  return {
+    ok: true,
+    unloadProbeFired: f6.unloadProbeFired,
+    unloadEventModelMatchesModelBefore: f6.unloadEventModel === f6.modelBefore,
+    unregisterBeforeEvict: f6.unregisterBeforeEvict,
+    bindingNullAfterUnload: session.registry.bindingFor(session.K) === null,
+  };
+}
+
+/**
+ * In-page. Plan §7.6 step 4's corrected ordering (fixes H1's timing defect): installs a FRESH
+ * `MODEL_ADDED_EVENT` listener BEFORE the reload's `Document.load` is ever triggered by the
+ * Node-side orchestrator -- self-contained implementation of plan §7.3's own prose logic (no
+ * concrete implementation of this exists anywhere else in the repo to import; Stage 3 left it as
+ * an opaque injected dependency, explicitly out of that stage's own scope -- writing it here, for
+ * F6's own reload probe, is this stage's own explicit brief). On the FIRST `MODEL_ADDED_EVENT`
+ * after install: snapshot `{isObjectTreeCreated, instanceTreeInData, isLoadDone}`, immediately
+ * call `resolveRoots({model}, 'whole', ctx)` against a throwaway binding (`resolveRoots`'s own
+ * `requireCall` only requires `binding.model` to be a non-null object,
+ * `ViewerElementEnumerator.js:72-79` -- confirmed by direct source read, no `K`/`modelVersion`
+ * needed for a throwaway probe binding), and record elapsed time + outcome + the flags again
+ * once that settles. Only the FIRST event is acted on (`rp.fired` guard) -- a later, unrelated
+ * `MODEL_ADDED_EVENT` must never overwrite this reload's own probe result.
+ */
+function f6InstallReloadProbe({ sessionId, addedEventName }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.f6) return { ok: false, reason: 'f6-not-installed' };
+  const viewer = window.__viewer;
+  const ctx = { checkpoint() {} };
+  const errOf = (e) => (e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? '') }
+    : { primitive: typeof e, value: String(e) });
+
+  const rp = { fired: false, settled: false, entry: null, listener: null, addedEventName };
+  const listener = (event) => {
+    if (rp.fired) return;
+    rp.fired = true;
+    const model = event && event.model !== undefined ? event.model : null;
+    const snapshotBefore = {
+      isObjectTreeCreated: (() => { try { return model && typeof model.isObjectTreeCreated === 'function' ? model.isObjectTreeCreated() : null; } catch { return null; } })(),
+      instanceTreeInData: (() => { try { return model && typeof model.getData === 'function' ? Boolean(model.getData() && model.getData().instanceTree) : null; } catch { return null; } })(),
+      isLoadDone: (() => { try { return model && typeof model.isLoadDone === 'function' ? model.isLoadDone() : null; } catch { return null; } })(),
+    };
+    const startedAt = performance.now();
+    session.enumerator.resolveRoots({ model }, 'whole', ctx).then(
+      (result) => {
+        rp.entry = { model, snapshotBefore, elapsedMs: performance.now() - startedAt, outcome: 'resolved', rootsLength: result ? result.roots.length : null, error: null };
+        rp.settled = true;
+      },
+      (err) => {
+        rp.entry = { model, snapshotBefore, elapsedMs: performance.now() - startedAt, outcome: 'rejected', rootsLength: null, error: errOf(err) };
+        rp.settled = true;
+      },
+    );
+  };
+  viewer.addEventListener(addedEventName, listener);
+  rp.listener = listener;
+  session.f6.reloadProbe = rp;
+  return { ok: true };
+}
+
+/** In-page predicate (Stage 2's `pageWaitForFunction` shape). True once the reload probe's own
+ * `resolveRoots` call has settled (resolved or rejected). */
+function f6ReloadProbeSettledPredicate({ sessionId }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  return Boolean(session && session.f6 && session.f6.reloadProbe && session.f6.reloadProbe.settled);
+}
+
+/**
+ * In-page. Plan §7.6 step 7: read out the timeline, remove the listener immediately (mirrors
+ * F3's own "finalize immediately, don't wait for Phase 11" discipline).
+ *
+ * codex-advisor consult (Stage 7): a fresh listener can observe an UNRELATED `MODEL_ADDED_EVENT`
+ * (e.g. a stray/duplicate load elsewhere) -- URN matching alone is insufficient. `tokenId` (the
+ * reload's own `loadDocumentNode` token, once known) lets this correlate the probe's own
+ * recorded `event.model` against the AUTHORITATIVE model for that exact reload
+ * (`window.__g1.models[tokenId]`, the same record Stage 2's own load machinery already
+ * populates) -- `modelMatchesReloadToken` is `null` only when `tokenId` was never supplied
+ * (the reload itself never reached a completed token), never silently assumed true.
+ */
+function f6FinalizeReloadProbe({ sessionId, tokenId } = {}) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.f6 || !session.f6.reloadProbe) return { ok: false, reason: 'reload-probe-not-installed' };
+  const rp = session.f6.reloadProbe;
+  window.__viewer.removeEventListener(rp.addedEventName, rp.listener);
+  let modelMatchesReloadToken = null;
+  if (tokenId !== undefined && rp.entry) {
+    const expectedModel = g.models ? g.models[tokenId] : undefined;
+    modelMatchesReloadToken = expectedModel !== undefined && rp.entry.model === expectedModel;
+  }
+  return { ok: true, fired: rp.fired, settled: rp.settled, entry: rp.entry, modelMatchesReloadToken };
+}
+
+/**
+ * In-page. Plan §7.6 step 5: `registry.register(K, modelAfter, {modelVersion})`; confirm
+ * `registry.bindingFor(K).model === modelAfter` and `world.isModelLive(modelAfter) === true`.
+ * `modelAfter` is read from `window.__g1.models[tokenId]` -- the reload's own load-record,
+ * exactly how Stage 2's own machinery already tracks a completed load's model (never a separate
+ * ad hoc lookup). F6 is the only mutating check: `session.model` moves forward to `modelAfter`
+ * here. `session.binding` is intentionally NOT overwritten -- every later read of "the current
+ * binding" in this file re-fetches `registry.bindingFor(K)` fresh rather than trusting a cached
+ * snapshot, avoiding any staleness question entirely.
+ */
+function f6Reregister({ sessionId, tokenId }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.f6) return { ok: false, reason: 'f6-not-installed' };
+  const modelAfter = g.models ? g.models[tokenId] : undefined;
+  if (!modelAfter) return { ok: false, reason: 'modelAfter-not-found' };
+  const errOf = (e) => (e !== null && typeof e === 'object'
+    ? { name: e.name, message: String(e.message ?? '') }
+    : { primitive: typeof e, value: String(e) });
+  try {
+    session.registry.register(session.K, modelAfter, { modelVersion: session.modelVersion });
+  } catch (e) {
+    return { ok: false, reason: 'register-threw', error: errOf(e) };
+  }
+  session.f6.modelAfter = modelAfter;
+  session.model = modelAfter;
+  const binding = session.registry.bindingFor(session.K);
+  const bindingOk = Boolean(binding && binding.model === modelAfter);
+  const liveOk = session.world.isModelLive(modelAfter) === true;
+  return { ok: true, reregisteredOk: bindingOk && liveOk };
+}
+
+/**
+ * In-page, async. Plan §7.6 step 6 -- the actual stale-event proof (T3's own `H_STEP3` "late-
+ * unload" pattern): invokes the wiring's CAPTURED handler directly with `{model: modelBefore}`
+ * (a simulated stale/delayed event for the model no longer bound), then asserts the four
+ * post-conditions the plan names: the handler does not throw; `registry.bindingFor(K)` still
+ * resolves to `modelAfter` (unchanged); `world.isModelLive(modelAfter)` is still `true`; a
+ * `resolveRoots` call against the CURRENT (freshly re-fetched) binding still succeeds. This
+ * outcome IS what `buildStaleOldModelEventControlResult` copies into
+ * `result.controls['stale-old-model-event']` (plan line 674/996) -- never re-run.
+ */
+async function f6RunLateUnloadControl({ sessionId }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.f6 || typeof session.f6.capturedHandler !== 'function') {
+    return { ok: false, reason: 'captured-handler-not-available' };
+  }
+  const f6 = session.f6;
+  const ctx = { checkpoint() {} };
+
+  let lateUnloadHandlerThrew = false;
+  try {
+    f6.capturedHandler({ model: f6.modelBefore });
+  } catch {
+    lateUnloadHandlerThrew = true;
+  }
+
+  const binding = session.registry.bindingFor(session.K);
+  const bindingSurvivesLateUnload = Boolean(binding && binding.model === f6.modelAfter);
+  const modelAfterStillLive = session.world.isModelLive(f6.modelAfter) === true;
+
+  let resolveRootsOk = false;
+  if (binding) {
+    try {
+      const r = await session.enumerator.resolveRoots(binding, 'whole', ctx);
+      resolveRootsOk = Boolean(r);
+    } catch {
+      resolveRootsOk = false;
+    }
+  }
+
+  return { ok: true, lateUnloadHandlerThrew, bindingSurvivesLateUnload, modelAfterStillLive, resolveRootsOk };
+}
+
+/** In-page. Plan §7.6 step 9: F6-local cleanup (the probe listener, the eviction-ordering shim,
+ * the wiring itself), guarded, independent of and before Phase 11's own outer cleanup. */
+function f6Cleanup({ sessionId }) {
+  const g = window.__g1;
+  const session = g && g.sessions && g.sessions[sessionId];
+  if (!session || !session.f6 || typeof session.f6.dispose !== 'function') return { ok: true, disposed: false };
+  try { session.f6.dispose(); } catch { /* best-effort, mirrors this file's own guarded cleanup discipline */ }
+  return { ok: true, disposed: true };
+}
+
+/**
+ * Node-side. `runF6UnloadReload(deps)` -- plan §7.6's exact 9-step sequence, the ONLY mutating
+ * check in the whole harness (must run last). Node owns sequencing/timeouts/failure routing; in-
+ * page functions (above) own every Viewer/registry/listener touch -- a strict realm boundary,
+ * since `world`/`registry`/`model` are page-owned and never returnable to Node (codex-advisor-
+ * confirmed decomposition, Stage 7 consult).
+ *
+ * Reuses Stage 2's own `startLoad` (never a second, parallel load protocol) for the reload's
+ * `Document.load`/`loadDocumentNode` pair, same corrected initializer options, no new
+ * `Initializer()` call. `drainLoadToken` is deliberately NOT used for the normal reload-success
+ * path (codex-advisor consult) -- it exists to reconcile a token that TIMED OUT and might still
+ * resolve late, a scenario that does not apply to a freshly-minted reload token with no prior
+ * ownership contention; `startLoad` alone already resolves once the reload has settled.
+ *
+ * `deps`: `{sessionId, pageEvaluate, pageWaitForFunction, loadStarter: {documentLoad,
+ * loadDocumentNode}, urn, loadTimeoutMs, unloadEventName, addedEventName, unloadWaitTimeoutMs =
+ * CHECK_TIMEOUT_MS, reloadProbeTimeoutMs = CHECK_TIMEOUT_MS, captureFormatSignalsFn =
+ * captureModelFormatSignals}` -- `unloadEventName`/`addedEventName` are real
+ * `Autodesk.Viewing.*_EVENT` STRINGS, caller-resolved (never hardcoded Node-side).
+ *
+ * Returns `{ok, fields, docLoad, loadDocumentNode, unloadSettled, unloadSnapshot,
+ * reregisterResult, lateUnloadResult, formatSignals}` (`ok:false` only on a fatal wiring-install
+ * failure before any of F6's own fields can be produced at all).
+ */
+async function runF6UnloadReload(deps) {
+  const {
+    sessionId, pageEvaluate, pageWaitForFunction, loadStarter, urn, loadTimeoutMs,
+    unloadEventName, addedEventName,
+    unloadWaitTimeoutMs = CHECK_TIMEOUT_MS, reloadProbeTimeoutMs = CHECK_TIMEOUT_MS,
+    captureFormatSignalsFn = captureModelFormatSignals,
+  } = deps;
+
+  const wiringResult = await pageEvaluate(f6InstallUnloadWiring, { sessionId, unloadEventName });
+  if (!wiringResult || wiringResult.ok !== true) {
+    return { ok: false, reason: 'wiring-install-failed', detail: wiringResult };
+  }
+
+  await pageEvaluate(f6TriggerUnload, { sessionId });
+  let unloadSettled = true;
+  try {
+    await pageWaitForFunction(f6UnloadSettledPredicate, { sessionId }, { timeout: unloadWaitTimeoutMs });
+  } catch {
+    unloadSettled = false;
+  }
+  const unloadSnapshot = await pageEvaluate(f6ReadUnloadSnapshot, { sessionId });
+
+  await pageEvaluate(f6InstallReloadProbe, { sessionId, addedEventName });
+
+  const docLoad = await startLoad({
+    pageEvaluate, starter: loadStarter.documentLoad, api: LOAD_API.DOCUMENT_LOAD, urn, loadTimeoutMs,
+  });
+  let loadDocumentNodeResult = null;
+  let reloadClassifier = null;
+  let formatSignals = null;
+  if (docLoad.token.state === TOKEN_STATE.COMPLETED) {
+    loadDocumentNodeResult = await startLoad({
+      pageEvaluate, starter: loadStarter.loadDocumentNode, api: LOAD_API.LOAD_DOCUMENT_NODE,
+      docTokenId: docLoad.token.id, loadTimeoutMs,
+    });
+  }
+
+  let reregisterResult = { ok: false, reregisteredOk: false };
+  let lateUnloadResult = { ok: false, lateUnloadHandlerThrew: null, bindingSurvivesLateUnload: null, modelAfterStillLive: null, resolveRootsOk: null };
+
+  if (loadDocumentNodeResult && loadDocumentNodeResult.token.state === TOKEN_STATE.COMPLETED) {
+    reregisterResult = await pageEvaluate(f6Reregister, { sessionId, tokenId: loadDocumentNodeResult.token.id });
+
+    const signalSnapshot = await pageEvaluate(captureFormatSignalsFn, { tokenId: loadDocumentNodeResult.token.id, gen: loadDocumentNodeResult.gen });
+    formatSignals = signalSnapshot;
+    if (signalSnapshot && signalSnapshot.ok === true && signalSnapshot.isOTG !== null && signalSnapshot.isSVF2 !== null) {
+      reloadClassifier = readFormat(buildFormatSignalShim(signalSnapshot));
+    }
+
+    if (reregisterResult && reregisterResult.ok === true) {
+      lateUnloadResult = await pageEvaluate(f6RunLateUnloadControl, { sessionId });
+    }
+  }
+
+  let reloadProbeSettled = false;
+  try {
+    await pageWaitForFunction(f6ReloadProbeSettledPredicate, { sessionId }, { timeout: reloadProbeTimeoutMs });
+    reloadProbeSettled = true;
+  } catch {
+    reloadProbeSettled = false;
+  }
+  const probeFinal = await pageEvaluate(f6FinalizeReloadProbe, {
+    sessionId, tokenId: loadDocumentNodeResult ? loadDocumentNodeResult.token.id : undefined,
+  });
+  const f3RepeatProbe = {
+    fired: Boolean(probeFinal && probeFinal.fired),
+    settled: Boolean(probeFinal && probeFinal.settled) && reloadProbeSettled,
+    entry: probeFinal ? probeFinal.entry : null,
+    modelMatchesReloadToken: probeFinal ? probeFinal.modelMatchesReloadToken : null,
+    timedOut: !reloadProbeSettled,
+  };
+
+  await pageEvaluate(f6Cleanup, { sessionId });
+
+  return {
+    ok: true,
+    fields: {
+      unloadProbeFired: Boolean(unloadSnapshot && unloadSnapshot.unloadProbeFired),
+      bindingNullAfterUnload: Boolean(unloadSnapshot && unloadSnapshot.bindingNullAfterUnload),
+      reregisteredOk: Boolean(reregisterResult && reregisterResult.reregisteredOk === true),
+      lateUnloadHandlerThrew: lateUnloadResult.lateUnloadHandlerThrew,
+      bindingSurvivesLateUnload: lateUnloadResult.bindingSurvivesLateUnload,
+      modelAfterStillLive: lateUnloadResult.modelAfterStillLive,
+      reloadClassifier,
+      f3RepeatProbe,
+      // Additions beyond the brief's own minimal named-field list, both directly required by
+      // the plan's own prose (never invented): `resolveRootsOk` is one of step 6's four named
+      // post-condition assertions (plan line 996: "a resolveRoots call against the current
+      // binding still succeeds"); `unregisterBeforeEvict` is step 3's own named eviction-
+      // ordering check (plan's Failure criteria: "eviction/unregistration ordering differs from
+      // the accepted Adapter contract"). Both are load-bearing for scoreF6 below.
+      resolveRootsOk: lateUnloadResult.resolveRootsOk,
+      unregisterBeforeEvict: unloadSnapshot ? unloadSnapshot.unregisterBeforeEvict : null,
+    },
+    docLoad, loadDocumentNode: loadDocumentNodeResult,
+    unloadSettled, unloadSnapshot, reregisterResult, lateUnloadResult, formatSignals,
+  };
+}
+
+/**
+ * `scoreF6(fields)` -- plan §7.6's exact success/failure criteria, pure, Node-side. `FAIL` iff:
+ * the late-unload control DOES disturb `modelAfter`'s binding/liveness/`resolveRoots` (the real
+ * stale-event failure mode this whole check exists to catch); eviction/unregistration ordering
+ * disagrees with the accepted contract; the reload never reaches `CONFIRMED_SVF2`; the step-7
+ * reload probe never fires, rejects, or times out (a probe that never settles is itself a
+ * finding, per the plan's own H1 discipline -- never merely "attempted"); the late-unload
+ * handler itself threw; or `reregisteredOk`/`unloadProbeFired`/`bindingNullAfterUnload` are
+ * false. Fails closed on missing evidence -- a `null`/`undefined` field never silently passes.
+ */
+function scoreF6(fields) {
+  const f = fields || {};
+  const probeOutcomeOk = Boolean(f.f3RepeatProbe) && f.f3RepeatProbe.fired === true
+    && f.f3RepeatProbe.settled === true && f.f3RepeatProbe.timedOut !== true
+    && f.f3RepeatProbe.modelMatchesReloadToken === true
+    && Boolean(f.f3RepeatProbe.entry) && f.f3RepeatProbe.entry.outcome === 'resolved';
+  const reloadOk = Boolean(f.reloadClassifier) && f.reloadClassifier.classifier === CLASSIFIER.CONFIRMED_SVF2;
+  const lateUnloadOk = f.lateUnloadHandlerThrew === false && f.bindingSurvivesLateUnload === true
+    && f.modelAfterStillLive === true && f.resolveRootsOk === true;
+  const evictionOrderingOk = f.unregisterBeforeEvict === true;
+
+  const failed = f.unloadProbeFired !== true
+    || f.bindingNullAfterUnload !== true
+    || f.reregisteredOk !== true
+    || !lateUnloadOk
+    || !reloadOk
+    || !probeOutcomeOk
+    || !evictionOrderingOk;
+
+  let reason = null;
+  if (failed) {
+    if (!lateUnloadOk) reason = 'f6-stale-event-disturbed-modelAfter';
+    else if (!evictionOrderingOk) reason = 'f6-eviction-ordering-violated';
+    else if (!reloadOk) reason = 'f6-reload-not-confirmed-svf2';
+    else if (!probeOutcomeOk) reason = 'f6-reload-probe-did-not-resolve';
+    else reason = 'f6-setup-failed';
+  }
+  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason, fields: f };
+}
+
+/**
+ * `buildStaleOldModelEventControlResult(f6Fields)` -- plan line 674/849/996: `stale-old-model-
+ * event` is NOT a new perturbation -- F6's own step 6 (`f6RunLateUnloadControl`, above) already
+ * performs exactly this perturbation, in-sequence, as part of the mutating check itself. Its
+ * outcome is COPIED, never re-run, into `result.controls['stale-old-model-event']`, via Stage
+ * 1's `createControlResult`, so it participates in §6.3's mandatory-control manifest identically
+ * to the other eight controls. `restorationRequired` comes from Stage 1's
+ * `CONTROL_RESTORATION_REQUIRED['stale-old-model-event']` via `createControlResult` (plan line
+ * 849: `true`, cross-checked, never hardcoded here). Nothing is patched by this control (it
+ * drives the wiring's own REAL captured handler, per line 849's own state description), so
+ * "detected" and "restored" collapse to the SAME oracle: F6 step 6's own four post-assertions.
+ */
+function buildStaleOldModelEventControlResult(f6Fields) {
+  const f = f6Fields || {};
+  const executed = f.lateUnloadHandlerThrew !== null && f.lateUnloadHandlerThrew !== undefined;
+  if (!executed) {
+    return createControlResult('stale-old-model-event', { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'f6-late-unload-control-not-executed' });
+  }
+  const survived = f.lateUnloadHandlerThrew === false && f.bindingSurvivesLateUnload === true
+    && f.modelAfterStillLive === true && f.resolveRootsOk === true;
+  if (!survived) {
+    return createControlResult('stale-old-model-event', { state: CONTROL_STATE.RESTORE_FAILED, executed: true, detected: true, restored: false, reason: 'stale-event-disturbed-modelAfter' });
+  }
+  return createControlResult('stale-old-model-event', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true, reason: null });
+}
+
+// ------------------------------------------------------------------------------------------
 // Guarded entrypoint stub (item 8) -- a later stage replaces main()'s body.
 // ------------------------------------------------------------------------------------------
 
@@ -4448,5 +5101,20 @@ export {
   selectBoundsBeyondToleranceTarget,
   runInvalidBoundsControl,
   runBoundsBeyondToleranceControl,
+  observeF8,
+  scoreF8,
+  f6InstallUnloadWiring,
+  f6TriggerUnload,
+  f6UnloadSettledPredicate,
+  f6ReadUnloadSnapshot,
+  f6InstallReloadProbe,
+  f6ReloadProbeSettledPredicate,
+  f6FinalizeReloadProbe,
+  f6Reregister,
+  f6RunLateUnloadControl,
+  f6Cleanup,
+  runF6UnloadReload,
+  scoreF6,
+  buildStaleOldModelEventControlResult,
   main,
 };
