@@ -1007,9 +1007,9 @@ test('scoreF5: F1 succeeded, F2 balanced, F4 no oversized geometry -> PASS', () 
 
 test('scoreF5: F1 succeeded but F2 did not balance -> FAIL, reason not-fully-enumerated', () => {
   const result = scoreF5({
-    f1Result: { ok: true, fields: { populationCount: 20 } },
+    f1Result: { ok: true, fields: { populationCount: 20, maxRootFragmentCount: 2, maxPerDbIdFragmentCount: 2 } },
     f2Fields: { accountingBalanced: false },
-    f4Fields: { oversizedGeometryCount: 0 },
+    f4Fields: { maxActiveTriangleCount: 10, oversizedGeometryCount: 0 },
   });
   assert.equal(result.verdict, CHECK_VERDICT.FAIL);
   assert.equal(result.reason, 'not-fully-enumerated');
@@ -1017,9 +1017,9 @@ test('scoreF5: F1 succeeded but F2 did not balance -> FAIL, reason not-fully-enu
 
 test('scoreF5: F1 succeeded, F2 balanced, but F4 reports an oversized geometry -> FAIL, reason oversized-geometry-present', () => {
   const result = scoreF5({
-    f1Result: { ok: true, fields: { populationCount: 20 } },
-    f2Fields: { accountingBalanced: true },
-    f4Fields: { oversizedGeometryCount: 1 },
+    f1Result: { ok: true, fields: { populationCount: 20, maxRootFragmentCount: 2, maxPerDbIdFragmentCount: 2 } },
+    f2Fields: { accountingBalanced: true, maxChildrenPerNode: 3 },
+    f4Fields: { maxActiveTriangleCount: 10, oversizedGeometryCount: 1 },
   });
   assert.equal(result.verdict, CHECK_VERDICT.FAIL);
   assert.equal(result.reason, 'oversized-geometry-present');

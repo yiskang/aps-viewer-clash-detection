@@ -2,7 +2,56 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — bounded independent Phase-0 remediation re-review PASS; blocker closed; commit/clean-tree closeout required before a fresh owner authorization; live G1 remains unauthorized
+## LATEST — accepted F1/F5 harness remediation COMMITTED on `main` (clean tree); live G1 F1–F8 remains UNAUTHORIZED and unexecuted since the first run; awaiting owner decision
+
+- **Branch / HEAD:** `main` @ `9eab858a7f7c314ba43c3416d5345a3124707088`. Parent of the closeout commit is `9eab858`; the accepted F1/F5 harness/tests, evidence, reviews and this handoff are committed in one closeout commit (see `git log -1`). Not pushed. A new live run needs a fresh explicit owner authorization.
+- **Current independent authority:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-f5-remediation-bounded-independent-rereview.md`](../reviews/2026-09-29-g1-svf2-f1-f8-f5-remediation-bounded-independent-rereview.md).
+- **Verdict:** 0 Critical / 0 High / 0 Medium / 1 Low. **F5 blocker closed.** The per-owner maximum comes from authoritative `f1PopulationRecords`, ties deterministically select the smallest dbId, unavailable ownership data stays `null`, all five reviewed existing-limit dimensions use strict-`>` semantics, upstream evidence fails closed, and `oversized-geometry-present` is reachable.
+- **F1 status:** prior accepted digest/oracle/evidence remediation remains intact. One non-blocking Low remains: `buildF1EvidenceDetails` bounds/redacts digest and population errors, but an `extractFragmentsThrew` mismatch entry still bypasses `describeError`; no scoring or false-PASS effect.
+- **Independent tests:** focused G1 suite `646/646` pass. One independent `npm run test:offline` run: `4233` total / `4232` pass / `0` fail / `1` existing todo, exit 0. Claude's two earlier clean offline aggregate runs remain acceptable corroboration; no retry was required for confidence. The unchanged timing-sensitive baseline test passed and was not modified.
+- **Deferred Lows:** the per-root check is defensive/redundant after valid F1, and unvalidated `sumRootFragmentCount` in a BLOCKED record is cosmetic; neither blocks a future live authorization.
+- **Operational prerequisite:** current dirty harness/test/review paths would be rejected by Phase 0's clean-tree interlock. Commit/clean-tree closeout and state verification are required before a new live authorization can be safely issued/executed.
+- **Scope:** no live rerun; no production/Core/Viewer Adapter/M4/Panel changes; no G2/G3, host H1/H2, OQ-1, or host integration work.
+- **Recommended next action:** owner authorization to commit the accepted F1/F5 harness, tests, evidence, reviews, and handoff set; then independently verify the clean repository state.
+- **Currently authorized action:** none; this re-review is complete. **Still unauthorized:** commit/push, any live F1–F8 run, G2/G3, host H1/H2, OQ-1, host integration, or production/Core/Adapter/M4/Panel work.
+
+## PRIOR STATE — bounded independent G1 harness remediation re-review COMPLETE; F1 accepted; F5 High blocker remains; live rerun unauthorized
+
+- **Branch / HEAD:** `main` @ `9eab858a7f7c314ba43c3416d5345a3124707088`. Working tree remains uncommitted with the reviewed harness/tests, retained prior live evidence/report/review/prompt, this review, and this handoff update; nothing committed or pushed.
+- **Current independent authority:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-harness-remediation-bounded-independent-rereview.md`](../reviews/2026-09-29-g1-svf2-f1-f8-harness-remediation-bounded-independent-rereview.md).
+- **Verdict:** 0 Critical / 1 High / 1 Medium / 1 Low. **F1 remediation accepted:** digest rows now satisfy the real contract, oracle/extraction failures remain distinct from true inequality, bounded evidence persists through `runHarness`, dependent artifacts are available before digest evaluation, the wrong-owner value is valid and guaranteed wrong, and exit/import behavior is fail-closed.
+- **Blocking High — F5:** class-L `populationClasses` omit `ownerDbId`, so `maxPerDbIdFragmentCount` collapses to the total loaded population. `scoreF5` also does not compare that field with `maxFragmentsPerDbId` and treats missing F4 `oversizedGeometryCount` as zero. The prior live F5 PASS is unreliable. A bounded harness/test-only correction plus targeted independent re-review is required before any new live authorization; no Core/public limit change is needed.
+- **Verification:** directly affected F1/final-integration tests pass `19/19`. Independent `npm run test:offline` produced `4213` total / `4211` pass / `1` fail / `1` existing todo, not the claimed clean result; the sole failure is the unchanged real-clock test at `test/query/ContainmentModeQuery.test.mjs:64-85` and reproduces in isolation. No harness/production diff touches that test, but a clean aggregate gate or explicit baseline disposition is required before live authorization.
+- **Low residual:** new digest/extraction exception evidence uses unbounded/unredacted `sessionErrOf`; it cannot create PASS and is non-blocking evidence hardening.
+- **Scope:** no live rerun; no G2/G3, host H1/H2, OQ-1, host integration, production Viewer/Adapter/Core/M4/Panel work. Retained live evidence was not changed.
+- **Recommended next action:** owner decision on a bounded harness/test-only F5 correction, followed by focused tests, aggregate-gate verification, and targeted independent re-review.
+- **Currently authorized action:** none; this independent review is complete. **Must not begin without explicit owner authorization:** the F5 correction, any new live F1–F8 run, production/Core/Adapter/M4/Panel work, G2/G3, host H1/H2, OQ-1, host integration, commit, or push.
+
+## PRIOR STATE — independent fresh-live-G1 verification: evidence authentic; overall `FAIL` correct; F1 is blocked by a harness digest-oracle defect; owner decision required
+
+- **Branch / HEAD:** `main` @ `9eab858a7f7c314ba43c3416d5345a3124707088` (= `origin/main`). Working tree contains the prior uncommitted live report/evidence/handoff/prompt plus this independent review/handoff update; no production implementation changes.
+- **Current independent authority:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-fresh-live-run-independent-verification.md`](../reviews/2026-09-29-g1-svf2-f1-f8-fresh-live-run-independent-verification.md).
+- **Verdict:** 0 Critical / 1 High / 3 Medium / 2 Low. The retained run is authentic for one real SVF2 execution and `computeOverall` correctly yields `FAIL`; the live authorization is consumed and no live rerun is authorized.
+- **Primary finding:** F1 omitted required `geometryId` from both recomputed digest inputs. Both digest functions therefore threw; the harness collapsed those errors into 467/467 subtree mismatches plus `populationDigestEqual:false`. This is a harness/oracle defect, not evidence of Viewer Adapter/SVF2 digest incompatibility. Ownership/count observations matched.
+- **Dependency fallout:** F4 correctly BLOCKED because the population artifact was never assigned after the digest throw; F7 correctly BLOCKED because F4 artifacts were absent. `wrong-owner`, `invalid-bounds`, and `bounds-beyond-tolerance` were `NOT_EXECUTABLE`; each independently prevents a future PASS and must be exercised after bounded harness remediation.
+- **Other required remediation before any future live run:** retain typed F1 digest errors/values and bounded mismatch evidence; make non-PASS outcomes return a nonzero process status. The report's “empty log” wording is imprecise: the 379-byte log has wrapper/server metadata but no harness console output.
+- **Attempt accounting:** retained evidence supports exactly one real live attempt and no live retry. A review-time import of the executable harness unexpectedly triggered a later Phase-0-only dirty-tree preflight; it created no browser/page/context, loaded no model, ran no F1–F8/control, and did not consume another live attempt. It overwrote only the ignored scratch-result file, not the durable evidence copy.
+- **Exact next owner decision:** authorize or decline a bounded harness/test-only remediation and targeted re-review for the items above. A future live rerun is a separate later owner gate.
+- **Must not begin without explicit authorization:** harness remediation, any live rerun, production/Core/Viewer Adapter/M4/Panel changes, G2/G3, host H1/H2, OQ-1, host integration, or the next milestone.
+
+## LATEST — fresh exactly-one live G1 F1–F8 executed: overall `FAIL` (F1 FAIL; F4/F7 BLOCKED); authorization consumed; awaiting independent Work verification → owner decision
+
+- **Branch / HEAD:** `main` @ `9eab858` (= `origin/main`), unchanged. Working tree: this handoff, the new report, and 2 evidence files are uncommitted/untracked, plus the untracked authorization prompt. Nothing committed or pushed.
+- **Run:** one live execution, 2026-09-29T06:31:58Z→06:32:07Z, exit 0; the fresh authorization is **consumed** — no rerun without new owner authorization.
+- **Runtime:** Viewer 7.124.2, Chromium 151.0.7922.34, Playwright 1.62.1, Node v22.23.1; `AutodeskProduction2`/`streamingV2`; `isOTG()=true`, `isSVF2()=true`; classifier `CONFIRMED_SVF2`.
+- **F1–F8:** F1 **FAIL** (subtreeDigestMismatch 467/467 roots, populationDigestEqual false; owners/sizes match); F2 PASS; F3 PASS; F4 BLOCKED (needs F1); F5 PASS; F6 PASS; F7 BLOCKED (needs F4); F8 PASS.
+- **Controls:** 6 DETECTED_RESTORED; 3 NOT_EXECUTABLE (wrong-owner, invalid-bounds, bounds-beyond-tolerance). Error ledger empty; cleanup clean.
+- **Evidence:** [report](../research/2026-09-29-g1-svf2-f1-f8-fresh-live-run-report.md) · [JSON](../research/evidence/2026-09-29-g1-svf2-f1-f8-fresh-live-run-result.json) · [log](../research/evidence/2026-09-29-g1-svf2-f1-f8-fresh-live-run.log.txt).
+- **Unresolved:** cause of F1 digest mismatch undiagnosed (no fix attempted).
+- **Next authorized action:** none — independent ChatGPT Work verification of this run, then owner decision.
+- **Must not begin without explicit authorization:** any rerun, harness/production fixes, G2/G3, H1/H2, OQ-1, host integration, next milestone.
+
+## PRIOR STATE — bounded independent Phase-0 remediation re-review PASS; blocker closed; commit/clean-tree closeout required before a fresh owner authorization; live G1 remains unauthorized
 
 - **Branch / reviewed HEAD:** `main` @ `606ee50d3bbac3f581743aac31b62c85e0ea7554`; the accepted remediation/evidence/review set remains uncommitted on top of this HEAD.
 - **Current independent review authority:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-phase0-remediation-bounded-independent-rereview.md`](../reviews/2026-09-29-g1-svf2-f1-f8-phase0-remediation-bounded-independent-rereview.md).

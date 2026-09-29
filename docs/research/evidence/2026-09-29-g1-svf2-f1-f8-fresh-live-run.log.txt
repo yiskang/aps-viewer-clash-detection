@@ -1,0 +1,7 @@
+# stdout+stderr of the single fresh live run (2026-09-29T06:31:58Z..06:32:07Z, exit 0). Harness emitted NO console output; file otherwise empty by design.
+# server.log tail
+  copied node_modules/three-mesh-bvh/src -> wwwroot/vendor/three-mesh-bvh/src
+sync-vendor: done.
+npm notice run aps-viewer-sandbox@1.0.0 start
+npm notice run node server.js
+Server listening on port 8080...

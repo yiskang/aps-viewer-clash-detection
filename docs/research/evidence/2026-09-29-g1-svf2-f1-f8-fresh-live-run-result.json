@@ -1,0 +1,469 @@
+{
+  "script": "g1-svf2-f1-f8-verification.mjs",
+  "harnessIntegrity": {
+    "path": "test/acceptance/g1-svf2-f1-f8-verification.mjs",
+    "sha256": "c7f3672aebc80f0e12f79334ec7b9a46ad0c03e261bf4c7733f6bc7684aee180",
+    "branch": "main",
+    "headSha": "9eab858a7f7c314ba43c3416d5345a3124707088",
+    "gitStatusPorcelain": "?? docs/prompts/for-claude-fresh-exactly-one-live-g1-f1-f8.md\n",
+    "servedModuleManifest": {
+      "/clashtest/viewer/index.js": "bffb0cdcb9911a7435580b5adbd5c05d6cb6404a6098f5be70a7e075e0322e6c",
+      "/clashtest/index.js": "08d313a397377bdabbc6aab769f0041a1cbe4fbaec35976c53844a9eac0daff2",
+      "/collision/viewer/ViewerModelAdapter.js": "5ed04748bf4574c65020db10b800f31d887724b4148e3e7cb93fba7a54586fa3",
+      "/collision/viewer/ViewerGeometryAdapter.js": "bfa9947377d41e31de93c4a329280cd0d0fbba59b23acb155cc60ecb95e133ee",
+      "/clashtest/planning/scopeDigest.js": "76767e797cce18a8670795bec2c1eb3beb6297f6f2fc8d07744b5944a288a301",
+      "/collision/index.js": "03375b2214da609755210fb9df86c6c3400b5afd8a4f3097b7729f60aa55f60e",
+      "/collision/constants.js": "389e675ef7def0c6cbffa2ddff2ea5176b8b46fc5159881592c5c671cfe73a35",
+      "/clashpanel/viewer/viewerApi.js": "667ea92076bfa2afeb6db39e5860873945341d293a0dd4f604eb9dd1c150fe5e",
+      "/clashtest/viewer/ViewerElementEnumerator.js": "6c07d62fd759d1caef7f73cc08f587b36a35c1d3cb51a69212a05a30a941fb82",
+      "/clashtest/viewer/unloadWiring.js": "516cf5f977d390cec6b3a81e3eb1d493e2518655ede9c6869317c7096ab7e9d8",
+      "/clashtest/engine.js": "586c07ff278a3d422d44ccde28c51df26531077c28b32b1ea429e11dcf607636",
+      "/clashtest/definition/validate.js": "758fa4619edca5eb9b53a69cf0be8f295ac024031d35b5a8fe74f0d57564dd3e",
+      "/clashtest/results/claim.js": "8791d77372fc429bad08b0abec44d5bf6f5c6484788f259b8876d50c5d43c8d6",
+      "/clashtest/results/status.js": "07007ad5bbe4f6c542e3c7c1ad030d5036d05f324c880e3ec615e847e3613c0f",
+      "/clashtest/run/freshness.js": "37813f0b45e77d1b5c6dc51e705a9d5d8e40fdaac46692d494b404987969b989",
+      "/clashtest/derive/index.js": "150a57516dc2f2f698a78bf256c7b75e39061e457feba4eb2dc85ae12d737838",
+      "/clashtest/stores/InMemoryClashTestStore.js": "2e9f9d87279550aba9cb4b50aa83267e9db2c8dff1386bdc145a4aff87646a2a",
+      "/clashtest/results/InMemoryResultStore.js": "1c3dfc5bda6b1ad43511be3e7cd1380b6bde12b065b58115899caf0e2c443242",
+      "/clashtest/execution/LocalUnitExecutor.js": "7fe3a669a1c487dd40429c1790a6b89aae2741095cca5e4a7c298b2fc407b5d4",
+      "/clashtest/identity/ModelRegistry.js": "468ae918f8ce67337b933b16c52185c30243a655026c4e78264a61711818bf83",
+      "/clashtest/options.js": "5d4248a8e02902b80f35e98d3a15234c5ccbaef7bb3bf2176b37e95d82d97af2",
+      "/clashtest/errors.js": "937e0d85fcf9407e0d897fc6a8f0e768c3876088595dabe8b8b00555130c94f5",
+      "/collision/geometry/GeometryIdentity.js": "286e2dea32d57ea0689b6818f00bdf99a3bc7454aebb242abfc064c7499d5107",
+      "/collision/errors.js": "c50bad100456919b393e79c6ed0b40c5f38f681a5c35232d127009699c091513",
+      "/clashtest/util/canonical.js": "e7545c2b92f241fcbdfbf9b86890bad79c7df549eb0e13104d4f2e96d038e3e6",
+      "/clashtest/planning/ElementEnumerator.js": "87ba68895dfc3b2f6973e43db5639e2a1a162c425fe81795863b751761e35e77",
+      "/collision/CollisionWorld.js": "fc096ee131b3683ec5c95f31f45e02daa381586219401110c85610704027aeac",
+      "/clashtest/util/slicer.js": "5ff34bdcdab048539b6fb9f40e1672588c2271d1e9d629fde32e57ae61715847",
+      "/clashtest/viewer/checkpoint.js": "82d9e21d68d3817552d78604bb9e09e5875b4595edd7fe738027f36ae2e434b2",
+      "/clashtest/viewer/errors.js": "3f20dd7cde30602a375ac556f6d64d1c0290154c48ecc403224b665ab7ff664f",
+      "/clashtest/viewer/readiness.js": "375a0bbdd239f25a7f220eaeba19fa393a6823a15774178278ec82047d909c69",
+      "/clashtest/viewer/treeWalk.js": "795fef0374e050d2589e3315da12f4bed3de94f74053711f4643b695cd49516e",
+      "/clashtest/viewer/populationScan.js": "bb780f6849620d269dbb57f4e23a96e8ecc42cfbf845aec6114a6f110ae70268",
+      "/clashtest/identity/ids.js": "06e1b348e1e4eb47b22b5fb00ca139e227abb7f77e30097ab9e95d82e93d008c",
+      "/clashtest/util/capture.js": "0eaea4a215f0a09f8f18b8ef86ea78a43227cb2a33b846143f73a5b629d2ea34",
+      "/clashtest/run/coordinator.js": "a1893bb82add53b311e59a2e0866c6568fb3187aed51e6919a2fbe6e98cee510",
+      "/clashtest/run/Run.js": "c542c2c225c8ebf760e81f7bfff78ca637317acf1761b481eb7cde4979a448d1",
+      "/clashtest/results/residency.js": "9ea2bf6a5c7e759d03c530daac1c83ddb55e7e5bdbaf0e1bb68f99ab4522ac08",
+      "/clashtest/results/resultSet.js": "c703a3657fbd26c945876efeb3c71e2554c2feba1a99d278708c7a8b3e0f46db",
+      "/clashtest/execution/UnitExecutor.js": "b51a9a8de6761c4be416e04f4edb96582578733cd5e2d8fa1d627fe629c3e98d",
+      "/clashtest/execution/diagnostics.js": "450c49065dbf2ac3b841a30c2fb2fe66c6d6df4cb8d580eda046de446a7249aa",
+      "/clashtest/definition/operations.js": "b60b29cfd6f69d4da21f08b3ea28393d596fb9e2d37792743ee6426c18bafee1",
+      "/clashtest/definition/normalize.js": "5121eca0058a01de1c7300e70982e0b8322550363ce9b6943acf4b5d7ddbfd0d",
+      "/clashtest/results/validateResultSet.js": "436b2f14f249ea59efc7b6c9ff825a17c75a60457eb1f33d24ab4056655a0425",
+      "/clashtest/derive/context.js": "65dd5b5bb972afdf3ddf053568a9079c184eaace2bd68fb404372fa25bad69b1",
+      "/clashtest/planning/planner.js": "d5001ccce0fb7b37df43a5898b3827ef1580f0a9e0571ee4bcee1b631cc56767",
+      "/clashtest/planning/splitting.js": "a2cccc90dd365a4d6e1d353f4cf4c950317dbab6ea1a4d789186fd461069768e",
+      "/clashtest/planning/ledger.js": "837099f362b1fe155c48b68a673d96f8a5bf870840afed67da0aee948d5bbc1d",
+      "/collision/scheduler.js": "a1a31fea91022f0e9857ee07df1814963e4eebefd2e0d0bef5e787fef5546819",
+      "/collision/geometry/createGeometryRegistry.js": "5351578c2af8f24285a76a2e2e864bcae344b40e848c95c8c5c5e0566cbccde1",
+      "/collision/tlas/TlasCache.js": "a74e8d7dc43141adbe0d4c9e46fed03f03868de5283dde92118ae32b5813c5cb",
+      "/collision/query/SurfaceIntersectionQuery.js": "de9ba8581aa13ae8f68f03bf881b633ee8c8c76d8b00e2d3fc27ffbaded5c23b",
+      "/collision/query/ContainmentModeQuery.js": "86a33fed15a9bc7fbd9a5f9a7c79bea098e834dd0973e3ab7df1914793ccdba3",
+      "/collision/query/VolumeOverlapQuery.js": "62aa1de9ea89e9688afc481bc5ef4e54a03e7272bb3aed2aedf0924cd38188fb",
+      "/collision/geometry/AabbDistance.js": "10c65a29ce40d238da2db488a554e8b55c2b44fda6c901f099808e8146411ac2",
+      "/collision/query/ClearanceTransform.js": "4b5be5d279397ea42de66a82cf4debbb26119a8505b36598dc660795ddb40c43",
+      "/collision/query/ClearanceQuery.js": "429d7dc7d6c25c0ea96780dc889f8a0626336582edaf12d932e9839e5baf9846",
+      "/collision/query/ClearanceHardClashPrecheck.js": "426179c12b15160c7147841cb54acfbf9378a1841a1d4d6a5fc5ac58a3ee1eb7",
+      "/clashtest/run/emitter.js": "c827b1d8fef7281c59c967a4b07e817102b91821019592706f42fdb8bbe0ea69",
+      "/clashtest/run/settlement.js": "5e25d48e0c9be82ff2bed89ab1bd5957bfc2d57b292c0988e68ebca2c3960175",
+      "/clashtest/results/resultSetSchema.js": "b85360ccf9eac616e7befd045ba0df492d1f4690fab1863c5851c70ff7a89f32",
+      "/clashtest/derive/validate.js": "fe77a8f04974c675a18404992e4f62954eed8e7a990b54dcb1d1ff7123e5acbd",
+      "/clashtest/derive/runners.js": "00472873347778d0442520673b793ccb50d1e842f9975ce6882dff1a81bb12b2",
+      "/clashtest/planning/steps.js": "0d4c417f36ee91f8edd2b0b94d3a6265c5612b409837a5c1a609f72213cdf9e3",
+      "/clashtest/planning/rootResolution.js": "46128ee9571fb7c71f600c69a7521d0da98db46c1e4485c46f40d1457bee2f11",
+      "/clashtest/planning/planTables.js": "d8a517dee45754a078494f821f0c4e24e69fe586354aa5a2074e2ca94f8b1e0f",
+      "/clashtest/planning/decompose.js": "dc00f86fa5c074e26674ecd697423d09915bb1304f644b082dade847e294069f",
+      "/clashtest/planning/sizing.js": "3feff94bfa792bff463b03f776472e1dd400f599bd8b16f761ab8bccaf05d3b7",
+      "/collision/geometry/GeometryRegistry.js": "d390a97286f123372aaab850f1e5d315cc6767b42886de464578aacd6a3eb2a6",
+      "/collision/geometry/activeRangeCompaction.js": "e0e23d3902cca680e286060889377c41edc85b45d6d72e0b69f5cae1fd824a82",
+      "/collision/geometry/GeometryConnectivity.js": "98900c46078d3a09bf839bdefa8a5d6d3e5e87fa47fff882203c40c8f116ed16",
+      "/collision/blas/BlasCache.js": "a9cb42334d7a9d8405c91f544e29e1dfe6b3a4b15dc79b95fd890522766de17a",
+      "/collision/tlas/CollisionInstanceBVH.js": "79f2cabc67a7f25072cce891dd706c56926e7d5f148795003c3f2132c77a8904",
+      "/collision/query/ContainmentQuery.js": "9a7f3b3f4a48214238429a8562d43a2b12391ed05cdc81f474c0675c88b5da18",
+      "/collision/query/SurfaceCrossingWitness.js": "9afca41e1910d95922ab037b3f32ee8bddac62c1708ce4120e4344625cebbd20",
+      "/collision/query/ProperCrossingQuery.js": "e475f89a0e4739892c64630b9ab60564806509e99f9668c2b6f635ba8c03cf55",
+      "/collision/query/orientForCrossing.js": "7f1701a2bb4dc20b0d019a54be123e88c2e299b1ae9d0fbb37c3e9e8322ac419",
+      "/clashtest/derive/groupBy.js": "578007f57b479de3aeeda559088a1612bcb43dc78d525e7bb51a5d905da4d31e",
+      "/clashtest/derive/filter.js": "72ab5a0ff55af0a0834780a57d5cb468145d0663b4a380777b20dc5da1bc47b7",
+      "/clashtest/derive/summarize.js": "437c5595127626710a51b1b4385276d0afd8255ad6cd1f2292047b7ef626ad6d",
+      "/clashtest/derive/compare.js": "9faca18af538affdfd868e7b10af1c0f1cc3672c59568731d22c6b98860a0077",
+      "/clashtest/planning/owners.js": "f3c8eac7a484b23d739abd131ed423d5723c5c64acbf2c9d834a7b2d8b005e70",
+      "/collision/blas/ThreeMeshBvhBackend.js": "9cd8f803399111af46cea4cc8b5990ff1f4e2c9a3eae8d74e084dfe65e1da7b0",
+      "/collision/query/geometryScale.js": "2915bdecff7e05a31ce6117df91d1dc0c48315915507cd9c10f03c303e2e6ec7",
+      "/clashtest/derive/facets.js": "6dc569970c3690f6150836809c6a1e51e8f2ed80141af2d2a0bd5911759337e4",
+      "/clashtest/derive/attributeSeam.js": "15d1b9032389817198b82c4093f3bf7701d5a5e3e9882976579bc988a431bf0b",
+      "/clashtest/derive/steps.js": "8d719d2d43166bcb2f754187e3d15dd5b5b182b23b9aa05106891d9bb4388e8e",
+      "/collision/geometry/contentDigest.js": "b3295e0a89c9c9a893c8f7326cb17d43596d7ab80f7891c2bca790b220187ede"
+    },
+    "gitTreeState": {
+      "clean": false,
+      "entries": [
+        {
+          "status": "??",
+          "path": "docs/prompts/for-claude-fresh-exactly-one-live-g1-f1-f8.md",
+          "allowed": true
+        }
+      ],
+      "dirtyPaths": [
+        "docs/prompts/for-claude-fresh-exactly-one-live-g1-f1-f8.md"
+      ],
+      "allowedPaths": [
+        "docs/prompts/for-claude-fresh-exactly-one-live-g1-f1-f8.md"
+      ],
+      "blockingPaths": []
+    },
+    "remoteAssets": {
+      "viewerScript": {
+        "integrityResult": "VERIFIED",
+        "reason": null,
+        "expectedSha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e",
+        "requestedUrl": "https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js",
+        "capture": {
+          "requestFailed": false,
+          "autodeskViewingDefined": true,
+          "attributableResponses": [
+            {
+              "status": 200,
+              "redirectChainComplete": true,
+              "fromServiceWorker": false,
+              "bodyOutcome": "captured",
+              "decodedByteLength": 10948159,
+              "sha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e"
+            }
+          ]
+        }
+      },
+      "viewerStyle": {
+        "identityScope": "CAPTURE_UNAVAILABLE",
+        "identityGatesOverall": false
+      },
+      "otherObservedRemoteAssets": []
+    }
+  },
+  "runtimeEnvelope": {
+    "viewerVersion": "7.124.2",
+    "chromium": "151.0.7922.34",
+    "node": "v22.23.1",
+    "modelUrn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ",
+    "initializer": {
+      "env": "AutodeskProduction2",
+      "api": "streamingV2"
+    }
+  },
+  "classifier": "CONFIRMED_SVF2",
+  "runtime": {
+    "isOTG": true,
+    "isSVF2": true
+  },
+  "checks": {
+    "F3": {
+      "verdict": "PASS",
+      "reason": null,
+      "fields": {
+        "ok": true,
+        "modelAddedObserved": true,
+        "tModelAdded": 3828.900000035763,
+        "atInvocation": {
+          "isObjectTreeCreated": false,
+          "instanceTreeInData": false,
+          "isLoadDone": false
+        },
+        "resolveRootsOutcome": "resolved",
+        "atSettlement": {
+          "isObjectTreeCreated": true,
+          "instanceTreeInData": true,
+          "isLoadDone": false
+        },
+        "elapsedMs": 3082.099999964237,
+        "rejectionError": null
+      },
+      "evidence": {
+        "status": "observed",
+        "error": null,
+        "blockedBy": null
+      }
+    },
+    "F1": {
+      "verdict": "FAIL",
+      "reason": "f1-mismatch-or-digest-disagreement",
+      "fields": {
+        "ownerMismatchCount": 0,
+        "unreachableCount": 0,
+        "populationCount": 789,
+        "rootsLength": 467,
+        "rootsCompared": 467,
+        "sizeMismatch": 0,
+        "ownersMismatch": 0,
+        "subtreeDigestMismatch": 467,
+        "populationDigestEqual": false,
+        "maxRootFragmentCount": 17,
+        "sumRootFragmentCount": 789,
+        "maxPerDbIdFragmentCount": 789
+      },
+      "evidence": {
+        "status": "observed",
+        "error": null,
+        "blockedBy": null
+      }
+    },
+    "F2": {
+      "verdict": "PASS",
+      "reason": null,
+      "fields": {
+        "isObjectTreeCreated": true,
+        "treeReachableCount": 789,
+        "classL": 789,
+        "classN": 0,
+        "classU": 0,
+        "loadedButUnreachableCount": 0,
+        "fragListCount": 789,
+        "rootsLength": 467,
+        "accountingBalanced": true,
+        "maxChildrenPerNode": 43
+      },
+      "evidence": {
+        "status": "observed",
+        "error": null,
+        "blockedBy": null
+      }
+    },
+    "F4": {
+      "verdict": "BLOCKED",
+      "reason": "f1-population-records-not-available-run-observeF1-first",
+      "fields": {},
+      "evidence": {
+        "status": "observation-failed",
+        "error": null,
+        "blockedBy": null
+      }
+    },
+    "F5": {
+      "verdict": "PASS",
+      "reason": null,
+      "fields": {
+        "maxRootFragmentCount": 17,
+        "maxPerDbIdFragmentCount": 789,
+        "maxChildrenPerNode": 43,
+        "sumRootFragmentCount": 789,
+        "wholePopulationCount": 789,
+        "maxActiveTriangleCount": null,
+        "oversizedGeometryCount": 0,
+        "withinLimits": true,
+        "fullyEnumerated": true,
+        "enforcementObserved": false,
+        "organicBreach": null
+      },
+      "evidence": {
+        "status": "observed",
+        "error": null,
+        "blockedBy": null
+      }
+    },
+    "F7": {
+      "verdict": "BLOCKED",
+      "reason": "f4-artifacts-not-available-run-observeF4-first",
+      "fields": {},
+      "evidence": {
+        "status": "observation-failed",
+        "error": null,
+        "blockedBy": null
+      }
+    },
+    "F8": {
+      "verdict": "PASS",
+      "reason": null,
+      "fields": {
+        "censusedRootCount": 467,
+        "censusedFragmentCount": 789,
+        "treeCheckedFragmentCount": 789,
+        "ownershipDivergenceCount": 0,
+        "treeDivergenceCount": 0,
+        "divergenceCount": 0,
+        "fragListCountReference": 789,
+        "classLReference": 789,
+        "classNExcluded": 0,
+        "classUExcluded": 0,
+        "treeReachableReference": 789,
+        "loadedButUnreachableReference": 0,
+        "rootsLengthReference": 467,
+        "coverageEquationsClosed": true
+      },
+      "evidence": {
+        "status": "observed",
+        "error": null,
+        "blockedBy": null
+      }
+    },
+    "F6": {
+      "verdict": "PASS",
+      "reason": null,
+      "fields": {
+        "unloadProbeFired": true,
+        "bindingNullAfterUnload": true,
+        "reregisteredOk": true,
+        "lateUnloadHandlerThrew": false,
+        "bindingSurvivesLateUnload": true,
+        "modelAfterStillLive": true,
+        "reloadClassifier": {
+          "classifier": "CONFIRMED_SVF2",
+          "otg": true,
+          "svf2": true
+        },
+        "f3RepeatProbe": {
+          "modelAddedObserved": true,
+          "tModelAdded": 7337.900000035763,
+          "atInvocation": {
+            "isObjectTreeCreated": false,
+            "instanceTreeInData": false,
+            "isLoadDone": false
+          },
+          "resolveRootsOutcome": "resolved",
+          "atSettlement": {
+            "isObjectTreeCreated": true,
+            "instanceTreeInData": true,
+            "isLoadDone": false
+          },
+          "elapsedMs": 100.59999996423721,
+          "rejectionError": null,
+          "readinessGateSufficient": true,
+          "modelMatchesReloadToken": true
+        },
+        "resolveRootsOk": true,
+        "unregisterBeforeEvict": true
+      },
+      "evidence": {
+        "status": "observed",
+        "error": null,
+        "blockedBy": null
+      }
+    }
+  },
+  "controls": {
+    "tree-unavailable": {
+      "state": "DETECTED_RESTORED",
+      "executed": true,
+      "detected": true,
+      "restored": true,
+      "restorationRequired": true,
+      "reason": null
+    },
+    "wrong-owner": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "no-eligible-fragment"
+    },
+    "late-completion-after-timeout": {
+      "state": "DETECTED_RESTORED",
+      "executed": true,
+      "detected": true,
+      "restored": true,
+      "restorationRequired": false,
+      "reason": null
+    },
+    "hidden-fragment": {
+      "state": "DETECTED_RESTORED",
+      "executed": true,
+      "detected": true,
+      "restored": true,
+      "restorationRequired": true,
+      "reason": null
+    },
+    "invalid-geometry-consumer": {
+      "state": "DETECTED_RESTORED",
+      "executed": true,
+      "detected": true,
+      "restored": true,
+      "restorationRequired": false,
+      "reason": null
+    },
+    "capacity-breach": {
+      "state": "DETECTED_RESTORED",
+      "executed": true,
+      "detected": true,
+      "restored": true,
+      "restorationRequired": true,
+      "reason": null
+    },
+    "invalid-bounds": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "precondition-unmet"
+    },
+    "bounds-beyond-tolerance": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "perturbation-not-representable"
+    },
+    "stale-old-model-event": {
+      "state": "DETECTED_RESTORED",
+      "executed": true,
+      "detected": true,
+      "restored": true,
+      "restorationRequired": true,
+      "reason": null
+    }
+  },
+  "controlTargets": {
+    "hidden-fragment": {
+      "controlName": "hidden-fragment",
+      "selectedFragId": 0,
+      "selectedTreeOwnerDbId": 4788,
+      "actedOnFragId": 0,
+      "selectionSource": "f2TreeOwnerByFragId-intersect-f1PopulationClasses-L",
+      "selectionRule": "numeric-minimum",
+      "populationSize": 789
+    }
+  },
+  "staleContinuationsDropped": [],
+  "errorLedger": {
+    "pageErrors": [],
+    "unhandledRejections": [],
+    "requiredResourceFailures": [],
+    "contextLoss": [],
+    "consoleErrors": [],
+    "consoleWarnings": [],
+    "allowListedFingerprints": [],
+    "fatalErrorObserved": false
+  },
+  "cleanupFailures": [],
+  "cleanupUnresolvedOwnership": false,
+  "overall": "FAIL",
+  "startedAt": "2026-09-29T06:32:02.261Z",
+  "finishedAt": "2026-09-29T06:32:07.208Z",
+  "cleanupStepStatus": {
+    "drainPendingTokens": "ran",
+    "clearOwnedTimers": "skipped",
+    "abortOwnedControllers": "skipped",
+    "removeF3Listeners": "skipped",
+    "removeF6ProbeListener": "skipped",
+    "removeF6ReloadProbeListener": "skipped",
+    "disposeF6Wiring": "skipped",
+    "restoreAllControlPatches": "skipped",
+    "unloadModelBeforeFromViewer": "ran",
+    "unloadModelAfterFromViewer": "skipped",
+    "unregisterModelBefore": "ran",
+    "unregisterModelAfter": "ran",
+    "evictModelBefore": "ran",
+    "evictModelAfter": "skipped",
+    "disposeEngine": "skipped",
+    "disposeWorld": "ran",
+    "verifyViewerModelSetEmpty": "ran",
+    "closePage": "ran",
+    "closeContext": "ran",
+    "closeBrowser": "ran",
+    "httpServerOwnership": "ran",
+    "evidenceWriterState": "ran"
+  },
+  "viewerScriptIntegrityReason": null,
+  "sessionTainted": false
+}

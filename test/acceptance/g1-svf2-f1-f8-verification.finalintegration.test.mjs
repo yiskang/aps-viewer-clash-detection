@@ -397,6 +397,12 @@ test('all six bridged controls staged through a real runHarness sequence: happy 
   assert.ok(session.artifacts.f2TreeOwnerByFragId, 'F2 must have genuinely run and written its own retained artifact');
 
   assert.equal(result.checks.F1.verdict, CHECK_VERDICT.PASS, `F1 unexpectedly not PASS: ${JSON.stringify(result.checks.F1)}`);
+  // Post-first-live-run remediation: F1's durable diagnostic payload must reach the persisted result
+  // (not merely the in-page return value), so a reviewer can tell inequality from oracle failure.
+  assert.ok(result.checks.F1.evidence.details, 'F1 evidence.details persisted in the runHarness result');
+  assert.ok(Array.isArray(result.checks.F1.evidence.details.first20Mismatches));
+  assert.ok(result.checks.F1.evidence.details.populationDigest && typeof result.checks.F1.evidence.details.populationDigest.state === 'string');
+  assert.equal(result.checks.F1.fields.subtreeDigestErrorCount, 0);
   assert.equal(result.checks.F2.verdict, CHECK_VERDICT.PASS, `F2 unexpectedly not PASS: ${JSON.stringify(result.checks.F2)}`);
 
   const { valid, errors } = validateResultSchema(result);

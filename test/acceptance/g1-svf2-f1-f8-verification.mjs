@@ -40,6 +40,7 @@ import { execFileSync } from 'node:child_process';
 import { compactAndWeld } from '../../collision/geometry/activeRangeCompaction.js';
 import { maxCollisionInstancesPerEpoch, maxSyncTriangleCount, maxFragmentsPerDbId, maxChildrenPerNode as MAX_CHILDREN_PER_NODE_LIMIT } from '../../collision/constants.js';
 import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
 
 // ------------------------------------------------------------------------------------------
 // Verdict / state enums -- exported constants matching the plan's own vocabulary verbatim.
@@ -763,7 +764,22 @@ function buildCheckRecord({ verdict, reason = null, fields = {}, evidence = {} }
       status: evidence.status || 'observed',
       error: evidence.error || null,
       blockedBy: evidence.blockedBy || null,
+      // Optional durable diagnostic payload (e.g. F1's digest/mismatch records). Present only
+      // when a caller supplies it, so every existing record shape is unchanged.
+      ...(evidence.details !== undefined ? { details: evidence.details } : {}),
     },
+  };
+}
+
+/** F1's durable diagnostic payload for the persisted result. The in-page exception carriers
+ * (`digestError`, `populationDigest.error`) are passed through the harness's existing bounded /
+ * redacting `describeError` here on the Node side (reuse, no new serializer). */
+function buildF1EvidenceDetails(f1Result) {
+  const r = f1Result || {};
+  const bound = (err) => (err === null || err === undefined ? null : describeError(err));
+  return {
+    first20Mismatches: (r.first20Mismatches ?? []).map((m) => (m && 'digestError' in m ? { ...m, digestError: bound(m.digestError) } : m)),
+    populationDigest: r.populationDigestEvidence ? { ...r.populationDigestEvidence, error: bound(r.populationDigestEvidence.error) } : null,
   };
 }
 
@@ -3052,6 +3068,8 @@ async function observeF1(sessionId) {
   let sizeMismatch = 0;
   let ownersMismatch = 0;
   let subtreeDigestMismatch = 0;
+  let subtreeDigestErrorCount = 0;
+  const F1_EVIDENCE_LIMIT = 20;
 
   for (const root of rr.roots) {
     rootsCompared += 1;
@@ -3067,40 +3085,49 @@ async function observeF1(sessionId) {
     }
     session.artifacts.f1FragmentMapsByRoot.set(root.dbId, lib);
     const owners = [...new Set([...lib.values()].map((rec) => rec.ownerDbId))].sort(ascending);
-    const rows = [...lib.values()].map((rec) => ({ fragId: rec.fragmentId, ownerDbId: rec.ownerDbId }));
+    // scopeDigest.js's subtree row contract is [fragId, ownerDbId, geometryId] (the same rows
+    // ViewerElementEnumerator's subtreeRecords builds from fragList.getGeometryId); a record's
+    // geometryIdentity.geometryIndex IS that getGeometryId value (createGeometryIdentity).
+    const rows = [...lib.values()].map((rec) => ({
+      fragId: rec.fragmentId,
+      ownerDbId: rec.ownerDbId,
+      geometryId: rec.geometryIdentity && rec.geometryIdentity.geometryIndex,
+    }));
+    // A digest EXCEPTION is oracle failure, never a digest disagreement: recorded in its own
+    // counter/evidence so a reviewer can tell "library and adapter digests differ" from
+    // "the digest oracle could not run".
     let libDigest = null;
-    try { libDigest = (await digestSubtree(rows)).digest; } catch { /* libDigest stays null -> digestOk below is false */ }
+    let digestError = null;
+    try { libDigest = (await digestSubtree(rows)).digest; } catch (e) { digestError = sessionErrOf(e); }
     const sizeOk = lib.size === root.fragmentCount;
     const ownersOk = JSON.stringify(owners) === JSON.stringify(root.ownerDbIds);
-    const digestOk = libDigest !== null && libDigest === root.subtreeDigest;
+    const digestComputed = digestError === null;
+    const digestOk = digestComputed && libDigest === root.subtreeDigest;
     if (!sizeOk) sizeMismatch += 1;
     if (!ownersOk) ownersMismatch += 1;
-    if (!digestOk) subtreeDigestMismatch += 1;
-    if ((!sizeOk || !ownersOk || !digestOk) && first20Mismatches.length < 20) {
-      first20Mismatches.push({ dbId: root.dbId, adapter: { fragmentCount: root.fragmentCount, ownerDbIds: root.ownerDbIds }, library: { size: lib.size, owners } });
+    if (!digestComputed) subtreeDigestErrorCount += 1;
+    else if (!digestOk) subtreeDigestMismatch += 1;
+    if ((!sizeOk || !ownersOk || !digestOk) && first20Mismatches.length < F1_EVIDENCE_LIMIT) {
+      first20Mismatches.push({
+        dbId: root.dbId,
+        adapter: { fragmentCount: root.fragmentCount, ownerDbIds: root.ownerDbIds, subtreeDigest: root.subtreeDigest },
+        library: { size: lib.size, owners, subtreeDigest: libDigest, rowCount: rows.length, rowSample: rows.slice(0, 3) },
+        digestState: digestComputed ? (digestOk ? 'EQUAL' : 'UNEQUAL') : 'ORACLE_ERROR',
+        digestError,
+      });
     }
   }
 
   let populationDigestEqual = false;
+  let populationDigestErrorCount = 0;
   const populationClasses = [];
+  const populationDigestEvidence = {
+    state: 'NOT_ATTEMPTED', adapterDigest: rr.population.digest, computedDigest: null,
+    adapterCount: rr.population.count, computedCount: null, rowCount: null, rowSample: null, error: null,
+  };
+  let populationExtraction = null;
   try {
-    const { records, diagnostics } = await extractAllFragments(model, 0, { THREE });
-    const dropped = new Map(diagnostics.map((d) => [d.fragment.fragId, d.reason === 'fragment-not-loaded' ? 'N' : 'U']));
-    const fragList = model.getFragmentList();
-    const rows = [];
-    for (let f = 0; f < fragList.getCount(); f += 1) {
-      if (dropped.has(f)) {
-        const cls = dropped.get(f);
-        rows.push({ fragId: f, cls });
-        populationClasses.push({ fragId: f, cls });
-      } else {
-        const rec = records.get(f);
-        rows.push({ fragId: f, cls: 'L', ownerDbId: rec.ownerDbId });
-        populationClasses.push({ fragId: f, cls: 'L' });
-      }
-    }
-    const expected = await digestPopulation({ count: fragList.getCount(), records: rows });
-    populationDigestEqual = expected.digest === rr.population.digest;
+    populationExtraction = await extractAllFragments(model, 0, { THREE });
     // Stage 5 addition: retain the FULL extractAllFragments records Map -- each
     // ExtractedFragmentRecord already carries {fragmentId, geometryIdentity, worldMatrix,
     // worldBounds, ownerDbId} for every loaded (class-L) fragment in the WHOLE tested
@@ -3110,9 +3137,47 @@ async function observeF1(sessionId) {
     // "Item A" cases). F4 (this same stage) reuses this verbatim for its own per-geometry-id
     // grouping and per-fragment world matrices -- never re-extracting or re-calling
     // getGeometryId()/readWorldMatrix() a second time.
-    session.artifacts.f1PopulationRecords = records;
-  } catch {
-    populationDigestEqual = false;
+    // Stored BEFORE the digest oracle runs: the records are valid extraction output regardless
+    // of whether the digest comparison below succeeds, so F4/F7 and the wrong-owner control
+    // (which read f1PopulationRecords) must not be starved by a digest-oracle failure.
+    session.artifacts.f1PopulationRecords = populationExtraction.records;
+  } catch (e) {
+    populationDigestErrorCount += 1;
+    populationDigestEvidence.state = 'EXTRACTION_ERROR';
+    populationDigestEvidence.error = sessionErrOf(e);
+  }
+  if (populationExtraction) {
+    try {
+      const { records, diagnostics } = populationExtraction;
+      const dropped = new Map(diagnostics.map((d) => [d.fragment.fragId, d.reason === 'fragment-not-loaded' ? 'N' : 'U']));
+      const fragList = model.getFragmentList();
+      const rows = [];
+      for (let f = 0; f < fragList.getCount(); f += 1) {
+        if (dropped.has(f)) {
+          const cls = dropped.get(f);
+          rows.push({ fragId: f, cls });
+          populationClasses.push({ fragId: f, cls });
+        } else {
+          const rec = records.get(f);
+          // scopeDigest.js population contract: an L row needs ownerDbId AND geometryId
+          // (ViewerElementEnumerator/populationScan emit both).
+          rows.push({ fragId: f, cls: 'L', ownerDbId: rec.ownerDbId, geometryId: rec.geometryIdentity && rec.geometryIdentity.geometryIndex });
+          populationClasses.push({ fragId: f, cls: 'L' });
+        }
+      }
+      populationDigestEvidence.rowCount = rows.length;
+      populationDigestEvidence.rowSample = rows.slice(0, 3);
+      const expected = await digestPopulation({ count: fragList.getCount(), records: rows });
+      populationDigestEvidence.computedDigest = expected.digest;
+      populationDigestEvidence.computedCount = expected.count;
+      populationDigestEqual = expected.digest === rr.population.digest;
+      populationDigestEvidence.state = populationDigestEqual ? 'EQUAL' : 'UNEQUAL';
+    } catch (e) {
+      populationDigestErrorCount += 1;
+      populationDigestEqual = false;
+      populationDigestEvidence.state = 'ORACLE_ERROR';
+      populationDigestEvidence.error = sessionErrOf(e);
+    }
   }
 
   session.artifacts.f1PopulationClasses = populationClasses;
@@ -3122,20 +3187,44 @@ async function observeF1(sessionId) {
   // max(per-dbId fragment count) -- computed here, from data F1 already has in scope, rather
   // than F5 re-deriving them from a second pass.
   let maxRootFragmentCount = 0;
+  let maxRootDbId = null;
   let sumRootFragmentCount = 0;
   for (const root of rr.roots) {
-    if (root.fragmentCount > maxRootFragmentCount) maxRootFragmentCount = root.fragmentCount;
+    if (root.fragmentCount > maxRootFragmentCount) { maxRootFragmentCount = root.fragmentCount; maxRootDbId = root.dbId; }
     sumRootFragmentCount += root.fragmentCount;
   }
+  // Per-owner-dbId fragment counts, from the authoritative extracted records
+  // (populationExtraction.records == session.artifacts.f1PopulationRecords), keyed by each
+  // ExtractedFragmentRecord.ownerDbId. (The earlier version counted populationClasses rows, which
+  // carry no ownerDbId, so every loaded fragment landed under the key `undefined` and the "max"
+  // collapsed to the total loaded count.) Fail closed: no records, or any record without a usable
+  // owner, makes the value unavailable (null) -- never 0 and never an undercount.
   const perDbIdCounts = new Map();
-  for (const row of populationClasses) {
-    if (row.cls !== 'L') continue;
-    perDbIdCounts.set(row.ownerDbId, (perDbIdCounts.get(row.ownerDbId) || 0) + 1);
+  let recordsWithoutOwner = 0;
+  let loadedRecordCount = 0;
+  if (populationExtraction && populationExtraction.records) {
+    for (const rec of populationExtraction.records.values()) {
+      loadedRecordCount += 1;
+      const owner = rec && rec.ownerDbId;
+      if (!Number.isSafeInteger(owner) || owner < 0) { recordsWithoutOwner += 1; continue; }
+      perDbIdCounts.set(owner, (perDbIdCounts.get(owner) || 0) + 1);
+    }
   }
-  let maxPerDbIdFragmentCount = 0;
-  for (const count of perDbIdCounts.values()) {
-    if (count > maxPerDbIdFragmentCount) maxPerDbIdFragmentCount = count;
-  }
+  const ranked = [...perDbIdCounts.entries()].sort((x, y) => (y[1] - x[1]) || (x[0] - y[0]));
+  let perDbIdState = 'OK';
+  if (!populationExtraction) perDbIdState = 'EXTRACTION_UNAVAILABLE';
+  else if (loadedRecordCount === 0) perDbIdState = 'NO_RECORDS';
+  else if (recordsWithoutOwner > 0) perDbIdState = 'RECORD_WITHOUT_OWNER';
+  const perDbIdUsable = perDbIdState === 'OK';
+  const maxPerDbIdFragmentCount = perDbIdUsable ? ranked[0][1] : null;
+  const maxPerDbIdOwnerDbId = perDbIdUsable ? ranked[0][0] : null;
+  const perDbIdEvidence = {
+    state: perDbIdState,
+    loadedRecordCount,
+    recordsWithoutOwner,
+    distinctOwnerCount: perDbIdCounts.size,
+    topOwners: ranked.slice(0, 5).map(([dbId, count]) => ({ dbId, count })),
+  };
 
   return {
     ok: true,
@@ -3148,12 +3237,18 @@ async function observeF1(sessionId) {
       sizeMismatch,
       ownersMismatch,
       subtreeDigestMismatch,
+      subtreeDigestErrorCount,
       populationDigestEqual,
+      populationDigestErrorCount,
       maxRootFragmentCount,
+      maxRootDbId,
       sumRootFragmentCount,
       maxPerDbIdFragmentCount,
+      maxPerDbIdOwnerDbId,
+      perDbIdEvidence,
     },
     first20Mismatches,
+    populationDigestEvidence,
   };
 }
 
@@ -3166,10 +3261,15 @@ async function observeF1(sessionId) {
  */
 function scoreF1(fields) {
   const f = fields || {};
+  // Oracle failure (a digest computation that THREW) is reported under its own reason, never
+  // as a digest disagreement: a reviewer must be able to tell "digests differ" from "the
+  // digest oracle could not run". Both are FAIL (the F1 property was not demonstrated).
+  const oracleFailed = f.subtreeDigestErrorCount > 0 || f.populationDigestErrorCount > 0;
   const failed = f.ownerMismatchCount > 0 || f.unreachableCount > 0
     || f.sizeMismatch > 0 || f.ownersMismatch > 0 || f.subtreeDigestMismatch > 0
-    || f.populationDigestEqual !== true;
-  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason: failed ? 'f1-mismatch-or-digest-disagreement' : null, fields: f };
+    || f.populationDigestEqual !== true || oracleFailed;
+  const reason = !failed ? null : (oracleFailed ? 'f1-digest-oracle-error' : 'f1-mismatch-or-digest-disagreement');
+  return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason, fields: f };
 }
 
 // ------------------------------------------------------------------------------------------
@@ -4137,7 +4237,11 @@ async function wrongOwnerControlInPage(arg) {
   // a hard-coded `0`. Defense-in-depth against the (real-Viewer-dbIds-are-non-negative, so
   // currently unreachable) case the real recorded owner IS the usual sentinel.
   const { fragId: targetFragId, ownerDbId: realOwnerDbId } = target;
-  const wrongOwnerDbId = realOwnerDbId === -999999 ? -999998 : -999999;
+  // Post-first-live-run fix: the injected owner must be a NON-NEGATIVE safe integer. scopeDigest.js
+  // (isDbId) rejects negative owners, so the former -999999 sentinel made resolveRoots THROW inside
+  // observeF1 (reason 'resolveRoots-threw') once real F1 population records existed, and the control
+  // could never observe ownerMismatch.count > 0. Unused, in range, and != the real owner.
+  const wrongOwnerDbId = realOwnerDbId === 2147483647 ? 2147483646 : 2147483647;
   // H3-R1: additive, JSON-only target evidence riding on every settled raw return (sanitized on the
   // Node side of the bridge by `sanitizeControlTargetEvidence`; never a live object).
   const targetEvidence = {
@@ -5292,21 +5396,68 @@ function scoreF5({ f1Result, f2Fields, f4Fields }) {
   const f1 = f1Result.fields || {};
   const f2 = f2Fields || {};
   const f4 = f4Fields || {};
+  const isCount = (v) => Number.isFinite(v) && Number.isInteger(v) && v >= 0;
+  // Never synthesize a missing upstream value as 0: evidence that is absent/blocked/malformed makes
+  // F5 BLOCKED (no usable evidence either way), exactly like the F1-failed-non-capacity case.
+  const blocked = (reason) => ({
+    verdict: CHECK_VERDICT.BLOCKED,
+    reason,
+    fields: {
+      maxRootFragmentCount: isCount(f1.maxRootFragmentCount) ? f1.maxRootFragmentCount : null,
+      maxPerDbIdFragmentCount: isCount(f1.maxPerDbIdFragmentCount) ? f1.maxPerDbIdFragmentCount : null,
+      maxChildrenPerNode: isCount(f2.maxChildrenPerNode) ? f2.maxChildrenPerNode : null,
+      sumRootFragmentCount: f1.sumRootFragmentCount ?? null,
+      wholePopulationCount: isCount(f1.populationCount) ? f1.populationCount : null,
+      maxActiveTriangleCount: isCount(f4.maxActiveTriangleCount) ? f4.maxActiveTriangleCount : null,
+      oversizedGeometryCount: isCount(f4.oversizedGeometryCount) ? f4.oversizedGeometryCount : null,
+      limitChecks: [], withinLimits: null, fullyEnumerated: null, enforcementObserved: false, organicBreach: null,
+    },
+  });
+  if (!isCount(f1.populationCount) || !isCount(f1.maxRootFragmentCount) || !isCount(f1.maxPerDbIdFragmentCount)) {
+    return blocked('f1-evidence-unavailable');
+  }
+  if (!isCount(f4.maxActiveTriangleCount) || !isCount(f4.oversizedGeometryCount)) return blocked('f4-evidence-unavailable');
+
+  // F2's observation absent/failed (call site passes null) or malformed: no usable evidence -> BLOCKED,
+  // never a limit FAIL on evidence that does not exist.
+  if (typeof f2.accountingBalanced !== 'boolean') return blocked('f2-evidence-unavailable');
   const fullyEnumerated = f2.accountingBalanced === true;
-  const oversizedGeometryCount = f4.oversizedGeometryCount ?? 0;
-  const withinLimits = fullyEnumerated && oversizedGeometryCount === 0;
+  if (fullyEnumerated && !isCount(f2.maxChildrenPerNode)) return blocked('f2-evidence-unavailable');
+
+  // Existing accepted limits only (collision/constants.js), each enforced upstream with a strict
+  // `>` (an observed value AT the limit is still within it). maxFragmentsPerRoot: treeWalk.js
+  // bounds a root's whole-subtree fragment tally with the same maxFragmentsPerDbId constant.
+  const limitChecks = fullyEnumerated ? [
+    { name: 'maxCollisionInstancesPerEpoch', observed: f1.populationCount, limit: maxCollisionInstancesPerEpoch, responsibleDbId: null },
+    { name: 'maxFragmentsPerDbId', observed: f1.maxPerDbIdFragmentCount, limit: maxFragmentsPerDbId, responsibleDbId: f1.maxPerDbIdOwnerDbId ?? null },
+    { name: 'maxFragmentsPerRoot', observed: f1.maxRootFragmentCount, limit: maxFragmentsPerDbId, responsibleDbId: f1.maxRootDbId ?? null },
+    { name: 'maxChildrenPerNode', observed: f2.maxChildrenPerNode, limit: MAX_CHILDREN_PER_NODE_LIMIT, responsibleDbId: null },
+    { name: 'maxSyncTriangleCount', observed: f4.maxActiveTriangleCount, limit: maxSyncTriangleCount, responsibleDbId: null },
+  ].map((c) => ({ ...c, withinLimit: c.observed <= c.limit })) : [];
+  const limitExceeded = limitChecks.some((c) => !c.withinLimit);
+  const oversizedGeometryCount = f4.oversizedGeometryCount;
+  const withinLimits = fullyEnumerated && !limitExceeded && oversizedGeometryCount === 0;
+  let reason = null;
+  if (!withinLimits) {
+    if (!fullyEnumerated) reason = 'not-fully-enumerated';
+    // An oversized geometry (activeTriangleCount > maxSyncTriangleCount) also trips that limit check;
+    // the more specific reason wins so it stays reachable.
+    else if (oversizedGeometryCount > 0) reason = 'oversized-geometry-present';
+    else reason = 'existing-limit-exceeded';
+  }
 
   return {
     verdict: withinLimits ? CHECK_VERDICT.PASS : CHECK_VERDICT.FAIL,
-    reason: withinLimits ? null : (!fullyEnumerated ? 'not-fully-enumerated' : 'oversized-geometry-present'),
+    reason,
     fields: {
-      maxRootFragmentCount: f1.maxRootFragmentCount ?? null,
-      maxPerDbIdFragmentCount: f1.maxPerDbIdFragmentCount ?? null,
-      maxChildrenPerNode: f2.maxChildrenPerNode ?? null,
+      maxRootFragmentCount: f1.maxRootFragmentCount,
+      maxPerDbIdFragmentCount: f1.maxPerDbIdFragmentCount,
+      maxChildrenPerNode: isCount(f2.maxChildrenPerNode) ? f2.maxChildrenPerNode : null,
       sumRootFragmentCount: f1.sumRootFragmentCount ?? null,
-      wholePopulationCount: f1.populationCount ?? null,
-      maxActiveTriangleCount: f4.maxActiveTriangleCount ?? null,
+      wholePopulationCount: f1.populationCount,
+      maxActiveTriangleCount: f4.maxActiveTriangleCount,
       oversizedGeometryCount,
+      limitChecks,
       withinLimits,
       fullyEnumerated,
       enforcementObserved: false,
@@ -8061,7 +8212,7 @@ async function runHarness(deps, config) {
         // failure (f1Result.ok !== true) never fabricates fields/a scored reason from an empty
         // observation -- fields stays {}, reason/evidence.error name the actual observe failure.
         checks.F1 = f1Result.ok === true
-          ? buildCheckRecord({ verdict: f1Score.verdict, reason: f1Score.reason, fields: f1Score.fields, evidence: { status: 'observed' } })
+          ? buildCheckRecord({ verdict: f1Score.verdict, reason: f1Score.reason, fields: f1Score.fields, evidence: { status: 'observed', details: buildF1EvidenceDetails(f1Result) } })
           : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f1Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
         // Fix wave (final whole-branch review, Minor M3, treated as a real bug): captured HERE,
         // immediately after F1 is computed -- never inline at the control call site below. The
@@ -8136,7 +8287,7 @@ async function runHarness(deps, config) {
 
       // Phase 7 -- F5 (its own corrected dependency: consumes F1's outcome directly, §7.5/I5).
       if (!sessionTainted) {
-        const f5Score = scoreF5({ f1Result, f2Fields: f2Result.fields, f4Fields: f4Result.fields });
+        const f5Score = scoreF5({ f1Result, f2Fields: f2Result && f2Result.ok === true ? f2Result.fields : null, f4Fields: f4Result && f4Result.ok === true ? f4Result.fields : null });
         // Fix wave (Important I4): F5 is pure/always-executes (no pageEvaluate ok-gate) -- see
         // buildCheckRecord's own doc comment.
         checks.F5 = buildCheckRecord({ verdict: f5Score.verdict, reason: f5Score.reason, fields: f5Score.fields, evidence: { status: 'observed' } });
@@ -9649,14 +9800,55 @@ async function main() {
   return result;
 }
 
-if (import.meta.url === `file://${process.argv[1]}` && !process.env.NODE_TEST_CONTEXT) {
-  main().catch((err) => {
+// Process exit status is a function of the retained overall verdict (the same value written to
+// the result JSON), so a shell/CI caller can never read a non-PASS run as success:
+//   PASS -> 0 · FAIL -> 1 (also any thrown/Phase-0 failure) · BLOCKED -> 2 · PARTIAL -> 3 ·
+//   missing/unrecognized verdict -> 4 (fail closed).
+const EXIT_CODE_FOR_VERDICT = Object.freeze({
+  [OVERALL_VERDICT.PASS]: 0,
+  [OVERALL_VERDICT.FAIL]: 1,
+  [OVERALL_VERDICT.BLOCKED]: 2,
+  [OVERALL_VERDICT.PARTIAL]: 3,
+});
+const EXIT_CODE_FATAL = 1;
+const EXIT_CODE_UNRECOGNIZED_VERDICT = 4;
+
+function exitCodeForVerdict(overall) {
+  return Object.prototype.hasOwnProperty.call(EXIT_CODE_FOR_VERDICT, overall)
+    ? EXIT_CODE_FOR_VERDICT[overall]
+    : EXIT_CODE_UNRECOGNIZED_VERDICT;
+}
+
+/** Runs `mainFn` and sets `process.exitCode` from the returned result's `overall` (a throw -> 1). */
+async function runCli(mainFn = main) {
+  try {
+    const result = await mainFn();
+    process.exitCode = exitCodeForVerdict(result && result.overall);
+  } catch (err) {
     console.error('g1-svf2-f1-f8-verification.mjs: fatal error', err);
-    process.exitCode = 1;
-  });
+    process.exitCode = EXIT_CODE_FATAL;
+  }
+}
+
+/** True only when this module is the process entry script. Both sides are compared as realpath'd
+ * file URLs (a bare `file://${argv[1]}` string compare breaks on spaces/symlinks and, worse,
+ * silently fails to run). Importing this module from any other entry never runs `main()`. */
+function isDirectInvocation(metaUrl, argv1, env = process.env) {
+  if (env && env.NODE_TEST_CONTEXT) return false;
+  if (typeof argv1 !== 'string' || argv1 === '') return false;
+  try {
+    return realpathSync(fileURLToPath(metaUrl)) === realpathSync(argv1);
+  } catch { return false; }
+}
+
+if (isDirectInvocation(import.meta.url, process.argv[1])) {
+  await runCli();
 }
 
 export {
+  exitCodeForVerdict,
+  runCli,
+  isDirectInvocation,
   closeAllBestEffort,
   CLOSE_TIMEOUT_MS,
   PHASE0_FAILURE_CATEGORIES,
