@@ -2,7 +2,54 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## CURRENT STATE — bounded H1–H3 remediation pass COMPLETE and internally reviewed; live F1–F8 execution still unauthorized; awaiting independent Work re-review before any live-execution owner decision; currently authorized next action: none — awaiting independent re-review, then owner decision
+## CURRENT STATE — G1 SVF2 F1–F8 harness implementation and bounded remediations COMMITTED; harness accepted by independent review; live F1–F8 unauthorized pending explicit owner decision
+
+- **Branch:** `feature/g1-svf2-f1-f8-harness`. The harness implementation, its offline/synthetic tests, the bounded H1/H2-R1/H3-R1 remediations, the review artifacts, and this handoff are all committed; the working tree is clean at closeout. Use `git log` for exact commits.
+- **Current independent review authority:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-harness-h3r1-target-coupling-final-bounded-independent-rereview.md`](../reviews/2026-09-29-g1-svf2-f1-f8-harness-h3r1-target-coupling-final-bounded-independent-rereview.md).
+- **Verdict:** 0 Critical / 0 High / 0 Medium / 2 Low; the harness is accepted. **H1, H2-R1, and H3-R1 are closed.** `wrong-owner` and `hidden-fragment` cannot be PASS-compatible as `DETECTED_RESTORED` without a structurally and semantically valid same-name durable `controlTargets` record; confirmed-live cleanup ownership forces FAIL.
+- **Verified tests:** `npm run test:offline` — 4183 total / 4182 pass / 0 fail / 1 existing todo, exit 0.
+- **Live execution:** live F1–F8 has **not** been run and no live result artifact exists. No G2/G3, host H1/H2, OQ-1, host integration, production initializer, Viewer Adapter, Core, M4, or Panel production work has occurred.
+- **Residuals (non-blocking Low):** schema validation does not recompute `overall`; direct test injection can retain extra target-record fields (the sanitized real browser path cannot). Also disclosed and accepted: teardown may conservatively report FAIL rather than PARTIAL when a page was alive at its close timeout but later closed via context/browser close.
+- **Next authorized action:** none — awaiting owner decision on live F1–F8 execution (recommended gate: exactly one live execution, if the owner chooses).
+- **Still unauthorized:** live F1–F8 execution; G2/G3; host-integration H1/H2; OQ-1; host integration; SVF2 Panel integration; model upload/retranslation; production initializer, Viewer Adapter, Core, M4, or Panel changes.
+
+## PRIOR STATE — final bounded H3-R1 target-evidence coupling fix COMPLETE and internally reviewed (0 Critical/High); uncommitted; awaiting bounded independent re-review / owner decision; live F1–F8 unauthorized
+
+- **Branch / HEAD:** `feature/g1-svf2-f1-f8-harness` @ `1d96624`; all remediation uncommitted.
+- **Fix:** `computeOverall` treats `wrong-owner`/`hidden-fragment` `DETECTED_RESTORED` as restored only with a valid `controlTargets` record (else FAIL); `validateResultSchema` rejects DETECTED_RESTORED without a valid record and NOT_EXECUTABLE with any record; the bridge emits records only after strict boolean typing. Details: addendum in [`docs/reviews/2026-09-29-g1-svf2-f1-f8-harness-h2r1-h3r1-bounded-remediation-review.md`](../reviews/2026-09-29-g1-svf2-f1-f8-harness-h2r1-h3r1-bounded-remediation-review.md).
+- **Tests:** `npm run test:offline` 4183 total / 4182 pass / 0 fail / 1 existing todo. Focused review: 0 Critical/High; 1 Medium fixed.
+- **Next authorized action:** awaiting owner authorization (recommended: bounded independent re-review). **Still unauthorized:** live F1–F8; G2/G3; host H1/H2; OQ-1; host integration; production/Adapter/Core/M4/Panel changes.
+
+## PRIOR STATE — bounded independent H2-R1/H3-R1 re-review complete; H2-R1 closed, H3-R1 still blocked by target-evidence coupling; live F1–F8 unauthorized
+
+- **Branch / reviewed HEAD:** `feature/g1-svf2-f1-f8-harness` @ `1d9662478fb8ced8bf5ef903b4122669cbdf965e`; remediation and review changes remain uncommitted.
+- **Current independent review authority:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-harness-h2r1-h3r1-bounded-independent-rereview.md`](../reviews/2026-09-29-g1-svf2-f1-f8-harness-h2r1-h3r1-bounded-independent-rereview.md).
+- **Verdict:** 0 Critical / 1 High / 1 Medium / 3 Low. **H2-R1 is closed:** real Playwright liveness is wired, close steps are independently bounded, confirmed-live ownership forces FAIL, and evidence persists. **H3-R1 is not fully closed:** `wrong-owner`/`hidden-fragment` may be `DETECTED_RESTORED` while `controlTargets` lacks the corresponding durable target record; schema validation permits that PASS-compatible state.
+- **Medium disposition:** immediate confirmed-live page state may remain FAIL even if later context/browser teardown ultimately closes it. This is a conservative, non-blocking semantic overclassification: PASS remains impossible and no unsafe evidence is certified.
+- **Verified tests / scope:** independent `npm run test:offline` — 4170 total / 4169 pass / 0 fail / 1 existing todo, exit 0. No live F1–F8, G2/G3, host H1/H2, OQ-1, host integration, production initializer, Viewer Adapter, Core, M4, or Panel work occurred.
+- **Recommended next action:** owner decision whether to authorize one bounded H3-R1 correction requiring structurally and semantically valid persisted target evidence for each target-bearing `DETECTED_RESTORED` control, followed by focused tests and bounded independent re-review.
+- **Still unauthorized:** live F1–F8 execution; G2/G3; host-integration H1/H2; OQ-1; host integration; model upload/retranslation; production initializer, Viewer Adapter, Core, M4, or Panel changes.
+
+## PRIOR STATE — bounded H2-R1/H3-R1 remediation COMPLETE and internally reviewed (0 Critical/High); uncommitted; awaiting bounded independent re-review / owner decision; live F1–F8 unauthorized
+
+- **Branch / HEAD:** `feature/g1-svf2-f1-f8-harness` @ `1d96624`; working tree: uncommitted harness + 2 new test files + stage8 fixture line + review artifact + this handoff.
+- **Review artifact:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-harness-h2r1-h3r1-bounded-remediation-review.md`](../reviews/2026-09-29-g1-svf2-f1-f8-harness-h2r1-h3r1-bounded-remediation-review.md).
+- **H2-R1:** real Playwright liveness (`page/context.isClosed()`, `browser.isConnected()`) wired via `buildPlaywrightCleanupResources`; confirmed-alive after close timeout ⇒ `cleanupUnresolvedOwnership` + durable evidence ⇒ FAIL. **H3-R1:** `controlTargets` persisted in durable JSON (schema in review artifact).
+- **Tests:** `npm run test:offline` 4170 total / 4169 pass / 0 fail / 1 existing todo.
+- **Open (owner disposition):** M1 (liveness checked before cascade close may yield FAIL vs PARTIAL), M2 (no cross-check that executed control has a target record), Lows — see review artifact.
+- **Next authorized action:** awaiting owner authorization (recommended: bounded independent re-review). **Still unauthorized:** live F1–F8; G2/G3; host H1/H2; OQ-1; host integration; production/Adapter/Core/M4/Panel changes.
+
+## PRIOR STATE — bounded independent H1–H3 re-review complete; H1 closed, H2/H3 still blocked by two durable-evidence/verdict-contract findings; live F1–F8 unauthorized
+
+- **Branch / reviewed HEAD:** `feature/g1-svf2-f1-f8-harness` @ `1d9662478fb8ced8bf5ef903b4122669cbdf965e`. Remediation implementation commits: `4a351c7`, `3e52ded`, `2208fa1`; remediation base: `67b3fdf82bebbe216ce9585dea8a35041dcdb74b`.
+- **Current independent review authority:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-harness-h1h3-bounded-independent-rereview.md`](../reviews/2026-09-29-g1-svf2-f1-f8-harness-h1h3-bounded-independent-rereview.md).
+- **Verdict:** 0 Critical / 2 High / 0 Medium / 0 Low in the bounded scope. **H1 is closed. H2 is not closed:** bounded closes work, but real Playwright `isClosed()`/`isConnected()` liveness is not wired to `cleanupUnresolvedOwnership`, so confirmed-live teardown can be mislabeled `PARTIAL` instead of contractual `FAIL`. **H3 is not closed:** authoritative deterministic target selection works, but selected target IDs are discarded by the bridge and absent from durable evidence.
+- **Verified test state:** independent `npm run test:offline` — `4152` total / `4151` pass / `0` fail / `1` existing unrelated todo, exit `0`. The +27 tests meaningfully cover taint/short-circuit, bounded teardown, and selection mechanics, but do not cover the two remaining cross-boundary evidence contracts.
+- **Verified scope:** remediation implementation changes only the harness and four directly affected test siblings. No live F1–F8 result artifact exists; no live run, G2/G3, host H1/H2, OQ-1, host integration, production initializer, Viewer Adapter, Core, M4, or Panel work occurred.
+- **Recommended next action:** owner decision on whether to authorize a bounded fix for the two High findings only, followed by bounded independent re-review. No implementation fix is currently authorized.
+- **Still unauthorized:** live F1–F8 execution; G2/G3; host-integration H1/H2; SVF2 Panel integration; OQ-1; host integration; model upload/retranslation; production initializer, Viewer Adapter, Core, M4, or Panel changes.
+
+## PRIOR STATE (superseded by the bounded independent re-review above) — bounded H1–H3 remediation pass COMPLETE and internally reviewed; live F1–F8 execution still unauthorized; awaiting independent Work re-review before any live-execution owner decision; currently authorized next action: none — awaiting independent re-review, then owner decision
 
 - **Branch / HEAD:** `feature/g1-svf2-f1-f8-harness` @ `2208fa1a825fab03cb595dc0b3cd24dee67c44bc`. Working tree: this handoff edit only (plus this task's own new `docs/reviews/` artifact). Base for this pass: `67b3fdf82bebbe216ce9585dea8a35041dcdb74` (the prior independent implementation review's own reviewed HEAD).
 - **Authorization:** the user's pasted "For Claude — Bounded H1–H3 Harness Remediation" prompt (2026-09-28; not persisted as a file this round) — fix exactly the three High findings (H1/H2/H3) from the prior independent implementation review below; explicitly excludes live F1–F8 execution, G2/G3, host-integration H1/H2 items, OQ-1, host integration, and any Viewer Adapter/Core/M4/production Viewer initialization/Viewer Clash Panel production change; explicitly excludes the four disclosed Low findings unless mechanically required by H1–H3 (none were).
