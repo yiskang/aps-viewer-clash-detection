@@ -2106,9 +2106,12 @@ const BASE_URL = `http://localhost:${PORT}`;
 const VIEWER_VERSION = '7.124.2';
 const VIEWER_SCRIPT_URL = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VERSION}/viewer3D.js`;
 const VIEWER_STYLE_URL = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VERSION}/style.css`;
-// Same fixture as g1-svf2-initializer-diagnostic.mjs:49 (Room Locator model, single SVF2 3D
-// derivative, already-reviewed) -- copied, not imported, per the codex-advisor note above.
-const MODEL_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ';
+// G1 fixture: Audubon_Mechanical_clash_test.rvt (existing confirmed-SVF2 model; accepted next
+// fixture per docs/research/2026-09-29-g1-svf2-fixture-capacity-screening.md and its independent
+// verification). Fallback (NOT active): Audubon_Structure_clash_test.rvt. Previously the Room
+// Locator RAC sample (over the F5 limit: 21,845 > 12,000). URN copied, not imported, per the
+// codex-advisor note above.
+const MODEL_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA';
 
 // Fix wave (C1): the bare synthetic page main() serves at Phase 0 -- mirrors
 // g1-svf2-initializer-diagnostic.mjs's own DIAGNOSTIC_HTML exactly (viewer3D.js script tag,

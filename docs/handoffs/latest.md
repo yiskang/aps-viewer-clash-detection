@@ -2,7 +2,15 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — independent fixture verification COMPLETE: `Audubon_Mechanical_clash_test.rvt` accepted as next G1 fixture; Structure fallback; NO fixture switch or live run authorized
+## LATEST — G1 fixture switch COMMITTED: `Audubon_Mechanical_clash_test.rvt` is now the configured next G1 fixture; Structure remains fallback; live F1–F8 remains UNAUTHORIZED and unexecuted
+
+- **Branch / HEAD:** `main`; parent `d501edd` (= `origin/main`). The fixture switch, its authorization prompt and this handoff are one commit (see `git log -1`). Not pushed.
+- **Change:** only `MODEL_URN` (+ its comment) in `test/acceptance/g1-svf2-f1-f8-verification.mjs` changed, from the Room Locator RAC URN to `dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA` (decodes to `urn:adsk.objects:os.object:test-sandbox-lkwej7xpbgp63x4hl335y6m26oakggof/Audubon_Mechanical_clash_test.rvt`), byte-identical to the URN in the committed [screening JSON](../research/evidence/2026-09-29-g1-svf2-fixture-capacity-screening-result.json). Structure (`…U3RydWN0dXJl…`) is not referenced by the harness; it stays a documented fallback only.
+- **Unchanged:** Viewer version, `env`/`api`, production Viewer initialization, G1 semantics, all accepted limits, models (no upload/retranslation), Core/Adapter/M4/Panel, OQ-1, host integration.
+- **Non-live verification:** `node --check` OK; single `MODEL_URN` declaration, decoded value matches Mechanical, RAC/Structure URN strings absent; focused G1 suite `597/597` pass (incl. stage8 `70/70`, which asserts `config.urn` is the hardcoded `MODEL_URN`). No browser/APS/Viewer launched; no live evidence file created.
+- **Currently authorized action:** none — awaiting owner decision on a fresh exactly-one live G1 F1–F8 execution against Mechanical. **Must not begin without explicit authorization:** any live F1–F8 run, G2/G3, host H1/H2, OQ-1, host integration, limit/model upload work, production/Core/Adapter/M4/Panel changes, push.
+
+## PRIOR STATE — independent fixture verification COMPLETE: `Audubon_Mechanical_clash_test.rvt` accepted as next G1 fixture; Structure fallback; NO fixture switch or live run authorized
 
 - **Branch / HEAD:** `main` @ `54d1c24` (= `origin/main`). Screening evidence is committed in `54d1c24`; this independent review and handoff correction are committed in one closeout commit (see `git log -1`). Not pushed.
 - **Current independent authority:** [Mechanical fixture bounded independent verification](../reviews/2026-09-29-g1-svf2-mechanical-fixture-bounded-independent-verification.md) — **0 Critical / 0 High / 1 Medium / 0 Low.** Mechanical is accepted as the next exactly-one G1 fixture under the current format/capacity contract; Structure remains the fallback. The Medium was stale committed handoff state (`030dc60`/“uncommitted”) and is corrected here.
