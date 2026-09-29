@@ -2,9 +2,9 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## CURRENT STATE — G1 SVF2 F1–F8 harness implementation and bounded remediations COMMITTED; harness accepted by independent review; live F1–F8 unauthorized pending explicit owner decision
+## CURRENT STATE — G1 SVF2 F1–F8 harness accepted and MERGED into `main`; live F1–F8 unauthorized pending explicit owner decision
 
-- **Branch:** `feature/g1-svf2-f1-f8-harness`. The harness implementation, its offline/synthetic tests, the bounded H1/H2-R1/H3-R1 remediations, the review artifacts, and this handoff are all committed; the working tree is clean at closeout. Use `git log` for exact commits.
+- **Branch state:** the accepted G1 SVF2 F1–F8 harness implementation, its offline/synthetic tests, the bounded H1/H2-R1/H3-R1 remediations, and the review artifacts were merged into `main` with a `--no-ff` merge of `feature/g1-svf2-f1-f8-harness` (feature history preserved; the feature branch still exists). The harness baseline is now on `main`. Use `git log` for exact commits.
 - **Current independent review authority:** [`docs/reviews/2026-09-29-g1-svf2-f1-f8-harness-h3r1-target-coupling-final-bounded-independent-rereview.md`](../reviews/2026-09-29-g1-svf2-f1-f8-harness-h3r1-target-coupling-final-bounded-independent-rereview.md).
 - **Verdict:** 0 Critical / 0 High / 0 Medium / 2 Low; the harness is accepted. **H1, H2-R1, and H3-R1 are closed.** `wrong-owner` and `hidden-fragment` cannot be PASS-compatible as `DETECTED_RESTORED` without a structurally and semantically valid same-name durable `controlTargets` record; confirmed-live cleanup ownership forces FAIL.
 - **Verified tests:** `npm run test:offline` — 4183 total / 4182 pass / 0 fail / 1 existing todo, exit 0.
