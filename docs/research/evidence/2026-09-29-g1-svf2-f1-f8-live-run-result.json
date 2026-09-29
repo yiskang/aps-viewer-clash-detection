@@ -1,0 +1,250 @@
+{
+  "script": "g1-svf2-f1-f8-verification.mjs",
+  "phase": "PHASE_0",
+  "failureCategory": "harness-integrity-compute-failed",
+  "error": {
+    "name": "Error",
+    "message": "buildServedModuleManifest: cannot read discovered module '/collision/tlas/core/Constants.js' (from specifier '/collision/tlas/core/Constants.js'): ENOENT: no such file or directory, open '/Users/kangea/Workspace/Codes/aps-viewer-clash-detection/collision/tlas/core/Constants.js'",
+    "code": null,
+    "reason": null,
+    "stack": "Error: buildServedModuleManifest: cannot read discovered module '/collision/tlas/core/Constants.js' (from specifier '/collision/tlas/core/Constants.js'): ENOENT: no such file or directory, open '/Users/kangea/Workspace/Codes/aps-viewer-clash-detection/collision/tlas/core/Constants.js'\n    at buildServedModuleManifest (file:///Users/kangea/Workspace/Codes/aps-viewer-clash-detection/test/acceptance/g1-svf2-f1-f8-verification.mjs:1914:13)\n    at async main (file:///Users/kangea/Workspace/Codes/aps-viewer-clash-detection/test/acceptance/g1-svf2-f1-f8-verification.mjs:9304:45)",
+    "truncated": false,
+    "redactions": []
+  },
+  "harnessIntegrity": {
+    "path": "test/acceptance/g1-svf2-f1-f8-verification.mjs",
+    "sha256": "d4b632f71274804074e37ebfffff23bab65234257ce367c8dd00fb527d643df8",
+    "branch": "main",
+    "headSha": "606ee50d3bbac3f581743aac31b62c85e0ea7554",
+    "gitStatusPorcelain": "?? docs/prompts/for-claude-one-live-g1-f1-f8-execution.md\n?? docs/research/evidence/2026-09-29-g1-svf2-f1-f8-live-run.log.txt",
+    "servedModuleManifest": {},
+    "remoteAssets": {
+      "viewerScript": {
+        "integrityResult": "FETCH_FAILED",
+        "reason": "fetch-failed",
+        "expectedSha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e",
+        "requestedUrl": "https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js",
+        "capture": {
+          "requestFailed": false,
+          "autodeskViewingDefined": false,
+          "attributableResponses": []
+        }
+      },
+      "viewerStyle": {
+        "identityScope": "CAPTURE_UNAVAILABLE",
+        "identityGatesOverall": false
+      },
+      "otherObservedRemoteAssets": []
+    }
+  },
+  "runtimeEnvelope": {
+    "viewerVersion": "7.124.2",
+    "chromium": null,
+    "node": "v22.23.1",
+    "modelUrn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ",
+    "initializer": {
+      "env": "AutodeskProduction2",
+      "api": "streamingV2"
+    }
+  },
+  "classifier": "INDETERMINATE_UNAVAILABLE",
+  "runtime": {
+    "isOTG": null,
+    "isSVF2": null
+  },
+  "checks": {
+    "F1": {
+      "verdict": "BLOCKED",
+      "reason": "not-reached:phase-0-failure:harness-integrity-compute-failed",
+      "fields": {},
+      "evidence": {
+        "status": "not-run",
+        "error": null,
+        "blockedBy": "fatal-error"
+      }
+    },
+    "F2": {
+      "verdict": "BLOCKED",
+      "reason": "not-reached:phase-0-failure:harness-integrity-compute-failed",
+      "fields": {},
+      "evidence": {
+        "status": "not-run",
+        "error": null,
+        "blockedBy": "fatal-error"
+      }
+    },
+    "F3": {
+      "verdict": "BLOCKED",
+      "reason": "not-reached:phase-0-failure:harness-integrity-compute-failed",
+      "fields": {},
+      "evidence": {
+        "status": "not-run",
+        "error": null,
+        "blockedBy": "fatal-error"
+      }
+    },
+    "F4": {
+      "verdict": "BLOCKED",
+      "reason": "not-reached:phase-0-failure:harness-integrity-compute-failed",
+      "fields": {},
+      "evidence": {
+        "status": "not-run",
+        "error": null,
+        "blockedBy": "fatal-error"
+      }
+    },
+    "F5": {
+      "verdict": "BLOCKED",
+      "reason": "not-reached:phase-0-failure:harness-integrity-compute-failed",
+      "fields": {},
+      "evidence": {
+        "status": "not-run",
+        "error": null,
+        "blockedBy": "fatal-error"
+      }
+    },
+    "F6": {
+      "verdict": "BLOCKED",
+      "reason": "not-reached:phase-0-failure:harness-integrity-compute-failed",
+      "fields": {},
+      "evidence": {
+        "status": "not-run",
+        "error": null,
+        "blockedBy": "fatal-error"
+      }
+    },
+    "F7": {
+      "verdict": "BLOCKED",
+      "reason": "not-reached:phase-0-failure:harness-integrity-compute-failed",
+      "fields": {},
+      "evidence": {
+        "status": "not-run",
+        "error": null,
+        "blockedBy": "fatal-error"
+      }
+    },
+    "F8": {
+      "verdict": "BLOCKED",
+      "reason": "not-reached:phase-0-failure:harness-integrity-compute-failed",
+      "fields": {},
+      "evidence": {
+        "status": "not-run",
+        "error": null,
+        "blockedBy": "fatal-error"
+      }
+    }
+  },
+  "controls": {
+    "tree-unavailable": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    },
+    "wrong-owner": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    },
+    "late-completion-after-timeout": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": false,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    },
+    "hidden-fragment": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    },
+    "invalid-geometry-consumer": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": false,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    },
+    "capacity-breach": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    },
+    "invalid-bounds": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    },
+    "bounds-beyond-tolerance": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    },
+    "stale-old-model-event": {
+      "state": "NOT_EXECUTABLE",
+      "executed": false,
+      "detected": null,
+      "restored": null,
+      "restorationRequired": true,
+      "reason": "phase-0-failure:harness-integrity-compute-failed"
+    }
+  },
+  "controlTargets": {},
+  "staleContinuationsDropped": [],
+  "errorLedger": {
+    "pageErrors": [],
+    "unhandledRejections": [],
+    "requiredResourceFailures": [
+      {
+        "kind": "phase-0-failure",
+        "category": "harness-integrity-compute-failed",
+        "error": {
+          "name": "Error",
+          "message": "buildServedModuleManifest: cannot read discovered module '/collision/tlas/core/Constants.js' (from specifier '/collision/tlas/core/Constants.js'): ENOENT: no such file or directory, open '/Users/kangea/Workspace/Codes/aps-viewer-clash-detection/collision/tlas/core/Constants.js'",
+          "code": null,
+          "reason": null,
+          "stack": "Error: buildServedModuleManifest: cannot read discovered module '/collision/tlas/core/Constants.js' (from specifier '/collision/tlas/core/Constants.js'): ENOENT: no such file or directory, open '/Users/kangea/Workspace/Codes/aps-viewer-clash-detection/collision/tlas/core/Constants.js'\n    at buildServedModuleManifest (file:///Users/kangea/Workspace/Codes/aps-viewer-clash-detection/test/acceptance/g1-svf2-f1-f8-verification.mjs:1914:13)\n    at async main (file:///Users/kangea/Workspace/Codes/aps-viewer-clash-detection/test/acceptance/g1-svf2-f1-f8-verification.mjs:9304:45)",
+          "truncated": false,
+          "redactions": []
+        }
+      }
+    ],
+    "contextLoss": [],
+    "consoleErrors": [],
+    "consoleWarnings": [],
+    "allowListedFingerprints": [],
+    "fatalErrorObserved": true
+  },
+  "cleanupFailures": [],
+  "cleanupUnresolvedOwnership": false,
+  "overall": "FAIL",
+  "startedAt": "2026-09-29T04:29:34.657Z",
+  "finishedAt": "2026-09-29T04:29:34.696Z",
+  "resourcesExisted": {
+    "browser": false,
+    "page": false,
+    "context": false
+  },
+  "cleanupAttempted": true,
+  "viewerScriptIntegrityReason": "fetch-failed",
+  "sessionTainted": false
+}

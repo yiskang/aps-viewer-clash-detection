@@ -1,0 +1,8 @@
+# HEAD_BEFORE=606ee50d3bbac3f581743aac31b62c85e0ea7554
+# START=2026-09-29T04:29:34Z
+# CMD=G1_F1_F8_LIVE_AUTHORIZED=YES node test/acceptance/g1-svf2-f1-f8-verification.mjs --execute-live-f1-f8
+g1-svf2-f1-f8-verification.mjs: fatal error Error: buildServedModuleManifest: cannot read discovered module '/collision/tlas/core/Constants.js' (from specifier '/collision/tlas/core/Constants.js'): ENOENT: no such file or directory, open '/Users/kangea/Workspace/Codes/aps-viewer-clash-detection/collision/tlas/core/Constants.js'
+    at buildServedModuleManifest (file:///Users/kangea/Workspace/Codes/aps-viewer-clash-detection/test/acceptance/g1-svf2-f1-f8-verification.mjs:1914:13)
+    at async main (file:///Users/kangea/Workspace/Codes/aps-viewer-clash-detection/test/acceptance/g1-svf2-f1-f8-verification.mjs:9304:45)
+# EXIT=1
+# END=2026-09-29T04:29:34Z

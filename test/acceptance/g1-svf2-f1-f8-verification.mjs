@@ -1865,6 +1865,82 @@ const IMPORT_EXPORT_FROM_SPECIFIER_RE = /\bfrom\s*['"]([^'"]+)['"]/g;
 const BARE_IMPORT_SPECIFIER_RE = /(?:^|[^.\w])import\s*['"]([^'"]+)['"]/g;
 
 /**
+ * `stripJsComments(source)` -- returns `source` with every `//` line comment and `/* ... *\/`
+ * block comment replaced by whitespace (newlines preserved), leaving string, template, and
+ * regex-literal contents untouched. Used only by the served-module scanner so a specifier-shaped
+ * string inside a comment (e.g. a documentation `export { X } from './core/Constants.js';` line)
+ * is never followed as an executable dependency.
+ *
+ * Small hand-written lexer (no parser exists in this repo's dependencies). It tracks: single- and
+ * double-quoted strings (with backslash escapes), template literals (escapes honored; `${...}`
+ * bodies are treated as template text, which is safe here because only comment-stripping is
+ * needed and a comment opener inside a template expression is not a case this repo's modules
+ * contain), and regex literals (a `/` in a position where an expression cannot continue, i.e.
+ * after start-of-input or one of `( , = : [ ! & | ? { } ; + - * % < > ~ ^` or the keywords
+ * `return`/`typeof`, with `[...]` classes honored). Known limit, accepted for a test-only
+ * manifest over repository ES modules under our own control: division after `)` / `]` / an
+ * identifier is (correctly) not a regex; exotic regex-vs-division ambiguities beyond that are
+ * not modeled.
+ */
+function stripJsComments(source) {
+  const src = String(source);
+  const n = src.length;
+  let out = '';
+  let i = 0;
+  let lastSignificant = ''; // last non-whitespace, non-comment char emitted (regex-vs-division context)
+  let lastWord = '';
+  const REGEX_PRECEDERS = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^']);
+  let wordEnded = false; // whitespace seen since the last word char: next word char starts a new word
+  const noteWord = (ch) => {
+    if (!/[\w$]/.test(ch)) { lastWord = ''; return; }
+    lastWord = wordEnded ? ch : lastWord + ch;
+    wordEnded = false;
+  };
+  while (i < n) {
+    const c = src[i];
+    const d = src[i + 1];
+    if (c === '/' && d === '/') {
+      while (i < n && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      i += 2;
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) { if (src[i] === '\n') out += '\n'; i++; }
+      i += 2;
+      out += ' ';
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      out += c; i++;
+      while (i < n && src[i] !== quote) {
+        if (src[i] === '\\') { out += src[i]; i++; }
+        if (i < n) { out += src[i]; i++; }
+      }
+      if (i < n) { out += src[i]; i++; }
+      lastSignificant = quote; lastWord = '';
+      continue;
+    }
+    if (c === '/' && (REGEX_PRECEDERS.has(lastSignificant) || lastWord === 'return' || lastWord === 'typeof')) {
+      out += c; i++;
+      let inClass = false;
+      while (i < n && src[i] !== '\n' && (inClass || src[i] !== '/')) {
+        if (src[i] === '\\') { out += src[i]; i++; }
+        else if (src[i] === '[') inClass = true;
+        else if (src[i] === ']') inClass = false;
+        if (i < n) { out += src[i]; i++; }
+      }
+      if (i < n && src[i] === '/') { out += src[i]; i++; }
+      lastSignificant = '/'; lastWord = '';
+      continue;
+    }
+    out += c; i++;
+    if (!/\s/.test(c)) { lastSignificant = c; noteWord(c); } else { wordEnded = true; }
+  }
+  return out;
+}
+
+/**
  * `buildServedModuleManifest(entrySpecifiers, { rootDir, readFileFn })` -- plan §8's
  * `servedModuleManifest`: walks the *static* `import`/`export ... from` specifiers of each
  * module transitively, starting from `entrySpecifiers` (repo-relative paths, leading slash),
@@ -1877,10 +1953,11 @@ const BARE_IMPORT_SPECIFIER_RE = /(?:^|[^.\w])import\s*['"]([^'"]+)['"]/g;
  * it resolves into `node_modules`, not a repository-relative file this manifest can/should
  * hash. This does NOT understand dynamic `import()` calls (a later stage's concern, listed
  * separately in plan §6.6's own required-resource-failure list, not this manifest), does NOT
- * understand conditional/computed specifiers, and can be fooled by a specifier-shaped string
- * inside a comment or an unrelated string literal (accepted false-positive risk for a
- * test-only evidence manifest over known, well-formed repository ES modules under our own
- * control -- not a production security boundary).
+ * understand conditional/computed specifiers, and can still be fooled by a specifier-shaped
+ * string inside an unrelated string literal (accepted false-positive risk for a test-only
+ * evidence manifest over known, well-formed repository ES modules under our own control --
+ * not a production security boundary). Line and block comments are stripped first
+ * (`stripJsComments`), so commented-out imports/exports are NOT followed.
  *
  * `readFileFn` defaults to `node:fs/promises`'s `readFile`, overridable in tests so this
  * stage's own tests never depend on production file contents (brief's own instruction) --
@@ -1915,9 +1992,12 @@ async function buildServedModuleManifest(entrySpecifiers, { rootDir = REPO_ROOT,
     }
     manifest[repoRelative] = createHash('sha256').update(contents, 'utf8').digest('hex');
 
+    // The digest above hashes the raw file bytes; only specifier DISCOVERY runs on the
+    // comment-stripped text, so a commented-out import/export is never followed.
+    const scannable = stripJsComments(contents);
     const discovered = new Set();
-    for (const match of contents.matchAll(IMPORT_EXPORT_FROM_SPECIFIER_RE)) discovered.add(match[1]);
-    for (const match of contents.matchAll(BARE_IMPORT_SPECIFIER_RE)) discovered.add(match[1]);
+    for (const match of scannable.matchAll(IMPORT_EXPORT_FROM_SPECIFIER_RE)) discovered.add(match[1]);
+    for (const match of scannable.matchAll(BARE_IMPORT_SPECIFIER_RE)) discovered.add(match[1]);
 
     for (const spec of discovered) {
       if (!spec.startsWith('./') && !spec.startsWith('../')) continue; // skip bare package specifiers
@@ -8882,6 +8962,7 @@ const PHASE0_FAILURE_CATEGORIES = Object.freeze({
   // the widened try block (main()) now covers these two steps too, which previously ran entirely
   // unguarded, before any try/catch existed.
   'harness-integrity': 'harness-integrity-compute-failed',
+  'git-tree-check': 'git-tree-not-clean',
   'playwright-import': 'playwright-import-failed',
   'browser-launch': 'browser-launch-failed',
   'context-create': 'context-create-failed',
@@ -8900,6 +8981,42 @@ const PHASE0_FAILURE_CATEGORIES = Object.freeze({
 // (`error.name === 'TimeoutError'`, Playwright's own documented name for this case) -- never
 // inferred from which step failed alone.
 const PHASE0_TIMEOUT_CAPABLE_STEPS = Object.freeze(new Set(['goto', 'bootstrap-ready']));
+
+// Phase 0 steps at which the Viewer script request can already have been issued (the page
+// navigation loads the pinned Viewer <script>). A failure at any OTHER step happens strictly
+// before any Viewer fetch could begin, so the Viewer-script identity must be reported as
+// "not attempted", never as FETCH_FAILED (which asserts a request actually failed).
+const PHASE0_VIEWER_FETCH_POSSIBLE_STEPS = Object.freeze(new Set(['goto', 'bootstrap-ready', 'module-install']));
+const VIEWER_IDENTITY_NOT_ATTEMPTED_REASON = 'not-attempted:phase-0-failed-before-viewer-fetch';
+
+// Untracked governance files the live-execution contract tolerates in an otherwise clean tree:
+// only new owner-authorization prompts under docs/prompts/. Nothing else (modified/staged
+// tracked files, untracked source/docs elsewhere) is tolerated.
+const GIT_TREE_ALLOWED_UNTRACKED_PREFIXES = Object.freeze(['docs/prompts/']);
+
+/**
+ * `classifyGitTreeState(porcelain)` -- pure. Parses `git status --porcelain` output into
+ * `{ clean, entries: [{ status, path, allowed }], dirtyPaths, allowedPaths, blockingPaths }`.
+ * `clean` is true ONLY for empty porcelain; `blockingPaths` is non-empty for anything not an
+ * allowed untracked governance file, and is what the live-execution preflight enforces. Allowed
+ * entries are still listed (never described as "clean").
+ */
+function classifyGitTreeState(porcelain) {
+  const lines = String(porcelain || '').split('\n').filter((l) => l.trim() !== '');
+  const entries = lines.map((line) => {
+    const status = line.slice(0, 2);
+    const p = line.slice(3).replace(/^"|"$/g, '');
+    const allowed = status === '??' && GIT_TREE_ALLOWED_UNTRACKED_PREFIXES.some((pre) => p.startsWith(pre));
+    return { status, path: p, allowed };
+  });
+  return {
+    clean: entries.length === 0,
+    entries,
+    dirtyPaths: entries.map((e) => e.path),
+    allowedPaths: entries.filter((e) => e.allowed).map((e) => e.path),
+    blockingPaths: entries.filter((e) => !e.allowed).map((e) => e.path),
+  };
+}
 function isPlaywrightTimeoutError(err) {
   return Boolean(err) && (err.name === 'TimeoutError' || /\btimeout\b/i.test(String(err && err.message || '')));
 }
@@ -8982,6 +9099,9 @@ async function handlePhase0Failure({
   // a test exercising handlePhase0Failure in isolation may omit it, and the merge degrades to
   // empty arrays, exactly as before.
   errorLedger = null,
+  // Defaults to true (fail-closed toward the pre-existing behavior); main() passes false when the
+  // failure happened strictly before the Viewer script could have been requested.
+  viewerFetchAttempted = true,
 } = {}) {
   const closeResult = typeof closeAllFn === 'function' ? await closeAllFn() : { closeFailures: [] };
   const closeFailures = (closeResult && closeResult.closeFailures) || [];
@@ -8993,7 +9113,12 @@ async function handlePhase0Failure({
   let viewerScriptIntegrity = INTEGRITY_RESULT.CAPTURE_UNAVAILABLE;
   let integrityReason = 'capture-function-not-injected';
   let viewerScriptCaptureRecord = null;
-  if (typeof captureViewerScriptIntegrity === 'function') {
+  if (viewerFetchAttempted === false) {
+    // No Viewer request was ever issued: report an explicit not-attempted state (BLOCKED-class
+    // CAPTURE_UNAVAILABLE + explicit reason, null capture -- nothing fabricated). Overall stays
+    // FAIL via fatalErrorObserved below.
+    integrityReason = VIEWER_IDENTITY_NOT_ATTEMPTED_REASON;
+  } else if (typeof captureViewerScriptIntegrity === 'function') {
     try {
       viewerScriptCaptureRecord = await captureViewerScriptIntegrity();
       const classified = classifyViewerScriptIntegrity(viewerScriptCaptureRecord);
@@ -9293,14 +9418,35 @@ async function main() {
     };
     const harnessSha256 = createHash('sha256').update(await nodeReadFile(new URL(import.meta.url), 'utf8')).digest('hex');
     harnessIntegrity.sha256 = harnessSha256;
-    const gitField = (args) => {
-      try { return execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' }).trim(); } catch { return null; }
+    // `trim: false` for porcelain output: a leading space is significant (' M path') and
+    // trimming the whole string corrupts the first line's status/path columns.
+    const gitField = (args, { trim = true } = {}) => {
+      try {
+        const out = execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8' });
+        return trim ? out.trim() : out;
+      } catch { return null; }
     };
     // '' (never null) on a git-command failure -- validateResultSchema requires a string; an
     // empty value is itself informative (git unavailable), never a missing/non-string field.
     harnessIntegrity.branch = gitField(['rev-parse', '--abbrev-ref', 'HEAD']) ?? '';
     harnessIntegrity.headSha = gitField(['rev-parse', 'HEAD']) ?? '';
-    harnessIntegrity.gitStatusPorcelain = gitField(['status', '--porcelain']) ?? '';
+    const rawPorcelain = gitField(['status', '--porcelain'], { trim: false });
+    harnessIntegrity.gitStatusPorcelain = rawPorcelain ?? '';
+    // Clean-tree preflight (live-execution contract): record the exact dirty paths and whether
+    // each is an allowed untracked governance file; enforce (fail closed, before any browser
+    // action) on anything else. Never described as "clean" unless porcelain is truly empty.
+    phase0Step = 'git-tree-check';
+    // Fail closed: a git failure (not installed, not a repo, dubious ownership) must never be
+    // mistaken for an empty (clean) porcelain.
+    if (rawPorcelain === null) {
+      throw new Error('g1-svf2-f1-f8-verification.mjs: `git status --porcelain` failed; cannot verify the working tree is clean');
+    }
+    const gitTreeState = classifyGitTreeState(harnessIntegrity.gitStatusPorcelain);
+    harnessIntegrity.gitTreeState = gitTreeState;
+    if (gitTreeState.blockingPaths.length > 0) {
+      throw new Error(`g1-svf2-f1-f8-verification.mjs: working tree is not clean; blocking paths: ${gitTreeState.blockingPaths.join(', ')}`);
+    }
+    phase0Step = 'harness-integrity';
     harnessIntegrity.servedModuleManifest = await buildServedModuleManifest(SERVED_MODULE_ENTRY_POINTS, {});
 
     // Only past this point: dynamic import('playwright'), a real browser launch, and every other
@@ -9441,6 +9587,7 @@ async function main() {
         modelUrn: MODEL_URN, initializer: { env: 'AutodeskProduction2', api: 'streamingV2' },
       },
       captureViewerScriptIntegrity,
+      viewerFetchAttempted: PHASE0_VIEWER_FETCH_POSSIBLE_STEPS.has(phase0Step),
       // codex-review (medium, this pass): previously hardcoded `true` for all three -- now the
       // REAL existence state (a browser-launch failure, for instance, leaves all three false).
       browserExisted: Boolean(browser), pageExisted: Boolean(page), contextExisted: Boolean(context),
@@ -9514,6 +9661,10 @@ export {
   CLOSE_TIMEOUT_MS,
   PHASE0_FAILURE_CATEGORIES,
   PHASE0_TIMEOUT_CAPABLE_STEPS,
+  PHASE0_VIEWER_FETCH_POSSIBLE_STEPS,
+  VIEWER_IDENTITY_NOT_ATTEMPTED_REASON,
+  classifyGitTreeState,
+  stripJsComments,
   isPlaywrightTimeoutError,
   categorizePhase0Failure,
   redactLedgerString,
