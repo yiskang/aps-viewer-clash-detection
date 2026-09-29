@@ -816,6 +816,7 @@ function computeOverall(input) {
     checks = {},
     controls = {},
     cleanupFailures = [],
+    controlTargets,
   } = input || {};
 
   // Branch 1 -- harness/runtime fatal conditions, checked before the classifier question so a
@@ -839,10 +840,16 @@ function computeOverall(input) {
   // Branch 3 -- any positively-observed Fi/control failure, checked before the
   // identity-unavailable arm so an unresolved identity can never bury a real defect.
   const anyFiFail = F_CHECK_NAMES.some((name) => checks[name] === CHECK_VERDICT.FAIL);
-  const anyControlNotRestored = CONTROL_NAMES.some((name) => {
+  // H3-R1 coupling: a target-bearing control (wrong-owner/hidden-fragment) counts as
+  // DETECTED_RESTORED ONLY IF its controlTargets record is present and valid; otherwise it is
+  // treated exactly like a control that was not restored (never PASS-eligible).
+  const controlIsRestored = (name) => {
     const control = controls[name];
-    return !control || control.state !== CONTROL_STATE.DETECTED_RESTORED;
-  });
+    if (!control || control.state !== CONTROL_STATE.DETECTED_RESTORED) return false;
+    if (!CONTROL_TARGET_CONTROL_NAMES.includes(name)) return true;
+    return validateControlTargetEvidence(name, controlTargets && controlTargets[name]).valid;
+  };
+  const anyControlNotRestored = CONTROL_NAMES.some((name) => !controlIsRestored(name));
   if (anyFiFail || anyControlNotRestored) {
     return OVERALL_VERDICT.FAIL;
   }
@@ -854,7 +861,7 @@ function computeOverall(input) {
 
   // Branch 5 -- all-clean PASS.
   const everyFiPass = F_CHECK_NAMES.every((name) => checks[name] === CHECK_VERDICT.PASS);
-  const everyControlRestored = CONTROL_NAMES.every((name) => controls[name] && controls[name].state === CONTROL_STATE.DETECTED_RESTORED);
+  const everyControlRestored = CONTROL_NAMES.every((name) => controlIsRestored(name));
   const cleanupFailuresEmpty = Array.isArray(cleanupFailures) && cleanupFailures.length === 0;
   if (viewerScriptIntegrity === INTEGRITY_RESULT.VERIFIED && everyFiPass && everyControlRestored && cleanupFailuresEmpty) {
     return OVERALL_VERDICT.PASS;
@@ -1462,6 +1469,27 @@ class AggregateCleanupError extends Error {
  * to `'skipped' | 'ran' | 'threw'`, so a caller/test can confirm no step was ever skipped over
  * due to an earlier failure (only its own guard can skip it).
  */
+// H2-R1: durable evidence fields for a positively-alive close failure: the liveness API used
+// plus its observed result (`page.isClosed()===false`, `browser.isConnected()===true`).
+function livenessEvidence(resourceType, resource, observedValue) {
+  const api = resource && typeof resource.livenessObservation === 'string' ? resource.livenessObservation : 'confirmStillAlive()';
+  return { resourceType, livenessObservation: `${api}===${observedValue}` };
+}
+
+/**
+ * H2-R1: adapts raw Playwright objects to runCleanup's `{close, confirmStillAlive,
+ * livenessObservation}` contract using the real APIs: Page/BrowserContext `!isClosed()`,
+ * Browser `isConnected()`. Absent resources stay null. A throwing liveness API propagates from
+ * confirmStillAlive and is treated as indeterminate by runCleanup's step().
+ */
+function buildPlaywrightCleanupResources({ page = null, context = null, browser = null } = {}) {
+  return {
+    page: page ? { close: () => page.close(), confirmStillAlive: () => !page.isClosed(), livenessObservation: 'page.isClosed()' } : null,
+    context: context ? { close: () => context.close(), confirmStillAlive: () => !context.isClosed(), livenessObservation: 'context.isClosed()' } : null,
+    browser: browser ? { close: () => browser.close(), confirmStillAlive: () => Boolean(browser.isConnected()), livenessObservation: 'browser.isConnected()' } : null,
+  };
+}
+
 async function runCleanup(resources = {}, opts = {}) {
   const cleanupFailures = [];
   const stepStatus = {};
@@ -1476,14 +1504,30 @@ async function runCleanup(resources = {}, opts = {}) {
   // through the SAME catch block every other thrown error already takes below, so it is recorded
   // in `cleanupFailures`, leaves `stepStatus[name] = 'threw'` (never `'ran'`), and still runs
   // `checkOwnership` -- no parallel/second recording mechanism.
-  const step = async (name, guard, fn, { checkOwnership, timeoutMs } = {}) => {
+  // H2-R1: `ownershipEvidence(resources)` (optional, only the three close steps pass it) returns
+  // extra durable evidence fields merged into that step's cleanupFailures entry when -- and only
+  // when -- checkOwnership positively confirms the resource is still alive. Any throw from
+  // checkOwnership/ownershipEvidence (e.g. a Playwright liveness call on a dead target) is
+  // INDETERMINATE: never escapes step(), never sets unresolved, never fabricates resolved.
+  const step = async (name, guard, fn, { checkOwnership, timeoutMs, ownershipEvidence } = {}) => {
+    const ownershipConfirmed = (failure) => {
+      if (!checkOwnership) return;
+      let alive = false;
+      try { alive = Boolean(checkOwnership(resources)); } catch { alive = false; }
+      if (!alive) return;
+      cleanupUnresolvedOwnership = true;
+      if (ownershipEvidence) {
+        try { Object.assign(failure, ownershipEvidence(resources), { ownership: 'unresolved' }); } catch { failure.ownership = 'unresolved'; }
+      }
+    };
     let shouldRun;
     try {
       shouldRun = Boolean(guard(resources));
     } catch (e) {
       stepStatus[name] = 'threw';
-      cleanupFailures.push({ step: name, error: describeError(e) });
-      if (checkOwnership && checkOwnership(resources)) cleanupUnresolvedOwnership = true;
+      const failure = { step: name, error: describeError(e) };
+      cleanupFailures.push(failure);
+      ownershipConfirmed(failure);
       return;
     }
     if (!shouldRun) { stepStatus[name] = 'skipped'; return; }
@@ -1511,8 +1555,9 @@ async function runCleanup(resources = {}, opts = {}) {
       stepStatus[name] = 'ran';
     } catch (e) {
       stepStatus[name] = 'threw';
-      cleanupFailures.push({ step: name, error: describeError(e) });
-      if (checkOwnership && checkOwnership(resources)) cleanupUnresolvedOwnership = true;
+      const failure = { step: name, error: describeError(e) };
+      cleanupFailures.push(failure);
+      ownershipConfirmed(failure);
     }
   };
 
@@ -1648,17 +1693,20 @@ async function runCleanup(resources = {}, opts = {}) {
   await step('closePage',
     (r) => Boolean(r.page),
     (r) => r.page.close(),
-    { checkOwnership: (r) => Boolean(r.page && typeof r.page.confirmStillAlive === 'function' && r.page.confirmStillAlive() === true), timeoutMs: closeTimeoutMs });
+    { checkOwnership: (r) => Boolean(r.page && typeof r.page.confirmStillAlive === 'function' && r.page.confirmStillAlive() === true),
+      ownershipEvidence: (r) => livenessEvidence('page', r.page, false), timeoutMs: closeTimeoutMs });
 
   await step('closeContext',
     (r) => Boolean(r.context),
     (r) => r.context.close(),
-    { checkOwnership: (r) => Boolean(r.context && typeof r.context.confirmStillAlive === 'function' && r.context.confirmStillAlive() === true), timeoutMs: closeTimeoutMs });
+    { checkOwnership: (r) => Boolean(r.context && typeof r.context.confirmStillAlive === 'function' && r.context.confirmStillAlive() === true),
+      ownershipEvidence: (r) => livenessEvidence('context', r.context, false), timeoutMs: closeTimeoutMs });
 
   await step('closeBrowser',
     (r) => Boolean(r.browser),
     (r) => r.browser.close(),
-    { checkOwnership: (r) => Boolean(r.browser && typeof r.browser.confirmStillAlive === 'function' && r.browser.confirmStillAlive() === true), timeoutMs: closeTimeoutMs });
+    { checkOwnership: (r) => Boolean(r.browser && typeof r.browser.confirmStillAlive === 'function' && r.browser.confirmStillAlive() === true),
+      ownershipEvidence: (r) => livenessEvidence('browser', r.browser, true), timeoutMs: closeTimeoutMs });
 
   // Verify-only; the harness never owned this resource, so a failed verification is recorded
   // but deliberately carries NO checkOwnership -- it can never set cleanupUnresolvedOwnership.
@@ -4010,6 +4058,14 @@ async function wrongOwnerControlInPage(arg) {
   // currently unreachable) case the real recorded owner IS the usual sentinel.
   const { fragId: targetFragId, ownerDbId: realOwnerDbId } = target;
   const wrongOwnerDbId = realOwnerDbId === -999999 ? -999998 : -999999;
+  // H3-R1: additive, JSON-only target evidence riding on every settled raw return (sanitized on the
+  // Node side of the bridge by `sanitizeControlTargetEvidence`; never a live object).
+  const targetEvidence = {
+    injectedOwnerDbId: wrongOwnerDbId,
+    selectionSource: 'f1PopulationRecords',
+    selectionRule: 'numeric-minimum',
+    populationSize: session.artifacts.f1PopulationRecords.size,
+  };
 
   let detected = null;
   let timedOut = false;
@@ -4067,11 +4123,11 @@ async function wrongOwnerControlInPage(arg) {
 
   // Task 17 (H3 fix): every settled outcome below retains the SELECTED fragId and its real
   // recorded ownerDbId as additive raw-return evidence (see this function's own doc comment above).
-  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight', selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
-  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
-  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
-  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed', selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
-  return { ok: true, detected: true, restored: true, timedOut: false, reason: null, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId };
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight', selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId, ...targetEvidence };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId, ...targetEvidence };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId, ...targetEvidence };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed', selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId, ...targetEvidence };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null, selectedFragId: targetFragId, selectedOwnerDbId: realOwnerDbId, ...targetEvidence };
 }
 
 /**
@@ -4179,6 +4235,13 @@ async function hiddenFragmentControlInPage(arg) {
   // Task 17 (H3 fix, see this function's own doc comment above): drop the SELECTED fragId, never
   // a hard-coded `1`.
   const { fragId: targetFragId, ownerDbId: treeOwnerDbId } = target;
+  // H3-R1: additive JSON-only target evidence (see wrongOwnerControlInPage's own note).
+  const targetEvidence = {
+    actedOnFragId: targetFragId,
+    selectionSource: 'f2TreeOwnerByFragId-intersect-f1PopulationClasses-L',
+    selectionRule: 'numeric-minimum',
+    populationSize: session.artifacts.f2TreeOwnerByFragId.size,
+  };
 
   let detected = null;
   let timedOut = false;
@@ -4228,11 +4291,11 @@ async function hiddenFragmentControlInPage(arg) {
 
   // Task 17 (H3 fix): every settled outcome below retains the SELECTED fragId and its recorded
   // tree-owner dbId as additive raw-return evidence (see this function's own doc comment above).
-  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight', selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
-  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
-  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
-  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed', selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
-  return { ok: true, detected: true, restored: true, timedOut: false, reason: null, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId };
+  if (leaseLost) return { ok: true, detected: false, restored: false, timedOut: false, reason: 'lease-lost-mid-flight', selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId, ...targetEvidence };
+  if (timedOut) return { ok: true, detected: false, restored: false, timedOut: true, reason, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId, ...targetEvidence };
+  if (!detected) return { ok: true, detected: false, restored: Boolean(restored), timedOut: false, reason, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId, ...targetEvidence };
+  if (!restored) return { ok: true, detected: true, restored: false, timedOut: false, reason: reason || 'restore-assertion-failed', selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId, ...targetEvidence };
+  return { ok: true, detected: true, restored: true, timedOut: false, reason: null, selectedFragId: targetFragId, selectedTreeOwnerDbId: treeOwnerDbId, ...targetEvidence };
 }
 
 // ============================================================================================
@@ -7256,6 +7319,64 @@ function runInPageResourceCleanup({ sessionId }) {
 // after `setupSharedSessionResources`) for the full "why".
 // ------------------------------------------------------------------------------------------
 
+// ------------------------------------------------------------------------------------------
+// H3-R1 -- durable control-target evidence (additive top-level `controlTargets` carrier).
+// Only `wrong-owner`/`hidden-fragment` carry a selected perturbation target. Records are plain JSON
+// identifiers/metadata; numbers only where numbers are expected (never coerced).
+// ------------------------------------------------------------------------------------------
+
+const CONTROL_TARGET_CONTROL_NAMES = Object.freeze(['wrong-owner', 'hidden-fragment']);
+const CONTROL_TARGET_SELECTION_SOURCE = Object.freeze({
+  'wrong-owner': 'f1PopulationRecords',
+  'hidden-fragment': 'f2TreeOwnerByFragId-intersect-f1PopulationClasses-L',
+});
+const CONTROL_TARGET_SELECTION_RULE = 'numeric-minimum';
+
+const isTargetNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+
+/** Pure. Validates ONE target record for `controlName`; returns `{valid, errors}`, never throws. */
+function validateControlTargetEvidence(controlName, record) {
+  const errors = [];
+  if (!CONTROL_TARGET_CONTROL_NAMES.includes(controlName)) return { valid: false, errors: [`control '${controlName}' carries no target record`] };
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return { valid: false, errors: ['record must be an object'] };
+  if (record.controlName !== controlName) errors.push(`controlName must be '${controlName}'`);
+  if (!isTargetNumber(record.selectedFragId)) errors.push('selectedFragId must be a finite number');
+  if (record.selectionSource !== CONTROL_TARGET_SELECTION_SOURCE[controlName]) errors.push(`selectionSource must be '${CONTROL_TARGET_SELECTION_SOURCE[controlName]}'`);
+  if (record.selectionRule !== CONTROL_TARGET_SELECTION_RULE) errors.push(`selectionRule must be '${CONTROL_TARGET_SELECTION_RULE}'`);
+  if (!Number.isInteger(record.populationSize) || record.populationSize < 1) errors.push('populationSize must be an integer >= 1');
+  if (controlName === 'wrong-owner') {
+    if (!isTargetNumber(record.selectedOwnerDbId)) errors.push('selectedOwnerDbId must be a finite number');
+    if (!isTargetNumber(record.injectedOwnerDbId)) errors.push('injectedOwnerDbId must be a finite number');
+    if (isTargetNumber(record.selectedOwnerDbId) && record.injectedOwnerDbId === record.selectedOwnerDbId) errors.push('injectedOwnerDbId must differ from selectedOwnerDbId');
+  } else {
+    if (!isTargetNumber(record.selectedTreeOwnerDbId)) errors.push('selectedTreeOwnerDbId must be a finite number');
+    if (!isTargetNumber(record.actedOnFragId)) errors.push('actedOnFragId must be a finite number');
+    else if (record.actedOnFragId !== record.selectedFragId) errors.push('actedOnFragId must equal selectedFragId');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Pure, Node-side. Builds the sanitized target record from an untrusted cross-realm raw in-page
+ * result, copying ONLY the known fields; returns `null` (omit; never coerce/fabricate) for a
+ * control that carries no target or for any malformed/absent evidence.
+ */
+function sanitizeControlTargetEvidence(controlName, raw) {
+  if (!CONTROL_TARGET_CONTROL_NAMES.includes(controlName) || !raw || typeof raw !== 'object' || raw.ok !== true) return null;
+  const record = controlName === 'wrong-owner'
+    ? {
+      controlName, selectedFragId: raw.selectedFragId, selectedOwnerDbId: raw.selectedOwnerDbId,
+      injectedOwnerDbId: raw.injectedOwnerDbId, selectionSource: raw.selectionSource,
+      selectionRule: raw.selectionRule, populationSize: raw.populationSize,
+    }
+    : {
+      controlName, selectedFragId: raw.selectedFragId, selectedTreeOwnerDbId: raw.selectedTreeOwnerDbId,
+      actedOnFragId: raw.actedOnFragId, selectionSource: raw.selectionSource,
+      selectionRule: raw.selectionRule, populationSize: raw.populationSize,
+    };
+  return validateControlTargetEvidence(controlName, record).valid ? record : null;
+}
+
 /**
  * Node-side, pure. `mapControlAttemptOutcome(controlName, {detected, restored, timedOut, reason})`
  * -- deliverable 3 (Task 10 brief). The ONE generic state-derivation rule every one of the six
@@ -7324,7 +7445,7 @@ function mapControlAttemptOutcome(controlName, { detected, restored, timedOut, r
  * `false`) is treated as `NOT_EXECUTABLE{reason: 'malformed-in-page-result'}` -- fail-closed,
  * never assumed successful.
  */
-async function runBridgedControl({ pageEvaluate, controlName, inPageFn, arg = {}, innerTimeoutMs, outerTimeoutMs = innerTimeoutMs * 3 }) {
+async function runBridgedControl({ pageEvaluate, controlName, inPageFn, arg = {}, innerTimeoutMs, outerTimeoutMs = innerTimeoutMs * 3, onTargetEvidence }) {
   let raw;
   try {
     raw = await withControlTimeout(pageEvaluate(inPageFn, { ...arg, innerTimeoutMs }), outerTimeoutMs);
@@ -7357,6 +7478,17 @@ async function runBridgedControl({ pageEvaluate, controlName, inPageFn, arg = {}
   // "validate at the realm boundary, trust internally" discipline).
   if (typeof raw.detected !== 'boolean' || typeof raw.restored !== 'boolean' || typeof raw.timedOut !== 'boolean') {
     return createControlResult(controlName, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'malformed-in-page-result' });
+  }
+  // H3-R1: a settled attempt (`raw.ok === true`) genuinely perturbed a selected target -- hand its
+  // sanitized, JSON-only target record to the optional sink (never part of the fixed ControlResult
+  // shape). Emitted only AFTER the strict boolean check above, so a NOT_EXECUTABLE result never
+  // carries a target record. Malformed evidence => null => silently omitted, never coerced/fabricated. A throwing
+  // sink can never change the control's own outcome.
+  if (typeof onTargetEvidence === 'function') {
+    const targetRecord = sanitizeControlTargetEvidence(controlName, raw);
+    if (targetRecord) {
+      try { onTargetEvidence(targetRecord); } catch { /* evidence sink failure never alters the control outcome */ }
+    }
   }
   return mapControlAttemptOutcome(controlName, raw);
 }
@@ -7399,6 +7531,7 @@ function buildWrongOwnerControlDep({ pageEvaluate, sessionId, tokenId, gen }) {
     inPageFn: wrongOwnerControlInPage,
     arg: { sessionId, tokenId, gen, controlId: 'wrong-owner' },
     innerTimeoutMs: ctx.controlTimeoutMs,
+    onTargetEvidence: ctx.recordControlTarget,
   });
 }
 
@@ -7411,6 +7544,7 @@ function buildHiddenFragmentControlDep({ pageEvaluate, sessionId, tokenId, gen }
     inPageFn: hiddenFragmentControlInPage,
     arg: { sessionId, tokenId, gen, controlId: 'hidden-fragment' },
     innerTimeoutMs: ctx.controlTimeoutMs,
+    onTargetEvidence: ctx.recordControlTarget,
   });
 }
 
@@ -7630,6 +7764,8 @@ async function runHarness(deps, config) {
   let cleanupUnresolvedOwnership = false;
   const cleanupFailures = [];
   const staleContinuationsDropped = [];
+  // H3-R1: durable selected-target evidence, populated only via `recordControlTarget` (below).
+  const controlTargets = {};
   // Task 10 (bounded completion pass, area 3 shared foundation), deliverable 4: a SEPARATE flag
   // from `fatalErrorObserved` -- deliberately never reused/overloaded for this narrower meaning
   // (second codex-advisor consult, request 20260928-180527-75769-27344: "Preserve the existing
@@ -7699,7 +7835,12 @@ async function runHarness(deps, config) {
     if (typeof fn !== 'function') return notExecutable(name, 'control-not-injected');
     let result;
     try {
-      result = await fn({ controlTimeoutMs, ...extraCtx });
+      // H3-R1: `recordControlTarget` is the sink `runBridgedControl`'s `onTargetEvidence` writes to;
+      // it re-validates and only accepts this control's OWN record (never overwritten by another).
+      const recordControlTarget = (record) => {
+        if (validateControlTargetEvidence(name, record).valid) controlTargets[name] = record;
+      };
+      result = await fn({ controlTimeoutMs, recordControlTarget, ...extraCtx });
     } catch (e) {
       if (e && e.outerWatchdogTimeout === true) {
         // Task 10, deliverable 4: still return a well-formed ControlResult for THIS control
@@ -8197,7 +8338,7 @@ async function runHarness(deps, config) {
   const overall = computeOverall({
     fatalErrorObserved: fatalErrorObserved || sessionTainted, cleanupUnresolvedOwnership, viewerScriptIntegrity,
     classifier: classifierResult ? classifierResult.classifier : null,
-    checks: projectCheckVerdicts(checks), controls: controlResults, cleanupFailures,
+    checks: projectCheckVerdicts(checks), controls: controlResults, cleanupFailures, controlTargets,
   });
 
   // Merge the just-finalized remote-asset identity into harnessIntegrity (plan §8: "remoteAssets
@@ -8243,6 +8384,7 @@ async function runHarness(deps, config) {
     runtime: { isOTG: signalSnapshot ? signalSnapshot.isOTG : null, isSVF2: signalSnapshot ? signalSnapshot.isSVF2 : null },
     checks,
     controls: controlResults,
+    controlTargets,
     staleContinuationsDropped,
     // codex-review (medium, round 3, High): every event array is now passed through
     // redactLedgerEventForEvidence (Part B's own redaction helper, built for the Phase 0 failure
@@ -8433,6 +8575,29 @@ function validateResultSchema(result) {
       if (record === undefined || record === null) { fail(`'controls.${name}' is missing (plan §8: every control is always written, never a missing object)`); continue; }
       const { valid, errors: controlErrors } = validateControlResult(name, record);
       if (!valid) fail(`'controls.${name}' invalid: ${controlErrors.join('; ')}`);
+      // H3-R1 coupling (evidence boundary): DETECTED_RESTORED on a target-bearing control needs a
+      // complete valid record; NOT_EXECUTABLE must never carry a (fabricated) one.
+      if (CONTROL_TARGET_CONTROL_NAMES.includes(name) && result.controlTargets && typeof result.controlTargets === 'object' && !Array.isArray(result.controlTargets)) {
+        const targetRecord = result.controlTargets[name];
+        if (record.state === CONTROL_STATE.DETECTED_RESTORED) {
+          const t = validateControlTargetEvidence(name, targetRecord);
+          if (!t.valid) fail(`'controls.${name}' is DETECTED_RESTORED but has no valid 'controlTargets.${name}' record: ${t.errors.join('; ')}`);
+        } else if (record.state === CONTROL_STATE.NOT_EXECUTABLE && targetRecord !== undefined) {
+          fail(`'controlTargets.${name}' must be absent when 'controls.${name}' is NOT_EXECUTABLE (no fabricated target)`);
+        }
+      }
+    }
+  }
+
+  // H3-R1: additive control-target carrier. Required as a plain object; each entry is optional
+  // (absent when the control never settled a perturbation, e.g. NOT_EXECUTABLE) but, if present,
+  // must be a well-formed record for its own control.
+  if (!result.controlTargets || typeof result.controlTargets !== 'object' || Array.isArray(result.controlTargets)) {
+    fail("'controlTargets' must be an object");
+  } else {
+    for (const [name, record] of Object.entries(result.controlTargets)) {
+      const { valid, errors: targetErrors } = validateControlTargetEvidence(name, record);
+      if (!valid) fail(`'controlTargets.${name}' invalid: ${targetErrors.join('; ')}`);
     }
   }
 
@@ -8906,6 +9071,7 @@ async function handlePhase0Failure({
     runtime: { isOTG: null, isSVF2: null },
     checks,
     controls,
+    controlTargets: {},
     staleContinuationsDropped: [],
     errorLedger: (() => {
       const ledgerSummary = errorLedger && typeof errorLedger.summary === 'function' ? errorLedger.summary() : null;
@@ -9323,7 +9489,7 @@ async function main() {
     // after-timeout need no entry here -- runHarness calls them directly (see its own Phase 4c/6c
     // comments), unchanged.
     controls: buildRealControls(pageEvaluate),
-    nodeCleanupResources: { page, context, browser },
+    nodeCleanupResources: buildPlaywrightCleanupResources({ page, context, browser }),
     // Fix wave (C1): previously not passed at all -- runHarness's own Phase 11
     // viewerScriptIntegrity finalization silently defaulted to CAPTURE_UNAVAILABLE /
     // 'capture-function-not-injected' on every real invocation.
@@ -9398,6 +9564,7 @@ export {
   CLEANUP_STEP_NAMES,
   AggregateCleanupError,
   runCleanup,
+  buildPlaywrightCleanupResources,
   tokenEscalatesToUnresolvedOwnership,
   REPO_ROOT,
   CLASHTEST_DIR,
@@ -9434,6 +9601,8 @@ export {
   disposeControlScratchSession,
   mapControlAttemptOutcome,
   runBridgedControl,
+  sanitizeControlTargetEvidence,
+  validateControlTargetEvidence,
   observeF1,
   scoreF1,
   observeF2,

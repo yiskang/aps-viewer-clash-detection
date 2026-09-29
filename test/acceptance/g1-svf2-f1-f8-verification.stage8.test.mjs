@@ -109,9 +109,9 @@ function buildHappyDeps(tracker, overrides = {}) {
     setupSharedSessionResources: (tokenId) => fakePageEvaluateWithLoad({ name: 'setupSharedSessionResources' }, tokenId),
     controls: {
       treeUnavailable: async () => createControlResult('tree-unavailable', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
-      wrongOwner: async () => createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+      wrongOwner: async (ctx) => { ctx.recordControlTarget({ controlName: 'wrong-owner', selectedFragId: 7, selectedOwnerDbId: 42, injectedOwnerDbId: -999999, selectionSource: 'f1PopulationRecords', selectionRule: 'numeric-minimum', populationSize: 3 }); return createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }); },
       lateCompletionAfterTimeout: async () => createControlResult('late-completion-after-timeout', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
-      hiddenFragment: async () => createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+      hiddenFragment: async (ctx) => { ctx.recordControlTarget({ controlName: 'hidden-fragment', selectedFragId: 4242, selectedTreeOwnerDbId: 9, actedOnFragId: 4242, selectionSource: 'f2TreeOwnerByFragId-intersect-f1PopulationClasses-L', selectionRule: 'numeric-minimum', populationSize: 5 }); return createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }); },
       invalidGeometryConsumer: async () => createControlResult('invalid-geometry-consumer', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
       capacityBreach: async () => createControlResult('capacity-breach', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
       invalidBounds: async () => createControlResult('invalid-bounds', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
@@ -521,9 +521,9 @@ test('runHarness: control invocation throwing still reaches cleanup and the atom
     depsOverrides: {
       controls: {
         treeUnavailable: async () => { throw new Error('simulated control crash'); },
-        wrongOwner: async () => createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+        wrongOwner: async (ctx) => { ctx.recordControlTarget({ controlName: 'wrong-owner', selectedFragId: 7, selectedOwnerDbId: 42, injectedOwnerDbId: -999999, selectionSource: 'f1PopulationRecords', selectionRule: 'numeric-minimum', populationSize: 3 }); return createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }); },
         lateCompletionAfterTimeout: async () => createControlResult('late-completion-after-timeout', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
-        hiddenFragment: async () => createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+        hiddenFragment: async (ctx) => { ctx.recordControlTarget({ controlName: 'hidden-fragment', selectedFragId: 4242, selectedTreeOwnerDbId: 9, actedOnFragId: 4242, selectionSource: 'f2TreeOwnerByFragId-intersect-f1PopulationClasses-L', selectionRule: 'numeric-minimum', populationSize: 5 }); return createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }); },
         invalidGeometryConsumer: async () => createControlResult('invalid-geometry-consumer', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
         capacityBreach: async () => createControlResult('capacity-breach', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
         invalidBounds: async () => createControlResult('invalid-bounds', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
@@ -717,6 +717,10 @@ function fabricateValidResult() {
     // buildCheckRecord, never a bare verdict string.
     checks: Object.fromEntries(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8'].map((name) => [name, buildCheckRecord({ verdict: CHECK_VERDICT.PASS, fields: {}, evidence: { status: 'observed' } })])),
     controls,
+    controlTargets: {
+      'wrong-owner': { controlName: 'wrong-owner', selectedFragId: 7, selectedOwnerDbId: 42, injectedOwnerDbId: -999999, selectionSource: 'f1PopulationRecords', selectionRule: 'numeric-minimum', populationSize: 3 },
+      'hidden-fragment': { controlName: 'hidden-fragment', selectedFragId: 4242, selectedTreeOwnerDbId: 9, actedOnFragId: 4242, selectionSource: 'f2TreeOwnerByFragId-intersect-f1PopulationClasses-L', selectionRule: 'numeric-minimum', populationSize: 5 },
+    },
     staleContinuationsDropped: [],
     errorLedger: { pageErrors: [], unhandledRejections: [], requiredResourceFailures: [], contextLoss: [], consoleErrors: [], consoleWarnings: [], allowListedFingerprints: [], fatalErrorObserved: false },
     cleanupFailures: [], cleanupUnresolvedOwnership: false,
@@ -727,6 +731,25 @@ function fabricateValidResult() {
     sessionTainted: false,
   };
 }
+
+test('validateResultSchema (H3-R1 coupling): DETECTED_RESTORED target-bearing control requires a valid record; NOT_EXECUTABLE must carry none', () => {
+  for (const name of ['wrong-owner', 'hidden-fragment']) {
+    const missing = fabricateValidResult(); delete missing.controlTargets[name];
+    assert.equal(validateResultSchema(missing).valid, false, `${name}: missing record must be invalid`);
+    const bad = fabricateValidResult(); bad.controlTargets[name] = { ...bad.controlTargets[name], selectedFragId: 'x' };
+    assert.equal(validateResultSchema(bad).valid, false, `${name}: malformed record must be invalid`);
+    const fabricated = fabricateValidResult();
+    fabricated.controls[name] = createControlResult(name, { state: CONTROL_STATE.NOT_EXECUTABLE, executed: false, detected: null, restored: null, reason: 'no-eligible-fragment' });
+    fabricated.overall = OVERALL_VERDICT.FAIL;
+    assert.equal(validateResultSchema(fabricated).valid, false, `${name}: NOT_EXECUTABLE with a fabricated record must be invalid`);
+    delete fabricated.controlTargets[name];
+    assert.equal(validateResultSchema(fabricated).valid, true, `${name}: NOT_EXECUTABLE with no record is valid`);
+  }
+  const semantic = fabricateValidResult(); semantic.controlTargets['wrong-owner'].injectedOwnerDbId = 42;
+  assert.equal(validateResultSchema(semantic).valid, false);
+  const semantic2 = fabricateValidResult(); semantic2.controlTargets['hidden-fragment'].actedOnFragId = 1;
+  assert.equal(validateResultSchema(semantic2).valid, false);
+});
 
 test('validateResultSchema: a fully synthetic, fabricated-but-schema-valid result passes', () => {
   const { valid, errors } = validateResultSchema(fabricateValidResult());
@@ -1304,8 +1327,8 @@ test('runHarness Phase 11 step 20a: an ABANDONED F6 token (realm destroyed, drai
     setupSharedSessionResources: (tokenId) => pageEvaluate({ name: 'setupSharedSessionResources' }, tokenId),
     controls: {
       treeUnavailable: async () => createControlResult('tree-unavailable', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
-      wrongOwner: async () => createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
-      hiddenFragment: async () => createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
+      wrongOwner: async (ctx) => { ctx.recordControlTarget({ controlName: 'wrong-owner', selectedFragId: 7, selectedOwnerDbId: 42, injectedOwnerDbId: -999999, selectionSource: 'f1PopulationRecords', selectionRule: 'numeric-minimum', populationSize: 3 }); return createControlResult('wrong-owner', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }); },
+      hiddenFragment: async (ctx) => { ctx.recordControlTarget({ controlName: 'hidden-fragment', selectedFragId: 4242, selectedTreeOwnerDbId: 9, actedOnFragId: 4242, selectionSource: 'f2TreeOwnerByFragId-intersect-f1PopulationClasses-L', selectionRule: 'numeric-minimum', populationSize: 5 }); return createControlResult('hidden-fragment', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }); },
       capacityBreach: async () => createControlResult('capacity-breach', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
       invalidBounds: async () => createControlResult('invalid-bounds', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
       boundsBeyondTolerance: async () => createControlResult('bounds-beyond-tolerance', { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true }),
@@ -1619,3 +1642,18 @@ test('runHarness (I5): a real observeF1 resolveRoots-threw path (which itself ca
   const { valid, errors } = validateResultSchema(result);
   assert.equal(valid, true, `result must still be schema-valid: ${errors.join('; ')}`);
 });
+
+// H3-R1 final coupling fix: runHarness-level -- a target-bearing control that reports
+// DETECTED_RESTORED WITHOUT recording a target can never yield PASS.
+for (const key of ['wrongOwner', 'hiddenFragment']) {
+  test(`runHarness (H3-R1 coupling): ${key} DETECTED_RESTORED without a controlTargets record -> overall is not PASS`, async () => {
+    const tracker = callOrderTracker();
+    const deps = buildHappyDeps(tracker, { pageEvaluateOverrides: withF6Handlers() });
+    const name = key === 'wrongOwner' ? 'wrong-owner' : 'hidden-fragment';
+    deps.controls[key] = async () => createControlResult(name, { state: CONTROL_STATE.DETECTED_RESTORED, executed: true, detected: true, restored: true });
+    const result = await runHarness(deps, HAPPY_CONFIG);
+    assert.notEqual(result.overall, OVERALL_VERDICT.PASS);
+    assert.equal(result.controlTargets[name], undefined);
+    assert.equal(validateResultSchema(result).valid, false);
+  });
+}

@@ -424,8 +424,13 @@ function cleanControls() {
   return controls;
 }
 
+function cleanControlTargets() {
+  return { 'wrong-owner': { controlName: 'wrong-owner', selectedFragId: 7, selectedOwnerDbId: 42, injectedOwnerDbId: -999999, selectionSource: 'f1PopulationRecords', selectionRule: 'numeric-minimum', populationSize: 3 }, 'hidden-fragment': { controlName: 'hidden-fragment', selectedFragId: 4242, selectedTreeOwnerDbId: 9, actedOnFragId: 4242, selectionSource: 'f2TreeOwnerByFragId-intersect-f1PopulationClasses-L', selectionRule: 'numeric-minimum', populationSize: 5 } };
+}
+
 function baseCleanInput(overrides = {}) {
   return {
+    controlTargets: cleanControlTargets(),
     fatalErrorObserved: false,
     cleanupUnresolvedOwnership: false,
     viewerScriptIntegrity: INTEGRITY_RESULT.VERIFIED,

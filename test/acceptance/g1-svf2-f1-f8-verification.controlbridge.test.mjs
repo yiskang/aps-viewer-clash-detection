@@ -573,9 +573,9 @@ function buildHappyDeps(tracker, { controlsOverrides = {}, pageEvaluateOverrides
     setupSharedSessionResources: (tokenId) => fakePageEvaluateWithLoad({ name: 'setupSharedSessionResources' }, tokenId),
     controls: {
       treeUnavailable: async () => detectedRestored('tree-unavailable'),
-      wrongOwner: async () => detectedRestored('wrong-owner'),
+      wrongOwner: async (ctx) => { ctx.recordControlTarget({ controlName: 'wrong-owner', selectedFragId: 7, selectedOwnerDbId: 42, injectedOwnerDbId: -999999, selectionSource: 'f1PopulationRecords', selectionRule: 'numeric-minimum', populationSize: 3 }); return detectedRestored('wrong-owner'); },
       lateCompletionAfterTimeout: async () => detectedRestored('late-completion-after-timeout'),
-      hiddenFragment: async () => detectedRestored('hidden-fragment'),
+      hiddenFragment: async (ctx) => { ctx.recordControlTarget({ controlName: 'hidden-fragment', selectedFragId: 4242, selectedTreeOwnerDbId: 9, actedOnFragId: 4242, selectionSource: 'f2TreeOwnerByFragId-intersect-f1PopulationClasses-L', selectionRule: 'numeric-minimum', populationSize: 5 }); return detectedRestored('hidden-fragment'); },
       invalidGeometryConsumer: async () => detectedRestored('invalid-geometry-consumer'),
       capacityBreach: async () => detectedRestored('capacity-breach'),
       invalidBounds: async () => detectedRestored('invalid-bounds'),
