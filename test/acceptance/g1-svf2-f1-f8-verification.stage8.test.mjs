@@ -710,7 +710,7 @@ function fabricateValidResult() {
         otherObservedRemoteAssets: [],
       },
     },
-    runtimeEnvelope: { viewerVersion: '7.124.2', chromium: '120', node: process.version, modelUrn: 'urn:x', initializer: { env: 'AutodeskProduction2', api: 'streamingV2' } },
+    runtimeEnvelope: { viewerVersion: '7.124.2', chromium: '120', playwright: '1.62.1', node: process.version, modelUrn: 'urn:x', initializer: { env: 'AutodeskProduction2', api: 'streamingV2' } },
     classifier: CLASSIFIER.CONFIRMED_SVF2,
     runtime: { isOTG: true, isSVF2: true },
     // Fix wave (Important I4): full {verdict, reason, fields, evidence} records via the real
@@ -803,6 +803,32 @@ test('validateResultSchema: rejects malformed harnessIntegrity (bad sha256, miss
 test('validateResultSchema: rejects malformed runtimeEnvelope (missing initializer)', () => {
   const r = fabricateValidResult(); delete r.runtimeEnvelope.initializer;
   assert.equal(validateResultSchema(r).valid, false);
+});
+
+test('validateResultSchema: runtimeEnvelope.playwright is required (may be null, but must be present)', () => {
+  assert.equal(validateResultSchema(fabricateValidResult()).valid, true);
+  const r = fabricateValidResult(); delete r.runtimeEnvelope.playwright;
+  assert.equal(validateResultSchema(r).valid, false);
+  const n = fabricateValidResult(); n.runtimeEnvelope.playwright = null;
+  assert.equal(validateResultSchema(n).valid, true);
+});
+
+test('runHarness: the durable result runtimeEnvelope records the Playwright version from config (null when absent, never fabricated)', async () => {
+  const withVersion = await runHarness(buildHappyDeps(callOrderTracker(), { pageEvaluateOverrides: withF6Handlers() }), { ...HAPPY_CONFIG, playwright: '1.62.1' });
+  assert.equal(withVersion.runtimeEnvelope.playwright, '1.62.1');
+  const without = await runHarness(buildHappyDeps(callOrderTracker(), { pageEvaluateOverrides: withF6Handlers() }), HAPPY_CONFIG);
+  assert.equal(without.runtimeEnvelope.playwright, null);
+});
+
+test('main(): the Playwright version is read after the playwright import and passed to runHarness config and the Phase 0 failure envelope', async () => {
+  const source = await readFile(HARNESS_PATH, 'utf8');
+  const mainBody = source.slice(source.indexOf('async function main()'), source.indexOf('\nif (import.meta.url'));
+  // Matched without spelling the package-import literal (domIsolation.test.mjs forbids it in any *.test.mjs).
+  const idxImport = mainBody.indexOf('const { chromium } = await import(');
+  const idxRead = mainBody.indexOf('playwrightVersion = readPlaywrightVersion()');
+  assert.ok(idxImport > -1 && idxRead > idxImport, 'playwrightVersion must be read right after the dynamic playwright import');
+  assert.ok(mainBody.includes('playwright: playwrightVersion,'), 'config.playwright must be populated');
+  assert.ok(/runtimeEnvelope: \{[^}]*playwright: playwrightVersion/.test(mainBody), 'the Phase 0 failure envelope must carry the Playwright version too');
 });
 
 test('validateResultSchema: rejects an out-of-enum classifier', () => {

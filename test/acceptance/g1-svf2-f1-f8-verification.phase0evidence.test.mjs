@@ -320,6 +320,14 @@ test('handlePhase0Failure: a secret-bearing errorLedger event (url with a token,
 // evidence writer and produces a FAIL-verdict, schema-shaped evidence object.
 // ============================================================================================
 
+test('handlePhase0Failure: runtimeEnvelope.playwright is persisted when known and null (never fabricated) when not', async () => {
+  const known = await handlePhase0Failure(baseArgs({ runtimeEnvelope: { ...fakeRuntimeEnvelope(), playwright: '1.62.1' } }));
+  assert.equal(known.evidence.runtimeEnvelope.playwright, '1.62.1');
+  const unknown = await handlePhase0Failure(baseArgs());
+  assert.ok('playwright' in unknown.evidence.runtimeEnvelope);
+  assert.equal(unknown.evidence.runtimeEnvelope.playwright, null);
+});
+
 test('handlePhase0Failure: a simulated module-install failure produces PHASE_0/FAIL evidence matching validateResultSchema', async () => {
   const writes = [];
   const args = baseArgs({

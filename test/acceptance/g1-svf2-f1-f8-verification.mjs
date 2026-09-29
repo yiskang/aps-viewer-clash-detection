@@ -40,7 +40,8 @@ import { execFileSync } from 'node:child_process';
 import { compactAndWeld } from '../../collision/geometry/activeRangeCompaction.js';
 import { maxCollisionInstancesPerEpoch, maxSyncTriangleCount, maxFragmentsPerDbId, maxChildrenPerNode as MAX_CHILDREN_PER_NODE_LIMIT } from '../../collision/constants.js';
 import { fileURLToPath } from 'node:url';
-import { realpathSync } from 'node:fs';
+import { realpathSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 // ------------------------------------------------------------------------------------------
 // Verdict / state enums -- exported constants matching the plan's own vocabulary verbatim.
@@ -781,6 +782,57 @@ function buildF1EvidenceDetails(f1Result) {
     first20Mismatches: (r.first20Mismatches ?? []).map((m) => (m && 'digestError' in m ? { ...m, digestError: bound(m.digestError) } : m)),
     populationDigest: r.populationDigestEvidence ? { ...r.populationDigestEvidence, error: bound(r.populationDigestEvidence.error) } : null,
   };
+}
+
+/** F4's durable diagnostic payload (post-live-run, baseline 3312ae1 remediation): the in-page
+ * per-geometry stage traces (render-proxy result, geometry adaptation result, consumer result,
+ * geometry/dbId identity, oversized marker), already bounded to the first 20 per class in-page,
+ * with every captured exception passed through the existing bounded/redacting `describeError`
+ * here on the Node side. Tolerates older/minimal result shapes (missing arrays -> []). */
+function buildF4EvidenceDetails(f4Result) {
+  const r = f4Result || {};
+  const LIMIT = 20;
+  const boundRecord = (rec) => (rec && typeof rec === 'object'
+    ? { ...rec, error: rec.error === null || rec.error === undefined ? null : describeError(rec.error) }
+    : rec);
+  const list = (arr, limit = LIMIT) => (Array.isArray(arr) ? arr.slice(0, limit).map(boundRecord) : []);
+  return {
+    consumerAvailability: r.consumerAvailability ?? null,
+    failureBreakdown: r.failureBreakdown ?? null,
+    first20RenderProxyFailures: list(r.first20RenderProxyFailures),
+    first20GeometryAdapterFailures: list(r.first20GeometryAdapterFailures),
+    first20WeldConsumerFailures: list(r.first20WeldConsumerFailures),
+    first20OversizedGeometries: list(r.first20OversizedGeometries),
+    sampleGeometryTraces: list(r.sampleGeometryTraces, 5),
+  };
+}
+
+/** `buildF4CheckRecord(f4Result)` -- the persisted `checks.F4` record from `observeF4`'s raw
+ * return. `ok:true` -> `scoreF4` verdict; `ok:false` (including the distinct
+ * `f4-compactAndWeld-missing-in-browser-realm` harness-wiring reason) -> `BLOCKED` with that
+ * reason. Both carry `evidence.details` (see `buildF4EvidenceDetails`). */
+function buildF4CheckRecord(f4Result) {
+  const r = f4Result || {};
+  const details = buildF4EvidenceDetails(r);
+  if (r.ok === true) {
+    const s = scoreF4(r.fields || {});
+    return buildCheckRecord({ verdict: s.verdict, reason: s.reason, fields: s.fields, evidence: { status: 'observed', details } });
+  }
+  return buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: r.reason || 'observation-failed', evidence: { status: 'observation-failed', details } });
+}
+
+/** Node-side. The installed `playwright` package version for `runtimeEnvelope.playwright`, read
+ * from its own package.json (never by importing playwright). `null` on any failure -- never
+ * fabricated. `readPackageJson` is injectable for tests. */
+function readPlaywrightVersion({ readPackageJson } = {}) {
+  try {
+    const pkg = readPackageJson
+      ? readPackageJson()
+      : JSON.parse(readFileSync(createRequire(import.meta.url).resolve('playwright/package.json'), 'utf8'));
+    return pkg && typeof pkg.version === 'string' && pkg.version.length > 0 ? pkg.version : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `projectCheckVerdicts(checks)` -- the bare-string `{F1: 'PASS', ...}` shape computeOverall's
@@ -1872,6 +1924,13 @@ const SERVED_MODULE_ENTRY_POINTS = Object.freeze([
   // harnessIntegrity.servedModuleManifest, silently defeating the manifest's own H5 byte-
   // comparison purpose for exactly the module F7 depends on. Caught during Stage 8 assembly.
   '/clashpanel/viewer/viewerApi.js',
+  // Post-live-run (baseline 3312ae1) F4 remediation: observeF4 reads the REAL compactAndWeld
+  // from `window.__g1.mod['/collision/geometry/activeRangeCompaction.js']`. The module was only
+  // reachable transitively (via /collision/index.js -> createGeometryRegistry.js), so it was
+  // hashed into servedModuleManifest but never installed into g.mod by installG1Modules --
+  // every in-page consumer call was `undefined(...)` (live run: weldConsumerFailures 348/348).
+  // Served unchanged through server.js's existing express.static('collision') route.
+  '/collision/geometry/activeRangeCompaction.js',
 ]);
 
 // Matches `... from '<specifier>'` -- covers `import X from '...'`, `import {a,b} from '...'`,
@@ -5123,9 +5182,30 @@ async function observeF4(sessionId) {
   const { adaptViewerGeometry } = mod['/collision/viewer/ViewerGeometryAdapter.js'] || {};
   const { compactAndWeld: weld } = mod['/collision/geometry/activeRangeCompaction.js'] || {};
   const viewer = window.__viewer;
+  // Bounded in-page capture (message/stack clipped before crossing the realm boundary); the
+  // Node side passes every captured error through describeError for final bounding/redaction.
+  const clip = (s, n) => { const str = String(s ?? ''); return str.length > n ? str.slice(0, n) : str; };
   const errOf = (e) => (e !== null && typeof e === 'object'
-    ? { name: e.name, message: String(e.message ?? ''), reason: e.reason ?? null }
-    : { primitive: typeof e, value: String(e) });
+    ? { name: e.name, message: clip(e.message, 4096), reason: e.reason ?? null, stack: e.stack == null ? null : clip(e.stack, 4096) }
+    : { primitive: typeof e, value: clip(e, 4096) });
+
+  // Post-live-run (baseline 3312ae1) remediation: the consumer chain's modules must actually be
+  // present in THIS realm. A missing module is a harness wiring defect, reported under its own
+  // reason BEFORE any census work -- never as N generic per-geometry weld-consumer failures.
+  const consumerAvailability = {
+    adaptViewerGeometry: typeof adaptViewerGeometry,
+    compactAndWeld: typeof weld,
+    modulePresent: {
+      '/collision/viewer/ViewerGeometryAdapter.js': Boolean(mod['/collision/viewer/ViewerGeometryAdapter.js']),
+      '/collision/geometry/activeRangeCompaction.js': Boolean(mod['/collision/geometry/activeRangeCompaction.js']),
+    },
+  };
+  if (typeof weld !== 'function') {
+    return { ok: false, reason: 'f4-compactAndWeld-missing-in-browser-realm', consumerAvailability };
+  }
+  if (typeof adaptViewerGeometry !== 'function') {
+    return { ok: false, reason: 'f4-adaptViewerGeometry-missing-in-browser-realm', consumerAvailability };
+  }
 
   // Fix round 1 (Stage 5 review): F4's own ownership-metadata observation (plan line 946:
   // "additionally record whether getGeometryId returns a usable id for every fragment in the
@@ -5149,6 +5229,7 @@ async function observeF4(sessionId) {
   const fragList = model.getFragmentList();
 
   const geometryIdToRepresentativeFragId = new Map();
+  const representativeDbIdByGeometryId = new Map();
   const fragmentGeometryId = new Map();
   const worldMatricesByFragId = new Map();
   for (const [fragId, record] of session.artifacts.f1PopulationRecords) {
@@ -5180,13 +5261,29 @@ async function observeF4(sessionId) {
 
     fragmentGeometryId.set(fragId, freshGeometryId);
     worldMatricesByFragId.set(fragId, record.worldMatrix);
-    if (!geometryIdToRepresentativeFragId.has(freshGeometryId)) geometryIdToRepresentativeFragId.set(freshGeometryId, fragId);
+    if (!geometryIdToRepresentativeFragId.has(freshGeometryId)) {
+      geometryIdToRepresentativeFragId.set(freshGeometryId, fragId);
+      representativeDbIdByGeometryId.set(freshGeometryId, record.ownerDbId ?? null);
+    }
   }
 
   const distinctGeometryCount = geometryIdToRepresentativeFragId.size;
+  // Per-geometry failure details are bounded IN-PAGE (first 20 per class; the counts below are
+  // the true, never-bounded totals), so a large census never ships unbounded records across the
+  // realm boundary. Each record is a stage trace of the getRenderProxy -> adaptViewerGeometry ->
+  // compactAndWeld chain up to the point it stopped, with the geometry/dbId identity.
+  const DETAIL_LIMIT = 20;
+  const TRACE_SAMPLE_LIMIT = 5;
   const renderProxyFailures = [];
   const geometryAdapterFailures = [];
   const weldConsumerFailures = [];
+  const oversizedGeometries = [];
+  const sampleGeometryTraces = [];
+  const failureBreakdown = {
+    renderProxy: 0, geometryAdapter: 0,
+    consumerException: 0, consumerReturnedFalsy: 0, consumerRejected: 0, consumerNonFinite: 0,
+  };
+  const pushBounded = (arr, rec) => { if (arr.length < DETAIL_LIMIT) arr.push(rec); };
   let geometriesWithNullIndex = 0;
   let weldConsumerSuccessCount = 0;
   let maxActiveTriangleCount = 0;
@@ -5194,28 +5291,67 @@ async function observeF4(sessionId) {
   let oversizedGeometryCount = 0;
   const geometrySnapshots = new Map();
 
+  const summarizeAdaptation = (a) => (!a ? { returned: false } : a.unsupported === true
+    ? { returned: true, unsupported: true, reason: a.reason ?? null }
+    : {
+      returned: true, unsupported: false,
+      activeTriangleCount: a.activeTriangleCount ?? null,
+      positionsLength: a.positions ? a.positions.length : null,
+      positionStride: a.positionStride ?? null, positionOffset: a.positionOffset ?? null,
+      indexLength: a.index == null ? null : a.index.length,
+      rangeCount: Array.isArray(a.ranges) ? a.ranges.length : null,
+    });
+  const summarizeConsumer = (w, outcome) => (!w ? { outcome } : {
+    outcome,
+    oversized: w.oversized === true,
+    reason: w.reason ?? null,
+    activeTriangleCount: w.activeTriangleCount ?? null,
+    triangleCount: w.triangleCount ?? null,
+    positionLength: w.position ? w.position.length : null,
+    indexLength: w.index ? w.index.length : null,
+  });
+
   for (const [geometryId, representativeFragId] of geometryIdToRepresentativeFragId) {
+    const trace = {
+      geometryId, fragId: representativeFragId, dbId: representativeDbIdByGeometryId.get(geometryId) ?? null,
+      stage: 'render-proxy', renderProxy: null, adaptation: null, consumer: null, error: null,
+    };
+    const finish = () => { if (sampleGeometryTraces.length < TRACE_SAMPLE_LIMIT) sampleGeometryTraces.push(trace); };
+
     let proxy;
     try {
       proxy = viewer.impl.getRenderProxy(model, representativeFragId);
     } catch (e) {
-      renderProxyFailures.push({ geometryId, fragId: representativeFragId, error: errOf(e) });
+      trace.renderProxy = { returned: false, threw: true };
+      trace.error = errOf(e);
+      failureBreakdown.renderProxy += 1;
+      pushBounded(renderProxyFailures, trace); finish();
       continue;
     }
+    trace.renderProxy = { returned: Boolean(proxy), hasGeometry: Boolean(proxy && proxy.geometry) };
     if (!proxy) {
-      renderProxyFailures.push({ geometryId, fragId: representativeFragId, error: { message: 'getRenderProxy returned a falsy value' } });
+      trace.error = { message: 'getRenderProxy returned a falsy value' };
+      failureBreakdown.renderProxy += 1;
+      pushBounded(renderProxyFailures, trace); finish();
       continue;
     }
 
+    trace.stage = 'geometry-adapter';
     let adapted;
     try {
       adapted = adaptViewerGeometry(proxy.geometry);
     } catch (e) {
-      geometryAdapterFailures.push({ geometryId, fragId: representativeFragId, error: errOf(e) });
+      trace.adaptation = { returned: false, threw: true };
+      trace.error = errOf(e);
+      failureBreakdown.geometryAdapter += 1;
+      pushBounded(geometryAdapterFailures, trace); finish();
       continue;
     }
+    trace.adaptation = summarizeAdaptation(adapted);
     if (!adapted || adapted.unsupported === true) {
-      geometryAdapterFailures.push({ geometryId, fragId: representativeFragId, reason: adapted ? adapted.reason : 'adapter-returned-falsy' });
+      trace.reason = adapted ? adapted.reason : 'adapter-returned-falsy';
+      failureBreakdown.geometryAdapter += 1;
+      pushBounded(geometryAdapterFailures, trace); finish();
       continue;
     }
 
@@ -5233,11 +5369,23 @@ async function observeF4(sessionId) {
       representativeFragId,
     });
 
+    trace.stage = 'consumer';
     let weldResult;
     try {
       weldResult = weld(adapted, { getUnitScale: () => model.getUnitScale() });
     } catch (e) {
-      weldConsumerFailures.push({ geometryId, error: errOf(e) });
+      // A consumer EXCEPTION is its own class (weldConsumerExceptionCount), never collapsed
+      // into a generic consumer rejection.
+      trace.consumer = summarizeConsumer(null, 'threw');
+      trace.error = errOf(e);
+      failureBreakdown.consumerException += 1;
+      pushBounded(weldConsumerFailures, trace); finish();
+      continue;
+    }
+    if (!weldResult) {
+      trace.consumer = summarizeConsumer(null, 'returned-falsy');
+      failureBreakdown.consumerReturnedFalsy += 1;
+      pushBounded(weldConsumerFailures, trace); finish();
       continue;
     }
 
@@ -5246,10 +5394,18 @@ async function observeF4(sessionId) {
     // classifyWeldResult, which Node-side scoreF4/the invalid-geometry-consumer control use.
     if (weldResult.oversized === true) {
       if (weldResult.reason === 'geometry-too-large-for-sync-build') {
+        // F5 capacity finding (the existing maxSyncTriangleCount ceiling), never an F4
+        // geometry incompatibility: counted and recorded, not a weld-consumer failure.
+        trace.consumer = summarizeConsumer(weldResult, 'oversized-informational');
         oversizedGeometryCount += 1;
-        if (oversizedGeometryIds.length < 20) oversizedGeometryIds.push(geometryId);
+        if (oversizedGeometryIds.length < DETAIL_LIMIT) oversizedGeometryIds.push(geometryId);
+        pushBounded(oversizedGeometries, trace); finish();
       } else {
-        weldConsumerFailures.push({ geometryId, reason: weldResult.reason });
+        trace.consumer = summarizeConsumer(weldResult, weldResult.reason === 'index-references-invalid-vertex'
+          ? 'index-references-invalid-vertex' : 'unrecognized-oversized-reason');
+        trace.reason = weldResult.reason; // pre-remediation record shape kept ({geometryId, reason})
+        failureBreakdown.consumerRejected += 1;
+        pushBounded(weldConsumerFailures, trace); finish();
       }
       continue;
     }
@@ -5262,16 +5418,23 @@ async function observeF4(sessionId) {
       allFinite = false;
     }
     if (!allFinite) {
-      weldConsumerFailures.push({ geometryId, nonFiniteComponent: true });
+      trace.consumer = summarizeConsumer(weldResult, 'non-finite-position');
+      trace.nonFiniteComponent = true;
+      failureBreakdown.consumerNonFinite += 1;
+      pushBounded(weldConsumerFailures, trace); finish();
       continue;
     }
+    trace.consumer = summarizeConsumer(weldResult, 'success');
     weldConsumerSuccessCount += 1;
+    finish();
   }
 
   session.artifacts.f4Geometry = geometrySnapshots;
   session.artifacts.f4FragmentGeometryId = fragmentGeometryId;
   session.artifacts.f4WorldMatricesByFragId = worldMatricesByFragId;
 
+  const weldConsumerFailureCount = failureBreakdown.consumerException + failureBreakdown.consumerReturnedFalsy
+    + failureBreakdown.consumerRejected + failureBreakdown.consumerNonFinite;
   return {
     ok: true,
     fields: {
@@ -5279,17 +5442,22 @@ async function observeF4(sessionId) {
       libOwnerDiffersFromFragList,
       droppedDiagnosticsCount,
       distinctGeometryCount,
-      renderProxyFailures: renderProxyFailures.length,
-      geometryAdapterFailures: geometryAdapterFailures.length,
+      renderProxyFailures: failureBreakdown.renderProxy,
+      geometryAdapterFailures: failureBreakdown.geometryAdapter,
       geometriesWithNullIndex,
-      weldConsumerFailures: weldConsumerFailures.length,
+      weldConsumerFailures: weldConsumerFailureCount,
+      weldConsumerExceptionCount: failureBreakdown.consumerException,
       weldConsumerSuccessCount,
       maxActiveTriangleCount,
       oversizedGeometryCount,
     },
-    first20RenderProxyFailures: renderProxyFailures.slice(0, 20),
-    first20GeometryAdapterFailures: geometryAdapterFailures.slice(0, 20),
-    first20WeldConsumerFailures: weldConsumerFailures.slice(0, 20),
+    consumerAvailability,
+    failureBreakdown,
+    first20RenderProxyFailures: renderProxyFailures,
+    first20GeometryAdapterFailures: geometryAdapterFailures,
+    first20WeldConsumerFailures: weldConsumerFailures,
+    first20OversizedGeometries: oversizedGeometries,
+    sampleGeometryTraces,
     oversizedGeometryIds,
   };
 }
@@ -5322,8 +5490,13 @@ function scoreF4(fields) {
   const ownershipMetadataFailed = f.libraryThrew > 0 || f.libOwnerDiffersFromFragList > 0 || droppedDiagnosticsTotal > 0;
   const geometryBufferFailed = f.renderProxyFailures > 0 || f.geometryAdapterFailures > 0 || f.weldConsumerFailures > 0;
   const failed = ownershipMetadataFailed || geometryBufferFailed;
+  // Post-live-run remediation: a consumer EXCEPTION (compactAndWeld threw) is reported under its
+  // own reason, never collapsed into the generic geometry-buffer failure reason. Absent on older
+  // result shapes -> treated as 0.
+  const consumerExceptions = Number.isInteger(f.weldConsumerExceptionCount) ? f.weldConsumerExceptionCount : 0;
   const reason = !failed ? null
     : ownershipMetadataFailed ? 'f4-ownership-metadata-failure'
+    : consumerExceptions > 0 ? 'f4-weld-consumer-exception'
     : 'f4-render-proxy-adapter-or-weld-consumer-failure';
   return { verdict: failed ? CHECK_VERDICT.FAIL : CHECK_VERDICT.PASS, reason, fields: f };
 }
@@ -8263,11 +8436,10 @@ async function runHarness(deps, config) {
       let f4Snapshot;
       if (!sessionTainted) {
         f4Result = await pageEvaluate(observeF4, sessionId);
-        const f4Score = scoreF4(f4Result.fields || {});
-        // Fix wave (Important I4): see F1's own comment above -- same pattern.
-        checks.F4 = f4Result.ok === true
-          ? buildCheckRecord({ verdict: f4Score.verdict, reason: f4Score.reason, fields: f4Score.fields, evidence: { status: 'observed' } })
-          : buildCheckRecord({ verdict: CHECK_VERDICT.BLOCKED, reason: f4Result.reason || 'observation-failed', evidence: { status: 'observation-failed' } });
+        // Fix wave (Important I4): see F1's own comment above -- same pattern. Post-live-run
+        // remediation: buildF4CheckRecord also persists bounded per-geometry evidence details
+        // (and the distinct missing-consumer reason) instead of counts alone.
+        checks.F4 = buildF4CheckRecord(f4Result);
         // Fix wave (final whole-branch review, Minor M3, treated as a real bug): same fix as
         // f1Snapshot above -- captured immediately after F4 is computed, never inline at the
         // control call site (where it previously ran with truly nothing at all in between,
@@ -8608,6 +8780,7 @@ async function runHarness(deps, config) {
     harnessIntegrity: finalizedHarnessIntegrity,
     runtimeEnvelope: {
       viewerVersion: config.viewerVersion || null, chromium: config.chromium || null,
+      playwright: config.playwright || null,
       node: config.node || process.version, modelUrn: urn,
       initializer: config.initializer || null,
     },
@@ -8759,7 +8932,7 @@ function validateResultSchema(result) {
   if (!re || typeof re !== 'object') {
     fail("'runtimeEnvelope' must be an object");
   } else {
-    for (const field of ['viewerVersion', 'chromium', 'node', 'modelUrn']) {
+    for (const field of ['viewerVersion', 'chromium', 'playwright', 'node', 'modelUrn']) {
       if (!(field in re)) fail(`'runtimeEnvelope.${field}' is required (may be null, but must be present)`);
     }
     if (!re.initializer || typeof re.initializer !== 'object') fail("'runtimeEnvelope.initializer' must be an object");
@@ -9339,6 +9512,7 @@ async function handlePhase0Failure({
     runtimeEnvelope: {
       viewerVersion: runtimeEnvelope.viewerVersion ?? null,
       chromium: runtimeEnvelope.chromium ?? null,
+      playwright: runtimeEnvelope.playwright ?? null,
       node: runtimeEnvelope.node || process.version,
       modelUrn: runtimeEnvelope.modelUrn ?? null,
       initializer: runtimeEnvelope.initializer || {},
@@ -9466,6 +9640,8 @@ async function main() {
   let browser = null;
   let context = null;
   let page = null;
+  // runtimeEnvelope.playwright: null until the playwright import succeeds (never fabricated).
+  let playwrightVersion = null;
   let pageEvaluate = null;
   let pageWaitForFunction = null;
   let harnessIntegrity = null;
@@ -9604,6 +9780,7 @@ async function main() {
     // real side effect this file performs.
     phase0Step = 'playwright-import';
     const { chromium } = await import('playwright');
+    playwrightVersion = readPlaywrightVersion();
 
     phase0Step = 'browser-launch';
     browser = await chromium.launch();
@@ -9734,7 +9911,7 @@ async function main() {
       error: e, failureCategory, startedAt,
       harnessIntegrityInput: harnessIntegrity,
       runtimeEnvelope: {
-        viewerVersion: VIEWER_VERSION, chromium: chromiumVersion, node: process.version,
+        viewerVersion: VIEWER_VERSION, chromium: chromiumVersion, playwright: playwrightVersion, node: process.version,
         modelUrn: MODEL_URN, initializer: { env: 'AutodeskProduction2', api: 'streamingV2' },
       },
       captureViewerScriptIntegrity,
@@ -9772,6 +9949,7 @@ async function main() {
     // placeholder.
     viewerVersion: VIEWER_VERSION,
     chromium: browser.version(),
+    playwright: playwrightVersion,
   };
 
   const result = await runHarness({
@@ -9972,6 +10150,8 @@ export {
   classifyWeldResult,
   observeF4,
   scoreF4,
+  buildF4CheckRecord,
+  readPlaywrightVersion,
   deriveOrganicBreach,
   scoreF5,
   jsonDeepEqual,

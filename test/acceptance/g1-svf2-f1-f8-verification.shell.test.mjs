@@ -164,6 +164,11 @@ test('SERVED_MODULE_ENTRY_POINTS: matches the plan §5 module list, PLUS the one
     '/collision/index.js',
     '/collision/constants.js',
     '/clashpanel/viewer/viewerApi.js',
+    // Post-live-run (baseline 3312ae1) F4 remediation: observeF4 reads compactAndWeld from
+    // window.__g1.mod['/collision/geometry/activeRangeCompaction.js']; it was only reachable
+    // transitively (hashed in the manifest) but never installed into g.mod, so every in-page
+    // consumer call failed. It must be an entry point for installG1Modules to install it.
+    '/collision/geometry/activeRangeCompaction.js',
   ]);
 });
 
