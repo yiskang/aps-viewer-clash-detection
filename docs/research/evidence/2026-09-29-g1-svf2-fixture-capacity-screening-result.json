@@ -1,0 +1,2188 @@
+{
+  "kind": "g1-svf2-fixture-capacity-screening",
+  "note": "SCREENING ONLY -- not G1 evidence; no F1-F8 run; no upload/translation. Two script invocations (run1: 1 candidate; run2: 4 candidates); each candidate loaded exactly once.",
+  "runtimeEnvelope": {
+    "node": "v22.23.1",
+    "playwright": "1.62.1",
+    "chromium": "151.0.7922.34",
+    "viewerVersion": "7.124.2",
+    "initializer": {
+      "env": "AutodeskProduction2",
+      "api": "streamingV2"
+    },
+    "loadCall": "Document.load -> viewer.loadDocumentNode(doc, doc.getRoot().getDefaultGeometry(true), {})",
+    "expectedViewerSha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e"
+  },
+  "invocations": [
+    {
+      "startedAt": "2026-09-29T13:16:43.217Z",
+      "finishedAt": "2026-09-29T13:16:54.797Z",
+      "candidates": [
+        "main_model_clash_test.rvt"
+      ]
+    },
+    {
+      "startedAt": "2026-09-29T13:17:06.425Z",
+      "finishedAt": "2026-09-29T13:17:44.172Z",
+      "candidates": [
+        "linked_model_clash_test.rvt",
+        "Audubon_Structure_clash_test.rvt",
+        "Audubon_Mechanical_clash_test.rvt",
+        "Audubon_Architecture_clash_test.rvt"
+      ]
+    }
+  ],
+  "envelopeConsistent": true,
+  "limits": {
+    "maxCollisionInstancesPerEpoch": 20000,
+    "maxFragmentsPerDbId": 5000,
+    "maxFragmentsPerRoot": 5000,
+    "maxChildrenPerNode": 10000,
+    "maxSyncTriangleCount": 12000,
+    "semantics": "observed <= limit is within (strict > breach), per harness scoreF5"
+  },
+  "discovery": {
+    "method": "read-only OSS object listing + Model Derivative GET manifest per object (no mutation)",
+    "objectCount": 100,
+    "objects": [
+      {
+        "name": "Project1.0011.rvt",
+        "sizeBytes": 6668288,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "mep-test-v4.ifc",
+        "sizeBytes": 1297113,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Audubon_Structure_clash_test.rvt",
+        "sizeBytes": 28983296,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "INT_AUS_1010_0520_UEBER_BAUP_80000475_FEDERATED-OVERALL.nwd",
+        "sizeBytes": 1022971458,
+        "manifestStatus": null,
+        "outputTypes": [],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Technical_school-current_m_rooms-v4.ifc",
+        "sizeBytes": 44789848,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "M_GTP_Inbound.ifc",
+        "sizeBytes": 6197486,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "rac_basic_sample_project_ifc4_rva_v3.ifc",
+        "sizeBytes": 14918454,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "adddba9b-20ba-4e47-8dc2-7200b3846f27.rvt",
+        "sizeBytes": 6934528,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "ifc"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "A250-E-MB-CND-STR-03-ifcv3.ifc",
+        "sizeBytes": 2852981,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "M_GTP_Inbound-v4.ifc",
+        "sizeBytes": 6197486,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Quintel_Antenna_8port_QD668-3D-spaceskip.ifc",
+        "sizeBytes": 127643,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "SPR_AUS_0260_UEBER_UEBER_ENGT_80017516_TGA_0500_0501_0502_0503_0504_0505_TEM-VZ_Sprinkler_V12-2dpdf.dwg",
+        "sizeBytes": 92396792,
+        "manifestStatus": "failed",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "enviro-dome.nwd",
+        "sizeBytes": 1659504,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "rac_advanced_sample_project.rvt",
+        "sizeBytes": 15708160,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "rebar-sample-v4.ifc",
+        "sizeBytes": 14612764,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "For Deugging have 2d.rvt",
+        "sizeBytes": 937984,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Office_A_20110811_optimized_v4.ifc",
+        "sizeBytes": 4099293,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "rac_basic_sample_project_ifc4_rva_modern.ifc",
+        "sizeBytes": 14918454,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "02_v02_v01 (2).rvt",
+        "sizeBytes": 9277440,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "2BG-IDSR-XX-XX-M3-I-00001.rvt",
+        "sizeBytes": 546209792,
+        "manifestStatus": "failed",
+        "outputTypes": [],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "GRENSESNITTSMODELL.ifc",
+        "sizeBytes": 216413428,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Audubon_Mechanical_clash_test.rvt",
+        "sizeBytes": 21700608,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "9400_Railing Test.rvt",
+        "sizeBytes": 7970816,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "ifc"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Buildings content testing.ifc",
+        "sizeBytes": 28585606,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "ATZ28-R21-AE-T (2).ifc",
+        "sizeBytes": 423843079,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "IFC ARK Guri Kunna 2-v4.ifc",
+        "sizeBytes": 29307870,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "泉佐野集約検証0922r1.nwd",
+        "sizeBytes": 237566103,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Snowdon Towers Sample Architectural-shared-coordinates.ifc",
+        "sizeBytes": 148656100,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "progettodue.zip",
+        "sizeBytes": 122918711,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "INT_AUS_1010_0520_UEBER_BAUP_80002433_FEDERATED-CONTRACTOR.nwd",
+        "sizeBytes": 273785326,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Audubon_Architecture_clash_test.rvt",
+        "sizeBytes": 40222720,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Simple_IFC_2024_2-modern.ifc",
+        "sizeBytes": 565188,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "rme_advanced_sample_project_ifc4-ifcv3.ifc",
+        "sizeBytes": 30858252,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "testFvHSE.ifc",
+        "sizeBytes": 25665563,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "BetterMetal_SupportStructure_Headframe_1BMP-14XD-12AMK-238120-HRK-spaceskip.ifc",
+        "sizeBytes": 23423319,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Simple_IFC_2024_2-legacy.ifc",
+        "sizeBytes": 565188,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "racbasicsampleproject.rvt",
+        "sizeBytes": 19775488,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "PRS-PCL-S7-ZZ-M3-G-0001.rvt",
+        "sizeBytes": 51449856,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "ifc"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Quintel_Antenna_8port_QD668-3D.ifc",
+        "sizeBytes": 127643,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Bandu's Revit Project 3.dwfx",
+        "sizeBytes": 1271134,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "rebar-sample.ifc",
+        "sizeBytes": 14612764,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Ericsson_Antenna_10Port_KRE1012467-1-spaceskip.ifc",
+        "sizeBytes": 172701,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "rac_basic_sample_project-2donly-test.rvt",
+        "sizeBytes": 19664896,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "rac_basic_sample_project.rvt",
+        "sizeBytes": 19664896,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "MAD03-ARCH-DH-FCO-R24.rvt",
+        "sizeBytes": 793223168,
+        "manifestStatus": "failed",
+        "outputTypes": [],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "bed-mc03.rvt",
+        "sizeBytes": 13254656,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "linked_model_clash_test.rvt",
+        "sizeBytes": 5525504,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "FOE_BZD_0260_0500_G0000_MOTO_60714665_StahlbauMoll_15E-2dpdf.dwg",
+        "sizeBytes": 13638080,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "rme_advanced_sample_project_ifc4-ifcv4.ifc",
+        "sizeBytes": 30858252,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "1360_MOD_PKO_MAS_Fixed.ifc",
+        "sizeBytes": 192052875,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "minimal_ifcv3.ifc",
+        "sizeBytes": 8811690,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "00-test-resvaed.dwg",
+        "sizeBytes": 1426548,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "clash_test_nested_link.zip",
+        "sizeBytes": 88306884,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Office_A_20110811_optimized.ifc",
+        "sizeBytes": 4099293,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "OriginalTestModel.rvt",
+        "sizeBytes": 4337664,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "ifc"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "rac_basic_sample_project_v3.ifc",
+        "sizeBytes": 27094875,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "FOE_BZD_0260_0500_G0000_MOTO_60714665_StahlbauMoll_15E.dwg",
+        "sizeBytes": 13638080,
+        "manifestStatus": "failed",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Snowdon Towers Sample Architectural.rvt",
+        "sizeBytes": 97615872,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "2BG-IDSR-XX-XX-M3-I-00001_2024.rvt",
+        "sizeBytes": 539582464,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "ifc"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "BOD-5-PAR-PR-3D-BT1-21_Rohbau_v3.ifc",
+        "sizeBytes": 13608375,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Origin locations.rvt",
+        "sizeBytes": 516096,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Simple_IFC_2024_2.ifc",
+        "sizeBytes": 565188,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "minimal.ifc",
+        "sizeBytes": 8811690,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "A250-E-MB-CND-STR-03.ifc",
+        "sizeBytes": 2852981,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "IFC ARK Guri Kunna 2.ifc",
+        "sizeBytes": 29307870,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "2BIMFEDERATI.zip",
+        "sizeBytes": 121336663,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "boolTest-after-fix.ifc",
+        "sizeBytes": 378615,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "test.ifc",
+        "sizeBytes": 432510,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "A250-E-MB-PZ3-STR-01.ifc.zip",
+        "sizeBytes": 5533572,
+        "manifestStatus": null,
+        "outputTypes": [],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "MAD03-ARCH-DH-FCO-R24.rv.rvt",
+        "sizeBytes": 793223168,
+        "manifestStatus": "failed",
+        "outputTypes": [],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "main_model_clash_test.rvt",
+        "sizeBytes": 6213632,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "minimal_ifcv4.ifc",
+        "sizeBytes": 8811690,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "A250-E-MB-CND-STR-03_ifcv4.ifc",
+        "sizeBytes": 2852981,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "boolTest.ifc",
+        "sizeBytes": 378615,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "rac_basic_sample_project_v4.ifc",
+        "sizeBytes": 27094875,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "A250-E-MB-PZ3-STR-01.ifc",
+        "sizeBytes": 31326249,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "2BG-IDSR-XX-XX-M3-I-00001_2025.rvt",
+        "sizeBytes": 556384256,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "ifc"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "BOD-5-PAR-PR-3D-BT1-21_Rohbau_v4.ifc",
+        "sizeBytes": 13608375,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "For Deugging have 2d-adn.rvt",
+        "sizeBytes": 925696,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "RIB_prefab K3-K5.ifc",
+        "sizeBytes": 131355242,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "mep-test-v3.ifc",
+        "sizeBytes": 1297113,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "For Deugging have 2d-adn-updated.rvt",
+        "sizeBytes": 995328,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "K2301 Innvendig arbeid (Ark)-v3.ifc",
+        "sizeBytes": 240790109,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Origin locations-sc.ifc",
+        "sizeBytes": 16746,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Snowdon Towers Sample Architectural-internal-origin.ifc",
+        "sizeBytes": 148656098,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "TestFile-LiftStation (1).rvt",
+        "sizeBytes": 92442624,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "ifc"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "RAC_basic_sample_project_rooms.ifc",
+        "sizeBytes": 26490374,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "SPR_AUS_0260_UEBER_UEBER_ENGT_80017516_TGA_0500_0501_0502_0503_0504_0505_TEM-VZ_Sprinkler_V12.dwg",
+        "sizeBytes": 92396792,
+        "manifestStatus": "failed",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Simple_IFC_2024_2-v4.ifc",
+        "sizeBytes": 565188,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "M_GTP_Inbound-v3.ifc",
+        "sizeBytes": 6197486,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "1360_MOD_PKO_MAS.ifc",
+        "sizeBytes": 190103559,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "BetterMetal_SupportStructure_Headframe_1BMP-14XD-12AMK-238120-HRK.ifc",
+        "sizeBytes": 23423319,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Ericsson_Antenna_10Port_KRE1012467-1.ifc",
+        "sizeBytes": 172701,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "table-tst.dwg",
+        "sizeBytes": 58366,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "K2301 Innvendig arbeid (Ark).ifc",
+        "sizeBytes": 240790109,
+        "manifestStatus": "failed",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "t23080-1.ifc.zip",
+        "sizeBytes": 128146439,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      },
+      {
+        "name": "Origin locations.ifc",
+        "sizeBytes": 17422,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "N767-581-20200731.rvt",
+        "sizeBytes": 176492544,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2",
+          "thumbnail"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "Technical_school-current_m_rooms.ifc",
+        "sizeBytes": 44789848,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf2"
+        ],
+        "svf2With3dViewable": true
+      },
+      {
+        "name": "01.B1.RIB.BIO.GM.A07.zip",
+        "sizeBytes": 13911610,
+        "manifestStatus": "success",
+        "outputTypes": [
+          "svf"
+        ],
+        "svf2With3dViewable": false
+      }
+    ]
+  },
+  "racReference": {
+    "candidate": "racbasicsampleproject.rvt",
+    "source": "docs/research/evidence/2026-09-29-g1-svf2-f1-f8-baseline-3312ae1-live-run-result.json checks.F5 (not re-screened)",
+    "wholePopulationCount": 789,
+    "maxFragmentsPerDbId": 17,
+    "maxChildrenPerNode": 43,
+    "maxActiveTriangleCount": 21845,
+    "disposition": "OVER_EXISTING_LIMIT"
+  },
+  "candidates": [
+    {
+      "candidate": "main_model_clash_test.rvt",
+      "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL21haW5fbW9kZWxfY2xhc2hfdGVzdC5ydnQ",
+      "startedAt": "2026-09-29T13:16:43.217Z",
+      "finishedAt": "2026-09-29T13:16:54.770Z",
+      "stage": "done",
+      "chromium": "151.0.7922.34",
+      "viewerScript": {
+        "status": 200,
+        "sha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e",
+        "matchesExpected": true
+      },
+      "load": {
+        "documentLoad": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        },
+        "loadDocumentNode": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        }
+      },
+      "formatSignals": {
+        "ok": true,
+        "isOTG": true,
+        "isSVF2": true,
+        "captureErrors": []
+      },
+      "classifier": {
+        "classifier": "CONFIRMED_SVF2",
+        "otg": true,
+        "svf2": true
+      },
+      "loadDone": {
+        "reached": true,
+        "waitedMs": 3764,
+        "present": true,
+        "isLoadDone": true,
+        "fragCount": 9
+      },
+      "phase25": {
+        "ok": true,
+        "sessionId": "regsess-160537e4cb43ee6019672addcd0f209f",
+        "postconditions": {
+          "registryWorldMatches": true,
+          "bindingModelMatches": true,
+          "worldModelIsLive": true
+        },
+        "error": null,
+        "cleanup": null
+      },
+      "f1": {
+        "ok": true,
+        "fields": {
+          "ownerMismatchCount": 0,
+          "unreachableCount": 0,
+          "populationCount": 9,
+          "rootsLength": 9,
+          "rootsCompared": 9,
+          "sizeMismatch": 0,
+          "ownersMismatch": 0,
+          "subtreeDigestMismatch": 0,
+          "subtreeDigestErrorCount": 0,
+          "populationDigestEqual": true,
+          "populationDigestErrorCount": 0,
+          "maxRootFragmentCount": 1,
+          "maxRootDbId": 52,
+          "sumRootFragmentCount": 9,
+          "maxPerDbIdFragmentCount": 1,
+          "maxPerDbIdOwnerDbId": 52,
+          "perDbIdEvidence": {
+            "state": "OK",
+            "loadedRecordCount": 9,
+            "recordsWithoutOwner": 0,
+            "distinctOwnerCount": 9,
+            "topOwners": [
+              {
+                "dbId": 52,
+                "count": 1
+              },
+              {
+                "dbId": 53,
+                "count": 1
+              },
+              {
+                "dbId": 54,
+                "count": 1
+              },
+              {
+                "dbId": 55,
+                "count": 1
+              },
+              {
+                "dbId": 3173,
+                "count": 1
+              }
+            ]
+          }
+        },
+        "populationDigestState": "EQUAL",
+        "first3Mismatches": []
+      },
+      "f2": {
+        "ok": true,
+        "fields": {
+          "isObjectTreeCreated": true,
+          "treeReachableCount": 9,
+          "classL": 9,
+          "classN": 0,
+          "classU": 0,
+          "loadedButUnreachableCount": 0,
+          "fragListCount": 9,
+          "rootsLength": 9,
+          "accountingBalanced": true,
+          "maxChildrenPerNode": 5
+        }
+      },
+      "f4": {
+        "ok": true,
+        "fields": {
+          "libraryThrew": 0,
+          "libOwnerDiffersFromFragList": 0,
+          "droppedDiagnosticsCount": {
+            "geometry-id-undefined": 0,
+            "geometry-id-threw": 0
+          },
+          "distinctGeometryCount": 9,
+          "renderProxyFailures": 0,
+          "geometryAdapterFailures": 0,
+          "geometriesWithNullIndex": 0,
+          "weldConsumerFailures": 0,
+          "weldConsumerExceptionCount": 0,
+          "weldConsumerSuccessCount": 9,
+          "maxActiveTriangleCount": 1348,
+          "oversizedGeometryCount": 0
+        },
+        "failureBreakdown": {
+          "renderProxy": 0,
+          "geometryAdapter": 0,
+          "consumerException": 0,
+          "consumerReturnedFalsy": 0,
+          "consumerRejected": 0,
+          "consumerNonFinite": 0
+        },
+        "oversizedGeometryIds": [],
+        "first5WeldConsumerFailures": [],
+        "first5GeometryAdapterFailures": [],
+        "first5RenderProxyFailures": []
+      },
+      "f5": {
+        "verdict": "PASS",
+        "reason": null,
+        "fields": {
+          "maxRootFragmentCount": 1,
+          "maxPerDbIdFragmentCount": 1,
+          "maxChildrenPerNode": 5,
+          "sumRootFragmentCount": 9,
+          "wholePopulationCount": 9,
+          "maxActiveTriangleCount": 1348,
+          "oversizedGeometryCount": 0,
+          "limitChecks": [
+            {
+              "name": "maxCollisionInstancesPerEpoch",
+              "observed": 9,
+              "limit": 20000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            },
+            {
+              "name": "maxFragmentsPerDbId",
+              "observed": 1,
+              "limit": 5000,
+              "responsibleDbId": 52,
+              "withinLimit": true
+            },
+            {
+              "name": "maxFragmentsPerRoot",
+              "observed": 1,
+              "limit": 5000,
+              "responsibleDbId": 52,
+              "withinLimit": true
+            },
+            {
+              "name": "maxChildrenPerNode",
+              "observed": 5,
+              "limit": 10000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            },
+            {
+              "name": "maxSyncTriangleCount",
+              "observed": 1348,
+              "limit": 12000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            }
+          ],
+          "withinLimits": true,
+          "fullyEnumerated": true,
+          "enforcementObserved": false,
+          "organicBreach": null
+        }
+      },
+      "triangleDetail": {
+        "ok": true,
+        "snapshotGeometryCount": 9,
+        "top": {
+          "geometryId": 5,
+          "activeTriangleCount": 1348,
+          "representativeFragId": 4,
+          "representativeDbId": 3175,
+          "instanceFragmentCount": 1,
+          "instanceDbIds": [
+            3175
+          ]
+        },
+        "topNodeName": "Model Text [348941]",
+        "top5": [
+          {
+            "geometryId": 5,
+            "activeTriangleCount": 1348,
+            "representativeFragId": 4,
+            "representativeDbId": 3175,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              3175
+            ]
+          },
+          {
+            "geometryId": 6,
+            "activeTriangleCount": 1348,
+            "representativeFragId": 5,
+            "representativeDbId": 3176,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              3176
+            ]
+          },
+          {
+            "geometryId": 7,
+            "activeTriangleCount": 1348,
+            "representativeFragId": 6,
+            "representativeDbId": 3173,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              3173
+            ]
+          },
+          {
+            "geometryId": 8,
+            "activeTriangleCount": 1348,
+            "representativeFragId": 7,
+            "representativeDbId": 3174,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              3174
+            ]
+          },
+          {
+            "geometryId": 9,
+            "activeTriangleCount": 1348,
+            "representativeFragId": 8,
+            "representativeDbId": 3177,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              3177
+            ]
+          }
+        ],
+        "overLimitGeometryCount": 0,
+        "overLimitFirst20": [],
+        "totalActiveTrianglesUniqueGeometry": 6804,
+        "fragListCount": 9
+      },
+      "pageErrors": [],
+      "error": null
+    },
+    {
+      "candidate": "linked_model_clash_test.rvt",
+      "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL2xpbmtlZF9tb2RlbF9jbGFzaF90ZXN0LnJ2dA",
+      "startedAt": "2026-09-29T13:17:06.425Z",
+      "finishedAt": "2026-09-29T13:17:15.237Z",
+      "stage": "done",
+      "chromium": "151.0.7922.34",
+      "viewerScript": {
+        "status": 200,
+        "sha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e",
+        "matchesExpected": true
+      },
+      "load": {
+        "documentLoad": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        },
+        "loadDocumentNode": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        }
+      },
+      "formatSignals": {
+        "ok": true,
+        "isOTG": true,
+        "isSVF2": true,
+        "captureErrors": []
+      },
+      "classifier": {
+        "classifier": "CONFIRMED_SVF2",
+        "otg": true,
+        "svf2": true
+      },
+      "loadDone": {
+        "reached": true,
+        "waitedMs": 2046,
+        "present": true,
+        "isLoadDone": true,
+        "fragCount": 8
+      },
+      "phase25": {
+        "ok": true,
+        "sessionId": "regsess-cb2b4dac1a844c3d9ffd949d910863ff",
+        "postconditions": {
+          "registryWorldMatches": true,
+          "bindingModelMatches": true,
+          "worldModelIsLive": true
+        },
+        "error": null,
+        "cleanup": null
+      },
+      "f1": {
+        "ok": true,
+        "fields": {
+          "ownerMismatchCount": 0,
+          "unreachableCount": 0,
+          "populationCount": 8,
+          "rootsLength": 8,
+          "rootsCompared": 8,
+          "sizeMismatch": 0,
+          "ownersMismatch": 0,
+          "subtreeDigestMismatch": 0,
+          "subtreeDigestErrorCount": 0,
+          "populationDigestEqual": true,
+          "populationDigestErrorCount": 0,
+          "maxRootFragmentCount": 1,
+          "maxRootDbId": 62,
+          "sumRootFragmentCount": 8,
+          "maxPerDbIdFragmentCount": 1,
+          "maxPerDbIdOwnerDbId": 62,
+          "perDbIdEvidence": {
+            "state": "OK",
+            "loadedRecordCount": 8,
+            "recordsWithoutOwner": 0,
+            "distinctOwnerCount": 8,
+            "topOwners": [
+              {
+                "dbId": 62,
+                "count": 1
+              },
+              {
+                "dbId": 63,
+                "count": 1
+              },
+              {
+                "dbId": 3388,
+                "count": 1
+              },
+              {
+                "dbId": 3389,
+                "count": 1
+              },
+              {
+                "dbId": 3390,
+                "count": 1
+              }
+            ]
+          }
+        },
+        "populationDigestState": "EQUAL",
+        "first3Mismatches": []
+      },
+      "f2": {
+        "ok": true,
+        "fields": {
+          "isObjectTreeCreated": true,
+          "treeReachableCount": 8,
+          "classL": 8,
+          "classN": 0,
+          "classU": 0,
+          "loadedButUnreachableCount": 0,
+          "fragListCount": 8,
+          "rootsLength": 8,
+          "accountingBalanced": true,
+          "maxChildrenPerNode": 6
+        }
+      },
+      "f4": {
+        "ok": true,
+        "fields": {
+          "libraryThrew": 0,
+          "libOwnerDiffersFromFragList": 0,
+          "droppedDiagnosticsCount": {
+            "geometry-id-undefined": 0,
+            "geometry-id-threw": 0
+          },
+          "distinctGeometryCount": 5,
+          "renderProxyFailures": 0,
+          "geometryAdapterFailures": 0,
+          "geometriesWithNullIndex": 0,
+          "weldConsumerFailures": 0,
+          "weldConsumerExceptionCount": 0,
+          "weldConsumerSuccessCount": 5,
+          "maxActiveTriangleCount": 1588,
+          "oversizedGeometryCount": 0
+        },
+        "failureBreakdown": {
+          "renderProxy": 0,
+          "geometryAdapter": 0,
+          "consumerException": 0,
+          "consumerReturnedFalsy": 0,
+          "consumerRejected": 0,
+          "consumerNonFinite": 0
+        },
+        "oversizedGeometryIds": [],
+        "first5WeldConsumerFailures": [],
+        "first5GeometryAdapterFailures": [],
+        "first5RenderProxyFailures": []
+      },
+      "f5": {
+        "verdict": "PASS",
+        "reason": null,
+        "fields": {
+          "maxRootFragmentCount": 1,
+          "maxPerDbIdFragmentCount": 1,
+          "maxChildrenPerNode": 6,
+          "sumRootFragmentCount": 8,
+          "wholePopulationCount": 8,
+          "maxActiveTriangleCount": 1588,
+          "oversizedGeometryCount": 0,
+          "limitChecks": [
+            {
+              "name": "maxCollisionInstancesPerEpoch",
+              "observed": 8,
+              "limit": 20000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            },
+            {
+              "name": "maxFragmentsPerDbId",
+              "observed": 1,
+              "limit": 5000,
+              "responsibleDbId": 62,
+              "withinLimit": true
+            },
+            {
+              "name": "maxFragmentsPerRoot",
+              "observed": 1,
+              "limit": 5000,
+              "responsibleDbId": 62,
+              "withinLimit": true
+            },
+            {
+              "name": "maxChildrenPerNode",
+              "observed": 6,
+              "limit": 10000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            },
+            {
+              "name": "maxSyncTriangleCount",
+              "observed": 1588,
+              "limit": 12000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            }
+          ],
+          "withinLimits": true,
+          "fullyEnumerated": true,
+          "enforcementObserved": false,
+          "organicBreach": null
+        }
+      },
+      "triangleDetail": {
+        "ok": true,
+        "snapshotGeometryCount": 5,
+        "top": {
+          "geometryId": 3,
+          "activeTriangleCount": 1588,
+          "representativeFragId": 2,
+          "representativeDbId": 3391,
+          "instanceFragmentCount": 2,
+          "instanceDbIds": [
+            3390,
+            3391
+          ]
+        },
+        "topNodeName": "Model Text [299153]",
+        "top5": [
+          {
+            "geometryId": 3,
+            "activeTriangleCount": 1588,
+            "representativeFragId": 2,
+            "representativeDbId": 3391,
+            "instanceFragmentCount": 2,
+            "instanceDbIds": [
+              3390,
+              3391
+            ]
+          },
+          {
+            "geometryId": 4,
+            "activeTriangleCount": 1588,
+            "representativeFragId": 3,
+            "representativeDbId": 3388,
+            "instanceFragmentCount": 2,
+            "instanceDbIds": [
+              3388,
+              3389
+            ]
+          },
+          {
+            "geometryId": 5,
+            "activeTriangleCount": 1588,
+            "representativeFragId": 5,
+            "representativeDbId": 3392,
+            "instanceFragmentCount": 2,
+            "instanceDbIds": [
+              3392,
+              3393
+            ]
+          },
+          {
+            "geometryId": 2,
+            "activeTriangleCount": 28,
+            "representativeFragId": 1,
+            "representativeDbId": 62,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              62
+            ]
+          },
+          {
+            "geometryId": 1,
+            "activeTriangleCount": 24,
+            "representativeFragId": 0,
+            "representativeDbId": 63,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              63
+            ]
+          }
+        ],
+        "overLimitGeometryCount": 0,
+        "overLimitFirst20": [],
+        "totalActiveTrianglesUniqueGeometry": 4816,
+        "fragListCount": 8
+      },
+      "pageErrors": [],
+      "error": null
+    },
+    {
+      "candidate": "Audubon_Structure_clash_test.rvt",
+      "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+      "startedAt": "2026-09-29T13:17:15.263Z",
+      "finishedAt": "2026-09-29T13:17:24.877Z",
+      "stage": "done",
+      "chromium": "151.0.7922.34",
+      "viewerScript": {
+        "status": 200,
+        "sha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e",
+        "matchesExpected": true
+      },
+      "load": {
+        "documentLoad": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        },
+        "loadDocumentNode": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        }
+      },
+      "formatSignals": {
+        "ok": true,
+        "isOTG": true,
+        "isSVF2": true,
+        "captureErrors": []
+      },
+      "classifier": {
+        "classifier": "CONFIRMED_SVF2",
+        "otg": true,
+        "svf2": true
+      },
+      "loadDone": {
+        "reached": true,
+        "waitedMs": 5129,
+        "present": true,
+        "isLoadDone": true,
+        "fragCount": 543
+      },
+      "phase25": {
+        "ok": true,
+        "sessionId": "regsess-52f96c46b68bb7034ed5b0714abd4197",
+        "postconditions": {
+          "registryWorldMatches": true,
+          "bindingModelMatches": true,
+          "worldModelIsLive": true
+        },
+        "error": null,
+        "cleanup": null
+      },
+      "f1": {
+        "ok": true,
+        "fields": {
+          "ownerMismatchCount": 0,
+          "unreachableCount": 0,
+          "populationCount": 543,
+          "rootsLength": 468,
+          "rootsCompared": 468,
+          "sizeMismatch": 0,
+          "ownersMismatch": 0,
+          "subtreeDigestMismatch": 0,
+          "subtreeDigestErrorCount": 0,
+          "populationDigestEqual": true,
+          "populationDigestErrorCount": 0,
+          "maxRootFragmentCount": 3,
+          "maxRootDbId": 249,
+          "sumRootFragmentCount": 543,
+          "maxPerDbIdFragmentCount": 3,
+          "maxPerDbIdOwnerDbId": 249,
+          "perDbIdEvidence": {
+            "state": "OK",
+            "loadedRecordCount": 543,
+            "recordsWithoutOwner": 0,
+            "distinctOwnerCount": 468,
+            "topOwners": [
+              {
+                "dbId": 249,
+                "count": 3
+              },
+              {
+                "dbId": 76,
+                "count": 2
+              },
+              {
+                "dbId": 85,
+                "count": 2
+              },
+              {
+                "dbId": 86,
+                "count": 2
+              },
+              {
+                "dbId": 112,
+                "count": 2
+              }
+            ]
+          }
+        },
+        "populationDigestState": "EQUAL",
+        "first3Mismatches": []
+      },
+      "f2": {
+        "ok": true,
+        "fields": {
+          "isObjectTreeCreated": true,
+          "treeReachableCount": 543,
+          "classL": 543,
+          "classN": 0,
+          "classU": 0,
+          "loadedButUnreachableCount": 0,
+          "fragListCount": 543,
+          "rootsLength": 468,
+          "accountingBalanced": true,
+          "maxChildrenPerNode": 48
+        }
+      },
+      "f4": {
+        "ok": true,
+        "fields": {
+          "libraryThrew": 0,
+          "libOwnerDiffersFromFragList": 0,
+          "droppedDiagnosticsCount": {
+            "geometry-id-undefined": 0,
+            "geometry-id-threw": 0
+          },
+          "distinctGeometryCount": 416,
+          "renderProxyFailures": 0,
+          "geometryAdapterFailures": 0,
+          "geometriesWithNullIndex": 0,
+          "weldConsumerFailures": 0,
+          "weldConsumerExceptionCount": 0,
+          "weldConsumerSuccessCount": 416,
+          "maxActiveTriangleCount": 7140,
+          "oversizedGeometryCount": 0
+        },
+        "failureBreakdown": {
+          "renderProxy": 0,
+          "geometryAdapter": 0,
+          "consumerException": 0,
+          "consumerReturnedFalsy": 0,
+          "consumerRejected": 0,
+          "consumerNonFinite": 0
+        },
+        "oversizedGeometryIds": [],
+        "first5WeldConsumerFailures": [],
+        "first5GeometryAdapterFailures": [],
+        "first5RenderProxyFailures": []
+      },
+      "f5": {
+        "verdict": "PASS",
+        "reason": null,
+        "fields": {
+          "maxRootFragmentCount": 3,
+          "maxPerDbIdFragmentCount": 3,
+          "maxChildrenPerNode": 48,
+          "sumRootFragmentCount": 543,
+          "wholePopulationCount": 543,
+          "maxActiveTriangleCount": 7140,
+          "oversizedGeometryCount": 0,
+          "limitChecks": [
+            {
+              "name": "maxCollisionInstancesPerEpoch",
+              "observed": 543,
+              "limit": 20000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            },
+            {
+              "name": "maxFragmentsPerDbId",
+              "observed": 3,
+              "limit": 5000,
+              "responsibleDbId": 249,
+              "withinLimit": true
+            },
+            {
+              "name": "maxFragmentsPerRoot",
+              "observed": 3,
+              "limit": 5000,
+              "responsibleDbId": 249,
+              "withinLimit": true
+            },
+            {
+              "name": "maxChildrenPerNode",
+              "observed": 48,
+              "limit": 10000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            },
+            {
+              "name": "maxSyncTriangleCount",
+              "observed": 7140,
+              "limit": 12000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            }
+          ],
+          "withinLimits": true,
+          "fullyEnumerated": true,
+          "enforcementObserved": false,
+          "organicBreach": null
+        }
+      },
+      "triangleDetail": {
+        "ok": true,
+        "snapshotGeometryCount": 416,
+        "top": {
+          "geometryId": 10,
+          "activeTriangleCount": 7140,
+          "representativeFragId": 53,
+          "representativeDbId": 6293,
+          "instanceFragmentCount": 2,
+          "instanceDbIds": [
+            6292,
+            6293
+          ]
+        },
+        "topNodeName": "SMBH-W-Wide Flange [269361]",
+        "top5": [
+          {
+            "geometryId": 10,
+            "activeTriangleCount": 7140,
+            "representativeFragId": 53,
+            "representativeDbId": 6293,
+            "instanceFragmentCount": 2,
+            "instanceDbIds": [
+              6292,
+              6293
+            ]
+          },
+          {
+            "geometryId": 11,
+            "activeTriangleCount": 6944,
+            "representativeFragId": 55,
+            "representativeDbId": 6293,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              6293
+            ]
+          },
+          {
+            "geometryId": 67,
+            "activeTriangleCount": 6813,
+            "representativeFragId": 45,
+            "representativeDbId": 5791,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              5791
+            ]
+          },
+          {
+            "geometryId": 70,
+            "activeTriangleCount": 6540,
+            "representativeFragId": 51,
+            "representativeDbId": 6241,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              6241
+            ]
+          },
+          {
+            "geometryId": 71,
+            "activeTriangleCount": 6514,
+            "representativeFragId": 52,
+            "representativeDbId": 5794,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              5794
+            ]
+          }
+        ],
+        "overLimitGeometryCount": 0,
+        "overLimitFirst20": [],
+        "totalActiveTrianglesUniqueGeometry": 771270,
+        "fragListCount": 543
+      },
+      "pageErrors": [],
+      "error": null
+    },
+    {
+      "candidate": "Audubon_Mechanical_clash_test.rvt",
+      "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+      "startedAt": "2026-09-29T13:17:24.901Z",
+      "finishedAt": "2026-09-29T13:17:34.686Z",
+      "stage": "done",
+      "chromium": "151.0.7922.34",
+      "viewerScript": {
+        "status": 200,
+        "sha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e",
+        "matchesExpected": true
+      },
+      "load": {
+        "documentLoad": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        },
+        "loadDocumentNode": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        }
+      },
+      "formatSignals": {
+        "ok": true,
+        "isOTG": true,
+        "isSVF2": true,
+        "captureErrors": []
+      },
+      "classifier": {
+        "classifier": "CONFIRMED_SVF2",
+        "otg": true,
+        "svf2": true
+      },
+      "loadDone": {
+        "reached": true,
+        "waitedMs": 3981,
+        "present": true,
+        "isLoadDone": true,
+        "fragCount": 1496
+      },
+      "phase25": {
+        "ok": true,
+        "sessionId": "regsess-0e426786139ea29b0f9d3bb59f650889",
+        "postconditions": {
+          "registryWorldMatches": true,
+          "bindingModelMatches": true,
+          "worldModelIsLive": true
+        },
+        "error": null,
+        "cleanup": null
+      },
+      "f1": {
+        "ok": true,
+        "fields": {
+          "ownerMismatchCount": 0,
+          "unreachableCount": 0,
+          "populationCount": 1496,
+          "rootsLength": 1257,
+          "rootsCompared": 1257,
+          "sizeMismatch": 0,
+          "ownersMismatch": 0,
+          "subtreeDigestMismatch": 0,
+          "subtreeDigestErrorCount": 0,
+          "populationDigestEqual": true,
+          "populationDigestErrorCount": 0,
+          "maxRootFragmentCount": 2,
+          "maxRootDbId": 153,
+          "sumRootFragmentCount": 1496,
+          "maxPerDbIdFragmentCount": 2,
+          "maxPerDbIdOwnerDbId": 153,
+          "perDbIdEvidence": {
+            "state": "OK",
+            "loadedRecordCount": 1496,
+            "recordsWithoutOwner": 0,
+            "distinctOwnerCount": 1257,
+            "topOwners": [
+              {
+                "dbId": 153,
+                "count": 2
+              },
+              {
+                "dbId": 710,
+                "count": 2
+              },
+              {
+                "dbId": 712,
+                "count": 2
+              },
+              {
+                "dbId": 4478,
+                "count": 2
+              },
+              {
+                "dbId": 4479,
+                "count": 2
+              }
+            ]
+          }
+        },
+        "populationDigestState": "EQUAL",
+        "first3Mismatches": []
+      },
+      "f2": {
+        "ok": true,
+        "fields": {
+          "isObjectTreeCreated": true,
+          "treeReachableCount": 1496,
+          "classL": 1496,
+          "classN": 0,
+          "classU": 0,
+          "loadedButUnreachableCount": 0,
+          "fragListCount": 1496,
+          "rootsLength": 1257,
+          "accountingBalanced": true,
+          "maxChildrenPerNode": 262
+        }
+      },
+      "f4": {
+        "ok": true,
+        "fields": {
+          "libraryThrew": 0,
+          "libOwnerDiffersFromFragList": 0,
+          "droppedDiagnosticsCount": {
+            "geometry-id-undefined": 0,
+            "geometry-id-threw": 0
+          },
+          "distinctGeometryCount": 438,
+          "renderProxyFailures": 0,
+          "geometryAdapterFailures": 0,
+          "geometriesWithNullIndex": 0,
+          "weldConsumerFailures": 0,
+          "weldConsumerExceptionCount": 0,
+          "weldConsumerSuccessCount": 438,
+          "maxActiveTriangleCount": 4228,
+          "oversizedGeometryCount": 0
+        },
+        "failureBreakdown": {
+          "renderProxy": 0,
+          "geometryAdapter": 0,
+          "consumerException": 0,
+          "consumerReturnedFalsy": 0,
+          "consumerRejected": 0,
+          "consumerNonFinite": 0
+        },
+        "oversizedGeometryIds": [],
+        "first5WeldConsumerFailures": [],
+        "first5GeometryAdapterFailures": [],
+        "first5RenderProxyFailures": []
+      },
+      "f5": {
+        "verdict": "PASS",
+        "reason": null,
+        "fields": {
+          "maxRootFragmentCount": 2,
+          "maxPerDbIdFragmentCount": 2,
+          "maxChildrenPerNode": 262,
+          "sumRootFragmentCount": 1496,
+          "wholePopulationCount": 1496,
+          "maxActiveTriangleCount": 4228,
+          "oversizedGeometryCount": 0,
+          "limitChecks": [
+            {
+              "name": "maxCollisionInstancesPerEpoch",
+              "observed": 1496,
+              "limit": 20000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            },
+            {
+              "name": "maxFragmentsPerDbId",
+              "observed": 2,
+              "limit": 5000,
+              "responsibleDbId": 153,
+              "withinLimit": true
+            },
+            {
+              "name": "maxFragmentsPerRoot",
+              "observed": 2,
+              "limit": 5000,
+              "responsibleDbId": 153,
+              "withinLimit": true
+            },
+            {
+              "name": "maxChildrenPerNode",
+              "observed": 262,
+              "limit": 10000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            },
+            {
+              "name": "maxSyncTriangleCount",
+              "observed": 4228,
+              "limit": 12000,
+              "responsibleDbId": null,
+              "withinLimit": true
+            }
+          ],
+          "withinLimits": true,
+          "fullyEnumerated": true,
+          "enforcementObserved": false,
+          "organicBreach": null
+        }
+      },
+      "triangleDetail": {
+        "ok": true,
+        "snapshotGeometryCount": 438,
+        "top": {
+          "geometryId": 2,
+          "activeTriangleCount": 4228,
+          "representativeFragId": 1,
+          "representativeDbId": 4593,
+          "instanceFragmentCount": 1,
+          "instanceDbIds": [
+            4593
+          ]
+        },
+        "topNodeName": "Round Duct [921809]",
+        "top5": [
+          {
+            "geometryId": 2,
+            "activeTriangleCount": 4228,
+            "representativeFragId": 1,
+            "representativeDbId": 4593,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              4593
+            ]
+          },
+          {
+            "geometryId": 142,
+            "activeTriangleCount": 3647,
+            "representativeFragId": 36,
+            "representativeDbId": 175,
+            "instanceFragmentCount": 2,
+            "instanceDbIds": [
+              174,
+              175
+            ]
+          },
+          {
+            "geometryId": 3,
+            "activeTriangleCount": 3488,
+            "representativeFragId": 2,
+            "representativeDbId": 4492,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              4492
+            ]
+          },
+          {
+            "geometryId": 5,
+            "activeTriangleCount": 2640,
+            "representativeFragId": 4,
+            "representativeDbId": 4808,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              4808
+            ]
+          },
+          {
+            "geometryId": 15,
+            "activeTriangleCount": 2474,
+            "representativeFragId": 16,
+            "representativeDbId": 4606,
+            "instanceFragmentCount": 1,
+            "instanceDbIds": [
+              4606
+            ]
+          }
+        ],
+        "overLimitGeometryCount": 0,
+        "overLimitFirst20": [],
+        "totalActiveTrianglesUniqueGeometry": 136946,
+        "fragListCount": 1496
+      },
+      "pageErrors": [],
+      "error": null
+    },
+    {
+      "candidate": "Audubon_Architecture_clash_test.rvt",
+      "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+      "startedAt": "2026-09-29T13:17:34.707Z",
+      "finishedAt": "2026-09-29T13:17:44.151Z",
+      "stage": "done",
+      "chromium": "151.0.7922.34",
+      "viewerScript": {
+        "status": 200,
+        "sha256": "12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e",
+        "matchesExpected": true
+      },
+      "load": {
+        "documentLoad": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        },
+        "loadDocumentNode": {
+          "state": "completed",
+          "status": "completed",
+          "error": null
+        }
+      },
+      "formatSignals": {
+        "ok": true,
+        "isOTG": true,
+        "isSVF2": true,
+        "captureErrors": []
+      },
+      "classifier": {
+        "classifier": "CONFIRMED_SVF2",
+        "otg": true,
+        "svf2": true
+      },
+      "loadDone": {
+        "reached": true,
+        "waitedMs": 4470,
+        "present": true,
+        "isLoadDone": true,
+        "fragCount": 5435
+      },
+      "phase25": {
+        "ok": true,
+        "sessionId": "regsess-0bf256b19a47b143b6a29b8de26fcf0f",
+        "postconditions": {
+          "registryWorldMatches": true,
+          "bindingModelMatches": true,
+          "worldModelIsLive": true
+        },
+        "error": null,
+        "cleanup": null
+      },
+      "f1": {
+        "ok": false,
+        "reason": "resolveRoots-threw",
+        "error": {
+          "name": "EnumerationInconsistencyError",
+          "message": "Viewer enumeration inconsistent: tree-reachable-fragment-unattributable",
+          "reason": "tree-reachable-fragment-unattributable",
+          "kind": null,
+          "limit": null,
+          "requested": null,
+          "bound": null,
+          "detail": {
+            "fragId": 4601,
+            "cls": "N"
+          }
+        }
+      },
+      "f2": null,
+      "f4": null,
+      "f5": {
+        "verdict": "BLOCKED",
+        "reason": "F1-failed-non-capacity",
+        "fields": {
+          "maxRootFragmentCount": null,
+          "maxPerDbIdFragmentCount": null,
+          "maxChildrenPerNode": null,
+          "sumRootFragmentCount": null,
+          "wholePopulationCount": null,
+          "maxActiveTriangleCount": null,
+          "oversizedGeometryCount": null,
+          "withinLimits": null,
+          "fullyEnumerated": null,
+          "enforcementObserved": false,
+          "organicBreach": null
+        }
+      },
+      "triangleDetail": null,
+      "pageErrors": [],
+      "error": null
+    }
+  ]
+}

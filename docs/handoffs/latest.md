@@ -2,7 +2,18 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — independent bounded F4 re-review COMPLETE: remediation accepted (0C/0H/0M/3L); ready for owner-authorized commit/clean-tree closeout; NO live rerun authorized
+## LATEST — existing-SVF2 fixture capacity SCREENING complete (uncommitted, docs/evidence only): 4 suitable candidates found; recommended `Audubon_Mechanical_clash_test.rvt`; NO G1 live run, harness change or model switch authorized
+
+- **Branch / HEAD:** `main` @ `030dc60` (= `origin/main`). The screening report, raw JSON, script copies and this handoff are committed in one closeout commit (see `git log -1`). Not pushed. Architecture's F1 enumeration error is a separate research residual, not a blocker to selecting another fixture; screening is not proof Mechanical passes F1–F8.
+- **Scope used:** owner's "Existing SVF2 Fixture Discovery / Capacity Screening Only". Not a G1 authorization. No full F1–F8, no controls, no harness/production/limit change, no upload/retranslation/derivative creation; server started for token/listing only and stopped.
+- **Envelope:** Node v22.23.1, Playwright 1.62.1, Chromium 151.0.7922.34, Viewer 7.124.2 (script sha matched harness), `AutodeskProduction2`/`streamingV2`; 2026-09-29T13:16:43Z–13:17:44Z. Method: imports the accepted harness (`observeF1/F2/F4`, `scoreF5`); each candidate loaded once. 100 bucket objects listed, 62 with an svf2 3D derivative; only this project's five clash models were screened, other 57 not loaded.
+- **Results (max active triangles vs 12,000):** `Audubon_Mechanical_clash_test.rvt` 4,228 (geom 2 / dbId 4593), 1,496 frags / 1,257 roots — **SUITABLE (recommended)**; `Audubon_Structure_clash_test.rvt` 7,140 (geom 10 / dbId 6293), 543 / 468 — **SUITABLE (alternate)**; `linked_model_clash_test.rvt` 1,588 (8 frags) and `main_model_clash_test.rvt` 1,348 (9 frags) — suitable but tiny; `Audubon_Architecture_clash_test.rvt` — SVF2 but F1 enumeration threw `EnumerationInconsistencyError` (`tree-reachable-fragment-unattributable`, fragId 4601) → INSUFFICIENT_EVIDENCE (possible G1 finding in its own right, not rerun). RAC (reference, not re-screened) 21,845 > 12,000 → OVER_EXISTING_LIMIT, unchanged.
+- **Not assessed:** F3/F6/F7/F8/controls suitability (e.g. F7 calibration) for the candidates.
+- **Report / evidence:** [`docs/research/2026-09-29-g1-svf2-fixture-capacity-screening.md`](../research/2026-09-29-g1-svf2-fixture-capacity-screening.md); raw JSON, scripts under `docs/research/evidence/2026-09-29-g1-svf2-fixture-capacity-screening-*`.
+- **Next authorized action:** none — owner decision (commit evidence; whether to switch harness `MODEL_URN` and authorize a new G1 live run on a chosen fixture).
+- **Must not begin without explicit authorization:** any live F1–F8, harness/`MODEL_URN` change, limit changes, G2/G3, H1/H2, OQ-1, host integration, committing.
+
+## PRIOR STATE — independent bounded F4 re-review COMPLETE: remediation accepted (0C/0H/0M/3L); ready for owner-authorized commit/clean-tree closeout; NO live rerun authorized
 
 - **Branch / HEAD:** parent `3312ae1` (= `origin/main`). The accepted F4 remediation (harness, tests incl. new `…f4consumer.test.mjs`), run report/evidence, reviews, authorization prompt and this handoff are committed in one closeout commit (see `git log -1`). Not pushed. No live rerun occurred; F5 semantics/limits unchanged (RAC finding 21,845 > 12,000 remains recorded).
 - **Current independent authority:** [bounded independent F4 re-review](../reviews/2026-09-29-g1-svf2-f4-harness-remediation-bounded-independent-rereview.md) — **0 Critical / 0 High / 0 Medium / 3 Low; F4 remediation accepted.**
