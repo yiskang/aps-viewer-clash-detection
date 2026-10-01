@@ -104,16 +104,34 @@ function passRun(over = {}) {
 }
 
 /**
- * Slice C1 (§9.2): the node passes `{seqBase}` (its run counter at the RPC) to g2RunPhases and the page
- * recorder numbers its records after it. The passRun fixture is written relative to 0, so the fake page
- * shifts every seq of its result by `seqBase` (what a page seeded with `seqBase` would produce).
+ * Live-readiness remediation (cross-realm sequence): the page numbers its records in the PAGE realm of the
+ * one composite sequence (`createPageSeqSource`: seq = major * SEQ_STRIDE, minor 0) and Node numbers its
+ * events in the node realm (minor >= 1) -- no seqBase is passed any more. The passRun fixture is written
+ * as plain ordinals 0,1,2,..., so the fake page maps every ordinal s to the page-realm seq
+ * (s + 1) * SEQ_STRIDE (what a page allocating major s+1 would produce) and reports the final transfer
+ * fields a real g2RunPhases returns (`pageHighWater`, `pageFatalSent`). Runs built by the REAL runner
+ * (`absoluteSeqs`) already carry page-realm seqs from a real `createPageSeqSource()`.
  */
-const NODE_EVENT_GAP = 1000;
-function shiftRunSeqs(run, base) {
-  if (run && run.absoluteSeqs === true) { const { absoluteSeqs, ...rest } = run; void absoluteSeqs; return rest; }
-  if (!run || typeof run !== 'object' || !Number.isInteger(base) || base === 0) return run;
+const pageSeqOf = (s) => (s + 1) * H.SEQ_STRIDE;
+function withTransfer(run) {
+  if (!run || typeof run !== 'object') return run;
+  let maxSeq = 0;
+  const visit = (v) => {
+    if (Array.isArray(v)) { v.forEach(visit); return; }
+    if (!v || typeof v !== 'object') return;
+    for (const [k, x] of Object.entries(v)) {
+      if (Number.isInteger(x) && /Seq$|^seq$/.test(k) && H.realmOfSeq(x) === 'page') maxSeq = Math.max(maxSeq, x);
+      else visit(x);
+    }
+  };
+  visit(run);
+  return { pageHighWater: maxSeq / H.SEQ_STRIDE, pageFatalSent: 0, ...run };
+}
+function shiftRunSeqs(run) {
+  if (run && run.absoluteSeqs === true) { const { absoluteSeqs, ...rest } = run; void absoluteSeqs; return withTransfer(rest); }
+  if (!run || typeof run !== 'object') return run;
   const r = JSON.parse(JSON.stringify(run));
-  const sh = (o, k) => { if (o && Number.isInteger(o[k])) o[k] += base; };
+  const sh = (o, k) => { if (o && Number.isInteger(o[k])) o[k] = pageSeqOf(o[k]); };
   for (const m of r.markers || []) sh(m, 'seq');
   if (r.c1FinalizedEvent) sh(r.c1FinalizedEvent, 'seq');
   if (r.gates && r.gates.C1) { sh(r.gates.C1, 'gateSeq'); sh(r.gates.C1, 'c1FinalizedSeq'); }
@@ -125,7 +143,7 @@ function shiftRunSeqs(run, base) {
   for (const c of Object.values(r.checks || {})) if (c && c.recordType === 'gate-disposition') sh(c, 'dispositionSeq');
   for (const k of ['eventLog', 'spyLedger', 'stateSnapshots']) for (const e of r[k] || []) sh(e, 'seq');
   if (r.extras) for (const e of r.extras.eventLog || []) sh(e, 'seq');
-  return r;
+  return withTransfer(r);
 }
 
 const FACTS = Object.freeze({
@@ -208,10 +226,12 @@ function makeWorld(opts = {}) {
       log.push({ kind: 'rpc', key: payload.key, arg: payload.arg });
       const h = handlers[payload.key];
       if (typeof h !== 'function') throw new Error(`no fake handler for ${payload.key}`);
-      // passRun numbers from 0; a page recorder seeded with seqBase allocates seqBase+1 first. The fake
-      // page additionally leaves NODE_EVENT_GAP seqs for node events received during the run: the interim
-      // two-namespace wiring cannot interleave them (a collision is a row-5 contradiction, tested below).
-      if (payload.key === 'g2RunPhases') return shiftRunSeqs(await h(payload.arg, { page, log }), payload.arg && Number.isInteger(payload.arg.seqBase) ? payload.arg.seqBase + 1 + NODE_EVENT_GAP : 0);
+      // passRun numbers ordinals from 0; the fake page maps them into the page realm (see shiftRunSeqs).
+      // Node events received during the run are numbered in the node realm, so the realms never collide.
+      if (payload.key === 'g2RunPhases') {
+        assert.equal(payload.arg && Object.hasOwn(payload.arg, 'seqBase'), false, 'g2RunPhases no longer receives a seqBase');
+        return shiftRunSeqs(await h(payload.arg, { page, log }));
+      }
       return h(payload.arg, { page, log });
     },
     async screenshot() { return Buffer.from('png'); },
@@ -550,12 +570,11 @@ test('page records are re-validated Node-side: an invalid check record fails clo
 
 test('fatal page event during the phase run => row 1 FAIL committed through K; the page fatal latch is set', async () => {
   // A faithful fake page: the node-observed pageerror reaches the page latch BEFORE the gate, so the real
-  // runner (offline-fake drivers, recorder seeded past seqBase) counts it through the page mirror =>
+  // runner (offline-fake drivers, recorder on the page realm of the composite sequence) counts it =>
   // fatalCountAtGate 1 => CLOSED_OTHER; the node ledger's sequenced entry recomputes the same count.
-  const g2RunPhases = async (arg, { page }) => {
+  const g2RunPhases = async (_arg, { page }) => {
     page.emit('pageerror', new Error('Bearer abc.def leaked?'));
-    let n = arg.seqBase + NODE_EVENT_GAP;
-    const rec = H.createCallRecorder({ nextSeq: () => { n += 1; return n; } });
+    const rec = H.createCallRecorder({ nextSeq: H.createPageSeqSource().next });
     const M = { loaded: true, classification: 'CONFIRMED_SVF2', inAllModels: true };
     const run = await H.runChecksInPhaseOrder({ drivers: { P1: () => ({ checks: { C1: H.evaluateC1({ A: M, B: M, loadedCount: 2 }) } }) }, recorder: rec, errorLedger: () => ({ fatalCount: 1, entries: [{ kind: 'pageerror' }] }) });
     assert.equal(run.gates.C1.outcome, 'CLOSED_OTHER');
@@ -720,7 +739,7 @@ test('route setup: the synthetic page is served at its exact URL; /clashpanel/**
   const ok = await call('http://localhost:8080/clashpanel/viewer/ViewerBridge.js');
   assert.equal(ok.fulfill.status, 200);
   assert.equal((await call('https://elsewhere.invalid/clashpanel/viewer/ViewerBridge.js')).continued, true);
-  assert.deepEqual(Object.keys(w.bindings).sort(), [H.G2_NODE_FATAL_BINDING, H.G2_NODE_OPLEDGER_BINDING, H.G2_NODE_SCREENSHOT_BINDING].sort());
+  assert.deepEqual(Object.keys(w.bindings).sort(), [H.G2_NODE_FATAL_BINDING, H.G2_NODE_OPLEDGER_BINDING, H.G2_NODE_SCREENSHOT_BINDING, H.G2_NODE_SYNC_BINDING].sort());
   // slice C2: the operation-ledger barrier accepts only the §9.2 page mutations (C16 hide B, C17 unload B, a cleanup unload)
   const opb = w.bindings[H.G2_NODE_OPLEDGER_BINDING];
   assert.deepEqual(await opb('begin', { operationType: 'hide', modelId: 'A', phase: 'P9', invokedBy: 'C16' }), { ok: false, reason: 'refused' });
@@ -810,14 +829,13 @@ const NOT_LOADED_A = (loadStatus) => ({ ...JSON.parse(JSON.stringify(FACTS)), lo
  * A fake g2RunPhases that runs the REAL runner over `facts` (P1 driver = the real evaluateC1). With
  * `feedNode` the facts go through the real `withNodeLoadOutcomes(facts, arg.nodeLoadOutcomes)` -- what
  * the real g2BuildEnv's env.modelFacts does; without it the page ignores the node outcomes (the pre-H1
- * wiring). `gap` = the page recorder's offset past `seqBase`: the real g2BuildEnv uses 0
- * (`let pageSeq = seqBase` -> first allocation seqBase+1), the other dry-run tests NODE_EVENT_GAP.
+ * wiring). The page recorder is numbered exactly like the real g2BuildEnv: a fresh `createPageSeqSource()`
+ * (page realm, no seqBase).
  */
-function realRunnerPhases(facts, { feedNode = true, gap = NODE_EVENT_GAP, before = null } = {}) {
+function realRunnerPhases(facts, { feedNode = true, before = null } = {}) {
   return async (arg, ctx) => {
     if (before) before(arg, ctx);
-    let n = arg.seqBase + gap;
-    const rec = H.createCallRecorder({ nextSeq: () => { n += 1; return n; } });
+    const rec = H.createCallRecorder({ nextSeq: H.createPageSeqSource().next });
     const f = feedNode ? H.withNodeLoadOutcomes(facts, arg.nodeLoadOutcomes) : facts;
     const run = await H.runChecksInPhaseOrder({ drivers: { P1: () => ({ checks: { C1: H.evaluateC1(f) } }) }, recorder: rec, errorLedger: () => ({ fatalCount: 0, entries: [] }) });
     return {
@@ -865,23 +883,48 @@ test('H1 dry run control: a page-side load REJECTION (node outcome rejected) => 
   assert.equal(reader.verdict, 'BLOCKED');
 });
 
-test('M2: with the REAL g2BuildEnv page numbering (recorder seeded at exactly seqBase, no gap) node network events during the in-page run collide with page seqs => row 5 seq-not-unique FAIL; the same run with the fake gap stays row 6 BLOCKED', async () => {
+test('M2 (cross-realm remediation): with the REAL g2BuildEnv page numbering (page realm, no seqBase) node network events during the in-page run never collide with page seqs (realms disjoint) => row 6 BLOCKED; a page numbered in the legacy single-namespace style still collides => row 5 seq-not-unique FAIL', async () => {
   // the real numbering this test reproduces (static coupling: if g2BuildEnv changes, revisit this test)
   const env = REAL_SOURCE.slice(REAL_SOURCE.indexOf('function g2BuildEnv('), REAL_SOURCE.indexOf('function g2PhaseBaseline('));
-  assert.ok(env.includes('let pageSeq = seqBase;') && env.includes('nextSeq: () => { pageSeq += 1; return pageSeq; }'), 'g2BuildEnv numbers page records from seqBase+1');
+  assert.ok(env.includes('const pageSeq = createPageSeqSource();') && env.includes('createCallRecorder({ nextSeq: pageSeq.next })'), 'g2BuildEnv numbers page records in the page realm');
+  assert.equal(env.includes('seqBase'), false, 'no seqBase seeding is left in g2BuildEnv');
   const nodeEvents = (_arg, { page }) => { for (const u of ['x1.bin', 'x2.bin']) c2LoadEvidence(page, `B/${u}`); };
-  const handlers = (gap) => ({
+  const handlers = (g2RunPhases) => ({
     g2DocumentLoad: (arg) => (arg.label === 'A' ? { status: 'failed', error: { name: 'DocumentLoadError', message: 'x' } } : { status: 'completed' }),
-    g2CollectModelFacts: () => NOT_LOADED_A('failed'), g2RunPhases: realRunnerPhases(NOT_LOADED_A('failed'), { gap, before: nodeEvents }),
+    g2CollectModelFacts: () => NOT_LOADED_A('failed'), g2RunPhases,
   });
-  const real = await consumedRun({ handlers: handlers(0) });
-  const dup = H.recordSchemaProblems(real.r.state).filter((p) => p.startsWith('seq-not-unique:'));
-  assert.ok(dup.length > 0, 'the collision is detected');
-  assert.equal(real.r.finalOverall, 'FAIL');
-  assert.equal(real.r.closeout.primaryRow, 5);
-  assert.equal(real.reader.verdict, 'FAIL');
-  const gapped = await consumedRun({ handlers: handlers(NODE_EVENT_GAP) });
-  assert.deepEqual(H.recordSchemaProblems(gapped.r.state).filter((p) => p.startsWith('seq-not-unique:')), []);
-  assert.equal(gapped.r.finalOverall, 'BLOCKED', JSON.stringify(gapped.r.closeout.causes));
-  assert.equal(gapped.r.closeout.primaryRow, 6);
+  // (a) the real page-realm numbering: no collision, every page record is page realm, every node event node realm.
+  const real = await consumedRun({ handlers: handlers(realRunnerPhases(NOT_LOADED_A('failed'), { before: nodeEvents })) });
+  const S = real.r.state;
+  assert.deepEqual(H.recordSchemaProblems(S).filter((p) => p.startsWith('seq-not-unique:')), []);
+  const runObs = S.errorLedger.requestObservations.filter((o) => o.urlRedacted.includes('/x1.bin') || o.urlRedacted.includes('/x2.bin'));
+  assert.equal(runObs.length, 2, 'the node events during the run were recorded');
+  for (const o of runObs) assert.equal(H.realmOfSeq(o.startSeq), 'node', 'node events are numbered in the node realm');
+  const pageMarkers = S.errorLedger.markers.filter((x) => x.name === 'P1');
+  assert.equal(pageMarkers.length, 1);
+  assert.equal(H.realmOfSeq(pageMarkers[0].seq), 'page', 'the page-run P1 marker is page realm');
+  assert.equal(real.r.finalOverall, 'BLOCKED', JSON.stringify(real.r.closeout.causes));
+  assert.equal(real.r.closeout.primaryRow, 6);
+  assert.equal(real.reader.verdict, 'BLOCKED');
+  // (b) control: a page numbered the pre-remediation way (one plain namespace, recorder seeded at the node
+  // counter as it stood when the run began -- the old `seqBase`) collides with the node events received
+  // during the run => the duplicate is still detected as a row-5 seq-not-unique contradiction.
+  const legacyBase = Math.min(...runObs.map((o) => o.startSeq)) - 1;
+  assert.ok(legacyBase > 0 && legacyBase < H.SEQ_STRIDE);
+  const legacy = async (arg, ctx) => {
+    nodeEvents(arg, ctx);
+    let n = legacyBase;
+    const rec = H.createCallRecorder({ nextSeq: () => { n += 1; return n; } });
+    const run = await H.runChecksInPhaseOrder({ drivers: { P1: () => ({ checks: { C1: H.evaluateC1(H.withNodeLoadOutcomes(NOT_LOADED_A('failed'), arg.nodeLoadOutcomes)) } }) }, recorder: rec, errorLedger: () => ({ fatalCount: 0, entries: [] }) });
+    return {
+      absoluteSeqs: true, pageHighWater: 0, checks: run.checks, controls: run.controls, subchecks: run.subchecks, extras: { c4Table: [], sceneOwnership: [], c17: null, c20: null, eventLog: [] },
+      c1FinalizedEvent: run.c1FinalizedEvent, gates: run.gates, markers: run.markers, eventLog: run.eventLog, spyInstall: null, sessionTainted: false, taintPhase: null,
+      phaseLog: run.phaseLog, spyLedger: rec.records, screenshots: [], stateSnapshots: [], staleContinuationsDropped: 0,
+    };
+  };
+  const coll = await consumedRun({ handlers: handlers(legacy) });
+  assert.ok(H.recordSchemaProblems(coll.r.state).some((p) => p.startsWith('seq-not-unique:')), 'the collision is detected');
+  assert.equal(coll.r.finalOverall, 'FAIL');
+  assert.equal(coll.r.closeout.primaryRow, 5);
+  assert.equal(coll.reader.verdict, 'FAIL');
 });

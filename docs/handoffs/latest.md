@@ -2,7 +2,20 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — G2 harness follow-up dormant checkpoint COMMITTED (see `git log -1`); independent Work review: 0 Critical / 2 High / 1 Medium / 4 Low; dormant checkpoint ready, live planning NOT ready
+## LATEST — G2 live-readiness remediation DORMANT CHECKPOINT COMMITTED (see `git log -1`); independent Work review: 0 Critical / 1 High / 1 Medium / 4 Low; live planning NOT ready
+
+- **Branch / HEAD:** `main`; parent `d07dea0045a07c3f748618f4f959195f4346db89` (= `origin/main` before the commit); one dormant checkpoint commit on top. **Not pushed.** Working tree clean after commit.
+- **Governing:** accepted procedure SHA-256 `5f9c4c7e124751d09406f07eab63f844fec53add006bd12ad676ecaca3732abb` (unchanged). Status authority: [independent Work review](../reviews/2026-10-01-g2-live-readiness-remediation-independent-review.md); design/findings: [internal review](../reviews/2026-10-01-g2-live-readiness-remediation-internal-review.md).
+- **Closed:** **H2 fully closed** (C1 gate prepared on the authoritative Node ledger; page fatal mirror demoted; page-origin fatals id-reconciled at gate/drain/final). **Item 24 fully integrated** on that ledger (one `responseRules` value reaches every finalization path). `requestfinished` exceptions fail closed.
+- **UNRESOLVED (not checkpoint blockers):**
+  - **H1 (High)** — the composite page-major/Node-minor sequence is collision-free and fail-closed, but cross-realm order is authoritative only at synchronization fences; the accepted procedure (§9.2) requires ONE Node-side monotonic counter/allocator. **Not fully closed; not fixed in this checkpoint.**
+  - **Medium** — a local/non-APS real-Playwright `exposeFunction` binding-scheduling integration test is still required before `G2_DUAL_COUNTER_GATE` may be resolved; not implemented here.
+  - **Four Lows open:** active-control phase validation; teardown C-e cleanup-marker proxy; C15(e) FAIL routing (via R1, not primary row 5); `T_iso` evidence authority (ledger target, not the spy-recorded argument). Broader M1/M2 pre-link/live-closeout static-guard hardening also remains before-live-execution work.
+- **Verification (at commit):** focused G2 `542/542`; aggregate `npm run test:offline` **4788 total / 4787 pass / 0 fail / 1 existing todo**. No APS Viewer/model/live attempt used.
+- **Gate state:** `LIVE_PATH_WIRED=false`; `G2_DUAL_COUNTER_GATE.resolved=false`; **live planning: not ready; live execution: unauthorized**; no live G2 attempt/result/evidence; no authorization record; no real-Viewer injection; no production/Core/Adapter/M4/Panel/OQ-1/host change.
+- **Next authorized action:** none — awaiting explicit owner authorization for bounded H1 live-readiness remediation (single allocator or one bounded procedure correction, plus the local non-live Playwright binding test and independent re-review). **Not authorized:** push, H1 remediation, the Playwright binding test, flipping either gate, live planning, authorization record, live G2, G3, H1/H2 milestones, OQ-1, host integration.
+
+## PRIOR STATE (superseded) — LATEST — G2 harness follow-up dormant checkpoint COMMITTED (see `git log -1`); independent Work review: 0 Critical / 2 High / 1 Medium / 4 Low; dormant checkpoint ready, live planning NOT ready
 
 - **Branch / HEAD:** `main`; parent `c6d89af1991f3849a97ef8a807ea4480de43704b` (= `origin/main` before the commit); one dormant checkpoint commit on top. **Not pushed.** Working tree clean after commit.
 - **Governing:** accepted procedure SHA-256 `5f9c4c7e124751d09406f07eab63f844fec53add006bd12ad676ecaca3732abb` (harness constant `ACCEPTED_PROCEDURE_SHA256`; this is NOT the later clean-commit harness binding); 24-item list in the [RC1-C1](../reviews/2026-10-01-g2-procedure-rc1-c1-internal-review.md) / [RC1-C2](../reviews/2026-10-01-g2-procedure-rc1-c2-internal-review.md) internal reviews.

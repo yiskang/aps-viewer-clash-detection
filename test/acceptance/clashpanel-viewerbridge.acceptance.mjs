@@ -28,8 +28,9 @@
 //  one-to-one fatal-witness correlation; slice C2 -- exact operation ledger (load / hide / unload /
 //  teardown records with node-side acknowledgement barriers), durable prefix-source ledger,
 //  derivePrefixes + hashes, ambiguous-prefix accounting, `load-windows-closed` finalization and
-//  boundPrefix provenance, all recomputed at closeout. KNOWN BEFORE-LIVE GATE: the page/node
-//  dual seq namespace (G2_DUAL_COUNTER_GATE) is unresolved.
+//  boundPrefix provenance, all recomputed at closeout. Live-readiness remediation: one composite
+//  cross-realm sequence + Node-authoritative attribution/gate (G2_DUAL_COUNTER_GATE stays
+//  unresolved until an independent re-review accepts it; see its documentation).
 //
 //  Hard boundaries (procedure §1/§2, authorization §7): this file never imports clashpanel/core,
 //  any engine, catalog, `createClashPanel`, or server.js, and never issues a theming call.
@@ -2018,6 +2019,23 @@ function prepareC1Gate({ c1, errorLedger, seqOf, clock = defaultClock, finalizeA
   };
 }
 
+/**
+ * Shape/ordering check of a gate record that came back from the Node authority: exactly the
+ * `prepareC1Gate` record for THIS C1 (`c1FinalizedSeq`, verdict, reason), `gateSeq` strictly after C1's
+ * finalization, outcome recomputed from the same inputs. Returns the list of problems.
+ */
+function authoritativeGateProblems(gate, c1) {
+  if (!isPlainObject(gate) || !isPlainObject(c1)) return ['not-an-object'];
+  const out = [];
+  const keys = ['gateSeq', 'gateAt', 'c1Verdict', 'c1Reason', 'c1FinalizedSeq', 'fatalCountAtGate', 'outcome', 'notStarted'];
+  if (Object.keys(gate).sort().join() !== [...keys].sort().join()) out.push('keys');
+  if (!isSeq(gate.gateSeq) || !isSeq(c1.finalizedSeq) || !(gate.gateSeq > c1.finalizedSeq)) out.push('gateSeq-order');
+  if (gate.c1FinalizedSeq !== c1.finalizedSeq || gate.c1Verdict !== c1.verdict || gate.c1Reason !== c1.reason) out.push('c1-binding');
+  if (!Number.isInteger(gate.fatalCountAtGate) || gate.fatalCountAtGate < 0) out.push('fatalCountAtGate');
+  else if (gate.outcome !== recomputeGateOutcome({ c1Verdict: c1.verdict, c1Reason: c1.reason, fatalCountAtGate: gate.fatalCountAtGate })) out.push('outcome');
+  return out;
+}
+
 // ============================================================================================
 // §9.2 request-failure / HTTP-error classification, request observations and the one-to-one
 // fatal-witness correlation (slice C1; procedure §9.2 RC1 + RC1-C1 + RC1-C2, §10). Pure layer:
@@ -3414,7 +3432,7 @@ function primarySeqAllocations(state) {
   return { seqs, problems };
 }
 
-/** The highest primary seq recorded in a state (node counter `observe`, interim two-namespace bridge). */
+/** The highest primary seq recorded in a state (node counter `observe`, defensive post-run catch-up). */
 function maxRecordedSeq(state) {
   return primarySeqAllocations(state).seqs.reduce((m, x) => Math.max(m, x.seq), -1);
 }
@@ -3426,33 +3444,133 @@ function maxRecordedSeq(state) {
  * cross-process single-counter unification is an UNRESOLVED live-wiring gate (slice C1 report).
  */
 /**
- * UNRESOLVED BEFORE-LIVE-EXECUTION GATE (slice C1 finding, kept by slice C2 -- NOT redesigned here):
- * §9.2 requires ONE node-side monotonic `seq` counter shared by opLedger, markers, check-finalized
- * events, gates.C1, control records and request/response events. The in-page phase run still numbers
- * its own records from a page-side recorder seeded with `seqBase` (the stopgap in `g2BuildEnv` /
- * `runPostReservation`), while node events DURING that run (network events and, since slice C2, the
- * C16/C17 operation records acknowledged through G2_NODE_OPLEDGER_BINDING) are numbered by the node
- * counter: two namespaces. Any collision is a row-5 contradiction (`seq-not-unique`) and C-d/C-e event-
- * time windows can disagree with closeout (`request-classification-mismatch`) -- fail-closed, but a
- * compliant cross-process counter design is required before any live execution.
- * The same gate also covers the node-side ATTRIBUTION defect (review M1, 2026-10-01): during the whole
- * in-page P2..P11 run Node labels its own events `{phase:'P1', activeCheck:null}` (runPostReservation),
- * because the page owns the phase/check context. C-e requires `event.phase` P9/cleanup for EC-hide/
- * EC-unload, so a C16 hideModel / C17 unload abort can never qualify as an expected cancellation (it is
- * classified fatal-required-resource, row 1), and P2..P11 node events carry false P1 evidence. Fail-
- * closed (never a false PASS), but it must be resolved together with the counter before live.
- * Mechanically coupled (M2): main() and runChecksInPhaseOrder(mode 'live') refuse with
+ * UNRESOLVED BEFORE-LIVE-EXECUTION GATE (kept `resolved:false` until an INDEPENDENT re-review accepts the
+ * remediation below; flipping it is an owner/independent-gate decision, not this pass's).
+ * History (slice C1/C2 + review H1/H2/M1, 2026-10-01): the in-page phase run numbered its own records
+ * from a page recorder seeded with `seqBase` while Node numbered request/response/fatal/operation events
+ * (two namespaces => `seq-not-unique`), Node labelled its events `{phase:'P1', activeCheck:null}` through
+ * the whole page run (C16/C17 aborts could never be EC-hide/EC-unload), and the C1 gate read an
+ * asynchronous page mirror of the fatals instead of the Node ledger.
+ * Remediation (live-readiness pass; harness-only, offline-tested, never exercised live): ONE composite
+ * sequence (`createRunSeqCounter` / `createPageSeqSource` / `createRunAuthority`: page majors, node minors,
+ * fenced at every attribution change, operation begin/end, C1 gate, page-fatal forward and the final
+ * transfer); Node-authoritative phase/check/control attribution delivered through the awaited
+ * `G2_NODE_SYNC_BINDING` before the attributed action; the C1 gate prepared synchronously by Node on the
+ * authoritative error ledger (item-24 finalization, witness rebuild, count, gateSeq); page-origin fatals
+ * numbered and reconciled (a missing/late/duplicate transfer is one fail-closed fatal). The page fatal
+ * mirror is only an abort-latch hint. Documented limitation: Node/page order is authoritative at the
+ * fences only; inside one fence epoch a Node event is ordered after the page's last REPORTED allocation.
+ * Still coupled (M2): main() and runChecksInPhaseOrder(mode 'live') refuse with
  * 'dual-counter-gate-unresolved' while `resolved` is not true, independently of LIVE_PATH_WIRED.
  */
 const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, owner: 'before-live-execution', finding: 'page-records-numbered-via-seqBase-while-node-owns-the-counter' });
 
+/**
+ * CROSS-REALM SEQUENCE AUTHORITY (G2 live-readiness remediation, H1). `seq` is a fenced composite
+ * `major * SEQ_STRIDE + minor`: the PAGE allocates only `minor === 0` (each page allocation bumps its
+ * own major, `createPageSeqSource`), NODE allocates `minor >= 1` under the highest page major it has
+ * INGESTED (`ingestPage`; the minor restarts when that major rises). Hence the two realms can never
+ * collide, each realm is strictly monotone, and the realm of any seq is derivable (`realmOfSeq`)
+ * without a schema change. Pre-run Node allocations are major 0 (seq 1,2,3,...). The order between
+ * realms is authoritative at the awaited fences (phase/check/control attribution, operation begin/end,
+ * C1 gate, page-fatal forward, final result transfer): each fence ingests the page high-water BEFORE
+ * Node allocates anything after it. Inside one fence epoch a Node event is ordered after the page's last
+ * reported allocation only -- not after every page spy record (documented, reviewed limitation).
+ * The last minor of a major is reserved: once the minors of one page epoch are exhausted every further
+ * Node allocation returns that single reserved value, so the duplicate is a guaranteed row-5
+ * `seq-not-unique` contradiction (fail-closed) rather than a silent collision.
+ */
+const SEQ_STRIDE = 1048576; // 2^20
+const SEQ_MINOR_RESERVED = SEQ_STRIDE - 1;
+/** 'page' (minor 0) | 'node' (minor >= 1) | null (not a seq). */
+function realmOfSeq(seq) { return isSeq(seq) ? (seq % SEQ_STRIDE === 0 ? 'page' : 'node') : null; }
+
 function createRunSeqCounter() {
-  let n = 0;
+  let major = 0;
+  let minor = 0;
+  let overflowed = false;
+  const value = () => major * SEQ_STRIDE + minor;
   return {
-    next: () => { n += 1; return n; },
-    peek: () => n,
-    observe: (seq) => { if (isSeq(seq) && seq > n) n = seq; return n; },
+    next: () => {
+      if (minor >= SEQ_MINOR_RESERVED - 1) { overflowed = true; minor = SEQ_MINOR_RESERVED; return value(); }
+      minor += 1;
+      return value();
+    },
+    peek: value,
+    observe: (seq) => {
+      if (isSeq(seq) && seq > value()) { major = Math.floor(seq / SEQ_STRIDE); minor = seq % SEQ_STRIDE; }
+      return value();
+    },
+    /** Ingests the page's reported high-water major; false (no change) unless it is an integer >= the current one. */
+    ingestPage: (hw) => {
+      if (!(Number.isInteger(hw) && hw >= 0 && hw >= major)) return false;
+      if (hw > major) { major = hw; minor = 0; }
+      return true;
+    },
+    pageMajor: () => major,
+    overflowed: () => overflowed,
   };
+}
+
+/** Page-realm seq source (page agent): every allocation is a fresh page major, `seq = major * SEQ_STRIDE`. */
+function createPageSeqSource() {
+  let major = 0;
+  return { next: () => { major += 1; return major * SEQ_STRIDE; }, highWater: () => major };
+}
+
+/**
+ * Node half of the cross-realm fences (`runPostReservation`): `counter` is the run counter,
+ * `attribution` the live node attribution object read by the network instrumentation (mutated here
+ * only from a VALID page report), `onViolation(reason)` records a fail-closed fatal. `syncPage` is the
+ * `attribution` fence: validates (page high-water never regresses, phase in the §7 enum and never
+ * moving backwards, activeCheck owned by the phase, activeControl in N1..N8|null), ingests the high-water
+ * and adopts the attribution; an invalid report changes nothing and is REFUSED (the page then throws
+ * before its action). Page-origin fatals carry contiguous ids; `reconcilePageFatals(sent)` fails closed
+ * (once) unless exactly ids 1..sent were received exactly once.
+ */
+function createRunAuthority({ counter, attribution, onViolation = () => {} }) {
+  let synced = false;
+  let mismatchReported = false;
+  let duplicate = false;
+  const received = new Set();
+  const violate = (reason) => { try { onViolation(reason); } catch { /* nothing left to record */ } return { ok: false, reason }; };
+  const phaseIndex = (p) => ATTRIBUTION_PHASES.indexOf(p);
+  const api = {
+    isSynced: () => synced,
+    phase: () => attribution.phase,
+    ingestHw(hw) {
+      if (hw === undefined || hw === null) return true;
+      return counter.ingestPage(hw);
+    },
+    syncPage(report) {
+      const r = isPlainObject(report) ? report : {};
+      if (!Number.isInteger(r.hw) || r.hw < counter.pageMajor()) return violate('sync-hw-invalid');
+      if (!ATTRIBUTION_PHASES.includes(r.phase)) return violate('sync-phase-invalid');
+      if (phaseIndex(r.phase) < phaseIndex(attribution.phase)) return violate('sync-phase-regressed');
+      const activeCheck = r.activeCheck === undefined ? null : r.activeCheck;
+      const activeControl = r.activeControl === undefined ? null : r.activeControl;
+      if (activeCheck !== null && !CHECK_NAMES.includes(activeCheck)) return violate('sync-activeCheck-invalid');
+      if (activeControl !== null && !CONTROL_NAMES.includes(activeControl)) return violate('sync-activeControl-invalid');
+      if (activeCheckPhaseProblem({ phase: r.phase, activeCheck }) !== null) return violate('sync-activeCheck-phase-inconsistent');
+      counter.ingestPage(r.hw);
+      Object.assign(attribution, { phase: r.phase, activeCheck, activeControl });
+      synced = true;
+      return { ok: true };
+    },
+    notePageFatal(id) {
+      if (!Number.isInteger(id) || id < 1) { duplicate = true; return false; }
+      if (received.has(id)) { duplicate = true; return false; }
+      received.add(id);
+      return true;
+    },
+    /** `true` iff exactly the ids 1..sent arrived once each; otherwise one fail-closed violation. */
+    reconcilePageFatals(sent) {
+      const ok = Number.isInteger(sent) && sent >= 0 && !duplicate && received.size === sent && [...Array(sent).keys()].every((i) => received.has(i + 1));
+      if (!ok && !mismatchReported) { mismatchReported = true; violate('page-fatal-transfer-mismatch'); }
+      return ok;
+    },
+  };
+  return api;
 }
 
 /**
@@ -9108,10 +9226,13 @@ function verdictMapOf(checks, controls) {
  * `errorLedger` (object, or a synchronous function returning it at gate time) is the ledger the gate
  * preparation finalizes/counts; when absent, `fatalCountAtGate` is 1 if `fatalObserved()` else 0.
  */
-async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phases = PHASE_ORDER, assertPhaseBaseline = null, fatalObserved = () => false, nextSeq = null, recorder = null, errorLedger = null, gateHooks = {}, clock = defaultClock } = {}) {
+async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phases = PHASE_ORDER, assertPhaseBaseline = null, fatalObserved = () => false, nextSeq = null, recorder = null, errorLedger = null, gateHooks = {}, clock = defaultClock, sync = null } = {}) {
   if (mode === 'live' && !LIVE_PATH_WIRED) throw new G2RefusalError('live-path-not-wired', 'runChecksInPhaseOrder: live mode is dormant in this revision');
   if (mode === 'live' && G2_DUAL_COUNTER_GATE.resolved !== true) throw new G2RefusalError('dual-counter-gate-unresolved', 'runChecksInPhaseOrder: live mode is refused while G2_DUAL_COUNTER_GATE is unresolved');
   if (mode !== 'live' && mode !== 'offline-fake') throw new TypeError(`runChecksInPhaseOrder: unknown mode ${String(mode)}`);
+  // Live mode needs the Node authority fences: attribution is Node-authoritative and the C1 gate is
+  // prepared on the Node ledger (never from the page mirror).
+  if (mode === 'live' && !(sync && typeof sync.attribution === 'function' && typeof sync.gate === 'function')) throw new G2RefusalError('node-sync-missing', 'runChecksInPhaseOrder: live mode requires the Node attribution/gate fences (sync)');
   if (recorder && typeof nextSeq === 'function' && nextSeq !== recorder.nextSeq) throw new TypeError('runChecksInPhaseOrder: nextSeq must be the recorder\'s own counter (single sequence source)');
   const rec = recorder && typeof recorder.setAttribution === 'function' ? recorder : createCallRecorder({ clock, nextSeq: typeof nextSeq === 'function' ? nextSeq : null });
   const seqOf = rec.nextSeq;
@@ -9125,10 +9246,17 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
   let taintPhase = null;
   let fatalSkip = false;
   let c1FinalizedEvent = null;
-  const mark = (name) => {
+  // Every attribution change is a fence: with `sync` Node must acknowledge it BEFORE the action it
+  // attributes can start (a refusal throws); offline there is no peer.
+  // The seq a change introduces (marker / finalization / control start) is allocated BEFORE the fence, so
+  // the high-water the fence reports already includes it and Node events after the fence sort after it.
+  const syncAttr = async () => { if (sync && typeof sync.attribution === 'function') await sync.attribution(rec.attribution()); };
+  const setAttr = async (patch) => { rec.setAttribution(patch); await syncAttr(); };
+  const mark = async (name) => {
     rec.setAttribution({ phase: name, activeCheck: null, activeControl: null });
     const m = { seq: seqOf(), name };
     markers.push(m);
+    await syncAttr();
     return m;
   };
   const setUnit = (id, r) => { units[id] = mergeCheckRecord(units[id], r); };
@@ -9136,17 +9264,18 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
     controls[id] = makeControlRunRecord(id, outcome, { start: controlStarts[id] || null, terminalSeq: seqOf(), terminalAt: clock.nowIso() });
   };
   const blockedCheck = (reason) => makeCheckRecord({ verdict: 'BLOCKED', reason });
-  const finalizeC1 = () => {
+  const finalizeC1 = async () => {
     if (c1FinalizedEvent !== null) return;
     rec.setAttribution({ phase: 'P1', activeCheck: 'C1', activeControl: null });
     const fin = finalizeC1Record(units.C1 || blockedCheck('not-executed'), { seq: seqOf(), at: clock.nowIso() });
     units.C1 = fin.record;
     c1FinalizedEvent = fin.event;
     rec.events.push({ ...fin.event });
+    await syncAttr();
   };
 
   const runPhase = async (phase) => {
-    mark(phase.id);
+    await mark(phase.id);
     const u = phaseUnits(phase);
     const entry = { phase: phase.id, ran: false, blocked: {}, taintedAfter: false, error: null };
     phaseLog.push(entry);
@@ -9182,17 +9311,18 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
     }
     const checkOf = (unit) => SUBCHECK_OF[unit] || unit;
     // Single-check phase (P1, P5b, P6b, P10, P11): that check is active for the whole driver run.
-    if (runnable.checks.length === 1 && u.checks.length === 1) rec.setAttribution({ activeCheck: checkOf(runnable.checks[0]), activeControl: null });
-    const beginControl = (n) => {
+    if (runnable.checks.length === 1 && u.checks.length === 1) await setAttr({ activeCheck: checkOf(runnable.checks[0]), activeControl: null });
+    const beginControl = async (n) => {
       if (!runnable.controls.includes(n)) throw new TypeError(`beginControl: ${String(n)} is not runnable in ${phase.id}`);
       rec.setAttribution({ activeControl: n });
       if (!controlStarts[n]) controlStarts[n] = { startSeq: seqOf(), startedAt: clock.nowIso() };
+      await syncAttr();
       return controlStarts[n].startSeq;
     };
     // `beginCheck(null)` ends the current check/control attribution (harness step owned by no check).
-    const beginCheck = (c) => {
+    const beginCheck = async (c) => {
       if (c !== null && !runnable.checks.includes(c)) throw new TypeError(`beginCheck: ${String(c)} is not runnable in ${phase.id}`);
-      rec.setAttribution({ activeCheck: c === null ? null : checkOf(c), activeControl: null });
+      await setAttr({ activeCheck: c === null ? null : checkOf(c), activeControl: null });
     };
     let out;
     try {
@@ -9200,13 +9330,14 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
       out = await driver({ phase: phase.id, runnable, blocked: { ...entry.blocked }, sessionTainted, beginControl, beginCheck, results: { checks: { ...units }, controls: { ...controls }, extras: { ...extras } } });
     } catch (err) {
       rec.setAttribution({ activeCheck: null, activeControl: null });
+      try { if (sync && typeof sync.attribution === 'function') await sync.attribution(rec.attribution()); } catch { /* the node authority already holds a violation; the unit is BLOCKED below */ }
       entry.error = summarizeThrown(err);
       for (const c of runnable.checks) setUnit(c, blockedCheck(`harness-exception:${phase.id}`));
       for (const n of runnable.controls) setControl(n, makeControlRecord(n, notExecutableState(n), { fields: { reason: `harness-exception:${phase.id}` } }));
       sessionTainted = true; taintPhase = taintPhase || phase.id; entry.taintedAfter = true;
       return;
     }
-    rec.setAttribution({ activeCheck: null, activeControl: null });
+    await setAttr({ activeCheck: null, activeControl: null });
     const got = out || {};
     for (const c of runnable.checks) {
       const r = got.checks ? got.checks[c] : undefined;
@@ -9243,13 +9374,22 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
   // ---- P1 (C1), C1 finalization, atomic gate preparation (§7) ----
   const p1 = phases.find((p) => p.id === 'P1');
   if (p1) await runPhase(p1);
-  finalizeC1();
-  const ledgerAtGate = typeof errorLedger === 'function' ? errorLedger() : errorLedger;
-  const gate = prepareC1Gate({
-    c1: units.C1,
-    errorLedger: isPlainObject(ledgerAtGate) ? ledgerAtGate : (fatalObserved() ? { fatalCount: 1, entries: [{ kind: 'fatal-observed' }] } : { fatalCount: 0, entries: [] }),
-    seqOf, clock, ...gateHooks,
-  });
+  await finalizeC1();
+  let gate;
+  if (sync && typeof sync.gate === 'function') {
+    // Authoritative gate: prepared by Node, synchronously, on the Node error ledger (item 24 finalization,
+    // witness rebuild, fatal count and gateSeq in one section). The page only validates what comes back.
+    gate = await sync.gate(units.C1);
+    const bad = authoritativeGateProblems(gate, units.C1);
+    if (bad.length) throw new TypeError(`runChecksInPhaseOrder: authoritative gate refused (${bad.join(',')})`);
+  } else {
+    const ledgerAtGate = typeof errorLedger === 'function' ? errorLedger() : errorLedger;
+    gate = prepareC1Gate({
+      c1: units.C1,
+      errorLedger: isPlainObject(ledgerAtGate) ? ledgerAtGate : (fatalObserved() ? { fatalCount: 1, entries: [{ kind: 'fatal-observed' }] } : { fatalCount: 0, entries: [] }),
+      seqOf, clock, ...gateHooks,
+    });
+  }
 
   const checks = {};
   if (gate.outcome === GATE_OUTCOME.OPEN) {
@@ -9271,7 +9411,7 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
       if (id.startsWith('C')) checks[id] = d; else controls[id] = d;
     }
   }
-  mark('cleanup');
+  await mark('cleanup');
   const eventLog = rec.events.slice().sort((a, b) => a.seq - b.seq);
   return { checks, controls, subchecks: units, extras, sessionTainted, taintPhase, phaseLog, c1FinalizedEvent, gates: { C1: gate }, markers, eventLog };
 }
@@ -9546,7 +9686,7 @@ function createLivePhaseDrivers(env) {
     async P2(ctx) {
       const spies = installSpySet({ viewer: env.viewer, dockingPanelPrototype: env.dockingPanelPrototype || null, recorder: env.recorder, registry: env.registry });
       st.tagger = attachModelArgumentTagger(env.recorder, { labelOf: env.labelOf });
-      beginCtl(ctx, 'N1');
+      await beginCtl(ctx, 'N1');
       return { controls: { N1: n1Record(runSpySelfTestN1({ recorder: env.recorder })) }, extras: { spyInstall: spies } };
     },
 
@@ -9554,15 +9694,15 @@ function createLivePhaseDrivers(env) {
     async P3(ctx) {
       const { runnable } = ctx;
       const checks = {};
-      if (runnable.checks.includes('C2')) { beginChk(ctx, 'C2'); checks.C2 = evaluateC2(await env.shellProbe.c2()); }
-      if (runnable.checks.includes('C3')) { beginChk(ctx, 'C3'); checks.C3 = evaluateC3(await env.shellProbe.c3()); }
+      if (runnable.checks.includes('C2')) { await beginChk(ctx, 'C2'); checks.C2 = evaluateC2(await env.shellProbe.c2()); }
+      if (runnable.checks.includes('C3')) { await beginChk(ctx, 'C3'); checks.C3 = evaluateC3(await env.shellProbe.c3()); }
       return { checks };
     },
 
     // P4 -- C4 bounds containment (T10 sample), C5 unit observation, N6 pure recomputation.
     async P4(ctx) {
       const { runnable } = ctx;
-      beginChk(ctx, 'C4');
+      await beginChk(ctx, 'C4');
       const sample = selectC4Sample(t().candidatesA, t().candidatesB);
       const rows = asHarness(env, () => sample.map((s) => {
         const model = s.model === 'A' ? A() : B();
@@ -9573,18 +9713,18 @@ function createLivePhaseDrivers(env) {
       const c4 = evaluateC4({ rows, candidateCounts: { A: t().candidatesA.length, B: t().candidatesB.length }, invalidDbIdObservation });
       st.c4Table = c4.c4Table;
       const checks = { C4: c4.record };
-      if (runnable.checks.includes('C5')) { beginChk(ctx, 'C5'); checks.C5 = evaluateC5(await env.unitFacts()); }
+      if (runnable.checks.includes('C5')) { await beginChk(ctx, 'C5'); checks.C5 = evaluateC5(await env.unitFacts()); }
       // N6 discriminates the C4 oracle over C4's own table: attributed to C4 + N6.
-      beginChk(ctx, 'C4');
+      await beginChk(ctx, 'C4');
       const n6Input = selectN6Input(c4.c4Table);
-      if (n6Input.candidate !== null) beginCtl(ctx, 'N6');
+      if (n6Input.candidate !== null) await beginCtl(ctx, 'N6');
       return { checks, controls: { N6: evaluateN6(n6Input) }, extras: { c4Table: c4.c4Table, n6: null } };
     },
 
     // P5a -- bridge #2: foreign pre-existing scene scenario (C7α, C18b, N3), before bridge #1 exists.
     async P5a(ctx) {
       // C7α and C18b are judged on ONE scenario (bridge #2); its actions are attributed to C7 (C7α).
-      beginChk(ctx, 'C7alpha');
+      await beginChk(ctx, 'C7alpha');
       const ov = env.viewer.overlays;
       const S1 = env.makeSentinelMesh();
       const S2 = env.makeSentinelMesh();
@@ -9614,7 +9754,7 @@ function createLivePhaseDrivers(env) {
       const own = evaluateSceneOwnership({ scenes, presentAfterDispose, ledger });
       const opsOk = p.ok && c.ok && d.ok;
       const alpha = opsOk ? own.record : makeCheckRecord({ verdict: 'BLOCKED', reason: p.timedOut || c.timedOut || d.timedOut ? 'timeout:bridge2-op' : 'bridge2-op-threw', fields: { present: p, clear: c, dispose: d } });
-      beginCtl(ctx, 'N3');
+      await beginCtl(ctx, 'N3');
       const n3 = n3Record(runSceneOwnershipControlN3({ scenes, presentAfterDispose, ledger }), { liveObservationsHold: presentAfterDispose[G2B_NAMES.overlayMarkers] === true && presentAfterDispose[G2_FOREIGN_SCENE] === true });
       return { checks: { C7alpha: alpha, C18b: alpha }, controls: { N3: n3 }, extras: { sceneOwnership: own.sceneOwnership } };
     },
@@ -9678,7 +9818,7 @@ function createLivePhaseDrivers(env) {
       const controls = {};
       const pair = t().fitPair;
       if (runnable.checks.includes('C6') || runnable.controls.includes('N2')) {
-        beginChk(ctx, 'C6');
+        await beginChk(ctx, 'C6');
         let n2 = makeControlRecord('N2', 'NOT_DETECTED', { fields: { reason: 'no-fit-pair' } });
         let c6input = { pairSelected: false };
         if (pair) {
@@ -9687,7 +9827,7 @@ function createLivePhaseDrivers(env) {
           const p = await bridgeOp(env, 'present', () => b.present({ sides: [{ model: A(), dbId: pair.a }, { model: B(), dbId: pair.b }], options: { focus: true, isolate: false, marker: false } }));
           const s = await settle();
           c6input = { pairSelected: true, present: { outcome: p.value, threw: p.threw, timedOut: p.timedOut }, fitRecords: ledgerSlice(env.recorder.records, { method: 'viewer.fitToView', origin: 'bridge', from: mark }), settle: s, boxes };
-          beginCtl(ctx, 'N2');
+          await beginCtl(ctx, 'N2');
           const reset1 = await asHarness(env, () => cam.resetHome());
           let single = { threw: false, timedOut: false };
           try { asHarness(env, () => env.viewer.fitToView([pair.b], B())); } catch { single = { threw: true, timedOut: false }; }
@@ -9699,7 +9839,7 @@ function createLivePhaseDrivers(env) {
         checks.C6 = evaluateC6({ ...c6input, n2State: n2.state });
       }
       if (runnable.checks.includes('C8')) {
-        beginChk(ctx, 'C8');
+        await beginChk(ctx, 'C8');
         const aBox = env.boundsOf(A(), t().a1);
         const mark = ledgerMark(env);
         const p = await bridgeOp(env, 'present', () => b.present({ sides: [{ model: A(), dbId: t().a1 }], options: { focus: true, isolate: false, marker: false } }));
@@ -9785,7 +9925,7 @@ function createLivePhaseDrivers(env) {
           W, H, dsf: canvas.dsf, cameras: { K0, K1, K2, K3 }, offAttempts: off.attempts, onAttempts: on.attempts, footprints,
           frames: { off1: off.frame, on: on.frame, clear: Fclear },
         };
-        beginCtl(ctx, 'N8');
+        await beginCtl(ctx, 'N8');
         const r = evaluateC20({ target, preconditions, timeouts, structural, oracleInput });
         return { checks: { C20: r.record }, controls: { N8: r.n8 }, extras: { c20: r.c20 } };
       } catch (err) {
@@ -9804,13 +9944,13 @@ function createLivePhaseDrivers(env) {
       const sides2 = [{ model: A(), dbId: t().a1 }, { model: B(), dbId: t().b1 }];
       st.c13 = st.c13 || {};
       if (runnable.checks.includes('C9')) {
-        beginChk(ctx, 'C9');
+        await beginChk(ctx, 'C9');
         const iso = asHarness(env, () => env.viewer.getAggregateIsolation());
         const hid = asHarness(env, () => env.viewer.getAggregateHiddenNodes());
         checks.C9 = evaluateC9({ isolationShape: normalizeEvidence(summarizeValue(iso, env.recorder.refIdOf)), hiddenShape: normalizeEvidence(summarizeValue(hid, env.recorder.refIdOf)), isolationNormalizable: normalizeAggregateRead(iso, env.labelOf) !== null, hiddenNormalizable: normalizeAggregateRead(hid, env.labelOf) !== null, prerequisite: viaBridge(env, () => b.checkIsolationPrerequisite()) });
       }
       if (runnable.checks.includes('C10')) {
-        beginChk(ctx, 'C10');
+        await beginChk(ctx, 'C10');
         const mark = ledgerMark(env);
         const p = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { isolate: true, marker: false, focus: false } }));
         const recs = env.recorder.records.slice(mark).filter((r) => r.origin === 'bridge');
@@ -9831,8 +9971,8 @@ function createLivePhaseDrivers(env) {
         });
       }
       if (runnable.checks.includes('C11') || runnable.controls.includes('N5')) {
-        beginChk(ctx, 'C11');
-        beginCtl(ctx, 'N5');
+        await beginChk(ctx, 'C11');
+        await beginCtl(ctx, 'N5');
         asHarness(env, () => env.viewer.hide(t().a1, A()));
         const preWhile = viaBridge(env, () => b.checkIsolationPrerequisite());
         const mark = ledgerMark(env);
@@ -9848,13 +9988,13 @@ function createLivePhaseDrivers(env) {
         controls.N5 = evaluateN5({ prerequisiteWhileHidden: preWhile, prerequisiteAfterShow: preAfter, timedOut: p.timedOut });
       }
       if (runnable.checks.includes('C12') || runnable.controls.includes('N4')) {
-        beginChk(ctx, 'C12');
+        await beginChk(ctx, 'C12');
         const second = t().candidatesA[1] || t().candidatesA[0];
         const p = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { isolate: true, marker: true, focus: false }, point: boxCentre(env.boundsOf(A(), t().a1)) }));
         const priorMeshes = (b.inspectLedger() || { markerMeshes: [] }).markerMeshes.length;
         const foreign = [{ model: A(), ids: [second.dbId] }];
         const fMark = ledgerMark(env);
-        beginCtl(ctx, 'N4');
+        await beginCtl(ctx, 'N4');
         asHarness(env, () => env.viewer.setAggregateIsolation(foreign));
         const foreignRead = isolationReadLabels(env);
         const c = await bridgeOp(env, 'clear', () => b.clear());
@@ -9893,7 +10033,7 @@ function createLivePhaseDrivers(env) {
         && Object.values(bridgeNetPerScene(env.recorder.records, st.bridge1Since, panelScenes())).every((n) => n === 0);
       st.c13 = st.c13 || {};
       if (runnable.checks.includes('C14')) {
-        beginChk(ctx, 'C14');
+        await beginChk(ctx, 'C14');
         const X = { sides: sides2, options: { isolate: true, marker: true, focus: false }, point: boxCentre(env.boundsOf(A(), t().a1)) };
         const Y = { sides: [{ model: A(), dbId: second.dbId }], options: { isolate: true, marker: true, focus: false }, point: boxCentre(second.box) };
         const [p1, p2] = await Promise.all([env.recorder.withOrigin('bridge', () => b.present(X)), env.recorder.withOrigin('bridge', () => b.present(Y))]);
@@ -9924,7 +10064,7 @@ function createLivePhaseDrivers(env) {
         checks.C14 = evaluateC14({ presentPresent, presentClear, presentDispose, spyBalanced, finalIsolationEmpty: isEmptyRead(isolationReadLabels(env)) });
       }
       if (runnable.checks.includes('C15')) {
-        beginChk(ctx, 'C15');
+        await beginChk(ctx, 'C15');
         const owners = { viewer: env.viewer, overlays: env.viewer.overlays };
         const inj = env.injection;
         const obs = {};
@@ -9967,7 +10107,7 @@ function createLivePhaseDrivers(env) {
         st.c13.C15e = e.c13;
         if (runnable.checks.includes('C15')) checks.C15 = evaluateC15(obs);
       }
-      if (runnable.checks.includes('C13')) { beginChk(ctx, 'C13'); checks.C13 = evaluateC13(st.c13); }
+      if (runnable.checks.includes('C13')) { await beginChk(ctx, 'C13'); checks.C13 = evaluateC13(st.c13); }
       return c15eTainted ? { checks, tainted: true } : { checks };
     },
 
@@ -9977,7 +10117,7 @@ function createLivePhaseDrivers(env) {
       const b = st.bridge1;
       const names = env.eventNames;
       // Listener setup serves C16 and C17 (the C16 event log); attributed to C16 when it runs.
-      beginChk(ctx, 'C16');
+      await beginChk(ctx, 'C16');
       const log = createMonotonicEventLog({ clock: env.clock || defaultClock, recorder: env.recorder });
       const listeners = [];
       const addListener = (name) => {
@@ -10010,8 +10150,8 @@ function createLivePhaseDrivers(env) {
         const sides2 = [{ model: A(), dbId: t().a1 }, { model: B(), dbId: t().b1 }];
         const membership = () => { const ms = asHarness(env, () => env.viewer.getAllModels()); return { containsA: ms.includes(A()), containsB: ms.includes(B()) }; };
         // N7 (S0): the same V3/V4/V5 on a present while B is still loaded (no check executing).
-        beginChk(ctx, null);
-        beginCtl(ctx, 'N7');
+        await beginChk(ctx, null);
+        await beginCtl(ctx, 'N7');
         const n7Mark = ledgerMark(env);
         const pre = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { focus: true, isolate: true, marker: true }, point: P }));
         const preObs = { models: membership(), r1: pre.ok ? { ...pre.value, notes: [...pre.value.notes] } : null, L1: summarizeBridgeLedger(b.inspectLedger(), env.labelOf), s4BridgeRecords: env.recorder.records.slice(n7Mark).filter((r) => r.origin === 'bridge'), a1: t().a1 };
@@ -10019,7 +10159,7 @@ function createLivePhaseDrivers(env) {
         const restoredN7 = b.inspectLedger() === null && isEmptyRead(isolationReadLabels(env));
         controls.N7 = evaluateN7({ preObs, restored: restoredN7, timedOut: pre.timedOut });
         if (runnable.checks.includes('C17')) {
-          beginChk(ctx, 'C17');
+          await beginChk(ctx, 'C17');
           const precondition = st.c16Restored !== true ? 'c16-restoration' : (b.inspectLedger() !== null ? 'ledger-not-null' : (!isEmptyRead(isolationReadLabels(env)) ? 'isolation-not-empty' : (!P.every(Number.isFinite) ? 'point' : null)));
           if (precondition) { const r = c17Oracle({}, { preconditionUnmet: precondition }); checks.C17 = r.record; return { checks, controls, extras: { c17: r.c17, eventLog: log.entries } }; }
           const since = st.bridge1Since;
@@ -10126,7 +10266,7 @@ function createLivePhaseDrivers(env) {
 // runner and the Section 36 drivers all run IN the page, next to the real Viewer and the served
 // ViewerBridge -- the only realm in which the bridge's synchronous Viewer calls can be spied.
 // Node talks to the page through `page.evaluate` by registry key (G2_IN_PAGE_FUNCTION_NAMES) and
-// the page calls back into Node only through two exposed bindings (screenshot, fatal event).
+// the page calls back into Node only through the exposed bindings (screenshot, fatal event, operation ledger, cross-realm sync).
 //
 // Rule for this section: an in-page function may reference page globals (window, document,
 // requestAnimationFrame, createImageBitmap, atob, Autodesk, THREE) and any declaration of Sections
@@ -10143,6 +10283,8 @@ const G2_NODE_SCREENSHOT_BINDING = '__g2NodeScreenshot';
 const G2_NODE_FATAL_BINDING = '__g2NodeFatal';
 /** §9.2 slice C2: the node-side operation-ledger acknowledgement barrier (`createOperationLedger().pageOperation`). */
 const G2_NODE_OPLEDGER_BINDING = '__g2NodeOpLedger';
+/** Cross-realm fences (attribution / C1 gate): `createRunAuthority` + the authoritative gate on the Node ledger. */
+const G2_NODE_SYNC_BINDING = '__g2NodeSync';
 /** Served modules the page imports (all under /clashpanel/, JS-only, path-confined; §3 "Page"). */
 const G2_SERVED_ENTRY_MODULES = Object.freeze([
   '/clashpanel/viewer/viewerApi.js',
@@ -10292,7 +10434,7 @@ function g2ErrOf(e) {
 /** The page agent's single mutable state object (created lazily; never exposed to the bridge). */
 function g2PageState() {
   if (!window.__g2) {
-    window.__g2 = { mod: {}, docs: {}, loads: {}, models: {}, readiness: {}, fatal: { flag: false, abort: false, kinds: [] }, env: null, screenshots: [], targets: null, listeners: [] };
+    window.__g2 = { mod: {}, docs: {}, loads: {}, models: {}, readiness: {}, fatal: { flag: false, abort: false, kinds: [] }, pageFatalSent: 0, seq: null, env: null, screenshots: [], targets: null, listeners: [] };
   }
   return window.__g2;
 }
@@ -10358,7 +10500,10 @@ function g2AgentReady() {
   const forward = (kind, detail) => {
     g.fatal.flag = true;
     g.fatal.kinds.push(kind);
-    try { const fn = window[G2_NODE_FATAL_BINDING]; if (typeof fn === 'function') Promise.resolve(fn(kind, detail)).catch(() => {}); } catch { /* the Node side also observes pageerror */ }
+    // Page-origin fatal: numbered (contiguous ids) so Node can reconcile exactly 1..pageFatalSent at the gate and at the final transfer.
+    g.pageFatalSent += 1;
+    const meta = { id: g.pageFatalSent, hw: g.seq ? g.seq.highWater() : null };
+    try { const fn = window[G2_NODE_FATAL_BINDING]; if (typeof fn === 'function') Promise.resolve(fn(kind, detail, meta)).catch(() => {}); } catch { /* reconciliation at the gate fails closed */ }
   };
   if (!g.fatalForwardingInstalled) {
     const onRejection = (ev) => { forward('unhandledrejection', g2ErrOf(ev && ev.reason).message); };
@@ -10929,14 +11074,32 @@ function g2CreateShellProbe(env) {
  * In-page adapter of the node-side operation-ledger acknowledgement barrier (§9.2 slice C2; the
  * `G2_NODE_OPLEDGER_BINDING` exposed function: its promise resolves after the node allocated the
  * record's startSeq and ackSeq). Null when the binding is absent -- then nothing is recorded and every
- * abort stays FATAL (fail-safe). NOTE (unresolved before-live gate, see `runPostReservation`): these
- * records are numbered by the NODE counter while the page's own records use the page recorder seeded
- * with `seqBase` -- two namespaces; not redesigned here.
+ * abort stays FATAL (fail-safe). These records are numbered by the NODE minors under the page high-water
+ * piggybacked on every call (`hw`), so they interleave collision-free with the page's own majors.
  */
 function g2NodeOps() {
   const fn = typeof window !== 'undefined' ? window[G2_NODE_OPLEDGER_BINDING] : undefined;
   if (typeof fn !== 'function') return null;
-  return { begin: (desc) => fn('begin', desc), end: (arg) => fn('end', arg) };
+  const hw = () => { const q = g2PageState().seq; return q ? q.highWater() : null; };
+  return { begin: (desc) => fn('begin', { ...desc, hw: hw() }), end: (arg) => fn('end', { ...arg, hw: hw() }) };
+}
+
+/**
+ * In-page half of the cross-realm fences. `attribution(report)` / `gate(c1)` call the Node sync binding
+ * (awaited) with the page high-water; a missing binding or a refusal THROWS, so the action that was
+ * about to run never starts (fail-closed). Null when the binding is absent (offline callers).
+ */
+function g2NodeSync() {
+  const fn = typeof window !== 'undefined' ? window[G2_NODE_SYNC_BINDING] : undefined;
+  if (typeof fn !== 'function') return null;
+  const g = g2PageState();
+  const hw = () => (g.seq ? g.seq.highWater() : 0);
+  const demand = (r, what) => { if (!r || r.ok !== true) throw new Error(`${what} refused by the node authority (${r && r.reason})`); return r; };
+  return {
+    attribution: async (a) => { demand(await fn('attribution', { hw: hw(), phase: a.phase, activeCheck: a.activeCheck, activeControl: a.activeControl, pageFatalSent: g.pageFatalSent }), 'attribution sync'); },
+    gate: async (c1) => demand(await fn('gate', { hw: hw(), c1, pageFatalSent: g.pageFatalSent }), 'C1 gate').gate,
+    drain: async () => demand(await fn('drain', { hw: hw(), pageFatalSent: g.pageFatalSent }), 'drain sync'),
+  };
 }
 
 /**
@@ -10945,17 +11108,18 @@ function g2NodeOps() {
  * quarantine are page-realm objects; nothing here touches the Viewer except the harness's own
  * camera-home capture (a read).
  */
-function g2BuildEnv({ seqBase = 0, nodeLoadOutcomes = null } = {}) {
+function g2BuildEnv({ nodeLoadOutcomes = null } = {}) {
   const g = g2PageState();
   const viewer = window.__viewer;
   const events = g2EventNames();
   const createViewerApi = g2Module('/clashpanel/viewer/viewerApi.js').createViewerApi;
   const createViewerBridge = g2Module('/clashpanel/viewer/ViewerBridge.js').createViewerBridge;
   const api = createViewerApi(viewer, { events });
-  // Page-side recorder seeded past the node counter at the RPC (interim; unresolved live-wiring gate).
-  // G2_DUAL_COUNTER_GATE (unresolved): page records are numbered here, node events by the node counter.
-  let pageSeq = seqBase;
-  const recorder = createCallRecorder({ nextSeq: () => { pageSeq += 1; return pageSeq; } });
+  // Page-side recorder on the page half of the cross-realm sequence authority (see createRunSeqCounter):
+  // every page allocation is a fresh page major (minor 0); Node allocates the minors in between.
+  const pageSeq = createPageSeqSource();
+  g.seq = pageSeq;
+  const recorder = createCallRecorder({ nextSeq: pageSeq.next });
   const registry = createWrapperRegistry();
   const baseInjection = createFailureInjectionController({ registry });
   const injectionHandles = [];
@@ -11018,21 +11182,21 @@ function g2PhaseBaseline(env, phase) {
  */
 async function g2RunPhases(arg) {
   const g = g2PageState();
-  const env = g2BuildEnv({ seqBase: arg && Number.isInteger(arg.seqBase) && arg.seqBase >= 0 ? arg.seqBase : 0, nodeLoadOutcomes: arg && isPlainObject(arg.nodeLoadOutcomes) ? arg.nodeLoadOutcomes : null });
+  const env = g2BuildEnv({ nodeLoadOutcomes: arg && isPlainObject(arg.nodeLoadOutcomes) ? arg.nodeLoadOutcomes : null });
+  const sync = g2NodeSync();
   const run = await runChecksInPhaseOrder({
     drivers: createLivePhaseDrivers(env),
     mode: 'live',
     assertPhaseBaseline: async (phase) => g2PhaseBaseline(env, phase),
     fatalObserved: () => g.fatal.flag === true || g.fatal.abort === true,
     recorder: env.recorder,
-    // Page-side mirror of the fatal events Node forwarded (g2MarkFatal), read synchronously at gate
-    // time. NOT replaced in slice C1: the real ledger lives in Node and the page cannot read it
-    // synchronously, and a Node-side gate binding would compare `gateSeq` against page-namespace seqs.
-    // Replacing it needs the cross-process single-counter design (UNRESOLVED live-wiring gate, see
-    // runPostReservation). The persisted gate is re-validated against the node ledger by the gate
-    // equations (fail-closed).
-    errorLedger: () => ({ fatalCount: g.fatal.kinds.length, entries: g.fatal.kinds.map((kind) => ({ kind })) }),
+    // The C1 gate and every attribution change go through the Node authority (`sync`): the gate is
+    // prepared on the AUTHORITATIVE Node ledger. `g.fatal` above is only an abort-latch hint (it is
+    // never consulted for the gate decision).
+    sync,
   });
+  // Final fence: the result is not returned before Node has the page high-water and fatal ids.
+  if (sync) await sync.drain();
   const { spyInstall, ...extras } = run.extras || {};
   return g2JsonSafe({
     checks: run.checks, controls: run.controls, subchecks: run.subchecks, extras, c1FinalizedEvent: run.c1FinalizedEvent,
@@ -11042,6 +11206,7 @@ async function g2RunPhases(arg) {
     spyLedger: env.recorder.records, screenshots: g.screenshots, stateSnapshots: env.state.stateSnapshots || [],
     staleContinuationsDropped: env.quarantine.staleContinuationsDropped,
     cameraHomeCaptured: env.cameraHomeCaptured, bridgeHistory: env.bridgeTracker.history,
+    pageHighWater: g.seq ? g.seq.highWater() : 0, pageFatalSent: g.pageFatalSent,
   });
 }
 
@@ -11610,7 +11775,7 @@ function createNetworkInstrumentation({ ledger, nextSeq, sink, attribution = () 
         if (latched()) return;
         const obs = observationOf(req);
         noteTerminal({ reqId: obs ? obs.reqId : null, terminalKind: 'requestfinished', terminalSeq: nextSeq() });
-      } catch { /* as above */ }
+      } catch { failClosed('requestfinished'); }
     },
     onRequestFailed(req) {
       try {
@@ -11940,24 +12105,22 @@ async function runPostReservation(ctx) {
   const serveModule = deps.serveModule || ((o) => serveClashPanelModule({ ...o, rootDir: repoRoot }));
   const quarantine = createTimeoutQuarantine();
   const baseUrl = g2BaseUrl(env);
+  // Resolved ONCE: event time, load-window close, gate and closeout finalization all use the same rules.
+  const responseRules = deps.responseRules || OPTIONAL_RESPONSE_RULES;
   const state = buildInitialRunState({ binding, validation, startedAt: clock.nowIso() });
-  // §9.2 THE node-side run counter: fatal entries, request/response events, P0/closeout markers.
-  // UNRESOLVED LIVE-WIRING GATE (slice C1): the in-page phase run (g2RunPhases) still stamps its own
-  // records (spy ledger, eventLog, snapshots, P1..P11/cleanup markers, C1 finalization, controls,
-  // gates.C1) from a page-side recorder seeded with `seqBase`, and node events received DURING that
-  // run are numbered by this counter -- two namespaces, not one. `observe` only moves this counter past
-  // the page's allocations afterwards; any collision is a row-5 contradiction (seq-not-unique). A
-  // compliant cross-process design is a before-live requirement. Slice C2 makes this gate certain to
-  // bite in a live run: the in-page C16/C17 operation records (G2_NODE_OPLEDGER_BINDING) are numbered by
-  // THIS counter during the page run, as are request/response events -- see G2_DUAL_COUNTER_GATE.
+  // §9.2 THE run counter (cross-realm sequence authority, see createRunSeqCounter): Node allocates the
+  // minors, the in-page run allocates page majors and reports its high-water at every awaited fence
+  // (attribution, operation begin/end, C1 gate, page-fatal forward, final transfer) -- so seqs are unique
+  // across realms and Node events during the page run carry the page's authoritative phase/check.
   const runSeq = createRunSeqCounter();
-  const nodeAttribution = { phase: 'P0', activeCheck: null };
+  const nodeAttribution = { phase: 'P0', activeCheck: null, activeControl: null };
   const sink = createFatalEventSink(state.errorLedger, { nextSeq: runSeq.next });
+  const authority = createRunAuthority({ counter: runSeq, attribution: nodeAttribution, onViolation: (reason) => { sink.recordFatal('harness-exception', `cross-realm-fence:${reason}`); } });
   const uninstallProcessHandlers = installProcessFatalHandlers({ proc: deps.proc || process, sink });
   const promises = createPromiseRegistry({ onRejection: () => {} });
   const live = { browser: null, context: null, page: null, rpc: null, closingIntent: false, detachFatal: () => {} };
   const network = createNetworkInstrumentation({
-    ledger: state.errorLedger, nextSeq: runSeq.next, sink, baseUrl,
+    ledger: state.errorLedger, nextSeq: runSeq.next, sink, baseUrl, rules: responseRules,
     attribution: () => ({ ...nodeAttribution }),
     mainFrame: () => (live.page && typeof live.page.mainFrame === 'function' ? live.page.mainFrame() : null),
     onFatalWitness: () => { if (live.rpc) promises.track(live.rpc.call('g2MarkFatal', { kind: NETWORK_FATAL_ENTRY_KIND }).catch(() => {})); },
@@ -12062,8 +12225,49 @@ async function runPostReservation(ctx) {
         const png = await live.page.screenshot({ clip: { x: clip.x, y: clip.y, width: clip.width, height: clip.height }, type: 'png', animations: 'disabled', caret: 'hide' });
         return toBuffer(png).toString('base64');
       });
-      await live.page.exposeFunction(G2_NODE_FATAL_BINDING, (kind, detail) => { fatal(String(kind), detail); return true; });
-      await live.page.exposeFunction(G2_NODE_OPLEDGER_BINDING, (action, arg) => ops.pageOperation(String(action), arg));
+      await live.page.exposeFunction(G2_NODE_FATAL_BINDING, (kind, detail, meta) => {
+        // Page-origin fatal: ingest the page high-water first (the fatal is ordered after the page's last
+        // reported allocation), then record it and its contiguous id for the reconciliation.
+        const m = isPlainObject(meta) ? meta : {};
+        authority.ingestHw(m.hw);
+        authority.notePageFatal(m.id);
+        fatal(String(kind), detail);
+        return true;
+      });
+      await live.page.exposeFunction(G2_NODE_OPLEDGER_BINDING, (action, arg) => {
+        const a = isPlainObject(arg) ? arg : {};
+        authority.ingestHw(a.hw);
+        // Node validates the operation's phase against the authoritative phase it holds (once the page has synced).
+        if (String(action) === 'begin' && authority.isSynced() && a.phase !== authority.phase()) return { ok: false, reason: 'phase-mismatch' };
+        return ops.pageOperation(String(action), arg);
+      });
+      await live.page.exposeFunction(G2_NODE_SYNC_BINDING, (action, arg) => {
+        try {
+          const a = isPlainObject(arg) ? arg : {};
+          if (action === 'attribution') {
+            return authority.syncPage(a);
+          }
+          if (action === 'drain') {
+            authority.ingestHw(a.hw);
+            authority.reconcilePageFatals(a.pageFatalSent);
+            return { ok: true };
+          }
+          if (action === 'gate') {
+            // Atomic authoritative gate (synchronous, no await): ingest the page high-water, reconcile the
+            // page-origin fatals (a missing/late/duplicate transfer is one fail-closed fatal ENTRY first), then
+            // finalize pending responses (item 24), rebuild witnesses, count and allocate gateSeq on the Node ledger.
+            if (!authority.ingestHw(a.hw)) return { ok: false, reason: 'gate-hw-invalid' };
+            authority.reconcilePageFatals(a.pageFatalSent);
+            const gate = prepareC1Gate({
+              c1: a.c1, errorLedger: state.errorLedger, seqOf: runSeq.next, clock,
+              finalizeAtGate: (e, { ledger, finalizedSeq }) => provisionalFinalization(e, { ledger, finalizedSeq, rules: responseRules }),
+              rebuildFatalWitnessState: (ledger) => syncFatalWitnesses(ledger, { appendEntry: (entry) => sink.recordWitnessEntry(entry) }),
+            });
+            return { ok: true, gate };
+          }
+          return { ok: false, reason: 'unknown-action' };
+        } catch (err) { return { ok: false, reason: `threw:${summarizeThrown(err).name}` }; }
+      });
       await live.page.addInitScript({ content: agent.source });
       return true;
     });
@@ -12154,7 +12358,7 @@ async function runPostReservation(ctx) {
       ops.endLoad(loadRec, nodeLoadOutcomes[label]);
       // §9.2 `load-windows-closed`: right after the later window closes (synchronously, no await in
       // between) the prefix-source snapshot + derivation are frozen and provisional responses finalized.
-      if (label === 'B') finalizeLoadWindows(state.errorLedger, { prefixSources: network.prefixSources, appendEntry: (entry) => sink.recordWitnessEntry(entry) });
+      if (label === 'B') finalizeLoadWindows(state.errorLedger, { prefixSources: network.prefixSources, appendEntry: (entry) => sink.recordWitnessEntry(entry), rules: responseRules });
       if (out.status === 'completed') loads[label] = normalizeEvidence(out.value);
       else { loads[label] = { status: out.status, error: out.status === 'threw' ? summarizeThrown(out.error) : null }; if (out.status === 'timed-out') tainted = true; }
     }
@@ -12170,13 +12374,19 @@ async function runPostReservation(ctx) {
     }
     const targetsOut = await withDeadline('tree-enumeration', TABLE_T.T3.treeEnumerationDeadlineMs, () => rpcCall('g2PrepareTargets', null));
     state.targets = targetsOut.status === 'completed' ? normalizeEvidence(targetsOut.value) : { unavailable: targetsOut.status, error: targetsOut.status === 'threw' ? summarizeThrown(targetsOut.error) : null };
-    // In-page run: node events during it keep the P1 attribution with no active check (the page owns
-    // the phase/check context -- part of the unresolved live-wiring gate above).
-    Object.assign(nodeAttribution, { phase: 'P1', activeCheck: null });
-    const runOut = await withDeadline('attempt', t9Remaining(), () => rpcCall('g2RunPhases', { seqBase: runSeq.peek(), nodeLoadOutcomes }));
+    // In-page run: the page owns the phase/check context but Node holds the authoritative copy: every
+    // change is acknowledged through the awaited sync binding (`authority.syncPage`) before the
+    // attributed action runs, so Node events during P2..P11 carry the page's phase/activeCheck.
+    Object.assign(nodeAttribution, { phase: 'P1', activeCheck: null, activeControl: null });
+    const runOut = await withDeadline('attempt', t9Remaining(), () => rpcCall('g2RunPhases', { nodeLoadOutcomes }));
     if (runOut.status === 'completed' && runOut.value) {
       const run = runOut.value;
       applyPhaseRunToState(state, run);
+      // Final transfer (drain): the page high-water and the page-origin fatal ids are reconciled before
+      // anything else is allocated; any gap/duplicate/late fatal is one fail-closed fatal entry (row 1).
+      authority.ingestHw(run.pageHighWater);
+      authority.reconcilePageFatals(run.pageFatalSent);
+      if (runSeq.overflowed()) sink.recordFatal('harness-exception', 'cross-realm-fence:seq-minor-overflow');
       runSeq.observe(maxRecordedSeq(state));
       if (run.sessionTainted === true) tainted = true;
       state.staleContinuationsDropped += Number.isInteger(run.staleContinuationsDropped) ? run.staleContinuationsDropped : 0;
@@ -12239,7 +12449,7 @@ async function runPostReservation(ctx) {
   runSeq.observe(maxRecordedSeq(state));
   state.errorLedger.markers.push({ seq: runSeq.next(), name: 'closeout' });
   ops.seal(); // no operation record after the closeout marker; every cancellation window is now closed
-  finalizeNetworkLedgerAtCloseout(state.errorLedger, { nextSeq: runSeq.next, appendEntry: (entry) => sink.recordWitnessEntry(entry), prefixSources: network.prefixSources });
+  finalizeNetworkLedgerAtCloseout(state.errorLedger, { nextSeq: runSeq.next, appendEntry: (entry) => sink.recordWitnessEntry(entry), prefixSources: network.prefixSources, rules: responseRules });
   emit({ type: 'closeout' });
   let closeout;
   try {
@@ -12774,6 +12984,14 @@ export {
   createOperationLedger,
   G2_DUAL_COUNTER_GATE,
   G2_NODE_OPLEDGER_BINDING,
+  G2_NODE_SYNC_BINDING,
+  SEQ_STRIDE,
+  SEQ_MINOR_RESERVED,
+  realmOfSeq,
+  createRunAuthority,
+  createPageSeqSource,
+  authoritativeGateProblems,
+  g2NodeSync,
   runAcknowledgedMutation,
   loadCompletionOutcome,
   finalizeLoadWindows,
