@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync } from 'node:fs';
 import {
   validateAuthorizationRecord,
   parseAuthorizationMarkers,
@@ -24,10 +24,14 @@ import {
   MARKER_LIVE_LINE,
   PROCEDURE_REL_PATH,
   HARNESS_REL_PATH,
+  ACCEPTED_PROCEDURE_SHA256,
+  REPO_ROOT,
 } from './clashpanel-viewerbridge.acceptance.mjs';
 
 const ROOT = '/repo';
-const PROC = 'procedure bytes (stand-in for the v5 procedure file)\n';
+/** The real accepted procedure bytes (W1 binds ACCEPTED_PROCEDURE_SHA256; a stand-in is refused). */
+const PROC = readFileSync(path.join(REPO_ROOT, PROCEDURE_REL_PATH), 'utf8');
+const STAND_IN_PROC = 'procedure bytes (stand-in for the v5 procedure file)\n';
 const HARNESS = 'harness bytes (stand-in for the harness file)\n';
 const HEAD = '82dab8244d8d83f3cb824b05199d7a2ce5b0f2e0';
 
@@ -319,6 +323,27 @@ test('reject: an unexpected io error is reported as io-error, never thrown', () 
   const fs = setup({ [P]: recordText() });
   const broken = { ...fs, readFile: (p) => { if (p.endsWith(PROCEDURE_REL_PATH)) { const e = new Error('EIO'); e.code = 'EIO'; throw e; } return fs.readFile(p); } };
   assert.equal(validateAuthorizationRecord({ recordPath: P, repoRoot: ROOT, fs: broken, gitHead: () => HEAD }).reason, 'io-error');
+});
+
+test('procedure binding: the accepted digest is the final RC1-C2 procedure SHA and the fixture uses those exact bytes', () => {
+  assert.equal(ACCEPTED_PROCEDURE_SHA256, '5f9c4c7e124751d09406f07eab63f844fec53add006bd12ad676ecaca3732abb');
+  assert.equal(DEFAULTS.proc, ACCEPTED_PROCEDURE_SHA256);
+});
+
+test('reject: a procedure file whose digest is not the accepted one, even when the record binds those bytes', () => {
+  const standIn = sha256Hex(Buffer.from(STAND_IN_PROC));
+  const r = validate(setup({ [P]: recordText({ proc: standIn }) }, { procedure: STAND_IN_PROC }), P);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'procedure-sha256-not-accepted');
+  assert.deepEqual(r.detail, { expected: ACCEPTED_PROCEDURE_SHA256, actual: standIn });
+  // a stale earlier procedure digest is equally refused (record/file agree, but not the accepted bytes)
+  const stale = `${PROC}\n<!-- stale revision -->\n`;
+  const staleSha = sha256Hex(Buffer.from(stale));
+  assert.equal(validate(setup({ [P]: recordText({ proc: staleSha }) }, { procedure: stale }), P).reason, 'procedure-sha256-not-accepted');
+  // the record-vs-file comparison still runs first
+  assert.equal(validate(setup({ [P]: recordText() }, { procedure: STAND_IN_PROC }), P).reason, 'procedure-sha256-mismatch');
+  // the accepted digest is an injectable parameter only for offline stand-ins
+  assert.equal(validate(setup({ [P]: recordText({ proc: standIn }) }, { procedure: STAND_IN_PROC }), P, { acceptedProcedureSha256: standIn }).ok, true);
 });
 
 test('W1 is read-only: no mkdir/open/write/rename/link on any path', () => {

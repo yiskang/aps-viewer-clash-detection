@@ -23,6 +23,14 @@
 //  Whether this harness has ever been RUN is recorded in docs/handoffs/ and docs/reviews/,
 //  never in this banner.
 //
+//  §9.2 network classification status (offline-implemented): slice C1 -- request observations,
+//  classifyRequestFailure / classifyHttpResponse (two-stage, frozen EMPTY OPTIONAL_RESPONSE_RULES),
+//  one-to-one fatal-witness correlation; slice C2 -- exact operation ledger (load / hide / unload /
+//  teardown records with node-side acknowledgement barriers), durable prefix-source ledger,
+//  derivePrefixes + hashes, ambiguous-prefix accounting, `load-windows-closed` finalization and
+//  boundPrefix provenance, all recomputed at closeout. KNOWN BEFORE-LIVE GATE: the page/node
+//  dual seq namespace (G2_DUAL_COUNTER_GATE) is unresolved.
+//
 //  Hard boundaries (procedure §1/§2, authorization §7): this file never imports clashpanel/core,
 //  any engine, catalog, `createClashPanel`, or server.js, and never issues a theming call.
 // ============================================================================================
@@ -59,6 +67,13 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const HARNESS_REL_PATH = 'test/acceptance/clashpanel-viewerbridge.acceptance.mjs';
 const PROCEDURE_REL_PATH = 'docs/research/2026-09-30-g2-viewerbridge-dockingpanel-live-verification-procedure.md';
 const PROCEDURE_VERSION = 'v5';
+/**
+ * The final accepted procedure digest (RC1 + RC1-C1 + RC1-C2, docs/handoffs/latest.md "FINAL accepted
+ * procedure SHA-256"; RC1-C1 follow-up item 14). W1 refuses unless the procedure file on disk hashes to
+ * exactly this value (every older digest is stale) AND the record's `Procedure-SHA256` equals it. This
+ * is the procedure binding only; the clean-commit harness binding is separate before-live work.
+ */
+const ACCEPTED_PROCEDURE_SHA256 = '5f9c4c7e124751d09406f07eab63f844fec53add006bd12ad676ecaca3732abb';
 
 /** The only directory an authorization record may live under (§4.1 "Type/path"). */
 const AUTHORIZATION_PROMPTS_REL_DIR = 'docs/prompts';
@@ -348,7 +363,10 @@ function enumeratePromptMarkdownFiles({ fs, repoRoot }) {
  *      Authorization-ID, the record is superseded, or the non-superseded count is not exactly 1
  *      (that one being the record);
  *   4. digests: Baseline-HEAD == `git rev-parse HEAD`; Procedure/Harness SHA-256 over the files'
- *      bytes; Model-A/B URN SHA-256 over the UTF-8 bytes of the literal URN constants.
+ *      bytes, and the procedure digest must also equal ACCEPTED_PROCEDURE_SHA256
+ *      (`procedure-sha256-not-accepted`; offline tests inject a stand-in via
+ *      `acceptedProcedureSha256`, main() never does); Model-A/B URN SHA-256 over the UTF-8 bytes of
+ *      the literal URN constants.
  * Returns `{ok:true, record, candidateSet, digests}` or `{ok:false, reason, detail?}`; never throws
  * for expected rejections (an unexpected io failure is `io-error`).
  */
@@ -358,6 +376,7 @@ function validateAuthorizationRecord({
   fs = createNodeFsLayer(),
   gitHead = () => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim(),
   urns = { A: MODEL_A_URN, B: MODEL_B_URN },
+  acceptedProcedureSha256 = ACCEPTED_PROCEDURE_SHA256,
 } = {}) {
   const reject = (reason, detail) => (detail === undefined ? { ok: false, reason } : { ok: false, reason, detail });
 
@@ -416,6 +435,7 @@ function validateAuthorizationRecord({
     if (head !== parsed.fields.baselineHead) return reject('baseline-head-mismatch', { expected: parsed.fields.baselineHead, actual: head });
     const procedureSha256 = sha256Hex(toBuffer(fs.readFile(path.join(repoRoot, PROCEDURE_REL_PATH))));
     if (procedureSha256 !== parsed.fields.procedureSha256) return reject('procedure-sha256-mismatch');
+    if (procedureSha256 !== acceptedProcedureSha256) return reject('procedure-sha256-not-accepted', { expected: acceptedProcedureSha256, actual: procedureSha256 });
     const harnessSha256 = sha256Hex(toBuffer(fs.readFile(path.join(repoRoot, HARNESS_REL_PATH))));
     if (harnessSha256 !== parsed.fields.harnessSha256) return reject('harness-sha256-mismatch');
     const urnASha256 = sha256Hex(Buffer.from(urns.A, 'utf8'));
@@ -1226,13 +1246,13 @@ const CONTROL_NAMES = Object.freeze(['N1', 'N2', 'N3', 'N4', 'N5', 'N6', 'N7', '
 
 /** §7 "Allowed terminal states per control (exhaustive)". Anything else is non-acceptable. */
 const CONTROL_ALLOWED_STATES = Object.freeze({
-  N1: Object.freeze(['DETECTED', 'NOT_DETECTED']),
-  N2: Object.freeze(['DETECTED_RESTORED', 'NOT_DISCRIMINATING', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT']),
-  N3: Object.freeze(['DETECTED_RESTORED', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE']),
-  N4: Object.freeze(['DETECTED_RESTORED', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE']),
-  N5: Object.freeze(['DETECTED_RESTORED', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE']),
+  N1: Object.freeze(['DETECTED', 'NOT_DETECTED', 'NOT_RUN_DEPENDENCY_BLOCKED']),
+  N2: Object.freeze(['DETECTED_RESTORED', 'NOT_DISCRIMINATING', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_RUN_DEPENDENCY_BLOCKED']),
+  N3: Object.freeze(['DETECTED_RESTORED', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE', 'NOT_RUN_DEPENDENCY_BLOCKED']),
+  N4: Object.freeze(['DETECTED_RESTORED', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE', 'NOT_RUN_DEPENDENCY_BLOCKED']),
+  N5: Object.freeze(['DETECTED_RESTORED', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE', 'NOT_RUN_DEPENDENCY_BLOCKED']),
   N6: Object.freeze(['DETECTED', 'NOT_DETECTED', 'NOT_APPLICABLE']),
-  N7: Object.freeze(['DETECTED_RESTORED', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE']),
+  N7: Object.freeze(['DETECTED_RESTORED', 'NOT_DETECTED', 'RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE', 'NOT_RUN_DEPENDENCY_BLOCKED']),
   N8: Object.freeze(['DETECTED', 'NOT_DETECTED', 'NOT_DISCRIMINATING', 'NOT_APPLICABLE']),
 });
 
@@ -1255,30 +1275,28 @@ const CLASSIFIER_CONFIRMED = 'CONFIRMED_SVF2';
 
 function isPlainObject(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
 
-/** Base verdict of a check record (`{verdict:'BLOCKED(timeout:load)'}` or a bare string) or null. */
+/**
+ * Check verdict read by every §8 row: the bare verdict base of a `check-run` record, else null. A
+ * `gate-disposition` record has NO verdict (§7 RC1-C2) and yields null; a parameterised string such
+ * as `'BLOCKED(x)'` is notation only and is rejected (the record is `{verdict:'BLOCKED', reason:'x'}`).
+ */
 function checkVerdictBase(rec) {
-  const v = typeof rec === 'string' ? rec : (isPlainObject(rec) ? rec.verdict : null);
-  if (typeof v !== 'string') return null;
-  const open = v.indexOf('(');
-  const base = open === -1 ? v : v.slice(0, open);
-  if (open !== -1 && !v.endsWith(')')) return null;
-  return CHECK_VERDICT_BASES.includes(base) ? base : null;
-}
-
-function controlStateOf(rec) {
-  if (typeof rec === 'string') return rec;
-  return isPlainObject(rec) && typeof rec.state === 'string' ? rec.state : null;
+  if (!isPlainObject(rec) || rec.recordType !== 'check-run') return null;
+  return CHECK_VERDICT_BASES.includes(rec.verdict) ? rec.verdict : null;
 }
 
 /**
- * §7 disposition of one control given the check bases: 'acceptable' (PASS-compatible),
- * 'partial' (N2/N8 NOT_DISCRIMINATING, N6 NOT_APPLICABLE while C4 != PASS, N8 NOT_APPLICABLE while
- * C20 != PASS -- fixture insufficiency, §8 row 7), or 'unacceptable' (§8 row 4), incl. any missing
- * or out-of-enum state.
+ * §7 disposition of one control given the check bases (read only from check-run records):
+ * 'acceptable' (PASS-compatible), 'neutral' (a NOT_RUN_DEPENDENCY_BLOCKED that satisfies L1-L4 --
+ * neither acceptable for PASS nor a control failure), 'partial' (N2/N8 NOT_DISCRIMINATING, N6
+ * NOT_APPLICABLE while C4 != PASS, N8 NOT_APPLICABLE while C20 != PASS -- fixture insufficiency, §8
+ * row 7), or 'unacceptable' (§8 row 4), incl. any missing/out-of-enum state and any illegal NRDB.
+ * The state is read ONLY through the effective-state accessor (`state` | `disposition`).
  */
-function controlDisposition(name, rec, checkBases) {
-  const st = controlStateOf(rec);
+function controlDisposition(name, rec, checkBases, state = null) {
+  const st = controlEffectiveState(rec);
   if (st === null || !CONTROL_ALLOWED_STATES[name].includes(st)) return 'unacceptable';
+  if (st === NRDB_STATE) return nrdbLegality(name, state).legal ? 'neutral' : 'unacceptable';
   if (st === CONTROL_ACCEPTABLE_STATE[name]) return 'acceptable';
   if (st === 'NOT_DISCRIMINATING' && (name === 'N2' || name === 'N8')) return 'partial';
   if (st === 'NOT_APPLICABLE' && name === 'N6') return checkBases.C4 === 'PASS' ? 'unacceptable' : 'partial';
@@ -1362,6 +1380,2309 @@ function preLinkCloseoutProblem(facts) {
   return null;
 }
 
+// ============================================================================================
+// Record unions, NRDB legality, C1 reason contract and global-C1-gate equations (procedure §7
+// RC1-C1/RC1-C2, §8 rows 3-8, §10). Pure schema/logic layer (slice B1) + the closed-gate evidence
+// predicates CG-1..CG-7, the exhaustive closed-gate legal-record list, the attribution-field rule and
+// the atomic gate preparation (slice B2; the runtime gate emission is in `runChecksInPhaseOrder`).
+// The fatal-witness ledger, request instrumentation and node-side counter are slice C1 (below).
+// ============================================================================================
+
+const NRDB_STATE = 'NOT_RUN_DEPENDENCY_BLOCKED';
+/** §7 record discriminator: every `checks`/`controls` entry carries exactly one of these. */
+const RECORD_TYPE = Object.freeze({ CHECK_RUN: 'check-run', CONTROL_RUN: 'control-run', GATE_DISPOSITION: 'gate-disposition' });
+/** §7 C1 reason contract: the ONLY two normalized dependency reasons (exact string equality). */
+const C1_NORMALIZED_REASONS = Object.freeze(['prerequisite', 'timeout:load']);
+/** §7 `fields.blockDetail[].cause` enum (diagnostic only; never a verdict input). */
+const C1_BLOCK_DETAIL_CAUSES = Object.freeze(['classifier', 'model-not-loaded', 'load-rejected', 'model-count', 'load-deadline']);
+const GATE_OUTCOME = Object.freeze({ OPEN: 'OPEN', CLOSED_DEPENDENCY_BLOCKED: 'CLOSED_DEPENDENCY_BLOCKED', CLOSED_OTHER: 'CLOSED_OTHER' });
+const GATE_OUTCOMES = Object.freeze(Object.values(GATE_OUTCOME));
+/** G-f: a gate-disposition record's evidenceRefs, exactly. */
+const GATE_EVIDENCE_REFS = Object.freeze(['/gates/C1', '/checks/C1']);
+/** G-b: the one disposition of a check under a closed gate. */
+const GATE_CHECK_DISPOSITION = 'NOT_RUN_C1_GATE_CLOSED';
+const GATE_BLOCKING_REASON_CLOSED_OTHER = 'closed-other';
+/**
+ * Integration boundary (slice B1 -> B2), flipped to true by slice B2 together with the runtime gate
+ * emission (`runChecksInPhaseOrder`): every run state / R1 must carry a valid `gates.C1` (and C1 its
+ * finalization fields); a missing gate is a §8 row-5 evidence contradiction ('gates-missing') -- e.g.
+ * an in-page phase run that failed/timed out before returning its gate ends row 5 FAIL.
+ */
+const GATE_C1_REQUIRED = true;
+/**
+ * Integration boundary (slice B1 -> C), flipped to true by slice C1 together with the seq stamping in
+ * `createFatalEventSink` (node-side run counter) and the witness-entry seq (= witnessSeq): an
+ * UNSEQUENCED fatal entry is an evidence contradiction (row 5, 'fatal-entry-unsequenced') and is not
+ * on the closed-gate legal-record list.
+ */
+const FATAL_ENTRY_SEQ_REQUIRED = true;
+const DOWNSTREAM_CHECK_NAMES = Object.freeze(CHECK_NAMES.slice(1));
+/** G-e order: C2..C20, then N1..N8. */
+const DOWNSTREAM_ITEM_NAMES = Object.freeze([...DOWNSTREAM_CHECK_NAMES, ...CONTROL_NAMES]);
+/** Controls that may record NRDB (§7: N1-N5, N7; N6/N8 use NOT_APPLICABLE). */
+const NRDB_CONTROL_NAMES = Object.freeze(['N1', 'N2', 'N3', 'N4', 'N5', 'N7']);
+
+/**
+ * §7 "Control dependency ids" (RC1-C1; N8 corrected by RC1-C2 M1): execution prerequisites only,
+ * ascending numeric id, always including C1. C20 is NOT in N8 (N8 <-> C20 would be a cycle).
+ */
+const CONTROL_DEPENDENCY_IDS = Object.freeze({
+  N1: Object.freeze(['C1']),
+  N2: Object.freeze(['C1', 'C4']),
+  N3: Object.freeze(['C1']),
+  N4: Object.freeze(['C1', 'C9', 'C10']),
+  N5: Object.freeze(['C1', 'C9']),
+  N6: Object.freeze(['C1', 'C4']),
+  N7: Object.freeze(['C1', 'C16']),
+  N8: Object.freeze(['C1', 'C4', 'C7', 'C8']),
+});
+
+/** §7 `executionRecord.phase`: the control's owning phase in §5 (drift-tested against PHASE_ORDER). */
+const CONTROL_OWNING_PHASE = Object.freeze({ N1: 'P2', N2: 'P6', N3: 'P5a', N4: 'P7', N5: 'P7', N6: 'P4', N7: 'P9', N8: 'P6b' });
+
+/** §7 not-started `terminalState` per control (NRDB only inside a gate-disposition record). */
+const CONTROL_NOT_STARTED_STATES = Object.freeze({
+  N1: Object.freeze(['NOT_DETECTED', NRDB_STATE]),
+  N2: Object.freeze(['NOT_DETECTED', NRDB_STATE]),
+  N3: Object.freeze(['NOT_EXECUTABLE', NRDB_STATE]),
+  N4: Object.freeze(['NOT_EXECUTABLE', NRDB_STATE]),
+  N5: Object.freeze(['NOT_EXECUTABLE', NRDB_STATE]),
+  N6: Object.freeze(['NOT_APPLICABLE']),
+  N7: Object.freeze(['NOT_EXECUTABLE', NRDB_STATE]),
+  N8: Object.freeze(['NOT_APPLICABLE']),
+});
+
+/** G-b: a control's exact disposition under each closed gate outcome. */
+const GATE_CONTROL_DISPOSITION = Object.freeze({
+  CLOSED_DEPENDENCY_BLOCKED: Object.freeze({ N1: NRDB_STATE, N2: NRDB_STATE, N3: NRDB_STATE, N4: NRDB_STATE, N5: NRDB_STATE, N6: 'NOT_APPLICABLE', N7: NRDB_STATE, N8: 'NOT_APPLICABLE' }),
+  CLOSED_OTHER: Object.freeze({ N1: 'NOT_DETECTED', N2: 'NOT_DETECTED', N3: 'NOT_EXECUTABLE', N4: 'NOT_EXECUTABLE', N5: 'NOT_EXECUTABLE', N6: 'NOT_APPLICABLE', N7: 'NOT_EXECUTABLE', N8: 'NOT_APPLICABLE' }),
+});
+
+/** ISO-8601 UTC with milliseconds (§7 executionRecord / dependencyBlockedBy / gate timestamps). */
+const ISO_MS_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const CHECK_RUN_KEYS = Object.freeze(['recordType', 'verdict', 'reason', 'fields', 'evidence']);
+const C1_CHECK_RUN_KEYS = Object.freeze([...CHECK_RUN_KEYS, 'finalizedSeq', 'finalizedAt']);
+const CONTROL_RUN_KEYS = Object.freeze(['recordType', 'state', 'fields', 'evidence', 'executionRecord', 'dependencyBlockedBy']);
+const EXECUTION_RECORD_KEYS = Object.freeze(['controlId', 'phase', 'dependencyIds', 'started', 'crossedStartBoundary', 'startSeq', 'startedAt', 'terminalSeq', 'terminalAt', 'terminalState', 'result', 'evidenceRefs']);
+const DEPENDENCY_BLOCKED_BY_KEYS = Object.freeze(['check', 'blockingState', 'reason', 'phaseSeq', 'blockedAt', 'evidenceRef', 'failedBeforeDependentStarted', 'detail']);
+const GATE_DISPOSITION_KEYS = Object.freeze(['recordType', 'itemId', 'itemKind', 'synthetic', 'gateGenerated', 'executed', 'gateOutcome', 'blockingReason', 'disposition', 'dispositionSeq', 'dispositionAt', 'startSeq', 'startedAt', 'executionRecord', 'dependencyBlockedBy', 'evidenceRefs']);
+const GATE_C1_KEYS = Object.freeze(['gateSeq', 'gateAt', 'c1Verdict', 'c1Reason', 'c1FinalizedSeq', 'fatalCountAtGate', 'outcome', 'notStarted']);
+const BLOCK_DETAIL_KEYS = Object.freeze(['cause', 'model', 'observed']);
+
+const sameJson = (a, b) => { try { return canonicalJson(a) === canonicalJson(b); } catch { return false; } };
+const isSeq = (v) => Number.isInteger(v) && v >= 0;
+const isIsoMs = (v) => typeof v === 'string' && ISO_MS_UTC_RE.test(v);
+const isJsonPointer = (v) => typeof v === 'string' && v.startsWith('/');
+const isPlainJsonOk = (v) => { try { toPlainJson(v); return true; } catch { return false; } };
+
+/**
+ * §7/§10 effective-state accessor -- the ONLY way any verdict/legality/schema path reads a control's
+ * state: `control-run` -> `state`, `gate-disposition` -> `disposition` (a disposition has no `state`).
+ * Anything else (missing/unknown recordType, legacy `{state}`) -> null (fails closed).
+ */
+function controlEffectiveState(rec) {
+  if (!isPlainObject(rec)) return null;
+  if (rec.recordType === RECORD_TYPE.CONTROL_RUN) return typeof rec.state === 'string' ? rec.state : null;
+  if (rec.recordType === RECORD_TYPE.GATE_DISPOSITION) return typeof rec.disposition === 'string' ? rec.disposition : null;
+  return null;
+}
+
+/** The `check-finalized` events for C1 in an eventLog (exactly one is legal, §7 C1 reason contract). */
+function c1FinalizationEvents(eventLog) {
+  return Array.isArray(eventLog) ? eventLog.filter((e) => isPlainObject(e) && e.kind === 'check-finalized' && e.check === 'C1') : [];
+}
+
+/** `fields.blockDetail` (§7): non-empty, exact entries, ordered A, B, then model-independent (null). */
+function blockDetailProblems(detail) {
+  if (!Array.isArray(detail) || detail.length === 0) return ['block-detail-empty-or-not-array'];
+  const out = [];
+  const rank = (m) => (m === 'A' ? 0 : m === 'B' ? 1 : 2);
+  let prev = -1;
+  detail.forEach((d, i) => {
+    if (!exactKeys(d, BLOCK_DETAIL_KEYS)) { out.push(`block-detail[${i}].keys`); return; }
+    if (!C1_BLOCK_DETAIL_CAUSES.includes(d.cause)) out.push(`block-detail[${i}].cause`);
+    if (!(d.model === 'A' || d.model === 'B' || d.model === null)) out.push(`block-detail[${i}].model`);
+    if (!(d.observed === null || typeof d.observed === 'string')) out.push(`block-detail[${i}].observed`);
+    if (rank(d.model) < prev) out.push('block-detail-order');
+    prev = Math.max(prev, rank(d.model));
+  });
+  return out;
+}
+
+/** True iff a check-run reason is the removed pre-RC1-C2 downstream encoding `dependency:..C1..`. */
+function isLegacyDependencyOnC1(reason) {
+  return typeof reason === 'string' && reason.startsWith('dependency:') && reason.slice('dependency:'.length).split(',').includes('C1');
+}
+
+/**
+ * `checkRunProblems(name, rec, {requireFinalization})` -- exact §7/§10 `check-run` shape: bare verdict
+ * base (the notation `BLOCKED(x)` is `{verdict:'BLOCKED', reason:'x'}`), PASS without reason, plain
+ * JSON fields/evidence (the removed `dependency:C1` encoding is rejected by `recordSchemaProblems`
+ * whenever a gate exists). C1 additionally carries `finalizedSeq` /
+ * `finalizedAt` (required when `requireFinalization`, else optional-but-valid) and, when BLOCKED for a
+ * normalized reason, a valid `fields.blockDetail`.
+ */
+function checkRunProblems(name, rec, { requireFinalization = false } = {}) {
+  if (!isPlainObject(rec)) return ['not-object'];
+  const out = [];
+  if (rec.recordType !== RECORD_TYPE.CHECK_RUN) out.push('record-type');
+  const isC1 = name === 'C1';
+  const hasFinal = Object.prototype.hasOwnProperty.call(rec, 'finalizedSeq') || Object.prototype.hasOwnProperty.call(rec, 'finalizedAt');
+  const keysOk = isC1 ? (exactKeys(rec, C1_CHECK_RUN_KEYS) || (!requireFinalization && exactKeys(rec, CHECK_RUN_KEYS))) : exactKeys(rec, CHECK_RUN_KEYS);
+  if (!keysOk) out.push('keys');
+  if (!CHECK_VERDICT_BASES.includes(rec.verdict)) out.push('verdict');
+  if (!(rec.reason === null || (typeof rec.reason === 'string' && CHECK_REASON_RE.test(rec.reason)))) out.push('reason');
+  if (rec.verdict === 'PASS' && rec.reason !== null) out.push('pass-with-reason');
+  if (!isPlainJsonOk(rec.fields) || !isPlainJsonOk(rec.evidence)) out.push('not-plain-json');
+  if (isC1 && (hasFinal || requireFinalization)) {
+    if (!isSeq(rec.finalizedSeq)) out.push('finalizedSeq');
+    if (!isIsoMs(rec.finalizedAt)) out.push('finalizedAt');
+  }
+  if (isC1 && rec.verdict === 'BLOCKED' && C1_NORMALIZED_REASONS.includes(rec.reason)) {
+    const bd = isPlainObject(rec.fields) ? rec.fields.blockDetail : undefined;
+    const bdp = blockDetailProblems(bd);
+    for (const p of bdp) out.push(`fields.${p}`);
+    // §7: 'timeout:load' iff the T2 deadline fired (a load-deadline cause), which takes precedence.
+    if (bdp.length === 0 && (rec.reason === 'timeout:load') !== bd.some((d) => d.cause === 'load-deadline')) out.push('reason-block-detail-mismatch');
+  }
+  return out;
+}
+
+/**
+ * `executionRecordProblems(name, er, {recordType, effectiveState})` -- §7 exact `executionRecord`:
+ * exactly two legal shapes (not started / started), `terminalState` equal to the enclosing record's
+ * EFFECTIVE state, a started record only inside a `control-run`, NRDB only not-started and only
+ * inside a `gate-disposition`.
+ */
+function executionRecordProblems(name, er, { recordType, effectiveState }) {
+  if (!isPlainObject(er)) return ['execution-record-not-object'];
+  const out = [];
+  if (!exactKeys(er, EXECUTION_RECORD_KEYS)) out.push('execution-record.keys');
+  if (er.controlId !== name) out.push('execution-record.controlId');
+  if (er.phase !== CONTROL_OWNING_PHASE[name]) out.push('execution-record.phase');
+  if (!sameJson(er.dependencyIds, CONTROL_DEPENDENCY_IDS[name])) out.push('execution-record.dependencyIds');
+  if (typeof er.started !== 'boolean' || typeof er.crossedStartBoundary !== 'boolean' || er.started !== er.crossedStartBoundary) out.push('execution-record.started');
+  if (!isSeq(er.terminalSeq)) out.push('execution-record.terminalSeq');
+  if (!isIsoMs(er.terminalAt)) out.push('execution-record.terminalAt');
+  const allowed = CONTROL_ALLOWED_STATES[name] || [];
+  if (!allowed.includes(er.terminalState)) out.push('execution-record.terminalState-enum');
+  if (er.terminalState !== effectiveState) out.push('execution-record.terminalState-not-effective-state');
+  if (!Array.isArray(er.evidenceRefs) || !er.evidenceRefs.every(isJsonPointer)) out.push('execution-record.evidenceRefs');
+  if (er.started === false) {
+    if (er.startSeq !== null || er.startedAt !== null) out.push('execution-record.not-started-start-fields');
+    if (er.result !== null) out.push('execution-record.not-started-result');
+    if (!Array.isArray(er.evidenceRefs) || er.evidenceRefs.length !== 0) out.push('execution-record.not-started-evidenceRefs');
+    if (!(CONTROL_NOT_STARTED_STATES[name] || []).includes(er.terminalState)) out.push('execution-record.not-started-state');
+    if (er.terminalState === NRDB_STATE && recordType !== RECORD_TYPE.GATE_DISPOSITION) out.push('execution-record.nrdb-outside-gate-disposition');
+  } else if (er.started === true) {
+    if (recordType !== RECORD_TYPE.CONTROL_RUN) out.push('execution-record.started-outside-control-run');
+    if (!isSeq(er.startSeq) || !isSeq(er.terminalSeq) || !(er.startSeq < er.terminalSeq)) out.push('execution-record.startSeq');
+    if (!isIsoMs(er.startedAt)) out.push('execution-record.startedAt');
+    if (er.terminalState === NRDB_STATE) out.push('execution-record.started-nrdb');
+    if (!isPlainObject(er.result)) out.push('execution-record.started-result');
+    if (!Array.isArray(er.evidenceRefs) || er.evidenceRefs.length === 0) out.push('execution-record.started-evidenceRefs');
+  }
+  return out;
+}
+
+/** §7 exact `dependencyBlockedBy` object shape (all keys required, unknown keys rejected). */
+function dependencyBlockedByShapeProblems(d) {
+  if (!isPlainObject(d)) return ['dependency-blocked-by.not-object'];
+  const out = [];
+  if (!exactKeys(d, DEPENDENCY_BLOCKED_BY_KEYS)) out.push('dependency-blocked-by.keys');
+  if (d.check !== 'C1') out.push('dependency-blocked-by.check');
+  if (d.blockingState !== 'BLOCKED') out.push('dependency-blocked-by.blockingState');
+  if (!C1_NORMALIZED_REASONS.includes(d.reason)) out.push('dependency-blocked-by.reason');
+  if (!isSeq(d.phaseSeq)) out.push('dependency-blocked-by.phaseSeq');
+  if (!isIsoMs(d.blockedAt)) out.push('dependency-blocked-by.blockedAt');
+  if (d.evidenceRef !== '/checks/C1') out.push('dependency-blocked-by.evidenceRef');
+  if (typeof d.failedBeforeDependentStarted !== 'boolean') out.push('dependency-blocked-by.failedBeforeDependentStarted');
+  if (!Array.isArray(d.detail)) out.push('dependency-blocked-by.detail');
+  return out;
+}
+
+/**
+ * §7 L3 referential constraints of a `dependencyBlockedBy` against C1's record, its single retained
+ * `check-finalized` event and `gates.C1`; `failedBeforeDependentStarted:true` is legal only for a
+ * gate-disposition record (with the not-started executionRecord for a control).
+ */
+function dependencyBlockedByReferentialProblems(d, state, rec) {
+  const out = [...dependencyBlockedByShapeProblems(d)];
+  if (!isPlainObject(d)) return out;
+  const s = isPlainObject(state) ? state : {};
+  const c1 = isPlainObject(s.checks) ? s.checks.C1 : null;
+  const gate = isPlainObject(s.gates) && isPlainObject(s.gates.C1) ? s.gates.C1 : null;
+  if (!isPlainObject(c1) || c1.recordType !== RECORD_TYPE.CHECK_RUN) return [...out, 'dependency-blocked-by.c1-record'];
+  if (d.blockingState !== c1.verdict) out.push('dependency-blocked-by.blockingState-ne-c1');
+  if (d.reason !== c1.reason) out.push('dependency-blocked-by.reason-ne-c1');
+  const ev = c1FinalizationEvents(s.eventLog);
+  if (d.phaseSeq !== c1.finalizedSeq || ev.length !== 1 || ev[0].seq !== d.phaseSeq) out.push('dependency-blocked-by.phaseSeq-ne-c1-finalized');
+  if (d.blockedAt !== c1.finalizedAt) out.push('dependency-blocked-by.blockedAt-ne-c1');
+  if (d.failedBeforeDependentStarted !== true) out.push('dependency-blocked-by.failedBeforeDependentStarted');
+  if (!gate || !isSeq(gate.gateSeq) || !(d.phaseSeq < gate.gateSeq)) out.push('dependency-blocked-by.phaseSeq-not-before-gate');
+  if (!isPlainObject(rec) || rec.recordType !== RECORD_TYPE.GATE_DISPOSITION) out.push('dependency-blocked-by.not-gate-disposition');
+  else if (rec.itemKind === 'control' && !(isPlainObject(rec.executionRecord) && rec.executionRecord.started === false)) out.push('dependency-blocked-by.control-started');
+  const bd = isPlainObject(c1.fields) ? c1.fields.blockDetail : undefined;
+  if (!sameJson(d.detail, bd)) out.push('dependency-blocked-by.detail-ne-c1-blockDetail');
+  return out;
+}
+
+/** The `cleanup` marker seq (G-e / CG `cleanupSeq`), or null if not exactly one is recorded. */
+function cleanupMarkerSeq(state) {
+  const ledger = isPlainObject(state) && isPlainObject(state.errorLedger) ? state.errorLedger : null;
+  const markers = ledger && Array.isArray(ledger.markers) ? ledger.markers.filter((m) => isPlainObject(m) && m.name === 'cleanup') : [];
+  return markers.length === 1 && isSeq(markers[0].seq) ? markers[0].seq : null;
+}
+
+// ---- §7 RC1-C2 closed-gate evidence predicates CG-1..CG-7, attribution fields, legal-record list ----
+
+/** §5 phases downstream of C1 (P2..P11; drift-tested against PHASE_ORDER). */
+const DOWNSTREAM_PHASE_IDS = Object.freeze(['P2', 'P3', 'P4', 'P5a', 'P5b', 'P6', 'P6b', 'P7', 'P8', 'P9', 'P10', 'P11']);
+/** §7 attribution `phase` enum = §9.2 marker names: P0..P11, cleanup, closeout. */
+const ATTRIBUTION_PHASES = Object.freeze(['P0', 'P1', ...DOWNSTREAM_PHASE_IDS, 'cleanup', 'closeout']);
+const CLEANUP_PHASES = Object.freeze(['cleanup', 'closeout']);
+/**
+ * §7 legal-under-a-closed-gate list: the passive fatal `eventLog` kinds legal between `gateSeq` and the
+ * cleanup marker (page error, unhandled rejection, console.error, crash/close, WebGL loss) -- the
+ * same kind names the §9 error ledger records.
+ */
+const PASSIVE_FATAL_EVENT_KINDS = Object.freeze(['pageerror', 'unhandledrejection', 'console.error', 'page-crash', 'page-close-outside-cleanup', 'browser-disconnected-outside-cleanup', 'webgl-context-lost']);
+/** The three collections that carry the §7 attribution fields `seq/phase/activeCheck/activeControl`. */
+const ATTRIBUTED_COLLECTIONS = Object.freeze(['spyLedger', 'eventLog', 'stateSnapshots']);
+
+/** `spyLedger` is an array in the run state and `{records, ...}` once capped into R1 (§4.6/T22). */
+function spyLedgerRecords(s) {
+  if (Array.isArray(s.spyLedger)) return s.spyLedger;
+  return isPlainObject(s.spyLedger) && Array.isArray(s.spyLedger.records) ? s.spyLedger.records : [];
+}
+function attributedCollection(s, name) {
+  if (name === 'spyLedger') return spyLedgerRecords(s);
+  return Array.isArray(s[name]) ? s[name] : [];
+}
+const errorLedgerList = (s, k) => (isPlainObject(s.errorLedger) && Array.isArray(s.errorLedger[k]) ? s.errorLedger[k] : []);
+const isDownstreamPhase = (p) => DOWNSTREAM_PHASE_IDS.includes(p);
+const isDownstreamCheck = (c) => DOWNSTREAM_CHECK_NAMES.includes(c);
+/** The ordering seq of a network record (§9.2): raw events by `rawEventSeq`, observations by `startSeq`. */
+const networkSeq = (k, e) => (k === 'requestObservations' ? e.startSeq : e.rawEventSeq);
+
+/**
+ * `attributionFieldProblems(state)` -- §7/§10 RC1-C2: EVERY `spyLedger`, `eventLog` and
+ * `stateSnapshots` entry carries `seq` (the single run counter), `phase` (P0..P11|cleanup|closeout),
+ * `activeCheck` (C1..C20|null) and `activeControl` (N1..N8|null); `eventLog` is monotonic (strictly
+ * increasing `seq`). Independent of the gate outcome.
+ */
+function attributionFieldProblems(state) {
+  const s = isPlainObject(state) ? state : {};
+  const out = [];
+  for (const name of ATTRIBUTED_COLLECTIONS) {
+    const raw = name === 'spyLedger' ? s.spyLedger : s[name];
+    if (raw === undefined || raw === null) continue; // presence is the §10 top-level-key rule
+    let prev = -1;
+    attributedCollection(s, name).forEach((e, i) => {
+      if (!isPlainObject(e) || !isSeq(e.seq) || !ATTRIBUTION_PHASES.includes(e.phase)
+        || !(e.activeCheck === null || CHECK_NAMES.includes(e.activeCheck))
+        || !(e.activeControl === null || CONTROL_NAMES.includes(e.activeControl))) { out.push(`attribution:${name}[${i}]`); return; }
+      if (name === 'eventLog') { if (!(e.seq > prev)) out.push(`attribution:eventLog-not-monotonic[${i}]`); prev = e.seq; }
+    });
+  }
+  return out;
+}
+
+/**
+ * `closedGateEvidenceMatches(state)` -- §7 RC1-C2 closed enumerated predicates CG-1..CG-7 (the
+ * exact meaning of "attributed to a downstream item" in L2, G-f and the gate equations), evaluated
+ * ONCE over the named collections. Returns stable identifiers `CG-n:<collection>[i]:<clause>`.
+ * `cleanupSeq` = the seq of the single `cleanup` marker (`cleanupMarkerSeq`; +Infinity when absent --
+ * G-e then fails separately). A match is a prohibited downstream-execution record under a closed gate.
+ */
+function closedGateEvidenceMatches(state) {
+  const s = isPlainObject(state) ? state : {};
+  const gate = isPlainObject(s.gates) && isPlainObject(s.gates.C1) ? s.gates.C1 : {};
+  const gs = isSeq(gate.gateSeq) ? gate.gateSeq : -1;
+  const cs = cleanupMarkerSeq(s) ?? Infinity;
+  const out = [];
+  // CG-1 markers
+  errorLedgerList(s, 'markers').forEach((m, i) => { if (isPlainObject(m) && isDownstreamPhase(m.name)) out.push(`CG-1:errorLedger.markers[${i}]:${m.name}`); });
+  // CG-2 spyLedger, stateSnapshots
+  for (const name of ['spyLedger', 'stateSnapshots']) {
+    attributedCollection(s, name).forEach((e, i) => {
+      if (!isPlainObject(e)) return;
+      const why = (isSeq(e.seq) && gs < e.seq && e.seq < cs) ? 'post-gate-pre-cleanup'
+        : isDownstreamPhase(e.phase) ? `phase-${e.phase}`
+          : isDownstreamCheck(e.activeCheck) ? `activeCheck-${e.activeCheck}`
+            : (e.activeControl !== null && e.activeControl !== undefined) ? `activeControl-${e.activeControl}`
+              : (CLEANUP_PHASES.includes(e.phase) && e.activeCheck !== null && e.activeCheck !== undefined) ? `cleanup-with-activeCheck-${e.activeCheck}` : null;
+      if (why) out.push(`CG-2:${name}[${i}]:${why}`);
+    });
+  }
+  // CG-3 eventLog
+  attributedCollection(s, 'eventLog').forEach((e, i) => {
+    if (!isPlainObject(e)) return;
+    const why = isDownstreamPhase(e.phase) ? `phase-${e.phase}`
+      : isDownstreamCheck(e.activeCheck) ? `activeCheck-${e.activeCheck}`
+        : (e.activeControl !== null && e.activeControl !== undefined) ? `activeControl-${e.activeControl}`
+          : (e.kind === 'check-finalized' && e.check !== 'C1') ? `check-finalized-${e.check}`
+            : (e.kind === 'wrapper-install' && !(isSeq(e.seq) && e.seq < gs)) ? 'wrapper-install-after-gate' : null;
+    if (why) out.push(`CG-3:eventLog[${i}]:${why}`);
+  });
+  // CG-4 opLedger
+  errorLedgerList(s, 'opLedger').forEach((o, i) => {
+    if (!isPlainObject(o)) return;
+    const why = !['P1', 'cleanup'].includes(o.phase) ? `phase-${o.phase}`
+      : ['C16', 'C17'].includes(o.invokedBy) ? `invokedBy-${o.invokedBy}`
+        : (o.recordType === 'load' && !(isSeq(o.startSeq) && o.startSeq <= gs)) ? 'load-after-gate' : null;
+    if (why) out.push(`CG-4:errorLedger.opLedger[${i}]:${why}`);
+  });
+  // CG-5 raw network events and request observations
+  for (const k of ['requestFailures', 'responseFailures', 'requestObservations']) {
+    errorLedgerList(s, k).forEach((e, i) => {
+      if (!isPlainObject(e)) return;
+      const why = isDownstreamPhase(e.phase) ? `phase-${e.phase}` : isDownstreamCheck(e.activeCheck) ? `activeCheck-${e.activeCheck}` : null;
+      if (why) out.push(`CG-5:errorLedger.${k}[${i}]:${why}`);
+    });
+  }
+  // CG-6 downstream run records / any started executionRecord
+  const checks = isPlainObject(s.checks) ? s.checks : {};
+  const controls = isPlainObject(s.controls) ? s.controls : {};
+  for (const n of DOWNSTREAM_CHECK_NAMES) if (isPlainObject(checks[n]) && checks[n].recordType === RECORD_TYPE.CHECK_RUN) out.push(`CG-6:checks.${n}:check-run`);
+  for (const n of CONTROL_NAMES) {
+    const r = controls[n];
+    if (!isPlainObject(r)) continue;
+    if (r.recordType === RECORD_TYPE.CONTROL_RUN) out.push(`CG-6:controls.${n}:control-run`);
+    if (isPlainObject(r.executionRecord) && r.executionRecord.started === true) out.push(`CG-6:controls.${n}:executionRecord-started`);
+  }
+  // CG-7 live-check evidence: exactly null / exactly [] under a closed gate (targets/screenshots excluded)
+  for (const k of ['c17', 'c20', 'n6']) if (s[k] !== null) out.push(`CG-7:${k}:not-null`);
+  if (!(Array.isArray(s.c4Table) && s.c4Table.length === 0)) out.push('CG-7:c4Table:not-empty');
+  return out;
+}
+
+/**
+ * `closedGateIllegalRecords(state)` -- §7 RC1-C2 "Legal under a closed gate (exhaustive)", checked
+ * per collection SEPARATELY from CG-1..CG-7 (an unknown record class that happens not to match a CG
+ * predicate is still rejected). Legal: every record with `seq < gateSeq`; with `gateSeq < seq <
+ * cleanupSeq` only passive P1 records with null attribution (raw network events, request observations,
+ * the enumerated fatal `eventLog` kinds and their `errorLedger.entries[]`); from `cleanupSeq` on the
+ * cleanup/closeout records (cleanup/closeout markers; `mutation` opLedger records with
+ * `phase:'cleanup'` and `invokedBy:'cleanup:<step>'`; spy/snapshot/event entries with phase
+ * cleanup|closeout and null attribution; network records with phase cleanup|closeout). Records
+ * without a usable seq are illegal (since slice C1 also unsequenced `errorLedger.entries[]`,
+ * FATAL_ENTRY_SEQ_REQUIRED). A pre-gate record labelled cleanup/closeout is illegal (the pre-gate
+ * region is P0/P1/C1 only). Checks/controls/gates are validated by the record-union rules.
+ */
+function closedGateIllegalRecords(state) {
+  const s = isPlainObject(state) ? state : {};
+  const gate = isPlainObject(s.gates) && isPlainObject(s.gates.C1) ? s.gates.C1 : {};
+  const gs = isSeq(gate.gateSeq) ? gate.gateSeq : -1;
+  const cs = cleanupMarkerSeq(s) ?? Infinity;
+  const out = [];
+  const nullAttr = (e) => e.activeCheck === null && e.activeControl === null;
+  // `preOk`: a pre-gate record is a P0/P1 (C1) record -- never one labelled cleanup/closeout.
+  const classify = (seq, preOk, windowOk, cleanupOk) => {
+    if (!isSeq(seq)) return false;
+    if (seq < gs) return preOk();
+    if (seq > gs && seq < cs) return windowOk();
+    if (seq >= cs) return cleanupOk();
+    return false; // seq === gateSeq: only gates.C1 owns it
+  };
+  const notCleanupPhase = (e) => () => !CLEANUP_PHASES.includes(e.phase);
+  errorLedgerList(s, 'markers').forEach((m, i) => {
+    if (!isPlainObject(m) || !classify(m.seq, () => !CLEANUP_PHASES.includes(m.name), () => false, () => CLEANUP_PHASES.includes(m.name))) out.push(`closed-gate-illegal-record:errorLedger.markers[${i}]`);
+  });
+  for (const name of ['spyLedger', 'stateSnapshots']) {
+    attributedCollection(s, name).forEach((e, i) => {
+      if (!isPlainObject(e) || !classify(e.seq, notCleanupPhase(e), () => false, () => CLEANUP_PHASES.includes(e.phase) && nullAttr(e))) out.push(`closed-gate-illegal-record:${name}[${i}]`);
+    });
+  }
+  attributedCollection(s, 'eventLog').forEach((e, i) => {
+    if (!isPlainObject(e) || !classify(e.seq, notCleanupPhase(e), () => e.phase === 'P1' && nullAttr(e) && PASSIVE_FATAL_EVENT_KINDS.includes(e.kind), () => CLEANUP_PHASES.includes(e.phase) && nullAttr(e))) out.push(`closed-gate-illegal-record:eventLog[${i}]`);
+  });
+  for (const k of ['requestFailures', 'responseFailures', 'requestObservations']) {
+    errorLedgerList(s, k).forEach((e, i) => {
+      if (!isPlainObject(e) || !classify(networkSeq(k, e), notCleanupPhase(e), () => e.phase === 'P1' && e.activeCheck === null, () => CLEANUP_PHASES.includes(e.phase))) out.push(`closed-gate-illegal-record:errorLedger.${k}[${i}]`);
+    });
+  }
+  errorLedgerList(s, 'opLedger').forEach((o, i) => {
+    if (!isPlainObject(o) || !classify(o.startSeq, () => o.phase === 'P1', () => false, () => o.recordType === 'mutation' && o.phase === 'cleanup' && typeof o.invokedBy === 'string' && o.invokedBy.startsWith('cleanup:'))) out.push(`closed-gate-illegal-record:errorLedger.opLedger[${i}]`);
+  });
+  // Fatal error-ledger entries: legal before the gate and from cleanup on (a fatal event during
+  // cleanup/closeout is still recorded -- row 1); between gate and cleanup only the entries of the
+  // passive fatal kinds and the network fatal-witness entries. An unsequenced entry is illegal
+  // (FATAL_ENTRY_SEQ_REQUIRED, slice C1).
+  errorLedgerList(s, 'entries').forEach((e, i) => {
+    if (isPlainObject(e) && !isSeq(e.seq) && !FATAL_ENTRY_SEQ_REQUIRED) return;
+    if (!isPlainObject(e) || !classify(e.seq, () => true, () => PASSIVE_FATAL_EVENT_KINDS.includes(e.kind) || e.kind === 'required-resource-failure', () => true)) out.push(`closed-gate-illegal-record:errorLedger.entries[${i}]`);
+  });
+  return out;
+}
+
+/**
+ * `itemAttributionProblems(state, itemId)` -- L2 / G-f attribution. Per §7 the closed-gate evidence
+ * predicates CG-1..CG-7 ARE the meaning of attribution, so ANY CG match (global) is attributed to every
+ * downstream item; in addition a record whose `activeCheck`/`activeControl` names `itemId` is reported
+ * under the item-specific label. Non-empty => L2 false (NRDB illegal) / G-f violated.
+ */
+function itemAttributionProblems(state, itemId) {
+  const s = isPlainObject(state) ? state : {};
+  const out = closedGateEvidenceMatches(s).map((m) => `closed-gate-evidence:${m}`);
+  const key = itemId.startsWith('N') ? 'activeControl' : 'activeCheck';
+  const collections = ATTRIBUTED_COLLECTIONS.map((n) => [n, attributedCollection(s, n)]);
+  if (key === 'activeCheck') for (const k of ['requestFailures', 'responseFailures', 'requestObservations']) collections.push([`errorLedger.${k}`, errorLedgerList(s, k)]);
+  for (const [label, list] of collections) {
+    if (list.some((e) => isPlainObject(e) && e[key] === itemId)) out.push(`attributed-record:${label}:${itemId}`);
+  }
+  return out;
+}
+
+/**
+ * `gateDispositionProblems(itemId, rec, state)` -- exact §7 gate-disposition shape + G-a..G-e and
+ * the evidenceRefs half of G-f (the CG half is `itemAttributionProblems`, extended in B2). A
+ * disposition is legal only beside a closed `gates.C1`.
+ */
+function gateDispositionProblems(itemId, rec, state) {
+  if (!isPlainObject(rec)) return ['not-object'];
+  const s = isPlainObject(state) ? state : {};
+  const out = [];
+  if (Object.prototype.hasOwnProperty.call(rec, 'verdict')) out.push('gate-disposition-has-verdict');
+  if (Object.prototype.hasOwnProperty.call(rec, 'state')) out.push('gate-disposition-has-state');
+  if (!exactKeys(rec, GATE_DISPOSITION_KEYS)) out.push('keys');
+  const isCheck = itemId.startsWith('C');
+  if (rec.recordType !== RECORD_TYPE.GATE_DISPOSITION) out.push('record-type');
+  if (rec.itemId !== itemId) out.push('itemId');
+  if (rec.itemKind !== (isCheck ? 'check' : 'control')) out.push('itemKind');
+  if (rec.synthetic !== true) out.push('synthetic');
+  if (rec.gateGenerated !== true) out.push('gateGenerated');
+  if (rec.executed !== false) out.push('executed');
+  if (rec.startSeq !== null || rec.startedAt !== null) out.push('start-fields-not-null');
+  if (!isSeq(rec.dispositionSeq)) out.push('dispositionSeq');
+  if (!isIsoMs(rec.dispositionAt)) out.push('dispositionAt');
+  if (!sameJson(rec.evidenceRefs, GATE_EVIDENCE_REFS)) out.push('G-f:evidenceRefs');
+  const gate = isPlainObject(s.gates) && isPlainObject(s.gates.C1) ? s.gates.C1 : null;
+  const c1 = isPlainObject(s.checks) ? s.checks.C1 : null;
+  const outcome = gate ? gate.outcome : null;
+  if (outcome !== GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED && outcome !== GATE_OUTCOME.CLOSED_OTHER) {
+    out.push('gate-disposition-without-closed-gate');
+    return out;
+  }
+  // G-a
+  if (rec.gateOutcome !== outcome) out.push('G-a:gateOutcome');
+  const expectedReason = outcome === GATE_OUTCOME.CLOSED_OTHER ? GATE_BLOCKING_REASON_CLOSED_OTHER : (isPlainObject(c1) ? c1.reason : undefined);
+  if (rec.blockingReason !== expectedReason || (outcome === GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED && !C1_NORMALIZED_REASONS.includes(rec.blockingReason))) out.push('G-a:blockingReason');
+  // G-b
+  const expectedDisposition = isCheck ? GATE_CHECK_DISPOSITION : GATE_CONTROL_DISPOSITION[outcome][itemId];
+  if (rec.disposition !== expectedDisposition) out.push('G-b:disposition');
+  // G-c
+  const needsDep = outcome === GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED && (isCheck || rec.disposition === NRDB_STATE);
+  if (needsDep) for (const p of dependencyBlockedByReferentialProblems(rec.dependencyBlockedBy, s, rec)) out.push(`G-c:${p}`);
+  else if (rec.dependencyBlockedBy !== null) out.push('G-c:dependencyBlockedBy-not-null');
+  // G-d
+  if (isCheck) { if (rec.executionRecord !== null) out.push('G-d:executionRecord-not-null'); } else {
+    for (const p of executionRecordProblems(itemId, rec.executionRecord, { recordType: RECORD_TYPE.GATE_DISPOSITION, effectiveState: rec.disposition })) out.push(`G-d:${p}`);
+    const er = rec.executionRecord;
+    if (isPlainObject(er) && er.started !== false) out.push('G-d:executionRecord-started');
+    if (isPlainObject(er) && er.terminalSeq !== rec.dispositionSeq) out.push('G-d:terminalSeq-ne-dispositionSeq');
+  }
+  // G-e (strict increase across items is checked by `recordSchemaProblems`)
+  if (!isSeq(gate.gateSeq) || !(rec.dispositionSeq > gate.gateSeq)) out.push('G-e:dispositionSeq-not-after-gate');
+  const cleanupSeq = cleanupMarkerSeq(s);
+  if (cleanupSeq === null) out.push('G-e:cleanup-marker-missing');
+  else if (!(rec.dispositionSeq < cleanupSeq)) out.push('G-e:dispositionSeq-not-before-cleanup');
+  // G-f (CG half): any CG-1..CG-7 match violates G-f for every disposition (reported once per item;
+  // the concrete matches are listed once by `recordSchemaProblems`), plus item-attributed records.
+  const attr = itemAttributionProblems(s, itemId);
+  if (attr.some((p) => p.startsWith('closed-gate-evidence:'))) out.push('G-f:closed-gate-evidence');
+  for (const p of attr) if (!p.startsWith('closed-gate-evidence:')) out.push(`G-f:${p}`);
+  return out;
+}
+
+/** §7 gate outcome rule, recomputed from its inputs (never trusted from the stored record). */
+function recomputeGateOutcome({ c1Verdict, c1Reason, fatalCountAtGate }) {
+  if (c1Verdict === 'PASS' && fatalCountAtGate === 0) return GATE_OUTCOME.OPEN;
+  if (c1Verdict === 'BLOCKED' && C1_NORMALIZED_REASONS.includes(c1Reason) && fatalCountAtGate === 0) return GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED;
+  return GATE_OUTCOME.CLOSED_OTHER;
+}
+
+/**
+ * Pre-gate fatal count recomputation interface (§7 gate equations; §9.2 witness invariant): the
+ * number of fatal `errorLedger.entries` with `seq < gateSeq`. A network entry
+ * (`kind:'required-resource-failure'`) counts through its single fatal witness: its `seq` must equal
+ * the referenced `fatalWitnesses[].witnessSeq`. An entry without an integer `seq` cannot be ordered
+ * against the gate and is a contradiction. (Slice C supplies sequenced entries and the witness
+ * ledger; this function is the B1 side of that interface.)
+ */
+function recomputeFatalCountAtGate(errorLedger, gateSeq) {
+  const ledger = isPlainObject(errorLedger) ? errorLedger : {};
+  const entries = Array.isArray(ledger.entries) ? ledger.entries : null;
+  if (entries === null) return { count: null, problems: ['fatal-entries-missing'] };
+  const witnesses = Array.isArray(ledger.fatalWitnesses) ? ledger.fatalWitnesses : [];
+  const problems = [];
+  let count = 0;
+  let indeterminate = false;
+  for (const e of entries) {
+    if (!isPlainObject(e) || !isSeq(e.seq)) {
+      if (FATAL_ENTRY_SEQ_REQUIRED) problems.push('fatal-entry-unsequenced');
+      indeterminate = true;
+      continue;
+    }
+    if (e.kind === 'required-resource-failure') {
+      const w = witnesses.filter((x) => isPlainObject(x) && x.witnessId === e.witnessId);
+      if (w.length !== 1 || w[0].witnessSeq !== e.seq) { problems.push('fatal-entry-witness-mismatch'); continue; }
+    }
+    if (e.seq < gateSeq) count += 1;
+  }
+  // §9.2 witness <-> entry bijection restricted to the gate: a witness with witnessSeq < gateSeq that
+  // has no single required-resource-failure entry is omitted from the count => contradiction.
+  for (const w of witnesses) {
+    if (!isPlainObject(w) || !isSeq(w.witnessSeq) || !(w.witnessSeq < gateSeq)) continue;
+    const es = entries.filter((e) => isPlainObject(e) && e.kind === 'required-resource-failure' && e.witnessId === w.witnessId);
+    if (es.length !== 1) problems.push('fatal-witness-without-single-entry');
+  }
+  return { count: indeterminate ? null : count, problems };
+}
+
+/**
+ * §7 atomic gate preparation, validator side: every `responseFailures[]` entry finalized by the gate
+ * (`finalizedBy:'gate'`) must satisfy `responseSeq < finalizedSeq < gateSeq`; an entry finalized by
+ * the gate after `gateSeq` was allocated is an evidence contradiction (row 5, §9.2 test (25)).
+ */
+function gateFinalizationProblems(errorLedger, gateSeq) {
+  const out = [];
+  const list = isPlainObject(errorLedger) && Array.isArray(errorLedger.responseFailures) ? errorLedger.responseFailures : [];
+  list.forEach((e, i) => {
+    if (!isPlainObject(e) || e.finalizedBy !== 'gate') return;
+    if (!isSeq(e.finalizedSeq) || !isSeq(gateSeq) || !(e.finalizedSeq < gateSeq)) out.push(`gate-finalized-after-gate:responseFailures[${i}]`);
+    else if (!isSeq(e.responseSeq) || !(e.responseSeq < e.finalizedSeq)) out.push(`gate-finalized-before-response:responseFailures[${i}]`);
+  });
+  return out;
+}
+
+const isThenable = (v) => v !== null && (typeof v === 'object' || typeof v === 'function') && typeof v.then === 'function';
+
+/**
+ * Gate-time finalization of one provisional HTTP response (§9.2 two-stage rule, §7 gate preparation):
+ * R-3/R-4 evaluated over the record truncated at the freshly allocated `finalizedSeq` against the
+ * ledger's persisted `prefixDerivation` (slice C2) -- unresolved ownership => `unknown-fatal`. Returns the finalization patch. Under the
+ * live empty OPTIONAL_RESPONSE_RULES no provisional entry can exist, so this never runs live.
+ */
+function defaultGateFinalization(e, { ledger, finalizedSeq, rules = OPTIONAL_RESPONSE_RULES } = {}) {
+  return provisionalFinalization(e, { ledger, finalizedSeq, rules });
+}
+
+/**
+ * Synchronous rebuild of the fatal-witness state at the gate (§9.2 W-1..W-5): the full
+ * `syncFatalWitnesses` recomputation -- `correlatedRequests[]`, `fatalWitnesses[]` (one per fatal
+ * identity; a witness newly created here gets `witnessSeq` = its effective seq = the gate
+ * finalizedSeq), the witness<->entry bijection and `witnessCount`; `fatalCount` += 1 only per CREATED
+ * witness. `appendEntry` defaults to a direct ledger push (the in-page gate has no node sink).
+ */
+function defaultRebuildFatalWitnessState(ledger, { appendEntry = directWitnessEntryAppender(ledger) } = {}) {
+  syncFatalWitnesses(ledger, { appendEntry });
+}
+
+/**
+ * `prepareC1Gate({c1, errorLedger, seqOf, clock, finalizeAtGate, rebuildFatalWitnessState})` -- §7
+ * RC1-C2 atomic gate preparation, SYNCHRONOUS (no await, no listener turn; a hook returning a thenable
+ * is a harness defect and throws). In this order: (1) finalize every still-provisional
+ * `responseFailures[]` entry (`finalizedBy:'gate'`, allocating its `finalizedSeq` first, then
+ * classifying over the record truncated there); (2) rebuild the fatal-witness state
+ * (`syncFatalWitnesses`); (3) recompute `fatalCountAtGate` (every fatal entry now in the ledger
+ * precedes the gate by construction); (4) only then allocate `gateSeq` and build `gates.C1`.
+ * Hence `responseSeq < finalizedSeq <= witnessSeq < gateSeq`. `c1` must be C1's finalized check-run
+ * record. Returns the exact `gates.C1` record.
+ */
+function prepareC1Gate({ c1, errorLedger, seqOf, clock = defaultClock, finalizeAtGate = defaultGateFinalization, rebuildFatalWitnessState = defaultRebuildFatalWitnessState }) {
+  if (!isPlainObject(c1) || c1.recordType !== RECORD_TYPE.CHECK_RUN || !isSeq(c1.finalizedSeq)) throw new TypeError('prepareC1Gate: C1 must be a finalized check-run record');
+  if (typeof seqOf !== 'function') throw new TypeError('prepareC1Gate: seqOf required (the run\'s single counter)');
+  const ledger = isPlainObject(errorLedger) ? errorLedger : { fatalCount: 0, entries: [] };
+  // (1) finalize gate-pending provisional entries
+  const gateFinalized = [];
+  for (const e of Array.isArray(ledger.responseFailures) ? ledger.responseFailures : []) {
+    if (!isPlainObject(e) || e.stage !== 'provisional' || isSeq(e.finalizedSeq)) continue;
+    const finalizedSeq = seqOf();
+    const r = finalizeAtGate(e, { ledger, finalizedSeq });
+    if (isThenable(r)) throw new TypeError('prepareC1Gate: finalizeAtGate must be synchronous');
+    applyProvisionalFinalization(e, isPlainObject(r) ? r : {}, finalizedSeq, 'gate');
+    gateFinalized.push(e);
+  }
+  // (2) rebuild witnesses
+  const rebuilt = rebuildFatalWitnessState(ledger, { gateFinalized, seqOf });
+  if (isThenable(rebuilt)) throw new TypeError('prepareC1Gate: rebuildFatalWitnessState must be synchronous');
+  // (3) fatalCountAtGate: every fatal entry recorded so far precedes the gate
+  const fatalCountAtGate = Array.isArray(ledger.entries) ? ledger.entries.length : 0;
+  // (4) allocate gateSeq last
+  const gateSeq = seqOf();
+  const outcome = recomputeGateOutcome({ c1Verdict: c1.verdict, c1Reason: c1.reason, fatalCountAtGate });
+  return {
+    gateSeq, gateAt: clock.nowIso(), c1Verdict: c1.verdict, c1Reason: c1.reason, c1FinalizedSeq: c1.finalizedSeq,
+    fatalCountAtGate, outcome, notStarted: outcome === GATE_OUTCOME.OPEN ? [] : [...DOWNSTREAM_ITEM_NAMES],
+  };
+}
+
+// ============================================================================================
+// §9.2 request-failure / HTTP-error classification, request observations and the one-to-one
+// fatal-witness correlation (slice C1; procedure §9.2 RC1 + RC1-C1 + RC1-C2, §10). Pure layer:
+// `classifyRequestFailure`, `classifyHttpResponse` (R-1..R-5, two-stage), the frozen EMPTY
+// `OPTIONAL_RESPONSE_RULES`, `correlateNetworkEvents` (W-1..W-5), the event-time witness maintenance
+// `syncFatalWitnesses` (fatalCount incremented ONLY at witness creation), the closeout recomputation
+// `networkLedgerProblems` (=> `fatal-witness-mismatch` / `request-classification-mismatch`, row 5)
+// and the cross-collection seq-uniqueness rule. Slice C2 (section below `correlateNetworkEvents`):
+// the exact operation ledger, the durable prefix-source ledger, `derivePrefixes` / `prefixDerivation`,
+// ambiguous-prefix accounting and `boundPrefix` provenance (prefix-source `evidenceRefs`); before the
+// load windows close the derivation is non-distinguishing (nothing can bind => fail-safe).
+// ============================================================================================
+
+/**
+ * §9.2 R-2: the frozen bounded expected-status exceptions. EMPTY in this procedure revision (so in a
+ * live run every status >= 400 is fatal; the acknowledged conservative false-FAIL risk). A rule may
+ * only be added by a future reviewed procedure revision -- never here.
+ */
+const OPTIONAL_RESPONSE_RULES = Object.freeze([]);
+const NETWORK_URL_CLASSES = Object.freeze(['bootstrap', 'harness-endpoint', 'other']);
+const NETWORK_CLASSIFICATION = Object.freeze({ FATAL_REQUIRED: 'fatal-required-resource', EXPECTED: 'expected-cancellation', DIAGNOSTIC: 'diagnostic-non-required', UNKNOWN_FATAL: 'unknown-fatal' });
+const NETWORK_CLASSIFICATIONS = Object.freeze(Object.values(NETWORK_CLASSIFICATION));
+const FATAL_NETWORK_CLASSIFICATIONS = Object.freeze([NETWORK_CLASSIFICATION.FATAL_REQUIRED, NETWORK_CLASSIFICATION.UNKNOWN_FATAL]);
+/** W-2 severity order (total, worst first): unknown-fatal > fatal-required-resource > diagnostic > expected. */
+const NETWORK_SEVERITY = Object.freeze({ 'unknown-fatal': 3, 'fatal-required-resource': 2, 'diagnostic-non-required': 1, 'expected-cancellation': 0 });
+const EC_RESOURCE_TYPES = Object.freeze(['fetch', 'xhr', 'other', 'image']);
+const EC_RULE_OF_OPERATION = Object.freeze({ hide: 'EC-hide', unload: 'EC-unload', teardown: 'EC-teardown' });
+const MUTATION_OPERATION_TYPES = Object.freeze(['hide', 'unload', 'teardown']);
+const ERR_ABORTED_TEXT = 'net::ERR_ABORTED';
+const NETWORK_FATAL_ENTRY_KIND = 'required-resource-failure';
+const CLASSIFIER_RESULT_KEYS = Object.freeze(['eventKind', 'url', 'method', 'status', 'failureReason', 'resourceType', 'phase', 'modelId', 'boundPrefix', 'operationId', 'opStartSeq', 'classification', 'rule', 'reasons', 'evidenceRefs', 'verdictEffect']);
+const REQUEST_OBSERVATION_KEYS = Object.freeze(['reqId', 'startSeq', 'method', 'resourceType', 'urlRedacted', 'urlClass', 'isNavigationRequest', 'phase', 'activeCheck']);
+const RAW_EVENT_COMMON_KEYS = Object.freeze(['reqId', 'reqIdValid', 'rawEventId', 'rawEventSeq', 'identityKey', 'duplicateOf', 'startSeq', 'method', 'resourceType', 'urlRedacted', 'urlClass', 'isNavigationRequest', 'frameIsMain', 'redirected', 'phase', 'activeCheck', 'eventTime', 'closeout', 'agree']);
+const REQUEST_FAILURE_KEYS = Object.freeze([...RAW_EVENT_COMMON_KEYS, 'failSeq', 'errorText']);
+const RESPONSE_FAILURE_KEYS = Object.freeze([...RAW_EVENT_COMMON_KEYS, 'responseSeq', 'stage', 'finalizedSeq', 'finalizedBy', 'status', 'requirement', 'modelBindingObserved']);
+const CORRELATED_REQUEST_KEYS = Object.freeze(['identityKey', 'identityKind', 'reqId', 'rawEventRefs', 'eventKinds', 'ownership', 'worstClassification', 'fatal', 'fatalSinceSeq', 'witnessId']);
+const FATAL_WITNESS_KEYS = Object.freeze(['witnessId', 'requestIdentityKey', 'rawEventRefs', 'fatalRawEventRefs', 'worstClassification', 'witnessSeq', 'phase', 'activeCheck', 'modelOwnership', 'ledgerEntryRef', 'eventTime', 'closeout', 'agree', 'fatal']);
+const WITNESS_COUNT_KEYS = Object.freeze(['requestObservations', 'rawEvents', 'correlatedIdentities', 'fatalIdentities', 'fatalWitnesses', 'requiredResourceFailureEntries', 'nonNetworkFatalEntries', 'fatalCount']);
+/** The slice-C1 error-ledger collections (all required in R1, §10; verdict-critical, never truncated). */
+const NETWORK_LEDGER_LIST_KEYS = Object.freeze(['requestObservations', 'requestFailures', 'responseFailures', 'correlatedRequests', 'fatalWitnesses']);
+/** §9.2 cross-field rule (v): the owning phase(s) of each check (§5 order; C7/C18 appear in two phases). */
+const CHECK_OWNING_PHASES = Object.freeze({
+  C1: ['P1'], C2: ['P3'], C3: ['P3'], C4: ['P4'], C5: ['P4'], C6: ['P6'], C7: ['P5a', 'P5b'], C8: ['P6'], C9: ['P7'], C10: ['P7'],
+  C11: ['P7'], C12: ['P7'], C13: ['P7'], C14: ['P8'], C15: ['P8'], C16: ['P9'], C17: ['P9'], C18: ['P5a', 'P10'], C19: ['P11'], C20: ['P6b'],
+});
+
+const isNonEmptyStr = (v) => typeof v === 'string' && v !== '';
+const cloneJson = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+const isFatalClassification = (c) => FATAL_NETWORK_CLASSIFICATIONS.includes(c);
+const worseClassification = (a, b) => ((NETWORK_SEVERITY[b] ?? 3) > (NETWORK_SEVERITY[a] ?? 3) ? b : a);
+const requirementOf = (classification) => (classification === NETWORK_CLASSIFICATION.FATAL_REQUIRED ? 'required' : classification === NETWORK_CLASSIFICATION.DIAGNOSTIC ? 'optional' : 'unknown');
+
+/** `origin + dirname(path)` of a redacted URL (§9.2 `prefixKey`), or null when not an absolute URL. */
+function networkPrefixKey(urlRedacted) {
+  try {
+    const u = new URL(urlRedacted);
+    const p = u.pathname;
+    const cut = p.lastIndexOf('/');
+    return `${u.origin}${cut <= 0 ? '/' : p.slice(0, cut)}`;
+  } catch { return null; }
+}
+
+/** The last path segment of a redacted URL (R-3 `pathSuffix` match), or null. */
+function lastPathSegment(urlRedacted) {
+  try {
+    const p = new URL(urlRedacted).pathname;
+    return p.slice(p.lastIndexOf('/') + 1);
+  } catch { return null; }
+}
+
+/**
+ * Observed model binding of a prefix key under a derivation (§9.2 "Binding of a candidate"):
+ * `unique` (key in exactly one `modelPrefixes[M]`), `ambiguous` (binding non-distinguishing or the key
+ * ambiguous), `unbound` (binding available, key in neither set). `reason` labels the ambiguous case.
+ */
+function prefixBindingOf(prefixKey, pd) {
+  if (!isPlainObject(pd) || pd.bindingAvailable !== true) return { status: 'ambiguous', modelId: null, reason: 'binding-unavailable' };
+  if (Array.isArray(pd.ambiguousKeys) && pd.ambiguousKeys.includes(prefixKey)) return { status: 'ambiguous', modelId: null, reason: 'prefix-ambiguous' };
+  const mp = isPlainObject(pd.modelPrefixes) ? pd.modelPrefixes : {};
+  const hits = ['A', 'B'].filter((m) => Array.isArray(mp[m]) && mp[m].includes(prefixKey));
+  if (hits.length === 1) return { status: 'unique', modelId: hits[0], reason: null };
+  if (hits.length > 1) return { status: 'ambiguous', modelId: null, reason: 'prefix-ambiguous' };
+  return { status: 'unbound', modelId: null, reason: 'unbound' };
+}
+
+/** A ClassifierResult for a FATAL outcome (all couplings of §9.2 "Exact nullability and coupling"). */
+function fatalClassifierResult(base, classification, reasons) {
+  return { ...base, modelId: null, boundPrefix: null, operationId: null, opStartSeq: null, classification, rule: null, reasons, evidenceRefs: [], verdictEffect: 'fatal-row1' };
+}
+
+/**
+ * The minimum operation-record shape a classifier needs before it may ground a NON-fatal result
+ * (the exact disjoint shapes + couplings are validated by `opLedgerRecordProblems` in
+ * `networkLedgerProblems`, row 5 -- slice C2): `operationId`, `startSeq`, the
+ * discriminator and the model coupling (hide/unload => model A|B, teardown => null; load => model A|B
+ * with an `expectedRequestWindow` object). Any other record makes the event unclassifiable.
+ */
+const isOpLedgerRecordShapeKnown = (o) => isPlainObject(o) && isNonEmptyStr(o.operationId) && isSeq(o.startSeq) && (
+  (o.recordType === 'load' && (o.modelId === 'A' || o.modelId === 'B') && isPlainObject(o.expectedRequestWindow))
+  || (o.recordType === 'mutation' && MUTATION_OPERATION_TYPES.includes(o.operationType)
+    && (o.operationType === 'teardown' ? o.modelId === null : (o.modelId === 'A' || o.modelId === 'B'))));
+
+/**
+ * `classifyRequestFailure(event, opLedger, markers, prefixDerivation[, prefixSourceLedger]) ->
+ * ClassifierResult` (§9.2) -- pure, total, deterministic. `prefixSourceLedger` (slice C2) only supplies
+ * the JSON Pointers of the entries supporting a `boundPrefix` (`evidenceRefs`); it never decides a binding. `event = {reqIdValid, startSeq, failSeq, method, resourceType,
+ * urlRedacted, urlClass, errorText, isNavigationRequest, phase}`. EXPECTED_CANCELLATION iff C-a ∧ C-b ∧
+ * (a mutationOperation O satisfying C-c, C-c′ (hide/unload), C-d, C-e -- the LATEST such O); else
+ * FATAL. `unknown-fatal` when unclassifiable (missing/invalid field incl. `reqIdValid !== true`, an
+ * unknown op shape, an exception) or when an EC candidate (C-a ∧ C-b) fails C-c′ only through an
+ * ambiguous/non-distinguishing binding. C-e "every check has a recorded final verdict" is read from
+ * the record as: the `cleanup` marker (the runner's last act, written after every check/control record
+ * is final) precedes `O.startSeq`. `reasons` list every unmet condition of the evaluated O (the latest
+ * in-flight mutation) plus a sub-label `bootstrap|harness-endpoint|other|unclassifiable`.
+ */
+function classifyRequestFailure(event, opLedger, markers, prefixDerivation, prefixSourceLedger = null) {
+  let base = { eventKind: 'requestfailed', url: null, method: null, status: null, failureReason: null, resourceType: null, phase: null };
+  let sub = 'unclassifiable';
+  const unclassifiable = () => fatalClassifierResult(base, NETWORK_CLASSIFICATION.UNKNOWN_FATAL, ['unclassifiable', sub]);
+  let ev;
+  try {
+    ev = isPlainObject(event) ? { ...event } : {}; // one read of every field (a throwing getter => unclassifiable)
+    base = {
+      eventKind: 'requestfailed', url: typeof ev.urlRedacted === 'string' ? ev.urlRedacted : null, method: typeof ev.method === 'string' ? ev.method : null, status: null,
+      failureReason: typeof ev.errorText === 'string' ? ev.errorText : null, resourceType: typeof ev.resourceType === 'string' ? ev.resourceType : null,
+      phase: ATTRIBUTION_PHASES.includes(ev.phase) ? ev.phase : null,
+    };
+    sub = NETWORK_URL_CLASSES.includes(ev.urlClass) ? ev.urlClass : 'unclassifiable';
+  } catch {
+    return unclassifiable();
+  }
+  try {
+    if (ev.reqIdValid !== true || !isSeq(ev.startSeq) || !isSeq(ev.failSeq) || !(ev.startSeq < ev.failSeq)
+      || base.url === null || base.method === null || base.resourceType === null || base.phase === null || sub === 'unclassifiable'
+      || typeof ev.isNavigationRequest !== 'boolean' || !(ev.errorText === null || typeof ev.errorText === 'string')
+      || !Array.isArray(opLedger) || !Array.isArray(markers) || !opLedger.every(isOpLedgerRecordShapeKnown)
+      || !markers.every((m) => isPlainObject(m) && isSeq(m.seq) && typeof m.name === 'string')) return unclassifiable();
+    const ca = ev.errorText === ERR_ABORTED_TEXT;
+    const cb = ev.urlClass === 'other' && ev.isNavigationRequest === false && EC_RESOURCE_TYPES.includes(ev.resourceType);
+    const prefixKey = networkPrefixKey(ev.urlRedacted);
+    const evaluate = (O) => {
+      const unmet = [];
+      let ambiguity = null;
+      let binding = null;
+      if (O.operationType === 'hide' || O.operationType === 'unload') {
+        binding = prefixBindingOf(prefixKey, prefixDerivation);
+        if (!(binding.status === 'unique' && binding.modelId === O.modelId)) {
+          unmet.push('C-c′');
+          if (binding.status === 'ambiguous') { ambiguity = binding.reason; unmet.push(binding.reason); }
+        }
+      }
+      const later = [...opLedger.filter((o) => o.startSeq > O.startSeq).map((o) => o.startSeq), ...markers.filter((m) => m.seq > O.startSeq).map((m) => m.seq)];
+      const end = later.length ? Math.min(...later) : null;
+      if (!(end === null || ev.failSeq < end)) unmet.push('C-d');
+      let ce;
+      if (O.operationType === 'teardown') ce = ev.phase === 'cleanup' && markers.some((m) => m.name === 'cleanup' && m.seq < O.startSeq);
+      else ce = ev.phase === 'P9' || ev.phase === 'cleanup';
+      if (!ce) unmet.push('C-e');
+      return { unmet, ambiguity, binding };
+    };
+    const inflight = opLedger.map((o, i) => ({ o, i })).filter(({ o }) => o.recordType === 'mutation' && ev.startSeq < o.startSeq && o.startSeq < ev.failSeq).sort((x, y) => y.o.startSeq - x.o.startSeq);
+    const reasons = [];
+    if (!ca) reasons.push('C-a');
+    if (!cb) reasons.push('C-b');
+    if (ca && cb) {
+      const hit = inflight.find(({ o }) => evaluate(o).unmet.length === 0);
+      if (hit) {
+        const O = hit.o;
+        const modelBound = O.operationType !== 'teardown';
+        const preceding = markers.map((m, j) => ({ m, j })).filter(({ m }) => m.seq < O.startSeq).sort((x, y) => y.m.seq - x.m.seq)[0];
+        return {
+          ...base,
+          modelId: modelBound ? O.modelId : null, boundPrefix: modelBound ? prefixKey : null,
+          operationId: O.operationId, opStartSeq: O.startSeq,
+          classification: NETWORK_CLASSIFICATION.EXPECTED, rule: EC_RULE_OF_OPERATION[O.operationType], reasons: [],
+          evidenceRefs: [
+            `/errorLedger/opLedger/${hit.i}`, ...(modelBound ? prefixSupportRefs(prefixSourceLedger, O.modelId, prefixKey) : []),
+            ...(preceding ? [`/errorLedger/markers/${preceding.j}`] : []), ...(modelBound ? ['/errorLedger/prefixDerivation'] : []),
+          ],
+          verdictEffect: 'none',
+        };
+      }
+    }
+    if (inflight.length === 0) {
+      reasons.push('C-c');
+      return fatalClassifierResult(base, NETWORK_CLASSIFICATION.FATAL_REQUIRED, [...reasons, sub]);
+    }
+    const r = evaluate(inflight[0].o);
+    reasons.push(...r.unmet);
+    const unknown = ca && cb && r.ambiguity !== null;
+    return fatalClassifierResult(base, unknown ? NETWORK_CLASSIFICATION.UNKNOWN_FATAL : NETWORK_CLASSIFICATION.FATAL_REQUIRED, [...reasons, sub]);
+  } catch {
+    return unclassifiable();
+  }
+}
+
+const isOptionalResponseRuleShape = (r) => exactKeys(r, ['ruleId', 'method', 'model', 'pathSuffix', 'resourceTypes', 'statuses', 'rationale'])
+  && isNonEmptyStr(r.ruleId) && isNonEmptyStr(r.method) && (r.model === 'A' || r.model === 'B') && isNonEmptyStr(r.pathSuffix) && !r.pathSuffix.includes('/')
+  && Array.isArray(r.resourceTypes) && r.resourceTypes.every((t) => EC_RESOURCE_TYPES.includes(t))
+  && Array.isArray(r.statuses) && r.statuses.every((s) => Number.isInteger(s) && s >= 400) && typeof r.rationale === 'string';
+
+/** The first rule of `rules` matching method, resourceType, status and the last path segment (exact), or null. */
+function matchingResponseRule(event, rules) {
+  const seg = lastPathSegment(event.urlRedacted);
+  return rules.find((r) => r.method === event.method && r.resourceTypes.includes(event.resourceType) && r.statuses.includes(event.status) && r.pathSuffix === seg) || null;
+}
+
+const isHttpEventShapeValid = (ev) => isPlainObject(ev) && ev.reqIdValid === true && isSeq(ev.startSeq) && isSeq(ev.responseSeq) && ev.startSeq < ev.responseSeq
+  && Number.isInteger(ev.status) && ev.status >= 400 && typeof ev.method === 'string' && typeof ev.resourceType === 'string' && typeof ev.urlRedacted === 'string'
+  && NETWORK_URL_CLASSES.includes(ev.urlClass) && typeof ev.isNavigationRequest === 'boolean' && ATTRIBUTION_PHASES.includes(ev.phase);
+
+/**
+ * §9.2 two-stage rule: an HTTP >= 400 response is a RULE CANDIDATE (stage `provisional`) iff it is
+ * classifiable, R-1 does not apply and some rule of `rules` matches its method, resourceType, status
+ * and last path segment. Everything else is `immediate` (with the live empty OPTIONAL_RESPONSE_RULES:
+ * every response).
+ */
+function isHttpRuleCandidate(event, rules = OPTIONAL_RESPONSE_RULES) {
+  try {
+    if (!isHttpEventShapeValid(event) || !Array.isArray(rules) || !rules.every(isOptionalResponseRuleShape)) return false;
+    if (event.urlClass !== 'other') return false;
+    return matchingResponseRule(event, rules) !== null;
+  } catch { return false; }
+}
+
+/**
+ * `classifyHttpResponse(event, opLedger, markers, prefixDerivation, OPTIONAL_RESPONSE_RULES) ->
+ * ClassifierResult` (§9.2 HTTP response policy; pure, total, deterministic). `event = {reqIdValid,
+ * startSeq, responseSeq, method, status, resourceType, urlRedacted, urlClass, isNavigationRequest,
+ * phase}`. R-5 unclassifiable (incl. `reqIdValid !== true`) => unknown-fatal; R-1 bootstrap/harness-
+ * endpoint => fatal-required-resource; R-2 no matching rule => fatal-required-resource; R-3 a match
+ * uniquely bound to `rule.model`, inside that model's load window, not a navigation =>
+ * diagnostic-non-required; R-4 a match whose binding fails (unavailable, ambiguous, unbound, other
+ * model) or lies outside the rule model's load window => unknown-fatal (a navigation match stays
+ * fatal-required-resource, `R-3`/`navigation`). A response is NEVER an expected cancellation.
+ */
+function classifyHttpResponse(event, opLedger, markers, prefixDerivation, rules = OPTIONAL_RESPONSE_RULES, prefixSourceLedger = null) {
+  let base = { eventKind: 'httpResponse', url: null, method: null, status: null, failureReason: null, resourceType: null, phase: null };
+  let sub = 'unclassifiable';
+  const unclassifiable = () => fatalClassifierResult(base, NETWORK_CLASSIFICATION.UNKNOWN_FATAL, ['R-5', 'unclassifiable', sub]);
+  let ev;
+  try {
+    ev = isPlainObject(event) ? { ...event } : {}; // one read of every field (a throwing getter => unclassifiable)
+    base = {
+      eventKind: 'httpResponse', url: typeof ev.urlRedacted === 'string' ? ev.urlRedacted : null, method: typeof ev.method === 'string' ? ev.method : null,
+      status: Number.isInteger(ev.status) && ev.status >= 400 ? ev.status : null, failureReason: null,
+      resourceType: typeof ev.resourceType === 'string' ? ev.resourceType : null, phase: ATTRIBUTION_PHASES.includes(ev.phase) ? ev.phase : null,
+    };
+    sub = NETWORK_URL_CLASSES.includes(ev.urlClass) ? ev.urlClass : 'unclassifiable';
+  } catch {
+    return unclassifiable();
+  }
+  try {
+    if (!isHttpEventShapeValid(ev) || !Array.isArray(rules) || !rules.every(isOptionalResponseRuleShape) || !Array.isArray(opLedger) || !Array.isArray(markers)
+      || !opLedger.every(isOpLedgerRecordShapeKnown)) return unclassifiable();
+    if (ev.urlClass !== 'other') return fatalClassifierResult(base, NETWORK_CLASSIFICATION.FATAL_REQUIRED, ['R-1', ev.urlClass]);
+    const rule = matchingResponseRule(ev, rules);
+    if (rule === null) return fatalClassifierResult(base, NETWORK_CLASSIFICATION.FATAL_REQUIRED, ['R-2', 'other']);
+    if (ev.isNavigationRequest !== false) return fatalClassifierResult(base, NETWORK_CLASSIFICATION.FATAL_REQUIRED, ['R-3', 'navigation', 'other']);
+    const prefixKey = networkPrefixKey(ev.urlRedacted);
+    const binding = prefixBindingOf(prefixKey, prefixDerivation);
+    if (binding.status === 'ambiguous') return fatalClassifierResult(base, NETWORK_CLASSIFICATION.UNKNOWN_FATAL, ['R-4', binding.reason, 'other']);
+    if (binding.status === 'unbound') return fatalClassifierResult(base, NETWORK_CLASSIFICATION.UNKNOWN_FATAL, ['R-4', 'unbound', 'other']);
+    if (binding.modelId !== rule.model) return fatalClassifierResult(base, NETWORK_CLASSIFICATION.UNKNOWN_FATAL, ['R-4', 'other-model', 'other']);
+    const loads = opLedger.map((o, i) => ({ o, i })).filter(({ o }) => isPlainObject(o) && o.recordType === 'load' && o.modelId === rule.model);
+    const w = loads.length === 1 && isPlainObject(loads[0].o.expectedRequestWindow) ? loads[0].o.expectedRequestWindow : null;
+    const inside = w !== null && isSeq(w.fromSeqExclusive) && isSeq(w.toSeqInclusive) && w.fromSeqExclusive < ev.startSeq && ev.startSeq <= w.toSeqInclusive;
+    if (!inside) return fatalClassifierResult(base, NETWORK_CLASSIFICATION.UNKNOWN_FATAL, ['R-4', 'outside-load-window', 'other']);
+    const L = loads[0];
+    return {
+      ...base, modelId: rule.model, boundPrefix: prefixKey, operationId: L.o.operationId, opStartSeq: L.o.startSeq,
+      classification: NETWORK_CLASSIFICATION.DIAGNOSTIC, rule: rule.ruleId, reasons: [],
+      evidenceRefs: [`/errorLedger/opLedger/${L.i}`, ...prefixSupportRefs(prefixSourceLedger, rule.model, prefixKey), '/errorLedger/prefixDerivation'], verdictEffect: 'none',
+    };
+  } catch {
+    return unclassifiable();
+  }
+}
+
+/** §9.2 `modelBindingObserved` of a response at its classification seq (`not-evaluated` iff immediate). */
+function modelBindingObservedOf(urlRedacted, stage, prefixDerivation) {
+  if (stage !== 'provisional') return { status: 'not-evaluated', modelId: null, prefixKey: null };
+  const prefixKey = networkPrefixKey(urlRedacted);
+  const b = prefixBindingOf(prefixKey, prefixDerivation);
+  return { status: b.status, modelId: b.status === 'unique' ? b.modelId : null, prefixKey };
+}
+
+/**
+ * Prefix-of-record truncation at `seq` (§9.2 closeout re-classification of a response entry "over the
+ * persisted record truncated at the entry's finalizedSeq"): op records started after `seq` are
+ * dropped, end fields observed after `seq` are reset to the open state, markers after `seq` dropped.
+ */
+function truncateRecordAt({ opLedger, markers }, seq) {
+  const ops = (Array.isArray(opLedger) ? opLedger : []).filter((o) => isPlainObject(o) && isSeq(o.startSeq) && o.startSeq <= seq).map((o) => {
+    const c = cloneJson(o);
+    if (isSeq(c.endSeq) && c.endSeq > seq) {
+      c.endSeq = null; c.endedAt = null;
+      if (c.recordType === 'load') { if (isPlainObject(c.expectedRequestWindow)) c.expectedRequestWindow.toSeqInclusive = null; c.completionOutcome = 'not-settled'; }
+      if (c.recordType === 'mutation') { if (isPlainObject(c.cancellationWindow)) c.cancellationWindow.toSeqExclusive = null; c.terminalOutcome = 'not-settled'; }
+    }
+    if (c.recordType === 'mutation' && isPlainObject(c.cancellationWindow) && isSeq(c.cancellationWindow.toSeqExclusive) && c.cancellationWindow.toSeqExclusive > seq) c.cancellationWindow.toSeqExclusive = null;
+    return c;
+  });
+  return { opLedger: ops, markers: (Array.isArray(markers) ? markers : []).filter((m) => isPlainObject(m) && isSeq(m.seq) && m.seq <= seq) };
+}
+
+/** The classifier input of a persisted raw event (`reqIdValid` passed explicitly -- recomputed, never trusted). */
+function requestFailureInput(e, reqIdValid) {
+  return { reqIdValid, startSeq: e.startSeq, failSeq: e.failSeq, method: e.method, resourceType: e.resourceType, urlRedacted: e.urlRedacted, urlClass: e.urlClass, errorText: e.errorText, isNavigationRequest: e.isNavigationRequest, phase: e.phase };
+}
+function httpResponseInput(e, reqIdValid) {
+  return { reqIdValid, startSeq: e.startSeq, responseSeq: e.responseSeq, method: e.method, status: e.status, resourceType: e.resourceType, urlRedacted: e.urlRedacted, urlClass: e.urlClass, isNavigationRequest: e.isNavigationRequest, phase: e.phase };
+}
+
+/**
+ * The classification context persisted in an error ledger: `opLedger`, `markers`, the persisted
+ * `prefixDerivation` (absent => recomputed by `derivePrefixes` from the persisted prefix-source ledger
+ * and load records -- before the load windows close that is non-distinguishing) and the
+ * `prefixSourceLedger` (the `evidenceRefs` source of a bound result).
+ */
+function networkContextOf(ledger) {
+  const l = isPlainObject(ledger) ? ledger : {};
+  const opLedger = Array.isArray(l.opLedger) ? l.opLedger : [];
+  const prefixSourceLedger = Array.isArray(l.prefixSourceLedger) ? l.prefixSourceLedger : [];
+  return {
+    opLedger,
+    markers: Array.isArray(l.markers) ? l.markers : [],
+    prefixDerivation: isPlainObject(l.prefixDerivation) ? l.prefixDerivation : derivePrefixes(prefixSourceLedger, opLedger),
+    prefixSourceLedger,
+  };
+}
+
+/** Closeout re-classification of one raw event (§9.2 "Timing and consistency"). */
+function reclassifyRawEvent(kind, e, reqIdValid, ctx, rules) {
+  if (kind === 'requestfailed') return classifyRequestFailure(requestFailureInput(e, reqIdValid), ctx.opLedger, ctx.markers, ctx.prefixDerivation, ctx.prefixSourceLedger);
+  const t = truncateRecordAt(ctx, e.finalizedSeq);
+  return classifyHttpResponse(httpResponseInput(e, reqIdValid), t.opLedger, t.markers, ctx.prefixDerivation, rules, ctx.prefixSourceLedger);
+}
+
+/**
+ * W-1 identity recomputation from `requestObservations[]` (never trusted): `reqIdValid` iff `reqId`
+ * is a non-empty string, exactly one observation has it, and that observation repeats the raw event's
+ * startSeq, method, resourceType and urlRedacted. `identityKey = 'req:'+reqId` iff valid, else
+ * `'invalid:'+rawEventSeq` (never merged, never suppressed).
+ */
+function recomputeRequestIdentity(raw, observations) {
+  const obs = Array.isArray(observations) ? observations : [];
+  const reqId = isPlainObject(raw) ? raw.reqId : undefined;
+  let valid = false;
+  if (isNonEmptyStr(reqId)) {
+    const m = obs.filter((o) => isPlainObject(o) && o.reqId === reqId);
+    valid = m.length === 1 && m[0].startSeq === raw.startSeq && m[0].method === raw.method && m[0].resourceType === raw.resourceType && m[0].urlRedacted === raw.urlRedacted;
+  }
+  return { reqIdValid: valid, identityKey: valid ? `req:${reqId}` : `invalid:${isPlainObject(raw) ? raw.rawEventSeq : 'unknown'}` };
+}
+
+/** All raw events of a ledger, tagged with their kind, ascending `rawEventSeq` (W-1). */
+function rawNetworkEventsOf(ledger) {
+  const l = isPlainObject(ledger) ? ledger : {};
+  const out = [];
+  (Array.isArray(l.requestFailures) ? l.requestFailures : []).forEach((e, i) => { if (isPlainObject(e)) out.push({ kind: 'requestfailed', e, list: 'requestFailures', i }); });
+  (Array.isArray(l.responseFailures) ? l.responseFailures : []).forEach((e, i) => { if (isPlainObject(e)) out.push({ kind: 'httpResponse', e, list: 'responseFailures', i }); });
+  return out.sort((a, b) => (isSeq(a.e.rawEventSeq) ? a.e.rawEventSeq : Infinity) - (isSeq(b.e.rawEventSeq) ? b.e.rawEventSeq : Infinity));
+}
+
+/** `duplicateOf` (W-1): the earliest earlier raw event with the same identityKey AND eventKind, else null. */
+function duplicateOfAmong(prior, kind, identityKey) {
+  const hit = prior.find((p) => p.kind === kind && p.identityKey === identityKey);
+  return hit ? hit.rawEventId : null;
+}
+
+/**
+ * `correlateNetworkEvents(ledger)` -- pure W-1..W-5 recomputation from the RETAINED raw events and
+ * `requestObservations[]`: per raw event `{reqIdValid, identityKey, duplicateOf, effective
+ * classification, effective seq}`; `correlatedRequests[]` (one per identityKey, ordered by the
+ * smallest member rawEventSeq; ownership conflict => unknown-fatal); the closeout view of
+ * `fatalWitnesses[]` (exactly one per fatal identity, ascending witnessSeq); and the `witnessCount`
+ * record. Effective classification = `closeout.classification` (unknown-fatal when the identity is
+ * invalid or the result is missing); effective seq = rawEventSeq (requestfailed / immediate) or
+ * finalizedSeq (provisional; an unfinalized provisional member has no effect yet).
+ */
+function correlateNetworkEvents(ledger) {
+  const l = isPlainObject(ledger) ? ledger : {};
+  const observations = Array.isArray(l.requestObservations) ? l.requestObservations : [];
+  const entries = Array.isArray(l.entries) ? l.entries : [];
+  const events = [];
+  for (const r of rawNetworkEventsOf(l)) {
+    const id = recomputeRequestIdentity(r.e, observations);
+    const cls = isPlainObject(r.e.closeout) && NETWORK_CLASSIFICATIONS.includes(r.e.closeout.classification) ? r.e.closeout.classification : null;
+    const provisional = r.kind === 'httpResponse' && r.e.stage === 'provisional';
+    const effSeq = provisional ? (isSeq(r.e.finalizedSeq) ? r.e.finalizedSeq : null) : (isSeq(r.e.rawEventSeq) ? r.e.rawEventSeq : null);
+    const effCls = effSeq === null ? null : (!id.reqIdValid || cls === null ? NETWORK_CLASSIFICATION.UNKNOWN_FATAL : cls);
+    const modelIds = [];
+    if (effSeq !== null) {
+      if (isPlainObject(r.e.closeout) && (r.e.closeout.modelId === 'A' || r.e.closeout.modelId === 'B')) modelIds.push(r.e.closeout.modelId);
+      if (r.kind === 'httpResponse' && isPlainObject(r.e.modelBindingObserved) && (r.e.modelBindingObserved.modelId === 'A' || r.e.modelBindingObserved.modelId === 'B')) modelIds.push(r.e.modelBindingObserved.modelId);
+    }
+    const rawEventId = r.kind === 'requestfailed' ? `rf:${r.e.rawEventSeq}` : `hr:${r.e.rawEventSeq}`;
+    events.push({ ...r, rawEventId, ...id, duplicateOf: duplicateOfAmong(events, r.kind, id.identityKey), effSeq, effCls, modelIds });
+  }
+  const groups = new Map();
+  for (const ev of events) {
+    if (!groups.has(ev.identityKey)) groups.set(ev.identityKey, []);
+    groups.get(ev.identityKey).push(ev);
+  }
+  const correlatedRequests = [];
+  const witnesses = [];
+  for (const [identityKey, members] of groups) {
+    const valid = identityKey.startsWith('req:');
+    const effective = members.filter((m) => m.effSeq !== null).sort((a, b) => a.effSeq - b.effSeq);
+    const modelIds = [...new Set(effective.flatMap((m) => m.modelIds))].sort();
+    const status = members.length === 1 ? 'single' : modelIds.length === 2 ? 'conflicting' : 'consistent';
+    let worst = null;
+    for (const m of effective) worst = worst === null ? m.effCls : worseClassification(worst, m.effCls);
+    if (worst === null) worst = NETWORK_CLASSIFICATION.EXPECTED; // only unfinalized provisional members: no effect yet (transient)
+    if (status === 'conflicting') worst = NETWORK_CLASSIFICATION.UNKNOWN_FATAL;
+    const fatal = isFatalClassification(worst);
+    const fatalMembers = effective.filter((m) => isFatalClassification(m.effCls));
+    let fatalSinceSeq = null;
+    if (fatal) {
+      if (fatalMembers.length > 0) fatalSinceSeq = fatalMembers[0].effSeq;
+      else {
+        const seen = new Set();
+        for (const m of effective) { for (const x of m.modelIds) seen.add(x); if (seen.size >= 2) { fatalSinceSeq = m.effSeq; break; } }
+      }
+    }
+    const rawEventRefs = members.map((m) => m.rawEventId);
+    const witnessId = fatal ? `w:${identityKey}` : null;
+    correlatedRequests.push({
+      identityKey, identityKind: valid ? 'reqId' : 'invalid', reqId: valid ? identityKey.slice(4) : null, rawEventRefs,
+      eventKinds: [...new Set(members.map((m) => m.kind))].sort(), ownership: { status, modelIds }, worstClassification: worst, fatal, fatalSinceSeq, witnessId,
+    });
+    if (fatal) {
+      const at = effective.find((m) => m.effSeq === fatalSinceSeq) || members[0];
+      const entryIdx = entries.findIndex((e) => isPlainObject(e) && e.kind === NETWORK_FATAL_ENTRY_KIND && e.witnessId === witnessId);
+      witnesses.push({
+        witnessId, requestIdentityKey: identityKey, rawEventRefs, fatalRawEventRefs: fatalMembers.slice().sort((a, b) => a.e.rawEventSeq - b.e.rawEventSeq).map((m) => m.rawEventId),
+        worstClassification: worst, witnessSeq: fatalSinceSeq, phase: at.e.phase, activeCheck: at.e.activeCheck, modelOwnership: { status, modelIds },
+        ledgerEntryRef: entryIdx === -1 ? null : `/errorLedger/entries/${entryIdx}`,
+        view: { worstClassification: worst, witnessSeq: fatalSinceSeq, rawEventRefs },
+      });
+    }
+  }
+  witnesses.sort((a, b) => a.witnessSeq - b.witnessSeq);
+  const rrfEntries = entries.filter((e) => isPlainObject(e) && e.kind === NETWORK_FATAL_ENTRY_KIND).length;
+  const nonNetwork = entries.filter((e) => !(isPlainObject(e) && e.kind === NETWORK_FATAL_ENTRY_KIND)).length;
+  const witnessCount = {
+    requestObservations: observations.length, rawEvents: events.length, correlatedIdentities: correlatedRequests.length,
+    fatalIdentities: correlatedRequests.filter((c) => c.fatal).length, fatalWitnesses: witnesses.length,
+    requiredResourceFailureEntries: rrfEntries, nonNetworkFatalEntries: nonNetwork, fatalCount: witnesses.length + nonNetwork,
+  };
+  return { events, correlatedRequests, witnesses, witnessCount };
+}
+
+// ============================================================================================
+// §9.2 operation ledger `opLedger` (exact disjoint `loadOperation` / `mutationOperation` shapes),
+// durable prefix-source ledger `prefixSourceLedger[]`, `derivePrefixes` / `prefixDerivation` (+
+// hashes), ambiguous-prefix accounting `ambiguousPrefixes[]` and `boundPrefix` provenance (slice C2;
+// procedure §9.2 RC1-C1, §10). Model-specific prefixes are derived ONLY from accepted
+// successful-request evidence (finished 2xx, inside its own CLOSED, DISJOINT load window, non-
+// ambiguous key); everything else is non-distinguishing (fail-safe: nothing can bind).
+// ============================================================================================
+
+const LOAD_OPERATION_KEYS = Object.freeze(['recordType', 'operationId', 'modelId', 'modelUrnSha256', 'phase', 'startSeq', 'startedAt', 'endSeq', 'endedAt', 'expectedRequestWindow', 'prefixSourceRef', 'completionOutcome']);
+const MUTATION_OPERATION_KEYS = Object.freeze(['recordType', 'operationId', 'operationType', 'teardownTarget', 'modelId', 'phase', 'invokedBy', 'startSeq', 'startedAt', 'ackSeq', 'endSeq', 'endedAt', 'cancellationWindow', 'causalEvidence', 'terminalOutcome']);
+const LOAD_COMPLETION_OUTCOMES = Object.freeze(['ready', 'rejected', 'timeout:load', 'harness-exception', 'not-settled']);
+const MUTATION_TERMINAL_OUTCOMES = Object.freeze(['settled', 'threw', 'timeout', 'not-settled']);
+const TEARDOWN_TARGETS = Object.freeze(['closePage', 'closeContext', 'closeBrowser']);
+const CLEANUP_UNLOAD_INVOKER = Object.freeze({ A: 'cleanup:unloadModelA', B: 'cleanup:unloadModelB' });
+/** Harness-origin spy records of the in-page C16/C17 mutations (the `causalEvidence.spyRef` target; verdict-critical). */
+const OP_LEDGER_SPY_METHODS = Object.freeze(['viewer.hideModel', 'viewer.unloadModel']);
+const SPY_REF_RE = /^spyLedger:seq:\d+$/;
+const PREFIX_SOURCE_ENTRY_KEYS = Object.freeze(['entryId', 'reqId', 'loadOperationId', 'modelId', 'startSeq', 'terminalKind', 'terminalSeq', 'status', 'method', 'resourceType', 'urlRedacted', 'urlClass', 'isNavigationRequest', 'prefixKey', 'disposition', 'reason']);
+const PREFIX_SOURCE_REASONS = Object.freeze(['included', 'excluded:resource-type', 'excluded:url-class', 'excluded:navigation', 'excluded:failed', 'excluded:status', 'excluded:not-finished-in-window', 'excluded:window-open', 'excluded:windows-overlap', 'excluded:ambiguous']);
+const PREFIX_DERIVATION_KEYS = Object.freeze(['algorithm', 'loadOperationIds', 'windows', 'bindingAvailable', 'nonDistinguishingReason', 'candidateKeys', 'ambiguousKeys', 'modelPrefixes', 'ledgerSha256', 'derivationSha256']);
+const PREFIX_DERIVATION_ALGORITHM = 'g2-prefix-v1';
+/** The slice-C2 error-ledger list collections (required in R1, §10; verdict-critical, never truncated). */
+const NETWORK_C2_LIST_KEYS = Object.freeze(['opLedger', 'prefixSourceLedger', 'ambiguousPrefixes']);
+
+const isLoadRecordish = (o) => isPlainObject(o) && o.recordType === 'load';
+const isMutationRecordish = (o) => isPlainObject(o) && o.recordType === 'mutation';
+
+/**
+ * Binding availability of a set of load records (§9.2 derivation rule): available iff exactly one
+ * load record per model exists, both with `endSeq !== null`, and their windows are disjoint
+ * (`A.endSeq < B.startSeq || B.endSeq < A.startSeq`). More than one load record for a model is
+ * treated as a missing record (`no-load-operation`; fail-safe -- the validator also rejects it).
+ */
+function prefixBindingState(loadOperations) {
+  const loads = (Array.isArray(loadOperations) ? loadOperations : []).filter(isLoadRecordish);
+  const byModel = { A: null, B: null };
+  for (const m of ['A', 'B']) {
+    const ls = loads.filter((l) => l.modelId === m);
+    if (ls.length === 1 && isNonEmptyStr(ls[0].operationId) && isSeq(ls[0].startSeq)) byModel[m] = ls[0];
+  }
+  let reason = null;
+  if (!byModel.A || !byModel.B) reason = 'no-load-operation';
+  else if (!isSeq(byModel.A.endSeq) || !isSeq(byModel.B.endSeq)) reason = 'window-open';
+  else if (!(byModel.A.endSeq < byModel.B.startSeq || byModel.B.endSeq < byModel.A.startSeq)) reason = 'windows-overlap';
+  return { byModel, bindingAvailable: reason === null, nonDistinguishingReason: reason };
+}
+
+/**
+ * The first applicable exclusion of a prefix-source entry EXCEPT `excluded:ambiguous` (§9.2 listed
+ * order), or null when the entry meets every inclusion condition but non-ambiguity (= it is a
+ * candidate). Recomputed from the entry's raw fields and the load records -- the stored `reason` is
+ * never trusted. A failing candidate (requestfailed / non-2xx / not finished inside its window) can
+ * never prove its own prefix. `no-load-operation` has no dedicated reason and is reported as
+ * `excluded:window-open` (the missing window is not closed).
+ */
+function prefixEntryCandidateExclusion(e, st) {
+  if (!EC_RESOURCE_TYPES.includes(e.resourceType)) return 'excluded:resource-type';
+  if (e.urlClass !== 'other') return 'excluded:url-class';
+  if (e.isNavigationRequest !== false) return 'excluded:navigation';
+  if (e.terminalKind === 'requestfailed') return 'excluded:failed';
+  const ok2xx = Number.isInteger(e.status) && e.status >= 200 && e.status <= 299;
+  if ((e.status !== null && !ok2xx) || (e.status === null && e.terminalKind === 'requestfinished')) return 'excluded:status';
+  const L = st.byModel[e.modelId] || null;
+  const own = L !== null && L.operationId === e.loadOperationId;
+  if (e.terminalKind !== 'requestfinished' || !isSeq(e.terminalSeq) || (own && isSeq(L.endSeq) && e.terminalSeq > L.endSeq)) return 'excluded:not-finished-in-window';
+  if (!st.bindingAvailable) return st.nonDistinguishingReason === 'windows-overlap' ? 'excluded:windows-overlap' : 'excluded:window-open';
+  if (!own) return 'excluded:window-open'; // an entry of no current load window can never bind
+  return null;
+}
+
+/**
+ * `derivePrefixes(prefixSourceLedger, loadOperations)` (§9.2; pure, deterministic): `candidateKeys[M]`
+ * = prefix keys of model-M entries meeting every inclusion condition except non-ambiguity;
+ * `ambiguousKeys = candidateKeys[A] ∩ candidateKeys[B]`; `modelPrefixes[M] = candidateKeys[M] −
+ * ambiguousKeys` (ascending). Binding unavailable => all three empty. Returns the exact persisted
+ * `prefixDerivation` record (`ledgerSha256` = SHA-256 of the canonical JSON of the ledger,
+ * `derivationSha256` = SHA-256 of the canonical JSON of {bindingAvailable, candidateKeys,
+ * ambiguousKeys, modelPrefixes}).
+ */
+function derivePrefixes(prefixSourceLedger, loadOperations) {
+  const ledger = Array.isArray(prefixSourceLedger) ? prefixSourceLedger : [];
+  const st = prefixBindingState(loadOperations);
+  const cand = { A: new Set(), B: new Set() };
+  if (st.bindingAvailable) {
+    for (const e of ledger) {
+      if (isPlainObject(e) && (e.modelId === 'A' || e.modelId === 'B') && typeof e.prefixKey === 'string' && prefixEntryCandidateExclusion(e, st) === null) cand[e.modelId].add(e.prefixKey);
+    }
+  }
+  const candidateKeys = { A: [...cand.A].sort(), B: [...cand.B].sort() };
+  const ambiguousKeys = candidateKeys.A.filter((k) => cand.B.has(k));
+  const amb = new Set(ambiguousKeys);
+  const modelPrefixes = { A: candidateKeys.A.filter((k) => !amb.has(k)), B: candidateKeys.B.filter((k) => !amb.has(k)) };
+  const win = (L) => (L ? { fromSeqExclusive: L.startSeq, toSeqInclusive: isSeq(L.endSeq) ? L.endSeq : null } : null);
+  return {
+    algorithm: PREFIX_DERIVATION_ALGORITHM,
+    loadOperationIds: { A: st.byModel.A ? st.byModel.A.operationId : null, B: st.byModel.B ? st.byModel.B.operationId : null },
+    windows: { A: win(st.byModel.A), B: win(st.byModel.B) },
+    bindingAvailable: st.bindingAvailable, nonDistinguishingReason: st.nonDistinguishingReason,
+    candidateKeys, ambiguousKeys, modelPrefixes,
+    ledgerSha256: sha256Hex(canonicalJson(ledger)),
+    derivationSha256: sha256Hex(canonicalJson({ bindingAvailable: st.bindingAvailable, candidateKeys, ambiguousKeys, modelPrefixes })),
+  };
+}
+
+/** The full §9.2 `reason` of one entry (first applicable, `excluded:ambiguous` last). */
+function prefixEntryReason(e, st, ambiguousKeys) {
+  const pre = prefixEntryCandidateExclusion(e, st);
+  if (pre !== null) return pre;
+  return ambiguousKeys.includes(e.prefixKey) ? 'excluded:ambiguous' : 'included';
+}
+
+/** `ambiguousPrefixes[]` (§9.2): one entry per ambiguous key with the candidate entry ids of each model (ledger order). */
+function ambiguousPrefixesOf(prefixSourceLedger, loadOperations, derivation) {
+  const ledger = Array.isArray(prefixSourceLedger) ? prefixSourceLedger : [];
+  const st = prefixBindingState(loadOperations);
+  const ids = (m, k) => ledger.filter((e) => isPlainObject(e) && e.modelId === m && e.prefixKey === k && prefixEntryCandidateExclusion(e, st) === null).map((e) => e.entryId);
+  return (derivation && Array.isArray(derivation.ambiguousKeys) ? derivation.ambiguousKeys : []).map((k) => ({ prefixKey: k, sourceEntryIds: { A: ids('A', k), B: ids('B', k) } }));
+}
+
+/**
+ * Builds the prefix-source ledger from the request observations, the load records and per-request
+ * terminal evidence (`terminalOf(reqId) -> {terminalKind, terminalSeq}|null`, `statusOf(reqId) ->
+ * integer|null`): exactly one entry per (observation, load record) pair whose `startSeq` lies inside
+ * that load's `expectedRequestWindow` (an open window extends to closeout), `entryId = reqId + ':' +
+ * loadOperationId`, ascending by (startSeq, modelId A before B). Overlapping windows => two entries.
+ * Returns `{prefixSourceLedger, prefixDerivation, ambiguousPrefixes}`.
+ */
+function buildPrefixSourceLedger({ observations, opLedger, terminalOf = () => null, statusOf = () => null }) {
+  const loads = (Array.isArray(opLedger) ? opLedger : []).filter((L) => isLoadRecordish(L) && isNonEmptyStr(L.operationId) && (L.modelId === 'A' || L.modelId === 'B') && isSeq(L.startSeq));
+  const entries = [];
+  for (const o of Array.isArray(observations) ? observations : []) {
+    if (!isPlainObject(o) || !isSeq(o.startSeq)) continue;
+    for (const L of loads) {
+      const to = isSeq(L.endSeq) ? L.endSeq : null;
+      if (!(L.startSeq < o.startSeq && (to === null || o.startSeq <= to))) continue;
+      const t = terminalOf(o.reqId);
+      const status = statusOf(o.reqId);
+      entries.push({
+        entryId: `${o.reqId}:${L.operationId}`, reqId: o.reqId, loadOperationId: L.operationId, modelId: L.modelId, startSeq: o.startSeq,
+        terminalKind: t && (t.terminalKind === 'requestfinished' || t.terminalKind === 'requestfailed') ? t.terminalKind : 'none',
+        terminalSeq: t && isSeq(t.terminalSeq) ? t.terminalSeq : null, status: Number.isInteger(status) ? status : null,
+        method: o.method, resourceType: o.resourceType, urlRedacted: o.urlRedacted, urlClass: o.urlClass, isNavigationRequest: o.isNavigationRequest,
+        prefixKey: networkPrefixKey(o.urlRedacted) ?? '', disposition: 'excluded', reason: 'excluded:window-open',
+      });
+    }
+  }
+  entries.sort((a, b) => (a.startSeq - b.startSeq) || (a.modelId < b.modelId ? -1 : a.modelId > b.modelId ? 1 : 0));
+  const st = prefixBindingState(opLedger);
+  const keys = derivePrefixes(entries, opLedger); // reasons do not influence the key sets
+  for (const e of entries) {
+    e.reason = prefixEntryReason(e, st, keys.ambiguousKeys);
+    e.disposition = e.reason === 'included' ? 'included' : 'excluded';
+  }
+  const prefixDerivation = derivePrefixes(entries, opLedger);
+  return { prefixSourceLedger: entries, prefixDerivation, ambiguousPrefixes: ambiguousPrefixesOf(entries, opLedger, prefixDerivation) };
+}
+
+/**
+ * The prefix-source SNAPSHOT cutoff (§9.2 "prefixes are frozen when the load windows close"): the
+ * later load window's `endSeq` once both load records are closed; otherwise the `closeout` marker
+ * (an open window extends to closeout); otherwise unbounded. Terminal fields of the persisted
+ * entries reflect exactly the terminals with `terminalSeq <=` this cutoff.
+ */
+function prefixSnapshotCutoff(ledger) {
+  const l = isPlainObject(ledger) ? ledger : {};
+  const st = prefixBindingState(l.opLedger);
+  if (st.byModel.A && st.byModel.B && isSeq(st.byModel.A.endSeq) && isSeq(st.byModel.B.endSeq)) return Math.max(st.byModel.A.endSeq, st.byModel.B.endSeq);
+  const c = (Array.isArray(l.markers) ? l.markers : []).find((m) => isPlainObject(m) && m.name === 'closeout' && isSeq(m.seq));
+  return c ? c.seq : Infinity;
+}
+
+/** True iff the persisted derivation is the frozen one of the CURRENT, both-closed load records. */
+function isPrefixLedgerFrozen(ledger) {
+  const l = isPlainObject(ledger) ? ledger : {};
+  const st = prefixBindingState(l.opLedger);
+  if (!(st.byModel.A && st.byModel.B && isSeq(st.byModel.A.endSeq) && isSeq(st.byModel.B.endSeq))) return false;
+  const pd = l.prefixDerivation;
+  const d = derivePrefixes([], l.opLedger);
+  return isPlainObject(pd) && sameJson(pd.loadOperationIds, d.loadOperationIds) && sameJson(pd.windows, d.windows);
+}
+
+/**
+ * Builds and persists the prefix-source snapshot -- `prefixSourceLedger[]`, `prefixDerivation`,
+ * `ambiguousPrefixes[]`, `modelPrefixes` and every load record's `prefixSourceRef` (§9.2). Terminal
+ * evidence comes from `prefixSources` (`{terminalOf, statusOf}`, the instrumentation's in-memory
+ * terminal record) or, when absent, from the already persisted entries; terminals after the snapshot
+ * cutoff (`prefixSnapshotCutoff`) are ignored. Called ONCE when the later load window closes (frozen
+ * from then on -- never rebuilt or "healed" afterwards) or, if a window never closed, at closeout step 1.
+ */
+function refreshPrefixSourceLedger(ledger, { prefixSources = null } = {}) {
+  ensureNetworkLedger(ledger);
+  const prev = new Map();
+  for (const e of Array.isArray(ledger.prefixSourceLedger) ? ledger.prefixSourceLedger : []) if (isPlainObject(e) && !prev.has(e.reqId)) prev.set(e.reqId, e);
+  const src = prefixSources && typeof prefixSources.terminalOf === 'function' && typeof prefixSources.statusOf === 'function' ? prefixSources : null;
+  const cutoff = prefixSnapshotCutoff(ledger);
+  const terminalOf = (reqId) => {
+    let t;
+    if (src) t = src.terminalOf(reqId);
+    else { const p = prev.get(reqId); t = p && p.terminalKind !== 'none' ? { terminalKind: p.terminalKind, terminalSeq: p.terminalSeq } : null; }
+    return t && isSeq(t.terminalSeq) && t.terminalSeq <= cutoff ? t : null;
+  };
+  const statusOf = (reqId) => (src ? src.statusOf(reqId) : (prev.has(reqId) ? prev.get(reqId).status : null));
+  const built = buildPrefixSourceLedger({ observations: ledger.requestObservations, opLedger: ledger.opLedger, terminalOf, statusOf });
+  ledger.prefixSourceLedger = built.prefixSourceLedger;
+  ledger.prefixDerivation = built.prefixDerivation;
+  ledger.ambiguousPrefixes = built.ambiguousPrefixes;
+  ledger.modelPrefixes = cloneJson(built.prefixDerivation.modelPrefixes);
+  for (const L of ledger.opLedger) {
+    if (!isLoadRecordish(L)) continue;
+    L.prefixSourceRef = { entryIds: built.prefixSourceLedger.filter((e) => e.loadOperationId === L.operationId).map((e) => e.entryId), ledgerSha256: built.prefixDerivation.ledgerSha256 };
+  }
+  return ledger;
+}
+
+/**
+ * JSON Pointers of the prefix-source entries supporting a binding of `prefixKey` to `modelId`
+ * (§9.2 `evidenceRefs`): every included entry of that model with that key, in ledger order.
+ */
+function prefixSupportRefs(prefixSourceLedger, modelId, prefixKey) {
+  const out = [];
+  (Array.isArray(prefixSourceLedger) ? prefixSourceLedger : []).forEach((e, i) => {
+    if (isPlainObject(e) && e.modelId === modelId && e.prefixKey === prefixKey && e.disposition === 'included' && e.reason === 'included') out.push(`/errorLedger/prefixSourceLedger/${i}`);
+  });
+  return out;
+}
+
+/**
+ * `end(O)` of C-d / `cancellationWindow.toSeqExclusive`: the first of {startSeq of a later opLedger
+ * record, a later phase-boundary marker (incl. `closeout`)} that already exists in the record; null
+ * while none exists (the window is open).
+ */
+function cancellationWindowEnd(O, opLedger, markers) {
+  const later = [
+    ...(Array.isArray(opLedger) ? opLedger : []).filter((o) => isPlainObject(o) && isSeq(o.startSeq) && o.startSeq > O.startSeq).map((o) => o.startSeq),
+    ...(Array.isArray(markers) ? markers : []).filter((m) => isPlainObject(m) && isSeq(m.seq) && m.seq > O.startSeq).map((m) => m.seq),
+  ];
+  return later.length ? Math.min(...later) : null;
+}
+
+/** Recomputes every mutation record's `cancellationWindow.toSeqExclusive` from the record (in place). */
+function refreshCancellationWindows(ledger) {
+  const ops = isPlainObject(ledger) && Array.isArray(ledger.opLedger) ? ledger.opLedger : [];
+  const markers = isPlainObject(ledger) && Array.isArray(ledger.markers) ? ledger.markers : [];
+  for (const O of ops) if (isMutationRecordish(O) && isSeq(O.startSeq) && isPlainObject(O.cancellationWindow)) O.cancellationWindow.toSeqExclusive = cancellationWindowEnd(O, ops, markers);
+  return ledger;
+}
+
+/**
+ * The exact §9.2 schema + couplings of ONE opLedger record (test (15)): all keys required, unknown
+ * keys rejected, `null` only where stated. `load`: phase P1, window = (startSeq, endSeq],
+ * `not-settled` iff `endSeq === null`. `mutation`: `hide` <=> C16 hideModel(B) (P9); `unload` <=> C17
+ * unload of B (P9, §4.8 -- C17 unloads B only) or a cleanup unload step of its own model; `teardown`
+ * <=> cleanup page/context/browser close (`modelId:null`, `invokedBy:'cleanup:'+teardownTarget`);
+ * `startSeq < ackSeq < endSeq`; `causalEvidence` repeats `ackSeq` and points at the spy record (P9:
+ * `spyLedger:seq:<n>`) or the cleanup-step record (`/cleanupStepStatus/<step>`). Returns problems.
+ */
+function opLedgerRecordProblems(o) {
+  if (!isPlainObject(o)) return ['not-object'];
+  const out = [];
+  const endedOk = (e) => (e.endSeq === null) === (e.endedAt === null) && (e.endedAt === null || isNonEmptyStr(e.endedAt));
+  if (o.recordType === 'load') {
+    if (!exactKeys(o, LOAD_OPERATION_KEYS)) out.push('keys');
+    if (!isNonEmptyStr(o.operationId)) out.push('operationId');
+    if (!(o.modelId === 'A' || o.modelId === 'B')) out.push('modelId');
+    if (!(typeof o.modelUrnSha256 === 'string' && SHA256_HEX_RE.test(o.modelUrnSha256))) out.push('modelUrnSha256');
+    if (o.phase !== 'P1') out.push('phase');
+    if (!isSeq(o.startSeq)) out.push('startSeq');
+    if (!isNonEmptyStr(o.startedAt)) out.push('startedAt');
+    if (!(o.endSeq === null || (isSeq(o.endSeq) && isSeq(o.startSeq) && o.endSeq > o.startSeq))) out.push('endSeq');
+    if (!endedOk(o)) out.push('endedAt');
+    const w = o.expectedRequestWindow;
+    if (!exactKeys(w, ['fromSeqExclusive', 'toSeqInclusive']) || w.fromSeqExclusive !== o.startSeq || w.toSeqInclusive !== o.endSeq) out.push('expectedRequestWindow');
+    const r = o.prefixSourceRef;
+    if (!exactKeys(r, ['entryIds', 'ledgerSha256']) || !Array.isArray(r.entryIds) || !r.entryIds.every(isNonEmptyStr) || !(typeof r.ledgerSha256 === 'string' && SHA256_HEX_RE.test(r.ledgerSha256))) out.push('prefixSourceRef');
+    if (!LOAD_COMPLETION_OUTCOMES.includes(o.completionOutcome) || (o.completionOutcome === 'not-settled') !== (o.endSeq === null)) out.push('completionOutcome');
+    return out;
+  }
+  if (o.recordType !== 'mutation') return ['recordType'];
+  if (!exactKeys(o, MUTATION_OPERATION_KEYS)) out.push('keys');
+  if (!isNonEmptyStr(o.operationId)) out.push('operationId');
+  if (!MUTATION_OPERATION_TYPES.includes(o.operationType)) out.push('operationType');
+  let coupled;
+  if (o.operationType === 'hide') coupled = o.modelId === 'B' && o.teardownTarget === null && o.phase === 'P9' && o.invokedBy === 'C16';
+  else if (o.operationType === 'unload') {
+    coupled = o.teardownTarget === null && ((o.phase === 'P9' && o.invokedBy === 'C17' && o.modelId === 'B')
+      || (o.phase === 'cleanup' && (o.modelId === 'A' || o.modelId === 'B') && o.invokedBy === CLEANUP_UNLOAD_INVOKER[o.modelId]));
+  } else if (o.operationType === 'teardown') coupled = o.modelId === null && TEARDOWN_TARGETS.includes(o.teardownTarget) && o.phase === 'cleanup' && o.invokedBy === `cleanup:${o.teardownTarget}`;
+  else coupled = false;
+  if (!coupled) out.push('coupling');
+  if (!isSeq(o.startSeq)) out.push('startSeq');
+  if (!isNonEmptyStr(o.startedAt)) out.push('startedAt');
+  if (!(isSeq(o.ackSeq) && isSeq(o.startSeq) && o.ackSeq > o.startSeq)) out.push('ackSeq');
+  if (!(o.endSeq === null || (isSeq(o.endSeq) && isSeq(o.ackSeq) && o.endSeq > o.ackSeq))) out.push('endSeq');
+  if (!endedOk(o)) out.push('endedAt');
+  const w = o.cancellationWindow;
+  if (!exactKeys(w, ['fromSeqExclusive', 'toSeqExclusive']) || w.fromSeqExclusive !== o.startSeq || !(w.toSeqExclusive === null || (isSeq(w.toSeqExclusive) && w.toSeqExclusive > o.startSeq))) out.push('cancellationWindow');
+  const c = o.causalEvidence;
+  if (!exactKeys(c, ['spyRef', 'cleanupStepRef', 'ackSeq']) || c.ackSeq !== o.ackSeq) out.push('causalEvidence');
+  else if (o.phase === 'P9') { if (!(typeof c.spyRef === 'string' && SPY_REF_RE.test(c.spyRef) && c.cleanupStepRef === null)) out.push('causalEvidence-ref'); } else if (!(c.spyRef === null && typeof o.invokedBy === 'string' && c.cleanupStepRef === `/cleanupStepStatus/${o.invokedBy.slice('cleanup:'.length)}`)) out.push('causalEvidence-ref');
+  if (!MUTATION_TERMINAL_OUTCOMES.includes(o.terminalOutcome) || (o.terminalOutcome === 'not-settled') !== (o.endSeq === null)) out.push('terminalOutcome');
+  return out;
+}
+
+/**
+ * `createOperationLedger({ledger, nextSeq, clock})` -- the harness-owned §9.2 operation-ledger
+ * writer (node side; the run's single counter). `beginLoad`/`endLoad` record a `loadOperation`
+ * (start fields appended BEFORE the load is invoked); `beginMutation` appends a `mutationOperation`'s
+ * start fields and its node-side acknowledgement (`ackSeq`) BEFORE the caller invokes the mutation;
+ * `endMutation` records the end fields. Every append closes earlier open cancellation windows.
+ * `pageOperation(action, arg)` is the node half of the in-page acknowledgement barrier: only
+ * `hide`/B/C16, `unload`/B/C17 (spy record attached at `end`) and a cleanup unload step of its own
+ * model that is about to call `viewer.unloadModel` are accepted. After `seal()` (closeout) nothing is recorded. A
+ * descriptor violating the §9.2 coupling throws (harness defect) -- nothing is appended.
+ */
+function createOperationLedger({ ledger, nextSeq, clock = defaultClock }) {
+  ensureNetworkLedger(ledger);
+  let sealed = false;
+  const byId = new Map();
+  const append = (rec) => { ledger.opLedger.push(rec); byId.set(rec.operationId, rec); refreshCancellationWindows(ledger); return rec; };
+  const api = {
+    beginLoad({ modelId, modelUrnSha256 }) {
+      if (sealed) return null;
+      if (!(modelId === 'A' || modelId === 'B')) throw new TypeError('beginLoad: modelId must be A or B');
+      const startSeq = nextSeq();
+      return append({
+        recordType: 'load', operationId: `load:${modelId}:${startSeq}`, modelId, modelUrnSha256, phase: 'P1', startSeq, startedAt: clock.nowIso(),
+        endSeq: null, endedAt: null, expectedRequestWindow: { fromSeqExclusive: startSeq, toSeqInclusive: null },
+        prefixSourceRef: { entryIds: [], ledgerSha256: isPlainObject(ledger.prefixDerivation) ? ledger.prefixDerivation.ledgerSha256 : derivePrefixes([], []).ledgerSha256 },
+        completionOutcome: 'not-settled',
+      });
+    },
+    endLoad(rec, completionOutcome) {
+      if (sealed || !isLoadRecordish(rec) || rec.endSeq !== null) return null;
+      if (!LOAD_COMPLETION_OUTCOMES.includes(completionOutcome) || completionOutcome === 'not-settled') throw new TypeError(`endLoad: invalid completionOutcome ${String(completionOutcome)}`);
+      rec.endSeq = nextSeq();
+      rec.endedAt = clock.nowIso();
+      rec.expectedRequestWindow.toSeqInclusive = rec.endSeq;
+      rec.completionOutcome = completionOutcome;
+      return rec;
+    },
+    beginMutation({ operationType, teardownTarget = null, modelId = null, phase, invokedBy, spyRef = null, cleanupStepRef = null }) {
+      if (sealed) return null;
+      const probe = {
+        recordType: 'mutation', operationId: 'probe', operationType, teardownTarget, modelId, phase, invokedBy, startSeq: 1, startedAt: 'x', ackSeq: 2,
+        endSeq: null, endedAt: null, cancellationWindow: { fromSeqExclusive: 1, toSeqExclusive: null },
+        // the P9 spy record is attached at endMutation (it is created by the invocation itself, after the ack)
+        causalEvidence: { spyRef: spyRef === null && phase === 'P9' ? 'spyLedger:seq:0' : spyRef, cleanupStepRef, ackSeq: 2 }, terminalOutcome: 'not-settled',
+      };
+      const bad = opLedgerRecordProblems(probe);
+      if (bad.length) throw new TypeError(`beginMutation: invalid descriptor (${bad.join(', ')})`);
+      const startSeq = nextSeq();
+      const startedAt = clock.nowIso();
+      const ackSeq = nextSeq(); // node-side acknowledgement, strictly before the caller invokes the mutation
+      return append({
+        recordType: 'mutation', operationId: `op:${operationType}:${startSeq}`, operationType, teardownTarget, modelId, phase, invokedBy, startSeq, startedAt, ackSeq,
+        endSeq: null, endedAt: null, cancellationWindow: { fromSeqExclusive: startSeq, toSeqExclusive: null }, causalEvidence: { spyRef, cleanupStepRef, ackSeq }, terminalOutcome: 'not-settled',
+      });
+    },
+    endMutation(operationId, terminalOutcome, { spyRef = null } = {}) {
+      const rec = byId.get(operationId);
+      if (sealed || !isMutationRecordish(rec) || rec.endSeq !== null) return null;
+      if (!MUTATION_TERMINAL_OUTCOMES.includes(terminalOutcome) || terminalOutcome === 'not-settled') throw new TypeError(`endMutation: invalid terminalOutcome ${String(terminalOutcome)}`);
+      if (rec.phase === 'P9' && rec.causalEvidence.spyRef === null && typeof spyRef === 'string' && SPY_REF_RE.test(spyRef)) rec.causalEvidence.spyRef = spyRef;
+      rec.endSeq = nextSeq();
+      rec.endedAt = clock.nowIso();
+      rec.terminalOutcome = terminalOutcome;
+      return rec;
+    },
+    pageOperation(action, arg) {
+      try {
+        const a = isPlainObject(arg) ? arg : {};
+        if (action === 'begin') {
+          let rec;
+          if (a.phase === 'P9' && a.modelId === 'B' && ((a.operationType === 'hide' && a.invokedBy === 'C16') || (a.operationType === 'unload' && a.invokedBy === 'C17'))) {
+            rec = api.beginMutation({ operationType: a.operationType, modelId: 'B', phase: 'P9', invokedBy: a.invokedBy });
+          } else if (a.phase === 'cleanup' && a.operationType === 'unload' && (a.modelId === 'A' || a.modelId === 'B') && a.invokedBy === CLEANUP_UNLOAD_INVOKER[a.modelId]) {
+            // a cleanup unload step that is about to call viewer.unloadModel (never for an already-absent model)
+            rec = api.beginMutation({ operationType: 'unload', modelId: a.modelId, phase: 'cleanup', invokedBy: a.invokedBy, cleanupStepRef: `/cleanupStepStatus/${a.invokedBy.slice('cleanup:'.length)}` });
+          } else return { ok: false, reason: 'refused' };
+          return rec ? { ok: true, operationId: rec.operationId, ackSeq: rec.ackSeq } : { ok: false, reason: 'sealed' };
+        }
+        if (action === 'end') {
+          const rec = byId.get(a.operationId);
+          if (!isMutationRecordish(rec) || rec.operationType === 'teardown') return { ok: false, reason: 'unknown-operation' };
+          return api.endMutation(a.operationId, a.terminalOutcome, { spyRef: a.spyRef }) ? { ok: true } : { ok: false, reason: 'not-ended' };
+        }
+        return { ok: false, reason: 'unknown-action' };
+      } catch (err) { return { ok: false, reason: `threw:${summarizeThrown(err).name}` }; }
+    },
+    openMutations: () => ledger.opLedger.filter((o) => isMutationRecordish(o) && o.endSeq === null).map((o) => o.operationId),
+    seal() { refreshCancellationWindows(ledger); sealed = true; },
+    isSealed: () => sealed,
+  };
+  return api;
+}
+
+/**
+ * The §9.2 `load-windows-closed` finalization trigger: once BOTH load records have `endSeq !== null`,
+ * (1) persist the (now frozen) prefix-source ledger / derivation / ambiguous prefixes; (2) finalize
+ * every still-provisional response with `responseSeq <` the later window close at `finalizedSeq` =
+ * that close seq (`finalizedBy:'load-windows-closed'`), over the record truncated there; (3) sync the
+ * fatal witnesses (a finalized FATAL creates its identity's witness here -- counted before the gate).
+ * Synchronous; must run right after the later `endLoad` (no await in between). Returns `{finalized,
+ * closeSeq, entries}` (`finalized:false` while a window is still open or a load record is missing).
+ */
+function finalizeLoadWindows(ledger, { prefixSources = null, appendEntry, rules = OPTIONAL_RESPONSE_RULES } = {}) {
+  ensureNetworkLedger(ledger);
+  const st = prefixBindingState(ledger.opLedger);
+  const A = st.byModel.A;
+  const B = st.byModel.B;
+  if (!A || !B || !isSeq(A.endSeq) || !isSeq(B.endSeq)) return { finalized: false, closeSeq: null, entries: [] };
+  refreshPrefixSourceLedger(ledger, { prefixSources });
+  const closeSeq = Math.max(A.endSeq, B.endSeq);
+  const done = [];
+  for (const e of ledger.responseFailures) {
+    if (!isPlainObject(e) || e.stage !== 'provisional' || isSeq(e.finalizedSeq) || !(isSeq(e.responseSeq) && e.responseSeq < closeSeq)) continue;
+    applyProvisionalFinalization(e, provisionalFinalization(e, { ledger, finalizedSeq: closeSeq, rules }), closeSeq, 'load-windows-closed');
+    done.push(e);
+  }
+  syncFatalWitnesses(ledger, { appendEntry: typeof appendEntry === 'function' ? appendEntry : directWitnessEntryAppender(ledger) });
+  return { finalized: true, closeSeq, entries: done };
+}
+
+/** An empty §10 error ledger with the slice-C1 + C2 collections (node state and offline fixtures). */
+function createEmptyErrorLedger() {
+  return {
+    fatalCount: 0, entries: [], attemptDeadlineExpired: false, markers: [],
+    opLedger: [], prefixSourceLedger: [], prefixDerivation: derivePrefixes([], []), ambiguousPrefixes: [], modelPrefixes: { A: [], B: [] },
+    requestObservations: [], requestFailures: [], responseFailures: [], correlatedRequests: [], fatalWitnesses: [],
+    witnessCount: { requestObservations: 0, rawEvents: 0, correlatedIdentities: 0, fatalIdentities: 0, fatalWitnesses: 0, requiredResourceFailureEntries: 0, nonNetworkFatalEntries: 0, fatalCount: 0 },
+  };
+}
+
+/** Adds any missing slice-C1 collection to an existing ledger in place (never removes data). */
+function ensureNetworkLedger(ledger) {
+  const empty = createEmptyErrorLedger();
+  for (const k of Object.keys(empty)) if (ledger[k] === undefined) ledger[k] = empty[k];
+  return ledger;
+}
+
+/**
+ * `syncFatalWitnesses(ledger, {appendEntry})` -- event-time witness maintenance (W-4/W-5). Recomputes
+ * the correlation over the raw events so far; for every fatal identity WITHOUT a witness it creates
+ * exactly one witness and calls `appendEntry({kind:'required-resource-failure', seq:witnessSeq,
+ * witnessId})` -- the ONLY place a network event increments `fatalCount` (`appendEntry` returns the
+ * entry index, or -1 when the commit latch is set: then nothing is created). An existing witness is
+ * only updated: members appended, `worstClassification` worsened in place (never improved), witnessSeq
+ * kept, never re-counted. `correlatedRequests` and `witnessCount` are refreshed. Synchronous.
+ */
+function syncFatalWitnesses(ledger, { appendEntry }) {
+  ensureNetworkLedger(ledger);
+  const c = correlateNetworkEvents(ledger);
+  for (const w of c.witnesses) {
+    const existing = ledger.fatalWitnesses.find((x) => isPlainObject(x) && x.witnessId === w.witnessId);
+    if (!existing) {
+      const idx = appendEntry({ kind: NETWORK_FATAL_ENTRY_KIND, seq: w.witnessSeq, witnessId: w.witnessId });
+      if (!Number.isInteger(idx) || idx < 0) continue;
+      const view = cloneJson(w.view);
+      ledger.fatalWitnesses.push({
+        witnessId: w.witnessId, requestIdentityKey: w.requestIdentityKey, rawEventRefs: [...w.rawEventRefs], fatalRawEventRefs: [...w.fatalRawEventRefs],
+        worstClassification: w.worstClassification, witnessSeq: w.witnessSeq, phase: w.phase, activeCheck: w.activeCheck, modelOwnership: cloneJson(w.modelOwnership),
+        ledgerEntryRef: `/errorLedger/entries/${idx}`, eventTime: view, closeout: cloneJson(view), agree: true, fatal: true,
+      });
+    } else {
+      existing.rawEventRefs = [...w.rawEventRefs];
+      existing.fatalRawEventRefs = [...w.fatalRawEventRefs];
+      existing.worstClassification = worseClassification(existing.worstClassification, w.worstClassification);
+      existing.modelOwnership = cloneJson(w.modelOwnership);
+      existing.eventTime = { worstClassification: existing.worstClassification, witnessSeq: existing.witnessSeq, rawEventRefs: [...w.rawEventRefs] };
+      existing.closeout = cloneJson(w.view);
+      existing.agree = sameJson(existing.eventTime, existing.closeout);
+    }
+  }
+  ledger.fatalWitnesses.sort((a, b) => a.witnessSeq - b.witnessSeq);
+  const after = correlateNetworkEvents(ledger);
+  ledger.correlatedRequests = after.correlatedRequests;
+  ledger.witnessCount = after.witnessCount;
+  return ledger;
+}
+
+/** `appendEntry` for a ledger without a sink (in-page gate preparation, offline tests): direct push. */
+function directWitnessEntryAppender(ledger) {
+  return (entry) => {
+    if (!Array.isArray(ledger.entries)) ledger.entries = [];
+    ledger.entries.push(entry);
+    ledger.fatalCount = (Number.isInteger(ledger.fatalCount) ? ledger.fatalCount : 0) + 1;
+    return ledger.entries.length - 1;
+  };
+}
+
+/**
+ * Finalizes one provisional response entry at `finalizedSeq` (§9.2 two-stage rule): R-3/R-4 evaluated
+ * over the record truncated at `finalizedSeq`; `eventTime = closeout` (the result at finalization),
+ * `requirement`, `modelBindingObserved` (evaluated at finalizedSeq), `agree`. Returns the patch.
+ */
+function provisionalFinalization(e, { ledger, finalizedSeq, rules = OPTIONAL_RESPONSE_RULES }) {
+  const ctx = networkContextOf(ledger);
+  const id = recomputeRequestIdentity(e, isPlainObject(ledger) ? ledger.requestObservations : []);
+  const t = truncateRecordAt(ctx, finalizedSeq);
+  const result = classifyHttpResponse(httpResponseInput(e, id.reqIdValid), t.opLedger, t.markers, ctx.prefixDerivation, rules, ctx.prefixSourceLedger);
+  return { classification: result.classification, requirement: requirementOf(result.classification), result, modelBindingObserved: modelBindingObservedOf(e.urlRedacted, 'provisional', ctx.prefixDerivation) };
+}
+
+/** Applies a finalization patch to a provisional entry (shared by gate, load-window and closeout finalization). */
+function applyProvisionalFinalization(e, patch, finalizedSeq, finalizedBy) {
+  e.finalizedSeq = finalizedSeq;
+  e.finalizedBy = finalizedBy;
+  const result = isPlainObject(patch.result) ? patch.result : { ...(isPlainObject(e.closeout) ? e.closeout : {}), classification: patch.classification };
+  e.requirement = patch.requirement;
+  e.eventTime = cloneJson(result);
+  e.closeout = cloneJson(result);
+  e.agree = true;
+  if (isPlainObject(patch.modelBindingObserved)) e.modelBindingObserved = cloneJson(patch.modelBindingObserved);
+}
+
+/**
+ * Closeout step 1 of the network ledger (§9.2): (0) close the cancellation windows and, if never
+ * frozen, persist the prefix-source snapshot; (1) finalize every still-provisional response
+ * (`finalizedBy:'closeout'`, one fresh seq each from the run's counter); (2) re-run both classifiers
+ * over the complete ordered record (responses: truncated at finalizedSeq) with the RECOMPUTED identity
+ * and store `closeout` + the recomputed `agree`; (3) sync witnesses (a newly fatal identity is still
+ * counted through `appendEntry` -- before the step-1 primaryOverall); (4) recompute every witness's
+ * closeout view. Synchronous; called right after the `closeout` marker.
+ */
+function finalizeNetworkLedgerAtCloseout(ledger, { nextSeq, appendEntry, rules = OPTIONAL_RESPONSE_RULES, prefixSources = null }) {
+  ensureNetworkLedger(ledger);
+  // (0) slice C2: close every mutation's cancellation window against the complete record; persist the
+  // prefix-source snapshot only if it was never frozen (a load window never closed) -- a frozen
+  // snapshot is never rebuilt here, so a corrupted persisted ledger is detected, not healed.
+  refreshCancellationWindows(ledger);
+  if (!isPrefixLedgerFrozen(ledger)) refreshPrefixSourceLedger(ledger, { prefixSources });
+  for (const e of ledger.responseFailures) {
+    if (!isPlainObject(e) || e.stage !== 'provisional' || isSeq(e.finalizedSeq)) continue;
+    const finalizedSeq = nextSeq();
+    applyProvisionalFinalization(e, provisionalFinalization(e, { ledger, finalizedSeq, rules }), finalizedSeq, 'closeout');
+  }
+  const ctx = networkContextOf(ledger);
+  for (const r of rawNetworkEventsOf(ledger)) {
+    const id = recomputeRequestIdentity(r.e, ledger.requestObservations);
+    r.e.closeout = reclassifyRawEvent(r.kind, r.e, id.reqIdValid, ctx, rules);
+    r.e.agree = sameJson(r.e.eventTime, r.e.closeout);
+  }
+  return syncFatalWitnesses(ledger, { appendEntry });
+}
+
+const isPointerTo = (p, prefix) => typeof p === 'string' && p.startsWith(prefix) && /^\d+$/.test(p.slice(prefix.length));
+
+/** §9.2 `ClassifierResult` exact schema + coupling rules (test (14)). */
+function classifierResultProblems(r, eventKind, { rules = OPTIONAL_RESPONSE_RULES } = {}) {
+  if (!isPlainObject(r)) return ['not-object'];
+  const out = [];
+  if (!exactKeys(r, CLASSIFIER_RESULT_KEYS)) out.push('keys');
+  if (r.eventKind !== eventKind) out.push('eventKind');
+  const allowed = eventKind === 'requestfailed' ? ['fatal-required-resource', 'expected-cancellation', 'unknown-fatal'] : ['fatal-required-resource', 'diagnostic-non-required', 'unknown-fatal'];
+  if (!allowed.includes(r.classification)) out.push('classification-for-eventKind');
+  const unclassifiable = r.classification === NETWORK_CLASSIFICATION.UNKNOWN_FATAL && Array.isArray(r.reasons) && r.reasons.includes('unclassifiable');
+  for (const k of ['url', 'method', 'resourceType']) if (!(typeof r[k] === 'string' || (unclassifiable && r[k] === null))) out.push(k);
+  if (!(ATTRIBUTION_PHASES.includes(r.phase) || (unclassifiable && r.phase === null))) out.push('phase');
+  if (eventKind === 'requestfailed') {
+    if (r.status !== null) out.push('status-not-null');
+    if (!(r.failureReason === null || typeof r.failureReason === 'string')) out.push('failureReason');
+  } else {
+    if (!(Number.isInteger(r.status) && r.status >= 400) && !(unclassifiable && r.status === null)) out.push('status');
+    if (r.failureReason !== null) out.push('failureReason-not-null');
+  }
+  const nonFatal = r.classification === NETWORK_CLASSIFICATION.EXPECTED || r.classification === NETWORK_CLASSIFICATION.DIAGNOSTIC;
+  const bound = (r.classification === NETWORK_CLASSIFICATION.EXPECTED && (r.rule === 'EC-hide' || r.rule === 'EC-unload')) || r.classification === NETWORK_CLASSIFICATION.DIAGNOSTIC;
+  if (bound) {
+    if (!(r.modelId === 'A' || r.modelId === 'B')) out.push('modelId');
+    if (!isNonEmptyStr(r.boundPrefix)) out.push('boundPrefix');
+  } else {
+    if (r.modelId !== null) out.push('modelId-not-null');
+    if (r.boundPrefix !== null) out.push('boundPrefix-not-null');
+  }
+  if (nonFatal) {
+    if (!isNonEmptyStr(r.operationId)) out.push('operationId');
+    if (!isSeq(r.opStartSeq)) out.push('opStartSeq');
+    if (r.classification === NETWORK_CLASSIFICATION.EXPECTED && !Object.values(EC_RULE_OF_OPERATION).includes(r.rule)) out.push('rule');
+    if (r.classification === NETWORK_CLASSIFICATION.DIAGNOSTIC && !(Array.isArray(rules) && rules.some((x) => isPlainObject(x) && x.ruleId === r.rule))) out.push('rule-not-in-OPTIONAL_RESPONSE_RULES');
+  } else {
+    if (r.operationId !== null) out.push('operationId-not-null');
+    if (r.opStartSeq !== null) out.push('opStartSeq-not-null');
+    if (r.rule !== null) out.push('rule-not-null');
+  }
+  if (!Array.isArray(r.reasons) || !r.reasons.every((x) => typeof x === 'string') || (r.reasons.length === 0) !== nonFatal) out.push('reasons');
+  if (!Array.isArray(r.evidenceRefs) || !r.evidenceRefs.every(isJsonPointer) || (r.evidenceRefs.length > 0) !== nonFatal) out.push('evidenceRefs');
+  if (r.verdictEffect !== (isFatalClassification(r.classification) ? 'fatal-row1' : 'none')) out.push('verdictEffect');
+  return out;
+}
+
+const hasQueryOrFragment = (u) => typeof u === 'string' && /[?#]/.test(u);
+
+/** §9.2 rule (v): activeCheck in C1..C20|null; null in P0/cleanup/closeout; else owned by `phase`. */
+function activeCheckPhaseProblem(e) {
+  if (e.activeCheck === null) return null;
+  if (!CHECK_NAMES.includes(e.activeCheck)) return 'activeCheck-enum';
+  if (['P0', 'cleanup', 'closeout'].includes(e.phase)) return 'activeCheck-in-non-check-phase';
+  return CHECK_OWNING_PHASES[e.activeCheck].includes(e.phase) ? null : 'activeCheck-phase-inconsistent';
+}
+
+/** The spy-ledger records of a state (array, or the capped `{records}` form of the R1 payload). */
+function spyRecordsOf(state) {
+  const sl = isPlainObject(state) ? state.spyLedger : null;
+  if (Array.isArray(sl)) return sl;
+  return isPlainObject(sl) && Array.isArray(sl.records) ? sl.records : [];
+}
+
+/**
+ * Slice-C2 validation (§9.2 RC1-C1, §10) of `opLedger[]`, `prefixSourceLedger[]`, `prefixDerivation`,
+ * `ambiguousPrefixes[]` and `modelPrefixes` -- every stored value recomputed, never trusted. Prefixes:
+ * `network-schema:` (shape / coupling, test (15)) and `prefix-derivation-mismatch:` (recomputation,
+ * tests (12)/(13); §8 row 5). `L` is the error ledger, `s` the state (spy ledger for causal refs).
+ */
+function c2LedgerProblems(L, s) {
+  const out = [];
+  const schema = (p) => out.push(`network-schema:${p}`);
+  const mismatch = (p) => out.push(`prefix-derivation-mismatch:${p}`);
+  // ---- operation ledger (test (15)) ----
+  const ids = new Set();
+  let prevStart = -1;
+  const spy = spyRecordsOf(s);
+  L.opLedger.forEach((o, i) => {
+    const at = `opLedger[${i}]`;
+    for (const p of opLedgerRecordProblems(o)) schema(`${at}.${p}`);
+    if (!isPlainObject(o)) return;
+    if (ids.has(o.operationId)) schema(`${at}.operationId-duplicated`);
+    ids.add(o.operationId);
+    if (!isSeq(o.startSeq) || !(o.startSeq > prevStart)) schema(`${at}.startSeq-not-ascending`);
+    if (isSeq(o.startSeq)) prevStart = o.startSeq;
+    if (isMutationRecordish(o) && isPlainObject(o.cancellationWindow) && isSeq(o.startSeq) && o.cancellationWindow.toSeqExclusive !== cancellationWindowEnd(o, L.opLedger, L.markers)) schema(`${at}.cancellationWindow-end`);
+    // causal evidence must resolve to the harness's own recorded invocation (after the ack)
+    if (isMutationRecordish(o) && o.phase === 'P9' && isPlainObject(o.causalEvidence) && typeof o.causalEvidence.spyRef === 'string' && SPY_REF_RE.test(o.causalEvidence.spyRef)) {
+      const seq = Number(o.causalEvidence.spyRef.slice('spyLedger:seq:'.length));
+      const hits = spy.filter((r) => isPlainObject(r) && r.seq === seq);
+      const method = o.operationType === 'hide' ? 'viewer.hideModel' : 'viewer.unloadModel';
+      if (!(hits.length === 1 && hits[0].method === method && hits[0].origin === 'harness' && hits[0].phase === 'P9' && isSeq(o.ackSeq) && seq > o.ackSeq)) schema(`${at}.causalEvidence-unresolved`);
+    }
+  });
+  for (const m of ['A', 'B']) if (L.opLedger.filter((o) => isLoadRecordish(o) && o.modelId === m).length > 1) schema(`opLedger.load-${m}-duplicated`);
+  // ---- prefix-source ledger (test (12)) ----
+  const st = prefixBindingState(L.opLedger);
+  const cutoff = prefixSnapshotCutoff(L);
+  const loads = L.opLedger.filter(isLoadRecordish);
+  const entryIds = new Set();
+  let prevKey = null;
+  const amb = isPlainObject(L.prefixDerivation) && Array.isArray(L.prefixDerivation.ambiguousKeys) ? L.prefixDerivation.ambiguousKeys : [];
+  const recomputedAmb = derivePrefixes(L.prefixSourceLedger, L.opLedger).ambiguousKeys;
+  L.prefixSourceLedger.forEach((e, i) => {
+    const at = `prefixSourceLedger[${i}]`;
+    if (!exactKeys(e, PREFIX_SOURCE_ENTRY_KEYS)) { schema(`${at}.keys`); return; }
+    for (const k of ['entryId', 'reqId', 'loadOperationId', 'method', 'resourceType', 'urlRedacted', 'prefixKey']) if (typeof e[k] !== 'string') schema(`${at}.${k}`);
+    if (!(e.modelId === 'A' || e.modelId === 'B')) schema(`${at}.modelId`);
+    if (!isSeq(e.startSeq)) schema(`${at}.startSeq`);
+    if (!['requestfinished', 'requestfailed', 'none'].includes(e.terminalKind) || ((e.terminalKind === 'none') !== (e.terminalSeq === null)) || !(e.terminalSeq === null || isSeq(e.terminalSeq))) schema(`${at}.terminal`);
+    if (!(e.status === null || Number.isInteger(e.status))) schema(`${at}.status`);
+    if (!NETWORK_URL_CLASSES.includes(e.urlClass)) schema(`${at}.urlClass`);
+    if (typeof e.isNavigationRequest !== 'boolean') schema(`${at}.isNavigationRequest`);
+    if (hasQueryOrFragment(e.urlRedacted) || hasQueryOrFragment(e.prefixKey)) schema(`${at}.urlRedacted-not-redacted`);
+    if (!PREFIX_SOURCE_REASONS.includes(e.reason) || e.disposition !== (e.reason === 'included' ? 'included' : 'excluded')) schema(`${at}.disposition-reason`);
+    if (e.entryId !== `${e.reqId}:${e.loadOperationId}`) mismatch(`${at}.entryId`);
+    if (entryIds.has(e.entryId)) mismatch(`${at}.entryId-duplicated`);
+    entryIds.add(e.entryId);
+    const key = [e.startSeq, e.modelId];
+    if (prevKey && !(key[0] > prevKey[0] || (key[0] === prevKey[0] && key[1] > prevKey[1]))) mismatch(`${at}.order`);
+    prevKey = key;
+    // references exactly one request observation and repeats its fields
+    const obs = L.requestObservations.filter((o) => isPlainObject(o) && o.reqId === e.reqId);
+    if (!(obs.length === 1 && ['startSeq', 'method', 'resourceType', 'urlRedacted', 'urlClass', 'isNavigationRequest'].every((k) => obs[0][k] === e[k]))) mismatch(`${at}.observation`);
+    // its load record (same model) and window
+    const lo = loads.filter((x) => x.operationId === e.loadOperationId);
+    const Lr = lo.length === 1 ? lo[0] : null;
+    if (!Lr || Lr.modelId !== e.modelId || !(isSeq(Lr.startSeq) && Lr.startSeq < e.startSeq && (Lr.endSeq === null || e.startSeq <= Lr.endSeq))) mismatch(`${at}.load-window`);
+    if (e.prefixKey !== (networkPrefixKey(e.urlRedacted) ?? '')) mismatch(`${at}.prefixKey`);
+    // terminal evidence vs the retained raw events (up to the snapshot cutoff); a failing candidate can never be included
+    if (isSeq(e.terminalSeq) && e.terminalSeq > cutoff) mismatch(`${at}.terminal-after-snapshot`);
+    const rf = L.requestFailures.filter((x) => isPlainObject(x) && x.reqId === e.reqId && isSeq(x.failSeq) && x.failSeq <= cutoff).sort((a, b) => a.failSeq - b.failSeq);
+    if (rf.length > 0 && !(e.terminalKind === 'requestfailed' && e.terminalSeq === rf[0].failSeq)) mismatch(`${at}.terminal-requestfailed`);
+    if (e.terminalKind === 'requestfailed' && !rf.some((x) => x.failSeq === e.terminalSeq)) mismatch(`${at}.terminal-requestfailed-unretained`);
+    const hr = L.responseFailures.filter((x) => isPlainObject(x) && x.reqId === e.reqId && isSeq(x.responseSeq) && x.responseSeq <= cutoff).sort((a, b) => a.responseSeq - b.responseSeq);
+    if (hr.length > 0 && e.status !== hr[0].status) mismatch(`${at}.status-vs-response`);
+    if (e.reason !== prefixEntryReason(e, st, recomputedAmb)) mismatch(`${at}.reason`);
+  });
+  // completeness: exactly one entry per (observation, load record) pair inside the window
+  for (const o of L.requestObservations) {
+    if (!isPlainObject(o) || !isSeq(o.startSeq)) continue;
+    for (const Lr of loads) {
+      if (!(isNonEmptyStr(Lr.operationId) && isSeq(Lr.startSeq) && Lr.startSeq < o.startSeq && (!isSeq(Lr.endSeq) || o.startSeq <= Lr.endSeq))) continue;
+      if (!entryIds.has(`${o.reqId}:${Lr.operationId}`)) mismatch(`prefixSourceLedger.missing:${o.reqId}:${Lr.operationId}`);
+    }
+  }
+  // ---- derivation, ambiguous prefixes, modelPrefixes (tests (12)/(13)) ----
+  const pd = L.prefixDerivation;
+  if (!exactKeys(pd, PREFIX_DERIVATION_KEYS)) schema('prefixDerivation.keys');
+  else {
+    if (pd.nonDistinguishingReason !== null && pd.bindingAvailable === true) schema('prefixDerivation.nonDistinguishingReason');
+    if (!sameJson(pd, derivePrefixes(L.prefixSourceLedger, L.opLedger))) mismatch('prefixDerivation');
+  }
+  L.ambiguousPrefixes.forEach((a, i) => {
+    if (!exactKeys(a, ['prefixKey', 'sourceEntryIds']) || !exactKeys(a.sourceEntryIds, ['A', 'B'])) schema(`ambiguousPrefixes[${i}].keys`);
+    else if (hasQueryOrFragment(a.prefixKey)) schema(`ambiguousPrefixes[${i}].prefixKey-not-redacted`);
+  });
+  if (!sameJson(L.ambiguousPrefixes, ambiguousPrefixesOf(L.prefixSourceLedger, L.opLedger, derivePrefixes(L.prefixSourceLedger, L.opLedger)))) mismatch('ambiguousPrefixes');
+  if (amb.length !== L.ambiguousPrefixes.length) mismatch('ambiguousPrefixes-count');
+  if (!(isPlainObject(pd) && sameJson(L.modelPrefixes, pd.modelPrefixes))) mismatch('modelPrefixes');
+  // load records' prefixSourceRef
+  for (const [i, o] of L.opLedger.entries()) {
+    if (!isLoadRecordish(o) || !isPlainObject(o.prefixSourceRef)) continue;
+    const want = L.prefixSourceLedger.filter((e) => isPlainObject(e) && e.loadOperationId === o.operationId).map((e) => e.entryId);
+    if (!sameJson(o.prefixSourceRef.entryIds, want)) mismatch(`opLedger[${i}].prefixSourceRef.entryIds`);
+    if (!(isPlainObject(pd) && o.prefixSourceRef.ledgerSha256 === pd.ledgerSha256)) mismatch(`opLedger[${i}].prefixSourceRef.ledgerSha256`);
+  }
+  return out;
+}
+
+/**
+ * `networkLedgerProblems(state, {rules})` -- the §9.2/§10 validation of the slice-C1 error-ledger
+ * collections, part of `recordSchemaProblems` (=> `validateResultSchema` and §8 row 5; evaluated at
+ * closeout step 1 by `computeOverall`). Stored values are NEVER trusted: every `reqIdValid` /
+ * `identityKey` / `duplicateOf`, every `closeout` ClassifierResult (responses over the record
+ * truncated at finalizedSeq), every `agree`, `correlatedRequests[]`, `fatalWitnesses[]` (closeout view)
+ * and `witnessCount` are recomputed. Prefixes: `network-schema:` (shape), `request-classification-
+ * mismatch:` (classifier disagreement), `fatal-witness-mismatch:` (W-1..W-5 / count invariant).
+ * `rules` defaults to the frozen OPTIONAL_RESPONSE_RULES (offline tests may pass a synthetic rule set
+ * for the recomputation only; the diagnostic-retention rule always checks the frozen constant).
+ */
+function networkLedgerProblems(state, { rules = OPTIONAL_RESPONSE_RULES } = {}) {
+  const s = isPlainObject(state) ? state : {};
+  const L = s.errorLedger;
+  if (!isPlainObject(L)) return ['network-schema:errorLedger-not-object'];
+  const out = [];
+  const schema = (p) => out.push(`network-schema:${p}`);
+  const mismatch = (p) => out.push(`fatal-witness-mismatch:${p}`);
+  const clsMismatch = (p) => out.push(`request-classification-mismatch:${p}`);
+  for (const k of NETWORK_LEDGER_LIST_KEYS) if (!Array.isArray(L[k])) schema(`${k}-not-array`);
+  // slice C2: the operation ledger and the prefix-source evidence are REQUIRED collections (§10)
+  for (const k of NETWORK_C2_LIST_KEYS) if (!Array.isArray(L[k])) schema(`${k}-not-array`);
+  if (!Array.isArray(L.markers)) schema('markers-not-array');
+  if (!isPlainObject(L.prefixDerivation)) schema('prefixDerivation-not-object');
+  if (!isPlainObject(L.modelPrefixes)) schema('modelPrefixes-not-object');
+  if (!exactKeys(L.witnessCount, WITNESS_COUNT_KEYS) || !WITNESS_COUNT_KEYS.every((k) => Number.isInteger(L.witnessCount[k]) && L.witnessCount[k] >= 0)) schema('witnessCount');
+  if (!Array.isArray(L.entries)) schema('entries-not-array');
+  if (out.length > 0) return out;
+  const ctx = networkContextOf(L);
+  out.push(...c2LedgerProblems(L, s));
+  // request observations (W-1)
+  let prevStart = -1;
+  const reqIds = new Set();
+  L.requestObservations.forEach((o, i) => {
+    const at = `requestObservations[${i}]`;
+    if (!exactKeys(o, REQUEST_OBSERVATION_KEYS)) { schema(`${at}.keys`); return; }
+    if (!isSeq(o.startSeq) || !(o.startSeq > prevStart)) schema(`${at}.startSeq-not-ascending`);
+    prevStart = isSeq(o.startSeq) ? o.startSeq : prevStart;
+    if (o.reqId !== `q:${o.startSeq}`) schema(`${at}.reqId-not-q-startSeq`);
+    if (reqIds.has(o.reqId)) mismatch(`${at}.reqId-duplicated`);
+    reqIds.add(o.reqId);
+    for (const k of ['method', 'resourceType', 'urlRedacted']) if (typeof o[k] !== 'string') schema(`${at}.${k}`);
+    if (hasQueryOrFragment(o.urlRedacted)) schema(`${at}.urlRedacted-not-redacted`);
+    if (!NETWORK_URL_CLASSES.includes(o.urlClass)) schema(`${at}.urlClass`);
+    if (typeof o.isNavigationRequest !== 'boolean') schema(`${at}.isNavigationRequest`);
+    if (!ATTRIBUTION_PHASES.includes(o.phase)) schema(`${at}.phase`);
+    const ap = activeCheckPhaseProblem(o);
+    if (ap) schema(`${at}.${ap}`);
+  });
+  // raw events (W-1, cross-field rules (i)-(v))
+  const c = correlateNetworkEvents(L);
+  const byRef = new Map(c.events.map((ev) => [`${ev.list}[${ev.i}]`, ev]));
+  const rawIds = new Set();
+  const check = (list, keys, kind) => L[list].forEach((e, i) => {
+    const at = `${list}[${i}]`;
+    if (!exactKeys(e, keys)) { schema(`${at}.keys`); return; }
+    const seqKey = kind === 'requestfailed' ? 'failSeq' : 'responseSeq';
+    const prefix = kind === 'requestfailed' ? 'rf:' : 'hr:';
+    if (!isSeq(e[seqKey]) || e.rawEventSeq !== e[seqKey]) schema(`${at}.rawEventSeq`);
+    if (e.rawEventId !== `${prefix}${e.rawEventSeq}`) schema(`${at}.rawEventId`);
+    if (rawIds.has(e.rawEventId)) schema(`${at}.rawEventId-duplicated`);
+    rawIds.add(e.rawEventId);
+    if (!(e.reqId === null || typeof e.reqId === 'string')) schema(`${at}.reqId`);
+    if (!(e.startSeq === null || isSeq(e.startSeq))) schema(`${at}.startSeq`);
+    for (const k of ['method', 'resourceType', 'urlRedacted']) if (!(e[k] === null || typeof e[k] === 'string')) schema(`${at}.${k}`);
+    if (hasQueryOrFragment(e.urlRedacted)) schema(`${at}.urlRedacted-not-redacted`);
+    if (!NETWORK_URL_CLASSES.includes(e.urlClass)) schema(`${at}.urlClass`);
+    for (const k of ['isNavigationRequest', 'frameIsMain', 'redirected']) if (!(e[k] === null || typeof e[k] === 'boolean')) schema(`${at}.${k}`);
+    if (!ATTRIBUTION_PHASES.includes(e.phase)) schema(`${at}.phase`);
+    const ap = activeCheckPhaseProblem(e);
+    if (ap) schema(`${at}.${ap}`);
+    if (kind === 'requestfailed' && !(e.errorText === null || typeof e.errorText === 'string')) schema(`${at}.errorText`);
+    const ev = byRef.get(at);
+    if (!ev) return;
+    if (e.reqIdValid !== ev.reqIdValid) mismatch(`${at}.reqIdValid`);
+    if (e.identityKey !== ev.identityKey) mismatch(`${at}.identityKey`);
+    if (e.duplicateOf !== ev.duplicateOf) mismatch(`${at}.duplicateOf`);
+    if (kind === 'httpResponse') {
+      if (!(Number.isInteger(e.status) && e.status >= 400)) schema(`${at}.status`);
+      // (ii) stage <-> finalizedBy <-> finalizedSeq
+      if (e.stage === 'immediate') { if (e.finalizedBy !== 'event' || e.finalizedSeq !== e.responseSeq) schema(`${at}.stage-immediate-finalization`); } else if (e.stage === 'provisional') {
+        if (!['load-windows-closed', 'gate', 'closeout'].includes(e.finalizedBy) || !isSeq(e.finalizedSeq) || !(e.finalizedSeq > e.responseSeq)) schema(`${at}.stage-provisional-finalization`);
+      } else schema(`${at}.stage`);
+      // (iv) modelBindingObserved
+      const mb = e.modelBindingObserved;
+      if (!exactKeys(mb, ['status', 'modelId', 'prefixKey'])) schema(`${at}.modelBindingObserved.keys`);
+      else if (e.stage === 'immediate') { if (!(mb.status === 'not-evaluated' && mb.modelId === null && mb.prefixKey === null)) schema(`${at}.modelBindingObserved-immediate`); } else {
+        const pd = ctx.prefixDerivation;
+        const inMp = (m, k) => isPlainObject(pd.modelPrefixes) && Array.isArray(pd.modelPrefixes[m]) && pd.modelPrefixes[m].includes(k);
+        const inAmb = (k) => Array.isArray(pd.ambiguousKeys) && pd.ambiguousKeys.includes(k);
+        if (mb.status === 'unique') { if (!((mb.modelId === 'A' || mb.modelId === 'B') && isNonEmptyStr(mb.prefixKey) && inMp(mb.modelId, mb.prefixKey))) schema(`${at}.modelBindingObserved-unique`); } else if (mb.status === 'ambiguous') { if (!(mb.modelId === null && isNonEmptyStr(mb.prefixKey) && (inAmb(mb.prefixKey) || pd.bindingAvailable !== true))) schema(`${at}.modelBindingObserved-ambiguous`); } else if (mb.status === 'unbound') { if (!(mb.modelId === null && isNonEmptyStr(mb.prefixKey) && pd.bindingAvailable === true && !inAmb(mb.prefixKey) && !inMp('A', mb.prefixKey) && !inMp('B', mb.prefixKey))) schema(`${at}.modelBindingObserved-unbound`); } else schema(`${at}.modelBindingObserved-status`);
+      }
+    }
+    // ClassifierResult schema of both results; (i) agree recomputed
+    for (const k of ['eventTime', 'closeout']) for (const p of classifierResultProblems(e[k], kind, { rules })) schema(`${at}.${k}.${p}`);
+    // slice C2 boundPrefix provenance: a non-null boundPrefix is in modelPrefixes[modelId] and is
+    // supported by at least one included prefix-source entry named in evidenceRefs
+    for (const k of ['eventTime', 'closeout']) {
+      const r = e[k];
+      if (!isPlainObject(r) || r.boundPrefix === null || r.boundPrefix === undefined) continue;
+      const mp = isPlainObject(ctx.prefixDerivation.modelPrefixes) ? ctx.prefixDerivation.modelPrefixes : {};
+      if (!((r.modelId === 'A' || r.modelId === 'B') && Array.isArray(mp[r.modelId]) && mp[r.modelId].includes(r.boundPrefix))) clsMismatch(`${at}.${k}.boundPrefix-not-in-modelPrefixes`);
+      const support = prefixSupportRefs(ctx.prefixSourceLedger, r.modelId, r.boundPrefix);
+      if (support.length === 0 || !Array.isArray(r.evidenceRefs) || !support.every((p) => r.evidenceRefs.includes(p))) clsMismatch(`${at}.${k}.boundPrefix-unsupported`);
+    }
+    if (e.agree !== sameJson(e.eventTime, e.closeout) || e.agree !== true) clsMismatch(`${at}.agree`);
+    // closeout re-classification (responses: record truncated at finalizedSeq)
+    if (kind === 'requestfailed' || isSeq(e.finalizedSeq)) {
+      const recomputed = reclassifyRawEvent(kind, e, ev.reqIdValid, ctx, rules);
+      if (!sameJson(recomputed, e.closeout)) clsMismatch(`${at}.closeout`);
+    }
+    const cls = isPlainObject(e.closeout) ? e.closeout.classification : null;
+    if (kind === 'httpResponse') {
+      // (iii) classification -> requirement truth table (an immediate entry is fatal-required-resource /
+      // 'required', or -- W-1 unclassifiable identity, R-5 -- unknown-fatal / 'unknown')
+      if (e.requirement !== requirementOf(cls)) schema(`${at}.requirement-ne-classification`);
+      if (e.stage === 'immediate' && !(cls === NETWORK_CLASSIFICATION.FATAL_REQUIRED || (cls === NETWORK_CLASSIFICATION.UNKNOWN_FATAL && Array.isArray(e.closeout.reasons) && e.closeout.reasons[0] === 'R-5'))) schema(`${at}.immediate-classification`);
+      if (cls === NETWORK_CLASSIFICATION.DIAGNOSTIC) {
+        const mb = e.modelBindingObserved;
+        if (!(isPlainObject(mb) && mb.status === 'unique' && mb.modelId === e.closeout.modelId && mb.prefixKey === e.closeout.boundPrefix)) schema(`${at}.diagnostic-binding`);
+        const rule = OPTIONAL_RESPONSE_RULES.find((x) => x.ruleId === e.closeout.rule);
+        const op = ctx.opLedger.find((o) => isPlainObject(o) && o.operationId === e.closeout.operationId);
+        if (!rule || !op || op.recordType !== 'load' || op.modelId !== rule.model) mismatch(`${at}.diagnostic-evidence-contradiction`);
+      }
+    } else if (cls === NETWORK_CLASSIFICATION.EXPECTED) {
+      const r = e.closeout;
+      const op = ctx.opLedger.find((o) => isPlainObject(o) && o.operationId === r.operationId);
+      const w = op && isPlainObject(op.cancellationWindow) ? op.cancellationWindow : null;
+      if (!op || op.recordType !== 'mutation' || op.startSeq !== r.opStartSeq || !w || !(w.fromSeqExclusive < e.failSeq && (w.toSeqExclusive === null || e.failSeq < w.toSeqExclusive))) clsMismatch(`${at}.expected-evidence-contradiction`);
+    }
+  });
+  check('requestFailures', REQUEST_FAILURE_KEYS, 'requestfailed');
+  check('responseFailures', RESPONSE_FAILURE_KEYS, 'httpResponse');
+  // W-3 correlated requests, W-4 witnesses, W-5 count invariant -- recomputed
+  if (!sameJson(L.correlatedRequests, c.correlatedRequests)) mismatch('correlatedRequests');
+  L.correlatedRequests.forEach((x, i) => { if (!exactKeys(x, CORRELATED_REQUEST_KEYS)) schema(`correlatedRequests[${i}].keys`); });
+  const stored = L.fatalWitnesses;
+  stored.forEach((w, i) => {
+    const at = `fatalWitnesses[${i}]`;
+    if (!exactKeys(w, FATAL_WITNESS_KEYS)) { schema(`${at}.keys`); return; }
+    if (w.fatal !== true) schema(`${at}.fatal`);
+    if (w.agree !== sameJson(w.eventTime, w.closeout) || w.agree !== true) mismatch(`${at}.agree`);
+    const e = isPointerTo(w.ledgerEntryRef, '/errorLedger/entries/') ? L.entries[Number(w.ledgerEntryRef.slice('/errorLedger/entries/'.length))] : undefined;
+    if (!(isPlainObject(e) && e.kind === NETWORK_FATAL_ENTRY_KIND && e.witnessId === w.witnessId && e.seq === w.witnessSeq && exactKeys(e, ['kind', 'seq', 'witnessId']))) mismatch(`${at}.ledgerEntryRef`);
+  });
+  if (stored.length !== c.witnesses.length) mismatch(`witness-count:${stored.length}-ne-${c.witnesses.length}`);
+  for (const w of c.witnesses) {
+    const hits = stored.filter((x) => isPlainObject(x) && x.witnessId === w.witnessId);
+    if (hits.length !== 1) { mismatch(`witness-missing-or-duplicated:${w.witnessId}`); continue; }
+    const h = hits[0];
+    if (h.requestIdentityKey !== w.requestIdentityKey) mismatch(`${w.witnessId}.requestIdentityKey`);
+    if (!sameJson(h.rawEventRefs, w.rawEventRefs) || !sameJson(h.fatalRawEventRefs, w.fatalRawEventRefs)) mismatch(`${w.witnessId}.rawEventRefs`);
+    if ((NETWORK_SEVERITY[h.worstClassification] ?? -1) < NETWORK_SEVERITY[w.worstClassification] || h.worstClassification !== w.worstClassification) mismatch(`${w.witnessId}.worstClassification`);
+    if (h.witnessSeq !== w.witnessSeq) mismatch(`${w.witnessId}.witnessSeq`);
+    if (h.phase !== w.phase || h.activeCheck !== w.activeCheck) mismatch(`${w.witnessId}.phase-activeCheck`);
+    if (!sameJson(h.modelOwnership, w.modelOwnership)) mismatch(`${w.witnessId}.modelOwnership`);
+    if (!sameJson(h.closeout, w.view)) mismatch(`${w.witnessId}.closeout`);
+  }
+  for (let i = 1; i < stored.length; i += 1) if (!(isPlainObject(stored[i - 1]) && isPlainObject(stored[i]) && stored[i - 1].witnessSeq <= stored[i].witnessSeq)) { mismatch('fatalWitnesses-order'); break; }
+  // witness <-> entry bijection
+  L.entries.forEach((e, i) => {
+    if (!isPlainObject(e) || e.kind !== NETWORK_FATAL_ENTRY_KIND) return;
+    const ws = stored.filter((w) => isPlainObject(w) && w.witnessId === e.witnessId);
+    if (ws.length !== 1 || ws[0].ledgerEntryRef !== `/errorLedger/entries/${i}`) mismatch(`entries[${i}].witness-bijection`);
+  });
+  if (!sameJson(L.witnessCount, c.witnessCount)) mismatch('witnessCount');
+  if (c.witnessCount.requiredResourceFailureEntries !== c.witnessCount.fatalWitnesses || c.witnessCount.fatalIdentities !== c.witnessCount.fatalWitnesses) mismatch('count-equation:fatalIdentities=fatalWitnesses=entries');
+  if (L.fatalCount !== c.witnessCount.fatalCount) mismatch(`count-equation:fatalCount:${L.fatalCount}-ne-${c.witnessCount.fatalCount}`);
+  return out;
+}
+
+/**
+ * §9.2 "`seq` is one node-side monotonic counter": every PRIMARY seq allocation is unique across
+ * collections -- markers, eventLog, spyLedger, stateSnapshots, request observations (`startSeq`), raw
+ * network events (`rawEventSeq`), non-network fatal entries, `gates.C1.gateSeq`, gate-disposition
+ * `dispositionSeq`, control-run executionRecord start/terminal seqs, and gate/closeout response
+ * finalizations, operation-ledger start/ack/end seqs (slice C2). References (C1 `finalizedSeq` = its check-finalized event, network fatal entries =
+ * `witnessSeq`, load-window finalizations) are not allocations and are not counted. Returns
+ * `{seqs:[{seq,label}], problems}`.
+ */
+function primarySeqAllocations(state) {
+  const s = isPlainObject(state) ? state : {};
+  const seqs = [];
+  const add = (seq, label) => { if (isSeq(seq)) seqs.push({ seq, label }); };
+  errorLedgerList(s, 'markers').forEach((m, i) => { if (isPlainObject(m)) add(m.seq, `errorLedger.markers[${i}]`); });
+  for (const name of ATTRIBUTED_COLLECTIONS) attributedCollection(s, name).forEach((e, i) => { if (isPlainObject(e)) add(e.seq, `${name}[${i}]`); });
+  errorLedgerList(s, 'requestObservations').forEach((e, i) => { if (isPlainObject(e)) add(e.startSeq, `errorLedger.requestObservations[${i}]`); });
+  for (const k of ['requestFailures', 'responseFailures']) errorLedgerList(s, k).forEach((e, i) => { if (isPlainObject(e)) add(e.rawEventSeq, `errorLedger.${k}[${i}]`); });
+  errorLedgerList(s, 'responseFailures').forEach((e, i) => { if (isPlainObject(e) && (e.finalizedBy === 'gate' || e.finalizedBy === 'closeout')) add(e.finalizedSeq, `errorLedger.responseFailures[${i}].finalizedSeq`); });
+  // slice C2: operation-ledger allocations (start, node-side acknowledgement, end). A load-window
+  // finalization (`finalizedBy:'load-windows-closed'`) references the later load's endSeq.
+  errorLedgerList(s, 'opLedger').forEach((o, i) => {
+    if (!isPlainObject(o)) return;
+    add(o.startSeq, `errorLedger.opLedger[${i}].startSeq`);
+    if (o.recordType === 'mutation') add(o.ackSeq, `errorLedger.opLedger[${i}].ackSeq`);
+    add(o.endSeq, `errorLedger.opLedger[${i}].endSeq`);
+  });
+  // A non-network fatal entry is its own allocation unless it is the ledger record of a passive fatal
+  // eventLog entry of the same kind and seq (one event, two records).
+  const events = attributedCollection(s, 'eventLog');
+  errorLedgerList(s, 'entries').forEach((e, i) => {
+    if (!isPlainObject(e) || e.kind === NETWORK_FATAL_ENTRY_KIND) return;
+    if (events.some((x) => isPlainObject(x) && x.seq === e.seq && x.kind === e.kind)) return;
+    add(e.seq, `errorLedger.entries[${i}]`);
+  });
+  if (isPlainObject(s.gates) && isPlainObject(s.gates.C1)) add(s.gates.C1.gateSeq, 'gates.C1');
+  for (const [coll, names] of [['checks', CHECK_NAMES], ['controls', CONTROL_NAMES]]) {
+    const recs = isPlainObject(s[coll]) ? s[coll] : {};
+    for (const n of names) {
+      const r = recs[n];
+      if (!isPlainObject(r)) continue;
+      if (r.recordType === RECORD_TYPE.GATE_DISPOSITION) add(r.dispositionSeq, `${coll}.${n}.dispositionSeq`);
+      else if (r.recordType === RECORD_TYPE.CONTROL_RUN && isPlainObject(r.executionRecord)) {
+        if (r.executionRecord.started === true) add(r.executionRecord.startSeq, `${coll}.${n}.executionRecord.startSeq`);
+        add(r.executionRecord.terminalSeq, `${coll}.${n}.executionRecord.terminalSeq`);
+      }
+    }
+  }
+  const byKey = new Map();
+  const problems = [];
+  for (const x of seqs) {
+    if (byKey.has(x.seq)) problems.push(`seq-not-unique:${x.seq}:${byKey.get(x.seq)}|${x.label}`);
+    else byKey.set(x.seq, x.label);
+  }
+  return { seqs, problems };
+}
+
+/** The highest primary seq recorded in a state (node counter `observe`, interim two-namespace bridge). */
+function maxRecordedSeq(state) {
+  return primarySeqAllocations(state).seqs.reduce((m, x) => Math.max(m, x.seq), -1);
+}
+
+/**
+ * `createRunSeqCounter()` -- THE node-side run counter (§9.2): `next()` allocates, `peek()` reads the
+ * last allocation, `observe(seq)` moves the counter past a seq allocated elsewhere. `observe` is the
+ * INTERIM bridge to the page-side recorder of the in-page phase run (see `runPostReservation`): the
+ * cross-process single-counter unification is an UNRESOLVED live-wiring gate (slice C1 report).
+ */
+/**
+ * UNRESOLVED BEFORE-LIVE-EXECUTION GATE (slice C1 finding, kept by slice C2 -- NOT redesigned here):
+ * §9.2 requires ONE node-side monotonic `seq` counter shared by opLedger, markers, check-finalized
+ * events, gates.C1, control records and request/response events. The in-page phase run still numbers
+ * its own records from a page-side recorder seeded with `seqBase` (the stopgap in `g2BuildEnv` /
+ * `runPostReservation`), while node events DURING that run (network events and, since slice C2, the
+ * C16/C17 operation records acknowledged through G2_NODE_OPLEDGER_BINDING) are numbered by the node
+ * counter: two namespaces. Any collision is a row-5 contradiction (`seq-not-unique`) and C-d/C-e event-
+ * time windows can disagree with closeout (`request-classification-mismatch`) -- fail-closed, but a
+ * compliant cross-process counter design is required before any live execution.
+ * The same gate also covers the node-side ATTRIBUTION defect (review M1, 2026-10-01): during the whole
+ * in-page P2..P11 run Node labels its own events `{phase:'P1', activeCheck:null}` (runPostReservation),
+ * because the page owns the phase/check context. C-e requires `event.phase` P9/cleanup for EC-hide/
+ * EC-unload, so a C16 hideModel / C17 unload abort can never qualify as an expected cancellation (it is
+ * classified fatal-required-resource, row 1), and P2..P11 node events carry false P1 evidence. Fail-
+ * closed (never a false PASS), but it must be resolved together with the counter before live.
+ * Mechanically coupled (M2): main() and runChecksInPhaseOrder(mode 'live') refuse with
+ * 'dual-counter-gate-unresolved' while `resolved` is not true, independently of LIVE_PATH_WIRED.
+ */
+const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, owner: 'before-live-execution', finding: 'page-records-numbered-via-seqBase-while-node-owns-the-counter' });
+
+function createRunSeqCounter() {
+  let n = 0;
+  return {
+    next: () => { n += 1; return n; },
+    peek: () => n,
+    observe: (seq) => { if (isSeq(seq) && seq > n) n = seq; return n; },
+  };
+}
+
+/**
+ * `makeGateDispositionRecord(itemId, {gate, c1, dispositionSeq, dispositionAt})` -- the exact §7
+ * synthetic gate-disposition record (G-a..G-f) for one C2..C20/N1..N8 item under a CLOSED gate.
+ */
+function makeGateDispositionRecord(itemId, { gate, c1, dispositionSeq, dispositionAt }) {
+  const outcome = gate.outcome;
+  if (outcome !== GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED && outcome !== GATE_OUTCOME.CLOSED_OTHER) throw new TypeError('makeGateDispositionRecord: gate is not closed');
+  if (!DOWNSTREAM_ITEM_NAMES.includes(itemId)) throw new TypeError(`makeGateDispositionRecord: ${String(itemId)} is not a downstream item`);
+  const isCheck = itemId.startsWith('C');
+  const cdb = outcome === GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED;
+  const disposition = isCheck ? GATE_CHECK_DISPOSITION : GATE_CONTROL_DISPOSITION[outcome][itemId];
+  const needsDep = cdb && (isCheck || disposition === NRDB_STATE);
+  const detail = isPlainObject(c1.fields) && Array.isArray(c1.fields.blockDetail) ? JSON.parse(JSON.stringify(c1.fields.blockDetail)) : [];
+  return {
+    recordType: RECORD_TYPE.GATE_DISPOSITION,
+    itemId,
+    itemKind: isCheck ? 'check' : 'control',
+    synthetic: true,
+    gateGenerated: true,
+    executed: false,
+    gateOutcome: outcome,
+    blockingReason: cdb ? c1.reason : GATE_BLOCKING_REASON_CLOSED_OTHER,
+    disposition,
+    dispositionSeq,
+    dispositionAt,
+    startSeq: null,
+    startedAt: null,
+    executionRecord: isCheck ? null : {
+      controlId: itemId, phase: CONTROL_OWNING_PHASE[itemId], dependencyIds: [...CONTROL_DEPENDENCY_IDS[itemId]],
+      started: false, crossedStartBoundary: false, startSeq: null, startedAt: null,
+      terminalSeq: dispositionSeq, terminalAt: dispositionAt, terminalState: disposition, result: null, evidenceRefs: [],
+    },
+    dependencyBlockedBy: needsDep ? {
+      check: 'C1', blockingState: 'BLOCKED', reason: c1.reason, phaseSeq: c1.finalizedSeq, blockedAt: c1.finalizedAt,
+      evidenceRef: '/checks/C1', failedBeforeDependentStarted: true, detail,
+    } : null,
+    evidenceRefs: [...GATE_EVIDENCE_REFS],
+  };
+}
+
+/**
+ * `gateC1Problems(state)` -- the exact `gates.C1` record and the mandatory gate equations (§7),
+ * every stored field recomputed. Returns `{problems, outcome}` (`outcome` = the STORED outcome when
+ * the record is shaped, else null). The OPEN/closed record-population equations are enforced by
+ * `recordSchemaProblems`.
+ */
+function gateC1Problems(state) {
+  const s = isPlainObject(state) ? state : {};
+  const out = [];
+  if (!exactKeys(s.gates, ['C1'])) return { problems: ['gates.keys'], outcome: null };
+  const g = s.gates.C1;
+  if (!exactKeys(g, GATE_C1_KEYS)) return { problems: ['gates.C1.keys'], outcome: null };
+  if (!isSeq(g.gateSeq)) out.push('gates.C1.gateSeq');
+  if (!isIsoMs(g.gateAt)) out.push('gates.C1.gateAt');
+  if (!CHECK_VERDICT_BASES.includes(g.c1Verdict)) out.push('gates.C1.c1Verdict-enum');
+  if (!GATE_OUTCOMES.includes(g.outcome)) out.push('gates.C1.outcome-enum');
+  if (!Number.isInteger(g.fatalCountAtGate) || g.fatalCountAtGate < 0) out.push('gates.C1.fatalCountAtGate');
+  if (!Array.isArray(g.notStarted)) out.push('gates.C1.notStarted');
+  const c1 = isPlainObject(s.checks) ? s.checks.C1 : null;
+  if (!isPlainObject(c1) || c1.recordType !== RECORD_TYPE.CHECK_RUN) out.push('gates.C1.c1-record');
+  else {
+    if (g.c1Verdict !== c1.verdict) out.push('gates.C1.c1Verdict-ne-check');
+    if (g.c1Reason !== c1.reason) out.push('gates.C1.c1Reason-ne-check');
+    if (g.c1FinalizedSeq !== c1.finalizedSeq) out.push('gates.C1.c1FinalizedSeq-ne-check');
+    const ev = c1FinalizationEvents(s.eventLog);
+    if (ev.length !== 1) out.push(`gates.C1.check-finalized-events:${ev.length}`);
+    else if (ev[0].seq !== c1.finalizedSeq || ev[0].verdict !== c1.verdict || ev[0].reason !== c1.reason) out.push('gates.C1.check-finalized-event-mismatch');
+  }
+  if (!(isSeq(g.c1FinalizedSeq) && isSeq(g.gateSeq) && g.c1FinalizedSeq < g.gateSeq)) out.push('gates.C1.c1FinalizedSeq-not-before-gate');
+  const fc = recomputeFatalCountAtGate(s.errorLedger, g.gateSeq);
+  for (const p of fc.problems) out.push(`gates.C1.${p}`);
+  if (fc.count !== null && fc.count !== g.fatalCountAtGate) out.push('gates.C1.fatalCountAtGate-ne-recomputed');
+  for (const p of gateFinalizationProblems(s.errorLedger, g.gateSeq)) out.push(`gates.C1.${p}`);
+  // An indeterminate count (unsequenced entries, FATAL_ENTRY_SEQ_REQUIRED false) recomputes the
+  // outcome from the stored fatalCountAtGate; a determinate count always uses the recomputed value.
+  const recomputed = recomputeGateOutcome({ c1Verdict: isPlainObject(c1) ? c1.verdict : null, c1Reason: isPlainObject(c1) ? c1.reason : null, fatalCountAtGate: fc.count === null ? g.fatalCountAtGate : fc.count });
+  if (g.outcome !== recomputed) out.push('gates.C1.outcome-ne-recomputed');
+  const expectedNotStarted = recomputed === GATE_OUTCOME.OPEN ? [] : [...DOWNSTREAM_ITEM_NAMES];
+  if (!sameJson(g.notStarted, expectedNotStarted)) out.push('gates.C1.notStarted-ne-recomputed');
+  return { problems: out, outcome: GATE_OUTCOMES.includes(g.outcome) ? g.outcome : null };
+}
+
+/**
+ * `controlRunProblems(name, rec)` -- exact §7/§10 `control-run` record: the accepted control record
+ * plus the discriminator, the exact `executionRecord` and `dependencyBlockedBy` (non-null iff the
+ * EFFECTIVE state is NRDB -- which is itself never legal in a control-run, L2).
+ */
+function controlRunProblems(name, rec) {
+  if (!isPlainObject(rec)) return ['not-object'];
+  const out = [];
+  if (rec.recordType !== RECORD_TYPE.CONTROL_RUN) out.push('record-type');
+  if (!exactKeys(rec, CONTROL_RUN_KEYS)) out.push('keys');
+  const eff = controlEffectiveState(rec);
+  if (!(CONTROL_ALLOWED_STATES[name] || []).includes(eff)) out.push('state');
+  if (!isPlainJsonOk(rec.fields) || !isPlainJsonOk(rec.evidence)) out.push('not-plain-json');
+  for (const p of executionRecordProblems(name, rec.executionRecord, { recordType: RECORD_TYPE.CONTROL_RUN, effectiveState: eff })) out.push(p);
+  if (eff === NRDB_STATE) { out.push('nrdb-in-control-run'); for (const p of dependencyBlockedByShapeProblems(rec.dependencyBlockedBy)) out.push(p); } else if (rec.dependencyBlockedBy !== null) out.push('dependency-blocked-by-not-null');
+  return out;
+}
+
+/**
+ * `recordSchemaProblems(state)` -- the discriminated-union + gate validation shared by
+ * `validateResultSchema` and §8 row 5: `checks` = check-run | gate-disposition, `controls` =
+ * control-run | gate-disposition, C1 always a check-run, `gates.C1` + equations, run records under a
+ * closed gate rejected, gate-disposition records without a closed gate rejected, dispositions
+ * strictly increasing in C2..C20, N1..N8 order (G-e). Returns a list of problem strings.
+ */
+function recordSchemaProblems(state) {
+  const s = isPlainObject(state) ? state : {};
+  const out = [];
+  const gatePresent = s.gates !== undefined && s.gates !== null;
+  let outcome = null;
+  if (!gatePresent) { if (GATE_C1_REQUIRED) out.push('gates-missing'); } else {
+    const g = gateC1Problems(s);
+    out.push(...g.problems);
+    outcome = g.outcome;
+  }
+  const closed = outcome === GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED || outcome === GATE_OUTCOME.CLOSED_OTHER;
+  const checks = isPlainObject(s.checks) ? s.checks : null;
+  const controls = isPlainObject(s.controls) ? s.controls : null;
+  if (!checks) out.push('checks'); else for (const k of Object.keys(checks)) if (!CHECK_NAMES.includes(k)) out.push(`checks.unknown:${k}`);
+  if (!controls) out.push('controls'); else for (const k of Object.keys(controls)) if (!CONTROL_NAMES.includes(k)) out.push(`controls.unknown:${k}`);
+  const dispositionSeqs = [];
+  const item = (kind, name, rec) => {
+    const rt = isPlainObject(rec) ? rec.recordType : undefined;
+    const runType = kind === 'checks' ? RECORD_TYPE.CHECK_RUN : RECORD_TYPE.CONTROL_RUN;
+    if (rt === runType) {
+      if (closed && name !== 'C1') out.push(`${kind}.${name}:run-record-under-closed-gate`);
+      const ps = kind === 'checks' ? checkRunProblems(name, rec, { requireFinalization: name === 'C1' && (gatePresent || GATE_C1_REQUIRED) }) : controlRunProblems(name, rec);
+      for (const p of ps) out.push(`${kind}.${name}:${p}`);
+      // The pre-RC1-C2 downstream encoding BLOCKED(dependency:C1..) is removed: under an OPEN gate C1
+      // is PASS (contradiction), under a closed gate the item must be a gate-disposition.
+      if (kind === 'checks' && name !== 'C1' && (gatePresent || GATE_C1_REQUIRED) && isLegacyDependencyOnC1(rec.reason)) out.push(`${kind}.${name}:legacy-dependency-c1-encoding`);
+    } else if (rt === RECORD_TYPE.GATE_DISPOSITION && name !== 'C1') {
+      for (const p of gateDispositionProblems(name, rec, s)) out.push(`${kind}.${name}:${p}`);
+      dispositionSeqs.push(rec.dispositionSeq);
+    } else out.push(`${kind}.${name}:${rec === undefined ? 'missing' : 'record-type'}`);
+  };
+  if (checks) for (const n of CHECK_NAMES) item('checks', n, checks[n]);
+  if (controls) for (const n of CONTROL_NAMES) item('controls', n, controls[n]);
+  for (let i = 1; i < dispositionSeqs.length; i += 1) {
+    if (!(isSeq(dispositionSeqs[i - 1]) && isSeq(dispositionSeqs[i]) && dispositionSeqs[i - 1] < dispositionSeqs[i])) { out.push('G-e:dispositionSeq-not-strictly-increasing'); break; }
+  }
+  // §7/§10 attribution fields on every spyLedger/eventLog/stateSnapshots entry (any gate outcome).
+  out.push(...attributionFieldProblems(s));
+  // §9.2/§10 slice C1: request observations, raw network events, correlated identities, fatal
+  // witnesses and the witnessCount invariant -- every stored value recomputed (row 5).
+  out.push(...networkLedgerProblems(s));
+  // §9.2 one run counter: every primary seq allocation is unique across collections.
+  out.push(...primarySeqAllocations(s).problems);
+  // H1: C1's reason is consistent with the node-side P1 load outcomes persisted in opLedger.
+  out.push(...c1LoadLedgerProblems(s));
+  // Closed gate, equation (b): no record matches CG-1..CG-7 (each match listed once), and every
+  // record of the named collections is on the exhaustive legal list.
+  if (closed) {
+    for (const m of closedGateEvidenceMatches(s)) out.push(`closed-gate-evidence:${m}`);
+    out.push(...closedGateIllegalRecords(s));
+  }
+  return out;
+}
+
+/**
+ * `c1LoadLedgerProblems(state)` -- H1 (2026-10-01 follow-up review) closeout/R1 consistency equation
+ * between C1's check-run record and the node-side P1 `loadOperation.completionOutcome`s persisted in
+ * `errorLedger.opLedger` (§7 C1 reason contract; §7 line 421: the absence of any P1 harness exception
+ * is part of the evidence for dependency loss). Part of `recordSchemaProblems`, so a mismatch is a
+ * §8 row-5 evidence contradiction (and fails R1 verify):
+ *   - any load `'harness-exception'` while C1 is PASS or carries a normalized reason
+ *     (`prerequisite`/`timeout:load`) => `c1-load-ledger-mismatch:harness-exception`;
+ *   - else any load `'timeout:load'` while C1 is PASS or `prerequisite` (the T2 deadline takes
+ *     precedence) => `c1-load-ledger-mismatch:timeout:load`.
+ * One-way only; no load records or a non-check-run C1 => no finding here (other rules apply).
+ */
+function c1LoadLedgerProblems(state) {
+  const s = isPlainObject(state) ? state : {};
+  const c1 = isPlainObject(s.checks) ? s.checks.C1 : null;
+  if (!isPlainObject(c1) || c1.recordType !== RECORD_TYPE.CHECK_RUN) return [];
+  const outcomes = errorLedgerList(s, 'opLedger').filter(isLoadRecordish).map((o) => o.completionOutcome);
+  if (outcomes.includes('harness-exception')) {
+    return c1.verdict === 'PASS' || C1_NORMALIZED_REASONS.includes(c1.reason) ? ['c1-load-ledger-mismatch:harness-exception'] : [];
+  }
+  if (outcomes.includes('timeout:load')) {
+    return c1.verdict === 'PASS' || c1.reason === 'prerequisite' ? ['c1-load-ledger-mismatch:timeout:load'] : [];
+  }
+  return [];
+}
+
+/**
+ * `nrdbLegality(name, state)` -- §7 NRDB record legality, EXACTLY L1-L4 (a pure function of
+ * checks.C1, gates.C1, the control's recordType/disposition/executionRecord/dependencyBlockedBy and
+ * the attribution fields of the retained ledgers; never of later events). Rows 1-3 are verdict
+ * precedence, not legality. Returns `{legal, failed:['L1'|'L2'|'L3'|'L4'], problems}`.
+ */
+function nrdbLegality(name, state) {
+  const s = isPlainObject(state) ? state : {};
+  const failed = new Set();
+  const problems = [];
+  const fail = (l, p) => { failed.add(l); problems.push(`${l}:${p}`); };
+  const c1 = isPlainObject(s.checks) ? s.checks.C1 : null;
+  const rec = isPlainObject(s.controls) ? s.controls[name] : null;
+  const gate = isPlainObject(s.gates) && isPlainObject(s.gates.C1) ? s.gates.C1 : null;
+  // L1
+  if (!isPlainObject(c1) || c1.recordType !== RECORD_TYPE.CHECK_RUN) fail('L1', 'c1-not-check-run');
+  else {
+    if (c1.verdict !== 'BLOCKED') fail('L1', 'c1-not-blocked');
+    if (!C1_NORMALIZED_REASONS.includes(c1.reason)) fail('L1', 'c1-reason-not-normalized');
+  }
+  // L2
+  if (!NRDB_CONTROL_NAMES.includes(name)) fail('L2', 'control-cannot-be-nrdb');
+  if (!isPlainObject(rec) || rec.recordType !== RECORD_TYPE.GATE_DISPOSITION) fail('L2', 'not-gate-disposition');
+  if (controlEffectiveState(rec) !== NRDB_STATE) fail('L2', 'effective-state-not-nrdb');
+  const er = isPlainObject(rec) ? rec.executionRecord : null;
+  const erp = executionRecordProblems(name, er, { recordType: RECORD_TYPE.GATE_DISPOSITION, effectiveState: NRDB_STATE });
+  if (erp.length > 0 || !isPlainObject(er) || er.started !== false) fail('L2', 'execution-record-not-exact-not-started');
+  for (const p of itemAttributionProblems(s, name)) fail('L2', p);
+  // L3
+  const dp = dependencyBlockedByReferentialProblems(isPlainObject(rec) ? rec.dependencyBlockedBy : null, s, rec);
+  if (dp.length > 0) fail('L3', dp[0]);
+  // L4
+  if (!gate || gate.outcome !== GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED) fail('L4', 'gate-not-closed-dependency-blocked');
+  if (!gate || !Array.isArray(gate.notStarted) || !gate.notStarted.includes(name)) fail('L4', 'not-in-notStarted');
+  const ts = isPlainObject(er) ? er.terminalSeq : null;
+  if (!gate || !(isSeq(gate.c1FinalizedSeq) && isSeq(gate.gateSeq) && isSeq(ts) && gate.c1FinalizedSeq < gate.gateSeq && gate.gateSeq < ts)) fail('L4', 'seq-order');
+  if (!isPlainObject(rec) || ts !== rec.dispositionSeq) fail('L4', 'terminalSeq-ne-dispositionSeq');
+  const order = ['L1', 'L2', 'L3', 'L4'].filter((l) => failed.has(l));
+  return { legal: order.length === 0, failed: order, problems };
+}
+
 /**
  * `evaluateOverallRows(state, phase)` -- pure; evaluates EVERY row predicate independently over
  * the recorded state (no row reads another row's result) and returns
@@ -1385,16 +3706,18 @@ function evaluateOverallRows(state, phase) {
   // Row 2 -- unresolved cleanup ownership (non-boolean fails closed).
   const r2 = s.cleanupUnresolvedOwnership === false ? [] : ['cleanup-unresolved-ownership'];
 
-  // Row 3 -- any required check FAIL.
+  // Row 3 -- any required check FAIL (verdicts read ONLY from check-run records; a gate-disposition
+  // record has no verdict and yields null here).
   const checks = isPlainObject(s.checks) ? s.checks : {};
   const bases = {};
   for (const n of CHECK_NAMES) bases[n] = checkVerdictBase(checks[n]);
   const r3 = CHECK_NAMES.filter((n) => bases[n] === 'FAIL').map((n) => `check-fail:${n}`);
 
-  // Row 4 -- any mandatory control non-acceptable (incl. missing/out-of-enum).
+  // Row 4 -- any mandatory control non-acceptable (incl. missing/out-of-enum and any NRDB violating
+  // L1-L4); a legal NRDB is neutral. Effective state only (control-run.state | disposition).
   const controls = isPlainObject(s.controls) ? s.controls : {};
   const dispositions = {};
-  for (const n of CONTROL_NAMES) dispositions[n] = controlDisposition(n, controls[n], bases);
+  for (const n of CONTROL_NAMES) dispositions[n] = controlDisposition(n, controls[n], bases, s);
   const r4 = CONTROL_NAMES.filter((n) => dispositions[n] === 'unacceptable').map((n) => `control-unacceptable:${n}`);
 
   // Row 5 -- authorization/journal/evidence contradiction or failure.
@@ -1407,7 +3730,10 @@ function evaluateOverallRows(state, phase) {
   if (!INTEGRITY_VALUES.includes(integrity)) r5.push('integrity-out-of-enum');
   else if (integrity === INTEGRITY_RESULT.MISMATCH || integrity === INTEGRITY_RESULT.FETCH_FAILED) r5.push(`integrity:${integrity}`);
   if (!ledger || ledger.attemptDeadlineExpired !== false) r5.push('attempt-deadline');
-  for (const n of CHECK_NAMES) if (bases[n] === null) r5.push(`check-record-invalid:${n}`);
+  // Record unions (check-run|gate-disposition, control-run|gate-disposition), G-a..G-f, the gate
+  // equations (X28/X29), run records under a closed gate, dispositions without a closed gate.
+  const schemaProblems = recordSchemaProblems(s);
+  for (const p of schemaProblems) r5.push(`record-schema:${p}`);
   if (!Array.isArray(s.cleanupFailures)) r5.push('cleanup-failures-invalid');
   if (preLink) {
     const closeoutProblem = preLinkCloseoutProblem(s.closeoutFacts);
@@ -1422,6 +3748,9 @@ function evaluateOverallRows(state, phase) {
   const runtime = isPlainObject(s.runtime) ? s.runtime : {};
   for (const m of ['A', 'B']) if (!isPlainObject(runtime[m]) || runtime[m].loaded !== true) r6.push(`model-unloadable:${m}`);
   for (const n of CHECK_NAMES) if (bases[n] === 'BLOCKED') r6.push(`check-blocked:${n}`);
+  // Row-6 gate clause: a CLOSED_DEPENDENCY_BLOCKED gate carries the row through C1's own check-run
+  // record and this clause; its gate-disposition records never count as a runtime BLOCKED.
+  if (isPlainObject(s.gates) && isPlainObject(s.gates.C1) && s.gates.C1.outcome === GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED) r6.push('gate-closed-dependency-blocked:C1');
   if (s.sessionTainted !== false) r6.push('session-tainted');
 
   // Row 7 -- partial evidence.
@@ -1430,8 +3759,9 @@ function evaluateOverallRows(state, phase) {
   for (const n of CONTROL_NAMES) if (dispositions[n] === 'partial') r7.push(`control-partial:${n}`);
   if (Array.isArray(s.cleanupFailures) && s.cleanupFailures.length > 0) r7.push('cleanup-step-failed-ownership-resolved');
 
-  // Row 8 -- positive PASS(-eligible) predicate, evaluated on its own.
-  const allChecksPass = CHECK_NAMES.every((n) => bases[n] === 'PASS');
+  // Row 8 -- positive PASS(-eligible) predicate, evaluated on its own: every check a check-run PASS
+  // (so no gate-disposition record exists), every control acceptable, records schema-valid.
+  const allChecksPass = CHECK_NAMES.every((n) => bases[n] === 'PASS') && schemaProblems.length === 0;
   const allControlsAcceptable = CONTROL_NAMES.every((n) => dispositions[n] === 'acceptable');
   const r8match = Boolean(ledger) && ledger.fatalCount === 0 && ledger.attemptDeadlineExpired === false
     && s.cleanupUnresolvedOwnership === false && Array.isArray(s.cleanupFailures) && s.cleanupFailures.length === 0
@@ -1493,7 +3823,7 @@ function commitCandidateName(id, u) { return `${id}.commit.candidate-${u}`; }
 /** §10 top-level keys of R1, in serialization order (the whitelist). */
 const RESULT_TOP_LEVEL_KEYS = Object.freeze([
   'script', 'procedure', 'authorization', 'attempt', 'harnessIntegrity', 'runtimeEnvelope', 'classifier', 'runtime',
-  'targets', 'checks', 'controls', 'sceneOwnership', 'spyLedger', 'eventLog', 'stateSnapshots', 'c4Table', 'c17', 'c20',
+  'targets', 'checks', 'gates', 'controls', 'sceneOwnership', 'spyLedger', 'eventLog', 'stateSnapshots', 'c4Table', 'c17', 'c20',
   'n6', 'screenshots', 'errorLedger', 'cleanupFailures', 'cleanupStepStatus', 'cleanupUnresolvedOwnership',
   'viewerScriptIntegrityReason', 'sessionTainted', 'staleContinuationsDropped', 'overall', 'closeout', 'limitations',
   'startedAt', 'finishedAt',
@@ -1659,34 +3989,150 @@ function validateResultSchema(result, mode) {
       if (names.length !== exact.length || names.some((n, i) => n !== exact[i])) errors.push('attempt.journalStates-not-ending-at-closeout-started');
     }
   }
+  // §7/§10 RC1-C2: `checks` (check-run | gate-disposition), `controls` (control-run |
+  // gate-disposition), `gates.C1` + the mandatory gate equations -- shared with §8 row 5.
+  for (const p of recordSchemaProblems(result)) errors.push(p);
   const checks = result.checks;
-  if (!isPlainObject(checks)) errors.push('checks');
-  else {
-    for (const k of Object.keys(checks)) if (!CHECK_NAMES.includes(k)) errors.push(`checks.unknown:${k}`);
-    for (const n of CHECK_NAMES) if (checkVerdictBase(checks[n]) === null) errors.push(`checks.${n}`);
-  }
-  const controls = result.controls;
-  if (!isPlainObject(controls)) errors.push('controls');
-  else {
-    for (const k of Object.keys(controls)) if (!CONTROL_NAMES.includes(k)) errors.push(`controls.unknown:${k}`);
-    for (const n of CONTROL_NAMES) {
-      const st = controlStateOf(controls[n]);
-      if (st === null || !CONTROL_ALLOWED_STATES[n].includes(st)) errors.push(`controls.${n}`);
+  if (isPlainObject(checks)) {
+    // §C15(e) RC1-C1: a retained `checks.C15.fields.e` must satisfy the exact schema + recomputation.
+    const c15 = checks.C15;
+    if (isPlainObject(c15) && c15.recordType === RECORD_TYPE.CHECK_RUN && isPlainObject(c15.fields) && c15.fields.e !== undefined && c15.fields.e !== null) {
+      const v = validateC15eEvidence(c15.fields.e);
+      if (!v.ok) for (const err of v.errors) errors.push(`checks.C15.fields.e:${err}`);
     }
   }
   const o = result.overall;
   if (!isPlainObject(o) || Object.keys(o).sort().join(',') !== 'row,verdict' || !PRIMARY_OVERALL_VALUES.includes(o.verdict) || !Number.isInteger(o.row) || o.row < 1 || o.row > 8) errors.push('overall');
+  // §10: `overall` is primaryOverall "with the matching row"; the §8 table fixes each row's verdict
+  // (rows 1-5 FAIL, 6 BLOCKED, 7 PARTIAL, 8 PASS), so a mismatched pair is invalid. (The row itself is
+  // not recomputed from R1 here -- the procedure does not require re-running computeOverall.)
+  else if (OVERALL_ROW_VERDICT[o.row] !== o.verdict) errors.push('overall.row-verdict-mismatch');
   const c = result.closeout;
   if (!isPlainObject(c) || Object.keys(c).sort().join(',') !== 'optional,phase,primaryOverall,primaryRow') errors.push('closeout-keys');
   else {
     if (c.phase !== 'payload') errors.push('closeout.phase');
     if (!PRIMARY_OVERALL_VALUES.includes(c.primaryOverall)) errors.push('closeout.primaryOverall');
     if (!Number.isInteger(c.primaryRow) || c.primaryRow < 1 || c.primaryRow > 8) errors.push('closeout.primaryRow');
+    else if (PRIMARY_OVERALL_VALUES.includes(c.primaryOverall) && OVERALL_ROW_VERDICT[c.primaryRow] !== c.primaryOverall) errors.push('closeout.row-verdict-mismatch');
     if (!Array.isArray(c.optional) || !c.optional.every((x) => isPlainObject(x) && Object.keys(x).sort().join(',') === 'name,status' && isNonEmptyString(x.name) && isNonEmptyString(x.status))) errors.push('closeout.optional');
     if (isPlainObject(o) && (o.verdict !== c.primaryOverall || o.row !== c.primaryRow)) errors.push('overall-differs-from-closeout');
   }
   for (const k of ['startedAt', 'finishedAt']) if (typeof result[k] !== 'string' || !ISO_UTC_RE.test(result[k])) errors.push(k);
   for (const k of ['sessionTainted', 'cleanupUnresolvedOwnership']) if (typeof result[k] !== 'boolean') errors.push(k);
+  return { ok: errors.length === 0, errors };
+}
+
+/** True for a plain-JSON value (strings, finite numbers, booleans, null, plain arrays/objects) -- R1. */
+function isPlainJsonValue(v, depth = 0) {
+  if (depth > 32) return false;
+  if (v === null || typeof v === 'string' || typeof v === 'boolean') return true;
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (Array.isArray(v)) return Object.getPrototypeOf(v) === Array.prototype && v.every((x) => isPlainJsonValue(x, depth + 1));
+  if (typeof v !== 'object') return false;
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return false;
+  return Object.keys(v).every((k) => isPlainJsonValue(v[k], depth + 1));
+}
+
+const C15E_EVIDENCE_KEYS = Object.freeze(['nm', 'ledgerBefore', 'E0', 'H0', 'T_iso', 'H_iso', 'presentSettleSeq', 'hIsoReadSeq', 'injection', 'clears', 'comparisons', 'predicates', 'failureLabel', 'diagnostics']);
+const C15E_INJECTION_KEYS = Object.freeze(['installSeq', 'armSeq', 'disarmSeq', 'removeSeq', 'restoredByReference', 'originalInvocationsWhileArmed', 'thrownInjectedCount']);
+const C15E_CLEAR_KEYS = Object.freeze(['index', 'injectionArmed', 'startSeq', 'settleSeq', 'outcome', 'spyWindow', 'after']);
+const C15E_SPY_KEYS = Object.freeze(['seq', 'method', 'origin', 'argDigest', 'thrown', 'returned']);
+const C15E_CLEAR_ISOLATION_VALUES = Object.freeze(['restored', 'failed', 'skipped-external', 'none']);
+const C15E_COMPARISON_KEYS = Object.freeze({ clear1: ['isolationEqualsTiso', 'hiddenEqualsHiso'], clear2: ['isolationEqualsE0', 'hiddenEqualsH0'], clear3: ['isolationEqualsE0', 'hiddenEqualsH0'] });
+
+/** CanonIso / CanonHidden: a canonical array (model keys 'A'/'B') or exactly `{unreadable:true, error:string}`. */
+function isC15eCanonValue(v) {
+  if (Array.isArray(v)) return isC15eCanonArray(v);
+  return exactKeys(v, ['unreadable', 'error']) && v.unreadable === true && typeof v.error === 'string';
+}
+function isC15eLedgerDTO(v) {
+  return exactKeys(v, ['markerMeshCount', 'isolationConfirmed']) && Number.isInteger(v.markerMeshCount) && v.markerMeshCount >= 0
+    && (v.isolationConfirmed === null || typeof v.isolationConfirmed === 'boolean');
+}
+
+/**
+ * `validateC15eEvidence(e)` -> `{ok, errors}` -- the exact §C15(e) RC1-C1 retained-evidence schema
+ * (`checks.C15.fields.e`): all keys required, unknown keys rejected at every level, plain JSON only,
+ * LedgerDTO the only ledger projection, CanonIso/CanonHidden canonical or exactly unreadable,
+ * ClearStep index 1..3 with `injectionArmed` true iff index 1, `originalInvocationsWhileArmed` 0, the
+ * ordering invariants, spy windows strictly ascending inside their coverage range (c15eDerive), and
+ * the RECOMPUTATION of every comparison, predicate, `failureLabel` and `thrownInjectedCount` from the
+ * stored values -- any disagreement is an evidence contradiction (§8 row 5). `diagnostics.*` is
+ * schema-checked only (LedgerDTO|null) and never recomputed into anything.
+ */
+function validateC15eEvidence(e) {
+  const errors = [];
+  if (!isPlainObject(e)) return { ok: false, errors: ['not-object'] };
+  if (!isPlainJsonValue(e)) errors.push('not-plain-json');
+  if (!exactKeys(e, C15E_EVIDENCE_KEYS)) return { ok: false, errors: [...errors, 'keys'] };
+  const isInt = Number.isInteger;
+  if (!isInt(e.nm) || e.nm < 0) errors.push('nm');
+  if (!isC15eLedgerDTO(e.ledgerBefore)) errors.push('ledgerBefore');
+  for (const k of ['E0', 'H0', 'T_iso', 'H_iso']) if (!isC15eCanonValue(e[k])) errors.push(k);
+  for (const k of ['presentSettleSeq', 'hIsoReadSeq']) if (!isInt(e[k])) errors.push(k);
+  const inj = e.injection;
+  if (!exactKeys(inj, C15E_INJECTION_KEYS)) errors.push('injection.keys');
+  else {
+    for (const k of ['installSeq', 'armSeq', 'disarmSeq', 'removeSeq', 'originalInvocationsWhileArmed', 'thrownInjectedCount']) if (!isInt(inj[k])) errors.push(`injection.${k}`);
+    if (typeof inj.restoredByReference !== 'boolean') errors.push('injection.restoredByReference');
+    if (inj.originalInvocationsWhileArmed !== 0) errors.push('injection.originalInvocationsWhileArmed');
+  }
+  const clears = e.clears;
+  let clearsOk = Array.isArray(clears) && clears.length === 3;
+  if (!clearsOk) errors.push('clears');
+  else {
+    clears.forEach((c, i) => {
+      const p = `clears[${i}]`;
+      if (!exactKeys(c, C15E_CLEAR_KEYS)) { errors.push(`${p}.keys`); clearsOk = false; return; }
+      if (c.index !== i + 1) errors.push(`${p}.index`);
+      if (c.injectionArmed !== (i === 0)) errors.push(`${p}.injectionArmed`);
+      if (!isInt(c.startSeq) || !isInt(c.settleSeq)) { errors.push(`${p}.seq`); clearsOk = false; }
+      const o = c.outcome;
+      if (!exactKeys(o, ['isolation', 'markersRemoved', 'notes']) || !C15E_CLEAR_ISOLATION_VALUES.includes(o.isolation) || !isInt(o.markersRemoved)
+        || !Array.isArray(o.notes) || !o.notes.every((n) => typeof n === 'string')) errors.push(`${p}.outcome`);
+      const a = c.after;
+      if (!exactKeys(a, ['readSeq', 'isolation', 'hidden', 'models']) || !isInt(a.readSeq) || !isC15eCanonValue(a.isolation) || !isC15eCanonValue(a.hidden)
+        || !Array.isArray(a.models) || !a.models.every((m) => C15E_SETUP_MODEL_KEYS.includes(m))) { errors.push(`${p}.after`); clearsOk = false; }
+      if (!Array.isArray(c.spyWindow)) { errors.push(`${p}.spyWindow`); clearsOk = false; return; }
+      const lo = i === 0 ? c.startSeq : (clears[i - 1] && clears[i - 1].settleSeq);
+      let prev = -Infinity;
+      c.spyWindow.forEach((r, j) => {
+        const q = `${p}.spyWindow[${j}]`;
+        if (!exactKeys(r, C15E_SPY_KEYS) || !isInt(r.seq) || !isNonEmptyString(r.method) || !isNonEmptyString(r.origin) || typeof r.argDigest !== 'string'
+          || !(r.thrown === null || typeof r.thrown === 'string') || !(r.returned === null || typeof r.returned === 'string')) { errors.push(q); return; }
+        if (!(r.seq > prev)) errors.push(`${p}.spyWindow-not-ascending`);
+        prev = r.seq;
+        if (!(r.seq > lo && r.seq < c.settleSeq)) errors.push(`${p}.spyWindow-out-of-range`);
+      });
+    });
+  }
+  const d = e.diagnostics;
+  if (!exactKeys(d, ['inspectLedgerAfterClear1', 'inspectLedgerAfterClear2', 'inspectLedgerAfterClear3'])
+    || !Object.values(d).every((v) => v === null || isC15eLedgerDTO(v))) errors.push('diagnostics');
+  if (!(e.failureLabel === null || C15E_FAILURE_LABELS.includes(e.failureLabel))) errors.push('failureLabel');
+  const cmp = e.comparisons;
+  const cmpOk = exactKeys(cmp, Object.keys(C15E_COMPARISON_KEYS))
+    && Object.keys(C15E_COMPARISON_KEYS).every((k) => exactKeys(cmp[k], C15E_COMPARISON_KEYS[k]) && C15E_COMPARISON_KEYS[k].every((x) => typeof cmp[k][x] === 'boolean'));
+  if (!cmpOk) errors.push('comparisons');
+  const preds = e.predicates;
+  const predsOk = exactKeys(preds, C15E_PREDICATE_NAMES) && C15E_PREDICATE_NAMES.every((n) => typeof preds[n] === 'boolean');
+  if (!predsOk) errors.push('predicates');
+  if (clearsOk && inj && isInt(inj.installSeq)) {
+    const c = clears;
+    const chain = [e.presentSettleSeq, e.hIsoReadSeq, inj.installSeq, inj.armSeq, c[0].startSeq, c[0].settleSeq, inj.disarmSeq];
+    const strict = chain.every((v, i) => i === 0 || v > chain[i - 1])
+      && inj.disarmSeq <= inj.removeSeq
+      && [inj.removeSeq, c[0].after.readSeq, c[1].startSeq, c[1].settleSeq, c[1].after.readSeq, c[2].startSeq, c[2].settleSeq, c[2].after.readSeq]
+        .every((v, i, arr) => i === 0 || v > arr[i - 1]);
+    if (!strict) errors.push('ordering');
+    // recomputation (row 5 contradiction on any disagreement)
+    const r = c15eDerive(e);
+    if (cmpOk) for (const k of Object.keys(C15E_COMPARISON_KEYS)) for (const x of C15E_COMPARISON_KEYS[k]) if (cmp[k][x] !== r.comparisons[k][x]) errors.push(`comparisons.${k}.${x}:contradiction`);
+    if (predsOk) for (const n of C15E_PREDICATE_NAMES) if (preds[n] !== r.predicates[n]) errors.push(`predicates.${n}:contradiction`);
+    if (e.failureLabel !== r.failureLabel) errors.push('failureLabel:contradiction');
+    if (inj.thrownInjectedCount !== r.thrownInjectedCount) errors.push('injection.thrownInjectedCount:contradiction');
+  }
   return { ok: errors.length === 0, errors };
 }
 
@@ -1706,6 +4152,24 @@ function summaryPrimaryLine(primaryOverall, primaryRow) { return `primaryOverall
  * `renderSummary(S*)` -- pure deterministic Markdown rendering of the frozen snapshot (R2). Carries
  * no artifact hash and states that the authoritative verdict is derived from K by the reader.
  */
+/**
+ * Human-readable label of a check-run record in the §8 notation (`VERDICT` / `VERDICT(reason)`; the
+ * stored record is always `{verdict:<base>, reason}`). Any other value (an oracle result whose own
+ * `verdict` is a label, e.g. C4 `FAIL(not-contained)`) is returned as its `verdict` unchanged.
+ * Display/diagnostic only -- no verdict function parses it.
+ */
+function checkVerdictLabel(rec) {
+  if (isPlainObject(rec) && rec.recordType === RECORD_TYPE.CHECK_RUN) return rec.reason === null || rec.reason === undefined ? rec.verdict : `${rec.verdict}(${rec.reason})`;
+  return isPlainObject(rec) ? rec.verdict : rec;
+}
+
+/** Summary cell of one check: the check-run label, or `gate-disposition:<d>`. */
+function summaryCheckCell(rec) {
+  if (!isPlainObject(rec)) return String(rec ?? 'missing');
+  if (rec.recordType === RECORD_TYPE.GATE_DISPOSITION) return `gate-disposition:${String(rec.disposition)}`;
+  return String(checkVerdictLabel(rec));
+}
+
 function renderSummary(S) {
   const run = S.run;
   const checks = isPlainObject(run.checks) ? run.checks : {};
@@ -1730,13 +4194,13 @@ function renderSummary(S) {
     '',
     '| Check | Verdict |',
     '|---|---|',
-    ...CHECK_NAMES.map((n) => `| ${n} | ${isPlainObject(checks[n]) ? String(checks[n].verdict) : String(checks[n] ?? 'missing')} |`),
+    ...CHECK_NAMES.map((n) => `| ${n} | ${summaryCheckCell(checks[n])} |`),
     '',
     SUMMARY_REQUIRED_HEADINGS[4],
     '',
     '| Control | State |',
     '|---|---|',
-    ...CONTROL_NAMES.map((n) => `| ${n} | ${String(controlStateOf(controls[n]) ?? 'missing')} |`),
+    ...CONTROL_NAMES.map((n) => `| ${n} | ${String(controlEffectiveState(controls[n]) ?? 'missing')} |`),
     '',
     SUMMARY_REQUIRED_HEADINGS[5],
     '',
@@ -1862,11 +4326,17 @@ class CloseoutFailure extends Error {
 
 /**
  * Fatal-event sink over the run state's plain-data `errorLedger` ({fatalCount, entries[],
- * attemptDeadlineExpired}). `recordFatal` increments the ledger until `markCommitted()` latches;
+ * attemptDeadlineExpired, ...}). `recordFatal` increments the ledger until `markCommitted()` latches;
  * afterwards events are kept only in `ignored` (§9.1 step 8: handlers ignore events once
  * committed). `recordAttemptDeadline` records a T9 expiry (row 5 ATTEMPT_DEADLINE).
+ * Slice C1 (§9.2): with `nextSeq` (the run's single node-side counter) every non-network fatal entry
+ * is stamped `{kind, detail, seq}`; `recordWitnessEntry({seq, witnessId})` appends the ONE network
+ * fatal entry `{kind:'required-resource-failure', seq:witnessSeq, witnessId}` of a newly created fatal
+ * witness (the only way a network event increments `fatalCount`) and returns its index (-1 latched).
+ * Without `nextSeq` (offline legacy callers) entries are unsequenced -- a row-5 contradiction
+ * whenever a gate is validated (FATAL_ENTRY_SEQ_REQUIRED).
  */
-function createFatalEventSink(errorLedger) {
+function createFatalEventSink(errorLedger, { nextSeq = null } = {}) {
   let commitLatched = false;
   const ignored = [];
   return {
@@ -1875,8 +4345,18 @@ function createFatalEventSink(errorLedger) {
     recordFatal(kind, detail) {
       if (commitLatched) { ignored.push({ kind: String(kind), detail: String(detail) }); return false; }
       errorLedger.fatalCount += 1;
-      errorLedger.entries.push({ kind: String(kind), detail: String(detail) });
+      const entry = { kind: String(kind), detail: String(detail) };
+      if (typeof nextSeq === 'function') entry.seq = nextSeq();
+      errorLedger.entries.push(entry);
+      // §9.2 witnessCount.nonNetworkFatalEntries / fatalCount stay equal to the recomputation.
+      if (isPlainObject(errorLedger.witnessCount)) errorLedger.witnessCount = correlateNetworkEvents(errorLedger).witnessCount;
       return true;
+    },
+    recordWitnessEntry({ seq, witnessId }) {
+      if (commitLatched) { ignored.push({ kind: NETWORK_FATAL_ENTRY_KIND, detail: String(witnessId) }); return -1; }
+      errorLedger.fatalCount += 1;
+      errorLedger.entries.push({ kind: NETWORK_FATAL_ENTRY_KIND, seq, witnessId });
+      return errorLedger.entries.length - 1;
     },
     recordAttemptDeadline() {
       if (commitLatched) { ignored.push({ kind: 'ATTEMPT_DEADLINE', detail: '' }); return false; }
@@ -3262,10 +5742,14 @@ function createOfflineAttemptFixture({ fs, chain, authorizationId = OFFLINE_FIXT
  * cleanup, untainted, empty error ledger) whose recorded digests equal `binding`'s.
  */
 function createOfflineRunStateFixture({ binding }) {
+  const at = '2026-09-30T00:00:01.000Z';
   const checks = {};
-  for (const n of CHECK_NAMES) checks[n] = { verdict: 'PASS', reason: null, fields: {}, evidence: {} };
+  for (const n of CHECK_NAMES) checks[n] = { recordType: 'check-run', verdict: 'PASS', reason: null, fields: {}, evidence: {} };
+  checks.C1 = { ...checks.C1, finalizedSeq: 1, finalizedAt: at };
   const controls = {};
-  for (const n of CONTROL_NAMES) controls[n] = { state: CONTROL_ACCEPTABLE_STATE[n] };
+  CONTROL_NAMES.forEach((n, i) => {
+    controls[n] = makeControlRunRecord(n, { state: CONTROL_ACCEPTABLE_STATE[n], fields: {}, evidence: {} }, { start: { startSeq: 10 + 2 * i, startedAt: at }, terminalSeq: 11 + 2 * i, terminalAt: at });
+  });
   return {
     script: { integrityResult: INTEGRITY_RESULT.VERIFIED },
     procedure: { path: binding.procedure.path, sha256: binding.procedure.sha256, version: PROCEDURE_VERSION, thresholdTable: 'T-rev2' },
@@ -3277,17 +5761,18 @@ function createOfflineRunStateFixture({ binding }) {
     runtime: { A: { loaded: true }, B: { loaded: true } },
     targets: null,
     checks,
+    gates: { C1: { gateSeq: 2, gateAt: at, c1Verdict: 'PASS', c1Reason: null, c1FinalizedSeq: 1, fatalCountAtGate: 0, outcome: 'OPEN', notStarted: [] } },
     controls,
     sceneOwnership: [],
     spyLedger: [],
-    eventLog: [],
+    eventLog: [{ seq: 1, kind: 'check-finalized', check: 'C1', verdict: 'PASS', reason: null, phase: 'P1', activeCheck: 'C1', activeControl: null }],
     stateSnapshots: [],
     c4Table: [],
     c17: null,
     c20: null,
     n6: null,
     screenshots: [],
-    errorLedger: { fatalCount: 0, entries: [], attemptDeadlineExpired: false },
+    errorLedger: createEmptyErrorLedger(),
     cleanupFailures: [],
     cleanupStepStatus: {},
     cleanupUnresolvedOwnership: false,
@@ -3430,6 +5915,10 @@ const VERDICT_CRITICAL_KEYS = Object.freeze([
   'verdict', 'reason', 'reasons', 'overall', 'primaryOverall', 'primaryRow', 'finalOverall',
   'journal', 'journalCopy', 'journalStates', 'sceneOwnership', 'oracle', 'oracleInput', 'oracleInputs',
   'oracleOutput', 'oracleOutputs', 'closeout', 'cleanupFailures',
+  // §9.2 slice C1: verdict-critical error-ledger collections, exempt from truncation
+  'requestObservations', 'requestFailures', 'responseFailures', 'correlatedRequests', 'fatalWitnesses', 'witnessCount',
+  // §9.2 slice C2: operation ledger and prefix-source evidence (verdict-critical, never truncated)
+  'opLedger', 'prefixSourceLedger', 'prefixDerivation', 'ambiguousPrefixes',
 ]);
 
 function isVerdictCriticalPath(pathSegments) {
@@ -3475,7 +5964,9 @@ function isVerdictCriticalSpyRecord(rec) {
   return rec.injected === true
     || /^overlays\.(addScene|addMesh|removeMesh|removeScene)$/.test(rec.method)
     || rec.method.endsWith(THEMING_SET_METHOD) || rec.method.endsWith(THEMING_CLEAR_METHOD)
-    || SELECTION_METHODS.some((m) => rec.method === `viewer.${m}`);
+    || SELECTION_METHODS.some((m) => rec.method === `viewer.${m}`)
+    // §9.2 causal evidence of a C16/C17 mutationOperation (`causalEvidence.spyRef`) -- never dropped
+    || (rec.origin === 'harness' && OP_LEDGER_SPY_METHODS.includes(rec.method));
 }
 
 /**
@@ -3579,11 +6070,38 @@ function summarizeThrown(err) {
  * `unattributed`. `withOrigin` pops the exact frame it pushed (also for async `fn`, when the
  * returned promise settles), so nested and interleaved contexts never pop the wrong frame.
  */
-function createCallRecorder({ clock = defaultClock } = {}) {
+function createCallRecorder({ clock = defaultClock, nextSeq: externalNextSeq = null } = {}) {
   const records = [];
   const frames = [];
   const refIds = new WeakMap();
   let refCounter = 0;
+  // One monotonic sequence shared by every record (`seq`) and every harness event mark (`nextSeq()`),
+  // so scenario events (e.g. §C15(e) install/arm/settle/read) are strictly ordered against spy records.
+  let seqCounter = 0;
+  // `externalNextSeq` shares an existing run counter (never a second one): the recorder then draws
+  // every seq from it.
+  const nextSeq = typeof externalNextSeq === 'function' ? externalNextSeq : () => { seqCounter += 1; return seqCounter; };
+  // §7 RC1-C2 attribution context: stamped on every spy record, eventLog entry and state snapshot.
+  // `phase` is the §5 phase currently executing; `activeCheck`/`activeControl` are null iff no check
+  // (resp. control) is executing. The runner (`runChecksInPhaseOrder`) is the only writer.
+  const ctx = { phase: 'P0', activeCheck: null, activeControl: null };
+  const events = [];
+  const attribution = () => ({ phase: ctx.phase, activeCheck: ctx.activeCheck, activeControl: ctx.activeControl });
+  const setAttribution = (patch) => {
+    for (const k of Object.keys(patch || {})) {
+      if (!['phase', 'activeCheck', 'activeControl'].includes(k)) throw new TypeError(`setAttribution: unknown key ${k}`);
+      ctx[k] = patch[k];
+    }
+    return attribution();
+  };
+  /** `{seq, phase, activeCheck, activeControl}` -- one fresh seq from the single counter + the context. */
+  const stamp = () => ({ seq: nextSeq(), ...attribution() });
+  /** Appends one eventLog entry `{seq, phase, activeCheck, activeControl, kind, ...fields}`. */
+  const logEvent = (kind, fields = {}) => {
+    const e = { ...stamp(), kind, ...fields };
+    events.push(e);
+    return e;
+  };
   const refIdOf = (obj) => {
     let id = refIds.get(obj);
     if (id === undefined) { refCounter += 1; id = `o${refCounter}`; refIds.set(obj, id); }
@@ -3609,6 +6127,7 @@ function createCallRecorder({ clock = defaultClock } = {}) {
     const argRefIds = argSummaries.map((s) => (s.refId === undefined ? null : s.refId));
     const rec = {
       callIndex: records.length,
+      ...stamp(),
       method,
       origin: currentOrigin(),
       argSummaries,
@@ -3622,7 +6141,7 @@ function createCallRecorder({ clock = defaultClock } = {}) {
     records.push(rec);
     return rec;
   };
-  return { records, withOrigin, currentOrigin, refIdOf, record, originDepth: () => frames.length };
+  return { records, events, withOrigin, currentOrigin, refIdOf, record, nextSeq, originDepth: () => frames.length, attribution, setAttribution, stamp, logEvent };
 }
 
 /** Registry of every wrapper one session installed, so cleanup can restore and verify them all. */
@@ -3689,6 +6208,10 @@ function recordingWrap(obj, name, { recorder, registry = null, label = name } = 
   entry.wrapper = wrapper;
   Object.defineProperty(obj, name, { value: wrapper, writable: true, configurable: true, enumerable: priorDescriptor ? priorDescriptor.enumerable : false });
   entry.installed = true;
+  // §7 RC1-C2: wrapper/spy installation and removal are eventLog entries ('wrapper-install' / 'wrapper-restore').
+  const logWrapperEvent = (kind, fields) => { if (typeof recorder.logEvent === 'function') recorder.logEvent(kind, { label, layer: 'recording', ...fields }); };
+  entry.logWrapperEvent = (kind, fields) => { if (typeof recorder.logEvent === 'function') recorder.logEvent(kind, { label, ...fields }); };
+  logWrapperEvent('wrapper-install', {});
   entry.verifyRestored = () => {
     const stillOwn = Object.prototype.hasOwnProperty.call(obj, name);
     const ok = obj[name] === original && stillOwn === hadOwn && !entry.installed;
@@ -3703,6 +6226,7 @@ function recordingWrap(obj, name, { recorder, registry = null, label = name } = 
       if (hadOwn) Object.defineProperty(obj, name, priorDescriptor); else delete obj[name];
     } catch (e) {
       entry.installed = false;
+      logWrapperEvent('wrapper-restore', { ok: false });
       return { ok: false, reason: `restore-threw:${e && e.name}` };
     }
     entry.installed = false;
@@ -3710,6 +6234,7 @@ function recordingWrap(obj, name, { recorder, registry = null, label = name } = 
     entry.inner = original;
     const v = entry.verifyRestored();
     if (!v.ok) problems.push(v.reason);
+    logWrapperEvent('wrapper-restore', { ok: problems.length === 0 });
     return problems.length === 0 ? { ok: true, reason: null } : { ok: false, reason: problems.join('+') };
   };
   if (registry) registry.add(obj, name, entry);
@@ -3731,6 +6256,8 @@ function installInjectionWrapper(obj, name, makeInjected, { registry }) {
   const layer = function injectedLayer(...args) { entry.injectedFired = true; return Reflect.apply(injected, this, args); };
   entry.inner = layer;
   entry.injections.push(layer);
+  const logInjection = (kind, fields) => { if (typeof entry.logWrapperEvent === 'function') entry.logWrapperEvent(kind, { layer: 'injection', ...fields }); };
+  logInjection('wrapper-install', {});
   return {
     remove() {
       const i = entry.injections.lastIndexOf(layer);
@@ -3738,6 +6265,7 @@ function installInjectionWrapper(obj, name, makeInjected, { registry }) {
       if (i !== entry.injections.length - 1 || entry.inner !== layer) return { ok: false, reason: 'out-of-order-removal' };
       entry.injections.pop();
       entry.inner = prev;
+      logInjection('wrapper-restore', { ok: true });
       return { ok: true, reason: null };
     },
   };
@@ -4098,12 +6626,49 @@ async function runCleanup({ steps = {}, context = {} } = {}, { stepDeadlineMs = 
   return { cleanupFailures, cleanupStepStatus, cleanupUnresolvedOwnership, stepResults, staleContinuationsDropped: quarantine.staleContinuationsDropped };
 }
 
-/** Guarded, independent unload of one model (§4.8): absent => `already-absent` (success). */
-async function guardedUnloadModel({ viewer, model, label }) {
+/**
+ * §9.2 acknowledgement barrier for a harness mutation invoked from the page (C16 hide, C17 unload, a
+ * cleanup unload step that is about to call `viewer.unloadModel`): `ops.begin(desc)` appends the
+ * mutationOperation's start fields on the node side and resolves only after the node-side
+ * acknowledgement (`ackSeq`); only then is the mutation invoked -- for C16/C17 recorded first as ONE
+ * harness-origin spy record (`recorder.record(method, args)`, after the ack: the
+ * `causalEvidence.spyRef`) -- and `ops.end({operationId, terminalOutcome, spyRef})` records the end
+ * fields. A missing or failing `ops` records nothing: the mutation still runs and any request abort it
+ * causes stays FATAL (fail-safe; nothing can ground an expected cancellation without the record).
+ */
+async function runAcknowledgedMutation({ ops = null, desc, recorder = null, method = null, args = [], invoke }) {
+  let operationId = null;
+  if (ops && typeof ops.begin === 'function') {
+    try { const r = await ops.begin(desc); if (r && r.ok === true && typeof r.operationId === 'string') operationId = r.operationId; } catch { operationId = null; }
+  }
+  const spyRec = recorder && method ? recorder.withOrigin('harness', () => recorder.record(method, args)) : null;
+  const end = async (terminalOutcome) => {
+    if (operationId === null) return;
+    try { await ops.end({ operationId, terminalOutcome, spyRef: spyRec ? `spyLedger:seq:${spyRec.seq}` : null }); } catch { /* the record stays not-settled (fail-safe) */ }
+  };
+  let value;
+  try { value = await invoke(); } catch (e) {
+    if (spyRec) spyRec.outcome = { threw: true, error: summarizeThrown(e) };
+    await end('threw');
+    throw e;
+  }
+  if (spyRec) spyRec.outcome = { threw: false, returned: null };
+  await end('settled');
+  return value;
+}
+
+/**
+ * Guarded, independent unload of one model (§4.8): absent => `already-absent` (success, and NO
+ * operation record -- §9.2 slice C2: a cleanup unload mutationOperation exists only around an actual
+ * `viewer.unloadModel` call, through `ops` when given).
+ */
+async function guardedUnloadModel({ viewer, model, label, ops = null, modelId = null }) {
   const before = viewer.getAllModels();
   if (!Array.isArray(before)) throw new TypeError(`${label}: getAllModels() did not return an array`);
   if (model === null || model === undefined || !before.includes(model)) return { outcome: 'already-absent' };
-  await viewer.unloadModel(model);
+  if (ops && (modelId === 'A' || modelId === 'B')) {
+    await runAcknowledgedMutation({ ops, desc: { operationType: 'unload', modelId, phase: 'cleanup', invokedBy: `cleanup:${label}` }, invoke: () => viewer.unloadModel(model) });
+  } else await viewer.unloadModel(model);
   const after = viewer.getAllModels();
   if (after.includes(model)) throw new Error(`${label}: model still loaded after unloadModel`);
   return { outcome: 'unloaded' };
@@ -4116,11 +6681,11 @@ function verifyViewerModelSetEmpty(viewer) {
 }
 
 /** Cleanup steps for the two models, keyed by object identity (never modelId). */
-function createModelCleanupSteps({ viewer, getModelA, getModelB }) {
+function createModelCleanupSteps({ viewer, getModelA, getModelB, ops = null }) {
   const stillLoaded = (getModel) => () => { const m = getModel(); return m != null && viewer.getAllModels().includes(m); };
   return {
-    unloadModelA: { run: () => guardedUnloadModel({ viewer, model: getModelA(), label: 'unloadModelA' }), ownershipRemains: stillLoaded(getModelA) },
-    unloadModelB: { run: () => guardedUnloadModel({ viewer, model: getModelB(), label: 'unloadModelB' }), ownershipRemains: stillLoaded(getModelB) },
+    unloadModelA: { run: () => guardedUnloadModel({ viewer, model: getModelA(), label: 'unloadModelA', ops, modelId: 'A' }), ownershipRemains: stillLoaded(getModelA) },
+    unloadModelB: { run: () => guardedUnloadModel({ viewer, model: getModelB(), label: 'unloadModelB', ops, modelId: 'B' }), ownershipRemains: stillLoaded(getModelB) },
     verifyViewerModelSetEmpty: { run: () => verifyViewerModelSetEmpty(viewer), ownershipRemains: () => viewer.getAllModels().length > 0 },
   };
 }
@@ -4484,50 +7049,115 @@ function normalizeEvidence(value, depth = 0) {
 const CHECK_REASON_RE = /^[^()\s][^()]*$/;
 
 /**
- * `makeCheckRecord({verdict, reason, fields, evidence})` -- the only constructor of a §10 check
- * record. `verdict` is a base; `reason` (string or null) is appended as `BASE(reason)`. PASS never
- * carries a reason. Throws on out-of-enum input (harness defect).
+ * `makeCheckRecord({verdict, reason, fields, evidence})` -- the only constructor of a §7/§10
+ * `check-run` record `{recordType:'check-run', verdict, reason, fields, evidence}`. `verdict` is the
+ * BARE base (`BLOCKED(x)` is notation for `{verdict:'BLOCKED', reason:'x'}`, §7 L1). PASS never
+ * carries a reason. Throws on out-of-enum input (harness defect). C1's `finalizedSeq`/`finalizedAt`
+ * are added only by `finalizeC1Record`.
  */
 function makeCheckRecord({ verdict, reason = null, fields = {}, evidence = {} }) {
   if (!CHECK_VERDICT_BASES.includes(verdict)) throw new TypeError(`makeCheckRecord: verdict base ${String(verdict)} not in ${CHECK_VERDICT_BASES.join('|')}`);
   if (reason !== null && (typeof reason !== 'string' || !CHECK_REASON_RE.test(reason))) throw new TypeError(`makeCheckRecord: malformed reason ${String(reason)}`);
   if (verdict === 'PASS' && reason !== null) throw new TypeError('makeCheckRecord: PASS carries no reason');
   return {
-    verdict: reason === null ? verdict : `${verdict}(${reason})`,
+    recordType: RECORD_TYPE.CHECK_RUN,
+    verdict,
     reason,
     fields: normalizeEvidence(fields),
     evidence: normalizeEvidence(evidence),
   };
 }
 
-/** Fail-closed validator of one check record (exact keys, base enum, reason consistency, plain JSON). */
-function validateCheckRecord(rec) {
-  const errors = [];
-  if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) return { ok: false, errors: ['not-object'] };
-  if (Object.keys(rec).sort().join(',') !== 'evidence,fields,reason,verdict') errors.push('keys');
-  const base = checkVerdictBase(rec);
-  if (base === null) errors.push('verdict');
-  const expected = rec.reason === null ? base : `${base}(${rec.reason})`;
-  if (base !== null && rec.verdict !== expected) errors.push('reason-mismatch');
-  if (base === 'PASS' && rec.reason !== null) errors.push('pass-with-reason');
-  try { toPlainJson(rec.fields, '$.fields'); toPlainJson(rec.evidence, '$.evidence'); } catch { errors.push('not-plain-json'); }
+/**
+ * Fail-closed validator of one `check-run` record (exact keys, bare base enum, reason rules, plain
+ * JSON, no legacy `dependency:C1` reason). With `name === 'C1'` the finalization keys are allowed
+ * (and validated if present).
+ */
+function validateCheckRecord(rec, name = null) {
+  const errors = checkRunProblems(name, rec);
   return { ok: errors.length === 0, errors };
 }
 
-/** `makeControlRecord(name, state, {fields, evidence})` -- §10 control record; state must be allowed (§7). */
+/**
+ * `finalizeC1Record(rec, {seq, at})` -> `{record, event}` -- §7 C1 reason contract: C1's record gains
+ * `finalizedSeq`/`finalizedAt` and exactly one `{seq, kind:'check-finalized', check:'C1', verdict,
+ * reason}` event is produced; the record is immutable afterwards. `seq` comes from the run's single
+ * sequence source (the call recorder's `nextSeq`), never a second counter.
+ */
+function finalizeC1Record(rec, { seq, at }) {
+  const v = validateCheckRecord(rec, 'C1');
+  if (!v.ok) throw new TypeError(`finalizeC1Record: invalid C1 record (${v.errors.join('|')})`);
+  if (Object.prototype.hasOwnProperty.call(rec, 'finalizedSeq')) throw new TypeError('finalizeC1Record: C1 already finalized');
+  if (!isSeq(seq) || !isIsoMs(at)) throw new TypeError('finalizeC1Record: seq/at invalid');
+  const record = Object.freeze({ ...rec, finalizedSeq: seq, finalizedAt: at });
+  // RC1-C2 attribution fields (every eventLog entry): emitted by P1 while C1 is the active check.
+  const event = Object.freeze({ seq, kind: 'check-finalized', check: 'C1', verdict: rec.verdict, reason: rec.reason, phase: 'P1', activeCheck: 'C1', activeControl: null });
+  return { record, event };
+}
+
+/**
+ * `makeControlRecord(name, state, {fields, evidence})` -- a control OUTCOME `{state, fields,
+ * evidence}` as produced by the control evaluators (§7 per-control fields). It is not yet a §10
+ * record: the runner wraps it into a `control-run` record (`makeControlRunRecord`) with the exact
+ * executionRecord. NRDB is never an outcome (it exists only in a gate-disposition record, L2).
+ */
 function makeControlRecord(name, state, { fields = {}, evidence = {} } = {}) {
   if (!CONTROL_NAMES.includes(name)) throw new TypeError(`makeControlRecord: unknown control ${String(name)}`);
-  if (!CONTROL_ALLOWED_STATES[name].includes(state)) throw new TypeError(`makeControlRecord: ${name} state ${String(state)} not allowed (§7)`);
+  if (!CONTROL_ALLOWED_STATES[name].includes(state) || state === NRDB_STATE) throw new TypeError(`makeControlRecord: ${name} state ${String(state)} not allowed (§7)`);
   return { state, fields: normalizeEvidence(fields), evidence: normalizeEvidence(evidence) };
 }
 
+/** Validator of a control OUTCOME (`makeControlRecord` shape; NRDB rejected). */
 function validateControlRecord(name, rec) {
   const errors = [];
   if (!CONTROL_NAMES.includes(name)) return { ok: false, errors: ['unknown-control'] };
   if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) return { ok: false, errors: ['not-object'] };
   if (Object.keys(rec).sort().join(',') !== 'evidence,fields,state') errors.push('keys');
-  if (!CONTROL_ALLOWED_STATES[name].includes(rec.state)) errors.push('state');
+  if (!CONTROL_ALLOWED_STATES[name].includes(rec.state) || rec.state === NRDB_STATE) errors.push('state');
   try { toPlainJson(rec.fields, '$.fields'); toPlainJson(rec.evidence, '$.evidence'); } catch { errors.push('not-plain-json'); }
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * `makeControlRunRecord(name, outcome, {start, terminalSeq, terminalAt})` -- the §7/§10 `control-run`
+ * record. `start` is `{startSeq, startedAt}` when the control crossed its start boundary (recorded
+ * BEFORE its first action), else null (the exact not-started executionRecord). A not-started record
+ * whose outcome state is not a legal not-started state (§7) is a harness defect: it is recorded as the
+ * control's not-executable state with `fields.reason:'start-boundary-not-recorded'` (fail-closed).
+ */
+function makeControlRunRecord(name, outcome, { start = null, terminalSeq, terminalAt }) {
+  let out = outcome;
+  if (start === null && !CONTROL_NOT_STARTED_STATES[name].includes(out.state)) {
+    out = makeControlRecord(name, notExecutableState(name), { fields: { reason: 'start-boundary-not-recorded', producedState: out.state, producedFields: out.fields } });
+  }
+  const started = start !== null;
+  return {
+    recordType: RECORD_TYPE.CONTROL_RUN,
+    state: out.state,
+    fields: out.fields,
+    evidence: out.evidence,
+    executionRecord: {
+      controlId: name,
+      phase: CONTROL_OWNING_PHASE[name],
+      dependencyIds: [...CONTROL_DEPENDENCY_IDS[name]],
+      started,
+      crossedStartBoundary: started,
+      startSeq: started ? start.startSeq : null,
+      startedAt: started ? start.startedAt : null,
+      terminalSeq,
+      terminalAt,
+      terminalState: out.state,
+      result: started ? (isPlainObject(out.fields) ? out.fields : { value: out.fields }) : null,
+      evidenceRefs: started ? [`/controls/${name}/fields`] : [],
+    },
+    dependencyBlockedBy: null,
+  };
+}
+
+/** §7/§10 validator of a `control-run` record (exact keys, state, executionRecord, dependencyBlockedBy). */
+function validateControlRunRecord(name, rec) {
+  if (!CONTROL_NAMES.includes(name)) return { ok: false, errors: ['unknown-control'] };
+  const errors = controlRunProblems(name, rec);
   return { ok: errors.length === 0, errors };
 }
 
@@ -5466,14 +8096,19 @@ function attachModelArgumentTagger(recorder, { labelOf, methods = MODEL_TAGGED_M
 }
 
 /** §C16/§C17 single monotonic event log `{seq, t, kind, eventName, modelLabel, reason, payloadSummary}`. */
-function createMonotonicEventLog({ clock = defaultClock } = {}) {
+function createMonotonicEventLog({ clock = defaultClock, recorder = null } = {}) {
   const entries = [];
   const KINDS = ['listener-entry', 'bridge-callback', 'listener-exit'];
+  // §7 RC1-C2 / §9.2: with a recorder, `seq` comes from the run's single counter (recorder.nextSeq)
+  // and every entry carries the attribution fields; the entry is also appended to the recorder's
+  // eventLog (one persisted, seq-ordered eventLog). Without a recorder (pure offline oracle tests)
+  // the legacy local numbering is kept.
   return {
     entries,
     push({ kind, eventName = null, modelLabel = null, reason = null, payloadSummary = null }) {
       if (!KINDS.includes(kind)) throw new TypeError(`event log: unknown kind ${String(kind)}`);
-      const e = { seq: entries.length, t: clock.monotonicMs(), kind, eventName, modelLabel, reason, payloadSummary };
+      const fields = { t: clock.monotonicMs(), eventName, modelLabel, reason, payloadSummary };
+      const e = recorder && typeof recorder.logEvent === 'function' ? recorder.logEvent(kind, fields) : { seq: entries.length, kind, ...fields };
       entries.push(e);
       return e;
     },
@@ -5709,21 +8344,63 @@ const C15_RESTORE_FAILED_NOTE = 'Isolation could not be restored (the Viewer rep
 /** Fit note copied by value from clashpanel/viewer/fit.js FIT_NOTE.FIRST_ONLY (procedure §C15(d), E5). */
 const C15_FIRST_ONLY_NOTE = 'Framing first element only';
 
-/** §C1 -- `{A:{loaded, classification, inAllModels, unitScale, unitString}, B:{..}, loadedCount}`. */
+/**
+ * §C1 -- `{A:{loaded, classification, inAllModels, unitScale, unitString, loadStatus?}, B:{..},
+ * loadedCount}`. RC1-C1 C1 reason contract: a P1 prerequisite loss is `BLOCKED` with EXACTLY one
+ * normalized reason -- `'timeout:load'` if the T2 load/readiness deadline fired for A or B
+ * (`loadStatus:'timed-out'`; takes precedence), else `'prerequisite'` -- and the detailed causes go
+ * ONLY to `fields.blockDetail = [{cause, model, observed}]` (ordered A, B, then model-independent;
+ * diagnostic, never parsed by any verdict function). A loaded model missing from getAllModels() is
+ * recorded as `model-not-loaded` with `observed:'not-in-getAllModels'` (see report).
+ *
+ * H1 (2026-10-01 follow-up review): the node-side §9.2 load `completionOutcome` of each model is
+ * merged into the facts as `nodeLoadOutcome` (`withNodeLoadOutcomes`). A node-side P1 harness
+ * exception (`'harness-exception'`: the load call threw, e.g. before the page recorded the load) is
+ * "any other non-PASS C1 outcome" of the §7 C1 reason contract: C1 is `BLOCKED('harness-exception')`
+ * -- its own, NON-normalized reason, so L1 is false and the gate is CLOSED_OTHER -- whatever the page
+ * facts say (they are kept in `fields` for diagnostics). It outranks `timeout:load` (the procedure
+ * orders only the two normalized causes; a harness exception can never make NRDB legal). A node-side
+ * T2 expiry (`'timeout:load'`, e.g. the outer deadline fired while the page record was still active)
+ * is a `load-deadline` cause for that model, so the precedence-winning `timeout:load` reason results.
+ */
 function evaluateC1(obs) {
   const o = obs || {};
   const models = ['A', 'B'].map((m) => o[m] || {});
   const unitMismatch = models[0].unitScale !== models[1].unitScale || models[0].unitString !== models[1].unitString;
   const fields = { A: o.A || null, B: o.B || null, loadedCount: o.loadedCount === undefined ? null : o.loadedCount, unitScaleMismatchFinding: unitMismatch };
-  const unmet = [];
+  if (models.some((m) => m.nodeLoadOutcome === 'harness-exception')) return makeCheckRecord({ verdict: 'BLOCKED', reason: 'harness-exception', fields });
+  const detail = [];
+  const obsStr = (v) => (v === null || v === undefined ? null : truncateUtf8(redactEvidenceText(String(v)).value, 256).value);
   models.forEach((m, k) => {
     const label = k === 0 ? 'A' : 'B';
-    if (m.loaded !== true) unmet.push(`model-not-loaded:${label}`);
-    else if (m.classification !== CLASSIFIER_CONFIRMED) unmet.push(`classifier:${label}`);
-    else if (m.inAllModels !== true) unmet.push(`not-in-getAllModels:${label}`);
+    if (m.loadStatus === 'timed-out') detail.push({ cause: 'load-deadline', model: label, observed: 'timed-out' });
+    else if (m.nodeLoadOutcome === 'timeout:load') detail.push({ cause: 'load-deadline', model: label, observed: 'timeout:load' });
+    else if (m.loaded !== true) {
+      if (m.loadStatus === 'failed' || m.loadStatus === 'rejected') detail.push({ cause: 'load-rejected', model: label, observed: obsStr(m.loadStatus) });
+      else detail.push({ cause: 'model-not-loaded', model: label, observed: obsStr(m.loadStatus) });
+    } else if (m.classification !== CLASSIFIER_CONFIRMED) detail.push({ cause: 'classifier', model: label, observed: obsStr(m.classification) });
+    else if (m.inAllModels !== true) detail.push({ cause: 'model-not-loaded', model: label, observed: 'not-in-getAllModels' });
   });
-  if (o.loadedCount !== TABLE_T.T14.loadedModelCount) unmet.push('loaded-model-count');
-  return unmet.length ? makeCheckRecord({ verdict: 'BLOCKED', reason: `prerequisite:${unmet.join(',')}`, fields }) : makeCheckRecord({ verdict: 'PASS', fields });
+  if (o.loadedCount !== TABLE_T.T14.loadedModelCount) detail.push({ cause: 'model-count', model: null, observed: obsStr(o.loadedCount) });
+  if (detail.length === 0) return makeCheckRecord({ verdict: 'PASS', fields });
+  const reason = detail.some((d) => d.cause === 'load-deadline') ? 'timeout:load' : 'prerequisite';
+  return makeCheckRecord({ verdict: 'BLOCKED', reason, fields: { ...fields, blockDetail: detail } });
+}
+
+/**
+ * `withNodeLoadOutcomes(facts, outcomes)` -- H1: a copy of the page-side C1 facts with each model's
+ * node-side §9.2 load `completionOutcome` added as `nodeLoadOutcome` (an out-of-enum value -> null).
+ * The page facts are never replaced. `outcomes` absent (null/undefined) -> the facts unchanged; the
+ * closeout backstop `c1LoadLedgerProblems` still couples C1 to the persisted opLedger (row 5).
+ */
+function withNodeLoadOutcomes(facts, outcomes) {
+  if (!isPlainObject(outcomes)) return facts;
+  const out = isPlainObject(facts) ? { ...facts } : {};
+  for (const label of ['A', 'B']) {
+    const v = outcomes[label];
+    out[label] = { ...(isPlainObject(out[label]) ? out[label] : {}), nodeLoadOutcome: LOAD_COMPLETION_OUTCOMES.includes(v) ? v : null };
+  }
+  return out;
 }
 
 /** §C5 -- observation only: feet only for a finite positive scale and a metre-based unit string. */
@@ -5857,20 +8534,25 @@ function evaluateN4({ clearIsolation = null, resetToEmpty = null, timedOut = fal
 /**
  * §C13 -- expected `ClearOutcome.isolation` per scenario: C10 restored; C12 skipped-external;
  * C15(b)/(c) restored, or `none` where isolation was never confirmed and already equals the
- * pre-image (`noneAllowed`); C15(e) failed. `outcomes = {C10, C12, C15b, C15c, C15e}` each
- * `{isolation, noneAllowed?}`; a missing scenario => BLOCKED(scenario-missing:..).
+ * pre-image (`noneAllowed`); C15(e) first clear() failed, second restored, third none (RC1).
+ * `outcomes = {C10, C12, C15b, C15c, C15e}` each `{isolation, noneAllowed?}` (C15e also `{clear2,
+ * clear3}`); a missing scenario => BLOCKED(scenario-missing:..).
  */
 function evaluateC13(outcomes) {
   const o = outcomes || {};
   const expected = { C10: ['restored'], C12: ['skipped-external'], C15b: ['restored', 'none'], C15c: ['restored', 'none'], C15e: ['failed'] };
-  const missing = Object.keys(expected).filter((k) => !o[k] || typeof o[k].isolation !== 'string');
+  // RC1: C15(e) runs three clear() calls -- first `failed`, second `restored`, third `none`.
+  const expectedC15eLater = { clear2: 'restored', clear3: 'none' };
+  const missing = Object.keys(expected).filter((k) => !o[k] || typeof o[k].isolation !== 'string'
+    || (k === 'C15e' && Object.keys(expectedC15eLater).some((n) => typeof o[k][n] !== 'string')));
   if (missing.length) return makeCheckRecord({ verdict: 'BLOCKED', reason: `scenario-missing:${missing.join(',')}`, fields: { outcomes: o } });
   const bad = Object.keys(expected).filter((k) => {
+    if (k === 'C15e' && Object.keys(expectedC15eLater).some((n) => o[k][n] !== expectedC15eLater[n])) return true;
     const got = o[k].isolation;
     if (got === 'none') return !(expected[k].includes('none') && o[k].noneAllowed === true);
     return !expected[k].includes(got);
   });
-  return makeCheckRecord({ verdict: bad.length ? 'FAIL' : 'PASS', reason: bad.length ? `mismatch:${bad.join(',')}` : null, fields: { outcomes: o, expected } });
+  return makeCheckRecord({ verdict: bad.length ? 'FAIL' : 'PASS', reason: bad.length ? `mismatch:${bad.join(',')}` : null, fields: { outcomes: o, expected: { ...expected, C15eLater: expectedC15eLater } } });
 }
 
 /**
@@ -5893,26 +8575,236 @@ function evaluateC14(obs) {
   return makeCheckRecord({ verdict: failed.length ? 'FAIL' : 'PASS', reason: failed.length ? failed.join(',') : null, fields: { clauses, characterization: 'one execution per interleaving' } });
 }
 
+// ---- §C15(e) (RC1 + RC1-C1): three-clear oracle over externally observable state ----------------
+// The oracle is a PURE function of the retained evidence `checks.C15.fields.e` (exact schema in
+// validateC15eEvidence, Section 12). Post-clear `inspectLedger()` values live only under
+// `diagnostics.*` and never enter a comparison, predicate or verdict.
+
+/** Predicate names of §C15(e), in procedure order. */
+const C15E_PREDICATE_NAMES = Object.freeze(['F1', 'F2', 'F3', 'F4', 'S1', 'S2', 'S3', 'Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'D1', 'D2', 'D3']);
 /**
- * §C15 -- (a)–(e) expected outcomes plus the global per-scenario assertion (`globalOk`: hidden empty,
- * isolation empty, Panel meshes/scenes equal to baseline). Each scenario observation carries
- * `injectedFired` (the bounded injection actually fired, recorded by the recorder as injected).
+ * Named FAIL labels of §C15(e) *FAIL*, in the precedence used when several apply (fail-closed
+ * unreadable first; a label is null when only an unnamed predicate failed).
+ */
+const C15E_FAILURE_LABELS = Object.freeze(['post-clear-read-unreadable', 'isolation-stranded', 'oracle-conflict', 'hidden-changed-after-failed-clear', 'hidden-not-baseline']);
+/** The setup model-key list (C1 / T14: both fixtures loaded; checked as a C15(e) setup precondition). */
+const C15E_SETUP_MODEL_KEYS = Object.freeze(['A', 'B']);
+/**
+ * Q4: the ONLY harness-origin Viewer calls that are not mutating (read-only public reads). Every other
+ * harness-origin spy record inside the Q4 span is a mutating call (fail-closed allow-list).
+ */
+const C15E_NON_MUTATING_METHODS = Object.freeze(['viewer.getAggregateIsolation', 'viewer.getAggregateHiddenNodes', 'viewer.getAggregateSelection', 'viewer.getAllModels']);
+
+/** `modelKey(m)`: 'A' / 'B' iff `m` is (===) the harness-loaded model object; otherwise null. */
+function c15eModelKey(m, models) {
+  if (m === null || (typeof m !== 'object' && typeof m !== 'function') || !models) return null;
+  if (m === models.A) return 'A';
+  if (m === models.B) return 'B';
+  return null;
+}
+
+/** The exact unreadable value `{unreadable:true, error:<redacted string>}` (equal to nothing). */
+function c15eUnreadable(error) {
+  const text = redactEvidenceText(String(error && typeof error === 'object' && error.message !== undefined ? error.message : error)).value;
+  return { unreadable: true, error: truncateUtf8(text, 512).value };
+}
+
+/**
+ * Canonical isolation / hidden value (C9/C10 form, §C15(e) RC1-C1): `raw` is an array of per-model
+ * entries `{model, ids}`; each maps to `{model:modelKey(model), ids:<ascending, de-duplicated integer
+ * dbIds>}`; entries of one model are merged (set union), empty entries dropped, sorted by model key.
+ * Not an array / non-object entry / model not A or B by identity / model absent from `allModels`
+ * (`getAllModels()`) / non-integer id => the exact unreadable value.
+ */
+function canonicalAggregate(raw, { models, allModels } = {}) {
+  if (!Array.isArray(raw)) return c15eUnreadable('read-not-an-array');
+  if (!Array.isArray(allModels)) return c15eUnreadable('getAllModels-unreadable');
+  const merged = new Map();
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object') return c15eUnreadable('entry-not-an-object');
+    const key = c15eModelKey(entry.model, models);
+    if (key === null) return c15eUnreadable('entry-model-not-A-or-B');
+    if (!allModels.includes(entry.model)) return c15eUnreadable(`entry-model-not-loaded:${key}`);
+    const ids = entry.ids;
+    if (ids === null || typeof ids !== 'object' || typeof ids.length !== 'number') return c15eUnreadable('entry-ids-not-array-like');
+    const list = Array.from(ids);
+    if (!list.every((v) => Number.isInteger(v))) return c15eUnreadable('entry-id-not-integer');
+    if (!merged.has(key)) merged.set(key, new Set());
+    for (const v of list) merged.get(key).add(v);
+  }
+  return [...merged.keys()].sort()
+    .map((key) => ({ model: key, ids: [...merged.get(key)].sort((x, y) => x - y) }))
+    .filter((e) => e.ids.length > 0);
+}
+
+/** `canonicalHidden(raw, {models, allModels})` -- canonical hidden-nodes value (same form as isolation). */
+function canonicalHidden(raw, ctx) { return canonicalAggregate(raw, ctx); }
+/** `canonicalIsolation(raw, {models, allModels})` -- canonical isolation value (E0, T_iso, after reads). */
+function canonicalIsolation(raw, ctx) { return canonicalAggregate(raw, ctx); }
+
+/** Runs one read; a throwing read is the exact unreadable value (redacted), never a thrown error. */
+function readCanonicalAggregate(readFn, ctx) {
+  let raw;
+  try { raw = readFn(); } catch (err) { return c15eUnreadable(err); }
+  return canonicalAggregate(raw, ctx);
+}
+
+/** True for a well-formed canonical array (model keys A/B ascending, ids non-empty ascending integers). */
+function isC15eCanonArray(v) {
+  if (!Array.isArray(v)) return false;
+  let prev = '';
+  for (const e of v) {
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) return false;
+    const keys = Object.keys(e).sort();
+    if (keys.length !== 2 || keys[0] !== 'ids' || keys[1] !== 'model') return false;
+    if (!C15E_SETUP_MODEL_KEYS.includes(e.model) || !(e.model > prev)) return false;
+    prev = e.model;
+    if (!Array.isArray(e.ids) || e.ids.length === 0) return false;
+    for (let i = 0; i < e.ids.length; i += 1) {
+      if (!Number.isInteger(e.ids[i]) || (i > 0 && !(e.ids[i] > e.ids[i - 1]))) return false;
+    }
+  }
+  return true;
+}
+
+/** `hiddenEquals(x, y)` <=> both canonical arrays and byte-equal JSON (no subset/superset/tolerance). */
+function hiddenEquals(x, y) { return isC15eCanonArray(x) && isC15eCanonArray(y) && JSON.stringify(x) === JSON.stringify(y); }
+/** `isolationEquals` on canonical isolation values: the same byte-equality rule. */
+function canonIsolationEquals(x, y) { return hiddenEquals(x, y); }
+
+/** LedgerDTO -- the only persisted projection of an `inspectLedger()` value (null ledger => null). */
+function c15eLedgerDTO(L) {
+  if (L === null || L === undefined) return null;
+  const mm = L.markerMeshes;
+  return {
+    markerMeshCount: mm && typeof mm.length === 'number' ? mm.length : 0,
+    isolationConfirmed: L.isolation ? L.isolation.confirmed === true : null,
+  };
+}
+
+const c15eIsUnreadable = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && v.unreadable === true;
+
+/**
+ * `c15eDerive(e)` -> `{comparisons, predicates, failureLabel, thrownInjectedCount}` -- every value a
+ * pure function of the stored fields (the schema validator recomputes these and compares).
+ * Spy-window coverage: clears[0].spyWindow = records with startSeq < seq < settleSeq; clears[N]
+ * (N >= 1) = records with clears[N-1].settleSeq < seq < clears[N].settleSeq, i.e. the gap before the
+ * clear plus its own window, so Q4 sees the whole span "start of clear #1 .. settle of clear #3".
+ * F4/S2/Q3/D2 only consider a clear's OWN window (seq > startSeq).
+ */
+function c15eDerive(e) {
+  const clears = Array.isArray(e && e.clears) ? e.clears : [];
+  const step = (i) => clears[i] || {};
+  const win = (i) => (Array.isArray(step(i).spyWindow) ? step(i).spyWindow : []);
+  const own = (i) => win(i).filter((r) => r && Number.isInteger(r.seq) && r.seq > step(i).startSeq && r.seq < step(i).settleSeq);
+  const bridgeCalls = (i, method) => own(i).filter((r) => r.origin === 'bridge' && r.method === method);
+  const out = (i) => step(i).outcome || {};
+  const after = (i) => step(i).after || {};
+  const notesOf = (i) => (Array.isArray(out(i).notes) ? out(i).notes : []);
+  const comparisons = {
+    clear1: { isolationEqualsTiso: canonIsolationEquals(after(0).isolation, e.T_iso), hiddenEqualsHiso: hiddenEquals(after(0).hidden, e.H_iso) },
+    clear2: { isolationEqualsE0: canonIsolationEquals(after(1).isolation, e.E0), hiddenEqualsH0: hiddenEquals(after(1).hidden, e.H0) },
+    clear3: { isolationEqualsE0: canonIsolationEquals(after(2).isolation, e.E0), hiddenEqualsH0: hiddenEquals(after(2).hidden, e.H0) },
+  };
+  const sets1 = bridgeCalls(0, 'viewer.setAggregateIsolation');
+  const thrownInjectedCount = sets1.filter((r) => r.thrown === 'injected').length;
+  const allRecords = [0, 1, 2].flatMap((i) => win(i));
+  const modelsUnchanged = Array.isArray(after(0).models) && JSON.stringify(after(0).models) === JSON.stringify(C15E_SETUP_MODEL_KEYS);
+  const predicates = {
+    F1: out(0).isolation === 'failed',
+    F2: notesOf(0).includes(C15_RESTORE_FAILED_NOTE),
+    F3: Number.isInteger(e.nm) && out(0).markersRemoved === e.nm,
+    F4: sets1.length >= 1 && sets1.every((r) => r.thrown === 'injected'),
+    S1: comparisons.clear1.isolationEqualsTiso,
+    S2: Number.isInteger(e.nm) && Boolean(e.ledgerBefore) && e.ledgerBefore.markerMeshCount === e.nm
+      && bridgeCalls(0, 'overlays.removeMesh').length === e.nm
+      && [0, 1, 2].every((i) => bridgeCalls(i, 'overlays.addMesh').length === 0)
+      && [1, 2].every((i) => bridgeCalls(i, 'overlays.removeMesh').length === 0),
+    S3: comparisons.clear1.hiddenEqualsHiso && modelsUnchanged,
+    Q1: out(1).isolation === 'restored',
+    Q2: !notesOf(1).includes(C15_RESTORE_FAILED_NOTE) && out(1).markersRemoved === 0,
+    Q3: bridgeCalls(1, 'viewer.setAggregateIsolation').length >= 1 && bridgeCalls(1, 'viewer.setAggregateIsolation').every((r) => r.thrown === null),
+    Q4: allRecords.every((r) => !(r && r.origin === 'harness') || C15E_NON_MUTATING_METHODS.includes(r.method)),
+    Q5: comparisons.clear2.isolationEqualsE0 && comparisons.clear2.hiddenEqualsH0,
+    D1: out(2).isolation === 'none',
+    D2: bridgeCalls(2, 'viewer.setAggregateIsolation').length === 0,
+    D3: comparisons.clear3.isolationEqualsE0 && comparisons.clear3.hiddenEqualsH0,
+  };
+  const anyUnreadable = [0, 1, 2].some((i) => c15eIsUnreadable(after(i).isolation) || c15eIsUnreadable(after(i).hidden));
+  let failureLabel = null;
+  if (anyUnreadable) failureLabel = 'post-clear-read-unreadable';
+  else if (!predicates.Q1 || !comparisons.clear2.isolationEqualsE0) failureLabel = 'isolation-stranded';
+  else if (predicates.F1 && !predicates.S1) failureLabel = 'oracle-conflict';
+  else if (!comparisons.clear1.hiddenEqualsHiso) failureLabel = 'hidden-changed-after-failed-clear';
+  else if (!comparisons.clear2.hiddenEqualsH0 || !comparisons.clear3.hiddenEqualsH0) failureLabel = 'hidden-not-baseline';
+  return { comparisons, predicates, failureLabel, thrownInjectedCount };
+}
+
+/**
+ * `c15eOracle(e)` -> `{verdict:'PASS'|'FAIL'|'BLOCKED', reason, violated, failureLabel, comparisons,
+ * predicates}`. BLOCKED(precondition:c15e) unless the setup preconditions hold in the stored values
+ * (E0 = [] , H0 = [], T_iso non-empty canonical != E0, H_iso canonical -- an unreadable H_iso is never
+ * PASS -- and ledgerBefore = {nm, confirmed:true}); BLOCKED(session-tainted) unless W_e was restored by
+ * reference; BLOCKED(injection-not-verified) unless the original ran zero times while armed. Otherwise
+ * PASS iff every predicate holds; FAIL names the violated predicates (and the §C15(e) label, if any).
+ * `diagnostics.*` is never read.
+ */
+function c15eOracle(e) {
+  const blocked = (reason) => ({ verdict: 'BLOCKED', reason, violated: [], failureLabel: null, comparisons: null, predicates: null });
+  if (e === null || typeof e !== 'object' || !Array.isArray(e.clears) || e.clears.length !== 3) return blocked('precondition:c15e');
+  const L = e.ledgerBefore;
+  const pre = isC15eCanonArray(e.E0) && e.E0.length === 0 && isC15eCanonArray(e.H0) && e.H0.length === 0
+    && isC15eCanonArray(e.T_iso) && e.T_iso.length > 0 && !canonIsolationEquals(e.T_iso, e.E0)
+    && isC15eCanonArray(e.H_iso)
+    && Number.isInteger(e.nm) && L !== null && typeof L === 'object' && L.markerMeshCount === e.nm && L.isolationConfirmed === true;
+  if (!pre) return blocked('precondition:c15e');
+  const inj = e.injection || {};
+  if (inj.restoredByReference !== true) return blocked('session-tainted');
+  if (inj.originalInvocationsWhileArmed !== 0) return blocked('injection-not-verified');
+  const d = c15eDerive(e);
+  const violated = C15E_PREDICATE_NAMES.filter((n) => d.predicates[n] !== true);
+  if (violated.length === 0) return { verdict: 'PASS', reason: null, violated, failureLabel: null, comparisons: d.comparisons, predicates: d.predicates };
+  const reason = d.failureLabel ? `${d.failureLabel}:${violated.join(',')}` : violated.join(',');
+  return { verdict: 'FAIL', reason, violated, failureLabel: d.failureLabel, comparisons: d.comparisons, predicates: d.predicates };
+}
+
+/**
+ * §C15 -- (a)–(d) expected outcomes plus the global per-scenario assertion (`globalOk`: hidden empty,
+ * isolation empty, Panel meshes/scenes equal to baseline); each (a)–(d) observation carries
+ * `injectedFired`. (e) is `{evidence, blocked, globalOk}`: `evidence` is the exact retained
+ * `checks.C15.fields.e` object (or null when the scenario stopped before the oracle could run, with
+ * `blocked` = the BLOCKED reason, e.g. `precondition:c15e`, `timeout:clear`, `session-tainted`); the
+ * (e) clause is recomputed here by `c15eOracle(evidence)` (never trusted from the driver) AND the
+ * scenario-end global assertion. Any (a)–(e) FAIL => FAIL(<clauses>); else a BLOCKED (e) =>
+ * BLOCKED(<reason>); else PASS.
  */
 function evaluateC15(obs) {
   const o = obs || {};
   const a = o.a || {}; const b = o.b || {}; const c = o.c || {}; const d = o.d || {}; const e = o.e || {};
   const fired = (s) => s.injectedFired === true;
+  const evidence = Object.prototype.hasOwnProperty.call(e, 'evidence') ? e.evidence : null;
+  const eBlockedByDriver = typeof e.blocked === 'string' && e.blocked !== '' ? e.blocked : null;
+  const eOracle = eBlockedByDriver !== null
+    ? { verdict: 'BLOCKED', reason: eBlockedByDriver, violated: [], failureLabel: null }
+    : c15eOracle(evidence);
+  const eBlocked = eOracle.verdict === 'BLOCKED';
   const clauses = {
     a: fired(a) && a.allAddedRemoved === true && a.ledgerNull === true && a.marked === false && a.failedNote === true && a.globalOk === true,
     b: fired(b) && b.isolationUnchanged === true && b.noMarkerLeak === true && b.globalOk === true,
     c: fired(c) && c.finalIsolationEmpty === true && c.globalOk === true,
     d: fired(d) && d.fitted === true && Array.isArray(d.notes) && d.notes.includes(C15_FIRST_ONLY_NOTE) && d.globalOk === true,
-    e: fired(e) && e.clear1 && e.clear1.isolation === 'failed' && Array.isArray(e.clear1.notes) && e.clear1.notes.includes(C15_RESTORE_FAILED_NOTE)
-      && e.ledgerIsolationConfirmedRetained === true && e.markersRemoved === true && e.wrapperRemoved === true
-      && e.clear2 && e.clear2.isolation === 'restored' && e.recordDropped === true && e.finalIsolationEmpty === true && e.globalOk === true,
+    e: !eBlocked && eOracle.verdict === 'PASS' && e.globalOk === true,
   };
-  const failed = Object.keys(clauses).filter((k) => !clauses[k]);
-  return makeCheckRecord({ verdict: failed.length ? 'FAIL' : 'PASS', reason: failed.length ? failed.join(',') : null, fields: { clauses }, evidence: { observation: o } });
+  const failed = Object.keys(clauses).filter((k) => !clauses[k] && !(k === 'e' && eBlocked));
+  const fields = {
+    clauses,
+    e: evidence === undefined ? null : evidence,
+    eOracle: { verdict: eOracle.verdict, reason: eOracle.reason, violated: eOracle.violated, failureLabel: eOracle.failureLabel, globalOk: e.globalOk === true },
+  };
+  const evidenceOut = { observation: { a, b, c, d } };
+  if (failed.length) return makeCheckRecord({ verdict: 'FAIL', reason: failed.join(','), fields, evidence: evidenceOut });
+  if (eBlocked) return makeCheckRecord({ verdict: 'BLOCKED', reason: eOracle.reason, fields, evidence: evidenceOut });
+  return makeCheckRecord({ verdict: 'PASS', fields, evidence: evidenceOut });
 }
 
 /**
@@ -6045,6 +8937,7 @@ function makeBoundedInjection(scenario, spec, counters) {
     if (counts) counters.matchingCalls += 1;
     const fire = counts && counters.matchingCalls >= spec.fireOnCall && counters.fires < spec.maxFires && (!spec.armedOnly || counters.armed);
     if (fire && spec.mode === 'throw-before') { counters.fires += 1; throw new G2InjectedError(scenario, spec.method); }
+    if (counters.armed) counters.originalInvocationsWhileArmed += 1; // §C15(e): must stay 0 (throw-before on every armed call)
     const result = Reflect.apply(prev, this, args);
     if (fire && spec.mode === 'throw-after') { counters.fires += 1; throw new G2InjectedError(scenario, spec.method); }
     return result;
@@ -6053,7 +8946,7 @@ function makeBoundedInjection(scenario, spec, counters) {
 
 /**
  * `createFailureInjectionController({registry, allowOfflineFakes})` -> `{install(scenario, owners),
- * installed()}`. `install` returns `{scenario, arm(), disarm(), fires(), matchingCalls(), remove()}`;
+ * installed()}`. `install` returns `{scenario, arm(), disarm(), fires(), matchingCalls(), originalInvocationsWhileArmed(), remove()}`;
  * removal is LIFO through Section 19 and verified. Refuses (G2RefusalError 'failure-injection-dormant')
  * unless the live path is wired or the target is a branded offline fake with allowOfflineFakes.
  */
@@ -6070,7 +8963,7 @@ function createFailureInjectionController({ registry, allowOfflineFakes = false 
       if (!LIVE_PATH_WIRED && !(allowOfflineFakes === true && brandedFake)) {
         throw new G2RefusalError('failure-injection-dormant', 'C15 failure injection is dormant: the live path is not wired and the target is not a branded offline fake');
       }
-      const counters = { matchingCalls: 0, fires: 0, armed: false };
+      const counters = { matchingCalls: 0, fires: 0, armed: false, originalInvocationsWhileArmed: 0 };
       const layer = installInjectionWrapper(target, spec.method, makeBoundedInjection(scenario, spec, counters), { registry });
       const handle = {
         scenario,
@@ -6078,6 +8971,7 @@ function createFailureInjectionController({ registry, allowOfflineFakes = false 
         disarm() { counters.armed = false; },
         fires: () => counters.fires,
         matchingCalls: () => counters.matchingCalls,
+        originalInvocationsWhileArmed: () => counters.originalInvocationsWhileArmed,
         remove() {
           const r = layer.remove();
           const i = active.indexOf(handle);
@@ -6176,38 +9070,83 @@ function verdictMapOf(checks, controls) {
     const base = checkVerdictBase(rec);
     if (!(key in m) || sev(base) > sev(m[key])) m[key] = base;
   }
-  for (const [k, rec] of Object.entries(controls)) m[k] = rec && rec.state;
+  for (const [k, rec] of Object.entries(controls)) m[k] = controlEffectiveState(rec);
   return m;
 }
 
 /**
- * `runChecksInPhaseOrder({drivers, mode, assertPhaseBaseline, fatalObserved})` -- executes
- * `drivers[phaseId](ctx)` for P1..P11 in §5 order. `ctx = {phase, runnable:{checks, controls},
- * blocked, sessionTainted, results}`; a driver returns `{checks:{unit:record}, controls:{N:record},
- * extras:{...}, tainted?:boolean}`. Rules: dependency blockers => BLOCKED(dependency:<list>); after
- * taint, mutating units => BLOCKED(session-tainted:<phase>) (read-only checks and pure controls may
- * continue); a fatal error-ledger event skips everything left to cleanup (BLOCKED(fatal-skip));
- * a driver throw => its units BLOCKED(harness-exception:<phase>) and taint; the phase-boundary
- * baseline assertion failing => taint. A recorded FAIL is never erased. At the end C7 = C7α ∧ C7β,
- * C18 = C18a ∧ C18b, and every check/control lacking a record gets BLOCKED(not-executed) /
- * the §7 not-executable state, so the §10 records are total.
+ * `runChecksInPhaseOrder({drivers, mode, assertPhaseBaseline, fatalObserved, recorder, nextSeq,
+ * errorLedger, gateHooks})` -- executes `drivers[phaseId](ctx)` for P1..P11 in §5 order. `ctx =
+ * {phase, runnable:{checks, controls}, blocked, sessionTainted, beginControl, beginCheck, results}`; a
+ * driver returns `{checks:{unit:record}, controls:{N:record}, extras:{...}, tainted?:boolean}`. Rules:
+ * dependency blockers => BLOCKED(dependency:<list>); after taint, mutating units =>
+ * BLOCKED(session-tainted:<phase>) (read-only checks and pure controls may continue); a fatal
+ * error-ledger event skips everything left to cleanup (BLOCKED(fatal-skip)); a driver throw => its
+ * units BLOCKED(harness-exception:<phase>) and taint; the phase-boundary baseline assertion failing =>
+ * taint. A recorded FAIL is never erased. At the end C7 = C7α ∧ C7β, C18 = C18a ∧ C18b, and every
+ * check/control lacking a record gets BLOCKED(not-executed) / the §7 not-executable state.
+ *
+ * RC1-C1/RC1-C2 (slices B1+B2). Every check is a `check-run` record (bare verdict); C1 is finalized
+ * (`finalizeC1Record`) right after P1 -- its single `check-finalized` event is appended to the eventLog.
+ * **Global C1 gate (§7):** after C1's finalization and BEFORE the P2 marker and any P2 action, the
+ * runner performs the atomic gate preparation (`prepareC1Gate`, synchronous) and records `gates.C1`.
+ * `OPEN` => P2..P11 run per §5 (every C2..C20/N1..N8 record is a run record; a later runtime BLOCKED
+ * stays a `check-run` record). Closed (`CLOSED_DEPENDENCY_BLOCKED` | `CLOSED_OTHER`) => NO P2..P11
+ * phase starts (no driver call, no P2 spy installation, no N1, no marker), and exactly one synthetic
+ * gate-disposition record per C2..C20, N1..N8 is emitted in that order (G-a..G-f) with
+ * `gateSeq < dispositionSeq`. **Start boundaries / attribution:** a driver MUST call
+ * `ctx.beginControl(N)` immediately before a control's first action and `ctx.beginCheck(C)` before a
+ * check's first action in a multi-check phase (single-check phases and P1 are attributed
+ * automatically); the runner stamps the recorder's attribution context `{phase, activeCheck,
+ * activeControl}`, which every spy record / eventLog entry / state snapshot carries. **Sequence:** one
+ * counter only -- `recorder.nextSeq` (live: `env.recorder`); a bare `nextSeq` is wrapped by an internal
+ * recorder that draws from it. **Markers:** `{seq, name}` for P1 and every P2..P11 phase entered, and
+ * -- as the runner's LAST act -- the `cleanup` marker (the caller runs cleanup immediately after; the
+ * attribution context is left at `phase:'cleanup'` with null active items, so cleanup-time spy records
+ * fall after `cleanupSeq`). The `P0` and `closeout` markers come from the node-side run counter
+ * (`runPostReservation`, slice C1).
+ * `errorLedger` (object, or a synchronous function returning it at gate time) is the ledger the gate
+ * preparation finalizes/counts; when absent, `fatalCountAtGate` is 1 if `fatalObserved()` else 0.
  */
-async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phases = PHASE_ORDER, assertPhaseBaseline = null, fatalObserved = () => false } = {}) {
+async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phases = PHASE_ORDER, assertPhaseBaseline = null, fatalObserved = () => false, nextSeq = null, recorder = null, errorLedger = null, gateHooks = {}, clock = defaultClock } = {}) {
   if (mode === 'live' && !LIVE_PATH_WIRED) throw new G2RefusalError('live-path-not-wired', 'runChecksInPhaseOrder: live mode is dormant in this revision');
+  if (mode === 'live' && G2_DUAL_COUNTER_GATE.resolved !== true) throw new G2RefusalError('dual-counter-gate-unresolved', 'runChecksInPhaseOrder: live mode is refused while G2_DUAL_COUNTER_GATE is unresolved');
   if (mode !== 'live' && mode !== 'offline-fake') throw new TypeError(`runChecksInPhaseOrder: unknown mode ${String(mode)}`);
+  if (recorder && typeof nextSeq === 'function' && nextSeq !== recorder.nextSeq) throw new TypeError('runChecksInPhaseOrder: nextSeq must be the recorder\'s own counter (single sequence source)');
+  const rec = recorder && typeof recorder.setAttribution === 'function' ? recorder : createCallRecorder({ clock, nextSeq: typeof nextSeq === 'function' ? nextSeq : null });
+  const seqOf = rec.nextSeq;
   const units = {};      // unit id -> check record (sub-checks kept separately)
   const controls = {};
+  const controlStarts = {};
   const extras = {};
   const phaseLog = [];
+  const markers = [];
   let sessionTainted = false;
   let taintPhase = null;
   let fatalSkip = false;
-  const setUnit = (id, rec) => { units[id] = mergeCheckRecord(units[id], rec); };
-  const setControl = (id, rec) => { controls[id] = rec; };
+  let c1FinalizedEvent = null;
+  const mark = (name) => {
+    rec.setAttribution({ phase: name, activeCheck: null, activeControl: null });
+    const m = { seq: seqOf(), name };
+    markers.push(m);
+    return m;
+  };
+  const setUnit = (id, r) => { units[id] = mergeCheckRecord(units[id], r); };
+  const setControl = (id, outcome) => {
+    controls[id] = makeControlRunRecord(id, outcome, { start: controlStarts[id] || null, terminalSeq: seqOf(), terminalAt: clock.nowIso() });
+  };
   const blockedCheck = (reason) => makeCheckRecord({ verdict: 'BLOCKED', reason });
+  const finalizeC1 = () => {
+    if (c1FinalizedEvent !== null) return;
+    rec.setAttribution({ phase: 'P1', activeCheck: 'C1', activeControl: null });
+    const fin = finalizeC1Record(units.C1 || blockedCheck('not-executed'), { seq: seqOf(), at: clock.nowIso() });
+    units.C1 = fin.record;
+    c1FinalizedEvent = fin.event;
+    rec.events.push({ ...fin.event });
+  };
 
-  for (const phase of phases) {
-    if (NON_CHECK_PHASES.includes(phase.id)) continue;
+  const runPhase = async (phase) => {
+    mark(phase.id);
     const u = phaseUnits(phase);
     const entry = { phase: phase.id, ran: false, blocked: {}, taintedAfter: false, error: null };
     phaseLog.push(entry);
@@ -6216,7 +9155,7 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
       for (const c of u.checks) setUnit(c, blockedCheck('fatal-skip'));
       for (const n of u.controls) setControl(n, makeControlRecord(n, notExecutableState(n), { fields: { reason: 'fatal-skip' } }));
       entry.blocked = Object.fromEntries([...u.checks, ...u.controls].map((x) => [x, 'fatal-skip']));
-      continue;
+      return;
     }
     const vm = verdictMapOf(units, controls);
     const runnable = { checks: [], controls: [] };
@@ -6235,34 +9174,50 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
       runnable.controls.push(n);
     }
     const driver = drivers[phase.id];
-    if (runnable.checks.length === 0 && runnable.controls.length === 0) continue;
+    if (runnable.checks.length === 0 && runnable.controls.length === 0) return;
     if (typeof driver !== 'function') {
       for (const c of runnable.checks) setUnit(c, blockedCheck(`driver-missing:${phase.id}`));
       for (const n of runnable.controls) setControl(n, makeControlRecord(n, notExecutableState(n), { fields: { reason: `driver-missing:${phase.id}` } }));
-      continue;
+      return;
     }
+    const checkOf = (unit) => SUBCHECK_OF[unit] || unit;
+    // Single-check phase (P1, P5b, P6b, P10, P11): that check is active for the whole driver run.
+    if (runnable.checks.length === 1 && u.checks.length === 1) rec.setAttribution({ activeCheck: checkOf(runnable.checks[0]), activeControl: null });
+    const beginControl = (n) => {
+      if (!runnable.controls.includes(n)) throw new TypeError(`beginControl: ${String(n)} is not runnable in ${phase.id}`);
+      rec.setAttribution({ activeControl: n });
+      if (!controlStarts[n]) controlStarts[n] = { startSeq: seqOf(), startedAt: clock.nowIso() };
+      return controlStarts[n].startSeq;
+    };
+    // `beginCheck(null)` ends the current check/control attribution (harness step owned by no check).
+    const beginCheck = (c) => {
+      if (c !== null && !runnable.checks.includes(c)) throw new TypeError(`beginCheck: ${String(c)} is not runnable in ${phase.id}`);
+      rec.setAttribution({ activeCheck: c === null ? null : checkOf(c), activeControl: null });
+    };
     let out;
     try {
       entry.ran = true;
-      out = await driver({ phase: phase.id, runnable, blocked: { ...entry.blocked }, sessionTainted, results: { checks: { ...units }, controls: { ...controls }, extras: { ...extras } } });
+      out = await driver({ phase: phase.id, runnable, blocked: { ...entry.blocked }, sessionTainted, beginControl, beginCheck, results: { checks: { ...units }, controls: { ...controls }, extras: { ...extras } } });
     } catch (err) {
+      rec.setAttribution({ activeCheck: null, activeControl: null });
       entry.error = summarizeThrown(err);
       for (const c of runnable.checks) setUnit(c, blockedCheck(`harness-exception:${phase.id}`));
       for (const n of runnable.controls) setControl(n, makeControlRecord(n, notExecutableState(n), { fields: { reason: `harness-exception:${phase.id}` } }));
       sessionTainted = true; taintPhase = taintPhase || phase.id; entry.taintedAfter = true;
-      continue;
+      return;
     }
+    rec.setAttribution({ activeCheck: null, activeControl: null });
     const got = out || {};
     for (const c of runnable.checks) {
-      const rec = got.checks ? got.checks[c] : undefined;
-      if (rec === undefined) { setUnit(c, blockedCheck(`not-produced:${phase.id}`)); continue; }
-      const v = validateCheckRecord(rec);
-      setUnit(c, v.ok ? rec : blockedCheck(`invalid-record:${phase.id}`));
+      const r = got.checks ? got.checks[c] : undefined;
+      if (r === undefined) { setUnit(c, blockedCheck(`not-produced:${phase.id}`)); continue; }
+      const v = validateCheckRecord(r);
+      setUnit(c, v.ok ? r : blockedCheck(`invalid-record:${phase.id}`));
     }
     for (const n of runnable.controls) {
-      const rec = got.controls ? got.controls[n] : undefined;
-      const v = rec === undefined ? { ok: false } : validateControlRecord(n, rec);
-      setControl(n, v.ok ? rec : makeControlRecord(n, 'NOT_DETECTED', { fields: { reason: rec === undefined ? `not-produced:${phase.id}` : `invalid-record:${phase.id}` } }));
+      const r = got.controls ? got.controls[n] : undefined;
+      const v = r === undefined ? { ok: false } : validateControlRecord(n, r);
+      setControl(n, v.ok ? r : makeControlRecord(n, 'NOT_DETECTED', { fields: { reason: r === undefined ? `not-produced:${phase.id}` : `invalid-record:${phase.id}` } }));
     }
     // Same-phase CHECK dependencies (C2->C3, C9->C10->C12, C9->C11, C16->C17) are gated after the
     // driver ran, in unit order: a dependent whose same-phase dependency is not PASS becomes
@@ -6283,16 +9238,42 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
     }
     if (taintNow && !sessionTainted) { sessionTainted = true; taintPhase = phase.id; }
     entry.taintedAfter = taintNow;
-  }
+  };
+
+  // ---- P1 (C1), C1 finalization, atomic gate preparation (§7) ----
+  const p1 = phases.find((p) => p.id === 'P1');
+  if (p1) await runPhase(p1);
+  finalizeC1();
+  const ledgerAtGate = typeof errorLedger === 'function' ? errorLedger() : errorLedger;
+  const gate = prepareC1Gate({
+    c1: units.C1,
+    errorLedger: isPlainObject(ledgerAtGate) ? ledgerAtGate : (fatalObserved() ? { fatalCount: 1, entries: [{ kind: 'fatal-observed' }] } : { fatalCount: 0, entries: [] }),
+    seqOf, clock, ...gateHooks,
+  });
 
   const checks = {};
-  for (const name of CHECK_NAMES) {
-    if (name === 'C7') checks.C7 = combineSubchecks({ C7alpha: units.C7alpha || null, C7beta: units.C7beta || null });
-    else if (name === 'C18') checks.C18 = combineSubchecks({ C18a: units.C18a || null, C18b: units.C18b || null });
-    else checks[name] = units[name] || blockedCheck('not-executed');
+  if (gate.outcome === GATE_OUTCOME.OPEN) {
+    for (const phase of phases) {
+      if (NON_CHECK_PHASES.includes(phase.id) || phase.id === 'P1') continue;
+      await runPhase(phase);
+    }
+    for (const name of CHECK_NAMES) {
+      if (name === 'C7') checks.C7 = combineSubchecks({ C7alpha: units.C7alpha || null, C7beta: units.C7beta || null });
+      else if (name === 'C18') checks.C18 = combineSubchecks({ C18a: units.C18a || null, C18b: units.C18b || null });
+      else checks[name] = units[name] || blockedCheck('not-executed');
+    }
+    for (const n of CONTROL_NAMES) if (!controls[n]) setControl(n, makeControlRecord(n, notExecutableState(n), { fields: { reason: 'not-executed' } }));
+  } else {
+    // Closed gate: no downstream execution; synthetic gate-disposition records only (C2..C20, N1..N8).
+    checks.C1 = units.C1;
+    for (const id of DOWNSTREAM_ITEM_NAMES) {
+      const d = makeGateDispositionRecord(id, { gate, c1: units.C1, dispositionSeq: seqOf(), dispositionAt: clock.nowIso() });
+      if (id.startsWith('C')) checks[id] = d; else controls[id] = d;
+    }
   }
-  for (const n of CONTROL_NAMES) if (!controls[n]) controls[n] = makeControlRecord(n, notExecutableState(n), { fields: { reason: 'not-executed' } });
-  return { checks, controls, subchecks: units, extras, sessionTainted, taintPhase, phaseLog };
+  mark('cleanup');
+  const eventLog = rec.events.slice().sort((a, b) => a.seq - b.seq);
+  return { checks, controls, subchecks: units, extras, sessionTainted, taintPhase, phaseLog, c1FinalizedEvent, gates: { C1: gate }, markers, eventLog };
 }
 
 // ============================================================================================
@@ -6344,6 +9325,14 @@ const asHarness = (env, fn) => env.recorder.withOrigin('harness', fn);
 /** Synchronous bridge API calls (reads, subscriptions) are attributed to origin 'bridge' as well. */
 const viaBridge = (env, fn) => env.recorder.withOrigin('bridge', fn);
 const ledgerMark = (env) => env.recorder.records.length;
+/** §7 start boundary: records the control's startSeq via the runner (only when it is runnable this phase). */
+/**
+ * §7 attribution: marks check `c`'s first action in a multi-check phase (activeCheck); when `c` is not
+ * runnable (or null) the attribution is cleared, so a later harness step is never attributed to a
+ * stale check.
+ */
+const beginChk = (ctx, c) => (ctx && typeof ctx.beginCheck === 'function' ? ctx.beginCheck(c !== null && ctx.runnable && ctx.runnable.checks.includes(c) ? c : null) : null);
+const beginCtl = (ctx, n) => (ctx && typeof ctx.beginControl === 'function' && ctx.runnable && ctx.runnable.controls.includes(n) ? ctx.beginControl(n) : null);
 
 /** Bridge-origin addMesh − removeMesh per scene over the ledger slice `[from, to)`. */
 function bridgeNetPerScene(records, from, scenes) {
@@ -6361,6 +9350,152 @@ function bridgeNetPerScene(records, from, scenes) {
 function isolationReadLabels(env) { return normalizeAggregateRead(asHarness(env, () => env.viewer.getAggregateIsolation()), env.labelOf); }
 function hiddenReadLabels(env) { return normalizeAggregateRead(asHarness(env, () => env.viewer.getAggregateHiddenNodes()), env.labelOf); }
 const isEmptyRead = (r) => Array.isArray(r) && r.every((e) => e.ids.length === 0);
+
+/**
+ * §C15(e) driver (RC1 + RC1-C1; DORMANT -- reachable only via the live phase drivers). Setup: bridge
+ * #1, phase-boundary baseline, setup model keys ['A','B'], E0 = [] and H0 = [] (canonical, harness
+ * reads); `present({A,a1},{B,b1}, isolate+marker, focus:false)`; T_iso (non-empty, != E0, equal to the
+ * applied target); `inspectLedger()` read ONCE during setup (legal: held non-null) for `nm` /
+ * `isolation.confirmed`; then exactly one `H_iso` read with no intervening mutating call (spy-ledger
+ * proven) -- else BLOCKED(precondition:c15e) with no injection installed. Then W_e (throw-before on
+ * every armed call, inside the recorder) for clear #1, disarm + remove + verify-by-reference in a
+ * `finally`, one harness `after` read per clear, clear #2 and #3 with W_e removed. Between the start
+ * of clear #1 and the settle of clear #3 the harness makes no mutating Viewer call and reads no bridge
+ * internals; `inspectLedger()` after each clear is read only into `diagnostics` (LedgerDTO).
+ * Returns `{evidence|null, blocked|null, globalOk, tainted, c13:{isolation, clear2, clear3}, detail}`;
+ * the verdict itself is computed by `evaluateC15` -> `c15eOracle(evidence)`.
+ */
+async function runC15eScenario({ env, bridge: b, sides, point, owners, globalOk, outlinedSides }) {
+  const rec = env.recorder;
+  const models = { A: env.models.A, B: env.models.B };
+  const allModelsRead = () => { try { const m = asHarness(env, () => env.viewer.getAllModels()); return Array.isArray(m) ? m : null; } catch { return null; } };
+  const canonRead = (method) => {
+    const allModels = allModelsRead();
+    return readCanonicalAggregate(() => asHarness(env, () => env.viewer[method]()), { models, allModels });
+  };
+  const modelKeysRead = () => {
+    const all = allModelsRead();
+    if (all === null) return null;
+    const keys = all.map((m) => c15eModelKey(m, models));
+    return keys.some((k) => k === null) ? null : keys.slice().sort();
+  };
+  const readAfter = () => {
+    const keys = modelKeysRead();
+    let isolation = canonRead('getAggregateIsolation');
+    let hidden = canonRead('getAggregateHiddenNodes');
+    if (keys === null) {
+      // any unmapped / unreadable getAllModels() entry makes the whole `after` read unreadable
+      isolation = c15eUnreadable('getAllModels-unreadable-or-unmapped');
+      hidden = c15eUnreadable('getAllModels-unreadable-or-unmapped');
+    }
+    return { readSeq: rec.nextSeq(), isolation, hidden, models: keys === null ? [] : keys };
+  };
+  const spyEntry = (r) => {
+    const o = r.outcome;
+    const threw = Boolean(o) && o.threw === true;
+    const errName = threw && o.error && typeof o.error.name === 'string' ? o.error.name : 'error';
+    return {
+      seq: r.seq, method: r.method, origin: r.origin, argDigest: r.argsDigest,
+      thrown: threw ? (r.injected === true && errName === 'G2InjectedError' ? 'injected' : errName) : null,
+      returned: o && !threw ? (o.returned && typeof o.returned.kind === 'string' ? o.returned.kind : 'unknown') : null,
+    };
+  };
+  const windowOf = (lo, hi) => rec.records.filter((r) => r.seq > lo && r.seq < hi).map(spyEntry);
+  const mutatingBetween = (lo, hi) => rec.records.filter((r) => r.seq > lo && r.seq < hi && !C15E_NON_MUTATING_METHODS.includes(r.method));
+  const frozenOutcome = (v) => ({ isolation: v.isolation, markersRemoved: v.markersRemoved, notes: [...v.notes] });
+  const finish = (o) => ({ evidence: null, blocked: null, tainted: false, c13: { isolation: null }, detail: null, ...o, globalOk: globalOk() });
+  const blockedPre = (detail) => finish({ blocked: 'precondition:c15e', detail });
+
+  // ---- setup / preconditions (no injection installed on any BLOCKED path) ----
+  if (!b) return blockedPre('no-bridge');
+  if (!globalOk()) return blockedPre('phase-boundary-baseline');
+  if (JSON.stringify(modelKeysRead()) !== JSON.stringify(C15E_SETUP_MODEL_KEYS)) return blockedPre('setup-model-keys');
+  const E0 = canonRead('getAggregateIsolation');
+  const H0 = canonRead('getAggregateHiddenNodes');
+  if (!(Array.isArray(E0) && E0.length === 0 && Array.isArray(H0) && H0.length === 0)) return blockedPre('baseline-not-empty');
+  const r = await bridgeOp(env, 'present', () => b.present({ sides, options: { focus: false, isolate: true, marker: true }, point }));
+  const presentSettleSeq = rec.nextSeq();
+  if (r.timedOut) return finish({ blocked: 'timeout:present', tainted: true });
+  if (!r.ok || r.value.isolated !== true) return blockedPre('present-did-not-isolate');
+  const T_iso = canonRead('getAggregateIsolation');
+  const L = b.inspectLedger(); // setup-only read (held non-null); never read again except into diagnostics
+  const ledgerBefore = c15eLedgerDTO(L);
+  const nm = expectedMarkerMeshCount({ variant: 'hard', outlinedSides });
+  const appliedTarget = L && L.isolation && Array.isArray(L.isolation.target) ? canonicalIsolation(L.isolation.target, { models, allModels: allModelsRead() }) : null;
+  const H_iso = canonRead('getAggregateHiddenNodes');
+  const hIsoReadSeq = rec.nextSeq();
+  if (!(Array.isArray(T_iso) && T_iso.length > 0 && !canonIsolationEquals(T_iso, E0) && canonIsolationEquals(T_iso, appliedTarget))) return blockedPre('t-iso');
+  if (!(ledgerBefore && ledgerBefore.markerMeshCount === nm && ledgerBefore.isolationConfirmed === true)) return blockedPre('ledger-before');
+  if (mutatingBetween(presentSettleSeq, hIsoReadSeq).length !== 0) return blockedPre('mutation-before-h-iso');
+  if (!Array.isArray(H_iso)) return blockedPre('h-iso-unreadable');
+
+  // ---- clear #1 with W_e armed (throw-before on every call) ----
+  const regEntry = env.registry ? env.registry.find(owners.viewer, 'setAggregateIsolation') : null;
+  const h = env.injection.install('e', owners);
+  const installSeq = rec.nextSeq();
+  h.arm();
+  const armSeq = rec.nextSeq();
+  const start1 = rec.nextSeq();
+  let c1;
+  let settle1;
+  let disarmSeq;
+  let removeSeq;
+  let restoredByReference = false;
+  let originalInvocationsWhileArmed = null;
+  try {
+    c1 = await bridgeOp(env, 'clear', () => b.clear());
+    settle1 = rec.nextSeq();
+  } finally {
+    if (settle1 === undefined) settle1 = rec.nextSeq();
+    h.disarm();
+    disarmSeq = rec.nextSeq();
+    originalInvocationsWhileArmed = h.originalInvocationsWhileArmed();
+    const removed = h.remove();
+    removeSeq = rec.nextSeq();
+    restoredByReference = removed.ok === true && Boolean(regEntry) && regEntry.inner === regEntry.original && regEntry.injections.length === 0
+      && owners.viewer.setAggregateIsolation === regEntry.wrapper;
+  }
+  if (!restoredByReference) return finish({ blocked: 'session-tainted', tainted: true, detail: 'w-e-not-restored-by-reference' });
+  if (c1.timedOut) return finish({ blocked: 'timeout:clear', tainted: true });
+  if (originalInvocationsWhileArmed !== 0) return finish({ blocked: 'injection-not-verified', detail: { originalInvocationsWhileArmed } });
+  if (!c1.ok) return finish({ blocked: 'harness-exception:clear', tainted: true, detail: c1.error });
+  const after1 = readAfter();
+  const diag1 = c15eLedgerDTO(b.inspectLedger());
+
+  // ---- clear #2 (W_e removed) and clear #3 (idempotence probe) ----
+  const start2 = rec.nextSeq();
+  const c2 = await bridgeOp(env, 'clear', () => b.clear());
+  const settle2 = rec.nextSeq();
+  if (c2.timedOut) return finish({ blocked: 'timeout:clear', tainted: true });
+  if (!c2.ok) return finish({ blocked: 'harness-exception:clear', tainted: true, detail: c2.error });
+  const after2 = readAfter();
+  const diag2 = c15eLedgerDTO(b.inspectLedger());
+  const start3 = rec.nextSeq();
+  const c3 = await bridgeOp(env, 'clear', () => b.clear());
+  const settle3 = rec.nextSeq();
+  if (c3.timedOut) return finish({ blocked: 'timeout:clear', tainted: true });
+  if (!c3.ok) return finish({ blocked: 'harness-exception:clear', tainted: true, detail: c3.error });
+  const after3 = readAfter();
+  const diag3 = c15eLedgerDTO(b.inspectLedger());
+
+  const clears = [
+    { index: 1, injectionArmed: true, startSeq: start1, settleSeq: settle1, outcome: frozenOutcome(c1.value), spyWindow: windowOf(start1, settle1), after: after1 },
+    { index: 2, injectionArmed: false, startSeq: start2, settleSeq: settle2, outcome: frozenOutcome(c2.value), spyWindow: windowOf(settle1, settle2), after: after2 },
+    { index: 3, injectionArmed: false, startSeq: start3, settleSeq: settle3, outcome: frozenOutcome(c3.value), spyWindow: windowOf(settle2, settle3), after: after3 },
+  ];
+  const evidence = {
+    nm, ledgerBefore, E0, H0, T_iso, H_iso, presentSettleSeq, hIsoReadSeq,
+    injection: { installSeq, armSeq, disarmSeq, removeSeq, restoredByReference, originalInvocationsWhileArmed, thrownInjectedCount: 0 },
+    clears, comparisons: null, predicates: null, failureLabel: null,
+    diagnostics: { inspectLedgerAfterClear1: diag1, inspectLedgerAfterClear2: diag2, inspectLedgerAfterClear3: diag3 },
+  };
+  const derived = c15eDerive(evidence);
+  evidence.comparisons = derived.comparisons;
+  evidence.predicates = derived.predicates;
+  evidence.failureLabel = derived.failureLabel;
+  evidence.injection.thrownInjectedCount = derived.thrownInjectedCount;
+  return finish({ evidence, c13: { isolation: c1.value.isolation, clear2: c2.value.isolation, clear3: c3.value.isolation } });
+}
 
 function outlinedSidesOf(env, sides) {
   return sides.filter((s) => { const b = env.boundsOf(s.model, s.dbId); return Array.isArray(b) && b.length === 6 && b.every(Number.isFinite) && !c4Inverted(b); }).length;
@@ -6408,22 +9543,26 @@ function createLivePhaseDrivers(env) {
     async P1() { return { checks: { C1: evaluateC1(await env.modelFacts()) } }; },
 
     // P2 -- install spies (after models load) + model tagger + N1 on a harness sentinel.
-    async P2() {
+    async P2(ctx) {
       const spies = installSpySet({ viewer: env.viewer, dockingPanelPrototype: env.dockingPanelPrototype || null, recorder: env.recorder, registry: env.registry });
       st.tagger = attachModelArgumentTagger(env.recorder, { labelOf: env.labelOf });
+      beginCtl(ctx, 'N1');
       return { controls: { N1: n1Record(runSpySelfTestN1({ recorder: env.recorder })) }, extras: { spyInstall: spies } };
     },
 
     // P3 -- C2/C3 on the real DockingPanel (page-side DOM observation; live-pending adapter).
-    async P3({ runnable }) {
+    async P3(ctx) {
+      const { runnable } = ctx;
       const checks = {};
-      if (runnable.checks.includes('C2')) checks.C2 = evaluateC2(await env.shellProbe.c2());
-      if (runnable.checks.includes('C3')) checks.C3 = evaluateC3(await env.shellProbe.c3());
+      if (runnable.checks.includes('C2')) { beginChk(ctx, 'C2'); checks.C2 = evaluateC2(await env.shellProbe.c2()); }
+      if (runnable.checks.includes('C3')) { beginChk(ctx, 'C3'); checks.C3 = evaluateC3(await env.shellProbe.c3()); }
       return { checks };
     },
 
     // P4 -- C4 bounds containment (T10 sample), C5 unit observation, N6 pure recomputation.
-    async P4({ runnable }) {
+    async P4(ctx) {
+      const { runnable } = ctx;
+      beginChk(ctx, 'C4');
       const sample = selectC4Sample(t().candidatesA, t().candidatesB);
       const rows = asHarness(env, () => sample.map((s) => {
         const model = s.model === 'A' ? A() : B();
@@ -6434,12 +9573,18 @@ function createLivePhaseDrivers(env) {
       const c4 = evaluateC4({ rows, candidateCounts: { A: t().candidatesA.length, B: t().candidatesB.length }, invalidDbIdObservation });
       st.c4Table = c4.c4Table;
       const checks = { C4: c4.record };
-      if (runnable.checks.includes('C5')) checks.C5 = evaluateC5(await env.unitFacts());
-      return { checks, controls: { N6: evaluateN6(selectN6Input(c4.c4Table)) }, extras: { c4Table: c4.c4Table, n6: null } };
+      if (runnable.checks.includes('C5')) { beginChk(ctx, 'C5'); checks.C5 = evaluateC5(await env.unitFacts()); }
+      // N6 discriminates the C4 oracle over C4's own table: attributed to C4 + N6.
+      beginChk(ctx, 'C4');
+      const n6Input = selectN6Input(c4.c4Table);
+      if (n6Input.candidate !== null) beginCtl(ctx, 'N6');
+      return { checks, controls: { N6: evaluateN6(n6Input) }, extras: { c4Table: c4.c4Table, n6: null } };
     },
 
     // P5a -- bridge #2: foreign pre-existing scene scenario (C7α, C18b, N3), before bridge #1 exists.
-    async P5a() {
+    async P5a(ctx) {
+      // C7α and C18b are judged on ONE scenario (bridge #2); its actions are attributed to C7 (C7α).
+      beginChk(ctx, 'C7alpha');
       const ov = env.viewer.overlays;
       const S1 = env.makeSentinelMesh();
       const S2 = env.makeSentinelMesh();
@@ -6469,6 +9614,7 @@ function createLivePhaseDrivers(env) {
       const own = evaluateSceneOwnership({ scenes, presentAfterDispose, ledger });
       const opsOk = p.ok && c.ok && d.ok;
       const alpha = opsOk ? own.record : makeCheckRecord({ verdict: 'BLOCKED', reason: p.timedOut || c.timedOut || d.timedOut ? 'timeout:bridge2-op' : 'bridge2-op-threw', fields: { present: p, clear: c, dispose: d } });
+      beginCtl(ctx, 'N3');
       const n3 = n3Record(runSceneOwnershipControlN3({ scenes, presentAfterDispose, ledger }), { liveObservationsHold: presentAfterDispose[G2B_NAMES.overlayMarkers] === true && presentAfterDispose[G2_FOREIGN_SCENE] === true });
       return { checks: { C7alpha: alpha, C18b: alpha }, controls: { N3: n3 }, extras: { sceneOwnership: own.sceneOwnership } };
     },
@@ -6523,7 +9669,8 @@ function createLivePhaseDrivers(env) {
     },
 
     // P6 -- C6 aggregate union framing (+N2), C8 per-model fit + superseded focus.
-    async P6({ runnable }) {
+    async P6(ctx) {
+      const { runnable } = ctx;
       const b = st.bridge1;
       const cam = env.camera;
       const settle = () => waitForCameraSettle({ sampleCamera: cam.sample, waitFrame: cam.waitFrame, timers: env.timers, quarantine: env.quarantine });
@@ -6531,6 +9678,7 @@ function createLivePhaseDrivers(env) {
       const controls = {};
       const pair = t().fitPair;
       if (runnable.checks.includes('C6') || runnable.controls.includes('N2')) {
+        beginChk(ctx, 'C6');
         let n2 = makeControlRecord('N2', 'NOT_DETECTED', { fields: { reason: 'no-fit-pair' } });
         let c6input = { pairSelected: false };
         if (pair) {
@@ -6539,6 +9687,7 @@ function createLivePhaseDrivers(env) {
           const p = await bridgeOp(env, 'present', () => b.present({ sides: [{ model: A(), dbId: pair.a }, { model: B(), dbId: pair.b }], options: { focus: true, isolate: false, marker: false } }));
           const s = await settle();
           c6input = { pairSelected: true, present: { outcome: p.value, threw: p.threw, timedOut: p.timedOut }, fitRecords: ledgerSlice(env.recorder.records, { method: 'viewer.fitToView', origin: 'bridge', from: mark }), settle: s, boxes };
+          beginCtl(ctx, 'N2');
           const reset1 = await asHarness(env, () => cam.resetHome());
           let single = { threw: false, timedOut: false };
           try { asHarness(env, () => env.viewer.fitToView([pair.b], B())); } catch { single = { threw: true, timedOut: false }; }
@@ -6550,6 +9699,7 @@ function createLivePhaseDrivers(env) {
         checks.C6 = evaluateC6({ ...c6input, n2State: n2.state });
       }
       if (runnable.checks.includes('C8')) {
+        beginChk(ctx, 'C8');
         const aBox = env.boundsOf(A(), t().a1);
         const mark = ledgerMark(env);
         const p = await bridgeOp(env, 'present', () => b.present({ sides: [{ model: A(), dbId: t().a1 }], options: { focus: true, isolate: false, marker: false } }));
@@ -6567,7 +9717,7 @@ function createLivePhaseDrivers(env) {
     },
 
     // P6b -- C20 overlay rendering (A1..A5) + N8, on the Hard variant for a_r.
-    async P6b() {
+    async P6b(ctx) {
       const b = st.bridge1;
       const cap = env.capture;
       const cam = env.camera;
@@ -6635,6 +9785,7 @@ function createLivePhaseDrivers(env) {
           W, H, dsf: canvas.dsf, cameras: { K0, K1, K2, K3 }, offAttempts: off.attempts, onAttempts: on.attempts, footprints,
           frames: { off1: off.frame, on: on.frame, clear: Fclear },
         };
+        beginCtl(ctx, 'N8');
         const r = evaluateC20({ target, preconditions, timeouts, structural, oracleInput });
         return { checks: { C20: r.record }, controls: { N8: r.n8 }, extras: { c20: r.c20 } };
       } catch (err) {
@@ -6645,18 +9796,21 @@ function createLivePhaseDrivers(env) {
     },
 
     // P7 -- isolation: C9, C10, C11 (+N5), C12 (+N4). C13 is evaluated with P8 (needs C15 outcomes).
-    async P7({ runnable }) {
+    async P7(ctx) {
+      const { runnable } = ctx;
       const b = st.bridge1;
       const checks = {};
       const controls = {};
       const sides2 = [{ model: A(), dbId: t().a1 }, { model: B(), dbId: t().b1 }];
       st.c13 = st.c13 || {};
       if (runnable.checks.includes('C9')) {
+        beginChk(ctx, 'C9');
         const iso = asHarness(env, () => env.viewer.getAggregateIsolation());
         const hid = asHarness(env, () => env.viewer.getAggregateHiddenNodes());
         checks.C9 = evaluateC9({ isolationShape: normalizeEvidence(summarizeValue(iso, env.recorder.refIdOf)), hiddenShape: normalizeEvidence(summarizeValue(hid, env.recorder.refIdOf)), isolationNormalizable: normalizeAggregateRead(iso, env.labelOf) !== null, hiddenNormalizable: normalizeAggregateRead(hid, env.labelOf) !== null, prerequisite: viaBridge(env, () => b.checkIsolationPrerequisite()) });
       }
       if (runnable.checks.includes('C10')) {
+        beginChk(ctx, 'C10');
         const mark = ledgerMark(env);
         const p = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { isolate: true, marker: false, focus: false } }));
         const recs = env.recorder.records.slice(mark).filter((r) => r.origin === 'bridge');
@@ -6677,6 +9831,8 @@ function createLivePhaseDrivers(env) {
         });
       }
       if (runnable.checks.includes('C11') || runnable.controls.includes('N5')) {
+        beginChk(ctx, 'C11');
+        beginCtl(ctx, 'N5');
         asHarness(env, () => env.viewer.hide(t().a1, A()));
         const preWhile = viaBridge(env, () => b.checkIsolationPrerequisite());
         const mark = ledgerMark(env);
@@ -6692,11 +9848,13 @@ function createLivePhaseDrivers(env) {
         controls.N5 = evaluateN5({ prerequisiteWhileHidden: preWhile, prerequisiteAfterShow: preAfter, timedOut: p.timedOut });
       }
       if (runnable.checks.includes('C12') || runnable.controls.includes('N4')) {
+        beginChk(ctx, 'C12');
         const second = t().candidatesA[1] || t().candidatesA[0];
         const p = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { isolate: true, marker: true, focus: false }, point: boxCentre(env.boundsOf(A(), t().a1)) }));
         const priorMeshes = (b.inspectLedger() || { markerMeshes: [] }).markerMeshes.length;
         const foreign = [{ model: A(), ids: [second.dbId] }];
         const fMark = ledgerMark(env);
+        beginCtl(ctx, 'N4');
         asHarness(env, () => env.viewer.setAggregateIsolation(foreign));
         const foreignRead = isolationReadLabels(env);
         const c = await bridgeOp(env, 'clear', () => b.clear());
@@ -6723,8 +9881,10 @@ function createLivePhaseDrivers(env) {
     },
 
     // P8 -- C14 interleavings, C15 bounded failure injection (a)–(e), then C13 from the collected outcomes.
-    async P8({ runnable }) {
+    async P8(ctx) {
+      const { runnable } = ctx;
       const checks = {};
+      let c15eTainted = false;
       let b = st.bridge1;
       const sides2 = [{ model: A(), dbId: t().a1 }, { model: B(), dbId: t().b1 }];
       const second = t().candidatesA[1] || t().candidatesA[0];
@@ -6733,6 +9893,7 @@ function createLivePhaseDrivers(env) {
         && Object.values(bridgeNetPerScene(env.recorder.records, st.bridge1Since, panelScenes())).every((n) => n === 0);
       st.c13 = st.c13 || {};
       if (runnable.checks.includes('C14')) {
+        beginChk(ctx, 'C14');
         const X = { sides: sides2, options: { isolate: true, marker: true, focus: false }, point: boxCentre(env.boundsOf(A(), t().a1)) };
         const Y = { sides: [{ model: A(), dbId: second.dbId }], options: { isolate: true, marker: true, focus: false }, point: boxCentre(second.box) };
         const [p1, p2] = await Promise.all([env.recorder.withOrigin('bridge', () => b.present(X)), env.recorder.withOrigin('bridge', () => b.present(Y))]);
@@ -6763,6 +9924,7 @@ function createLivePhaseDrivers(env) {
         checks.C14 = evaluateC14({ presentPresent, presentClear, presentDispose, spyBalanced, finalIsolationEmpty: isEmptyRead(isolationReadLabels(env)) });
       }
       if (runnable.checks.includes('C15')) {
+        beginChk(ctx, 'C15');
         const owners = { viewer: env.viewer, overlays: env.viewer.overlays };
         const inj = env.injection;
         const obs = {};
@@ -6797,43 +9959,26 @@ function createLivePhaseDrivers(env) {
         h.remove();
         await bridgeOp(env, 'clear', () => b.clear());
         obs.d.globalOk = globalOk();
-        // (e) persistent restore failure for one clear(), then a second clear() after removal.
-        r = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { isolate: true, marker: true, focus: false }, point: boxCentre(env.boundsOf(A(), t().a1)) }));
-        const priorE = (b.inspectLedger() || { markerMeshes: [] }).markerMeshes.length;
-        h = inj.install('e', owners);
-        h.arm();
-        const c1 = await bridgeOp(env, 'clear', () => b.clear());
-        h.disarm();
-        const firedE = h.fires() >= 1;
-        const retained = b.inspectLedger();
-        const wrapperRemoved = h.remove().ok;
-        const c2 = await bridgeOp(env, 'clear', () => b.clear());
-        const after = b.inspectLedger();
-        obs.e = {
-          injectedFired: firedE, clear1: c1.ok ? { isolation: c1.value.isolation, notes: [...c1.value.notes] } : null,
-          // Literal §C15(e) clause: `inspectLedger().isolation` retained with confirmed:true after the failed clear().
-          ledgerIsolationConfirmedRetained: Boolean(retained && retained.isolation && retained.isolation.confirmed === true),
-          ledgerAfterClear1: retained === null ? null : 'present',
-          markersRemoved: c1.ok && c1.value.markersRemoved === priorE, wrapperRemoved,
-          clear2: c2.ok ? { isolation: c2.value.isolation } : null, recordDropped: after === null || !after.isolation,
-          finalIsolationEmpty: isEmptyRead(isolationReadLabels(env)),
-        };
-        // Observation only (not a C15 clause): a `restored` second clear() is public-API evidence that the
-        // isolation record survived the failed restore even when inspectLedger() is null (see report).
-        obs.e.retentionEvidencedByClear2Restored = Boolean(obs.e.clear1 && obs.e.clear1.isolation === 'failed' && obs.e.clear2 && obs.e.clear2.isolation === 'restored');
-        obs.e.globalOk = globalOk();
-        st.c13.C15e = { isolation: c1.ok ? c1.value.isolation : null };
+        // (e) RC1/RC1-C1: transient restore failure -> three consecutive clear() calls, judged ONLY on
+        // externally observable state (c15eOracle). Post-clear inspectLedger() is diagnostics only.
+        const e = await runC15eScenario({ env, bridge: b, sides: sides2, point: boxCentre(env.boundsOf(A(), t().a1)), owners, globalOk, outlinedSides: outlinedSidesOf(env, sides2) });
+        obs.e = { evidence: e.evidence, blocked: e.blocked, globalOk: e.globalOk };
+        if (e.tainted) c15eTainted = true;
+        st.c13.C15e = e.c13;
         if (runnable.checks.includes('C15')) checks.C15 = evaluateC15(obs);
       }
-      if (runnable.checks.includes('C13')) checks.C13 = evaluateC13(st.c13);
-      return { checks };
+      if (runnable.checks.includes('C13')) { beginChk(ctx, 'C13'); checks.C13 = evaluateC13(st.c13); }
+      return c15eTainted ? { checks, tainted: true } : { checks };
     },
 
     // P9 -- C16 hideModel/showModel events, N7 pre-check, C17 unload of B with Panel-owned state.
-    async P9({ runnable }) {
+    async P9(ctx) {
+      const { runnable } = ctx;
       const b = st.bridge1;
       const names = env.eventNames;
-      const log = createMonotonicEventLog({ clock: env.clock || defaultClock });
+      // Listener setup serves C16 and C17 (the C16 event log); attributed to C16 when it runs.
+      beginChk(ctx, 'C16');
+      const log = createMonotonicEventLog({ clock: env.clock || defaultClock, recorder: env.recorder });
       const listeners = [];
       const addListener = (name) => {
         const fn = (event) => {
@@ -6852,7 +9997,8 @@ function createLivePhaseDrivers(env) {
       try {
         if (runnable.checks.includes('C16')) {
           const from = log.entries.length;
-          asHarness(env, () => env.viewer.hideModel(B().id));
+          // §9.2 slice C2: hide is a mutationOperation (node-side ack before the call; spy record = causal evidence)
+          await runAcknowledgedMutation({ ops: env.ops, desc: { operationType: 'hide', modelId: 'B', phase: 'P9', invokedBy: 'C16' }, recorder: env.recorder, method: 'viewer.hideModel', args: [B().id], invoke: () => asHarness(env, () => env.viewer.hideModel(B().id)) });
           await waitFor(() => log.entries.slice(from).some((e) => e.kind === 'listener-entry' && e.eventName === names.MODEL_REMOVED));
           asHarness(env, () => env.viewer.showModel(B().id));
           const back = asHarness(env, () => env.viewer.getAllModels()).includes(B());
@@ -6863,7 +10009,9 @@ function createLivePhaseDrivers(env) {
         const P = boxCentre(env.boundsOf(A(), t().a1));
         const sides2 = [{ model: A(), dbId: t().a1 }, { model: B(), dbId: t().b1 }];
         const membership = () => { const ms = asHarness(env, () => env.viewer.getAllModels()); return { containsA: ms.includes(A()), containsB: ms.includes(B()) }; };
-        // N7 (S0): the same V3/V4/V5 on a present while B is still loaded.
+        // N7 (S0): the same V3/V4/V5 on a present while B is still loaded (no check executing).
+        beginChk(ctx, null);
+        beginCtl(ctx, 'N7');
         const n7Mark = ledgerMark(env);
         const pre = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { focus: true, isolate: true, marker: true }, point: P }));
         const preObs = { models: membership(), r1: pre.ok ? { ...pre.value, notes: [...pre.value.notes] } : null, L1: summarizeBridgeLedger(b.inspectLedger(), env.labelOf), s4BridgeRecords: env.recorder.records.slice(n7Mark).filter((r) => r.origin === 'bridge'), a1: t().a1 };
@@ -6871,13 +10019,14 @@ function createLivePhaseDrivers(env) {
         const restoredN7 = b.inspectLedger() === null && isEmptyRead(isolationReadLabels(env));
         controls.N7 = evaluateN7({ preObs, restored: restoredN7, timedOut: pre.timedOut });
         if (runnable.checks.includes('C17')) {
+          beginChk(ctx, 'C17');
           const precondition = st.c16Restored !== true ? 'c16-restoration' : (b.inspectLedger() !== null ? 'ledger-not-null' : (!isEmptyRead(isolationReadLabels(env)) ? 'isolation-not-empty' : (!P.every(Number.isFinite) ? 'point' : null)));
           if (precondition) { const r = c17Oracle({}, { preconditionUnmet: precondition }); checks.C17 = r.record; return { checks, controls, extras: { c17: r.c17, eventLog: log.entries } }; }
           const since = st.bridge1Since;
           const r0 = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { focus: false, isolate: true, marker: true }, point: P }));
           const L0 = summarizeBridgeLedger(b.inspectLedger(), env.labelOf);
           const from = log.entries.length;
-          await asHarness(env, () => env.viewer.unloadModel(B()));
+          await runAcknowledgedMutation({ ops: env.ops, desc: { operationType: 'unload', modelId: 'B', phase: 'P9', invokedBy: 'C17' }, recorder: env.recorder, method: 'viewer.unloadModel', args: [B()], invoke: () => asHarness(env, () => env.viewer.unloadModel(B())) });
           await waitFor(() => {
             const s = log.entries.slice(from).filter((e) => e.kind === 'listener-entry');
             return s.some((e) => e.eventName === names.BEFORE_MODEL_UNLOAD) && s.some((e) => e.eventName === names.MODEL_REMOVED);
@@ -6959,7 +10108,7 @@ function createLivePhaseDrivers(env) {
 
     // P11 -- C19 whole-session prohibited-call ledger.
     async P11({ results }) {
-      return { checks: { C19: evaluateC19({ records: env.recorder.records, n1State: results.controls.N1 ? results.controls.N1.state : null }) } };
+      return { checks: { C19: evaluateC19({ records: env.recorder.records, n1State: results.controls.N1 ? controlEffectiveState(results.controls.N1) : null }) } };
     },
   };
 }
@@ -6992,6 +10141,8 @@ const G2_SHELL_PROBE_ID = 'g2-shell-probe';
 /** Exposed Node bindings the page may call (page.exposeFunction names). */
 const G2_NODE_SCREENSHOT_BINDING = '__g2NodeScreenshot';
 const G2_NODE_FATAL_BINDING = '__g2NodeFatal';
+/** §9.2 slice C2: the node-side operation-ledger acknowledgement barrier (`createOperationLedger().pageOperation`). */
+const G2_NODE_OPLEDGER_BINDING = '__g2NodeOpLedger';
 /** Served modules the page imports (all under /clashpanel/, JS-only, path-confined; §3 "Page"). */
 const G2_SERVED_ENTRY_MODULES = Object.freeze([
   '/clashpanel/viewer/viewerApi.js',
@@ -7374,7 +10525,10 @@ function g2CollectModelFacts() {
   for (const label of ['A', 'B']) {
     const model = g.models[label] || null;
     const ready = g.readiness[label];
-    if (!model) { facts[label] = { loaded: false, classification: null, otg: null, svf2: null, inAllModels: false, unitScale: null, unitString: null }; continue; }
+    // §7 C1 reason contract: the awaited-operation outcome (T2 deadline vs rejection) for blockDetail.
+    const ops = [g.loads && g.loads[`doc:${label}`], g.loads && g.loads[`node:${label}`], ready].filter(Boolean).map((r) => r.status);
+    const loadStatus = ops.includes('timed-out') ? 'timed-out' : (ops.includes('failed') ? 'failed' : (ops.length ? String(ops[ops.length - 1]) : null));
+    if (!model) { facts[label] = { loaded: false, classification: null, otg: null, svf2: null, inAllModels: false, unitScale: null, unitString: null, loadStatus }; continue; }
     const otg = g2ReadModelSignal(model, 'isOTG');
     const svf2 = g2ReadModelSignal(model, 'isSVF2');
     // A throwing signal is never coerced to a value: classification null (C1 BLOCKED(prerequisite)).
@@ -7387,6 +10541,7 @@ function g2CollectModelFacts() {
       inAllModels: Array.isArray(all) && all.includes(model),
       unitScale: scale.available && !scale.threw ? scale.value : null,
       unitString: unit.available && !unit.threw ? unit.value : null,
+      loadStatus,
     };
   }
   return facts;
@@ -7771,19 +10926,36 @@ function g2CreateShellProbe(env) {
 // ---- env + phase run ---------------------------------------------------------------------------
 
 /**
+ * In-page adapter of the node-side operation-ledger acknowledgement barrier (§9.2 slice C2; the
+ * `G2_NODE_OPLEDGER_BINDING` exposed function: its promise resolves after the node allocated the
+ * record's startSeq and ackSeq). Null when the binding is absent -- then nothing is recorded and every
+ * abort stays FATAL (fail-safe). NOTE (unresolved before-live gate, see `runPostReservation`): these
+ * records are numbered by the NODE counter while the page's own records use the page recorder seeded
+ * with `seqBase` -- two namespaces; not redesigned here.
+ */
+function g2NodeOps() {
+  const fn = typeof window !== 'undefined' ? window[G2_NODE_OPLEDGER_BINDING] : undefined;
+  if (typeof fn !== 'function') return null;
+  return { begin: (desc) => fn('begin', desc), end: (arg) => fn('end', arg) };
+}
+
+/**
  * Builds the Section 36 driver `env` in the page from the loaded models and targets. Recorder,
  * wrapper registry, injection controller (tracked for cleanup), bridge tracker, timers and
  * quarantine are page-realm objects; nothing here touches the Viewer except the harness's own
  * camera-home capture (a read).
  */
-function g2BuildEnv() {
+function g2BuildEnv({ seqBase = 0, nodeLoadOutcomes = null } = {}) {
   const g = g2PageState();
   const viewer = window.__viewer;
   const events = g2EventNames();
   const createViewerApi = g2Module('/clashpanel/viewer/viewerApi.js').createViewerApi;
   const createViewerBridge = g2Module('/clashpanel/viewer/ViewerBridge.js').createViewerBridge;
   const api = createViewerApi(viewer, { events });
-  const recorder = createCallRecorder();
+  // Page-side recorder seeded past the node counter at the RPC (interim; unresolved live-wiring gate).
+  // G2_DUAL_COUNTER_GATE (unresolved): page records are numbered here, node events by the node counter.
+  let pageSeq = seqBase;
+  const recorder = createCallRecorder({ nextSeq: () => { pageSeq += 1; return pageSeq; } });
   const registry = createWrapperRegistry();
   const baseInjection = createFailureInjectionController({ registry });
   const injectionHandles = [];
@@ -7794,6 +10966,7 @@ function g2BuildEnv() {
     models: { A: g.models.A || null, B: g.models.B || null },
     labelOf: createModelLabeler({ A: g.models.A || null, B: g.models.B || null }),
     recorder, registry,
+    ops: g2NodeOps(),
     injection: { installed: () => baseInjection.installed(), install(scenario, owners) { const h = baseInjection.install(scenario, owners); injectionHandles.push(h); return h; } },
     injectionHandles,
     bridgeTracker: createBridgeInstanceTracker(),
@@ -7813,7 +10986,8 @@ function g2BuildEnv() {
     capture: g2CreateCaptureAdapter(viewer),
     state,
   };
-  env.modelFacts = async () => g2CollectModelFacts();
+  // H1: C1 sees the node-side load outcomes (a node-side harness exception / T2 expiry).
+  env.modelFacts = async () => withNodeLoadOutcomes(g2CollectModelFacts(), nodeLoadOutcomes);
   env.unitFacts = async () => g2CollectUnitFacts(env);
   state.shellCapture = attachShellArgumentCapture(recorder);
   env.shellProbe = g2CreateShellProbe(env);
@@ -7828,7 +11002,9 @@ function g2PhaseBaseline(env, phase) {
   const iso = normalizeAggregateRead(env.recorder.withOrigin('harness', () => env.viewer.getAggregateIsolation()), env.labelOf);
   const hid = normalizeAggregateRead(env.recorder.withOrigin('harness', () => env.viewer.getAggregateHiddenNodes()), env.labelOf);
   const empty = (read) => Array.isArray(read) && Array.isArray(labels) && read.filter((e) => labels.includes(e.model)).every((e) => e.ids.length === 0);
-  const snap = { phase, loadedModels: labels, isolationEmpty: empty(iso), hiddenEmpty: empty(hid) };
+  // §7 RC1-C2 attribution fields (seq from the recorder's single counter; the runner has cleared
+  // activeCheck/activeControl before the phase-end baseline).
+  const snap = { ...env.recorder.stamp(), baselinePhase: phase, loadedModels: labels, isolationEmpty: empty(iso), hiddenEmpty: empty(hid) };
   env.state.stateSnapshots = env.state.stateSnapshots || [];
   env.state.stateSnapshots.push(snap);
   return { ok: snap.isolationEmpty && snap.hiddenEmpty };
@@ -7840,18 +11016,27 @@ function g2PhaseBaseline(env, phase) {
  * checks, controls, subchecks, extras, taint, phase log, the spy ledger, screenshots, state
  * snapshots and staleContinuationsDropped.
  */
-async function g2RunPhases() {
+async function g2RunPhases(arg) {
   const g = g2PageState();
-  const env = g2BuildEnv();
+  const env = g2BuildEnv({ seqBase: arg && Number.isInteger(arg.seqBase) && arg.seqBase >= 0 ? arg.seqBase : 0, nodeLoadOutcomes: arg && isPlainObject(arg.nodeLoadOutcomes) ? arg.nodeLoadOutcomes : null });
   const run = await runChecksInPhaseOrder({
     drivers: createLivePhaseDrivers(env),
     mode: 'live',
     assertPhaseBaseline: async (phase) => g2PhaseBaseline(env, phase),
     fatalObserved: () => g.fatal.flag === true || g.fatal.abort === true,
+    recorder: env.recorder,
+    // Page-side mirror of the fatal events Node forwarded (g2MarkFatal), read synchronously at gate
+    // time. NOT replaced in slice C1: the real ledger lives in Node and the page cannot read it
+    // synchronously, and a Node-side gate binding would compare `gateSeq` against page-namespace seqs.
+    // Replacing it needs the cross-process single-counter design (UNRESOLVED live-wiring gate, see
+    // runPostReservation). The persisted gate is re-validated against the node ledger by the gate
+    // equations (fail-closed).
+    errorLedger: () => ({ fatalCount: g.fatal.kinds.length, entries: g.fatal.kinds.map((kind) => ({ kind })) }),
   });
   const { spyInstall, ...extras } = run.extras || {};
   return g2JsonSafe({
-    checks: run.checks, controls: run.controls, subchecks: run.subchecks, extras,
+    checks: run.checks, controls: run.controls, subchecks: run.subchecks, extras, c1FinalizedEvent: run.c1FinalizedEvent,
+    gates: run.gates, markers: run.markers, eventLog: run.eventLog,
     spyInstall: spyInstall || null,
     sessionTainted: run.sessionTainted, taintPhase: run.taintPhase, phaseLog: run.phaseLog,
     spyLedger: env.recorder.records, screenshots: g.screenshots, stateSnapshots: env.state.stateSnapshots || [],
@@ -7883,7 +11068,7 @@ function g2CleanupStepImpls(env) {
   const models = { A: g.models.A || null, B: g.models.B || null };
   const loaded = () => viewer.getAllModels();
   const hasEntries = (list) => Array.isArray(list) && list.some((e) => e && e.ids && e.ids.length > 0);
-  const modelSteps = createModelCleanupSteps({ viewer, getModelA: () => models.A, getModelB: () => models.B });
+  const modelSteps = createModelCleanupSteps({ viewer, getModelA: () => models.A, getModelB: () => models.B, ops: env && env.ops ? env.ops : g2NodeOps() });
   return {
     drainPendingTokens: { run: async () => ({ staleContinuationsDropped: env ? env.quarantine.staleContinuationsDropped : 0 }), ownership: () => false },
     bridgeDispose: {
@@ -8286,11 +11471,175 @@ function fatalDetail(detail) {
 }
 
 /**
- * Wires the §9 error-ledger sources onto the Playwright objects: pageerror, non-allow-listed
- * console.error (the allow-list is empty by design), request failures (URL query dropped), page
- * crash, and page close / browser disconnect outside cleanup. Returns `detach()`.
+ * §9.2 `urlClass` of a redacted URL: `bootstrap` = the pinned Viewer script/stylesheet URLs, the
+ * synthetic page document and the operator origin's `/clashpanel/**` modules; `harness-endpoint` = the
+ * operator server's `/api/auth/token`; `other` = everything else (incl. an unparseable URL). These are
+ * the ONLY URL constants of the network policy (the class constants of §9.2 test (8)).
  */
-function wireFatalListeners({ page, browser, live, fatal }) {
+function classifyNetworkUrl(urlRedacted, { baseUrl = g2BaseUrl({}) } = {}) {
+  if (typeof urlRedacted !== 'string') return 'other';
+  if (urlRedacted === G2_VIEWER_SCRIPT_URL || urlRedacted === G2_VIEWER_STYLE_URL) return 'bootstrap';
+  try {
+    const u = new URL(urlRedacted);
+    const origin = new URL(baseUrl).origin;
+    if (u.origin !== origin) return 'other';
+    if (u.pathname === G2_PAGE_PATH || u.pathname.startsWith('/clashpanel/')) return 'bootstrap';
+    if (u.pathname === '/api/auth/token') return 'harness-endpoint';
+  } catch { return 'other'; }
+  return 'other';
+}
+
+/**
+ * `createNetworkInstrumentation({ledger, nextSeq, sink, attribution, baseUrl, mainFrame,
+ * onFatalWitness, rules, context})` -- §9.2 item 7/20 listener bodies (node side; passive). One
+ * `requestObservations[]` entry per Playwright `request` (`reqId := 'q:'+startSeq` bound to the Request
+ * OBJECT in a WeakMap; every later response/requestfinished/requestfailed resolves its reqId through
+ * the same object -- absent => null => invalid identity => unknown-fatal). A `response` with status
+ * >= 400 (or an unreadable status: fail-closed) is one `responseFailures[]` raw event (immediate, or
+ * provisional for a rule candidate); every `requestfailed` is one `requestFailures[]` raw event; a
+ * `requestfinished`/`requestfailed` is retained as the request's terminal and every response status
+ * (any status) as its status (`terminals`; `prefixSources.{terminalOf, statusOf}` -- first terminal /
+ * first status per reqId wins), the slice-C2 prefix-source evidence persisted into
+ * `errorLedger.prefixSourceLedger[]` when the load windows close (`finalizeLoadWindows`). Each raw event is classified at event time, then `syncFatalWitnesses` runs: a new fatal
+ * identity creates exactly one witness through `sink.recordWitnessEntry` (fatalCount += 1 there
+ * only). Events after the commit latch are ignored (§9.1/§9.2). Unreadable fields are persisted as
+ * null and make the event unclassifiable (unknown-fatal), never non-fatal. Every handler is
+ * synchronous and never throws; an internal exception while handling an event is recorded fail-closed
+ * as a non-network `harness-exception` fatal entry (row 1), never silently dropped.
+ */
+function createNetworkInstrumentation({ ledger, nextSeq, sink, attribution = () => ({ phase: 'P0', activeCheck: null }), baseUrl = g2BaseUrl({}), mainFrame = () => null, onFatalWitness = () => {}, rules = OPTIONAL_RESPONSE_RULES, context = () => networkContextOf(ledger) }) {
+  ensureNetworkLedger(ledger);
+  const ids = new WeakMap();
+  const terminals = [];
+  const terminalByReqId = new Map();
+  const statusByReqId = new Map();
+  const noteTerminal = (t) => { terminals.push(t); if (typeof t.reqId === 'string' && !terminalByReqId.has(t.reqId)) terminalByReqId.set(t.reqId, { terminalKind: t.terminalKind, terminalSeq: t.terminalSeq }); };
+  const read = (obj, method) => { try { return obj && typeof obj[method] === 'function' ? obj[method]() : undefined; } catch { return undefined; } };
+  const str = (v) => (typeof v === 'string' ? v : null);
+  const bool = (v) => (typeof v === 'boolean' ? v : null);
+  const latched = () => Boolean(sink && typeof sink.isCommitLatched === 'function' && sink.isCommitLatched());
+  const attr = () => { const a = attribution() || {}; return { phase: ATTRIBUTION_PHASES.includes(a.phase) ? a.phase : 'P0', activeCheck: a.activeCheck === undefined ? null : a.activeCheck }; };
+  const observationOf = (req) => (req !== null && typeof req === 'object' ? ids.get(req) : undefined);
+  const appendEntry = (entry) => (sink && typeof sink.recordWitnessEntry === 'function' ? sink.recordWitnessEntry(entry) : -1);
+  // Fail-closed: an exception while capturing/classifying a failure event must never drop it silently
+  // -- it is recorded as a (non-network) harness-exception fatal entry (row 1).
+  const failClosed = (event) => { try { if (sink && typeof sink.recordFatal === 'function') sink.recordFatal('harness-exception', `network-instrumentation:${event}`); } catch { /* nothing left */ } };
+  const sync = () => {
+    const before = ledger.fatalWitnesses.length;
+    syncFatalWitnesses(ledger, { appendEntry });
+    if (ledger.fatalWitnesses.length > before) { try { onFatalWitness(); } catch { /* informational */ } }
+  };
+  const capture = (req, seqKey, seq) => {
+    const obs = observationOf(req);
+    const url = str(read(req, 'url'));
+    const urlRedacted = url === null ? null : redactEvidenceUrl(url).value;
+    const frame = read(req, 'frame');
+    const main = (() => { try { return mainFrame(); } catch { return null; } })();
+    const redirectedFrom = read(req, 'redirectedFrom');
+    const { phase, activeCheck } = attr();
+    const raw = {
+      reqId: obs ? obs.reqId : null, reqIdValid: false, rawEventId: '', rawEventSeq: seq, identityKey: '', duplicateOf: null,
+      startSeq: obs ? obs.startSeq : null, method: str(read(req, 'method')), resourceType: str(read(req, 'resourceType')), urlRedacted,
+      urlClass: classifyNetworkUrl(urlRedacted, { baseUrl }), isNavigationRequest: bool(read(req, 'isNavigationRequest')),
+      frameIsMain: frame !== undefined && main !== null ? frame === main : null, redirected: redirectedFrom === undefined ? null : redirectedFrom !== null,
+      phase, activeCheck: phase === 'P0' || phase === 'cleanup' || phase === 'closeout' ? null : activeCheck,
+    };
+    raw[seqKey] = seq;
+    return raw;
+  };
+  const identify = (raw, kind) => {
+    const id = recomputeRequestIdentity(raw, ledger.requestObservations);
+    raw.reqIdValid = id.reqIdValid;
+    raw.identityKey = id.identityKey;
+    raw.rawEventId = `${kind === 'requestfailed' ? 'rf' : 'hr'}:${raw.rawEventSeq}`;
+    const prior = rawNetworkEventsOf(ledger).map((r) => ({ kind: r.kind, identityKey: r.e.identityKey, rawEventId: r.e.rawEventId }));
+    raw.duplicateOf = duplicateOfAmong(prior, kind, raw.identityKey);
+  };
+  return {
+    terminals,
+    prefixSources: Object.freeze({
+      terminalOf: (reqId) => (terminalByReqId.has(reqId) ? { ...terminalByReqId.get(reqId) } : null),
+      statusOf: (reqId) => (statusByReqId.has(reqId) ? statusByReqId.get(reqId) : null),
+    }),
+    onRequest(req) {
+      try {
+        if (latched()) return;
+        const startSeq = nextSeq();
+        const url = str(read(req, 'url'));
+        const urlRedacted = url === null ? '' : redactEvidenceUrl(url).value;
+        const { phase, activeCheck } = attr();
+        const obs = {
+          reqId: `q:${startSeq}`, startSeq, method: str(read(req, 'method')) ?? '', resourceType: str(read(req, 'resourceType')) ?? '', urlRedacted,
+          urlClass: classifyNetworkUrl(urlRedacted, { baseUrl }), isNavigationRequest: read(req, 'isNavigationRequest') === true,
+          phase, activeCheck: phase === 'P0' || phase === 'cleanup' || phase === 'closeout' ? null : activeCheck,
+        };
+        ledger.requestObservations.push(obs);
+        if (req !== null && typeof req === 'object') ids.set(req, obs);
+        ledger.witnessCount = correlateNetworkEvents(ledger).witnessCount;
+      } catch { failClosed('request'); }
+    },
+    onResponse(resp) {
+      try {
+        if (latched()) return;
+        const status = read(resp, 'status');
+        const req = read(resp, 'request');
+        const sObs = observationOf(req);
+        if (sObs && !statusByReqId.has(sObs.reqId)) statusByReqId.set(sObs.reqId, Number.isInteger(status) ? status : null);
+        if (Number.isInteger(status) && status < 400) return; // < 400 (incl. 3xx) is not a failure event
+        const responseSeq = nextSeq();
+        const raw = capture(req, 'responseSeq', responseSeq);
+        raw.status = Number.isInteger(status) ? status : null;
+        identify(raw, 'httpResponse');
+        const ctx = context();
+        const input = httpResponseInput(raw, raw.reqIdValid);
+        if (isHttpRuleCandidate(input, rules)) {
+          Object.assign(raw, { stage: 'provisional', finalizedSeq: null, finalizedBy: null, requirement: null, modelBindingObserved: null, eventTime: null, closeout: null, agree: null });
+        } else {
+          const result = classifyHttpResponse(input, ctx.opLedger, ctx.markers, ctx.prefixDerivation, rules, ctx.prefixSourceLedger);
+          Object.assign(raw, {
+            stage: 'immediate', finalizedSeq: responseSeq, finalizedBy: 'event', requirement: requirementOf(result.classification),
+            modelBindingObserved: modelBindingObservedOf(raw.urlRedacted, 'immediate', ctx.prefixDerivation), eventTime: result, closeout: cloneJson(result), agree: true,
+          });
+        }
+        ledger.responseFailures.push(raw);
+        sync();
+      } catch { failClosed('response'); }
+    },
+    onRequestFinished(req) {
+      try {
+        if (latched()) return;
+        const obs = observationOf(req);
+        noteTerminal({ reqId: obs ? obs.reqId : null, terminalKind: 'requestfinished', terminalSeq: nextSeq() });
+      } catch { /* as above */ }
+    },
+    onRequestFailed(req) {
+      try {
+        if (latched()) return;
+        const failSeq = nextSeq();
+        const raw = capture(req, 'failSeq', failSeq);
+        const failure = read(req, 'failure');
+        raw.errorText = failure && typeof failure.errorText === 'string' ? failure.errorText : null;
+        identify(raw, 'requestfailed');
+        const ctx = context();
+        const result = classifyRequestFailure(requestFailureInput(raw, raw.reqIdValid), ctx.opLedger, ctx.markers, ctx.prefixDerivation, ctx.prefixSourceLedger);
+        Object.assign(raw, { eventTime: result, closeout: cloneJson(result), agree: true });
+        ledger.requestFailures.push(raw);
+        noteTerminal({ reqId: raw.reqId, terminalKind: 'requestfailed', terminalSeq: failSeq });
+        sync();
+      } catch { failClosed('requestfailed'); }
+    },
+  };
+}
+
+/**
+ * Wires the §9 error-ledger sources onto the Playwright objects: pageerror, non-allow-listed
+ * console.error (the allow-list is empty by design), page crash, page close / browser disconnect
+ * outside cleanup, and (slice C1, §9.2) the passive `request` / `response` / `requestfinished` /
+ * `requestfailed` instrumentation (`network`, from `createNetworkInstrumentation`) -- replacing the
+ * former blanket `requestfailed => fatal`: a request failure or HTTP >= 400 response is fatal only
+ * through its correlated identity's single fatal witness. Returns `detach()`.
+ */
+function wireFatalListeners({ page, browser, live, fatal, network = null }) {
   const detach = [];
   const on = (emitter, ev, fn) => {
     if (!emitter || typeof emitter.on !== 'function') return;
@@ -8299,7 +11648,12 @@ function wireFatalListeners({ page, browser, live, fatal }) {
   };
   on(page, 'pageerror', (err) => fatal('pageerror', err && err.message));
   on(page, 'console', (msg) => { if (msg && typeof msg.type === 'function' && msg.type() === 'error') fatal('console.error', msg.text()); });
-  on(page, 'requestfailed', (req) => fatal('required-resource-failure', redactEvidenceUrl(req.url()).value));
+  if (network) {
+    on(page, 'request', (req) => network.onRequest(req));
+    on(page, 'response', (resp) => network.onResponse(resp));
+    on(page, 'requestfinished', (req) => network.onRequestFinished(req));
+    on(page, 'requestfailed', (req) => network.onRequestFailed(req));
+  }
   on(page, 'crash', () => fatal('page-crash', 'page crashed'));
   on(page, 'close', () => { if (!live.closingIntent) fatal('page-close-outside-cleanup', 'page closed outside cleanup'); });
   on(browser, 'disconnected', () => { if (!live.closingIntent) fatal('browser-disconnected-outside-cleanup', 'browser disconnected outside cleanup'); });
@@ -8348,7 +11702,7 @@ function buildInitialRunState({ binding, validation, startedAt }) {
   const checks = {};
   for (const n of CHECK_NAMES) checks[n] = makeCheckRecord({ verdict: 'BLOCKED', reason: 'not-executed' });
   const controls = {};
-  for (const n of CONTROL_NAMES) controls[n] = makeControlRecord(n, notExecutableState(n), { fields: { reason: 'not-executed' } });
+  for (const n of CONTROL_NAMES) controls[n] = notStartedControlRun(n, 'not-executed', { at: startedAt });
   return {
     script: { integrityResult: INTEGRITY_RESULT.CAPTURE_UNAVAILABLE, reason: 'not-captured', requestedUrl: G2_VIEWER_SCRIPT_URL, expectedSha256: EXPECTED_VIEWER_SHA256, capture: null },
     procedure: { path: binding.procedure.path, sha256: binding.procedure.sha256, version: PROCEDURE_VERSION, thresholdTable: 'T-rev2' },
@@ -8368,6 +11722,7 @@ function buildInitialRunState({ binding, validation, startedAt }) {
     runtime: { A: { loaded: false }, B: { loaded: false } },
     targets: null,
     checks,
+    gates: null,
     controls,
     sceneOwnership: [],
     spyLedger: [],
@@ -8378,7 +11733,7 @@ function buildInitialRunState({ binding, validation, startedAt }) {
     c20: null,
     n6: null,
     screenshots: [],
-    errorLedger: { fatalCount: 0, entries: [], attemptDeadlineExpired: false },
+    errorLedger: createEmptyErrorLedger(),
     cleanupFailures: [],
     cleanupStepStatus: {},
     cleanupUnresolvedOwnership: false,
@@ -8390,12 +11745,35 @@ function buildInitialRunState({ binding, validation, startedAt }) {
   };
 }
 
+/**
+ * Node-side not-started `control-run` record (§7 not-started executionRecord, the control's §7
+ * not-executable state). Used only for pre-run placeholders and fail-closed fallbacks; `seq` defaults
+ * to 0 ("before any sequenced event"): a placeholder only -- such records appear solely in states that
+ * already fail closed (no gate / invalid page record), where a seq collision is one more row-5 reason.
+ */
+function notStartedControlRun(name, reason, { seq = 0, at = defaultClock.nowIso() } = {}) {
+  return makeControlRunRecord(name, makeControlRecord(name, notExecutableState(name), { fields: { reason } }), { start: null, terminalSeq: seq, terminalAt: at });
+}
+
+/**
+ * Fail-closed replacement for an invalid/missing page control record: state NOT_DETECTED (row 4
+ * unacceptable for every control) with the not-started executionRecord. For N3-N8 this record is
+ * deliberately schema-invalid (NOT_DETECTED is not a not-started state there) => row 5 as well;
+ * it can never be weaker than the record it replaces.
+ */
+function failClosedControlRun(name, reason, { seq = 0, at = defaultClock.nowIso() } = {}) {
+  const rec = makeControlRunRecord(name, makeControlRecord(name, notExecutableState(name), { fields: { reason } }), { start: null, terminalSeq: seq, terminalAt: at });
+  rec.state = 'NOT_DETECTED';
+  rec.executionRecord.terminalState = 'NOT_DETECTED';
+  return rec;
+}
+
 /** Records from an unavailable phase run: every check BLOCKED(<reason>), every control its §7 not-executable state. */
 function unavailablePhaseRecords(reason) {
   const checks = {};
   for (const n of CHECK_NAMES) checks[n] = makeCheckRecord({ verdict: 'BLOCKED', reason });
   const controls = {};
-  for (const n of CONTROL_NAMES) controls[n] = makeControlRecord(n, notExecutableState(n), { fields: { reason } });
+  for (const n of CONTROL_NAMES) controls[n] = notStartedControlRun(n, reason);
   return { checks, controls };
 }
 
@@ -8404,21 +11782,46 @@ function unavailablePhaseRecords(reason) {
  * a missing or invalid check/control record fails closed (BLOCKED / NOT_DETECTED), never PASS.
  */
 function applyPhaseRunToState(state, run) {
+  // A synthetic gate-disposition record (closed gate, slice B2) is kept verbatim: it is never a
+  // verdict, and its legality (shape, G-a..G-f, CG-1..CG-7, gate equations) is decided against the
+  // whole state by recordSchemaProblems -- a defective one is a row-5 contradiction (fail-closed).
+  const isDisposition = (rec, n) => n !== 'C1' && isPlainObject(rec) && rec.recordType === RECORD_TYPE.GATE_DISPOSITION;
   for (const n of CHECK_NAMES) {
     const rec = run && run.checks ? run.checks[n] : undefined;
-    state.checks[n] = rec !== undefined && validateCheckRecord(rec).ok ? rec : makeCheckRecord({ verdict: 'BLOCKED', reason: 'invalid-or-missing-page-record' });
+    state.checks[n] = isDisposition(rec, n) || (rec !== undefined && validateCheckRecord(rec, n).ok) ? rec : makeCheckRecord({ verdict: 'BLOCKED', reason: 'invalid-or-missing-page-record' });
   }
   for (const n of CONTROL_NAMES) {
     const rec = run && run.controls ? run.controls[n] : undefined;
-    state.controls[n] = rec !== undefined && validateControlRecord(n, rec).ok ? rec : makeControlRecord(n, 'NOT_DETECTED', { fields: { reason: 'invalid-or-missing-page-record' } });
+    state.controls[n] = isDisposition(rec, n) || (rec !== undefined && validateControlRunRecord(n, rec).ok) ? rec : failClosedControlRun(n, 'invalid-or-missing-page-record');
   }
   const extras = (run && run.extras) || {};
   state.c4Table = Array.isArray(extras.c4Table) ? extras.c4Table : [];
   state.sceneOwnership = Array.isArray(extras.sceneOwnership) ? extras.sceneOwnership : (extras.sceneOwnership == null ? [] : extras.sceneOwnership);
   state.c17 = extras.c17 == null ? null : extras.c17;
   state.c20 = extras.c20 == null ? null : extras.c20;
-  state.n6 = extras.n6 == null ? (run && run.controls && run.controls.N6 ? run.controls.N6 : null) : extras.n6;
-  state.eventLog = Array.isArray(extras.eventLog) ? extras.eventLog : [];
+  // N6 fallback only from an executed control-run record (a gate-disposition is never live evidence;
+  // under a closed gate `n6` must stay exactly null, CG-7).
+  const n6Rec = run && run.controls ? run.controls.N6 : null;
+  state.n6 = extras.n6 == null ? (isPlainObject(n6Rec) && n6Rec.recordType === RECORD_TYPE.CONTROL_RUN ? n6Rec : null) : extras.n6;
+  // §7 global C1 gate (slice B2): the runner's `gates.C1` record and its markers (P1..P11, cleanup;
+  // persisted under errorLedger.markers[], §9.2). Re-validated by the gate equations, never trusted.
+  state.gates = run && isPlainObject(run.gates) ? run.gates : null;
+  if (run && Array.isArray(run.markers)) {
+    if (!isPlainObject(state.errorLedger)) state.errorLedger = createEmptyErrorLedger();
+    state.errorLedger.markers = [...(Array.isArray(state.errorLedger.markers) ? state.errorLedger.markers : []), ...run.markers];
+  }
+  // §7 C1 reason contract: C1's single check-finalized event is retained in the persisted eventLog only
+  // when it matches the finalized C1 record. The eventLog is ONE seq-ordered list from the run's single
+  // counter (runner events, wrapper-install/restore, the C16 log); extras.eventLog entries already in
+  // it (same seq) are not duplicated.
+  const c1 = state.checks.C1;
+  const c1EventOk = (e) => isPlainObject(c1) && e.seq === c1.finalizedSeq && e.verdict === c1.verdict && e.reason === c1.reason;
+  const ev = run && isPlainObject(run.c1FinalizedEvent) ? run.c1FinalizedEvent : null;
+  const base = run && Array.isArray(run.eventLog) ? run.eventLog : (ev ? [ev] : []);
+  const merged = base.filter((e) => !(isPlainObject(e) && e.kind === 'check-finalized' && e.check === 'C1') || c1EventOk(e));
+  const seen = new Set(merged.map((e) => (isPlainObject(e) ? e.seq : undefined)));
+  for (const e of Array.isArray(extras.eventLog) ? extras.eventLog : []) if (!(isPlainObject(e) && seen.has(e.seq))) merged.push(e);
+  state.eventLog = merged.map((e, i) => [e, i]).sort((a, b) => ((isPlainObject(a[0]) && isPlainObject(b[0]) && a[0].seq !== b[0].seq) ? a[0].seq - b[0].seq : a[1] - b[1])).map(([e]) => e);
   state.spyLedger = run && Array.isArray(run.spyLedger) ? run.spyLedger : [];
   state.screenshots = run && Array.isArray(run.screenshots) ? run.screenshots : [];
   state.stateSnapshots = run && Array.isArray(run.stateSnapshots) ? run.stateSnapshots : [];
@@ -8444,8 +11847,40 @@ function buildCappedResultPayload(S) {
   }
 }
 
-/** Node-owned cleanup steps + delegating wrappers for the page-owned ones (ownership re-checked in-page). */
-function buildCleanupSteps({ live, rpcCall, timers }) {
+/**
+ * §9.2 load `completionOutcome` of one settled load (slice C2): `ready` iff the readiness wait
+ * observed readiness; `timeout:load` for the T2 deadline (outer, or an inner RPC reporting
+ * `timed-out`); `harness-exception` for a thrown load; everything else (`rejected`) is a load the
+ * Viewer did not complete.
+ */
+function loadCompletionOutcome(out) {
+  if (!isPlainObject(out) || out.status === 'threw') return 'harness-exception';
+  if (out.status === 'timed-out') return 'timeout:load';
+  const v = isPlainObject(out.value) ? out.value : {};
+  if (isPlainObject(v.ready) && v.ready.status === 'ready') return 'ready';
+  if ([v.doc, v.node, v.ready].some((x) => isPlainObject(x) && x.status === 'timed-out')) return 'timeout:load';
+  return 'rejected';
+}
+
+/**
+ * Node-owned cleanup steps + delegating wrappers for the page-owned ones (ownership re-checked
+ * in-page). Slice C2: each page/context/browser close that is actually invoked (target present) is a
+ * §9.2 `teardown` mutationOperation recorded through `ops` (start + node-side ack before `close()`).
+ */
+function buildCleanupSteps({ live, rpcCall, timers, ops = null }) {
+  const teardown = (target, getTarget, fn) => async () => {
+    const t = getTarget();
+    const rec = ops && t && typeof t.close === 'function'
+      ? ops.beginMutation({ operationType: 'teardown', teardownTarget: target, phase: 'cleanup', invokedBy: `cleanup:${target}`, cleanupStepRef: `/cleanupStepStatus/${target}` }) : null;
+    try {
+      const v = await fn();
+      if (rec) ops.endMutation(rec.operationId, 'settled');
+      return v;
+    } catch (e) {
+      if (rec) ops.endMutation(rec.operationId, 'threw');
+      throw e;
+    }
+  };
   const ownership = {};
   const steps = {};
   for (const name of G2_PAGE_CLEANUP_STEPS) {
@@ -8466,12 +11901,12 @@ function buildCleanupSteps({ live, rpcCall, timers }) {
     };
   }
   steps.closePage = {
-    run: async () => { live.closingIntent = true; return closePlaywrightTarget(live.page, 'page', { timers }); },
+    run: teardown('closePage', () => live.page, async () => { live.closingIntent = true; return closePlaywrightTarget(live.page, 'page', { timers }); }),
     ownershipRemains: () => Boolean(live.page) && typeof live.page.isClosed === 'function' && !live.page.isClosed(),
   };
-  steps.closeContext = { run: async () => { live.closingIntent = true; return closePlaywrightTarget(live.context, 'context', { timers }); } };
+  steps.closeContext = { run: teardown('closeContext', () => live.context, async () => { live.closingIntent = true; return closePlaywrightTarget(live.context, 'context', { timers }); }) };
   steps.closeBrowser = {
-    run: async () => { live.closingIntent = true; return closePlaywrightTarget(live.browser, 'browser', { timers }); },
+    run: teardown('closeBrowser', () => live.browser, async () => { live.closingIntent = true; return closePlaywrightTarget(live.browser, 'browser', { timers }); }),
     ownershipRemains: () => Boolean(live.browser) && typeof live.browser.isConnected === 'function' && live.browser.isConnected(),
   };
   steps.httpServerOwnership = async () => ({ outcome: 'not-started-by-harness', note: 'the operator started npm start and stops it after the run' });
@@ -8506,10 +11941,29 @@ async function runPostReservation(ctx) {
   const quarantine = createTimeoutQuarantine();
   const baseUrl = g2BaseUrl(env);
   const state = buildInitialRunState({ binding, validation, startedAt: clock.nowIso() });
-  const sink = createFatalEventSink(state.errorLedger);
+  // §9.2 THE node-side run counter: fatal entries, request/response events, P0/closeout markers.
+  // UNRESOLVED LIVE-WIRING GATE (slice C1): the in-page phase run (g2RunPhases) still stamps its own
+  // records (spy ledger, eventLog, snapshots, P1..P11/cleanup markers, C1 finalization, controls,
+  // gates.C1) from a page-side recorder seeded with `seqBase`, and node events received DURING that
+  // run are numbered by this counter -- two namespaces, not one. `observe` only moves this counter past
+  // the page's allocations afterwards; any collision is a row-5 contradiction (seq-not-unique). A
+  // compliant cross-process design is a before-live requirement. Slice C2 makes this gate certain to
+  // bite in a live run: the in-page C16/C17 operation records (G2_NODE_OPLEDGER_BINDING) are numbered by
+  // THIS counter during the page run, as are request/response events -- see G2_DUAL_COUNTER_GATE.
+  const runSeq = createRunSeqCounter();
+  const nodeAttribution = { phase: 'P0', activeCheck: null };
+  const sink = createFatalEventSink(state.errorLedger, { nextSeq: runSeq.next });
   const uninstallProcessHandlers = installProcessFatalHandlers({ proc: deps.proc || process, sink });
   const promises = createPromiseRegistry({ onRejection: () => {} });
   const live = { browser: null, context: null, page: null, rpc: null, closingIntent: false, detachFatal: () => {} };
+  const network = createNetworkInstrumentation({
+    ledger: state.errorLedger, nextSeq: runSeq.next, sink, baseUrl,
+    attribution: () => ({ ...nodeAttribution }),
+    mainFrame: () => (live.page && typeof live.page.mainFrame === 'function' ? live.page.mainFrame() : null),
+    onFatalWitness: () => { if (live.rpc) promises.track(live.rpc.call('g2MarkFatal', { kind: NETWORK_FATAL_ENTRY_KIND }).catch(() => {})); },
+  });
+  // §9.2 slice C2: the harness-owned operation ledger (loads, C16/C17 + cleanup mutations, teardown).
+  const ops = createOperationLedger({ ledger: state.errorLedger, nextSeq: runSeq.next, clock });
   const integrity = createViewerScriptIntegrityCapture({ timers });
   const manifest = createServedModuleManifest();
   const fatal = (kind, detail) => {
@@ -8586,7 +12040,7 @@ async function runPostReservation(ctx) {
     await p0('context-create', async () => { live.context = await live.browser.newContext({ serviceWorkers: 'block', deviceScaleFactor: 1 }); return true; });
     await p0('page-create', async () => {
       live.page = await live.context.newPage();
-      live.detachFatal = wireFatalListeners({ page: live.page, browser: live.browser, live, fatal });
+      live.detachFatal = wireFatalListeners({ page: live.page, browser: live.browser, live, fatal, network });
       live.page.on('response', (response) => { try { integrity.onResponse(response); } catch { /* capture is best-effort; classification fails closed */ } });
       live.page.on('requestfailed', (request) => { try { integrity.onRequestFailed(request); } catch { /* as above */ } });
       live.rpc = createPageRpc(live.page, { onCall: (key) => emit({ type: 'rpc', key }) });
@@ -8609,9 +12063,12 @@ async function runPostReservation(ctx) {
         return toBuffer(png).toString('base64');
       });
       await live.page.exposeFunction(G2_NODE_FATAL_BINDING, (kind, detail) => { fatal(String(kind), detail); return true; });
+      await live.page.exposeFunction(G2_NODE_OPLEDGER_BINDING, (action, arg) => ops.pageOperation(String(action), arg));
       await live.page.addInitScript({ content: agent.source });
       return true;
     });
+    // §9.2: the P0 phase-boundary marker precedes the Phase-0 goto (listeners attached above).
+    state.errorLedger.markers.push({ seq: runSeq.next(), name: 'P0' });
     await p0('goto', async () => { await live.page.goto(`${baseUrl}${G2_PAGE_PATH}`, { waitUntil: 'load', timeout: TABLE_T.T1.phase0StepDeadlineMs }); return true; });
     await p0('bootstrap-ready', async () => {
       await live.page.waitForFunction(() => window.__g2Bootstrap && window.__g2Bootstrap.ready === true, null, { timeout: TABLE_T.T1.phase0StepDeadlineMs });
@@ -8673,9 +12130,14 @@ async function runPostReservation(ctx) {
   let tainted = false;
   try {
     const loads = {};
+    // H1: the node-side load outcomes, fed into the in-page C1 evaluation (withNodeLoadOutcomes).
+    const nodeLoadOutcomes = { A: null, B: null };
+    Object.assign(nodeAttribution, { phase: 'P1', activeCheck: 'C1' });
     for (const label of ['A', 'B']) {
       const urn = label === 'A' ? MODEL_A_URN : MODEL_B_URN;
       const budget = TABLE_T.T2.loadAndReadinessDeadlineMs;
+      // §9.2 slice C2: the loadOperation's start fields precede the first load RPC (node counter).
+      const loadRec = ops.beginLoad({ modelId: label, modelUrnSha256: binding.fixtures && binding.fixtures[label] && SHA256_HEX_RE.test(String(binding.fixtures[label].urnSha256)) ? binding.fixtures[label].urnSha256 : sha256Hex(urn) });
       const t0 = clock.monotonicMs();
       const remaining = () => Math.max(1, budget - (clock.monotonicMs() - t0));
       const out = await withDeadline('load', budget, async () => {
@@ -8688,6 +12150,11 @@ async function runPostReservation(ctx) {
         const ready = await rpcCall('g2AwaitModelReady', { label, timeoutMs: remaining() });
         return { doc, node, ready: ready || null };
       }, true);
+      nodeLoadOutcomes[label] = loadCompletionOutcome(out);
+      ops.endLoad(loadRec, nodeLoadOutcomes[label]);
+      // §9.2 `load-windows-closed`: right after the later window closes (synchronously, no await in
+      // between) the prefix-source snapshot + derivation are frozen and provisional responses finalized.
+      if (label === 'B') finalizeLoadWindows(state.errorLedger, { prefixSources: network.prefixSources, appendEntry: (entry) => sink.recordWitnessEntry(entry) });
       if (out.status === 'completed') loads[label] = normalizeEvidence(out.value);
       else { loads[label] = { status: out.status, error: out.status === 'threw' ? summarizeThrown(out.error) : null }; if (out.status === 'timed-out') tainted = true; }
     }
@@ -8703,10 +12170,14 @@ async function runPostReservation(ctx) {
     }
     const targetsOut = await withDeadline('tree-enumeration', TABLE_T.T3.treeEnumerationDeadlineMs, () => rpcCall('g2PrepareTargets', null));
     state.targets = targetsOut.status === 'completed' ? normalizeEvidence(targetsOut.value) : { unavailable: targetsOut.status, error: targetsOut.status === 'threw' ? summarizeThrown(targetsOut.error) : null };
-    const runOut = await withDeadline('attempt', t9Remaining(), () => rpcCall('g2RunPhases', null));
+    // In-page run: node events during it keep the P1 attribution with no active check (the page owns
+    // the phase/check context -- part of the unresolved live-wiring gate above).
+    Object.assign(nodeAttribution, { phase: 'P1', activeCheck: null });
+    const runOut = await withDeadline('attempt', t9Remaining(), () => rpcCall('g2RunPhases', { seqBase: runSeq.peek(), nodeLoadOutcomes }));
     if (runOut.status === 'completed' && runOut.value) {
       const run = runOut.value;
       applyPhaseRunToState(state, run);
+      runSeq.observe(maxRecordedSeq(state));
       if (run.sessionTainted === true) tainted = true;
       state.staleContinuationsDropped += Number.isInteger(run.staleContinuationsDropped) ? run.staleContinuationsDropped : 0;
     } else {
@@ -8725,8 +12196,14 @@ async function runPostReservation(ctx) {
   state.sessionTainted = tainted;
 
   // ---- cleanup ledger (§9; every step runs, each bounded by T8) ------------------------------
+  Object.assign(nodeAttribution, { phase: 'cleanup', activeCheck: null });
   emit({ type: 'cleanup' });
-  const cleanup = await runCleanup({ steps: buildCleanupSteps({ live, rpcCall, timers }), context: {} }, { timers, quarantine });
+  const cleanup = await runCleanup({ steps: buildCleanupSteps({ live, rpcCall, timers, ops }), context: {} }, { timers, quarantine });
+  // §9.2: a mutation whose cleanup step timed out ends `timeout` (its window still closes at the next boundary).
+  for (const [step, status] of Object.entries(cleanup.cleanupStepStatus || {})) {
+    if (status !== 'timed-out') continue;
+    for (const id of ops.openMutations()) { const o = state.errorLedger.opLedger.find((x) => x.operationId === id); if (o && o.invokedBy === `cleanup:${step}`) ops.endMutation(id, 'timeout'); }
+  }
   state.cleanupFailures = normalizeEvidence(cleanup.cleanupFailures);
   state.cleanupStepStatus = normalizeEvidence(cleanup.cleanupStepStatus);
   state.cleanupUnresolvedOwnership = cleanup.cleanupUnresolvedOwnership === true;
@@ -8754,6 +12231,15 @@ async function runPostReservation(ctx) {
     if (t9.deadlineAbs() !== null && !t9.hasExpired() && !(clock.monotonicMs() < t9.deadlineAbs())) sink.recordAttemptDeadline();
   };
   recordT9IfOverdue();
+  // §9.2 closeout step 1 (network ledger): the `closeout` marker, then every still-provisional response
+  // finalized (`finalizedBy:'closeout'`), both classifiers re-run over the complete record, witnesses
+  // synced (a newly fatal identity still counted through the sink) -- all before closeoutProtocol's
+  // step-1 primaryOverall, synchronously.
+  Object.assign(nodeAttribution, { phase: 'closeout', activeCheck: null });
+  runSeq.observe(maxRecordedSeq(state));
+  state.errorLedger.markers.push({ seq: runSeq.next(), name: 'closeout' });
+  ops.seal(); // no operation record after the closeout marker; every cancellation window is now closed
+  finalizeNetworkLedgerAtCloseout(state.errorLedger, { nextSeq: runSeq.next, appendEntry: (entry) => sink.recordWitnessEntry(entry), prefixSources: network.prefixSources });
   emit({ type: 'closeout' });
   let closeout;
   try {
@@ -8810,6 +12296,11 @@ async function main({ argv = process.argv, env = process.env, deps = {} } = {}) 
   }
   if (!LIVE_PATH_WIRED) {
     throw new G2RefusalError('live-path-not-wired', 'the G2 live path is not wired in this harness revision; nothing was validated, reserved or spent');
+  }
+  // M2 (2026-10-01 follow-up review): live cannot run while the before-live dual-counter /
+  // attribution gate is unresolved, even if LIVE_PATH_WIRED were flipped.
+  if (G2_DUAL_COUNTER_GATE.resolved !== true) {
+    throw new G2RefusalError('dual-counter-gate-unresolved', 'G2_DUAL_COUNTER_GATE is unresolved (before-live blocker); nothing was validated, reserved or spent');
   }
 
   const repoRoot = deps.repoRoot ?? REPO_ROOT;
@@ -8870,6 +12361,7 @@ export {
   HARNESS_REL_PATH,
   PROCEDURE_REL_PATH,
   PROCEDURE_VERSION,
+  ACCEPTED_PROCEDURE_SHA256,
   AUTHORIZATION_PROMPTS_REL_DIR,
   ATTEMPTS_D0_REL,
   ATTEMPTS_D1_NAME,
@@ -9133,6 +12625,7 @@ export {
   C15_RESTORE_FAILED_NOTE,
   C15_FIRST_ONLY_NOTE,
   evaluateC1,
+  withNodeLoadOutcomes,
   evaluateC5,
   evaluateC7Beta,
   evaluateSceneOwnership,
@@ -9145,6 +12638,20 @@ export {
   evaluateC13,
   evaluateC14,
   evaluateC15,
+  C15E_PREDICATE_NAMES,
+  C15E_FAILURE_LABELS,
+  C15E_NON_MUTATING_METHODS,
+  c15eModelKey,
+  c15eUnreadable,
+  canonicalHidden,
+  canonicalIsolation,
+  readCanonicalAggregate,
+  hiddenEquals,
+  canonIsolationEquals,
+  c15eLedgerDTO,
+  c15eDerive,
+  c15eOracle,
+  validateC15eEvidence,
   evaluateC16,
   evaluateC18a,
   BRIDGE_ALLOWED_SPY_METHODS,
@@ -9208,6 +12715,112 @@ export {
   buildCappedResultPayload,
   buildCleanupSteps,
   runPostReservation,
+  // RC1-C1/RC1-C2 record unions, NRDB legality, C1 reason contract, gate equations (slice B1)
+  NRDB_STATE,
+  RECORD_TYPE,
+  C1_NORMALIZED_REASONS,
+  C1_BLOCK_DETAIL_CAUSES,
+  GATE_OUTCOME,
+  GATE_EVIDENCE_REFS,
+  GATE_CHECK_DISPOSITION,
+  GATE_C1_REQUIRED,
+  FATAL_ENTRY_SEQ_REQUIRED,
+  DOWNSTREAM_ITEM_NAMES,
+  NRDB_CONTROL_NAMES,
+  CONTROL_DEPENDENCY_IDS,
+  CONTROL_OWNING_PHASE,
+  CONTROL_NOT_STARTED_STATES,
+  GATE_CONTROL_DISPOSITION,
+  controlEffectiveState,
+  checkVerdictLabel,
+  checkRunProblems,
+  executionRecordProblems,
+  dependencyBlockedByShapeProblems,
+  dependencyBlockedByReferentialProblems,
+  itemAttributionProblems,
+  DOWNSTREAM_PHASE_IDS,
+  ATTRIBUTION_PHASES,
+  PASSIVE_FATAL_EVENT_KINDS,
+  attributionFieldProblems,
+  closedGateEvidenceMatches,
+  closedGateIllegalRecords,
+  gateFinalizationProblems,
+  defaultGateFinalization,
+  defaultRebuildFatalWitnessState,
+  prepareC1Gate,
+  // §9.2 slice C1: network classification, observations, fatal-witness correlation, run counter
+  OPTIONAL_RESPONSE_RULES,
+  NETWORK_URL_CLASSES,
+  NETWORK_CLASSIFICATIONS,
+  NETWORK_SEVERITY,
+  NETWORK_FATAL_ENTRY_KIND,
+  LOAD_OPERATION_KEYS,
+  MUTATION_OPERATION_KEYS,
+  PREFIX_SOURCE_ENTRY_KEYS,
+  PREFIX_SOURCE_REASONS,
+  PREFIX_DERIVATION_KEYS,
+  OP_LEDGER_SPY_METHODS,
+  prefixBindingState,
+  derivePrefixes,
+  buildPrefixSourceLedger,
+  refreshPrefixSourceLedger,
+  prefixSnapshotCutoff,
+  isPrefixLedgerFrozen,
+  ambiguousPrefixesOf,
+  prefixSupportRefs,
+  cancellationWindowEnd,
+  refreshCancellationWindows,
+  opLedgerRecordProblems,
+  createOperationLedger,
+  G2_DUAL_COUNTER_GATE,
+  G2_NODE_OPLEDGER_BINDING,
+  runAcknowledgedMutation,
+  loadCompletionOutcome,
+  finalizeLoadWindows,
+  c2LedgerProblems,
+  CLASSIFIER_RESULT_KEYS,
+  REQUEST_OBSERVATION_KEYS,
+  REQUEST_FAILURE_KEYS,
+  RESPONSE_FAILURE_KEYS,
+  CORRELATED_REQUEST_KEYS,
+  FATAL_WITNESS_KEYS,
+  WITNESS_COUNT_KEYS,
+  CHECK_OWNING_PHASES,
+  networkPrefixKey,
+  classifyRequestFailure,
+  classifyHttpResponse,
+  isHttpRuleCandidate,
+  modelBindingObservedOf,
+  truncateRecordAt,
+  recomputeRequestIdentity,
+  correlateNetworkEvents,
+  createEmptyErrorLedger,
+  syncFatalWitnesses,
+  directWitnessEntryAppender,
+  provisionalFinalization,
+  applyProvisionalFinalization,
+  finalizeNetworkLedgerAtCloseout,
+  classifierResultProblems,
+  networkLedgerProblems,
+  primarySeqAllocations,
+  maxRecordedSeq,
+  createRunSeqCounter,
+  classifyNetworkUrl,
+  createNetworkInstrumentation,
+  makeGateDispositionRecord,
+  gateDispositionProblems,
+  recomputeGateOutcome,
+  recomputeFatalCountAtGate,
+  gateC1Problems,
+  controlRunProblems,
+  recordSchemaProblems,
+  c1LoadLedgerProblems,
+  nrdbLegality,
+  finalizeC1Record,
+  makeControlRunRecord,
+  validateControlRunRecord,
+  notStartedControlRun,
+  failClosedControlRun,
   // entry
   main,
   runCli,

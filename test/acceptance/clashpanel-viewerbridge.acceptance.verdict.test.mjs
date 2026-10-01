@@ -84,6 +84,12 @@ function stateFor(phase, mutate = () => {}, { binding = makeBinding(), closeout 
   return armClosureTrap(s);
 }
 
+/** Sets a control-run record's state AND its executionRecord.terminalState (they must agree, §7). */
+function setControlState(s, n, st) {
+  s.controls[n].state = st;
+  s.controls[n].executionRecord.terminalState = st;
+}
+
 function both(mutate, closeout) {
   return { pre: computeOverall(stateFor('pre-closeout', mutate), 'pre-closeout'), link: computeOverall(stateFor('pre-link', mutate, { closeout }), 'pre-link') };
 }
@@ -152,12 +158,12 @@ test('pre-link requires every closeout prerequisite; each missing one (or a reco
 // ------------------------------------------------------------------------------------------
 
 test('X1: C7 FAIL + C1 BLOCKED(prerequisite) => row 3 before row 6 => FAIL', () => {
-  const r = both((s) => { s.checks.C7.verdict = 'FAIL'; s.checks.C1.verdict = 'BLOCKED(prerequisite)'; });
+  const r = both((s) => { s.checks.C7.verdict = 'FAIL'; Object.assign(s.checks.C1, { verdict: 'BLOCKED', reason: 'prerequisite' }); });
   for (const x of [r.pre, r.link]) assert.deepEqual([x.overall, x.row], ['FAIL', 3]);
 });
 
 test('X2: N3 NOT_DETECTED + integrity CAPTURE_UNAVAILABLE => row 4 before row 6 => FAIL', () => {
-  const r = both((s) => { s.controls.N3.state = 'NOT_DETECTED'; s.script.integrityResult = 'CAPTURE_UNAVAILABLE'; });
+  const r = both((s) => { setControlState(s, 'N3', 'NOT_DETECTED'); s.script.integrityResult = 'CAPTURE_UNAVAILABLE'; });
   for (const x of [r.pre, r.link]) assert.deepEqual([x.overall, x.row], ['FAIL', 4]);
 });
 
@@ -166,16 +172,18 @@ test('X3: cleanupUnresolvedOwnership + integrity PROVENANCE_AMBIGUOUS => row 2 b
   for (const x of [r.pre, r.link]) assert.deepEqual([x.overall, x.row], ['FAIL', 2]);
 });
 
-test('X4: classifier CONTRADICTORY for B, all dependents BLOCKED, nothing else wrong => row 6 BLOCKED', () => {
+// The procedure's X4 (C1 BLOCKED(prerequisite) => CLOSED_DEPENDENCY_BLOCKED gate + gate-disposition
+// records) is in the nrdb test file; this is the row-6 classifier/runtime-BLOCKED clause under an OPEN gate.
+test('row 6 classifier clause: classifier CONTRADICTORY for B, runtime check-run BLOCKED records, nothing else wrong => row 6 BLOCKED', () => {
   const r = both((s) => {
     s.classifier.B = 'CONTRADICTORY';
-    for (const n of ['C10', 'C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17', 'C18', 'C19', 'C20']) s.checks[n].verdict = 'BLOCKED(prerequisite)';
+    for (const n of ['C10', 'C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17', 'C18', 'C19', 'C20']) Object.assign(s.checks[n], { verdict: 'BLOCKED', reason: 'prerequisite' });
   });
   for (const x of [r.pre, r.link]) assert.deepEqual([x.overall, x.row], ['BLOCKED', 6]);
 });
 
 test('X6: C6 NOT_EVIDENCED with N2 NOT_DISCRIMINATING, everything else PASS => row 7 PARTIAL', () => {
-  const r = both((s) => { s.checks.C6.verdict = 'NOT_EVIDENCED(not-discriminating)'; s.controls.N2.state = 'NOT_DISCRIMINATING'; });
+  const r = both((s) => { Object.assign(s.checks.C6, { verdict: 'NOT_EVIDENCED', reason: 'not-discriminating' }); setControlState(s, 'N2', 'NOT_DISCRIMINATING'); });
   for (const x of [r.pre, r.link]) assert.deepEqual([x.overall, x.row], ['PARTIAL', 7]);
 });
 
@@ -200,9 +208,9 @@ test('X7: journal attemptId differs from result attempt.attemptId, all checks PA
 
 test('X8: C4 FAIL + sessionTainted + later checks BLOCKED(session-tainted) => row 3 FAIL', () => {
   const r = both((s) => {
-    s.checks.C4.verdict = 'FAIL(not-contained)';
+    Object.assign(s.checks.C4, { verdict: 'FAIL', reason: 'not-contained' });
     s.sessionTainted = true;
-    for (const n of ['C5', 'C6', 'C7']) s.checks[n].verdict = 'BLOCKED(session-tainted)';
+    for (const n of ['C5', 'C6', 'C7']) Object.assign(s.checks[n], { verdict: 'BLOCKED', reason: 'session-tainted' });
   });
   for (const x of [r.pre, r.link]) assert.deepEqual([x.overall, x.row], ['FAIL', 3]);
 });
@@ -226,9 +234,9 @@ test('X11: C7 FAIL and a result-JSON write failure => FAIL; rows 3 and 5 both ma
 });
 
 test('X12: primaryOverall PARTIAL (C20 NOT_EVIDENCED) and a result-JSON write failure => row 5 outranks row 7 => FAIL', () => {
-  const pre = computeOverall(stateFor('pre-closeout', (x) => { x.checks.C20.verdict = 'NOT_EVIDENCED(unstable-frame)'; }), 'pre-closeout');
+  const pre = computeOverall(stateFor('pre-closeout', (x) => { Object.assign(x.checks.C20, { verdict: 'NOT_EVIDENCED', reason: 'unstable-frame' }); }), 'pre-closeout');
   assert.deepEqual([pre.overall, pre.row], ['PARTIAL', 7]);
-  const link = computeOverall(stateFor('pre-link', (x) => { x.checks.C20.verdict = 'NOT_EVIDENCED(unstable-frame)'; }, { closeout: { closeoutFailures: ['r1-write'], r1Verified: false } }), 'pre-link');
+  const link = computeOverall(stateFor('pre-link', (x) => { Object.assign(x.checks.C20, { verdict: 'NOT_EVIDENCED', reason: 'unstable-frame' }); }, { closeout: { closeoutFailures: ['r1-write'], r1Verified: false } }), 'pre-link');
   assert.deepEqual([link.overall, link.row], ['FAIL', 5]);
 });
 
@@ -238,7 +246,7 @@ test('X13: all PASS; optional artifacts are not an input of computeOverall (O1 a
 });
 
 test('X14: all PASS except C20 NOT_EVIDENCED(unstable-frame) => row 7 PARTIAL (never PASS)', () => {
-  const r = both((s) => { s.checks.C20.verdict = 'NOT_EVIDENCED(unstable-frame)'; });
+  const r = both((s) => { Object.assign(s.checks.C20, { verdict: 'NOT_EVIDENCED', reason: 'unstable-frame' }); });
   for (const x of [r.pre, r.link]) assert.deepEqual([x.overall, x.row], ['PARTIAL', 7]);
 });
 
@@ -248,30 +256,37 @@ test('X14: all PASS except C20 NOT_EVIDENCED(unstable-frame) => row 7 PARTIAL (n
 
 test('controls: §7 allowed/acceptable states; NOT_APPLICABLE is partial only while its check is not PASS', () => {
   const pass = Object.fromEntries(CHECK_NAMES.map((n) => [n, 'PASS']));
-  assert.equal(controlDisposition('N1', { state: 'DETECTED' }, pass), 'acceptable');
-  assert.equal(controlDisposition('N1', { state: 'NOT_DETECTED' }, pass), 'unacceptable');
-  assert.equal(controlDisposition('N2', { state: 'NOT_DISCRIMINATING' }, pass), 'partial');
-  assert.equal(controlDisposition('N3', { state: 'NOT_DISCRIMINATING' }, pass), 'unacceptable');
-  assert.equal(controlDisposition('N6', { state: 'NOT_APPLICABLE' }, pass), 'unacceptable');
-  assert.equal(controlDisposition('N6', { state: 'NOT_APPLICABLE' }, { ...pass, C4: 'NOT_EVIDENCED' }), 'partial');
-  assert.equal(controlDisposition('N8', { state: 'NOT_APPLICABLE' }, pass), 'unacceptable');
-  assert.equal(controlDisposition('N8', { state: 'NOT_APPLICABLE' }, { ...pass, C20: 'NOT_EVIDENCED' }), 'partial');
-  assert.equal(controlDisposition('N8', { state: 'NOT_DISCRIMINATING' }, pass), 'partial');
+  assert.equal(controlDisposition('N1', { recordType: 'control-run', state: 'DETECTED' }, pass), 'acceptable');
+  assert.equal(controlDisposition('N1', { recordType: 'control-run', state: 'NOT_DETECTED' }, pass), 'unacceptable');
+  assert.equal(controlDisposition('N2', { recordType: 'control-run', state: 'NOT_DISCRIMINATING' }, pass), 'partial');
+  assert.equal(controlDisposition('N3', { recordType: 'control-run', state: 'NOT_DISCRIMINATING' }, pass), 'unacceptable');
+  assert.equal(controlDisposition('N6', { recordType: 'control-run', state: 'NOT_APPLICABLE' }, pass), 'unacceptable');
+  assert.equal(controlDisposition('N6', { recordType: 'control-run', state: 'NOT_APPLICABLE' }, { ...pass, C4: 'NOT_EVIDENCED' }), 'partial');
+  assert.equal(controlDisposition('N8', { recordType: 'control-run', state: 'NOT_APPLICABLE' }, pass), 'unacceptable');
+  assert.equal(controlDisposition('N8', { recordType: 'control-run', state: 'NOT_APPLICABLE' }, { ...pass, C20: 'NOT_EVIDENCED' }), 'partial');
+  assert.equal(controlDisposition('N8', { recordType: 'control-run', state: 'NOT_DISCRIMINATING' }, pass), 'partial');
   for (const n of CONTROL_NAMES) {
-    assert.equal(controlDisposition(n, { state: 'BOGUS' }, pass), 'unacceptable', n);
+    assert.equal(controlDisposition(n, { recordType: 'control-run', state: 'BOGUS' }, pass), 'unacceptable', n);
     assert.equal(controlDisposition(n, undefined, pass), 'unacceptable', n);
   }
-  for (const st of ['RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE']) assert.equal(controlDisposition('N4', { state: st }, pass), 'unacceptable', st);
+  for (const st of ['RESTORE_FAILED', 'TIMED_OUT', 'NOT_EXECUTABLE']) assert.equal(controlDisposition('N4', { recordType: 'control-run', state: st }, pass), 'unacceptable', st);
+  // a legacy record without recordType never reads as a state (effective-state accessor fails closed)
+  assert.equal(controlDisposition('N1', { state: 'DETECTED' }, pass), 'unacceptable');
+  // NRDB is never neutral without L1-L4 (here: control-run record, no gate)
+  assert.equal(controlDisposition('N3', { recordType: 'control-run', state: 'NOT_RUN_DEPENDENCY_BLOCKED' }, pass, {}), 'unacceptable');
   // N6 NOT_APPLICABLE while C4 PASS => row 4; while C4 NOT_EVIDENCED => row 7
-  assert.equal(computeOverall(stateFor('pre-closeout', (s) => { s.controls.N6.state = 'NOT_APPLICABLE'; }), 'pre-closeout').row, 4);
-  assert.equal(computeOverall(stateFor('pre-closeout', (s) => { s.controls.N6.state = 'NOT_APPLICABLE'; s.checks.C4.verdict = 'NOT_EVIDENCED(near-tolerance)'; }), 'pre-closeout').row, 7);
+  assert.equal(computeOverall(stateFor('pre-closeout', (s) => { setControlState(s, 'N6', 'NOT_APPLICABLE'); }), 'pre-closeout').row, 4);
+  assert.equal(computeOverall(stateFor('pre-closeout', (s) => { setControlState(s, 'N6', 'NOT_APPLICABLE'); Object.assign(s.checks.C4, { verdict: 'NOT_EVIDENCED', reason: 'near-tolerance' }); }), 'pre-closeout').row, 7);
 });
 
-test('check verdict parsing: bare or parameterised enum values only', () => {
-  assert.equal(checkVerdictBase({ verdict: 'BLOCKED(timeout:load)' }), 'BLOCKED');
-  assert.equal(checkVerdictBase('NOT_EVIDENCED(unstable-frame)'), 'NOT_EVIDENCED');
-  assert.equal(checkVerdictBase({ verdict: 'PASS' }), 'PASS');
-  for (const bad of ['pass', 'OK', 'FAIL(', 'BLOCKED(x', '', null, undefined, 3, {}]) assert.equal(checkVerdictBase(typeof bad === 'string' ? { verdict: bad } : bad), null, String(bad));
+test('check verdict reading: bare base of a check-run record only (BLOCKED(x) is notation, never stored)', () => {
+  assert.equal(checkVerdictBase({ recordType: 'check-run', verdict: 'BLOCKED', reason: 'timeout:load' }), 'BLOCKED');
+  assert.equal(checkVerdictBase({ recordType: 'check-run', verdict: 'PASS' }), 'PASS');
+  for (const bad of ['BLOCKED(timeout:load)', 'NOT_EVIDENCED(unstable-frame)', 'pass', 'OK', 'FAIL(', '']) assert.equal(checkVerdictBase({ recordType: 'check-run', verdict: bad }), null, bad);
+  // no recordType / a gate-disposition record (no verdict) / non-objects => null
+  assert.equal(checkVerdictBase({ verdict: 'PASS' }), null);
+  assert.equal(checkVerdictBase({ recordType: 'gate-disposition', verdict: 'PASS' }), null);
+  for (const bad of ['PASS', null, undefined, 3, {}]) assert.equal(checkVerdictBase(bad), null, String(bad));
 });
 
 test('fail-closed inputs: missing/garbage fields never yield PASS', () => {
@@ -348,11 +363,11 @@ test('§8 product matrix: exactly one row, FAIL rows win over BLOCKED/NOT_EVIDEN
     if (c.cleanup === 'resolved') s.cleanupFailures = ['unloadModelA'];
     if (c.cleanup === 'unresolved') s.cleanupUnresolvedOwnership = true;
     if (c.checks === 'fail') s.checks.C7.verdict = 'FAIL';
-    if (c.checks === 'blocked') s.checks.C1.verdict = 'BLOCKED(timeout:load)';
-    if (c.checks === 'not-evidenced') s.checks.C20.verdict = 'NOT_EVIDENCED(no-change-observed)';
-    if (c.controls === 'n1-not-detected') s.controls.N1.state = 'NOT_DETECTED';
-    if (c.controls === 'n2-not-discriminating') s.controls.N2.state = 'NOT_DISCRIMINATING';
-    if (c.controls === 'n6-na-while-c4-pass') s.controls.N6.state = 'NOT_APPLICABLE';
+    if (c.checks === 'blocked') Object.assign(s.checks.C12, { verdict: 'BLOCKED', reason: 'timeout:present' });
+    if (c.checks === 'not-evidenced') Object.assign(s.checks.C20, { verdict: 'NOT_EVIDENCED', reason: 'no-change-observed' });
+    if (c.controls === 'n1-not-detected') setControlState(s, 'N1', 'NOT_DETECTED');
+    if (c.controls === 'n2-not-discriminating') setControlState(s, 'N2', 'NOT_DISCRIMINATING');
+    if (c.controls === 'n6-na-while-c4-pass') setControlState(s, 'N6', 'NOT_APPLICABLE');
     if (c.journal === 'inconsistent') s.attempt.attemptId = randomUUID();
     s.script.integrityResult = c.integrity;
     s.sessionTainted = c.tainted;

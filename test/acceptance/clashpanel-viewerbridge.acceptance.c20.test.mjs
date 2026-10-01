@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import {
   TABLE_T, cameraSample, projectToPixel, cameraFromSample, computeC20Footprints, buildC20Masks, changedPixelIndices, runLengthEncode, runLengthDecode,
   overlayRenderingOracle, evaluateN8, evaluateC20, selectC20Target, C20_REASONS, validateCheckRecord, validateControlRecord,
+  checkVerdictLabel as vr,
 } from './clashpanel-viewerbridge.acceptance.mjs';
 
 // Perspective camera at the origin looking down -z, fov 90°, aspect 1 (THREE column-major).
@@ -129,7 +130,7 @@ test('evidence-too-large: a changed-pixel run list above 1 MiB => NOT_EVIDENCED(
   const on = new Uint8Array(W2 * H2 * 4);
   for (let p = 0; p < W2 * H2; p += 2) on[p * 4] = 1; // alternating pixels => ~524k runs
   const o = overlayRenderingOracle({ W: W2, H: H2, dsf: 1, cameras: { K0, K1: K0, K2: K0, K3: K0 }, offAttempts: [{ identical: true }], onAttempts: [{ identical: true }], footprints: fp, frames: { off1: new Uint8Array(W2 * H2 * 4), on, clear: new Uint8Array(W2 * H2 * 4) } });
-  assert.equal(o.verdict, 'NOT_EVIDENCED(evidence-too-large)');
+  assert.equal(vr(o), 'NOT_EVIDENCED(evidence-too-large)');
   assert.ok(o.listBytes.changed > 1024 * 1024);
 });
 
@@ -149,32 +150,32 @@ test('H2: C20 evidence-too-large (post-clear list > 1 MiB) does not make N8 NOT_
   for (let p = 0; p < W2 * H2; p += 2) clear[p * 4] = 1; // scattered post-clear difference => ~524k runs
   const input = { W: W2, H: H2, dsf: 1, cameras: { K0, K1: K0, K2: K0, K3: K0 }, offAttempts: [{ identical: true }], onAttempts: [{ identical: true }], footprints: fp, frames: { off1: new Uint8Array(W2 * H2 * 4), on, clear } };
   const real = overlayRenderingOracle(input);
-  assert.equal(real.verdict, 'NOT_EVIDENCED(evidence-too-large)');
+  assert.equal(vr(real), 'NOT_EVIDENCED(evidence-too-large)');
   assert.equal(real.reachedPixelComparison, true);
   assert.ok(real.listBytes.clear > 1024 * 1024);
   const n8 = evaluateN8({ oracleInput: input, oracleResult: real });
-  assert.equal(n8.fields.nullChange.verdict, 'NOT_EVIDENCED(no-change-observed)');
+  assert.equal(vr(n8.fields.nullChange), 'NOT_EVIDENCED(no-change-observed)');
   assert.notEqual(n8.state, 'NOT_DETECTED');
   const c20 = evaluateC20({ target: { row: {} }, oracleInput: input });
-  assert.equal(c20.record.verdict, 'NOT_EVIDENCED(evidence-too-large)');
+  assert.equal(vr(c20.record), 'NOT_EVIDENCED(evidence-too-large)');
   assert.notEqual(c20.n8.state, 'NOT_DETECTED');
 });
 
 test('evaluateC20: no-target, BLOCKED preconditions / structural steps / T5-T7 deadlines, dsf NOT_EVIDENCED; N8 NOT_APPLICABLE on every early exit', () => {
-  assert.equal(evaluateC20({ target: null }).record.verdict, 'NOT_EVIDENCED(no-target)');
+  assert.equal(vr(evaluateC20({ target: null }).record), 'NOT_EVIDENCED(no-target)');
   const t = { row: {} };
   let r = evaluateC20({ target: t, preconditions: { aRContained: false } });
-  assert.equal(r.record.verdict, 'BLOCKED(precondition:aRContained)');
+  assert.equal(vr(r.record), 'BLOCKED(precondition:aRContained)');
   assert.equal(r.n8.state, 'NOT_APPLICABLE');
   r = evaluateC20({ target: t, timeouts: { screenshot: true } });
-  assert.equal(r.record.verdict, 'BLOCKED(timeout:screenshot)');
+  assert.equal(vr(r.record), 'BLOCKED(timeout:screenshot)');
   r = evaluateC20({ target: t, preconditions: { dsf: false } });
-  assert.equal(r.record.verdict, 'NOT_EVIDENCED(dsf)');
+  assert.equal(vr(r.record), 'NOT_EVIDENCED(dsf)');
   r = evaluateC20({ target: t, structural: { a3Markers: false }, oracleInput: baseInput() });
-  assert.equal(r.record.verdict, 'BLOCKED(precondition:a3Markers)');
+  assert.equal(vr(r.record), 'BLOCKED(precondition:a3Markers)');
   const unstable = baseInput({ offAttempts: [{ identical: false }, { identical: false }], footprints: null, frames: {} });
   r = evaluateC20({ target: t, oracleInput: unstable });
-  assert.equal(r.record.verdict, 'NOT_EVIDENCED(unstable-frame)');
+  assert.equal(vr(r.record), 'NOT_EVIDENCED(unstable-frame)');
   assert.equal(r.n8.state, 'NOT_APPLICABLE');
 });
 
@@ -183,8 +184,8 @@ test('N8: (i) null-change must be exactly no-change-observed; (ii) displaced foo
   const res = overlayRenderingOracle(input);
   const n8 = evaluateN8({ oracleInput: input, oracleResult: res });
   assert.equal(n8.state, 'DETECTED');
-  assert.equal(n8.fields.nullChange.verdict, 'NOT_EVIDENCED(no-change-observed)');
-  assert.equal(n8.fields.displaced.verdict, 'NOT_EVIDENCED(locality-violation)');
+  assert.equal(vr(n8.fields.nullChange), 'NOT_EVIDENCED(no-change-observed)');
+  assert.equal(vr(n8.fields.displaced), 'NOT_EVIDENCED(locality-violation)');
   // X pixel that also lies in the displaced sphere footprint (x = 100 + 100 wraps to 0)
   const on = input.frames.on.slice();
   paint(on, 0, 100);

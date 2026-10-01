@@ -4,8 +4,10 @@
 // §9 cleanup, §9.1 closeout, §8 exit codes) with an ENTIRELY FAKE browser package, page, viewer
 // and filesystem. The real harness keeps LIVE_PATH_WIRED=false, so its main() can never get past
 // W0 (asserted below). To exercise the wired flow, this file imports a MUTATED COPY of the harness
-// written to an os.tmpdir() sandbox with exactly two constants changed -- LIVE_PATH_WIRED=true and
-// EXPECTED_VIEWER_SHA256 = the SHA-256 of this file's fake viewer3D.js body -- and drives its
+// written to an os.tmpdir() sandbox with exactly three constants changed -- LIVE_PATH_WIRED=true,
+// G2_DUAL_COUNTER_GATE.resolved=true (the dry run SIMULATES a resolved before-live gate; the real
+// harness refuses live while it is unresolved, M2) and EXPECTED_VIEWER_SHA256 = the SHA-256 of this
+// file's fake viewer3D.js body -- and drives its
 // main() with deps: a recording fake fs, a fake git, a fake module server and a fake browser
 // package whose page answers the in-page registry keys. Nothing here imports playwright, launches a
 // browser, touches the network, or writes under test/acceptance/results/.
@@ -16,9 +18,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as REAL from './clashpanel-viewerbridge.acceptance.mjs';
+
+const vr = REAL.checkVerdictLabel;
 
 const HARNESS_FILE = fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url));
 const REAL_SOURCE = readFileSync(HARNESS_FILE, 'utf8');
@@ -29,13 +33,21 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 const FAKE_VIEWER_BODY = Buffer.from('/* fake viewer3D.js body for the offline dry run */\n');
 const WIRED_LINE = 'const LIVE_PATH_WIRED = false;';
 const SHA_LINE = `const EXPECTED_VIEWER_SHA256 = '${REAL.EXPECTED_VIEWER_SHA256}';`;
+const GATE_LINE = "const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, ";
 assert.equal(REAL_SOURCE.split(WIRED_LINE).length - 1, 1);
 assert.equal(REAL_SOURCE.split(SHA_LINE).length - 1, 1);
-const MUTATED_SOURCE = REAL_SOURCE.replace(WIRED_LINE, 'const LIVE_PATH_WIRED = true;').replace(SHA_LINE, `const EXPECTED_VIEWER_SHA256 = '${sha(FAKE_VIEWER_BODY)}';`);
+assert.equal(REAL_SOURCE.split(GATE_LINE).length - 1, 1);
+const WIRED_ONLY_SOURCE = REAL_SOURCE.replace(WIRED_LINE, 'const LIVE_PATH_WIRED = true;').replace(SHA_LINE, `const EXPECTED_VIEWER_SHA256 = '${sha(FAKE_VIEWER_BODY)}';`);
+const MUTATED_SOURCE = WIRED_ONLY_SOURCE.replace(GATE_LINE, 'const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: true, ');
 const SANDBOX = mkdtempSync(path.join(os.tmpdir(), 'g2-mainflow-'));
 const MUTATED_FILE = path.join(SANDBOX, 'clashpanel-viewerbridge.acceptance.mjs');
 writeFileSync(MUTATED_FILE, MUTATED_SOURCE);
 const H = await import(pathToFileURL(MUTATED_FILE).href);
+// M2: a copy with ONLY the wiring flag (and the fake viewer SHA) changed -- the gate stays unresolved.
+const WIRED_ONLY_FILE = path.join(SANDBOX, 'wired-only', 'clashpanel-viewerbridge.acceptance.mjs');
+mkdirSync(path.dirname(WIRED_ONLY_FILE));
+writeFileSync(WIRED_ONLY_FILE, WIRED_ONLY_SOURCE);
+const HW = await import(pathToFileURL(WIRED_ONLY_FILE).href);
 after(() => { rmSync(SANDBOX, { recursive: true, force: true }); });
 
 // ---- fixture: repo tree in the fake fs + a valid authorization record ---------------------------
@@ -44,7 +56,10 @@ const ROOT = '/repo';
 const HEAD = '82dab8244d8d83f3cb824b05199d7a2ce5b0f2e0';
 const RECORD = 'docs/prompts/g2-live-authorization.md';
 const AUTH_ID = 'g2-live-dryrun-0001';
-const PROC_BYTES = 'procedure bytes (stand-in)\n';
+// The real accepted procedure bytes: W1 binds ACCEPTED_PROCEDURE_SHA256, so a stand-in would be refused
+// (`procedure-sha256-not-accepted`) before reservation.
+const PROC_BYTES = readFileSync(path.join(path.dirname(HARNESS_FILE), '..', '..', H.PROCEDURE_REL_PATH), 'utf8');
+assert.equal(sha(Buffer.from(PROC_BYTES)), H.ACCEPTED_PROCEDURE_SHA256);
 const CHAIN = H.resolveAttemptsChain(ROOT);
 const JOURNAL_PATH = path.join(CHAIN.D2, H.journalName(AUTH_ID));
 
@@ -66,18 +81,51 @@ const FLAG = '--execute-live-g2';
 const ARGV = ['node', 'h.mjs', FLAG, '--authorization-record', RECORD];
 const ENV = { G2_LIVE_AUTHORIZED: 'YES' };
 
-const PASS_CHECK = () => ({ verdict: 'PASS', reason: null, fields: {}, evidence: {} });
+const PASS_CHECK = () => ({ recordType: 'check-run', verdict: 'PASS', reason: null, fields: {}, evidence: {} });
+const AT = '2026-09-30T00:00:01.000Z';
 
 function passRun(over = {}) {
   const checks = {};
   for (const n of H.CHECK_NAMES) checks[n] = PASS_CHECK();
+  checks.C1 = { ...checks.C1, finalizedSeq: 1, finalizedAt: AT };
   const controls = {};
-  for (const n of H.CONTROL_NAMES) controls[n] = { state: H.CONTROL_ACCEPTABLE_STATE[n], fields: {}, evidence: {} };
+  H.CONTROL_NAMES.forEach((n, i) => {
+    controls[n] = H.makeControlRunRecord(n, { state: H.CONTROL_ACCEPTABLE_STATE[n], fields: {}, evidence: {} }, { start: { startSeq: 10 + 2 * i, startedAt: AT }, terminalSeq: 11 + 2 * i, terminalAt: AT });
+  });
   return {
     checks, controls, subchecks: {}, extras: { c4Table: [], sceneOwnership: [], c17: null, c20: null, eventLog: [] },
+    // slice B2: every runner result carries the global C1 gate (OPEN for an all-PASS run) and C1's single check-finalized event
+    c1FinalizedEvent: { seq: 1, kind: 'check-finalized', check: 'C1', verdict: 'PASS', reason: null, phase: 'P1', activeCheck: 'C1', activeControl: null },
+    gates: { C1: { gateSeq: 2, gateAt: AT, c1Verdict: 'PASS', c1Reason: null, c1FinalizedSeq: 1, fatalCountAtGate: 0, outcome: 'OPEN', notStarted: [] } },
+    markers: [{ seq: 0, name: 'P1' }, { seq: 3, name: 'P2' }, { seq: 40, name: 'cleanup' }],
     spyInstall: null, sessionTainted: false, taintPhase: null, phaseLog: [], spyLedger: [], screenshots: [], stateSnapshots: [],
     staleContinuationsDropped: 0, ...over,
   };
+}
+
+/**
+ * Slice C1 (§9.2): the node passes `{seqBase}` (its run counter at the RPC) to g2RunPhases and the page
+ * recorder numbers its records after it. The passRun fixture is written relative to 0, so the fake page
+ * shifts every seq of its result by `seqBase` (what a page seeded with `seqBase` would produce).
+ */
+const NODE_EVENT_GAP = 1000;
+function shiftRunSeqs(run, base) {
+  if (run && run.absoluteSeqs === true) { const { absoluteSeqs, ...rest } = run; void absoluteSeqs; return rest; }
+  if (!run || typeof run !== 'object' || !Number.isInteger(base) || base === 0) return run;
+  const r = JSON.parse(JSON.stringify(run));
+  const sh = (o, k) => { if (o && Number.isInteger(o[k])) o[k] += base; };
+  for (const m of r.markers || []) sh(m, 'seq');
+  if (r.c1FinalizedEvent) sh(r.c1FinalizedEvent, 'seq');
+  if (r.gates && r.gates.C1) { sh(r.gates.C1, 'gateSeq'); sh(r.gates.C1, 'c1FinalizedSeq'); }
+  if (r.checks && r.checks.C1) sh(r.checks.C1, 'finalizedSeq');
+  for (const c of Object.values(r.controls || {})) {
+    if (c && c.executionRecord) { sh(c.executionRecord, 'startSeq'); sh(c.executionRecord, 'terminalSeq'); }
+    if (c && c.recordType === 'gate-disposition') sh(c, 'dispositionSeq');
+  }
+  for (const c of Object.values(r.checks || {})) if (c && c.recordType === 'gate-disposition') sh(c, 'dispositionSeq');
+  for (const k of ['eventLog', 'spyLedger', 'stateSnapshots']) for (const e of r[k] || []) sh(e, 'seq');
+  if (r.extras) for (const e of r.extras.eventLog || []) sh(e, 'seq');
+  return r;
 }
 
 const FACTS = Object.freeze({
@@ -160,6 +208,10 @@ function makeWorld(opts = {}) {
       log.push({ kind: 'rpc', key: payload.key, arg: payload.arg });
       const h = handlers[payload.key];
       if (typeof h !== 'function') throw new Error(`no fake handler for ${payload.key}`);
+      // passRun numbers from 0; a page recorder seeded with seqBase allocates seqBase+1 first. The fake
+      // page additionally leaves NODE_EVENT_GAP seqs for node events received during the run: the interim
+      // two-namespace wiring cannot interleave them (a collision is a row-5 contradiction, tested below).
+      if (payload.key === 'g2RunPhases') return shiftRunSeqs(await h(payload.arg, { page, log }), payload.arg && Number.isInteger(payload.arg.seqBase) ? payload.arg.seqBase + 1 + NODE_EVENT_GAP : 0);
       return h(payload.arg, { page, log });
     },
     async screenshot() { return Buffer.from('png'); },
@@ -242,13 +294,29 @@ test('real harness: LIVE_PATH_WIRED is false and main() refuses right after W0 w
   assert.deepEqual(calls, []);
 });
 
-test('mutated copy differs from the real harness in exactly the two constants', () => {
+test('mutated copy differs from the real harness in exactly the three constants (wiring flag, simulated-resolved dual-counter gate, fake viewer SHA)', () => {
   const a = REAL_SOURCE.split('\n');
   const b = MUTATED_SOURCE.split('\n');
   assert.equal(a.length, b.length);
   const diff = a.map((l, i) => (l === b[i] ? null : i)).filter((i) => i !== null);
-  assert.equal(diff.length, 2);
+  assert.equal(diff.length, 3);
   assert.equal(H.LIVE_PATH_WIRED, true);
+  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
+  assert.equal(REAL.G2_DUAL_COUNTER_GATE.resolved, false);
+});
+
+test('M2: LIVE_PATH_WIRED=true while G2_DUAL_COUNTER_GATE is unresolved => main() refuses (dual-counter-gate-unresolved) right after the wiring gate, with no fs/git/browser/event activity; live-mode runChecksInPhaseOrder refuses too', async () => {
+  assert.equal(HW.LIVE_PATH_WIRED, true);
+  assert.equal(HW.G2_DUAL_COUNTER_GATE.resolved, false);
+  const calls = [];
+  const trapFs = new Proxy({}, { get: (_t, k) => (...a) => { calls.push(['fs', String(k), ...a]); throw new Error('fs must not be touched'); } });
+  const trapPkg = new Proxy({}, { get: (_t, k) => { calls.push(['browserPackage', String(k)]); throw new Error('browser package must not be touched'); } });
+  await assert.rejects(
+    HW.main({ argv: ARGV, env: ENV, deps: { fs: trapFs, repoRoot: ROOT, gitHead: () => { calls.push(['gitHead']); return HEAD; }, git: () => { calls.push(['git']); return ''; }, browserPackage: trapPkg, onEvent: (e) => calls.push(['event', e]), serveModule: () => { calls.push(['serve']); } } }),
+    (err) => err instanceof HW.G2RefusalError && err.reason === 'dual-counter-gate-unresolved',
+  );
+  assert.deepEqual(calls, []);
+  await assert.rejects(HW.runChecksInPhaseOrder({ mode: 'live', drivers: {} }), (err) => err instanceof HW.G2RefusalError && err.reason === 'dual-counter-gate-unresolved');
 });
 
 // ------------------------------------------------------------------------------------------
@@ -466,7 +534,7 @@ test('model A load failure => B still loaded after A (order A then B); A unloada
 test('in-page phase run throws => every check BLOCKED, session tainted, controls not executable => FAIL row 4 (never PASS; §7 literal)', async () => {
   const { r, reader } = await consumedRun({ handlers: { g2RunPhases: () => { throw new Error('page crashed'); } } });
   assert.equal(r.state.sessionTainted, true);
-  assert.ok(Object.values(r.state.checks).every((c) => c.verdict === 'BLOCKED(phase-run-threw)'));
+  assert.ok(Object.values(r.state.checks).every((c) => vr(c) === 'BLOCKED(phase-run-threw)'));
   // §7: NOT_EXECUTABLE / NOT_DETECTED controls are non-acceptable => §8 row 4 FAIL (the X4 reading flagged by Task 4).
   assert.equal(r.finalOverall, 'FAIL');
   assert.equal(r.closeout.primaryRow, 4);
@@ -475,16 +543,34 @@ test('in-page phase run throws => every check BLOCKED, session tainted, controls
 
 test('page records are re-validated Node-side: an invalid check record fails closed', async () => {
   const { r } = await consumedRun({ handlers: { g2RunPhases: () => { const run = passRun(); run.checks.C9 = { verdict: 'MAYBE' }; delete run.controls.N4; return run; } } });
-  assert.equal(r.state.checks.C9.verdict, 'BLOCKED(invalid-or-missing-page-record)');
+  assert.equal(vr(r.state.checks.C9), 'BLOCKED(invalid-or-missing-page-record)');
   assert.equal(r.state.controls.N4.state, 'NOT_DETECTED');
   assert.equal(r.finalOverall, 'FAIL');
 });
 
 test('fatal page event during the phase run => row 1 FAIL committed through K; the page fatal latch is set', async () => {
-  const { w, r, reader } = await consumedRun({ handlers: { g2RunPhases: (_a, { page }) => { page.emit('pageerror', new Error('Bearer abc.def leaked?')); return passRun(); } } });
+  // A faithful fake page: the node-observed pageerror reaches the page latch BEFORE the gate, so the real
+  // runner (offline-fake drivers, recorder seeded past seqBase) counts it through the page mirror =>
+  // fatalCountAtGate 1 => CLOSED_OTHER; the node ledger's sequenced entry recomputes the same count.
+  const g2RunPhases = async (arg, { page }) => {
+    page.emit('pageerror', new Error('Bearer abc.def leaked?'));
+    let n = arg.seqBase + NODE_EVENT_GAP;
+    const rec = H.createCallRecorder({ nextSeq: () => { n += 1; return n; } });
+    const M = { loaded: true, classification: 'CONFIRMED_SVF2', inAllModels: true };
+    const run = await H.runChecksInPhaseOrder({ drivers: { P1: () => ({ checks: { C1: H.evaluateC1({ A: M, B: M, loadedCount: 2 }) } }) }, recorder: rec, errorLedger: () => ({ fatalCount: 1, entries: [{ kind: 'pageerror' }] }) });
+    assert.equal(run.gates.C1.outcome, 'CLOSED_OTHER');
+    return {
+      absoluteSeqs: true, checks: run.checks, controls: run.controls, subchecks: run.subchecks, extras: { c4Table: [], sceneOwnership: [], c17: null, c20: null, eventLog: [] },
+      c1FinalizedEvent: run.c1FinalizedEvent, gates: run.gates, markers: run.markers, eventLog: run.eventLog, spyInstall: null, sessionTainted: false, taintPhase: null,
+      phaseLog: run.phaseLog, spyLedger: rec.records, screenshots: [], stateSnapshots: [], staleContinuationsDropped: 0,
+    };
+  };
+  const { w, r, reader } = await consumedRun({ handlers: { g2RunPhases } });
   assert.equal(r.finalOverall, 'FAIL');
   assert.equal(r.closeout.primaryRow, 1);
-  assert.equal(r.closeout.committed, true);
+  assert.equal(r.closeout.committed, true, JSON.stringify(r.closeout.causes));
+  assert.equal(r.state.gates.C1.fatalCountAtGate, 1);
+  assert.ok(r.state.errorLedger.entries[0].seq < r.state.gates.C1.gateSeq, 'the node-sequenced entry precedes the gate');
   assert.equal(reader.verdict, 'FAIL');
   assert.equal(r.state.errorLedger.fatalCount, 1);
   assert.doesNotMatch(r.state.errorLedger.entries[0].detail, /abc\.def/, 'fatal detail is redacted');
@@ -590,7 +676,7 @@ test('EvidenceCapError (a verdict-critical field over the 4 KiB cap) => closeout
 });
 
 test('R1 persisted by the live closeout is capped and redacted (spy ledger wrapper, secrets masked)', async () => {
-  const { w, r } = await consumedRun({ handlers: { g2RunPhases: () => passRun({ spyLedger: [{ method: 'viewer.fitToView', origin: 'bridge', argSummaries: [{ kind: 'string', value: 'https://h.invalid/x?access_token=SECRET' }] }] }) } });
+  const { w, r } = await consumedRun({ handlers: { g2RunPhases: () => passRun({ spyLedger: [{ seq: 35, phase: 'P6', activeCheck: 'C6', activeControl: null, method: 'viewer.fitToView', origin: 'bridge', argSummaries: [{ kind: 'string', value: 'https://h.invalid/x?access_token=SECRET' }] }] }) } });
   assert.equal(r.finalOverall, 'PASS');
   const r1 = JSON.parse(H.readArtifactFileMap({ fs: w.fs.processCrashView(), chain: CHAIN }).results[H.R1_NAME].toString('utf8'));
   assert.equal(r1.spyLedger.truncated, false);
@@ -634,6 +720,168 @@ test('route setup: the synthetic page is served at its exact URL; /clashpanel/**
   const ok = await call('http://localhost:8080/clashpanel/viewer/ViewerBridge.js');
   assert.equal(ok.fulfill.status, 200);
   assert.equal((await call('https://elsewhere.invalid/clashpanel/viewer/ViewerBridge.js')).continued, true);
-  assert.deepEqual(Object.keys(w.bindings).sort(), [H.G2_NODE_FATAL_BINDING, H.G2_NODE_SCREENSHOT_BINDING].sort());
+  assert.deepEqual(Object.keys(w.bindings).sort(), [H.G2_NODE_FATAL_BINDING, H.G2_NODE_OPLEDGER_BINDING, H.G2_NODE_SCREENSHOT_BINDING].sort());
+  // slice C2: the operation-ledger barrier accepts only the §9.2 page mutations (C16 hide B, C17 unload B, a cleanup unload)
+  const opb = w.bindings[H.G2_NODE_OPLEDGER_BINDING];
+  assert.deepEqual(await opb('begin', { operationType: 'hide', modelId: 'A', phase: 'P9', invokedBy: 'C16' }), { ok: false, reason: 'refused' });
+  assert.deepEqual(await opb('begin', { operationType: 'teardown', teardownTarget: 'closePage', modelId: null, phase: 'cleanup', invokedBy: 'cleanup:closePage' }), { ok: false, reason: 'refused' });
   await assert.rejects(w.bindings[H.G2_NODE_SCREENSHOT_BINDING]({ x: 0.5, y: 0, width: 10, height: 10 }), /integer clip/);
+});
+
+// ------------------------------------------------------------------------------------------
+// Slice C2 (§9.2): the operation ledger, the frozen prefix-source snapshot and the acknowledgement
+// barrier wired through the whole (fake) main flow.
+// ------------------------------------------------------------------------------------------
+
+const C2_CDN = 'https://cdn.derivative.invalid';
+const c2Req = (url, { resourceType = 'fetch', errorText = 'net::ERR_ABORTED' } = {}) => ({
+  url: () => url, method: () => 'GET', resourceType: () => resourceType, isNavigationRequest: () => false, failure: () => ({ errorText }), redirectedFrom: () => null, frame: () => null,
+});
+/** Emits finished-2xx evidence for model `label` while its load window is open (inside g2DocumentLoad). */
+function c2LoadEvidence(page, label) {
+  const r = c2Req(`${C2_CDN}/model${label}/output/0/geom.bin`);
+  page.emit('request', r);
+  page.emit('response', { request: () => r, status: () => 200, fromServiceWorker: () => false, body: async () => Buffer.alloc(0) });
+  page.emit('requestfinished', r);
+}
+
+/** World whose cleanup unload of B goes through the node acknowledgement barrier while `abortUrl` is in flight. */
+function c2CleanupAbortWorld(abortUrl) {
+  const w = makeWorld({ handlers: { g2DocumentLoad: (arg, { page }) => { c2LoadEvidence(page, arg.label); return { status: 'completed' }; } } });
+  w.handlers.g2CleanupStep = async (arg) => {
+    if (arg.name !== 'unloadModelB') return { ok: true, result: null, error: null, ownershipRemains: false };
+    const req = c2Req(abortUrl);
+    w.page.emit('request', req);
+    const op = await w.bindings[H.G2_NODE_OPLEDGER_BINDING]('begin', { operationType: 'unload', modelId: 'B', phase: 'cleanup', invokedBy: 'cleanup:unloadModelB' });
+    assert.equal(op.ok, true);
+    w.page.emit('requestfailed', req); // the abort caused by viewer.unloadModel(B), after the node-side ack
+    await w.bindings[H.G2_NODE_OPLEDGER_BINDING]('end', { operationId: op.operationId, terminalOutcome: 'settled' });
+    return { ok: true, result: { outcome: 'unloaded' }, error: null, ownershipRemains: false };
+  };
+  return w;
+}
+
+test('slice C2 dry run: load A/B and the page/context/browser teardown are recorded in opLedger; the prefix snapshot is frozen at the B window close; PASS', async () => {
+  const w = makeWorld({ handlers: { g2DocumentLoad: (arg, { page }) => { c2LoadEvidence(page, arg.label); return { status: 'completed' }; } } });
+  const r = await runMain(w);
+  assert.equal(r.finalOverall, 'PASS', JSON.stringify(r.closeout && r.closeout.causes));
+  const L = r.state.errorLedger;
+  assert.deepEqual(L.opLedger.map((o) => [o.recordType, o.operationType || o.modelId, o.completionOutcome || o.terminalOutcome]), [
+    ['load', 'A', 'ready'], ['load', 'B', 'ready'], ['mutation', 'teardown', 'settled'], ['mutation', 'teardown', 'settled'], ['mutation', 'teardown', 'settled'],
+  ]);
+  assert.deepEqual(L.opLedger.slice(2).map((o) => o.teardownTarget), ['closePage', 'closeContext', 'closeBrowser']);
+  const firstDocLoadSeq = L.requestObservations.find((o) => o.urlRedacted.includes('/modelA/')).startSeq;
+  assert.ok(L.opLedger[0].startSeq < firstDocLoadSeq && firstDocLoadSeq <= L.opLedger[0].endSeq, 'the A evidence lies inside the A window');
+  assert.deepEqual(L.prefixDerivation.modelPrefixes, { A: [`${C2_CDN}/modelA/output/0`], B: [`${C2_CDN}/modelB/output/0`] });
+  assert.equal(L.prefixDerivation.bindingAvailable, true);
+  assert.deepEqual(L.modelPrefixes, L.prefixDerivation.modelPrefixes);
+  assert.ok(H.isPrefixLedgerFrozen(L));
+  assert.deepEqual(H.recordSchemaProblems(r.state), []);
+});
+
+test('slice C2 dry run: an ERR_ABORTED of a B-bound request inside the acknowledged cleanup unload of B => EC-unload, no fatal, PASS; the same abort on an A-bound or unbound request => FATAL (row 1)', async () => {
+  const ok = c2CleanupAbortWorld(`${C2_CDN}/modelB/output/0/stream.bin`);
+  const r = await runMain(ok);
+  assert.equal(r.finalOverall, 'PASS', JSON.stringify(r.closeout && r.closeout.causes));
+  const L = r.state.errorLedger;
+  const ec = L.requestFailures[0];
+  assert.deepEqual([ec.closeout.classification, ec.closeout.rule, ec.closeout.modelId, ec.closeout.boundPrefix, ec.agree], ['expected-cancellation', 'EC-unload', 'B', `${C2_CDN}/modelB/output/0`, true]);
+  assert.ok(ec.closeout.evidenceRefs.some((p) => p.startsWith('/errorLedger/prefixSourceLedger/')));
+  const unload = L.opLedger.find((o) => o.invokedBy === 'cleanup:unloadModelB');
+  assert.deepEqual([unload.causalEvidence.cleanupStepRef, unload.startSeq < ec.failSeq, ec.failSeq < unload.cancellationWindow.toSeqExclusive], ['/cleanupStepStatus/unloadModelB', true, true]);
+  assert.equal(L.fatalCount, 0);
+  for (const url of [`${C2_CDN}/modelA/output/0/stream.bin`, `${C2_CDN}/elsewhere/x.bin`]) {
+    const bad = c2CleanupAbortWorld(url);
+    const rb = await runMain(bad);
+    assert.equal(rb.finalOverall, 'FAIL', url);
+    assert.equal(rb.closeout.primaryRow, 1, url);
+    assert.equal(rb.state.errorLedger.requestFailures[0].closeout.classification, 'fatal-required-resource', url);
+  }
+});
+
+// ------------------------------------------------------------------------------------------
+// H1 / M2 (2026-10-01 follow-up review): node-side P1 load outcomes vs C1, and the real page
+// numbering against node allocations during the in-page run.
+// ------------------------------------------------------------------------------------------
+
+const NOT_LOADED_A = (loadStatus) => ({ ...JSON.parse(JSON.stringify(FACTS)), loadedCount: 1, A: { loaded: false, classification: null, inAllModels: false, unitScale: null, unitString: null, loadStatus } });
+
+/**
+ * A fake g2RunPhases that runs the REAL runner over `facts` (P1 driver = the real evaluateC1). With
+ * `feedNode` the facts go through the real `withNodeLoadOutcomes(facts, arg.nodeLoadOutcomes)` -- what
+ * the real g2BuildEnv's env.modelFacts does; without it the page ignores the node outcomes (the pre-H1
+ * wiring). `gap` = the page recorder's offset past `seqBase`: the real g2BuildEnv uses 0
+ * (`let pageSeq = seqBase` -> first allocation seqBase+1), the other dry-run tests NODE_EVENT_GAP.
+ */
+function realRunnerPhases(facts, { feedNode = true, gap = NODE_EVENT_GAP, before = null } = {}) {
+  return async (arg, ctx) => {
+    if (before) before(arg, ctx);
+    let n = arg.seqBase + gap;
+    const rec = H.createCallRecorder({ nextSeq: () => { n += 1; return n; } });
+    const f = feedNode ? H.withNodeLoadOutcomes(facts, arg.nodeLoadOutcomes) : facts;
+    const run = await H.runChecksInPhaseOrder({ drivers: { P1: () => ({ checks: { C1: H.evaluateC1(f) } }) }, recorder: rec, errorLedger: () => ({ fatalCount: 0, entries: [] }) });
+    return {
+      absoluteSeqs: true, checks: run.checks, controls: run.controls, subchecks: run.subchecks, extras: { c4Table: [], sceneOwnership: [], c17: null, c20: null, eventLog: [] },
+      c1FinalizedEvent: run.c1FinalizedEvent, gates: run.gates, markers: run.markers, eventLog: run.eventLog, spyInstall: null, sessionTainted: false, taintPhase: null,
+      phaseLog: run.phaseLog, spyLedger: rec.records, screenshots: [], stateSnapshots: [], staleContinuationsDropped: 0,
+    };
+  };
+}
+const throwingDocLoadA = (arg) => { if (arg.label === 'A') throw new Error('RPC transport failure before the page recorded the load'); return { status: 'completed' }; };
+
+test('H1 dry run: the node passes its load completionOutcomes to g2RunPhases; a P1 load that THREW node-side (page never recorded it) => C1 BLOCKED(harness-exception) => CLOSED_OTHER => row 4 FAIL, never BLOCKED', async () => {
+  const { w, r, reader } = await consumedRun({ handlers: { g2DocumentLoad: throwingDocLoadA, g2CollectModelFacts: () => NOT_LOADED_A(null), g2RunPhases: realRunnerPhases(NOT_LOADED_A(null)) } });
+  const call = w.log.find((e) => e.kind === 'rpc' && e.key === 'g2RunPhases');
+  assert.deepEqual(call.arg.nodeLoadOutcomes, { A: 'harness-exception', B: 'ready' });
+  assert.deepEqual(r.state.errorLedger.opLedger.filter((o) => o.recordType === 'load').map((o) => [o.modelId, o.completionOutcome]), [['A', 'harness-exception'], ['B', 'ready']]);
+  assert.deepEqual([r.state.checks.C1.verdict, r.state.checks.C1.reason, r.state.gates.C1.outcome], ['BLOCKED', 'harness-exception', 'CLOSED_OTHER']);
+  assert.equal(r.state.controls.N3.disposition, 'NOT_EXECUTABLE');
+  assert.equal(r.finalOverall, 'FAIL');
+  assert.equal(r.closeout.primaryRow, 4);
+  assert.equal(r.closeout.committed, true, JSON.stringify(r.closeout.causes));
+  assert.equal(reader.verdict, 'FAIL');
+});
+
+test('H1 dry run backstop: the same node-side harness exception with a page that IGNORES the node outcomes (C1 normalized to prerequisite, legal-looking NRDB) => row 5 c1-load-ledger-mismatch => FAIL, not BLOCKED', async () => {
+  const { r, reader } = await consumedRun({ handlers: { g2DocumentLoad: throwingDocLoadA, g2CollectModelFacts: () => NOT_LOADED_A(null), g2RunPhases: realRunnerPhases(NOT_LOADED_A(null), { feedNode: false }) } });
+  assert.deepEqual([r.state.checks.C1.reason, r.state.gates.C1.outcome], ['prerequisite', 'CLOSED_DEPENDENCY_BLOCKED']);
+  assert.ok(H.recordSchemaProblems(r.state).includes('c1-load-ledger-mismatch:harness-exception'));
+  assert.equal(r.finalOverall, 'FAIL');
+  assert.equal(r.closeout.primaryRow, 5);
+  assert.equal(reader.verdict, 'FAIL');
+});
+
+test('H1 dry run control: a page-side load REJECTION (node outcome rejected) => C1 BLOCKED(prerequisite) => CLOSED_DEPENDENCY_BLOCKED => legal NRDB => row 6 BLOCKED (exit 2)', async () => {
+  const { w, r, reader } = await consumedRun({ handlers: {
+    g2DocumentLoad: (arg) => (arg.label === 'A' ? { status: 'failed', error: { name: 'DocumentLoadError', message: 'x' } } : { status: 'completed' }),
+    g2CollectModelFacts: () => NOT_LOADED_A('failed'), g2RunPhases: realRunnerPhases(NOT_LOADED_A('failed')),
+  } });
+  assert.deepEqual(w.log.find((e) => e.kind === 'rpc' && e.key === 'g2RunPhases').arg.nodeLoadOutcomes, { A: 'rejected', B: 'ready' });
+  assert.deepEqual([r.state.checks.C1.verdict, r.state.checks.C1.reason, r.state.gates.C1.outcome], ['BLOCKED', 'prerequisite', 'CLOSED_DEPENDENCY_BLOCKED']);
+  assert.deepEqual(H.recordSchemaProblems(r.state), []);
+  assert.equal(r.finalOverall, 'BLOCKED', JSON.stringify(r.closeout.causes));
+  assert.equal(r.closeout.primaryRow, 6);
+  assert.equal(r.exitCode, 2);
+  assert.equal(reader.verdict, 'BLOCKED');
+});
+
+test('M2: with the REAL g2BuildEnv page numbering (recorder seeded at exactly seqBase, no gap) node network events during the in-page run collide with page seqs => row 5 seq-not-unique FAIL; the same run with the fake gap stays row 6 BLOCKED', async () => {
+  // the real numbering this test reproduces (static coupling: if g2BuildEnv changes, revisit this test)
+  const env = REAL_SOURCE.slice(REAL_SOURCE.indexOf('function g2BuildEnv('), REAL_SOURCE.indexOf('function g2PhaseBaseline('));
+  assert.ok(env.includes('let pageSeq = seqBase;') && env.includes('nextSeq: () => { pageSeq += 1; return pageSeq; }'), 'g2BuildEnv numbers page records from seqBase+1');
+  const nodeEvents = (_arg, { page }) => { for (const u of ['x1.bin', 'x2.bin']) c2LoadEvidence(page, `B/${u}`); };
+  const handlers = (gap) => ({
+    g2DocumentLoad: (arg) => (arg.label === 'A' ? { status: 'failed', error: { name: 'DocumentLoadError', message: 'x' } } : { status: 'completed' }),
+    g2CollectModelFacts: () => NOT_LOADED_A('failed'), g2RunPhases: realRunnerPhases(NOT_LOADED_A('failed'), { gap, before: nodeEvents }),
+  });
+  const real = await consumedRun({ handlers: handlers(0) });
+  const dup = H.recordSchemaProblems(real.r.state).filter((p) => p.startsWith('seq-not-unique:'));
+  assert.ok(dup.length > 0, 'the collision is detected');
+  assert.equal(real.r.finalOverall, 'FAIL');
+  assert.equal(real.r.closeout.primaryRow, 5);
+  assert.equal(real.reader.verdict, 'FAIL');
+  const gapped = await consumedRun({ handlers: handlers(NODE_EVENT_GAP) });
+  assert.deepEqual(H.recordSchemaProblems(gapped.r.state).filter((p) => p.startsWith('seq-not-unique:')), []);
+  assert.equal(gapped.r.finalOverall, 'BLOCKED', JSON.stringify(gapped.r.closeout.causes));
+  assert.equal(gapped.r.closeout.primaryRow, 6);
 });

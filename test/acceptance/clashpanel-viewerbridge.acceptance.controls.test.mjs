@@ -166,5 +166,10 @@ test('N1 and N3 records from the Section 19/23 controls; N3 also needs the live 
 });
 
 test('every control constructor only emits §7-allowed states', () => {
-  for (const n of CONTROL_NAMES) for (const s of CONTROL_ALLOWED_STATES[n]) assert.equal(makeControlRecord(n, s).state, s);
+  // NOT_RUN_DEPENDENCY_BLOCKED is a §7 terminal state but never a control OUTCOME: it exists only in a
+  // gate-disposition record (L2), so the outcome constructor refuses it.
+  for (const n of CONTROL_NAMES) for (const s of CONTROL_ALLOWED_STATES[n]) {
+    if (s === 'NOT_RUN_DEPENDENCY_BLOCKED') assert.throws(() => makeControlRecord(n, s), TypeError);
+    else assert.equal(makeControlRecord(n, s).state, s);
+  }
 });

@@ -57,7 +57,9 @@ function setup({ mutateState = () => {} } = {}) {
   const state = createOfflineRunStateFixture({ binding });
   Object.defineProperty(state, 'closeoutComplete', { enumerable: false, get() { throw new Error('closeoutComplete read before K'); } });
   mutateState(state);
-  const sink = createFatalEventSink(state.errorLedger);
+  // §9.2: the live sink stamps every fatal entry from the run's single counter (past every fixture seq).
+  let seq = 1000;
+  const sink = createFatalEventSink(state.errorLedger, { nextSeq: () => { seq += 1; return seq; } });
   const commitFs = { linkSync: brandSyncLinkForTest((a, b) => fs.link(a, b)) };
   return { fs, handle, binding, state, sink, commitFs, base: fs.ops.length, arm: (fn) => { armed = fn; }, id: handle.authorizationId };
 }
@@ -288,7 +290,7 @@ test('X11: C7 FAIL (primaryOverall FAIL) and result-JSON write fails => FAIL wit
 });
 
 test('X12: primaryOverall PARTIAL and result-JSON write fails => FAIL (row 5 outranks row 7)', async () => {
-  const ctx = setup({ mutateState: (s) => { s.checks.C20.verdict = 'NOT_EVIDENCED(unstable-frame)'; } });
+  const ctx = setup({ mutateState: (s) => { Object.assign(s.checks.C20, { verdict: 'NOT_EVIDENCED', reason: 'unstable-frame' }); } });
   atFirst(ctx, isOpOn('write', R1_NAME));
   const r = await run(ctx);
   assert.deepEqual([r.primaryOverall, r.finalOverall, r.exitCode], ['PARTIAL', 'FAIL', 1]);
@@ -308,7 +310,7 @@ test('primary non-PASS verdicts are committed as-is through K: BLOCKED exit 2, P
   for (const [mut, verdict, code] of [
     [(s) => { s.classifier.B = 'CONTRADICTORY'; }, 'BLOCKED', 2],
     [(s) => { s.checks.C14.verdict = 'NOT_EVIDENCED'; }, 'PARTIAL', 3],
-    [(s) => { s.checks.C4.verdict = 'FAIL(not-contained)'; }, 'FAIL', 1],
+    [(s) => { Object.assign(s.checks.C4, { verdict: 'FAIL', reason: 'not-contained' }); }, 'FAIL', 1],
   ]) {
     const ctx = setup({ mutateState: mut });
     const r = await run(ctx);

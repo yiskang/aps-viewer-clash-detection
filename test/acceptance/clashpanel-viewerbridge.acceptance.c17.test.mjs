@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   c17Oracle, evaluateN7, C17_PREDICATES, C17_NOT_IN_SCENE_NOTE, createModelLabeler, modelLabelsInArgs, attachModelArgumentTagger,
   createCallRecorder, createWrapperRegistry, recordingWrap, createMonotonicEventLog, summarizeBridgeLedger, validateCheckRecord,
+  checkVerdictLabel as vr,
 } from './clashpanel-viewerbridge.acceptance.mjs';
 
 const NAMES = { BEFORE_MODEL_UNLOAD: 'beforeModelUnload', MODEL_REMOVED: 'modelRemoved' };
@@ -90,7 +91,7 @@ test('C17 mutated ledgers/observations: each V1–V7 violation => FAIL naming ex
       const o = goodObs();
       mutate(o);
       const r = c17Oracle(o);
-      assert.equal(r.record.verdict, `FAIL(${v})`, `${v} mutation #${i}: ${r.record.verdict}`);
+      assert.equal(vr(r.record), `FAIL(${v})`, `${v} mutation #${i}: ${r.record.verdict}`);
     }
   }
 });
@@ -98,13 +99,13 @@ test('C17 mutated ledgers/observations: each V1–V7 violation => FAIL naming ex
 test('C17 BLOCKED paths: V0 false => BLOCKED(precondition:apply); precondition; T5 timeout (never T6)', () => {
   const o = goodObs();
   o.L0.markerMeshCount = 2;
-  assert.equal(c17Oracle(o).record.verdict, 'BLOCKED(precondition:apply)');
+  assert.equal(vr(c17Oracle(o).record), 'BLOCKED(precondition:apply)');
   const o2 = goodObs();
   o2.L0.isolation.target = [{ model: 'A', ids: [11] }];
-  assert.equal(c17Oracle(o2).record.verdict, 'BLOCKED(precondition:apply)');
-  assert.equal(c17Oracle(goodObs(), { preconditionUnmet: 'c16-restoration' }).record.verdict, 'BLOCKED(precondition:c16-restoration)');
-  assert.equal(c17Oracle(goodObs(), { timedOut: 'present' }).record.verdict, 'BLOCKED(timeout:present)');
-  assert.equal(c17Oracle({}).record.verdict, 'BLOCKED(precondition:apply)');
+  assert.equal(vr(c17Oracle(o2).record), 'BLOCKED(precondition:apply)');
+  assert.equal(vr(c17Oracle(goodObs(), { preconditionUnmet: 'c16-restoration' }).record), 'BLOCKED(precondition:c16-restoration)');
+  assert.equal(vr(c17Oracle(goodObs(), { timedOut: 'present' }).record), 'BLOCKED(timeout:present)');
+  assert.equal(vr(c17Oracle({}).record), 'BLOCKED(precondition:apply)');
 });
 
 function preDepartureObs() {

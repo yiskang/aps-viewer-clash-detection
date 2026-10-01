@@ -157,12 +157,13 @@ test('static: no top-level/static playwright import; exactly one dynamic import 
   assert.ok(mainBody().includes(DYNAMIC_IMPORT));
 });
 
-test('source order in main(): interlock -> wiring gate -> record validation -> startup scan -> W2a -> W2b (AUTH_BOUND) -> playwright', () => {
+test('source order in main(): interlock -> wiring gate -> dual-counter gate (M2) -> record validation -> startup scan -> W2a -> W2b (AUTH_BOUND) -> playwright', () => {
   const body = mainBody();
   const order = [
     'parseLiveActivation(',
     'if (!activation.authorized)',
     'if (!LIVE_PATH_WIRED)',
+    'if (G2_DUAL_COUNTER_GATE.resolved !== true)',
     'validateAuthorizationRecord(',
     'if (!validation.ok)',
     'scanAttemptsDirectoryForStartup(',

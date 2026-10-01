@@ -23,6 +23,7 @@ import {
   evaluateC1, evaluateC5, evaluateC7Beta, evaluateSceneOwnership, SCENE_CLASS, evaluateC9, evaluateC10, evaluateC11, evaluateN5,
   evaluateC12, evaluateN4, evaluateC13, evaluateC14, evaluateC15, evaluateC16, evaluateC18a, evaluateC19,
   markersOnlyV1Violations, THEMING_SET_METHOD, C15_FIRST_ONLY_NOTE, C15_RESTORE_FAILED_NOTE,
+  checkVerdictLabel as vr,
 } from './clashpanel-viewerbridge.acceptance.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ const REPO = path.resolve(HERE, '..', '..');
 
 test('check records: BASE(reason) form read by checkVerdictBase; PASS has no reason; validator is fail-closed', () => {
   const r = makeCheckRecord({ verdict: 'BLOCKED', reason: 'timeout:present', fields: { a: undefined, n: NaN }, evidence: { x: new Float32Array([1, 2]) } });
-  assert.equal(r.verdict, 'BLOCKED(timeout:present)');
+  assert.equal(vr(r), 'BLOCKED(timeout:present)');
   assert.equal(checkVerdictBase(r), 'BLOCKED');
   assert.deepEqual(r.fields, { a: null, n: 'NaN' });
   assert.deepEqual(r.evidence, { x: [1, 2] });
@@ -62,10 +63,10 @@ test('taint rule: a recorded FAIL is never erased by a later BLOCKED; sub-check 
   const pass = makeCheckRecord({ verdict: 'PASS' });
   const ne = makeCheckRecord({ verdict: 'NOT_EVIDENCED', reason: 'n' });
   assert.equal(combineSubchecks({ a: pass, b: pass }).verdict, 'PASS');
-  assert.equal(combineSubchecks({ a: pass, b: ne }).verdict, 'NOT_EVIDENCED(b:n)');
-  assert.equal(combineSubchecks({ a: ne, b: blocked }).verdict, 'BLOCKED(b:session-tainted:P7)');
-  assert.equal(combineSubchecks({ a: fail, b: blocked }).verdict, 'FAIL(a:x)');
-  assert.equal(combineSubchecks({ a: pass, b: null }).verdict, 'BLOCKED(sub-check-missing:b)');
+  assert.equal(vr(combineSubchecks({ a: pass, b: ne })), 'NOT_EVIDENCED(b:n)');
+  assert.equal(vr(combineSubchecks({ a: ne, b: blocked })), 'BLOCKED(b:session-tainted:P7)');
+  assert.equal(vr(combineSubchecks({ a: fail, b: blocked })), 'FAIL(a:x)');
+  assert.equal(vr(combineSubchecks({ a: pass, b: null })), 'BLOCKED(sub-check-missing:b)');
 });
 
 test('T13 is derived from markers.js: location once per present + one outline per outlined side (Hard 3/2, Soft 5)', () => {
@@ -130,11 +131,11 @@ test('C4 reference union, T10 sample and check aggregation (FAIL > NOT_EVIDENCED
   const box = [0, 0, 0, 1, 1, 1];
   const ok = { model: 'A', dbId: 1, candidate: box, fragmentBoxes: [box] };
   assert.equal(evaluateC4({ rows: [ok] }).record.verdict, 'PASS');
-  assert.equal(evaluateC4({ rows: [] }).record.verdict, 'NOT_EVIDENCED(empty-sample)');
-  assert.equal(evaluateC4({ rows: [ok, { model: 'B', dbId: 2, candidate: box, fragmentBoxes: [] }] }).record.verdict, 'NOT_EVIDENCED(no-reference)');
+  assert.equal(vr(evaluateC4({ rows: [] }).record), 'NOT_EVIDENCED(empty-sample)');
+  assert.equal(vr(evaluateC4({ rows: [ok, { model: 'B', dbId: 2, candidate: box, fragmentBoxes: [] }] }).record), 'NOT_EVIDENCED(no-reference)');
   const bad = { model: 'B', dbId: 3, candidate: [0, 0, 0, 0.5, 1, 1], fragmentBoxes: [box] };
   const res = evaluateC4({ rows: [ok, { model: 'B', dbId: 2, candidate: box, fragmentBoxes: [] }, bad] });
-  assert.equal(res.record.verdict, 'FAIL(not-contained)');
+  assert.equal(vr(res.record), 'FAIL(not-contained)');
   assert.equal(res.c4Table.length, 3);
   assert.deepEqual(Object.keys(res.c4Table[2]).sort(), ['candidateBox', 'dbId', 'detail', 'excess', 'fragmentCount', 'model', 'outcome', 'perAxis', 'referenceBox', 'referenceProblem']);
   assert.equal(validateCheckRecord(res.record).ok, true);
@@ -214,14 +215,14 @@ test('C6 + N2: PASS only with the aggregate form, fitted, all corners in and N2 
   assert.equal(n2.state, 'DETECTED_RESTORED');
   assert.equal(evaluateC6({ ...base, n2State: n2.state }).verdict, 'PASS');
   assert.equal(evaluateN2({ singleFit: {}, settle: wide, boxes: union, restored: true }).state, 'NOT_DISCRIMINATING');
-  assert.equal(evaluateC6({ ...base, n2State: 'NOT_DISCRIMINATING' }).verdict, 'NOT_EVIDENCED(n2-not-discriminating)');
-  assert.equal(evaluateC6({ ...base, settle: narrow, n2State: 'DETECTED_RESTORED' }).verdict, 'FAIL(corner-outside-frustum)');
-  assert.equal(evaluateC6({ ...base, settle: narrow, n2State: 'NOT_DISCRIMINATING' }).verdict, 'NOT_EVIDENCED(n2-not-discriminating)');
-  assert.equal(evaluateC6({ ...base, fitRecords: [], n2State: 'DETECTED_RESTORED' }).verdict, 'FAIL(aggregate-selection-form-not-observed)');
-  assert.equal(evaluateC6({ ...base, fitRecords: [rec('viewer.fitToView', [aggArg], { outcome: { threw: true } })], n2State: 'DETECTED_RESTORED' }).verdict, 'FAIL(aggregate-form-threw)');
-  assert.equal(evaluateC6({ ...base, settle: { status: 'timed-out' }, n2State: 'DETECTED_RESTORED' }).verdict, 'BLOCKED(timeout:camera-settle)');
-  assert.equal(evaluateC6({ ...base, present: { timedOut: true } }).verdict, 'BLOCKED(timeout:present)');
-  assert.equal(evaluateC6({ pairSelected: false }).verdict, 'NOT_EVIDENCED(no-discriminating-pair)');
+  assert.equal(vr(evaluateC6({ ...base, n2State: 'NOT_DISCRIMINATING' })), 'NOT_EVIDENCED(n2-not-discriminating)');
+  assert.equal(vr(evaluateC6({ ...base, settle: narrow, n2State: 'DETECTED_RESTORED' })), 'FAIL(corner-outside-frustum)');
+  assert.equal(vr(evaluateC6({ ...base, settle: narrow, n2State: 'NOT_DISCRIMINATING' })), 'NOT_EVIDENCED(n2-not-discriminating)');
+  assert.equal(vr(evaluateC6({ ...base, fitRecords: [], n2State: 'DETECTED_RESTORED' })), 'FAIL(aggregate-selection-form-not-observed)');
+  assert.equal(vr(evaluateC6({ ...base, fitRecords: [rec('viewer.fitToView', [aggArg], { outcome: { threw: true } })], n2State: 'DETECTED_RESTORED' })), 'FAIL(aggregate-form-threw)');
+  assert.equal(vr(evaluateC6({ ...base, settle: { status: 'timed-out' }, n2State: 'DETECTED_RESTORED' })), 'BLOCKED(timeout:camera-settle)');
+  assert.equal(vr(evaluateC6({ ...base, present: { timedOut: true } })), 'BLOCKED(timeout:present)');
+  assert.equal(vr(evaluateC6({ pairSelected: false })), 'NOT_EVIDENCED(no-discriminating-pair)');
   assert.equal(evaluateN2({ singleFit: { timedOut: true } }).state, 'TIMED_OUT');
   assert.equal(evaluateN2({ singleFit: {}, settle: narrow, boxes: union, restored: false }).state, 'RESTORE_FAILED');
   assert.equal(evaluateN2({ singleFit: { threw: true }, settle: narrow, boxes: union, restored: true }).state, 'NOT_DETECTED');
@@ -234,10 +235,10 @@ test('C8: per-model form, element framed, superseded focus must leave P2 framed'
   const off = { status: 'settled', camera: cameraSample(ortho(0.5, 10)) };
   const base = { present: { outcome: { fitted: true } }, fitRecords: perModel, settle: good, box, supersession: { settle: good, box } };
   assert.equal(evaluateC8(base).verdict, 'PASS');
-  assert.equal(evaluateC8({ ...base, supersession: { settle: off, box } }).verdict, 'FAIL(superseded-focus-overwrote-p2)');
-  assert.equal(evaluateC8({ ...base, settle: off }).verdict, 'FAIL(element-outside-frustum)');
-  assert.equal(evaluateC8({ ...base, fitRecords: [] }).verdict, 'FAIL(per-model-fit-form-not-observed)');
-  assert.equal(evaluateC8({ ...base, supersession: null }).verdict, 'BLOCKED(supersession-not-observed)');
+  assert.equal(vr(evaluateC8({ ...base, supersession: { settle: off, box } })), 'FAIL(superseded-focus-overwrote-p2)');
+  assert.equal(vr(evaluateC8({ ...base, settle: off })), 'FAIL(element-outside-frustum)');
+  assert.equal(vr(evaluateC8({ ...base, fitRecords: [] })), 'FAIL(per-model-fit-form-not-observed)');
+  assert.equal(vr(evaluateC8({ ...base, supersession: null })), 'BLOCKED(supersession-not-observed)');
 });
 
 // ---- C2 / C3 -------------------------------------------------------------------------------
@@ -279,9 +280,9 @@ const c2ok = () => ({
 test('C2: PASS iff clauses (i)–(viii); base initialize count is recorded only', () => {
   assert.equal(evaluateC2(c2ok()).verdict, 'PASS');
   assert.equal(evaluateC2({ ...c2ok(), baseInitializeCalls: 1 }).verdict, 'PASS');
-  assert.equal(evaluateC2({ ...c2ok(), regions: [...c2ok().regions].reverse() }).verdict, 'FAIL(iii)');
-  assert.equal(evaluateC2({ ...c2ok(), title: { ok: false, reason: 'duplicate-title-class' } }).verdict, 'FAIL(vi:duplicate-title-class)');
-  assert.equal(evaluateC2({ ...c2ok(), shellKeys: ['show'] }).verdict, 'FAIL(viii)');
+  assert.equal(vr(evaluateC2({ ...c2ok(), regions: [...c2ok().regions].reverse() })), 'FAIL(iii)');
+  assert.equal(vr(evaluateC2({ ...c2ok(), title: { ok: false, reason: 'duplicate-title-class' } })), 'FAIL(vi:duplicate-title-class)');
+  assert.equal(vr(evaluateC2({ ...c2ok(), shellKeys: ['show'] })), 'FAIL(viii)');
   assert.equal(evaluateC2({}).reason.split(',').length, 8);
 });
 
@@ -290,10 +291,10 @@ test('C3: exactly 3 show/hide repetitions with one dispatch each, idempotent dis
   const dispose = { uninitializeCalls: 1, containerInDom: false, rootFound: false, byIdFound: false, retainedCallbackDispatches: 0, setVisibleAfterUninitialize: 0, postDisposeSpyCalls: 0, postDisposeIsVisible: false };
   const ok = { showHide: [rep, rep, rep], dispose, residue: [] };
   assert.equal(evaluateC3(ok).verdict, 'PASS');
-  assert.equal(evaluateC3({ ...ok, showHide: [rep, rep] }).verdict, 'FAIL(repetitions)');
-  assert.equal(evaluateC3({ ...ok, showHide: [rep, rep, { ...rep, hideDispatches: ['PANEL_HIDDEN', 'PANEL_HIDDEN'] }] }).verdict, 'FAIL(repetitions)');
-  assert.equal(evaluateC3({ ...ok, dispose: { ...dispose, uninitializeCalls: 2 } }).verdict, 'FAIL(dispose)');
-  assert.equal(evaluateC3({ ...ok, residue: [{ node: 'div' }] }).verdict, 'FAIL(residue)');
+  assert.equal(vr(evaluateC3({ ...ok, showHide: [rep, rep] })), 'FAIL(repetitions)');
+  assert.equal(vr(evaluateC3({ ...ok, showHide: [rep, rep, { ...rep, hideDispatches: ['PANEL_HIDDEN', 'PANEL_HIDDEN'] }] })), 'FAIL(repetitions)');
+  assert.equal(vr(evaluateC3({ ...ok, dispose: { ...dispose, uninitializeCalls: 2 } })), 'FAIL(dispose)');
+  assert.equal(vr(evaluateC3({ ...ok, residue: [{ node: 'div' }] })), 'FAIL(residue)');
 });
 
 // ---- remaining evaluators ------------------------------------------------------------------
@@ -304,8 +305,26 @@ test('C1: classifier/load/count unmet => BLOCKED(prerequisite), never FAIL; unit
   const mm = evaluateC1({ A: m, B: { ...m, unitScale: 1, unitString: 'm' }, loadedCount: 2 });
   assert.equal(mm.verdict, 'PASS');
   assert.equal(mm.fields.unitScaleMismatchFinding, true);
-  assert.match(evaluateC1({ A: m, B: { ...m, classification: 'CONTRADICTORY' }, loadedCount: 2 }).verdict, /^BLOCKED\(prerequisite:classifier:B\)$/);
-  assert.match(evaluateC1({ A: m, B: { loaded: false }, loadedCount: 1 }).verdict, /^BLOCKED\(prerequisite:/);
+  // RC1-C1 C1 reason contract: normalized reason only; detail in fields.blockDetail (A, B, then model-independent).
+  const cls = evaluateC1({ A: m, B: { ...m, classification: 'CONTRADICTORY' }, loadedCount: 2 });
+  assert.deepEqual([cls.verdict, cls.reason], ['BLOCKED', 'prerequisite']);
+  assert.deepEqual(cls.fields.blockDetail, [{ cause: 'classifier', model: 'B', observed: 'CONTRADICTORY' }]);
+  const nl = evaluateC1({ A: m, B: { loaded: false }, loadedCount: 1 });
+  assert.deepEqual([nl.verdict, nl.reason], ['BLOCKED', 'prerequisite']);
+  assert.deepEqual(nl.fields.blockDetail, [{ cause: 'model-not-loaded', model: 'B', observed: null }, { cause: 'model-count', model: null, observed: '1' }]);
+  const rej = evaluateC1({ A: { loaded: false, loadStatus: 'failed' }, B: m, loadedCount: 1 });
+  assert.equal(rej.reason, 'prerequisite');
+  assert.deepEqual(rej.fields.blockDetail[0], { cause: 'load-rejected', model: 'A', observed: 'failed' });
+  // T2 deadline for either model => 'timeout:load' (takes precedence over 'prerequisite')
+  const to = evaluateC1({ A: { ...m, classification: 'CONTRADICTORY' }, B: { loaded: false, loadStatus: 'timed-out' }, loadedCount: 1 });
+  assert.deepEqual([to.verdict, to.reason], ['BLOCKED', 'timeout:load']);
+  assert.deepEqual(to.fields.blockDetail.map((d) => [d.cause, d.model]), [['classifier', 'A'], ['load-deadline', 'B'], ['model-count', null]]);
+  const notIn = evaluateC1({ A: m, B: { ...m, inAllModels: false }, loadedCount: 2 });
+  assert.deepEqual(notIn.fields.blockDetail, [{ cause: 'model-not-loaded', model: 'B', observed: 'not-in-getAllModels' }]);
+  for (const r of [cls, nl, rej, to, notIn]) {
+    assert.ok(['prerequisite', 'timeout:load'].includes(r.reason), 'never a detailed/suffixed reason');
+    assert.equal(r.recordType, 'check-run');
+  }
 });
 
 test('C5: feet only for finite positive scale and metre-based unit; otherwise raw pair + reason; observation-only PASS', () => {
@@ -313,7 +332,7 @@ test('C5: feet only for finite positive scale and metre-based unit; otherwise ra
   assert.equal(r.verdict, 'PASS');
   assert.equal(r.fields.perModel.A.feet[0], 1);
   assert.equal(r.fields.perModel.B.feet, null);
-  assert.equal(evaluateC5({ A: {} }).verdict, 'NOT_EVIDENCED(values-not-captured)');
+  assert.equal(vr(evaluateC5({ A: {} })), 'NOT_EVIDENCED(values-not-captured)');
 });
 
 test('C7β: T13 counts per variant, exactly 5 replacements without accumulation, setFromPoints, clear', () => {
@@ -324,9 +343,9 @@ test('C7β: T13 counts per variant, exactly 5 replacements without accumulation,
     replacements: [rep, rep, rep, rep, rep], setFromPointsOk: true, clear: { markersRemoved: 3, priorCount: 3, ledgerNull: true },
   };
   assert.equal(evaluateC7Beta(ok).verdict, 'PASS');
-  assert.equal(evaluateC7Beta({ ...ok, soft: { ...ok.soft, markerMeshCount: 8 } }).verdict, 'FAIL(i)');
-  assert.equal(evaluateC7Beta({ ...ok, replacements: [rep, rep, rep, rep, { ...rep, cumulativeNet: 6 }] }).verdict, 'FAIL(ii)');
-  assert.equal(evaluateC7Beta({ ...ok, replacements: [rep, rep, rep, rep] }).verdict, 'FAIL(ii)');
+  assert.equal(vr(evaluateC7Beta({ ...ok, soft: { ...ok.soft, markerMeshCount: 8 } })), 'FAIL(i)');
+  assert.equal(vr(evaluateC7Beta({ ...ok, replacements: [rep, rep, rep, rep, { ...rep, cumulativeNet: 6 }] })), 'FAIL(ii)');
+  assert.equal(vr(evaluateC7Beta({ ...ok, replacements: [rep, rep, rep, rep] })), 'FAIL(ii)');
 });
 
 test('C7α/C18b wrapper of the scene-ownership oracle produces the §10 sceneOwnership rows', () => {
@@ -335,7 +354,7 @@ test('C7α/C18b wrapper of the scene-ownership oracle produces the §10 sceneOwn
   assert.equal(r.record.verdict, 'PASS');
   assert.equal(r.sceneOwnership.rows.length, 2);
   const bad = evaluateSceneOwnership({ scenes, presentAfterDispose: { p: true, f: true }, ledger: [] });
-  assert.equal(bad.record.verdict, 'FAIL(c1)');
+  assert.equal(vr(bad.record), 'FAIL(c1)');
 });
 
 test('C9–C12, N4, N5: pure evaluators', () => {
@@ -344,63 +363,68 @@ test('C9–C12, N4, N5: pure evaluators', () => {
   const set = { method: 'viewer.setAggregateIsolation', modelLabels: ['A', 'B'] };
   const c10 = { records: [{ method: 'viewer.getAllModels' }, { method: 'viewer.getAggregateIsolation' }, { method: 'viewer.getAggregateHiddenNodes' }, set], nonEmptyIds: true, postEqualsTarget: true, isolated: true, clear: { isolation: 'restored', postIsolationEmpty: true, postHiddenEmpty: true, emptySetWithoutCompare: false } };
   assert.equal(evaluateC10(c10).verdict, 'PASS');
-  assert.equal(evaluateC10({ ...c10, records: [set, { method: 'viewer.getAggregateIsolation' }] }).verdict, 'FAIL(readsBeforeSet)');
-  assert.equal(evaluateC10({ ...c10, records: [...c10.records, set] }).verdict, 'FAIL(exactlyOneSet,onePerModel)');
+  assert.equal(vr(evaluateC10({ ...c10, records: [set, { method: 'viewer.getAggregateIsolation' }] })), 'FAIL(readsBeforeSet)');
+  assert.equal(vr(evaluateC10({ ...c10, records: [...c10.records, set] })), 'FAIL(exactlyOneSet,onePerModel)');
   const c11 = { prerequisiteWhileHidden: { available: false, reason: 'hidden' }, presentOutcome: { isolated: false, notes: ['x'] }, setIsolationCallsDuringPresent: 0, nodeStillHidden: true };
   assert.equal(evaluateC11(c11).verdict, 'PASS');
-  assert.equal(evaluateC11({ ...c11, setIsolationCallsDuringPresent: 1 }).verdict, 'FAIL(zeroSets)');
+  assert.equal(vr(evaluateC11({ ...c11, setIsolationCallsDuringPresent: 1 })), 'FAIL(zeroSets)');
   assert.equal(evaluateN5({ prerequisiteWhileHidden: { available: false }, prerequisiteAfterShow: { available: true } }).state, 'DETECTED_RESTORED');
   assert.equal(evaluateN5({ prerequisiteWhileHidden: { available: true } }).state, 'NOT_DETECTED');
   assert.equal(evaluateN5({ prerequisiteWhileHidden: { available: false }, prerequisiteAfterShow: { available: false } }).state, 'RESTORE_FAILED');
   const c12 = { clear: { isolation: 'skipped-external' }, bridgeSetsAfterForeign: 0, foreignUnchanged: true, markersRemoved: true, replacement: { bridgeRestoredOverForeign: false } };
   assert.equal(evaluateC12(c12).verdict, 'PASS');
-  assert.equal(evaluateC12({ ...c12, bridgeSetsAfterForeign: 1 }).verdict, 'FAIL(noBridgeSetAfterForeign)');
+  assert.equal(vr(evaluateC12({ ...c12, bridgeSetsAfterForeign: 1 })), 'FAIL(noBridgeSetAfterForeign)');
   assert.equal(evaluateN4({ clearIsolation: 'skipped-external', resetToEmpty: true }).state, 'DETECTED_RESTORED');
   assert.equal(evaluateN4({ clearIsolation: 'restored', resetToEmpty: true }).state, 'NOT_DETECTED');
   assert.equal(evaluateN4({ timedOut: true }).state, 'TIMED_OUT');
 });
 
 test('C13 outcome table: C15(e) is the only `failed`; `none` only where allowed', () => {
-  const ok = { C10: { isolation: 'restored' }, C12: { isolation: 'skipped-external' }, C15b: { isolation: 'none', noneAllowed: true }, C15c: { isolation: 'restored' }, C15e: { isolation: 'failed' } };
+  const ok = { C10: { isolation: 'restored' }, C12: { isolation: 'skipped-external' }, C15b: { isolation: 'none', noneAllowed: true }, C15c: { isolation: 'restored' }, C15e: { isolation: 'failed', clear2: 'restored', clear3: 'none' } };
   assert.equal(evaluateC13(ok).verdict, 'PASS');
-  assert.equal(evaluateC13({ ...ok, C15b: { isolation: 'none' } }).verdict, 'FAIL(mismatch:C15b)');
-  assert.equal(evaluateC13({ ...ok, C10: { isolation: 'failed' } }).verdict, 'FAIL(mismatch:C10)');
-  assert.equal(evaluateC13({ ...ok, C15e: undefined }).verdict, 'BLOCKED(scenario-missing:C15e)');
+  assert.equal(vr(evaluateC13({ ...ok, C15b: { isolation: 'none' } })), 'FAIL(mismatch:C15b)');
+  assert.equal(vr(evaluateC13({ ...ok, C10: { isolation: 'failed' } })), 'FAIL(mismatch:C10)');
+  assert.equal(vr(evaluateC13({ ...ok, C15e: undefined })), 'BLOCKED(scenario-missing:C15e)');
+  // RC1: the C15(e) second/third clear outcomes are part of the table (failed -> restored -> none)
+  assert.equal(vr(evaluateC13({ ...ok, C15e: { isolation: 'failed', clear2: 'failed', clear3: 'none' } })), 'FAIL(mismatch:C15e)');
 });
 
 test('C14, C15, C16, C18a, C19: pure evaluators', () => {
   const c14 = { presentPresent: { p1Superseded: true, p2Superseded: false, ledgerOnlyP2: true, finalEqualsY: true }, presentClear: { superseded: true, finalEmpty: true }, presentDispose: { superseded: true, residueOk: true }, spyBalanced: true, finalIsolationEmpty: true };
   assert.equal(evaluateC14(c14).verdict, 'PASS');
-  assert.equal(evaluateC14({ ...c14, spyBalanced: false }).verdict, 'FAIL(noStranded)');
-  const e = { injectedFired: true, clear1: { isolation: 'failed', notes: [C15_RESTORE_FAILED_NOTE] }, ledgerIsolationConfirmedRetained: true, markersRemoved: true, wrapperRemoved: true, clear2: { isolation: 'restored' }, recordDropped: true, finalIsolationEmpty: true, globalOk: true };
+  assert.equal(vr(evaluateC14({ ...c14, spyBalanced: false })), 'FAIL(noStranded)');
+  // (e) is the RC1 three-clear oracle over fields.e (full mutation coverage in the .c15e test file);
+  // here (e) stops before the oracle (driver-reported BLOCKED), so (a)-(d) decide FAIL vs BLOCKED.
+  const e = { evidence: null, blocked: 'precondition:c15e', globalOk: true };
   const c15 = {
     a: { injectedFired: true, allAddedRemoved: true, ledgerNull: true, marked: false, failedNote: true, globalOk: true },
     b: { injectedFired: true, isolationUnchanged: true, noMarkerLeak: true, globalOk: true },
     c: { injectedFired: true, finalIsolationEmpty: true, globalOk: true },
     d: { injectedFired: true, fitted: true, notes: [C15_FIRST_ONLY_NOTE], globalOk: true }, e,
   };
-  assert.equal(evaluateC15(c15).verdict, 'PASS');
-  assert.equal(evaluateC15({ ...c15, a: { ...c15.a, injectedFired: false } }).verdict, 'FAIL(a)');
-  assert.equal(evaluateC15({ ...c15, e: { ...e, clear2: { isolation: 'failed' } } }).verdict, 'FAIL(e)');
+  assert.equal(vr(evaluateC15(c15)), 'BLOCKED(precondition:c15e)');
+  assert.equal(vr(evaluateC15({ ...c15, a: { ...c15.a, injectedFired: false } })), 'FAIL(a)');
+  assert.equal(vr(evaluateC15({ ...c15, e: { evidence: null, blocked: null, globalOk: true } })), 'BLOCKED(precondition:c15e)'); // no evidence => never PASS
+  assert.equal(C15_RESTORE_FAILED_NOTE, 'Isolation could not be restored (the Viewer reported an error).');
   const names = { BEFORE_MODEL_UNLOAD: 'bu', MODEL_REMOVED: 'mr' };
   const log = [{ seq: 0, kind: 'listener-entry', eventName: 'mr', modelLabel: 'B' }, { seq: 1, kind: 'bridge-callback', modelLabel: 'B', reason: 'removed' }];
   assert.equal(evaluateC16({ eventLog: log, eventNames: names, restored: true }).verdict, 'PASS');
-  assert.equal(evaluateC16({ eventLog: [...log, { seq: 2, kind: 'listener-entry', eventName: 'bu', modelLabel: 'B' }], eventNames: names, restored: true }).verdict, 'FAIL(event-behaviour-differs-from-spec-16)');
-  assert.equal(evaluateC16({ eventLog: [], eventNames: names, restored: true }).verdict, 'FAIL(event-behaviour-differs-from-spec-16)');
-  assert.equal(evaluateC16({ eventLog: log, eventNames: names, restored: false }).verdict, 'FAIL(RESTORE_FAILED)');
+  assert.equal(vr(evaluateC16({ eventLog: [...log, { seq: 2, kind: 'listener-entry', eventName: 'bu', modelLabel: 'B' }], eventNames: names, restored: true })), 'FAIL(event-behaviour-differs-from-spec-16)');
+  assert.equal(vr(evaluateC16({ eventLog: [], eventNames: names, restored: true })), 'FAIL(event-behaviour-differs-from-spec-16)');
+  assert.equal(vr(evaluateC16({ eventLog: log, eventNames: names, restored: false })), 'FAIL(RESTORE_FAILED)');
   const c18 = { panelScenesAbsent: true, foreignOk: true, listenerAddRemove: { bu: { add: 1, remove: 1 } }, ledgerNull: true, disposal: { disposed: true, releaseNotes: [], listenerErrors: [] }, postDispose: { presentDisposed: true, clearDisposed: true, bridgeMutatorCalls: 0 }, isolationHiddenEmpty: true };
   assert.equal(evaluateC18a(c18).verdict, 'PASS');
-  assert.equal(evaluateC18a({ ...c18, listenerAddRemove: { bu: { add: 1, remove: 0 } } }).verdict, 'FAIL(clause:3)');
-  assert.equal(evaluateC18a({ ...c18, postDispose: { ...c18.postDispose, bridgeMutatorCalls: 1 } }).verdict, 'FAIL(clause:5)');
+  assert.equal(vr(evaluateC18a({ ...c18, listenerAddRemove: { bu: { add: 1, remove: 0 } } })), 'FAIL(clause:3)');
+  assert.equal(vr(evaluateC18a({ ...c18, postDispose: { ...c18.postDispose, bridgeMutatorCalls: 1 } })), 'FAIL(clause:5)');
 });
 
 test('C19 + markers-only v1: any theming call or non-harness selection call FAILs; N1 must be DETECTED', () => {
   const clean = [{ method: 'viewer.fitToView', origin: 'bridge', callIndex: 0 }, { method: 'viewer.select', origin: 'harness', callIndex: 1 }];
   assert.equal(evaluateC19({ records: clean, n1State: 'DETECTED' }).verdict, 'PASS');
-  assert.equal(evaluateC19({ records: clean, n1State: 'NOT_DETECTED' }).verdict, 'BLOCKED(dependency:N1)');
+  assert.equal(vr(evaluateC19({ records: clean, n1State: 'NOT_DETECTED' })), 'BLOCKED(dependency:N1)');
   const theming = [...clean, { method: `viewer.${THEMING_SET_METHOD}`, origin: 'viewer-internal', callIndex: 2 }];
-  assert.equal(evaluateC19({ records: theming, n1State: 'DETECTED' }).verdict, 'FAIL(theming)');
-  assert.equal(evaluateC19({ records: [...clean, { method: 'viewer.clearSelection', origin: 'unattributed', callIndex: 3 }], n1State: 'DETECTED' }).verdict, 'FAIL(selection)');
+  assert.equal(vr(evaluateC19({ records: theming, n1State: 'DETECTED' })), 'FAIL(theming)');
+  assert.equal(vr(evaluateC19({ records: [...clean, { method: 'viewer.clearSelection', origin: 'unattributed', callIndex: 3 }], n1State: 'DETECTED' })), 'FAIL(selection)');
   const m = markersOnlyV1Violations([...theming, { method: 'viewer.hide', origin: 'bridge', callIndex: 4 }]);
   assert.equal(m.theming.length, 1);
   assert.deepEqual(m.nonE3Bridge.map((r) => r.method), ['viewer.hide']);
