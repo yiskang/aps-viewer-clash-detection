@@ -25,7 +25,7 @@ import {
   createOfflineRunStateFixture, buildBindingRecord, sha256Hex, serializeJson, MODEL_A_URN, MODEL_B_URN,
   tokenizeJs, locateFunctionSource, LIVE_PATH_WIRED, runChecksInPhaseOrder, createCallRecorder,
   createEmptyErrorLedger, createFatalEventSink, createNetworkInstrumentation,
-  createRunSeqCounter, createOperationLedger, finalizeLoadWindows, withNodeLoadOutcomes, c1LoadLedgerProblems,
+  createRunSeqAllocator, createOperationLedger, finalizeLoadWindows, withNodeLoadOutcomes, c1LoadLedgerProblems,
 } from './clashpanel-viewerbridge.acceptance.mjs';
 
 const HARNESS_SOURCE = readFileSync(fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url)), 'utf8');
@@ -805,7 +805,7 @@ function shiftClosedState(s, off) {
 /** Writes the real §9.2 P1 load records (A then B, the given completionOutcomes) through the real writer. */
 function withLoadLedger(s, { A = 'ready', B = 'ready' } = {}) {
   shiftClosedState(s, 10);
-  const counter = createRunSeqCounter();
+  const counter = createRunSeqAllocator();
   const ops = createOperationLedger({ ledger: s.errorLedger, nextSeq: counter.next });
   for (const [m, out] of [['A', A], ['B', B]]) { const r = ops.beginLoad({ modelId: m, modelUrnSha256: h(`urn-${m}`) }); ops.endLoad(r, out); }
   assert.equal(finalizeLoadWindows(s.errorLedger, { prefixSources: [] }).finalized, true);

@@ -21,7 +21,7 @@ import {
   OPTIONAL_RESPONSE_RULES, NETWORK_SEVERITY, CLASSIFIER_RESULT_KEYS, LIVE_PATH_WIRED, FATAL_ENTRY_SEQ_REQUIRED, OVERALL_PHASES,
   classifyRequestFailure, classifyHttpResponse, isHttpRuleCandidate, correlateNetworkEvents, createEmptyErrorLedger, syncFatalWitnesses,
   directWitnessEntryAppender, provisionalFinalization, applyProvisionalFinalization, finalizeNetworkLedgerAtCloseout,
-  classifierResultProblems, networkLedgerProblems, primarySeqAllocations, maxRecordedSeq, createRunSeqCounter, classifyNetworkUrl,
+  classifierResultProblems, networkLedgerProblems, primarySeqAllocations, maxRecordedSeq, createRunSeqAllocator, classifyNetworkUrl,
   createNetworkInstrumentation, wireFatalListeners, createFatalEventSink, recomputeFatalCountAtGate, recordSchemaProblems,
   evaluateOverallRows, computeOverall, createOfflineRunStateFixture, buildBindingRecord, sha256Hex, MODEL_A_URN, MODEL_B_URN,
   G2_VIEWER_SCRIPT_URL, tokenizeJs, locateFunctionSource, derivePrefixes, createOperationLedger, finalizeLoadWindows,
@@ -55,8 +55,8 @@ function fakeRequest({ url = URL_B, method = 'GET', resourceType = 'fetch', nav 
  */
 function world({ seqStart = 100, rules, context, attr = { phase: 'P1', activeCheck: 'C1' } } = {}) {
   const ledger = createEmptyErrorLedger();
-  const counter = createRunSeqCounter();
-  counter.observe(seqStart);
+  const counter = createRunSeqAllocator();
+  while (counter.peek() < seqStart) counter.next();
   const sink = createFatalEventSink(ledger, { nextSeq: counter.next });
   const at = { ...attr };
   let witnessNotes = 0;
@@ -797,8 +797,9 @@ test('seq uniqueness across collections: a duplicated primary allocation => seq-
   const dup = clone(st); dup.errorLedger.markers = [{ seq: 101, name: 'P0' }];
   assert.ok(recordSchemaProblems(dup).includes('seq-not-unique:101:errorLedger.markers[0]|errorLedger.requestObservations[0]'));
   assert.equal(evaluateOverallRows(dup, 'pre-closeout')[4].match, true);
-  const c = createRunSeqCounter();
-  assert.deepEqual([c.next(), c.next(), c.observe(10), c.next(), c.observe(3), c.peek()], [1, 2, 10, 11, 11, 11]);
+  const c = createRunSeqAllocator();
+  assert.deepEqual([c.next(), c.next(), c.peek(), c.next(), c.peek()], [1, 2, 2, 3, 3]);
+  assert.equal(c.observe, undefined, 'the single Node allocator has no observe');
 });
 
 test('closeout: a still-provisional response is finalized at closeout (finalizedBy closeout, fresh seq) and counted through the sink before step 1; recomputation agrees', () => {

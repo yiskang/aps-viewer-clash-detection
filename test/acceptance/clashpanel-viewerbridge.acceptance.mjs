@@ -3426,6 +3426,8 @@ function primarySeqAllocations(state) {
   const byKey = new Map();
   const problems = [];
   for (const x of seqs) {
+    // H1: a page-local (non-authoritative) ordinal in authoritative state is a row-5 contradiction.
+    if (isPageLocalOrdinal(x.seq)) problems.push(`page-ordinal-leaked:${x.seq}:${x.label}`);
     if (byKey.has(x.seq)) problems.push(`seq-not-unique:${x.seq}:${byKey.get(x.seq)}|${x.label}`);
     else byKey.set(x.seq, x.label);
   }
@@ -3438,113 +3440,188 @@ function maxRecordedSeq(state) {
 }
 
 /**
- * `createRunSeqCounter()` -- THE node-side run counter (§9.2): `next()` allocates, `peek()` reads the
- * last allocation, `observe(seq)` moves the counter past a seq allocated elsewhere. `observe` is the
- * INTERIM bridge to the page-side recorder of the in-page phase run (see `runPostReservation`): the
- * cross-process single-counter unification is an UNRESOLVED live-wiring gate (slice C1 report).
- */
-/**
  * UNRESOLVED BEFORE-LIVE-EXECUTION GATE (kept `resolved:false` until an INDEPENDENT re-review accepts the
- * remediation below; flipping it is an owner/independent-gate decision, not this pass's).
- * History (slice C1/C2 + review H1/H2/M1, 2026-10-01): the in-page phase run numbered its own records
- * from a page recorder seeded with `seqBase` while Node numbered request/response/fatal/operation events
- * (two namespaces => `seq-not-unique`), Node labelled its events `{phase:'P1', activeCheck:null}` through
- * the whole page run (C16/C17 aborts could never be EC-hide/EC-unload), and the C1 gate read an
- * asynchronous page mirror of the fatals instead of the Node ledger.
- * Remediation (live-readiness pass; harness-only, offline-tested, never exercised live): ONE composite
- * sequence (`createRunSeqCounter` / `createPageSeqSource` / `createRunAuthority`: page majors, node minors,
- * fenced at every attribution change, operation begin/end, C1 gate, page-fatal forward and the final
- * transfer); Node-authoritative phase/check/control attribution delivered through the awaited
- * `G2_NODE_SYNC_BINDING` before the attributed action; the C1 gate prepared synchronously by Node on the
- * authoritative error ledger (item-24 finalization, witness rebuild, count, gateSeq); page-origin fatals
- * numbered and reconciled (a missing/late/duplicate transfer is one fail-closed fatal). The page fatal
- * mirror is only an abort-latch hint. Documented limitation: Node/page order is authoritative at the
- * fences only; inside one fence epoch a Node event is ordered after the page's last REPORTED allocation.
+ * H1 sequencing remediation below; flipping it is an owner/independent-gate decision, not this pass's).
+ * History: the in-page phase run once numbered its own records from a page counter while Node numbered
+ * request/response/fatal/operation events (two namespaces), and a later remediation merged them as a fenced
+ * page-major/Node-minor composite -- neither is the accepted §9.2 "one node-side monotonic counter".
+ * Remediation (H1 sequencing pass; harness-only, offline-tested, never exercised live): ONE Node-owned
+ * allocator (`createRunSeqAllocator`) hands out every authoritative `seq`. The page keeps only a
+ * NON-AUTHORITATIVE local ordinal (`createPageOrdinalSource`, values > `PAGE_LOCAL_BASE`) that it uses to
+ * order its own synchronous records; the Node authority (`createRunAuthority`) INGESTS those ordinals
+ * (awaited fences carry every unacknowledged one; an early best-effort binding narrows the window) and
+ * allocates the authoritative seq at ingestion, in ordinal order. Authoritative state is rewritten through
+ * the ordinal->seq map (`remapPageOrdinals`), so no page ordinal and no second counter survives into it.
  * Still coupled (M2): main() and runChecksInPhaseOrder(mode 'live') refuse with
  * 'dual-counter-gate-unresolved' while `resolved` is not true, independently of LIVE_PATH_WIRED.
  */
-const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, owner: 'before-live-execution', finding: 'page-records-numbered-via-seqBase-while-node-owns-the-counter' });
+const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, owner: 'before-live-execution', finding: 'h1-single-node-allocator-implemented-awaiting-independent-confirmation' });
 
 /**
- * CROSS-REALM SEQUENCE AUTHORITY (G2 live-readiness remediation, H1). `seq` is a fenced composite
- * `major * SEQ_STRIDE + minor`: the PAGE allocates only `minor === 0` (each page allocation bumps its
- * own major, `createPageSeqSource`), NODE allocates `minor >= 1` under the highest page major it has
- * INGESTED (`ingestPage`; the minor restarts when that major rises). Hence the two realms can never
- * collide, each realm is strictly monotone, and the realm of any seq is derivable (`realmOfSeq`)
- * without a schema change. Pre-run Node allocations are major 0 (seq 1,2,3,...). The order between
- * realms is authoritative at the awaited fences (phase/check/control attribution, operation begin/end,
- * C1 gate, page-fatal forward, final result transfer): each fence ingests the page high-water BEFORE
- * Node allocates anything after it. Inside one fence epoch a Node event is ordered after the page's last
- * reported allocation only -- not after every page spy record (documented, reviewed limitation).
- * The last minor of a major is reserved: once the minors of one page epoch are exhausted every further
- * Node allocation returns that single reserved value, so the duplicate is a guaranteed row-5
- * `seq-not-unique` contradiction (fail-closed) rather than a silent collision.
+ * SINGLE-ALLOCATOR SEQUENCING CONTRACT (H1). Authoritative ordering point = NODE INGESTION: every
+ * verdict-bearing event -- Node-origin (network, operation ledger, fatal, gate, closeout) or page-origin
+ * (spy records, markers, events, snapshots, control/check executions) -- receives its `seq` from the one
+ * allocator below, in the order Node ingests it. No composite order exists after ingestion, and the
+ * harness claims no causal order stronger than ingestion order: a page event observed before a Node
+ * event may be ingested after it (between fences); only the awaited fences (attribution, operation
+ * begin/end, C1 gate, drain/final) guarantee that everything the page allocated before the fence is
+ * ingested before anything Node allocates after it.
  */
-const SEQ_STRIDE = 1048576; // 2^20
-const SEQ_MINOR_RESERVED = SEQ_STRIDE - 1;
-/** 'page' (minor 0) | 'node' (minor >= 1) | null (not a seq). */
-function realmOfSeq(seq) { return isSeq(seq) ? (seq % SEQ_STRIDE === 0 ? 'page' : 'node') : null; }
+const PAGE_LOCAL_BASE = 2 ** 50; // > epoch milliseconds, < Number.MAX_SAFE_INTEGER; every authoritative seq is < this
+const PAGE_PENDING_MAX = 100000; // bounded unacknowledged page ordinals (fail closed by throwing)
+/** True for a page-local (non-authoritative) ordinal. */
+function isPageLocalOrdinal(v) { return Number.isSafeInteger(v) && v > PAGE_LOCAL_BASE; }
 
-function createRunSeqCounter() {
-  let major = 0;
-  let minor = 0;
-  let overflowed = false;
-  const value = () => major * SEQ_STRIDE + minor;
+/** THE node-side allocator (§9.2): `next()` allocates 1,2,3...; `peek()` reads the last allocation. */
+function createRunSeqAllocator() {
+  let last = 0;
   return {
-    next: () => {
-      if (minor >= SEQ_MINOR_RESERVED - 1) { overflowed = true; minor = SEQ_MINOR_RESERVED; return value(); }
-      minor += 1;
-      return value();
+    next() {
+      if (last + 1 >= PAGE_LOCAL_BASE) throw new RangeError('run seq allocator exhausted');
+      last += 1;
+      return last;
     },
-    peek: value,
-    observe: (seq) => {
-      if (isSeq(seq) && seq > value()) { major = Math.floor(seq / SEQ_STRIDE); minor = seq % SEQ_STRIDE; }
-      return value();
-    },
-    /** Ingests the page's reported high-water major; false (no change) unless it is an integer >= the current one. */
-    ingestPage: (hw) => {
-      if (!(Number.isInteger(hw) && hw >= 0 && hw >= major)) return false;
-      if (hw > major) { major = hw; minor = 0; }
-      return true;
-    },
-    pageMajor: () => major,
-    overflowed: () => overflowed,
+    peek: () => last,
   };
 }
 
-/** Page-realm seq source (page agent): every allocation is a fresh page major, `seq = major * SEQ_STRIDE`. */
-function createPageSeqSource() {
-  let major = 0;
-  return { next: () => { major += 1; return major * SEQ_STRIDE; }, highWater: () => major };
+/**
+ * Page-realm NON-AUTHORITATIVE ordinal source: `next(attribution, kind, label)` (`label` = the record's own identity, e.g.
+ * an eventLog entry's `kind`, for Node-side provenance checks) returns the next local ordinal
+ * (> PAGE_LOCAL_BASE, strictly increasing, used only to order this realm's own synchronous records until
+ * Node ingests them) and queues `{ord, kind, phase, activeCheck, activeControl, label}`; `deliver(entry)` is an
+ * optional early best-effort hint (never relied on: every awaited fence re-sends all unacknowledged
+ * entries). `ack(hw)` prunes entries Node acknowledged at a fence.
+ */
+function createPageOrdinalSource({ deliver = null } = {}) {
+  let last = PAGE_LOCAL_BASE;
+  const pending = [];
+  return {
+    next(attribution = null, kind = 'alloc', label = null) {
+      if (pending.length >= PAGE_PENDING_MAX) throw new RangeError('page ordinal queue exhausted');
+      last += 1;
+      const a = attribution !== null && typeof attribution === 'object' ? attribution : {};
+      const entry = { ord: last, kind: typeof kind === 'string' ? kind : 'alloc', phase: a.phase === undefined ? 'P0' : a.phase, activeCheck: a.activeCheck === undefined ? null : a.activeCheck, activeControl: a.activeControl === undefined ? null : a.activeControl, label: typeof label === 'string' ? label : null };
+      pending.push(entry);
+      if (typeof deliver === 'function') { try { deliver({ ...entry }); } catch { /* early hint only; the awaited fences carry every entry */ } }
+      return last;
+    },
+    highWater: () => last,
+    pending: () => pending.map((e) => ({ ...e })),
+    ack(hw) { while (pending.length > 0 && pending[0].ord <= hw) pending.shift(); },
+  };
+}
+
+/** Rewrites every page-local ordinal in `value` (numbers, and `spyLedger:seq:<n>` references inside strings) through `ordToSeq`. `{value, unmapped}`. */
+function remapPageOrdinals(value, ordToSeq) {
+  const unmapped = [];
+  const mapNum = (n) => { const s = ordToSeq.get(n); if (s === undefined) { unmapped.push(n); return n; } return s; };
+  const walk = (v) => {
+    if (typeof v === 'number') return isPageLocalOrdinal(v) ? mapNum(v) : v;
+    // Only the one encoded reference form is rewritten in strings (a hex digest may contain any 16-digit run).
+    if (typeof v === 'string') return v.replace(/(spyLedger:seq:)(\d+)/g, (m, pre, d) => { const n = Number(d); return isPageLocalOrdinal(n) ? `${pre}${mapNum(n)}` : m; });
+    if (Array.isArray(v)) return v.map(walk);
+    if (v !== null && typeof v === 'object') { const o = {}; for (const k of Object.keys(v)) o[k] = walk(v[k]); return o; }
+    return v;
+  };
+  return { value: walk(value), unmapped };
 }
 
 /**
- * Node half of the cross-realm fences (`runPostReservation`): `counter` is the run counter,
- * `attribution` the live node attribution object read by the network instrumentation (mutated here
- * only from a VALID page report), `onViolation(reason)` records a fail-closed fatal. `syncPage` is the
- * `attribution` fence: validates (page high-water never regresses, phase in the §7 enum and never
- * moving backwards, activeCheck owned by the phase, activeControl in N1..N8|null), ingests the high-water
- * and adopts the attribution; an invalid report changes nothing and is REFUSED (the page then throws
- * before its action). Page-origin fatals carry contiguous ids; `reconcilePageFatals(sent)` fails closed
- * (once) unless exactly ids 1..sent were received exactly once.
+ * Node half of the cross-realm ingestion (`runPostReservation`). `allocator` is the run allocator;
+ * `attribution` the live node attribution object read by the network instrumentation (mutated only from a
+ * VALID page report); `onViolation(reason)` records a fail-closed fatal.
+ * - `ingestFence(report)` (operation begin/end, drain, gate, fatal): ingests `report.pending` ordinals
+ *   (atomically; contiguous from the last ingested ordinal, attribution equal to the acknowledged one,
+ *   `report.hw` equal to the last ordinal afterwards) -- any failure ingests nothing, is one violation,
+ *   and the page throws before its action.
+ * - `syncPage(report)` (attribution fence): validates the new attribution (phase in the §7 enum, never
+ *   moving backwards, activeCheck owned by the phase, activeControl in N1..N8|null), ingests the pending
+ *   ordinals (each carries the acknowledged attribution or, from the transition allocation on, the new
+ *   one) and only then adopts the attribution.
+ * - `ingestEarly(entries)`: best-effort early path; ingests the longest contiguous prefix that carries
+ *   the acknowledged attribution; anything else (gap, other attribution, malformed, conflicting) is DEFERRED
+ *   to the next fence, which is the single authority and reports it once -- the early path never violates.
+ * Ordinals map to authoritative seqs in ingestion order (`seqOfOrdinal`); `rewritePageRun` rewrites a
+ * page result through that map. Page-origin fatals carry contiguous ids; `reconcilePageFatals(sent)` fails
+ * closed (once) unless exactly ids 1..sent were received exactly once.
  */
-function createRunAuthority({ counter, attribution, onViolation = () => {} }) {
+function createRunAuthority({ allocator, attribution, onViolation = () => {} }) {
   let synced = false;
   let mismatchReported = false;
   let duplicate = false;
+  let lastOrd = PAGE_LOCAL_BASE;
   const received = new Set();
+  const ordToSeq = new Map();
+  const byOrd = new Map();
+  const ingested = [];
+  // Drain provenance: the phase result (stage 'run') fixes the boundary; the cleanup delta (stage 'cleanup') fixes the
+  // cleanup drain ordinal range (boundary, hw]. Page ordinals above PAGE_LOCAL_BASE only; never a second sequence.
+  let runBoundary = null;
+  let drainRange = null;
+  let drainCount = 0;
   const violate = (reason) => { try { onViolation(reason); } catch { /* nothing left to record */ } return { ok: false, reason }; };
   const phaseIndex = (p) => ATTRIBUTION_PHASES.indexOf(p);
+  const attrOf = (e) => ({ phase: e.phase, activeCheck: e.activeCheck === undefined ? null : e.activeCheck, activeControl: e.activeControl === undefined ? null : e.activeControl });
+  const sameAttr = (a, b) => a.phase === b.phase && a.activeCheck === b.activeCheck && a.activeControl === b.activeControl;
+  const attrProblem = (a) => {
+    if (!ATTRIBUTION_PHASES.includes(a.phase)) return 'phase-invalid';
+    if (a.activeCheck !== null && !CHECK_NAMES.includes(a.activeCheck)) return 'activeCheck-invalid';
+    if (a.activeControl !== null && !CONTROL_NAMES.includes(a.activeControl)) return 'activeControl-invalid';
+    if (activeCheckPhaseProblem({ phase: a.phase, activeCheck: a.activeCheck }) !== null) return 'activeCheck-phase-inconsistent';
+    return null;
+  };
+  /** Atomic batch ingestion. `{ok:true, count}`; early => deferral instead of a violation. */
+  const ingestBatch = (entries, { incoming = null, hw, early = false } = {}) => {
+    // The early path never records a violation (a refusal there is a deferral to the awaited fence, which is the
+    // single authority and reports it once); the fence path fails closed.
+    const fail = (reason) => (early ? { ok: true, count: 0, deferred: true, reason } : violate(reason));
+    if (!Array.isArray(entries)) return fail('ingest-entries-invalid');
+    const ack = { phase: attribution.phase, activeCheck: attribution.activeCheck === undefined ? null : attribution.activeCheck, activeControl: attribution.activeControl === undefined ? null : attribution.activeControl };
+    const fresh = [];
+    let expect = lastOrd + 1;
+    let switched = false;
+    for (const e of entries) {
+      if (!isPlainObject(e) || !Number.isSafeInteger(e.ord) || e.ord <= PAGE_LOCAL_BASE || typeof e.kind !== 'string' || (e.kind === 'event' && !(typeof e.label === 'string' && e.label.length > 0)) || !(e.label === undefined || e.label === null || typeof e.label === 'string') || attrProblem(attrOf(e)) !== null) return fail('ingest-entry-invalid');
+      if (e.ord <= lastOrd) {
+        const prev = byOrd.get(e.ord);
+        if (!prev || prev.kind !== e.kind || prev.label !== (e.label === undefined ? null : e.label) || !sameAttr(prev, attrOf(e))) return fail('ingest-conflict');
+        continue;
+      }
+      if (e.ord !== expect) { if (early) break; return fail('ingest-gap'); }
+      const a = attrOf(e);
+      if (!switched && !sameAttr(a, ack)) {
+        if (incoming !== null && sameAttr(a, incoming)) switched = true;
+        else { if (early) break; return fail('ingest-attribution'); }
+      } else if (switched && !sameAttr(a, incoming)) { return fail('ingest-attribution'); }
+      fresh.push(e);
+      expect += 1;
+    }
+    // The awaited fences must prove completeness: a missing high-water is as bad as a wrong one (the early path has none).
+    if (!early && (!Number.isSafeInteger(hw) || hw !== expect - 1)) return fail('ingest-hw-mismatch');
+    for (const e of fresh) {
+      const seq = allocator.next();
+      lastOrd = e.ord;
+      ordToSeq.set(e.ord, seq);
+      const label = e.label === undefined ? null : e.label;
+      byOrd.set(e.ord, { ord: e.ord, kind: e.kind, label, ...attrOf(e) });
+      ingested.push({ seq, ord: e.ord, realm: 'page', kind: e.kind, label, ...attrOf(e) });
+    }
+    return { ok: true, count: fresh.length };
+  };
   const api = {
     isSynced: () => synced,
     phase: () => attribution.phase,
-    ingestHw(hw) {
-      if (hw === undefined || hw === null) return true;
-      return counter.ingestPage(hw);
+    lastOrdinal: () => lastOrd,
+    seqOfOrdinal: (ord) => ordToSeq.get(ord),
+    ingested: () => ingested.map((e) => ({ ...e })),
+    ingestFence(report) {
+      const r = isPlainObject(report) ? report : {};
+      return ingestBatch(r.pending === undefined ? [] : r.pending, { hw: r.hw });
     },
+    ingestEarly(entries) { return ingestBatch(Array.isArray(entries) ? entries : [], { early: true }); },
     syncPage(report) {
       const r = isPlainObject(report) ? report : {};
-      if (!Number.isInteger(r.hw) || r.hw < counter.pageMajor()) return violate('sync-hw-invalid');
       if (!ATTRIBUTION_PHASES.includes(r.phase)) return violate('sync-phase-invalid');
       if (phaseIndex(r.phase) < phaseIndex(attribution.phase)) return violate('sync-phase-regressed');
       const activeCheck = r.activeCheck === undefined ? null : r.activeCheck;
@@ -3552,9 +3629,109 @@ function createRunAuthority({ counter, attribution, onViolation = () => {} }) {
       if (activeCheck !== null && !CHECK_NAMES.includes(activeCheck)) return violate('sync-activeCheck-invalid');
       if (activeControl !== null && !CONTROL_NAMES.includes(activeControl)) return violate('sync-activeControl-invalid');
       if (activeCheckPhaseProblem({ phase: r.phase, activeCheck }) !== null) return violate('sync-activeCheck-phase-inconsistent');
-      counter.ingestPage(r.hw);
-      Object.assign(attribution, { phase: r.phase, activeCheck, activeControl });
+      const incoming = { phase: r.phase, activeCheck, activeControl };
+      const ing = ingestBatch(r.pending === undefined ? [] : r.pending, { incoming, hw: r.hw });
+      if (!ing.ok) return ing;
+      Object.assign(attribution, incoming);
       synced = true;
+      return { ok: true };
+    },
+    /** Translates one `spyLedger:seq:<ordinal>` reference to its authoritative seq (`null` when unmapped). */
+    translateSpyRef(ref) {
+      if (typeof ref !== 'string' || !SPY_REF_RE.test(ref)) return null;
+      const n = Number(ref.slice('spyLedger:seq:'.length));
+      if (!isPageLocalOrdinal(n)) return ref;
+      const s = ordToSeq.get(n);
+      return s === undefined ? null : `spyLedger:seq:${s}`;
+    },
+    /** Rewrites a page run result through the ordinal map; a gap/unmapped ordinal is one fail-closed violation. */
+    rewritePageRun(run, { stage = null } = {}) {
+      if (!isPlainObject(run) || run.pageHighWater !== lastOrd) violate('final-ingest-mismatch');
+      if (stage === 'run') runBoundary = isPlainObject(run) && Number.isSafeInteger(run.pageHighWater) ? run.pageHighWater : null;
+      if (stage === 'cleanup') {
+        drainCount += 1;
+        if (drainCount > 1) violate('cleanup-drain-repeated');
+        drainRange = runBoundary !== null && isPlainObject(run) && Number.isSafeInteger(run.pageHighWater) && run.pageHighWater >= runBoundary ? { lo: runBoundary, hi: run.pageHighWater } : null;
+      }
+      const out = remapPageOrdinals(run, ordToSeq);
+      if (out.unmapped.length > 0) violate('page-ordinal-unmapped');
+      return out.value;
+    },
+    /** Stage of a page ordinal: 'run' (<= the phase-result boundary), 'cleanup' (inside the cleanup drain range) or null. */
+    stageOfOrdinal(ord) {
+      if (runBoundary === null || !Number.isSafeInteger(ord)) return null;
+      if (ord <= runBoundary) return 'run';
+      return drainRange !== null && ord > drainRange.lo && ord <= drainRange.hi ? 'cleanup' : null;
+    },
+    /** Node-side provenance table: one row per ingested page ordinal `{seq, ord, realm, kind, label, phase, activeCheck, activeControl, stage}`. */
+    provenance() { return ingested.map((e) => ({ ...e, stage: api.stageOfOrdinal(e.ord) })); },
+    /**
+     * Completeness of page-origin MANDATORY evidence (both directions): every ingested `spy` / `event` /
+     * `snapshot` ordinal must appear exactly once, at its authoritative seq, in `spyLedger` / `eventLog` /
+     * `stateSnapshots` (cleanup-phase `wrapper-restore` events and cleanup spy records included), and every
+     * `spyLedger` / `stateSnapshots` seq must come from an ingested page ordinal of that kind. Cleanup `eventLog`
+     * provenance is checked one-to-one in both directions against the cleanup drain range (labels
+     * `cleanup-event-missing|duplicate|unsourced|outside-drain|before-boundary|boundary-unproven|phase-mismatch|identity-mismatch|leaked-ordinal`; the
+     * identity check compares the event's `kind` with the label the page registered for its ordinal). Markers, check/
+     * control execution seqs and C1 events are `alloc`-kind (not independently mandatory records).
+     */
+    pageEvidenceProblems(state) {
+      const s = isPlainObject(state) ? state : {};
+      const count = (arr) => { const m = new Map(); for (const e of Array.isArray(arr) ? arr : []) if (isPlainObject(e)) m.set(e.seq, (m.get(e.seq) || 0) + 1); return m; };
+      const coll = { spy: count(s.spyLedger), event: count(s.eventLog), snapshot: count(s.stateSnapshots) };
+      const out = [];
+      for (const e of ingested) {
+        const m = coll[e.kind];
+        if (!m) continue;
+        const n = m.get(e.seq) || 0;
+        if (n !== 1) out.push(`page-evidence-${n === 0 ? 'missing' : 'duplicate'}:${e.kind}:${e.seq}`);
+      }
+      const kindBySeq = new Map(ingested.map((e) => [e.seq, e.kind]));
+      for (const kind of ['spy', 'snapshot']) for (const seq of coll[kind].keys()) if (kindBySeq.get(seq) !== kind) out.push(`page-evidence-unsourced:${kind}:${seq}`);
+      // Cleanup eventLog provenance, BOTH directions (every cleanup event <-> exactly one ingested cleanup-drain `event` ordinal):
+      const bySeq = new Map(ingested.map((e) => [e.seq, e]));
+      // Semantic phase vs transport stage: a cleanup event is mandatory if it came through the cleanup drain OR it is a
+      // phase-'cleanup' event the run-stage transfer carried past the cleanup marker (qualified below).
+      for (const e of ingested) {
+        const stage = api.stageOfOrdinal(e.ord);
+        if (e.kind !== 'event' || !(stage === 'cleanup' || (stage === 'run' && e.phase === 'cleanup'))) continue;
+        const n = coll.event.get(e.seq) || 0;
+        if (n === 0) out.push(`cleanup-event-missing:${e.seq}`);
+        else if (n > 1) out.push(`cleanup-event-duplicate:${e.seq}`);
+      }
+      // Cleanup-boundary proof for run-stage-carried cleanup events: exactly ONE authoritative 'cleanup' marker, itself the
+      // authoritative seq of an ingested page `alloc` ordinal carried by the run stage with phase 'cleanup'. Anything
+      // else leaves the boundary unproven (fail closed).
+      const cleanupMarkers = (s.errorLedger && Array.isArray(s.errorLedger.markers) ? s.errorLedger.markers : []).filter((m) => isPlainObject(m) && m.name === 'cleanup');
+      const markerSrc = cleanupMarkers.length === 1 ? bySeq.get(cleanupMarkers[0].seq) : undefined;
+      const boundarySeq = markerSrc !== undefined && markerSrc.kind === 'alloc' && markerSrc.label === 'marker:cleanup' && markerSrc.phase === 'cleanup' && api.stageOfOrdinal(markerSrc.ord) === 'run' ? cleanupMarkers[0].seq : null;
+      const events = Array.isArray(s.eventLog) ? s.eventLog : [];
+      const seenCleanup = new Set();
+      for (const ev of events) {
+        if (!isPlainObject(ev)) continue;
+        const src = bySeq.get(ev.seq);
+        const srcStage = src !== undefined ? api.stageOfOrdinal(src.ord) : null;
+        const fromCleanupDrain = srcStage === 'cleanup';
+        // A run-carried event whose SOURCE was a cleanup-phase event stays under validation even if its authoritative phase was rewritten.
+        const semanticCleanupSrc = src !== undefined && src.kind === 'event' && srcStage === 'run' && src.phase === 'cleanup';
+        if (ev.phase !== 'cleanup' && !fromCleanupDrain && !semanticCleanupSrc) continue;
+        if (isPageLocalOrdinal(ev.seq)) { out.push(`cleanup-event-leaked-ordinal:${ev.seq}`); continue; }
+        if (src === undefined || src.kind !== 'event') out.push(`cleanup-event-unsourced:${ev.seq}`);
+        else if (!fromCleanupDrain && srcStage !== 'run') out.push(`cleanup-event-outside-drain:${ev.seq}`);
+        else if (!fromCleanupDrain && boundarySeq === null) out.push(`cleanup-event-boundary-unproven:${ev.seq}`);
+        else if (!fromCleanupDrain && !(ev.seq > boundarySeq)) out.push(`cleanup-event-before-boundary:${ev.seq}`);
+        else if (ev.phase !== 'cleanup' || src.phase !== 'cleanup') out.push(`cleanup-event-phase-mismatch:${ev.seq}`);
+        else if (ev.kind !== src.label) out.push(`cleanup-event-identity-mismatch:${ev.seq}`);
+        if (seenCleanup.has(ev.seq)) out.push(`cleanup-event-duplicate:${ev.seq}`);
+        seenCleanup.add(ev.seq);
+      }
+      return [...new Set(out)]; // stable order, one label per distinct problem
+    },
+    /** A refused operation begin: the page will not start the mutation; exactly one violation per refusal. */
+    refuseOperation(reason) { violate(`op-begin-refused:${String(reason)}`); return { ok: false, reason }; },
+    /** Fail-closed catch-up check: no recorded authoritative seq may exceed what the allocator handed out. */
+    assertAllocated(maxSeq) {
+      if (Number.isInteger(maxSeq) && maxSeq > allocator.peek()) return violate('seq-beyond-allocator');
       return { ok: true };
     },
     notePageFatal(id) {
@@ -6198,13 +6375,16 @@ function createCallRecorder({ clock = defaultClock, nextSeq: externalNextSeq = n
   let seqCounter = 0;
   // `externalNextSeq` shares an existing run counter (never a second one): the recorder then draws
   // every seq from it.
-  const nextSeq = typeof externalNextSeq === 'function' ? externalNextSeq : () => { seqCounter += 1; return seqCounter; };
+  // An external (page-local ordinal) source is told the attribution/kind of each allocation so Node can validate it at ingestion.
+  let attributionOf = () => ({ phase: 'P0', activeCheck: null, activeControl: null });
+  const nextSeq = typeof externalNextSeq === 'function' ? (kind, label) => externalNextSeq(attributionOf(), typeof kind === 'string' ? kind : 'alloc', typeof label === 'string' ? label : null) : () => { seqCounter += 1; return seqCounter; };
   // §7 RC1-C2 attribution context: stamped on every spy record, eventLog entry and state snapshot.
   // `phase` is the §5 phase currently executing; `activeCheck`/`activeControl` are null iff no check
   // (resp. control) is executing. The runner (`runChecksInPhaseOrder`) is the only writer.
   const ctx = { phase: 'P0', activeCheck: null, activeControl: null };
   const events = [];
   const attribution = () => ({ phase: ctx.phase, activeCheck: ctx.activeCheck, activeControl: ctx.activeControl });
+  attributionOf = attribution;
   const setAttribution = (patch) => {
     for (const k of Object.keys(patch || {})) {
       if (!['phase', 'activeCheck', 'activeControl'].includes(k)) throw new TypeError(`setAttribution: unknown key ${k}`);
@@ -6213,10 +6393,10 @@ function createCallRecorder({ clock = defaultClock, nextSeq: externalNextSeq = n
     return attribution();
   };
   /** `{seq, phase, activeCheck, activeControl}` -- one fresh seq from the single counter + the context. */
-  const stamp = () => ({ seq: nextSeq(), ...attribution() });
+  const stamp = (kind, label) => ({ seq: nextSeq(kind, label), ...attribution() });
   /** Appends one eventLog entry `{seq, phase, activeCheck, activeControl, kind, ...fields}`. */
   const logEvent = (kind, fields = {}) => {
-    const e = { ...stamp(), kind, ...fields };
+    const e = { ...stamp('event', kind), kind, ...fields };
     events.push(e);
     return e;
   };
@@ -6245,7 +6425,7 @@ function createCallRecorder({ clock = defaultClock, nextSeq: externalNextSeq = n
     const argRefIds = argSummaries.map((s) => (s.refId === undefined ? null : s.refId));
     const rec = {
       callIndex: records.length,
-      ...stamp(),
+      ...stamp('spy'),
       method,
       origin: currentOrigin(),
       argSummaries,
@@ -6751,14 +6931,22 @@ async function runCleanup({ steps = {}, context = {} } = {}, { stepDeadlineMs = 
  * acknowledgement (`ackSeq`); only then is the mutation invoked -- for C16/C17 recorded first as ONE
  * harness-origin spy record (`recorder.record(method, args)`, after the ack: the
  * `causalEvidence.spyRef`) -- and `ops.end({operationId, terminalOutcome, spyRef})` records the end
- * fields. A missing or failing `ops` records nothing: the mutation still runs and any request abort it
- * causes stays FATAL (fail-safe; nothing can ground an expected cancellation without the record).
+ * fields. With `requireOps` (the live page: a present operation-ledger binding is mandatory) a missing
+ * binding, a refused / thrown / malformed begin THROWS BEFORE any recorder activity and before `invoke()`:
+ * the mutation never starts and no operation record exists (Node already holds the violation). Without
+ * `requireOps` (offline callers with no peer) a missing `ops` records nothing and the mutation runs.
  */
-async function runAcknowledgedMutation({ ops = null, desc, recorder = null, method = null, args = [], invoke }) {
+async function runAcknowledgedMutation({ ops = null, desc, recorder = null, method = null, args = [], invoke, requireOps = false }) {
   let operationId = null;
   if (ops && typeof ops.begin === 'function') {
-    try { const r = await ops.begin(desc); if (r && r.ok === true && typeof r.operationId === 'string') operationId = r.operationId; } catch { operationId = null; }
-  }
+    let r;
+    try { r = await ops.begin(desc); } catch (e) {
+      if (requireOps) throw new Error(`operation-begin failed (${e && e.message ? e.message : 'threw'}): mutation not started`);
+      r = null;
+    }
+    if (r && r.ok === true && typeof r.operationId === 'string' && r.operationId.length > 0) operationId = r.operationId;
+    else if (requireOps) throw new Error(`operation-begin refused (${r && r.reason ? r.reason : 'malformed-response'}): mutation not started`);
+  } else if (requireOps) throw new Error('operation-ledger binding missing: mutation not started');
   const spyRec = recorder && method ? recorder.withOrigin('harness', () => recorder.record(method, args)) : null;
   const end = async (terminalOutcome) => {
     if (operationId === null) return;
@@ -6780,13 +6968,14 @@ async function runAcknowledgedMutation({ ops = null, desc, recorder = null, meth
  * operation record -- §9.2 slice C2: a cleanup unload mutationOperation exists only around an actual
  * `viewer.unloadModel` call, through `ops` when given).
  */
-async function guardedUnloadModel({ viewer, model, label, ops = null, modelId = null }) {
+async function guardedUnloadModel({ viewer, model, label, ops = null, modelId = null, requireOps = false }) {
   const before = viewer.getAllModels();
   if (!Array.isArray(before)) throw new TypeError(`${label}: getAllModels() did not return an array`);
   if (model === null || model === undefined || !before.includes(model)) return { outcome: 'already-absent' };
-  if (ops && (modelId === 'A' || modelId === 'B')) {
-    await runAcknowledgedMutation({ ops, desc: { operationType: 'unload', modelId, phase: 'cleanup', invokedBy: `cleanup:${label}` }, invoke: () => viewer.unloadModel(model) });
-  } else await viewer.unloadModel(model);
+  if ((ops || requireOps) && (modelId === 'A' || modelId === 'B')) {
+    await runAcknowledgedMutation({ ops, requireOps, desc: { operationType: 'unload', modelId, phase: 'cleanup', invokedBy: `cleanup:${label}` }, invoke: () => viewer.unloadModel(model) });
+  } else if (requireOps) throw new Error(`${label}: operation-ledger barrier required but no ledgered model id`);
+  else await viewer.unloadModel(model);
   const after = viewer.getAllModels();
   if (after.includes(model)) throw new Error(`${label}: model still loaded after unloadModel`);
   return { outcome: 'unloaded' };
@@ -6799,11 +6988,11 @@ function verifyViewerModelSetEmpty(viewer) {
 }
 
 /** Cleanup steps for the two models, keyed by object identity (never modelId). */
-function createModelCleanupSteps({ viewer, getModelA, getModelB, ops = null }) {
+function createModelCleanupSteps({ viewer, getModelA, getModelB, ops = null, requireOps = false }) {
   const stillLoaded = (getModel) => () => { const m = getModel(); return m != null && viewer.getAllModels().includes(m); };
   return {
-    unloadModelA: { run: () => guardedUnloadModel({ viewer, model: getModelA(), label: 'unloadModelA', ops, modelId: 'A' }), ownershipRemains: stillLoaded(getModelA) },
-    unloadModelB: { run: () => guardedUnloadModel({ viewer, model: getModelB(), label: 'unloadModelB', ops, modelId: 'B' }), ownershipRemains: stillLoaded(getModelB) },
+    unloadModelA: { run: () => guardedUnloadModel({ viewer, model: getModelA(), label: 'unloadModelA', ops, modelId: 'A', requireOps }), ownershipRemains: stillLoaded(getModelA) },
+    unloadModelB: { run: () => guardedUnloadModel({ viewer, model: getModelB(), label: 'unloadModelB', ops, modelId: 'B', requireOps }), ownershipRemains: stillLoaded(getModelB) },
     verifyViewerModelSetEmpty: { run: () => verifyViewerModelSetEmpty(viewer), ownershipRemains: () => viewer.getAllModels().length > 0 },
   };
 }
@@ -9254,7 +9443,8 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
   const setAttr = async (patch) => { rec.setAttribution(patch); await syncAttr(); };
   const mark = async (name) => {
     rec.setAttribution({ phase: name, activeCheck: null, activeControl: null });
-    const m = { seq: seqOf(), name };
+    // The marker's ordinal carries an identity label so Node can bind the cleanup boundary to THIS allocation.
+    const m = { seq: rec.nextSeq('alloc', `marker:${name}`), name };
     markers.push(m);
     await syncAttr();
     return m;
@@ -9380,7 +9570,9 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
     // Authoritative gate: prepared by Node, synchronously, on the Node error ledger (item 24 finalization,
     // witness rebuild, fatal count and gateSeq in one section). The page only validates what comes back.
     gate = await sync.gate(units.C1);
-    const bad = authoritativeGateProblems(gate, units.C1);
+    // C1's finalizedSeq is a page-local ordinal until the final transfer; the gate carries its authoritative
+    // seq (Node translated it before allocating gateSeq). Closeout re-verifies the binding on the remapped state.
+    const bad = authoritativeGateProblems(gate, isPlainObject(gate) && isPlainObject(units.C1) ? { ...units.C1, finalizedSeq: gate.c1FinalizedSeq } : units.C1);
     if (bad.length) throw new TypeError(`runChecksInPhaseOrder: authoritative gate refused (${bad.join(',')})`);
   } else {
     const ledgerAtGate = typeof errorLedger === 'function' ? errorLedger() : errorLedger;
@@ -10138,7 +10330,7 @@ function createLivePhaseDrivers(env) {
         if (runnable.checks.includes('C16')) {
           const from = log.entries.length;
           // §9.2 slice C2: hide is a mutationOperation (node-side ack before the call; spy record = causal evidence)
-          await runAcknowledgedMutation({ ops: env.ops, desc: { operationType: 'hide', modelId: 'B', phase: 'P9', invokedBy: 'C16' }, recorder: env.recorder, method: 'viewer.hideModel', args: [B().id], invoke: () => asHarness(env, () => env.viewer.hideModel(B().id)) });
+          await runAcknowledgedMutation({ ops: env.ops, requireOps: env.requireOps === true, desc: { operationType: 'hide', modelId: 'B', phase: 'P9', invokedBy: 'C16' }, recorder: env.recorder, method: 'viewer.hideModel', args: [B().id], invoke: () => asHarness(env, () => env.viewer.hideModel(B().id)) });
           await waitFor(() => log.entries.slice(from).some((e) => e.kind === 'listener-entry' && e.eventName === names.MODEL_REMOVED));
           asHarness(env, () => env.viewer.showModel(B().id));
           const back = asHarness(env, () => env.viewer.getAllModels()).includes(B());
@@ -10166,7 +10358,7 @@ function createLivePhaseDrivers(env) {
           const r0 = await bridgeOp(env, 'present', () => b.present({ sides: sides2, options: { focus: false, isolate: true, marker: true }, point: P }));
           const L0 = summarizeBridgeLedger(b.inspectLedger(), env.labelOf);
           const from = log.entries.length;
-          await runAcknowledgedMutation({ ops: env.ops, desc: { operationType: 'unload', modelId: 'B', phase: 'P9', invokedBy: 'C17' }, recorder: env.recorder, method: 'viewer.unloadModel', args: [B()], invoke: () => asHarness(env, () => env.viewer.unloadModel(B())) });
+          await runAcknowledgedMutation({ ops: env.ops, requireOps: env.requireOps === true, desc: { operationType: 'unload', modelId: 'B', phase: 'P9', invokedBy: 'C17' }, recorder: env.recorder, method: 'viewer.unloadModel', args: [B()], invoke: () => asHarness(env, () => env.viewer.unloadModel(B())) });
           await waitFor(() => {
             const s = log.entries.slice(from).filter((e) => e.kind === 'listener-entry');
             return s.some((e) => e.eventName === names.BEFORE_MODEL_UNLOAD) && s.some((e) => e.eventName === names.MODEL_REMOVED);
@@ -10285,6 +10477,8 @@ const G2_NODE_FATAL_BINDING = '__g2NodeFatal';
 const G2_NODE_OPLEDGER_BINDING = '__g2NodeOpLedger';
 /** Cross-realm fences (attribution / C1 gate): `createRunAuthority` + the authoritative gate on the Node ledger. */
 const G2_NODE_SYNC_BINDING = '__g2NodeSync';
+/** Early best-effort ingestion hint for one page ordinal (never relied on: every awaited fence re-sends the unacknowledged ones). */
+const G2_NODE_INGEST_BINDING = '__g2NodeIngest';
 /** Served modules the page imports (all under /clashpanel/, JS-only, path-confined; §3 "Page"). */
 const G2_SERVED_ENTRY_MODULES = Object.freeze([
   '/clashpanel/viewer/viewerApi.js',
@@ -10502,7 +10696,7 @@ function g2AgentReady() {
     g.fatal.kinds.push(kind);
     // Page-origin fatal: numbered (contiguous ids) so Node can reconcile exactly 1..pageFatalSent at the gate and at the final transfer.
     g.pageFatalSent += 1;
-    const meta = { id: g.pageFatalSent, hw: g.seq ? g.seq.highWater() : null };
+    const meta = { id: g.pageFatalSent, ...g2FenceReport() };
     try { const fn = window[G2_NODE_FATAL_BINDING]; if (typeof fn === 'function') Promise.resolve(fn(kind, detail, meta)).catch(() => {}); } catch { /* reconciliation at the gate fails closed */ }
   };
   if (!g.fatalForwardingInstalled) {
@@ -11071,17 +11265,31 @@ function g2CreateShellProbe(env) {
 // ---- env + phase run ---------------------------------------------------------------------------
 
 /**
+ * In-page. The ingestion report every awaited fence carries: the page's local-ordinal high-water and every
+ * ordinal Node has not acknowledged yet (`pending`). `g2FenceAck` prunes them only after Node accepted the
+ * fence (a refusal throws in the caller and nothing is acknowledged).
+ */
+function g2FenceReport() {
+  const q = g2PageState().seq;
+  return q ? { hw: q.highWater(), pending: q.pending() } : { hw: PAGE_LOCAL_BASE, pending: [] };
+}
+function g2FenceAck(report, result) {
+  const q = g2PageState().seq;
+  if (q && result && result.ok === true) q.ack(report.hw);
+}
+
+/**
  * In-page adapter of the node-side operation-ledger acknowledgement barrier (§9.2 slice C2; the
  * `G2_NODE_OPLEDGER_BINDING` exposed function: its promise resolves after the node allocated the
  * record's startSeq and ackSeq). Null when the binding is absent -- then nothing is recorded and every
- * abort stays FATAL (fail-safe). These records are numbered by the NODE minors under the page high-water
- * piggybacked on every call (`hw`), so they interleave collision-free with the page's own majors.
+ * abort stays FATAL (fail-safe). These records are numbered by the Node allocator; every call first carries
+ * the page's unacknowledged ordinals (`pending`/`hw`) so Node ingests them before allocating the operation's seqs.
  */
 function g2NodeOps() {
   const fn = typeof window !== 'undefined' ? window[G2_NODE_OPLEDGER_BINDING] : undefined;
   if (typeof fn !== 'function') return null;
-  const hw = () => { const q = g2PageState().seq; return q ? q.highWater() : null; };
-  return { begin: (desc) => fn('begin', { ...desc, hw: hw() }), end: (arg) => fn('end', { ...arg, hw: hw() }) };
+  const call = async (action, arg) => { const f = g2FenceReport(); const r = await fn(action, { ...arg, ...f }); g2FenceAck(f, r); return r; };
+  return { begin: (desc) => call('begin', desc), end: (arg) => call('end', arg) };
 }
 
 /**
@@ -11093,12 +11301,12 @@ function g2NodeSync() {
   const fn = typeof window !== 'undefined' ? window[G2_NODE_SYNC_BINDING] : undefined;
   if (typeof fn !== 'function') return null;
   const g = g2PageState();
-  const hw = () => (g.seq ? g.seq.highWater() : 0);
   const demand = (r, what) => { if (!r || r.ok !== true) throw new Error(`${what} refused by the node authority (${r && r.reason})`); return r; };
+  const call = async (action, arg, what) => { const f = g2FenceReport(); const r = demand(await fn(action, { ...arg, ...f, pageFatalSent: g.pageFatalSent }), what); g2FenceAck(f, r); return r; };
   return {
-    attribution: async (a) => { demand(await fn('attribution', { hw: hw(), phase: a.phase, activeCheck: a.activeCheck, activeControl: a.activeControl, pageFatalSent: g.pageFatalSent }), 'attribution sync'); },
-    gate: async (c1) => demand(await fn('gate', { hw: hw(), c1, pageFatalSent: g.pageFatalSent }), 'C1 gate').gate,
-    drain: async () => demand(await fn('drain', { hw: hw(), pageFatalSent: g.pageFatalSent }), 'drain sync'),
+    attribution: async (a) => { await call('attribution', { phase: a.phase, activeCheck: a.activeCheck, activeControl: a.activeControl }, 'attribution sync'); },
+    gate: async (c1) => (await call('gate', { c1 }, 'C1 gate')).gate,
+    drain: async () => call('drain', {}, 'drain sync'),
   };
 }
 
@@ -11115,9 +11323,11 @@ function g2BuildEnv({ nodeLoadOutcomes = null } = {}) {
   const createViewerApi = g2Module('/clashpanel/viewer/viewerApi.js').createViewerApi;
   const createViewerBridge = g2Module('/clashpanel/viewer/ViewerBridge.js').createViewerBridge;
   const api = createViewerApi(viewer, { events });
-  // Page-side recorder on the page half of the cross-realm sequence authority (see createRunSeqCounter):
-  // every page allocation is a fresh page major (minor 0); Node allocates the minors in between.
-  const pageSeq = createPageSeqSource();
+  // Page-side recorder on the NON-AUTHORITATIVE page-local ordinal source (see createPageOrdinalSource):
+  // the ordinals only order this realm's own synchronous records; Node ingests them (fences + this early
+  // best-effort hint) and allocates the authoritative seq from the single Node allocator.
+  const ingestFn = window[G2_NODE_INGEST_BINDING];
+  const pageSeq = createPageOrdinalSource({ deliver: typeof ingestFn === 'function' ? (entry) => { Promise.resolve(ingestFn(entry)).catch(() => {}); } : null });
   g.seq = pageSeq;
   const recorder = createCallRecorder({ nextSeq: pageSeq.next });
   const registry = createWrapperRegistry();
@@ -11131,6 +11341,7 @@ function g2BuildEnv({ nodeLoadOutcomes = null } = {}) {
     labelOf: createModelLabeler({ A: g.models.A || null, B: g.models.B || null }),
     recorder, registry,
     ops: g2NodeOps(),
+    requireOps: true, // the live page: a present operation-ledger binding is mandatory for every hide/unload
     injection: { installed: () => baseInjection.installed(), install(scenario, owners) { const h = baseInjection.install(scenario, owners); injectionHandles.push(h); return h; } },
     injectionHandles,
     bridgeTracker: createBridgeInstanceTracker(),
@@ -11168,7 +11379,7 @@ function g2PhaseBaseline(env, phase) {
   const empty = (read) => Array.isArray(read) && Array.isArray(labels) && read.filter((e) => labels.includes(e.model)).every((e) => e.ids.length === 0);
   // §7 RC1-C2 attribution fields (seq from the recorder's single counter; the runner has cleared
   // activeCheck/activeControl before the phase-end baseline).
-  const snap = { ...env.recorder.stamp(), baselinePhase: phase, loadedModels: labels, isolationEmpty: empty(iso), hiddenEmpty: empty(hid) };
+  const snap = { ...env.recorder.stamp('snapshot'), baselinePhase: phase, loadedModels: labels, isolationEmpty: empty(iso), hiddenEmpty: empty(hid) };
   env.state.stateSnapshots = env.state.stateSnapshots || [];
   env.state.stateSnapshots.push(snap);
   return { ok: snap.isolationEmpty && snap.hiddenEmpty };
@@ -11198,6 +11409,8 @@ async function g2RunPhases(arg) {
   // Final fence: the result is not returned before Node has the page high-water and fatal ids.
   if (sync) await sync.drain();
   const { spyInstall, ...extras } = run.extras || {};
+  // Cleanup delta boundary: everything the page allocates after this high-water is cleanup evidence (g2CleanupDrain).
+  g.runResultHw = g2FenceReport().hw;
   return g2JsonSafe({
     checks: run.checks, controls: run.controls, subchecks: run.subchecks, extras, c1FinalizedEvent: run.c1FinalizedEvent,
     gates: run.gates, markers: run.markers, eventLog: run.eventLog,
@@ -11206,7 +11419,7 @@ async function g2RunPhases(arg) {
     spyLedger: env.recorder.records, screenshots: g.screenshots, stateSnapshots: env.state.stateSnapshots || [],
     staleContinuationsDropped: env.quarantine.staleContinuationsDropped,
     cameraHomeCaptured: env.cameraHomeCaptured, bridgeHistory: env.bridgeTracker.history,
-    pageHighWater: g.seq ? g.seq.highWater() : 0, pageFatalSent: g.pageFatalSent,
+    pageHighWater: g2FenceReport().hw, pageFatalSent: g.pageFatalSent,
   });
 }
 
@@ -11233,7 +11446,7 @@ function g2CleanupStepImpls(env) {
   const models = { A: g.models.A || null, B: g.models.B || null };
   const loaded = () => viewer.getAllModels();
   const hasEntries = (list) => Array.isArray(list) && list.some((e) => e && e.ids && e.ids.length > 0);
-  const modelSteps = createModelCleanupSteps({ viewer, getModelA: () => models.A, getModelB: () => models.B, ops: env && env.ops ? env.ops : g2NodeOps() });
+  const modelSteps = createModelCleanupSteps({ viewer, getModelA: () => models.A, getModelB: () => models.B, ops: env && env.ops ? env.ops : g2NodeOps(), requireOps: true });
   return {
     drainPendingTokens: { run: async () => ({ staleContinuationsDropped: env ? env.quarantine.staleContinuationsDropped : 0 }), ownership: () => false },
     bridgeDispose: {
@@ -11347,10 +11560,39 @@ async function g2CleanupStep({ name }) {
   }
 }
 
+/**
+ * In-page. Final awaited cleanup drain (after the page-owned cleanup steps, BEFORE closePage): returns the
+ * cleanup DELTA of the verdict-bearing page collections (spy records, eventLog -- incl. `wrapper-restore` --
+ * and state snapshots with a page ordinal above the run result's high-water) together with the page
+ * high-water, after an awaited drain fence has made Node ingest every unacknowledged ordinal. The delta is
+ * snapshotted in the same synchronous tick as the fence report, so nothing can be allocated in between.
+ * Node rewrites it through the ordinal->seq map and merges it exactly once.
+ */
+async function g2CleanupDrain() {
+  const g = g2PageState();
+  const env = g.env;
+  const sync = g2NodeSync();
+  if (!env || !sync) return { ok: false, delta: null, error: { name: 'Error', message: env ? 'node sync binding missing' : 'page env missing' } };
+  const after = typeof g.runResultHw === 'number' ? g.runResultHw : PAGE_LOCAL_BASE;
+  // Stable-fence loop: a cleanup callback may allocate while the fence is in flight; the delta is only returned once
+  // the page high-water did not move across the awaited fence (bounded, otherwise fail closed).
+  for (let round = 0; round < 8; round += 1) {
+    const delta = g2JsonSafe({
+      spyLedger: env.recorder.records.filter((r) => r.seq > after),
+      eventLog: env.recorder.events.filter((e) => e.seq > after),
+      stateSnapshots: (env.state.stateSnapshots || []).filter((e) => e.seq > after),
+      pageHighWater: g2FenceReport().hw, pageFatalSent: g.pageFatalSent,
+    });
+    try { await sync.drain(); } catch (e) { return { ok: false, delta: null, error: g2ErrOf(e) }; }
+    if (g2FenceReport().hw === delta.pageHighWater) return { ok: true, delta, error: null };
+  }
+  return { ok: false, delta: null, error: { name: 'Error', message: 'cleanup drain did not stabilize' } };
+}
+
 /** The page registry: the ONLY functions Node may invoke in the page (by key). */
 const G2_IN_PAGE_FUNCTION_NAMES = Object.freeze([
   'g2InstallModules', 'g2AgentReady', 'g2MarkFatal', 'g2DocumentLoad', 'g2LoadDocumentNode', 'g2AwaitModelReady',
-  'g2CollectModelFacts', 'g2PrepareTargets', 'g2RunPhases', 'g2CleanupStep',
+  'g2CollectModelFacts', 'g2PrepareTargets', 'g2RunPhases', 'g2CleanupStep', 'g2CleanupDrain',
 ]);
 
 // ==== G2 PAGE-AGENT END ====  (buildPageAgentSource ships everything above, from Section 17, into the page)
@@ -11993,6 +12235,24 @@ function applyPhaseRunToState(state, run) {
 }
 
 /**
+ * Merges the (already rewritten) cleanup delta of `g2CleanupDrain` into the authoritative state exactly once
+ * per seq: spy records and snapshots are appended, eventLog entries are merged seq-ordered (stable).
+ */
+function mergeCleanupDelta(state, delta) {
+  const d = isPlainObject(delta) ? delta : {};
+  const arr = (v) => (Array.isArray(v) ? v : []);
+  let duplicates = 0;
+  const fresh = (list, have) => arr(list).filter((e) => { const dup = !isPlainObject(e) || have.has(e.seq); if (dup) duplicates += 1; return !dup; });
+  const seqs = (list) => new Set(arr(list).map((e) => (isPlainObject(e) ? e.seq : undefined)));
+  state.spyLedger = [...arr(state.spyLedger), ...fresh(d.spyLedger, seqs(state.spyLedger))];
+  state.stateSnapshots = [...arr(state.stateSnapshots), ...fresh(d.stateSnapshots, seqs(state.stateSnapshots))];
+  const evHave = seqs(state.eventLog);
+  state.eventLog = [...arr(state.eventLog), ...fresh(d.eventLog, evHave)].map((e, i) => [e, i])
+    .sort((a, b) => ((isPlainObject(a[0]) && isPlainObject(b[0]) && a[0].seq !== b[0].seq) ? a[0].seq - b[0].seq : a[1] - b[1])).map(([e]) => e);
+  return { duplicates };
+}
+
+/**
  * R1 payload builder used by the live closeout: `buildResultPayload(S*)`, then the §4.6/T22 caps --
  * the spy ledger through `capSpyLedger` (verdict-critical records never dropped) and every string
  * through `sanitizeEvidenceTree` (redaction; 4 KiB per non-critical field, truncation recorded). A
@@ -12032,7 +12292,7 @@ function loadCompletionOutcome(out) {
  * in-page). Slice C2: each page/context/browser close that is actually invoked (target present) is a
  * §9.2 `teardown` mutationOperation recorded through `ops` (start + node-side ack before `close()`).
  */
-function buildCleanupSteps({ live, rpcCall, timers, ops = null }) {
+function buildCleanupSteps({ live, rpcCall, timers, ops = null, beforeClose = null }) {
   const teardown = (target, getTarget, fn) => async () => {
     const t = getTarget();
     const rec = ops && t && typeof t.close === 'function'
@@ -12066,7 +12326,8 @@ function buildCleanupSteps({ live, rpcCall, timers, ops = null }) {
     };
   }
   steps.closePage = {
-    run: teardown('closePage', () => live.page, async () => { live.closingIntent = true; return closePlaywrightTarget(live.page, 'page', { timers }); }),
+    // H1 cleanup completeness: the awaited cleanup drain (page delta -> Node ingestion/merge) runs BEFORE the page is closed.
+    run: async () => { if (typeof beforeClose === 'function') await beforeClose(); return teardown('closePage', () => live.page, async () => { live.closingIntent = true; return closePlaywrightTarget(live.page, 'page', { timers }); })(); },
     ownershipRemains: () => Boolean(live.page) && typeof live.page.isClosed === 'function' && !live.page.isClosed(),
   };
   steps.closeContext = { run: teardown('closeContext', () => live.context, async () => { live.closingIntent = true; return closePlaywrightTarget(live.context, 'context', { timers }); }) };
@@ -12108,14 +12369,15 @@ async function runPostReservation(ctx) {
   // Resolved ONCE: event time, load-window close, gate and closeout finalization all use the same rules.
   const responseRules = deps.responseRules || OPTIONAL_RESPONSE_RULES;
   const state = buildInitialRunState({ binding, validation, startedAt: clock.nowIso() });
-  // §9.2 THE run counter (cross-realm sequence authority, see createRunSeqCounter): Node allocates the
-  // minors, the in-page run allocates page majors and reports its high-water at every awaited fence
-  // (attribution, operation begin/end, C1 gate, page-fatal forward, final transfer) -- so seqs are unique
-  // across realms and Node events during the page run carry the page's authoritative phase/check.
-  const runSeq = createRunSeqCounter();
+  // §9.2 THE run allocator (single Node-owned sequence authority, see createRunSeqAllocator): every
+  // authoritative seq is allocated here, in Node ingestion order. The in-page run only keeps non-authoritative
+  // local ordinals that Node ingests at the awaited fences (attribution, operation begin/end, C1 gate, drain)
+  // and through the early best-effort ingest binding; Node events during the page run carry the page's
+  // acknowledged phase/check.
+  const runSeq = createRunSeqAllocator();
   const nodeAttribution = { phase: 'P0', activeCheck: null, activeControl: null };
   const sink = createFatalEventSink(state.errorLedger, { nextSeq: runSeq.next });
-  const authority = createRunAuthority({ counter: runSeq, attribution: nodeAttribution, onViolation: (reason) => { sink.recordFatal('harness-exception', `cross-realm-fence:${reason}`); } });
+  const authority = createRunAuthority({ allocator: runSeq, attribution: nodeAttribution, onViolation: (reason) => { sink.recordFatal('harness-exception', `cross-realm-fence:${reason}`); } });
   const uninstallProcessHandlers = installProcessFatalHandlers({ proc: deps.proc || process, sink });
   const promises = createPromiseRegistry({ onRejection: () => {} });
   const live = { browser: null, context: null, page: null, rpc: null, closingIntent: false, detachFatal: () => {} };
@@ -12226,20 +12488,32 @@ async function runPostReservation(ctx) {
         return toBuffer(png).toString('base64');
       });
       await live.page.exposeFunction(G2_NODE_FATAL_BINDING, (kind, detail, meta) => {
-        // Page-origin fatal: ingest the page high-water first (the fatal is ordered after the page's last
-        // reported allocation), then record it and its contiguous id for the reconciliation.
+        // Page-origin fatal: ingest the page ordinals it reports first (best-effort; the awaited fences
+        // reconcile them), then record the fatal and its contiguous id for the reconciliation.
         const m = isPlainObject(meta) ? meta : {};
-        authority.ingestHw(m.hw);
+        authority.ingestEarly(m.pending);
         authority.notePageFatal(m.id);
         fatal(String(kind), detail);
         return true;
       });
+      await live.page.exposeFunction(G2_NODE_INGEST_BINDING, (entry) => authority.ingestEarly([entry]));
       await live.page.exposeFunction(G2_NODE_OPLEDGER_BINDING, (action, arg) => {
         const a = isPlainObject(arg) ? arg : {};
-        authority.ingestHw(a.hw);
+        // Fence: the page's pending ordinals are ingested BEFORE the operation allocates its seqs.
+        const ing = authority.ingestFence(a);
+        if (!ing.ok) return ing;
         // Node validates the operation's phase against the authoritative phase it holds (once the page has synced).
-        if (String(action) === 'begin' && authority.isSynced() && a.phase !== authority.phase()) return { ok: false, reason: 'phase-mismatch' };
-        return ops.pageOperation(String(action), arg);
+        if (String(action) === 'begin' && authority.isSynced() && a.phase !== authority.phase()) return authority.refuseOperation('phase-mismatch');
+        let opArg = arg;
+        if (String(action) === 'end' && typeof a.spyRef === 'string') {
+          const ref = authority.translateSpyRef(a.spyRef);
+          if (ref === null) return { ok: false, reason: 'spy-ref-unmapped' };
+          opArg = { ...a, spyRef: ref };
+        }
+        const out = ops.pageOperation(String(action), opArg);
+        // A refused begin is one authoritative violation (the page blocks the mutation); ingest refusals
+        // already recorded theirs above, so there is never a second one for the same root cause.
+        return String(action) === 'begin' && out && out.ok !== true ? authority.refuseOperation(out.reason) : out;
       });
       await live.page.exposeFunction(G2_NODE_SYNC_BINDING, (action, arg) => {
         try {
@@ -12248,18 +12522,24 @@ async function runPostReservation(ctx) {
             return authority.syncPage(a);
           }
           if (action === 'drain') {
-            authority.ingestHw(a.hw);
+            const ing = authority.ingestFence(a);
+            if (!ing.ok) return ing;
             authority.reconcilePageFatals(a.pageFatalSent);
             return { ok: true };
           }
           if (action === 'gate') {
-            // Atomic authoritative gate (synchronous, no await): ingest the page high-water, reconcile the
-            // page-origin fatals (a missing/late/duplicate transfer is one fail-closed fatal ENTRY first), then
-            // finalize pending responses (item 24), rebuild witnesses, count and allocate gateSeq on the Node ledger.
-            if (!authority.ingestHw(a.hw)) return { ok: false, reason: 'gate-hw-invalid' };
+            // Atomic authoritative gate (synchronous, no await): ingest the page ordinals (C1's finalization
+            // included), reconcile the page-origin fatals (a missing/late/duplicate transfer is one fail-closed
+            // fatal ENTRY first), then finalize pending responses (item 24), rebuild witnesses, count and allocate
+            // gateSeq on the Node ledger. C1's page ordinal is translated to its authoritative seq first.
+            const ing = authority.ingestFence(a);
+            if (!ing.ok) return ing;
             authority.reconcilePageFatals(a.pageFatalSent);
+            const c1 = isPlainObject(a.c1) ? a.c1 : null;
+            const mapped = c1 && isPageLocalOrdinal(c1.finalizedSeq) ? authority.seqOfOrdinal(c1.finalizedSeq) : (c1 ? c1.finalizedSeq : undefined);
+            if (!c1 || !Number.isInteger(mapped)) return { ok: false, reason: 'gate-c1-unmapped' };
             const gate = prepareC1Gate({
-              c1: a.c1, errorLedger: state.errorLedger, seqOf: runSeq.next, clock,
+              c1: { ...c1, finalizedSeq: mapped }, errorLedger: state.errorLedger, seqOf: runSeq.next, clock,
               finalizeAtGate: (e, { ledger, finalizedSeq }) => provisionalFinalization(e, { ledger, finalizedSeq, rules: responseRules }),
               rebuildFatalWitnessState: (ledger) => syncFatalWitnesses(ledger, { appendEntry: (entry) => sink.recordWitnessEntry(entry) }),
             });
@@ -12324,6 +12604,9 @@ async function runPostReservation(ctx) {
   }
 
   // ---- consumed session: T9 armed; loads A then B; facts; targets; P1..P11 (in-page) ----------
+  // H1 cleanup completeness: set once the page run result is applied; `drainCleanup` (run before closePage) merges the
+  // page's cleanup delta; `failure` is a fail-closed reason (merged === false => one fatal before closeout).
+  const cleanupEvidence = { runApplied: false, started: false, merged: false, failure: null };
   let t9DisarmedAt = null;
   const t9 = createAttemptDeadlineTimer({
     sink: { recordAttemptDeadline: () => { const r = sink.recordAttemptDeadline(); if (r && live.rpc) promises.track(live.rpc.call('g2MarkFatal', { kind: 'ATTEMPT_DEADLINE', abort: true }).catch(() => {})); return r; } },
@@ -12380,14 +12663,14 @@ async function runPostReservation(ctx) {
     Object.assign(nodeAttribution, { phase: 'P1', activeCheck: null, activeControl: null });
     const runOut = await withDeadline('attempt', t9Remaining(), () => rpcCall('g2RunPhases', { nodeLoadOutcomes }));
     if (runOut.status === 'completed' && runOut.value) {
-      const run = runOut.value;
+      // Final transfer (drain): the page-origin fatal ids are reconciled before anything else is allocated
+      // (any gap/duplicate/late fatal is one fail-closed fatal entry, row 1); the run result is then rewritten
+      // through the ordinal->seq map so no page-local ordinal reaches the authoritative state.
+      authority.reconcilePageFatals(runOut.value.pageFatalSent);
+      const run = authority.rewritePageRun(runOut.value, { stage: 'run' });
       applyPhaseRunToState(state, run);
-      // Final transfer (drain): the page high-water and the page-origin fatal ids are reconciled before
-      // anything else is allocated; any gap/duplicate/late fatal is one fail-closed fatal entry (row 1).
-      authority.ingestHw(run.pageHighWater);
-      authority.reconcilePageFatals(run.pageFatalSent);
-      if (runSeq.overflowed()) sink.recordFatal('harness-exception', 'cross-realm-fence:seq-minor-overflow');
-      runSeq.observe(maxRecordedSeq(state));
+      cleanupEvidence.runApplied = true;
+      authority.assertAllocated(maxRecordedSeq(state));
       if (run.sessionTainted === true) tainted = true;
       state.staleContinuationsDropped += Number.isInteger(run.staleContinuationsDropped) ? run.staleContinuationsDropped : 0;
     } else {
@@ -12408,7 +12691,25 @@ async function runPostReservation(ctx) {
   // ---- cleanup ledger (§9; every step runs, each bounded by T8) ------------------------------
   Object.assign(nodeAttribution, { phase: 'cleanup', activeCheck: null });
   emit({ type: 'cleanup' });
-  const cleanup = await runCleanup({ steps: buildCleanupSteps({ live, rpcCall, timers, ops }), context: {} }, { timers, quarantine });
+  // Awaited cleanup drain (before closePage): the page's cleanup-generated records are ingested by Node (single
+  // allocator), rewritten through the ordinal->seq map and merged into the authoritative state exactly once.
+  const drainCleanup = async () => {
+    if (!cleanupEvidence.runApplied || cleanupEvidence.started) return;
+    cleanupEvidence.started = true;
+    try {
+      const out = await withDeadline('cleanup-step', TABLE_T.T8.cleanupStepDeadlineMs, () => rpcCall('g2CleanupDrain', null), true);
+      if (out.status !== 'completed' || !isPlainObject(out.value) || out.value.ok !== true) {
+        cleanupEvidence.failure = out.status !== 'completed' ? `drain-${out.status}` : `drain-refused:${out.value && out.value.error ? out.value.error.message : 'malformed'}`;
+        return;
+      }
+      authority.reconcilePageFatals(out.value.delta && out.value.delta.pageFatalSent);
+      // A cleanup record that is already in the state (same seq) is a duplicate merge: fail closed, never a silent dedup.
+      const { duplicates } = mergeCleanupDelta(state, authority.rewritePageRun(out.value.delta, { stage: 'cleanup' }));
+      if (duplicates > 0) { cleanupEvidence.failure = `merge-duplicate:${duplicates}`; return; }
+      cleanupEvidence.merged = true;
+    } catch (err) { cleanupEvidence.failure = `drain-threw:${summarizeThrown(err).name}`; }
+  };
+  const cleanup = await runCleanup({ steps: buildCleanupSteps({ live, rpcCall, timers, ops, beforeClose: drainCleanup }), context: {} }, { timers, quarantine });
   // §9.2: a mutation whose cleanup step timed out ends `timeout` (its window still closes at the next boundary).
   for (const [step, status] of Object.entries(cleanup.cleanupStepStatus || {})) {
     if (status !== 'timed-out') continue;
@@ -12446,7 +12747,16 @@ async function runPostReservation(ctx) {
   // synced (a newly fatal identity still counted through the sink) -- all before closeoutProtocol's
   // step-1 primaryOverall, synchronously.
   Object.assign(nodeAttribution, { phase: 'closeout', activeCheck: null });
-  runSeq.observe(maxRecordedSeq(state));
+  // H1: mandatory page-origin evidence (incl. cleanup-generated records) must be complete before the verdict is
+  // computed; a missing/failed cleanup drain or any missing/unsourced record is ONE fatal (row 1), never a PASS.
+  if (cleanupEvidence.runApplied) {
+    if (!cleanupEvidence.merged) sink.recordFatal('harness-exception', `cleanup-evidence:${cleanupEvidence.failure || 'drain-not-run'}`);
+    else {
+      const problems = authority.pageEvidenceProblems(state);
+      if (problems.length > 0) sink.recordFatal('harness-exception', `cleanup-evidence:${problems[0]}${problems.length > 1 ? `(+${problems.length - 1})` : ''}`);
+    }
+  }
+  authority.assertAllocated(maxRecordedSeq(state));
   state.errorLedger.markers.push({ seq: runSeq.next(), name: 'closeout' });
   ops.seal(); // no operation record after the closeout marker; every cancellation window is now closed
   finalizeNetworkLedgerAtCloseout(state.errorLedger, { nextSeq: runSeq.next, appendEntry: (entry) => sink.recordWitnessEntry(entry), prefixSources: network.prefixSources, rules: responseRules });
@@ -12566,6 +12876,7 @@ if (isDirectInvocation(import.meta.url, process.argv[1])) {
 }
 
 export {
+  mergeCleanupDelta,
   // constants
   REPO_ROOT,
   HARNESS_REL_PATH,
@@ -12985,11 +13296,12 @@ export {
   G2_DUAL_COUNTER_GATE,
   G2_NODE_OPLEDGER_BINDING,
   G2_NODE_SYNC_BINDING,
-  SEQ_STRIDE,
-  SEQ_MINOR_RESERVED,
-  realmOfSeq,
+  PAGE_LOCAL_BASE,
+  isPageLocalOrdinal,
+  remapPageOrdinals,
+  G2_NODE_INGEST_BINDING,
   createRunAuthority,
-  createPageSeqSource,
+  createPageOrdinalSource,
   authoritativeGateProblems,
   g2NodeSync,
   runAcknowledgedMutation,
@@ -13022,7 +13334,7 @@ export {
   networkLedgerProblems,
   primarySeqAllocations,
   maxRecordedSeq,
-  createRunSeqCounter,
+  createRunSeqAllocator,
   classifyNetworkUrl,
   createNetworkInstrumentation,
   makeGateDispositionRecord,

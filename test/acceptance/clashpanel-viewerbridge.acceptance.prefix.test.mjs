@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   LIVE_PATH_WIRED, LOAD_OPERATION_KEYS, MUTATION_OPERATION_KEYS, PREFIX_SOURCE_ENTRY_KEYS, PREFIX_DERIVATION_KEYS, OP_LEDGER_SPY_METHODS,
-  G2_DUAL_COUNTER_GATE, locateFunctionSource, createEmptyErrorLedger, createRunSeqCounter, createFatalEventSink, createNetworkInstrumentation, wireFatalListeners,
+  G2_DUAL_COUNTER_GATE, locateFunctionSource, createEmptyErrorLedger, createRunSeqAllocator, createFatalEventSink, createNetworkInstrumentation, wireFatalListeners,
   createOperationLedger, opLedgerRecordProblems, derivePrefixes, buildPrefixSourceLedger, refreshPrefixSourceLedger, prefixBindingState,
   finalizeLoadWindows, finalizeNetworkLedgerAtCloseout, networkLedgerProblems, classifyRequestFailure, classifyHttpResponse, classifierResultProblems,
   prefixSupportRefs, isPrefixLedgerFrozen, prefixSnapshotCutoff, runAcknowledgedMutation, guardedUnloadModel, buildCleanupSteps, loadCompletionOutcome,
@@ -47,8 +47,8 @@ function fakeRequest({ url = URL_B, method = 'GET', resourceType = 'fetch', nav 
 
 function world({ seqStart = 100, rules, attr = { phase: 'P1', activeCheck: 'C1' } } = {}) {
   const ledger = createEmptyErrorLedger();
-  const counter = createRunSeqCounter();
-  counter.observe(seqStart);
+  const counter = createRunSeqAllocator();
+  while (counter.peek() < seqStart) counter.next();
   const sink = createFatalEventSink(ledger, { nextSeq: counter.next });
   const at = { ...attr };
   const net = createNetworkInstrumentation({ ledger, nextSeq: counter.next, sink, baseUrl: BASE, attribution: () => at, mainFrame: () => 'main', ...(rules ? { rules } : {}) });
@@ -93,19 +93,19 @@ const NP = (w, opts) => networkLedgerProblems({ errorLedger: w.ledger, spyLedger
 // Static
 // ------------------------------------------------------------------------------------------
 
-test('static: the slice-C1 non-distinguishing stand-in is gone; LIVE_PATH_WIRED stays false; the dual-counter gate stays documented (incl. M1 attribution), unresolved and mechanically coupled to live (M2)', () => {
+test('static: the slice-C1 non-distinguishing stand-in is gone; LIVE_PATH_WIRED stays false; the dual-counter gate stays documented (H1 single-allocator remediation), unresolved and mechanically coupled to live (M2)', () => {
   assert.equal(HARNESS_SOURCE.includes('NON_DISTINGUISHING_PREFIX_DERIVATION'), false);
   assert.equal(HARNESS_SOURCE.split('const LIVE_PATH_WIRED = false;').length - 1, 1);
   assert.equal(LIVE_PATH_WIRED, false);
   assert.equal(G2_DUAL_COUNTER_GATE.resolved, false);
   // Live-readiness remediation: the seqBase stopgap in g2BuildEnv is gone -- page records are numbered by
-  // the page realm of the ONE composite sequence (createPageSeqSource), never seeded from a node seqBase.
+  // page-local ordinals (createPageOrdinalSource) mapped by the ONE Node allocator, never seeded from a node seqBase.
   assert.equal(HARNESS_SOURCE.includes('G2_DUAL_COUNTER_GATE (unresolved): page records are numbered here'), false, 'the seqBase stopgap label is gone');
   {
     const { start, end } = locateFunctionSource(HARNESS_SOURCE, 'g2BuildEnv');
     const body = HARNESS_SOURCE.slice(start, end);
     assert.equal(body.includes('seqBase'), false, 'g2BuildEnv no longer seeds page numbering from seqBase');
-    assert.ok(body.includes('createPageSeqSource()'), 'g2BuildEnv numbers page records from the page realm');
+    assert.ok(body.includes('createPageOrdinalSource('), 'g2BuildEnv numbers page records with page-local ordinals');
   }
   // M2: mechanical coupling -- live can never be enabled while the gate is unresolved.
   assert.equal(LIVE_PATH_WIRED && G2_DUAL_COUNTER_GATE.resolved !== true, false, 'LIVE_PATH_WIRED must not be true while G2_DUAL_COUNTER_GATE is unresolved');
@@ -119,9 +119,11 @@ test('static: the slice-C1 non-distinguishing stand-in is gone; LIVE_PATH_WIRED 
   }
   // M1 (attribution) is named by the same gate's comment -- its history and its remediation.
   const gateDoc = HARNESS_SOURCE.slice(HARNESS_SOURCE.indexOf('UNRESOLVED BEFORE-LIVE-EXECUTION GATE'), HARNESS_SOURCE.indexOf('const G2_DUAL_COUNTER_GATE ='));
-  assert.match(gateDoc, /review H1\/H2\/M1/);
-  assert.match(gateDoc, /\{phase:'P1', activeCheck:null\}/);
-  assert.match(gateDoc, /Node-authoritative phase\/check\/control attribution/);
+  assert.match(gateDoc, /H1 sequencing remediation/);
+  assert.match(gateDoc, /ONE Node-owned\s+\*\s+allocator \(`createRunSeqAllocator`\)/);
+  assert.match(gateDoc, /NON-AUTHORITATIVE local ordinal \(`createPageOrdinalSource`/);
+  assert.match(gateDoc, /no page ordinal and no second counter survives/);
+  assert.match(gateDoc, /'dual-counter-gate-unresolved'/);
   assert.deepEqual(derivePrefixes([], []), {
     algorithm: 'g2-prefix-v1', loadOperationIds: { A: null, B: null }, windows: { A: null, B: null }, bindingAvailable: false, nonDistinguishingReason: 'no-load-operation',
     candidateKeys: { A: [], B: [] }, ambiguousKeys: [], modelPrefixes: { A: [], B: [] },

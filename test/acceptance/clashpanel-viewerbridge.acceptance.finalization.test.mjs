@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import {
-  OPTIONAL_RESPONSE_RULES, createEmptyErrorLedger, createFatalEventSink, createNetworkInstrumentation, createRunSeqCounter,
+  OPTIONAL_RESPONSE_RULES, createEmptyErrorLedger, createFatalEventSink, createNetworkInstrumentation, createRunSeqAllocator,
   createOperationLedger, finalizeLoadWindows, prepareC1Gate, provisionalFinalization, syncFatalWitnesses,
   finalizeNetworkLedgerAtCloseout, networkLedgerProblems, wireFatalListeners, sha256Hex,
 } from './clashpanel-viewerbridge.acceptance.mjs';
@@ -31,7 +31,7 @@ function fakeRequest({ url = URL_B, method = 'GET', resourceType = 'fetch', nav 
 /** A Node-authority world: the real ledger, counter, sink and instrumentation over a fake page. */
 function world({ rules = RULES, nextSeqWrap = null } = {}) {
   const ledger = createEmptyErrorLedger();
-  const counter = createRunSeqCounter();
+  const counter = createRunSeqAllocator();
   const nextSeq = nextSeqWrap ? nextSeqWrap(counter.next) : counter.next;
   const sink = createFatalEventSink(ledger, { nextSeq: counter.next });
   const at = { phase: 'P1', activeCheck: 'C1' };
