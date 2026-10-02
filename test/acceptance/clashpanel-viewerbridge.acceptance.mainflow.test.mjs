@@ -668,14 +668,18 @@ test('model A load failure => B still loaded after A (order A then B); A unloada
   assert.equal(r.finalOverall, 'BLOCKED');
 });
 
-test('in-page phase run throws => every check BLOCKED, session tainted, controls not executable => FAIL row 4 (never PASS; §7 literal)', async () => {
-  const { r, reader } = await consumedRun({ handlers: { g2RunPhases: () => { throw new Error('page crashed'); } } });
+test('in-page phase run throws (no transfer) => every check BLOCKED, session tainted, controls not started => a durably committed FAIL (row 3 phase-run-failed; never PASS); the root failure is a schema-valid R1 record', async () => {
+  const { w, r, reader } = await consumedRun({ handlers: { g2RunPhases: () => { throw new Error('page crashed'); } } });
   assert.equal(r.state.sessionTainted, true);
   assert.ok(Object.values(r.state.checks).every((c) => vr(c) === 'BLOCKED(phase-run-threw)'));
-  // §7: NOT_EXECUTABLE / NOT_DETECTED controls are non-acceptable => §8 row 4 FAIL (the X4 reading flagged by Task 4).
   assert.equal(r.finalOverall, 'FAIL');
-  assert.equal(r.closeout.primaryRow, 4);
+  assert.equal(r.closeout.primaryRow, 3, 'the phase-run-failed reason of row 3 (no longer an incidental row 4)');
+  assert.equal(r.closeout.committed, true, 'a failed run closes out normally: R1/R2/R3/J/K');
+  assert.deepEqual(r.closeout.causes, []);
   assert.equal(reader.verdict, 'FAIL');
+  assert.equal(reader.witness, 'W-6');
+  assert.equal(reader.detail.failedRun.source, 'node-phase-run-transport');
+  assert.equal(r.state.phaseRunFailure.seqSource, 'node-observed');
 });
 
 test('page records are re-validated Node-side: an invalid check record fails closed', async () => {
@@ -1261,12 +1265,12 @@ test('H1 cleanup evidence non-vacuity: a closePage step that never runs the drai
   assert.equal(r.closeout.primaryRow, 1);
 });
 
-test('H1 cleanup evidence: no drain when the run result was never applied (phase run threw) -- no spurious cleanup-evidence fatal; the row-4 verdict is unchanged', async () => {
+test('H1 cleanup evidence: no drain when the run result was never applied (phase run threw) -- no spurious cleanup-evidence fatal; FAIL via the row-3 phase-run-failed reason', async () => {
   const { w, r } = await consumedRun({ handlers: { g2RunPhases: () => { throw new Error('page crashed'); } } });
   assert.equal(w.log.some((e) => e.kind === 'rpc' && e.key === 'g2CleanupDrain'), false);
   assert.equal(r.state.errorLedger.entries.filter(isCleanupEvidenceFatal).length, 0);
   assert.equal(r.finalOverall, 'FAIL');
-  assert.equal(r.closeout.primaryRow, 4);
+  assert.equal(r.closeout.primaryRow, 3);
 });
 
 // ------------------------------------------------------------------------------------------
@@ -1806,4 +1810,391 @@ test('ADDENDUM 5 (3) stable drain: a page that keeps allocating cleanup events d
   assert.equal(r.closeout.primaryRow, 1);
   assert.equal(r.exitCode, 1);
   assert.equal(readerVerdict(w).verdict, 'FAIL');
+});
+
+// ------------------------------------------------------------------------------------------
+// Before-live hardening Medium 2 (2026-10-02): cleanup evidence retained after a FAILED phase run, full main flow.
+// The page side (g2RunPhases catching the runner throw, g2EnterCleanupAfterFailure, g2FinalizeRunTransfer) is covered
+// on the real page bundle in clashpanel-viewerbridge.acceptance.final-transfer.test.mjs; here the fake page returns the
+// failure transfer that path produces and runPostReservation handles it end to end (rewrite, apply, cleanup drain,
+// provenance checks, closeout, reader).
+// ------------------------------------------------------------------------------------------
+
+const PAGE_FAILURE = Object.freeze({ name: 'TypeError', message: 'runChecksInPhaseOrder: authoritative gate refused (gates.C1.keys)' });
+/**
+ * The failure transfer of a run whose runner threw: the page evidence up to the throw (passRun's C1 finalization event
+ * etc.), the failure path's ONE identity-bound marker:cleanup (40, acknowledged through the real attribution fence) and a
+ * cleanup-phase callback event carried by the run stage after it (41); NO verdict fields -- unless `forge` (a page that
+ * also sends PASS checks/controls/gate, which Node must ignore).
+ */
+function failedRunTransfer({ forge = false } = {}) {
+  const r = crossBoundaryRun({ markers: [{ seq: 40, name: 'cleanup' }] });
+  const { checks, controls, subchecks, extras, c1FinalizedEvent, gates, sessionTainted, taintPhase, phaseLog, spyInstall, ...evidence } = r;
+  void subchecks; void extras; void taintPhase; void phaseLog; void spyInstall;
+  return { ...evidence, ...(forge ? { checks, controls, gates, c1FinalizedEvent, sessionTainted } : {}), phaseRunFailure: { ...PAGE_FAILURE, cleanupEntry: 'marker-allocated' } };
+}
+/** The committed (schema-valid) R1 of the run, read back from the durable result directory. */
+function r1Of(w) {
+  const view = w.fs.processCrashView();
+  return JSON.parse(view.readFile(path.join(CHAIN.D1, H.R1_NAME)).toString('utf8'));
+}
+const allBlockedByFailure = (S) => Object.values(S.checks).every((c) => vr(c) === 'BLOCKED(phase-run-threw)' && c.evidence.phaseRunFailure.message === PAGE_FAILURE.message);
+
+test('Medium 2 (full flow): a phase run that threw in the page but made the failure transfer => run + cleanup page evidence retained in the state AND in the committed schema-valid R1, every check BLOCKED(phase-run-threw) with the exact page failure, no cleanup-evidence fatal, row 3 FAIL committed through K (R1/R2/R3/J/K); harness and reader agree', async () => {
+  const { w, r, reader } = await consumedRun({ handlers: { g2RunPhases: () => failedRunTransfer() } });
+  const S = r.state;
+  assert.ok(allBlockedByFailure(S), JSON.stringify(S.checks.C1));
+  assert.equal(S.sessionTainted, true);
+  assert.equal(S.gates, null);
+  assert.deepEqual(S.errorLedger.entries.filter((e) => e.kind === 'harness-exception'), [], 'no fence violation, no cleanup-evidence fatal');
+  assert.ok(w.log.some((e) => e.kind === 'rpc' && e.key === 'g2CleanupDrain'), 'the cleanup drain ran after the failed run');
+  const c = cleanupRecordsOf(S);
+  assert.deepEqual([c.spy.length, c.restore.length, c.snap.length], [1, 2, 1], 'cleanup-step evidence retained');
+  assert.equal(S.eventLog.filter((e) => e.kind === 'late-callback').length, 1, 'the run-carried cleanup callback retained once');
+  assert.equal(S.eventLog.filter((e) => e.kind === 'check-finalized').length, 1, 'the failed run\'s page evidence retained');
+  assert.equal(S.errorLedger.markers.filter((m) => m.name === 'cleanup').length, 1);
+  // closeout: the failed run is durably closed by the UNCHANGED protocol
+  assert.equal(r.finalOverall, 'FAIL');
+  assert.equal(r.closeout.primaryRow, 3);
+  assert.equal(r.closeout.committed, true);
+  assert.deepEqual(r.closeout.causes, [], 'no closeout failure: R1 verifies (failed-run schema), R2, R3, Kc, K');
+  assert.equal(reader.verdict, 'FAIL');
+  assert.equal(reader.witness, 'W-6');
+  assert.deepEqual(reader.detail.failedRun, { source: 'page-phase-run', category: PAGE_FAILURE.name, phase: null, failureSeq: S.phaseRunFailure.failureSeq, c1Stage: 'pre-c1' });
+  // the persisted R1 is schema-valid and carries the retained evidence and the exact failure detail
+  const r1 = r1Of(w);
+  assert.deepEqual(H.validateResultSchema(r1, 'payload').errors, []);
+  assert.equal(r1.phaseRunFailure.message, PAGE_FAILURE.message);
+  assert.equal(r1.phaseRunFailure.category, 'TypeError');
+  assert.equal(r1.checks.C9.evidence.phaseRunFailure.message, PAGE_FAILURE.message);
+  assert.equal(r1.gates, null);
+  assert.equal(r1.overall.row, 3);
+  assert.equal(r1.eventLog.filter((e) => e.kind === 'wrapper-restore' && e.phase === 'cleanup').length, 2);
+  assert.equal(r1.spyLedger.records.filter((e) => e.phase === 'cleanup').length, 1);
+  assert.equal(r1.stateSnapshots.filter((e) => e.baselinePhase === 'cleanup').length, 1);
+  assert.equal(r1.closeout.primaryRow, 3);
+  // contrast: a page whose run THREW without a transfer retains no cleanup page evidence (no drain) but is ALSO durably closed
+  const t = await consumedRun({ handlers: { g2RunPhases: () => { throw new Error('page crashed'); } } });
+  assert.equal(t.w.log.some((e) => e.kind === 'rpc' && e.key === 'g2CleanupDrain'), false);
+  const tc = cleanupRecordsOf(t.r.state);
+  assert.deepEqual([tc.spy.length, tc.restore.length, tc.snap.length], [0, 0, 0]);
+  assert.deepEqual(t.r.closeout.causes, []);
+  assert.equal(t.reader.verdict, 'FAIL');
+  const tr1 = r1Of(t.w);
+  assert.deepEqual(H.validateResultSchema(tr1, 'payload').errors, []);
+  assert.equal(tr1.eventLog.length, 0, 'its R1 holds no page evidence');
+  assert.equal(tr1.phaseRunFailure.message, 'page crashed');
+});
+
+test('Medium 2 (full flow): phase threw AND the cleanup evidence has a problem => BOTH causes retained (checks BLOCKED(phase-run-threw) with the failure + exactly ONE cleanup-evidence fatal); FAIL, never PASS', async () => {
+  const cases = [
+    ['omitted cleanup event', (w) => () => w.cleanupPage.drain({ mutate: (d) => ({ ...d, eventLog: [] }) }), /^cleanup-evidence:page-evidence-missing:event:\d+\(\+\d+\)$/],
+    ['refused drain', () => () => ({ ok: false, delta: null, error: { name: 'Error', message: 'x' } }), /^cleanup-evidence:drain-refused:x$/],
+    ['duplicate merge', (w) => () => w.cleanupPage.drain({ mutate: (d) => ({ ...d, eventLog: [...d.eventLog, { ...LATE_EVENT, seq: pageSeqOf(LATE_EVENT.seq) }] }) }), /^cleanup-evidence:merge-duplicate:1$/],
+  ];
+  for (const [name, make, re] of cases) {
+    const w = makeWorld({ handlers: { g2RunPhases: () => failedRunTransfer() } });
+    w.handlers.g2CleanupDrain = make(w);
+    const r = await runMain(w);
+    assert.ok(allBlockedByFailure(r.state), name);
+    const f = r.state.errorLedger.entries.filter(isCleanupEvidenceFatal).map((e) => e.detail);
+    assert.equal(f.length, 1, `${name}: ${JSON.stringify(f)}`);
+    assert.match(f[0], re, name);
+    assert.equal(r.finalOverall, 'FAIL', name);
+    assert.equal(r.closeout.primaryRow, 1, name);
+    assert.equal(readerVerdict(w).verdict, 'FAIL', name);
+  }
+});
+
+test('Medium 2 (full flow): a failure transfer that ALSO carries page PASS verdicts/gate never PASSes (Node ignores them); non-vacuity: without the Node failure verdict (mutated harness) the same forged transfer is taken at face value', async () => {
+  const { r, reader } = await consumedRun({ handlers: { g2RunPhases: () => failedRunTransfer({ forge: true }) } });
+  assert.ok(allBlockedByFailure(r.state));
+  assert.equal(r.state.gates, null);
+  assert.equal(r.finalOverall, 'FAIL');
+  assert.equal(reader.verdict, 'FAIL');
+  const mod = await mutatedHarness([["      if (isPlainObject(run) && Object.hasOwn(run, 'phaseRunFailure')) { applyPhaseRunFailureToState(state, authenticatedFailureRun(run, authority), { nextSeq: runSeq.next }); tainted = true; }\n", '']]);
+  const w = makeWorld({ mod: mod.mod, harnessText: mod.text, handlers: { g2RunPhases: () => failedRunTransfer({ forge: true }) } });
+  const rm = await runMain(w);
+  assert.equal(vr(rm.state.checks.C9), 'PASS', 'the page verdict would have been applied');
+  assert.equal(allBlockedByFailure(rm.state), false);
+});
+
+// ==========================================================================================
+// FAILED-RUN CLOSEOUT (owner-authorized 2026-10-02), full main flow.
+// A failed phase run is durably closed by the UNCHANGED closeout protocol (R1 -> R2 -> R3 -> J -> K, finalOverall =
+// primaryOverall = FAIL): R1 carries the Node-set root failure `phaseRunFailure`; it is never replaced by later
+// cleanup / closeout failures (they only ADD reasons); markers survive into the durable R1; a closeout failure keeps the
+// root failure in F; a PASS run keeps `phaseRunFailure: null` and `failedRun: none`.
+// ==========================================================================================
+
+/** The exact page failure detail a runner throw at P4 produces (g2ErrOf + g2FailureDetail + attribution at the throw). */
+const FR_FAILURE = Object.freeze({
+  name: 'TypeError', message: PAGE_FAILURE.message, phase: 'P1', activeCheck: null, activeControl: null,
+  operation: null, // (operation cross-validation against the opLedger is covered at the state level in the verdict file)
+});
+/** Every page marker emitted before the throw (P1..P4, small passRun ordinals) + the failure path's ONE marker:cleanup (40). */
+const FR_MARKERS = Object.freeze([{ seq: 0, name: 'P1' }, { seq: 40, name: 'cleanup' }]); // PRE-C1 world: this fake page never reaches the gate, so no downstream marker may exist
+const FR_FAILURE_ORDINAL = 38; // the page's identity-bound `phase-run-failure` alloc ordinal (between P4 and the cleanup marker)
+/**
+ * A failure transfer exactly like g2RunPhases' failure branch returns it: the whole marker log, the transferred page
+ * evidence, and `phaseRunFailure` with the failure's own page ordinal (`seq`, rewritten by Node) + cleanupEntry; no verdicts.
+ */
+function frTransfer({ markers = FR_MARKERS } = {}) {
+  const r = crossBoundaryRun({ markers: markers.map((m) => ({ ...m })), labels: { [FR_FAILURE_ORDINAL]: 'phase-run-failure' } });
+  const { checks, controls, subchecks, extras, c1FinalizedEvent, gates, sessionTainted, taintPhase, phaseLog, spyInstall, ...evidence } = r;
+  void checks; void controls; void subchecks; void extras; void c1FinalizedEvent; void gates; void sessionTainted; void taintPhase; void phaseLog; void spyInstall;
+  return { ...evidence, phaseRunFailure: { ...FR_FAILURE, seq: pageSeqOf(FR_FAILURE_ORDINAL), cleanupEntry: 'marker-allocated' } };
+}
+/** The durable artifact set of a world (process-crash view). */
+function durableOf(w) {
+  const files = H.readArtifactFileMap({ fs: w.fs.processCrashView(), chain: CHAIN });
+  const json = (b) => (b ? JSON.parse(b.toString('utf8')) : null);
+  return {
+    files,
+    r1Bytes: files.results[H.R1_NAME], r1: json(files.results[H.R1_NAME]),
+    r2: files.results[H.R2_NAME] ? files.results[H.R2_NAME].toString('utf8') : null,
+    r3: json(files.results[H.R3_NAME]), k: json(files.attempts[H.commitName(AUTH_ID)]), f: json(files.attempts[H.closeoutFailureName(AUTH_ID)]),
+  };
+}
+/** The expected Node-authoritative root-failure record of frTransfer (failureSeq = the authoritative seq of ordinal 38). */
+function frExpectedRecord(failureSeq) {
+  return {
+    primary: true, source: 'page-phase-run', realm: 'page', status: 'threw', category: 'TypeError', message: PAGE_FAILURE.message,
+    phase: 'P1', activeCheck: null, activeControl: null, operation: null, failureSeq, seqSource: 'page-alloc', cleanupEntry: 'marker-allocated', c1Stage: 'pre-c1', gateSeq: null, gateOutcome: null,
+  };
+}
+const markerNamesOf = (r1) => r1.errorLedger.markers.map((m) => m.name);
+const strictlyIncreasing = (xs) => xs.every((x, i) => i === 0 || x > xs[i - 1]);
+
+test('FAILED-RUN CLOSEOUT (1): phase throws (page failure transfer) => valid failed-run R1, R2 (failedRun line), R3 (validates, hashes the on-disk R1), J, K committed; reader FAIL at W-6 with detail.failedRun; harness and reader agree', async () => {
+  const { w, r, reader } = await consumedRun({ handlers: { g2RunPhases: () => frTransfer() } });
+  assert.deepEqual([r.finalOverall, r.closeout.primaryRow, r.closeout.committed, r.exitCode], ['FAIL', 3, true, 1]);
+  assert.deepEqual(r.closeout.causes, []);
+  const d = durableOf(w);
+  // R1: schema-valid failed-run record, FAIL row 3, tainted, no gate
+  assert.deepEqual(H.validateResultSchema(d.r1, 'payload').errors, []);
+  assert.deepEqual([d.r1.overall.verdict, d.r1.overall.row, d.r1.sessionTainted, d.r1.gates], ['FAIL', 3, true, null]);
+  assert.deepEqual(H.phaseRunFailureShapeProblems(d.r1.phaseRunFailure), []);
+  assert.deepEqual(H.failedRunRecordProblems(d.r1), []);
+  // R2: exactly one failedRun line naming the root failure
+  const pf = d.r1.phaseRunFailure;
+  const line = `failedRun: page-phase-run/TypeError/P1/seq ${pf.failureSeq}/pre-c1`;
+  assert.equal(d.r2.split('\n').filter((l) => l === line).length, 1, d.r2);
+  assert.equal(d.r2.split('\n').filter((l) => l.startsWith('failedRun:')).length, 1);
+  // R3: validates and its R1 / R2 hashes are those of the on-disk bytes
+  assert.deepEqual(H.validateCloseoutManifest(d.r3), { ok: true, errors: [] });
+  assert.equal(d.r3.artifacts[0].sha256, sha(d.r1Bytes));
+  assert.equal(d.r3.artifacts[1].sha256, sha(d.files.results[H.R2_NAME]));
+  assert.deepEqual([d.r3.primaryOverall, d.r3.primaryRow], ['FAIL', 3]);
+  // J + K: journal ends CLOSEOUT_STARTED, K is the ordinary FAIL commit (finalOverall = primaryOverall), no F
+  assert.deepEqual(w.durableJournalStates(), ['AUTH_BOUND', 'ATTEMPT_CONSUMED', 'CLOSEOUT_STARTED']);
+  assert.deepEqual([d.k.finalOverall, d.k.primaryOverall, d.k.primaryRow, d.k.resultSha256], ['FAIL', 'FAIL', 3, sha(d.r1Bytes)]);
+  assert.equal(d.f, null);
+  // reader: W-6 FAIL carrying the root failure summary
+  assert.deepEqual([reader.verdict, reader.label, reader.witness], ['FAIL', 'FAIL', 'W-6']);
+  assert.deepEqual({ ...reader.detail.failedRun }, { source: 'page-phase-run', category: 'TypeError', phase: 'P1', failureSeq: pf.failureSeq, c1Stage: 'pre-c1' });
+});
+
+test('FAILED-RUN CLOSEOUT (1) non-vacuity: with the failed-run gate waiver REMOVED (mutated harness) the same failed run cannot be durably closed (R1 fails its own verify: no K, F written); with the row-3 phase-run-failed reason REMOVED it lands on row 4 by accident', async () => {
+  const noWaiver = await mutatedHarness([["if (GATE_C1_REQUIRED && !failedRun) out.push('gates-missing');", "if (GATE_C1_REQUIRED) out.push('gates-missing');"]]);
+  const w = makeWorld({ mod: noWaiver.mod, harnessText: noWaiver.text, handlers: { g2RunPhases: () => frTransfer() } });
+  const r = await runMain(w);
+  assert.equal(r.closeout.committed, false, JSON.stringify(r.closeout));
+  assert.equal(r.finalOverall, 'FAIL');
+  const d = durableOf(w);
+  assert.equal(d.k, null, 'no K without the waiver');
+  assert.ok(d.f, 'the closeout failure witness instead');
+  assert.equal(readerVerdict(w).witness, 'W-1');
+  const noRow3 = await mutatedHarness([["  if (phaseRunFailureOf(s) !== null) r3.push('phase-run-failed');\n", '']]);
+  const w2 = makeWorld({ mod: noRow3.mod, harnessText: noRow3.text, handlers: { g2RunPhases: () => frTransfer() } });
+  const r2 = await runMain(w2);
+  assert.equal(r2.closeout.primaryRow, 4, 'pre-change: the incidental not-started-controls row');
+});
+
+test('FAILED-RUN CLOSEOUT (2): phase throws + cleanup succeeds => the original failure is retained VERBATIM in R1 (category / message / phase / operation / page-alloc failureSeq / cleanupEntry) and unchanged by closeout', async () => {
+  const { w, r, reader } = await consumedRun({ handlers: { g2RunPhases: () => frTransfer() } });
+  assert.deepEqual(r.state.errorLedger.entries.filter((e) => e.kind === 'harness-exception'), [], 'cleanup succeeded: no cleanup-evidence fatal');
+  const d = durableOf(w);
+  const cleanupSeq = d.r1.errorLedger.markers.find((m) => m.name === 'cleanup').seq;
+  // ordinals 38 (phase-run-failure) .. 40 (marker:cleanup) are ingested in ONE fence batch => consecutive authoritative seqs
+  const expected = frExpectedRecord(cleanupSeq - 2);
+  assert.deepEqual(d.r1.phaseRunFailure, expected);
+  assert.deepEqual(r.state.phaseRunFailure, expected, 'the post-closeout state holds the identical record (closeout never edits it)');
+  assert.ok(!H.isPageLocalOrdinal(expected.failureSeq), 'Node-authoritative seq, not the page ordinal');
+  for (const n of H.CHECK_NAMES) {
+    assert.equal(vr(d.r1.checks[n]), 'BLOCKED(phase-run-threw)', n);
+    assert.deepEqual([d.r1.checks[n].evidence.phaseRunFailure.name, d.r1.checks[n].evidence.phaseRunFailure.message], ['TypeError', PAGE_FAILURE.message], n);
+  }
+  assert.equal(reader.detail.failedRun.failureSeq, expected.failureSeq);
+});
+
+test('FAILED-RUN CLOSEOUT (3): phase throws + cleanup ALSO fails (omitted cleanup event / refused drain / duplicate merge) => BOTH causes durable: R1.phaseRunFailure identical to the clean-cleanup run AND exactly ONE cleanup-evidence fatal in R1.errorLedger.entries after failureSeq; primaryRow 1; reader FAIL; the root failure is never replaced', async () => {
+  const clean = await consumedRun({ handlers: { g2RunPhases: () => frTransfer() } });
+  const root = durableOf(clean.w).r1.phaseRunFailure;
+  assert.equal(clean.r.closeout.primaryRow, 3);
+  const cases = [
+    ['omitted cleanup event', (w) => () => w.cleanupPage.drain({ mutate: (dl) => ({ ...dl, eventLog: [] }) }), /^cleanup-evidence:page-evidence-missing:event:\d+\(\+\d+\)$/],
+    ['refused drain', () => () => ({ ok: false, delta: null, error: { name: 'Error', message: 'x' } }), /^cleanup-evidence:drain-refused:x$/],
+    ['duplicate merge', (w) => () => w.cleanupPage.drain({ mutate: (dl) => ({ ...dl, eventLog: [...dl.eventLog, { ...LATE_EVENT, seq: pageSeqOf(LATE_EVENT.seq) }] }) }), /^cleanup-evidence:merge-duplicate:1$/],
+  ];
+  for (const [name, make, re] of cases) {
+    const w = makeWorld({ handlers: { g2RunPhases: () => frTransfer() } });
+    w.handlers.g2CleanupDrain = make(w);
+    const r = await runMain(w);
+    const d = durableOf(w);
+    assert.ok(d.r1, `${name}: R1 committed`);
+    assert.deepEqual(H.validateResultSchema(d.r1, 'payload').errors, [], name);
+    assert.deepEqual(d.r1.phaseRunFailure, root, `${name}: the ROOT failure is retained, not replaced`);
+    const fatals = d.r1.errorLedger.entries.filter(isCleanupEvidenceFatal);
+    assert.equal(fatals.length, 1, `${name}: ${JSON.stringify(d.r1.errorLedger.entries)}`);
+    assert.match(fatals[0].detail, re, name);
+    assert.ok(fatals[0].seq > root.failureSeq, `${name}: the added cause is sequenced after the root failure`);
+    assert.deepEqual([r.finalOverall, r.closeout.primaryRow, d.r1.overall.row, r.closeout.committed], ['FAIL', 1, 1, true], name);
+    const v = readerVerdict(w);
+    assert.deepEqual([v.verdict, v.witness], ['FAIL', 'W-6'], name);
+    assert.deepEqual({ ...v.detail.failedRun }, { source: root.source, category: root.category, phase: root.phase, failureSeq: root.failureSeq, c1Stage: root.c1Stage }, name);
+    assert.ok(Object.values(d.r1.checks).every((c) => vr(c) === 'BLOCKED(phase-run-threw)'), name);
+  }
+});
+
+test('FAILED-RUN CLOSEOUT (4): markers survive into the durable R1 -- Node P0, EVERY earlier page marker (P1), the single cleanup marker and closeout, in strictly increasing authoritative seq; non-vacuity: a transfer carrying only the cleanup marker (pre-F1 page) loses P1', async () => {
+  const { w } = await consumedRun({ handlers: { g2RunPhases: () => frTransfer() } });
+  const r1 = durableOf(w).r1;
+  assert.deepEqual(markerNamesOf(r1), ['P0', 'P1', 'cleanup', 'closeout']);
+  assert.ok(strictlyIncreasing(r1.errorLedger.markers.map((m) => m.seq)), JSON.stringify(r1.errorLedger.markers));
+  const seqOf = (n) => r1.errorLedger.markers.find((m) => m.name === n).seq;
+  assert.ok(r1.phaseRunFailure.failureSeq > seqOf('P1') && r1.phaseRunFailure.failureSeq < seqOf('cleanup'), 'failure between the last phase marker and the cleanup marker');
+  const pre = await consumedRun({ handlers: { g2RunPhases: () => frTransfer({ markers: [{ seq: 40, name: 'cleanup' }] }) } });
+  assert.deepEqual(markerNamesOf(durableOf(pre.w).r1), ['P0', 'cleanup', 'closeout'], 'the assertion above discriminates a marker-dropping transfer');
+});
+
+/** Timers that remember the most recently armed long deadline (the g2RunPhases T9-remaining `attempt` deadline) to fire it on demand. */
+function attemptDeadlineTimers() {
+  let last = null;
+  return {
+    timers: { setTimeout: (fn, ms) => { const h = setTimeout(fn, ms); if (ms > H.TABLE_T.T8.cleanupStepDeadlineMs) last = { fn, ms }; return h; }, clearTimeout: (h) => clearTimeout(h) },
+    fireLast: () => { const t = last; setTimeout(() => t.fn(), 0); return t.ms; },
+  };
+}
+/** Before the RPC fails, the fake page ingests marker:P1 (P1), then marker:P2 + one unlabelled alloc through the real P2 attribution fence. */
+async function ingestMarkersThen(w, fail) {
+  const sync = w.bindings[H.G2_NODE_SYNC_BINDING];
+  const P2 = { phase: 'P2', activeCheck: null, activeControl: null };
+  const a = await sync('drain', { pending: [{ ord: PAGE_BASE + 1, kind: 'alloc', label: 'marker:P1', ...ACK_ATTR }], hw: PAGE_BASE + 1, pageFatalSent: 0 });
+  assert.equal(a.ok, true, JSON.stringify(a));
+  // (pre-C1 world: no gate was ever established, so only marker:P1 and one unlabelled alloc are ingested -- a P2 marker would contradict pre-c1)
+  const b = await sync('drain', { pending: [{ ord: PAGE_BASE + 2, kind: 'alloc', label: null, ...ACK_ATTR }], hw: PAGE_BASE + 2, pageFatalSent: 0 });
+  assert.equal(b.ok, true, JSON.stringify(b));
+  return fail();
+}
+
+test('FAILED-RUN CLOSEOUT (4) transport branch: g2RunPhases rpc THREW / TIMED OUT after the page ingested marker:P1 / marker:P2 => a valid failed-run R1 committed through K: source node-phase-run-transport, seqSource node-observed, status = the RPC status, checks BLOCKED(phase-run-<status>), markers reconstructed from Node provenance (P0, P1, P2, closeout)', async () => {
+  for (const status of ['threw', 'timed-out']) {
+    const w = makeWorld();
+    const t = attemptDeadlineTimers();
+    w.deps.timers = t.timers;
+    let firedMs = null;
+    w.handlers.g2RunPhases = () => ingestMarkersThen(w, () => {
+      if (status === 'threw') throw new RangeError('page crashed mid-run');
+      firedMs = t.fireLast();
+      return new Promise(() => {});
+    });
+    const r = await runMain(w);
+    assert.equal(r.consumed, true);
+    if (status === 'timed-out') assert.ok(firedMs > 0 && firedMs <= H.TABLE_T.T9.wholeAttemptCapMs, `fired the attempt deadline (${firedMs})`);
+    assert.deepEqual([r.finalOverall, r.closeout.primaryRow, r.closeout.committed], ['FAIL', 3, true], `${status}: ${JSON.stringify(r.closeout.causes)}`);
+    const d = durableOf(w);
+    assert.deepEqual(H.validateResultSchema(d.r1, 'payload').errors, [], status);
+    const pf = d.r1.phaseRunFailure;
+    assert.deepEqual([pf.source, pf.realm, pf.seqSource, pf.status, pf.cleanupEntry], ['node-phase-run-transport', 'node', 'node-observed', status, 'not-entered'], status);
+    assert.deepEqual([pf.category, pf.message], status === 'threw' ? ['RangeError', 'page crashed mid-run'] : ['Error', 'phase run timed-out'], status);
+    assert.ok(Object.values(d.r1.checks).every((c) => vr(c) === `BLOCKED(phase-run-${status})`), status);
+    assert.deepEqual(markerNamesOf(d.r1), ['P0', 'P1', 'closeout'], `${status}: only identity-bound marker:<phase> allocs are reconstructed`);
+    assert.ok(strictlyIncreasing(d.r1.errorLedger.markers.map((m) => m.seq)), status);
+    assert.ok(pf.failureSeq > d.r1.errorLedger.markers.find((m) => m.name === 'P1').seq, `${status}: Node observed the failure after the ingested markers`);
+    assert.equal(d.r2.split('\n').filter((l) => l === `failedRun: node-phase-run-transport/${pf.category}/${pf.phase === null ? 'none' : pf.phase}/seq ${pf.failureSeq}/${pf.c1Stage}`).length, 1, status);
+    const v = readerVerdict(w);
+    assert.deepEqual([v.verdict, v.witness, v.detail.failedRun.source], ['FAIL', 'W-6', 'node-phase-run-transport'], status);
+  }
+});
+
+test('FAILED-RUN CLOSEOUT (5): a forced closeout failure on a failed run (R1 write fault) => no K, F written, F.phaseRunFailure is the original root failure, validateFailureWitness(F) ok, reader FAIL (W-1); contrast: the same fault on a PASS run leaves F.phaseRunFailure null', async () => {
+  const R1_FAULT = (rec) => (rec.op === 'open' && rec.flags === 'wx' && rec.path.startsWith(`${CHAIN.D1}/${H.R1_NAME}`) ? 'error' : null);
+  const { w, r, reader } = await consumedRun({ fault: R1_FAULT, handlers: { g2RunPhases: () => frTransfer() } });
+  assert.deepEqual([r.finalOverall, r.closeout.committed, r.exitCode], ['FAIL', false, 1]);
+  assert.ok(r.closeout.causes.includes('r1-write'), JSON.stringify(r.closeout.causes));
+  const d = durableOf(w);
+  assert.equal(d.k, null);
+  assert.ok(d.f, 'F written');
+  assert.deepEqual(H.validateFailureWitness(d.f), { ok: true, errors: [] });
+  const cleanupSeq = r.state.errorLedger.markers.find((m) => m.name === 'cleanup').seq;
+  assert.deepEqual(d.f.phaseRunFailure, frExpectedRecord(cleanupSeq - 2), 'the root failure survives the closeout failure');
+  assert.deepEqual(d.f.phaseRunFailure, r.state.phaseRunFailure);
+  assert.deepEqual([d.f.primaryOverall, d.f.primaryRow], ['FAIL', 3]);
+  assert.ok(d.f.causes.includes('r1-write'));
+  assert.equal(w.durableJournalStates().at(-1), 'FAILED');
+  assert.deepEqual([reader.verdict, reader.witness], ['FAIL', 'W-1']);
+  const pass = await consumedRun({ fault: R1_FAULT });
+  const pf = durableOf(pass.w).f;
+  assert.equal(pf.phaseRunFailure, null, 'a non-failed run carries no root failure in F');
+  assert.deepEqual(H.validateFailureWitness(pf), { ok: true, errors: [] });
+  assert.equal(H.validateFailureWitness({ ...d.f, phaseRunFailure: { ...d.f.phaseRunFailure, realm: 'node' } }).ok, false, 'F re-validates the carried record');
+});
+
+test('FAILED-RUN CLOSEOUT (7): the valid PASS path is unchanged -- R1.phaseRunFailure === null, schema valid, R2 "failedRun: none", reader PASS (W-6, detail.failedRun null); a failed run never yields a PASS K', async () => {
+  const { w, r, reader } = await consumedRun({});
+  assert.deepEqual([r.finalOverall, r.closeout.primaryRow, r.closeout.committed], ['PASS', 8, true]);
+  const d = durableOf(w);
+  assert.equal(Object.hasOwn(d.r1, 'phaseRunFailure'), true, 'always-present key');
+  assert.equal(d.r1.phaseRunFailure, null);
+  assert.equal(r.state.phaseRunFailure, null);
+  assert.deepEqual(H.validateResultSchema(d.r1, 'payload').errors, []);
+  assert.equal(d.r2.split('\n').filter((l) => l === 'failedRun: none').length, 1);
+  assert.deepEqual([reader.verdict, reader.witness, reader.detail.failedRun], ['PASS', 'W-6', null]);
+  assert.deepEqual([d.k.finalOverall, d.k.primaryOverall], ['PASS', 'PASS']);
+  // every failed-run flavour commits a FAIL K, never PASS
+  for (const g2RunPhases of [() => frTransfer(), () => frTransfer({ markers: [{ seq: 40, name: 'cleanup' }] }), () => { throw new Error('page crashed'); }]) {
+    const x = await consumedRun({ handlers: { g2RunPhases } });
+    const k = durableOf(x.w).k;
+    assert.deepEqual([k.finalOverall, k.primaryOverall, x.reader.verdict], ['FAIL', 'FAIL', 'FAIL']);
+    assert.notEqual(durableOf(x.w).r1.phaseRunFailure, null);
+  }
+});
+
+test('FAILED-RUN CLOSEOUT (5b): an UNEXPECTED closeout abort (outer catch, before K) still writes F carrying the original phaseRunFailure; no K; reader FAIL; the failure is not erased', async () => {
+  const w = makeWorld({ handlers: { g2RunPhases: () => failedRunTransfer() } });
+  w.deps.scheduler = { setImmediate: () => { throw new Error('scheduler exploded'); } };
+  const r = await runMain(w);
+  assert.equal(r.finalOverall, 'FAIL');
+  assert.equal(r.closeoutAbort.name, 'Error');
+  const view = w.fs.processCrashView();
+  const fName = view.readdir(CHAIN.D2).find((n) => n.endsWith('.closeout-failure.json'));
+  assert.ok(fName, 'F written by the abort path');
+  const f = JSON.parse(view.readFile(path.join(CHAIN.D2, fName)).toString('utf8'));
+  assert.deepEqual(H.validateFailureWitness(f).errors, []);
+  assert.equal(f.phaseRunFailure.message, PAGE_FAILURE.message);
+  assert.equal(f.phaseRunFailure.failureSeq, r.state ? r.state.phaseRunFailure.failureSeq : f.phaseRunFailure.failureSeq);
+  assert.ok(f.causes[0].startsWith('harness-abort:closeout-threw:'));
+  assert.equal(readerVerdict(w).verdict, 'FAIL');
+});
+
+test('FAILED-RUN v2 L1: g2RunPhases rpc COMPLETED without a result (handler returns null / undefined) => status invalid-result (never "completed"): R1.phaseRunFailure {source node-phase-run-transport, status invalid-result, message "phase run completed without a result"}, checks BLOCKED(phase-run-invalid-result), committed FAIL row 3, reader FAIL', async () => {
+  for (const [label, value] of [['null', null], ['undefined', undefined]]) {
+    const { w, r, reader } = await consumedRun({ handlers: { g2RunPhases: () => value } });
+    const rpc = w.log.filter((e) => e.kind === 'rpc' && e.key === 'g2RunPhases');
+    assert.equal(rpc.length, 1, `${label}: the RPC was made and returned (completed)`);
+    assert.deepEqual([r.finalOverall, r.closeout.primaryRow, r.closeout.committed], ['FAIL', 3, true], `${label}: ${JSON.stringify(r.closeout.causes)}`);
+    const d = durableOf(w);
+    assert.deepEqual(H.validateResultSchema(d.r1, 'payload').errors, [], label);
+    const pf = d.r1.phaseRunFailure;
+    assert.deepEqual([pf.source, pf.realm, pf.status, pf.seqSource, pf.cleanupEntry, pf.category, pf.message, pf.c1Stage], ['node-phase-run-transport', 'node', 'invalid-result', 'node-observed', 'not-entered', 'Error', 'phase run completed without a result', 'pre-c1'], label);
+    assert.ok(Object.values(d.r1.checks).every((c) => vr(c) === 'BLOCKED(phase-run-invalid-result)'), label);
+    assert.ok(Object.values(d.r1.controls).every((c) => c.executionRecord.started === false && c.fields.reason === 'phase-run-invalid-result'), label);
+    assert.equal(Object.values(d.r1.checks).some((c) => c.reason === 'phase-run-completed'), false, `${label}: the misleading pre-L1 label is gone`);
+    assert.equal(d.r2.split('\n').filter((l) => l === `failedRun: node-phase-run-transport/Error/${pf.phase === null ? 'none' : pf.phase}/seq ${pf.failureSeq}/pre-c1`).length, 1, label);
+    assert.deepEqual([reader.verdict, reader.witness, reader.detail.failedRun.source], ['FAIL', 'W-6', 'node-phase-run-transport'], label);
+  }
+  // contrast: a completed RPC WITH a result is not a transport failure
+  const ok = await consumedRun({});
+  assert.equal(ok.r.state.phaseRunFailure, null);
 });

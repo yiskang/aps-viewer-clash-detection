@@ -290,8 +290,104 @@ function guardAwaitedDelivery(src) {
     // Final transfer + drain reconcile too.
     if (!/authority\.reconcilePageFatals\(runOut\.value\.pageFatalSent\)/.test(t)) v.push('e:final-transfer-missing-reconcilePageFatals');
   }
+  // Final run transfer (before-live Medium 1): g2RunPhases awaits g2FinalizeRunTransfer exactly once, whose loop awaits the drain fence.
   const run = need(a, 'g2RunPhases', v);
-  if (run && !/if \(sync\) await sync\.drain\(\);/.test(run.text)) v.push('e:g2RunPhases-missing-awaited-drain');
+  const fin = need(a, 'g2FinalizeRunTransfer', v);
+  if (run && countOf(run.text, /\bawait g2FinalizeRunTransfer\(\{ sync, recorder: env\.recorder, snapshots: /g) !== 1) v.push('e:g2RunPhases-final-transfer-not-awaited-once');
+  if (fin && (countOf(fin.text, /\bawait sync\.drain\(\);/g) !== 1 || unawaitedCalls(fin.text, 'sync\\.drain').length > 0)) v.push('e:g2RunPhases-missing-awaited-drain');
+  return v;
+}
+
+// ---------------------------------------------------------------------------------------------
+// (vii) before-live Medium 1: the authoritative run eventLog is finalized AFTER the last transfer drain
+// ---------------------------------------------------------------------------------------------
+function guardFinalRunTransfer(src) {
+  const a = analyze(src);
+  const v = [];
+  const fin = need(a, 'g2FinalizeRunTransfer', v);
+  const run = need(a, 'g2RunPhases', v);
+  if (fin) {
+    const t = fin.text;
+    if (!/for \(let round = 0; !stable && round < 8; round \+= 1\) \{/.test(t)) v.push('vii:final-drain-loop-not-bounded-stable-loop');
+    const iDrain = t.indexOf('await sync.drain();');
+    const iStable = t.indexOf('stable = g2FenceReport().hw === before;');
+    const iBefore = t.indexOf('const before = g2FenceReport().hw;');
+    if (iStable === -1 || iBefore === -1 || !(iBefore < iDrain && iDrain < iStable)) v.push('vii:stability-not-compared-across-the-awaited-drain');
+    const iThrow = t.indexOf("if (!stable) throw new Error('run transfer drain did not stabilize');");
+    if (iThrow === -1) v.push('vii:unstable-final-drain-not-fail-closed');
+    const iSnap = t.indexOf('const eventLog = recorder.events.slice().sort((a, b) => a.seq - b.seq);');
+    if (iSnap === -1) v.push('vii:eventLog-not-snapshotted-from-the-recorder');
+    // Finalization after the LAST drain: the snapshot follows the loop's last await and the stability gate, and nothing
+    // after the stability gate awaits (snapshot, high-water and runResultHw are taken in that same synchronous tick).
+    const lastAwait = t.lastIndexOf('await ');
+    if (iSnap !== -1 && (iSnap < lastAwait || iSnap < iThrow)) v.push('vii:eventLog-finalized-before-last-drain');
+    if (iThrow !== -1 && /\bawait\b/.test(t.slice(iThrow))) v.push('vii:await-after-final-drain');
+    const iHw = t.indexOf('g.runResultHw = pageHighWater;');
+    if (iHw === -1 || iHw < iSnap) v.push('vii:runResultHw-not-set-after-finalization');
+  }
+  if (run) {
+    const t = run.text;
+    if (/\brun\.eventLog\b/.test(t)) v.push('vii:result-uses-pre-drain-runner-eventLog');
+    if (countOf(t, /eventLog: fin\.eventLog/g) !== 2) v.push('vii:result-eventLog-not-the-finalized-snapshot');
+    // every ordinal-bearing collection of the result comes from the same finalization tick (never re-read live afterwards)
+    for (const k of ['spyLedger', 'stateSnapshots', 'pageHighWater', 'pageFatalSent']) if (countOf(t, new RegExp(`${k}: fin\\.${k}\\b`, 'g')) !== 2) v.push(`vii:result-${k}-not-finalized`);
+    if (/env\.recorder\.records|g\.pageFatalSent/.test(t)) v.push('vii:result-reads-live-collections-after-finalization');
+    if (/g\.runResultHw\s*=/.test(t) || /g2FenceReport\(\)/.test(t)) v.push('vii:boundary-or-high-water-taken-outside-finalization');
+    const iRunner = t.indexOf('await runChecksInPhaseOrder(');
+    const iFin = t.indexOf('await g2FinalizeRunTransfer(');
+    if (iRunner === -1 || iFin === -1 || iFin < iRunner) v.push('vii:final-transfer-not-after-the-runner');
+  }
+  return v;
+}
+
+// ---------------------------------------------------------------------------------------------
+// (viii) before-live Medium 2: a failed phase run uses the SAME transfer path; its verdict stays the failure
+// ---------------------------------------------------------------------------------------------
+function guardFailedRunTransfer(src) {
+  const a = analyze(src);
+  const v = [];
+  const run = need(a, 'g2RunPhases', v);
+  const enter = need(a, 'g2EnterCleanupAfterFailure', v);
+  const apply = need(a, 'applyPhaseRunFailureToState', v);
+  const rpr = need(a, 'runPostReservation', v);
+  if (run) {
+    const t = run.text;
+    if (!/\} catch \(e\) \{ failure = e;/.test(t)) v.push('viii:runner-throw-not-captured');
+    // one final transfer for both outcomes (no second, weaker transfer path); its own failure never replaces the original
+    if (countOf(src, /\bg2FinalizeRunTransfer\(/g) !== 2) v.push('viii:final-transfer-call-sites');
+    if (!/catch \(e\) \{ throw failure === null \? e : failure; \}/.test(t)) v.push('viii:original-failure-not-preserved');
+    const iEnter = t.indexOf('await g2EnterCleanupAfterFailure(');
+    const iFin = t.indexOf('await g2FinalizeRunTransfer(');
+    if (iEnter === -1 || iFin === -1 || iEnter > iFin) v.push('viii:cleanup-entry-not-before-final-transfer');
+    if (!/phaseRunFailure: \{ \.\.\.g2ErrOf\(failure\)/.test(t) || !/markers: markerLog\.slice\(\),/.test(t)) v.push('viii:failure-result-shape');
+  }
+  if (enter) {
+    const t = enter.text;
+    if (!/if \(!sync\) throw failure;/.test(t) || !/\} catch \{ throw failure; \}\s*\}$/.test(t)) v.push('viii:cleanup-entry-does-not-rethrow-original');
+    // the whole entry (attribution change, marker allocation, fence) sits inside the original-failure guard
+    const iTry = t.indexOf('try {');
+    if (iTry === -1 || !(iTry < t.indexOf('recorder.setAttribution(') && iTry < t.indexOf("recorder.nextSeq('alloc'"))) v.push('viii:cleanup-entry-allocation-outside-guard');
+    if (countOf(t, /recorder\.nextSeq\('alloc', 'marker:cleanup'\)/g) !== 1) v.push('viii:cleanup-entry-marker-not-identity-bound');
+    if (!/await sync\.attribution\(recorder\.attribution\(\)\)/.test(t)) v.push('viii:cleanup-entry-not-acknowledged');
+  }
+  if (apply) {
+    const t = apply.text;
+    if (!/for \(const n of CHECK_NAMES\) state\.checks\[n\] = makeCheckRecord\(\{ verdict: 'BLOCKED', reason: phaseRunFailureReason\(record\),/.test(t)) v.push('viii:failure-checks-not-blocked');
+    if (/'PASS'|run\.checks|run\.controls|run\.gates/.test(t)) v.push('viii:failure-verdict-reads-page-verdicts');
+    if (!/state\.gates = null;/.test(t)) v.push('viii:failure-keeps-a-page-gate');
+  }
+  if (rpr) {
+    const t = rpr.text;
+    const line = "if (isPlainObject(run) && Object.hasOwn(run, 'phaseRunFailure')) { applyPhaseRunFailureToState(state, authenticatedFailureRun(run, authority), { nextSeq: runSeq.next }); tainted = true; }";
+    // two call sites: the applied transfer (page-phase-run) and the RPC-did-not-complete branch (node-phase-run-transport)
+    if (countOf(t, /\bapplyPhaseRunFailureToState\(/g) !== 2 || !t.includes(line)) v.push('viii:node-failure-verdict-missing');
+    else {
+      const iAss = t.indexOf('authority.assertAllocated(maxRecordedSeq(state));');
+      const iLine = t.indexOf(line);
+      const iElse = t.indexOf("} else {\n      // The RPC did not complete");
+      if (!(iAss !== -1 && iAss < iLine && iLine < iElse)) v.push('viii:node-failure-verdict-outside-the-applied-transfer');
+    }
+  }
   return v;
 }
 
@@ -463,9 +559,10 @@ function guardAcknowledgedMutationBlocking(src) {
     const t = f.text;
     if (!/requireOps = false \}\) \{/.test(t)) v.push('iii:requireOps-param-missing-or-default-changed');
     const throws = [
-      ['failed', /if \(requireOps\) throw new Error\(`operation-begin failed/],
-      ['refused', /else if \(requireOps\) throw new Error\(`operation-begin refused/],
-      ['missing', /else if \(requireOps\) throw new Error\('operation-ledger binding missing/],
+      // (Medium 3) `blocked(...)` builds the thrown Error after logging the durable refusal event; still thrown here.
+      ['failed', /if \(requireOps\) throw blocked\(`operation-begin failed/],
+      ['refused', /else if \(requireOps\) throw blocked\(`operation-begin refused/],
+      ['missing', /else if \(requireOps\) throw blocked\('operation-ledger binding missing/],
     ];
     const iSpy = Math.min(...['recorder.withOrigin(', 'recorder.record('].map((n) => t.indexOf(n)).filter((i) => i !== -1), Infinity);
     const iInvoke = t.indexOf('await invoke()');
@@ -630,7 +727,7 @@ function guardStageProvenance(src) {
     }
     if (countOf(t, /\ballocator\.next\(\)/g) !== 1) v.push('v:allocator.next-not-single-ingest-allocation');
     // Cleanup eventLog evidence, both directions.
-    const pep = bodyAfterHeader(t, 'pageEvidenceProblems(state) {');
+    const pep = bodyAfterHeader(t, 'pageEvidenceProblems(state, { throughOrdinal = null } = {}) {');
     if (pep === null) v.push('v:pageEvidenceProblems-missing');
     else {
       for (const l of ['missing', 'duplicate', 'unsourced', 'outside-drain', 'before-boundary', 'boundary-unproven', 'phase-mismatch', 'identity-mismatch', 'leaked-ordinal']) {
@@ -638,7 +735,9 @@ function guardStageProvenance(src) {
       }
       // source -> eventLog (forward) and eventLog -> source (reverse) loops.
       // Forward: a mandatory cleanup event is semantic (stage 'cleanup', OR stage 'run' with phase 'cleanup'), not stage-only.
-      if (!/for \(const e of ingested\) \{\s*const stage = api\.stageOfOrdinal\(e\.ord\);\s*if \(e\.kind !== 'event' \|\| !\(stage === 'cleanup' \|\| \(stage === 'run' && e\.phase === 'cleanup'\)\)\) continue;/.test(pep)) v.push('v:forward-loop-source-to-eventLog-missing');
+      // The ingested side is `scope`: every ingested ordinal, or (retained transport-fallback evidence only) those <= throughOrdinal.
+      if (!pep.includes('const scope = throughOrdinal === null ? ingested : ingested.filter((e) => e.ord <= throughOrdinal);')) v.push('v:scope-not-ingested-or-retained-prefix');
+      if (!/for \(const e of scope\) \{\s*const stage = api\.stageOfOrdinal\(e\.ord\);\s*if \(e\.kind !== 'event' \|\| !\(stage === 'cleanup' \|\| \(stage === 'run' && e\.phase === 'cleanup'\)\)\) continue;/.test(pep)) v.push('v:forward-loop-source-to-eventLog-missing');
       // Boundary proof: exactly ONE authoritative 'cleanup' marker, itself an ingested run-stage phase-'cleanup' alloc ordinal.
       if (!/m\.name === 'cleanup'/.test(pep) || !/cleanupMarkers\.length === 1 \? bySeq\.get\(cleanupMarkers\[0\]\.seq\) : undefined/.test(pep)) v.push('v:boundary-single-marker-proof-missing');
       if (!/markerSrc\.kind === 'alloc' && markerSrc\.label === 'marker:cleanup' && markerSrc\.phase === 'cleanup' && api\.stageOfOrdinal\(markerSrc\.ord\) === 'run' \? cleanupMarkers\[0\]\.seq : null/.test(pep)) v.push('v:boundary-marker-source-qualification-missing');
@@ -780,8 +879,37 @@ test('(e) guard: verdict-bearing page->Node delivery is awaited; only the two re
   expectDetects(guardAwaitedDelivery, mutate(SOURCE, "            authority.reconcilePageFatals(a.pageFatalSent);\n            return { ok: true };", '            return { ok: true };'), 'drain-fence-missing-ingest-then-reconcilePageFatals', 'drain stops reconciling page fatals');
   expectDetects(guardAwaitedDelivery, mutate(SOURCE, "            authority.reconcilePageFatals(a.pageFatalSent);\n            const c1 = isPlainObject(a.c1)", '            const c1 = isPlainObject(a.c1)'), 'gate-fence-missing-ingest-then-reconcilePageFatals', 'gate stops reconciling page fatals');
   expectDetects(guardAwaitedDelivery, mutate(SOURCE, "        const ing = authority.ingestFence(a);\n        if (!ing.ok) return ing;\n        // Node validates the operation's phase", "        const ing = { ok: true };\n        // Node validates the operation's phase"), 'ops-binding-no-ingest-fence-before-allocation', 'ops binding allocates without ingesting the fence');
-  expectDetects(guardAwaitedDelivery, mutate(SOURCE, 'if (sync) await sync.drain();', 'if (sync) sync.drain();'), 'g2RunPhases-missing-awaited-drain', 'drain no longer awaited');
+  expectDetects(guardAwaitedDelivery, mutate(SOURCE, '    await sync.drain();\n    stable = g2FenceReport().hw === before;', '    sync.drain();\n    stable = g2FenceReport().hw === before;'), 'g2RunPhases-missing-awaited-drain', 'final drain no longer awaited');
+  expectDetects(guardAwaitedDelivery, mutate(SOURCE, '  try { fin = await g2FinalizeRunTransfer({ sync, recorder: env.recorder, snapshots:', '  try { fin = g2FinalizeRunTransfer({ sync, recorder: env.recorder, snapshots:'), 'g2RunPhases-final-transfer-not-awaited-once', 'final transfer no longer awaited');
   expectDetects(guardAwaitedDelivery, mutate(SOURCE, 'authority.reconcilePageFatals(runOut.value.pageFatalSent);', ''), 'final-transfer-missing-reconcilePageFatals', 'final transfer stops reconciling');
+});
+
+test('(vii) guard (before-live Medium 1): the run eventLog is finalized only after the last (stable) transfer drain, in the same tick', () => {
+  expectClean(guardFinalRunTransfer, 'vii');
+  const SNAP = '  const eventLog = recorder.events.slice().sort((a, b) => a.seq - b.seq);\n';
+  const LOOP = '  for (let round = 0; !stable && round < 8; round += 1) {';
+  // the pre-fix order: the snapshot taken before the final drain
+  expectDetects(guardFinalRunTransfer, mutate(mutate(SOURCE, SNAP, ''), LOOP, `${SNAP}${LOOP}`), 'eventLog-finalized-before-last-drain', 'eventLog snapshotted before the final drain (pre-fix order)');
+  expectDetects(guardFinalRunTransfer, mutate(SOURCE, 'gates: run.gates, markers: run.markers, eventLog: fin.eventLog,', 'gates: run.gates, markers: run.markers, eventLog: run.eventLog,'), 'result-uses-pre-drain-runner-eventLog', 'run result carries the runner\'s pre-drain eventLog');
+  expectDetects(guardFinalRunTransfer, mutate(SOURCE, '    stable = g2FenceReport().hw === before;', '    stable = true;'), 'stability-not-compared-across-the-awaited-drain', 'first drain accepted without the stability comparison');
+  expectDetects(guardFinalRunTransfer, mutate(SOURCE, LOOP, '  for (let round = 0; !stable; round += 1) {'), 'final-drain-loop-not-bounded-stable-loop', 'unbounded final drain loop');
+  expectDetects(guardFinalRunTransfer, mutate(SOURCE, "  if (!stable) throw new Error('run transfer drain did not stabilize');\n", ''), 'unstable-final-drain-not-fail-closed', 'non-stabilizing final drain accepted');
+  expectDetects(guardFinalRunTransfer, mutate(SOURCE, SNAP, `  await Promise.resolve();\n${SNAP}`), 'await-after-final-drain', 'a tick yields between the last drain and the finalization');
+  expectDetects(guardFinalRunTransfer, mutate(SOURCE, '  g.runResultHw = pageHighWater;\n', ''), 'runResultHw-not-set-after-finalization', 'cleanup-delta boundary no longer set by the finalization');
+  expectDetects(guardFinalRunTransfer, mutate(SOURCE, "    entry = await g2EnterCleanupAfterFailure({ sync, recorder: env.recorder, failure, markerLog });\n", "    entry = await g2EnterCleanupAfterFailure({ sync, recorder: env.recorder, failure, markerLog });\n    g.runResultHw = g2FenceReport().hw;\n"), 'boundary-or-high-water-taken-outside-finalization', 'g2RunPhases sets the boundary itself (pre-drain)');
+});
+
+test('(viii) guard (before-live Medium 2): a failed phase run makes the same final transfer, keeps the original failure, and Node decides its verdict', () => {
+  expectClean(guardFailedRunTransfer, 'viii');
+  const FAIL_LINE = "      if (isPlainObject(run) && Object.hasOwn(run, 'phaseRunFailure')) { applyPhaseRunFailureToState(state, authenticatedFailureRun(run, authority), { nextSeq: runSeq.next }); tainted = true; }\n";
+  expectDetects(guardFailedRunTransfer, mutate(SOURCE, FAIL_LINE, ''), 'node-failure-verdict-missing', 'Node no longer overrides a failure transfer\'s verdict');
+  expectDetects(guardFailedRunTransfer, mutate(mutate(SOURCE, FAIL_LINE, ''), '    } else {\n      // The RPC did not complete', `    } else {\n${FAIL_LINE}      // The RPC did not complete`), 'node-failure-verdict-outside-the-applied-transfer', 'failure verdict moved out of the applied-transfer branch');
+  expectDetects(guardFailedRunTransfer, mutate(SOURCE, '} catch (e) { throw failure === null ? e : failure; }', '} catch (e) { throw e; }'), 'original-failure-not-preserved', 'transfer error replaces the original failure');
+  expectDetects(guardFailedRunTransfer, mutate(SOURCE, "    return { marker, reused: Boolean(existing) };\n  } catch { throw failure; }", "    return { marker, reused: Boolean(existing) };\n  } catch (e) { throw e; }"), 'cleanup-entry-does-not-rethrow-original', 'cleanup-entry refusal replaces the original failure');
+  expectDetects(guardFailedRunTransfer, mutate(SOURCE, "  if (!sync) throw failure;\n  try {\n    recorder.setAttribution({ phase: 'cleanup', activeCheck: null, activeControl: null });\n", "  if (!sync) throw failure;\n  recorder.setAttribution({ phase: 'cleanup', activeCheck: null, activeControl: null });\n  try {\n"), 'cleanup-entry-allocation-outside-guard', 'marker allocation outside the original-failure guard');
+  expectDetects(guardFailedRunTransfer, mutate(SOURCE, "recorder.nextSeq('alloc', 'marker:cleanup')", "recorder.nextSeq('alloc')"), 'cleanup-entry-marker-not-identity-bound', 'failure marker loses its identity label');
+  expectDetects(guardFailedRunTransfer, mutate(SOURCE, "  for (const n of CHECK_NAMES) state.checks[n] = makeCheckRecord({ verdict: 'BLOCKED', reason: phaseRunFailureReason(record), evidence: { phaseRunFailure } });", "  for (const n of CHECK_NAMES) state.checks[n] = (run.checks && run.checks[n]) || makeCheckRecord({ verdict: 'BLOCKED', reason: phaseRunFailureReason(record), evidence: { phaseRunFailure } });"), 'failure-checks-not-blocked', 'failure verdict falls back to page verdicts');
+  expectDetects(guardFailedRunTransfer, `${SOURCE}\nasync function g2SecondTransfer(sync, recorder) { return g2FinalizeRunTransfer({ sync, recorder }); }\n`, 'final-transfer-call-sites', 'a second transfer path');
 });
 
 test('positive invariants: one allocator feeds every Node consumer; final transfer order; both live gates closed', () => {
@@ -847,10 +975,10 @@ test('(ii) guard: cleanup drain runs only as beforeClose of the closePage step, 
 
 test('(iii) guard: requireOps blocks the mutation before any recorder activity or invoke(); every live caller passes it', () => {
   expectClean(guardAcknowledgedMutationBlocking, 'iii');
-  expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "else if (requireOps) throw new Error(`operation-begin refused (${r && r.reason ? r.reason : 'malformed-response'}): mutation not started`);", ''), 'throw-missing:refused', 'refused begin no longer throws');
-  expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "      if (requireOps) throw new Error(`operation-begin failed (${e && e.message ? e.message : 'threw'}): mutation not started`);\n", ''), 'throw-missing:failed', 'thrown begin no longer throws');
-  expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "  } else if (requireOps) throw new Error('operation-ledger binding missing: mutation not started');", '  }'), 'throw-missing:missing', 'missing ledger binding no longer throws');
-  expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "  } else if (requireOps) throw new Error('operation-ledger binding missing: mutation not started');\n  const spyRec = recorder && method ? recorder.withOrigin('harness', () => recorder.record(method, args)) : null;", "  }\n  const spyRec = recorder && method ? recorder.withOrigin('harness', () => recorder.record(method, args)) : null;\n  if (requireOps && !ops) throw new Error('operation-ledger binding missing: mutation not started');"), 'throw-missing:missing', 'ledger-missing throw moved after the spy record');
+  expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "else if (requireOps) throw blocked(`operation-begin refused (${r && r.reason ? r.reason : 'malformed-response'}): mutation not started`, { response: r });", ''), 'throw-missing:refused', 'refused begin no longer throws');
+  expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "      if (requireOps) throw blocked(`operation-begin failed (${e && e.message ? e.message : 'threw'}): mutation not started`, { category: 'begin-threw', error: e });\n", ''), 'throw-missing:failed', 'thrown begin no longer throws');
+  expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "  } else if (requireOps) throw blocked('operation-ledger binding missing: mutation not started', { category: 'binding-missing' });", '  }'), 'throw-missing:missing', 'missing ledger binding no longer throws');
+  expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "  } else if (requireOps) throw blocked('operation-ledger binding missing: mutation not started', { category: 'binding-missing' });\n  const spyRec = recorder && method ? recorder.withOrigin('harness', () => recorder.record(method, args)) : null;", "  }\n  const spyRec = recorder && method ? recorder.withOrigin('harness', () => recorder.record(method, args)) : null;\n  if (requireOps && !ops) throw new Error('operation-ledger binding missing: mutation not started');"), 'throw-missing:missing', 'ledger-missing throw moved after the spy record');
   expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "  let operationId = null;\n  if (ops && typeof ops.begin === 'function') {", "  let operationId = null;\n  if (recorder && method) recorder.record(method, args);\n  if (ops && typeof ops.begin === 'function') {"), 'throw-after-spy-record', 'a spy record is created before the begin is acknowledged');
   expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "  let operationId = null;\n  if (ops && typeof ops.begin === 'function') {", "  let operationId = null;\n  void invoke();\n  if (ops && typeof ops.begin === 'function') {"), 'invoke-not-single', 'invoke() reachable before the begin');
   expectDetects(guardAcknowledgedMutationBlocking, mutate(SOURCE, "requireOps: env.requireOps === true, desc: { operationType: 'hide'", "desc: { operationType: 'hide'"), 'caller-without-requireOps', 'C16 hide caller drops requireOps');

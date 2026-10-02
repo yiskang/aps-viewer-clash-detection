@@ -67,9 +67,9 @@ async function importMutated(pairs) {
 }
 
 // Harness anchors the non-vacuity mutations remove (asserted to exist exactly once by `mutate`).
-const REFUSED_THROW = "else if (requireOps) throw new Error(`operation-begin refused (";
-const FAILED_THROW = "if (requireOps) throw new Error(`operation-begin failed (";
-const MISSING_THROW = "} else if (requireOps) throw new Error('operation-ledger binding missing: mutation not started');";
+const REFUSED_THROW = "else if (requireOps) throw blocked(`operation-begin refused (";
+const FAILED_THROW = "if (requireOps) throw blocked(`operation-begin failed (";
+const MISSING_THROW = "} else if (requireOps) throw blocked('operation-ledger binding missing: mutation not started', { category: 'binding-missing' });";
 const BINDING_REFUSE_RETURN = "return String(action) === 'begin' && out && out.ok !== true ? authority.refuseOperation(out.reason) : out;";
 const BINDING_PHASE_REFUSE = "return authority.refuseOperation('phase-mismatch');";
 const AUTHORITY_REFUSE = 'refuseOperation(reason) { violate(`op-begin-refused:${String(reason)}`); return { ok: false, reason }; },';

@@ -73,8 +73,10 @@ const PROCEDURE_VERSION = 'v5';
  * procedure SHA-256"; RC1-C1 follow-up item 14). W1 refuses unless the procedure file on disk hashes to
  * exactly this value (every older digest is stale) AND the record's `Procedure-SHA256` equals it. This
  * is the procedure binding only; the clean-commit harness binding is separate before-live work.
+ * 2026-10-02: re-bound to the procedure revision carrying the owner-authorized failed-run closeout + post-C1 truthful-history reconciliation
+ * (§8 row 3 / §9 / §9.1 / §10 `phaseRunFailure`); that revision is PENDING independent re-review and owner acceptance.
  */
-const ACCEPTED_PROCEDURE_SHA256 = '5f9c4c7e124751d09406f07eab63f844fec53add006bd12ad676ecaca3732abb';
+const ACCEPTED_PROCEDURE_SHA256 = 'd1ccfde224b8ae76fe74b06c93abc532e6df9612933cafaa045053c8e2e45a75';
 
 /** The only directory an authorization record may live under (§4.1 "Type/path"). */
 const AUTHORIZATION_PROMPTS_REL_DIR = 'docs/prompts';
@@ -2076,10 +2078,10 @@ const FATAL_WITNESS_KEYS = Object.freeze(['witnessId', 'requestIdentityKey', 'ra
 const WITNESS_COUNT_KEYS = Object.freeze(['requestObservations', 'rawEvents', 'correlatedIdentities', 'fatalIdentities', 'fatalWitnesses', 'requiredResourceFailureEntries', 'nonNetworkFatalEntries', 'fatalCount']);
 /** The slice-C1 error-ledger collections (all required in R1, §10; verdict-critical, never truncated). */
 const NETWORK_LEDGER_LIST_KEYS = Object.freeze(['requestObservations', 'requestFailures', 'responseFailures', 'correlatedRequests', 'fatalWitnesses']);
-/** §9.2 cross-field rule (v): the owning phase(s) of each check (§5 order; C7/C18 appear in two phases). */
+/** §9.2 cross-field rule (v): the owning phase(s) of each check (§5 order; C7/C18 appear in two phases; C13 is P8-owned: it consumes C15 outcomes). */
 const CHECK_OWNING_PHASES = Object.freeze({
   C1: ['P1'], C2: ['P3'], C3: ['P3'], C4: ['P4'], C5: ['P4'], C6: ['P6'], C7: ['P5a', 'P5b'], C8: ['P6'], C9: ['P7'], C10: ['P7'],
-  C11: ['P7'], C12: ['P7'], C13: ['P7'], C14: ['P8'], C15: ['P8'], C16: ['P9'], C17: ['P9'], C18: ['P5a', 'P10'], C19: ['P11'], C20: ['P6b'],
+  C11: ['P7'], C12: ['P7'], C13: ['P8'], C14: ['P8'], C15: ['P8'], C16: ['P9'], C17: ['P9'], C18: ['P5a', 'P10'], C19: ['P11'], C20: ['P6b'],
 });
 
 const isNonEmptyStr = (v) => typeof v === 'string' && v !== '';
@@ -3411,6 +3413,9 @@ function primarySeqAllocations(state) {
     add(e.seq, `errorLedger.entries[${i}]`);
   });
   if (isPlainObject(s.gates) && isPlainObject(s.gates.C1)) add(s.gates.C1.gateSeq, 'gates.C1');
+  if (isPlainObject(phaseRunFailureOf(s))) add(phaseRunFailureOf(s).failureSeq, 'phaseRunFailure.failureSeq');
+  // an untransferred post-C1 failure keeps the gate's seq only inside the failure record (gates is null): it is still a primary allocation
+  if (isPlainObject(phaseRunFailureOf(s)) && phaseRunFailureOf(s).c1Stage === 'post-c1-untransferred') add(phaseRunFailureOf(s).gateSeq, 'phaseRunFailure.gateSeq');
   for (const [coll, names] of [['checks', CHECK_NAMES], ['controls', CONTROL_NAMES]]) {
     const recs = isPlainObject(s[coll]) ? s[coll] : {};
     for (const n of names) {
@@ -3535,6 +3540,8 @@ function remapPageOrdinals(value, ordToSeq) {
  *   (atomically; contiguous from the last ingested ordinal, attribution equal to the acknowledged one,
  *   `report.hw` equal to the last ordinal afterwards) -- any failure ingests nothing, is one violation,
  *   and the page throws before its action.
+ * - `retainPageSnapshot(report)` (completed-result retention fence): the same ingestion, then Node keeps its own
+ *   remapped copy of the page's completed partial history (`retained()`), the source of a non-transferred post-C1 R1.
  * - `syncPage(report)` (attribution fence): validates the new attribution (phase in the §7 enum, never
  *   moving backwards, activeCheck owned by the phase, activeControl in N1..N8|null), ingests the pending
  *   ordinals (each carries the acknowledged attribution or, from the transition allocation on, the new
@@ -3560,6 +3567,8 @@ function createRunAuthority({ allocator, attribution, onViolation = () => {} }) 
   let runBoundary = null;
   let drainRange = null;
   let drainCount = 0;
+  let retainedSnapshot = null; // Node's own completed-result snapshot (retainPageSnapshot); authoritative seqs only
+  let retainedThroughOrd = null; // the last page ordinal Node had ingested when it accepted `retainedSnapshot` (its evidence scope)
   const violate = (reason) => { try { onViolation(reason); } catch { /* nothing left to record */ } return { ok: false, reason }; };
   const phaseIndex = (p) => ATTRIBUTION_PHASES.indexOf(p);
   const attrOf = (e) => ({ phase: e.phase, activeCheck: e.activeCheck === undefined ? null : e.activeCheck, activeControl: e.activeControl === undefined ? null : e.activeControl });
@@ -3636,6 +3645,35 @@ function createRunAuthority({ allocator, attribution, onViolation = () => {} }) 
       synced = true;
       return { ok: true };
     },
+    /**
+     * Completed-result retention fence (the page's awaited `retain`, BEFORE each phase's attribution-clear fence): ingests
+     * the page's pending ordinals exactly like the drain fence (no attribution change, so it never depends on the clear
+     * fence), then stores NODE'S OWN copy of the page's completed partial history + page evidence (`{partial, markers,
+     * eventLog, spyLedger, stateSnapshots, screenshots, pageHighWater}`), rewritten through the ordinal->seq map at once:
+     * no page ordinal survives and no second sequence exists. The latest accepted snapshot replaces the previous one (each
+     * is a superset). Any refusal (malformed snapshot, ingestion, high-water, unmapped ordinal, internal throw) is ONE
+     * fail-closed violation, stores nothing, and makes the page call throw (the retain failure IS the phase-run failure).
+     */
+    retainPageSnapshot(report) {
+      try {
+        const r = isPlainObject(report) ? report : {};
+        const snap = r.snapshot;
+        if (!isPlainObject(snap) || !isPlainObject(snap.partial) || !isPlainObject(snap.partial.checks) || !isPlainObject(snap.partial.controls)
+          || !['markers', 'eventLog', 'spyLedger', 'stateSnapshots', 'screenshots'].every((k) => Array.isArray(snap[k]))) return violate('retain-snapshot-invalid');
+        const ing = ingestBatch(r.pending === undefined ? [] : r.pending, { hw: r.hw });
+        if (!ing.ok) return ing;
+        if (snap.pageHighWater !== lastOrd) return violate('retain-hw-mismatch');
+        const out = remapPageOrdinals(snap, ordToSeq);
+        if (out.unmapped.length > 0) return violate('retain-ordinal-unmapped');
+        retainedSnapshot = out.value;
+        retainedThroughOrd = lastOrd;
+        return { ok: true };
+      } catch (err) { return violate(`retain-threw:${err && typeof err.name === 'string' ? err.name : typeof err}`); }
+    },
+    /** Node's own retained completed-result snapshot (a deep copy; already in authoritative seqs), or `null`. */
+    retained: () => (retainedSnapshot === null ? null : JSON.parse(JSON.stringify(retainedSnapshot))),
+    /** The page ordinal high-water the retained snapshot covers (`null` before any accepted retain): its completeness scope. */
+    retainedThroughOrdinal: () => retainedThroughOrd,
     /** Translates one `spyLedger:seq:<ordinal>` reference to its authoritative seq (`null` when unmapped). */
     translateSpyRef(ref) {
       if (typeof ref !== 'string' || !SPY_REF_RE.test(ref)) return null;
@@ -3674,25 +3712,32 @@ function createRunAuthority({ allocator, attribution, onViolation = () => {} }) 
      * `cleanup-event-missing|duplicate|unsourced|outside-drain|before-boundary|boundary-unproven|phase-mismatch|identity-mismatch|leaked-ordinal`; the
      * identity check compares the event's `kind` with the label the page registered for its ordinal). Markers, check/
      * control execution seqs and C1 events are `alloc`-kind (not independently mandatory records).
+     * `throughOrdinal` (retained transport-fallback evidence only): the SAME checks, with the ingested side restricted to the
+     * page ordinals <= `throughOrdinal` (the high-water of Node's accepted retain fence, `retainedThroughOrdinal()`): ordinals
+     * ingested after that fence are legitimately absent from the retained collections, and nothing later is claimed. A
+     * retained record whose seq is not an in-scope ingested ordinal of its kind is therefore unsourced. A malformed scope
+     * fails closed.
      */
-    pageEvidenceProblems(state) {
+    pageEvidenceProblems(state, { throughOrdinal = null } = {}) {
+      if (throughOrdinal !== null && !(Number.isSafeInteger(throughOrdinal) && throughOrdinal > PAGE_LOCAL_BASE)) return ['page-evidence-scope-invalid'];
+      const scope = throughOrdinal === null ? ingested : ingested.filter((e) => e.ord <= throughOrdinal);
       const s = isPlainObject(state) ? state : {};
       const count = (arr) => { const m = new Map(); for (const e of Array.isArray(arr) ? arr : []) if (isPlainObject(e)) m.set(e.seq, (m.get(e.seq) || 0) + 1); return m; };
       const coll = { spy: count(s.spyLedger), event: count(s.eventLog), snapshot: count(s.stateSnapshots) };
       const out = [];
-      for (const e of ingested) {
+      for (const e of scope) {
         const m = coll[e.kind];
         if (!m) continue;
         const n = m.get(e.seq) || 0;
         if (n !== 1) out.push(`page-evidence-${n === 0 ? 'missing' : 'duplicate'}:${e.kind}:${e.seq}`);
       }
-      const kindBySeq = new Map(ingested.map((e) => [e.seq, e.kind]));
+      const kindBySeq = new Map(scope.map((e) => [e.seq, e.kind]));
       for (const kind of ['spy', 'snapshot']) for (const seq of coll[kind].keys()) if (kindBySeq.get(seq) !== kind) out.push(`page-evidence-unsourced:${kind}:${seq}`);
       // Cleanup eventLog provenance, BOTH directions (every cleanup event <-> exactly one ingested cleanup-drain `event` ordinal):
-      const bySeq = new Map(ingested.map((e) => [e.seq, e]));
+      const bySeq = new Map(scope.map((e) => [e.seq, e]));
       // Semantic phase vs transport stage: a cleanup event is mandatory if it came through the cleanup drain OR it is a
       // phase-'cleanup' event the run-stage transfer carried past the cleanup marker (qualified below).
-      for (const e of ingested) {
+      for (const e of scope) {
         const stage = api.stageOfOrdinal(e.ord);
         if (e.kind !== 'event' || !(stage === 'cleanup' || (stage === 'run' && e.phase === 'cleanup'))) continue;
         const n = coll.event.get(e.seq) || 0;
@@ -3850,6 +3895,149 @@ function controlRunProblems(name, rec) {
   return out;
 }
 
+// ---- §10 failed-run record: `phaseRunFailure` (null on every non-failed run) ----------------------------------------
+// The durable ROOT failure of a phase run that threw (page) or did not complete (Node RPC). Only Node sets it; later
+// cleanup / closeout failures only ADD reasons (cleanup-evidence fatals, closeout causes) and never replace it.
+const PHASE_RUN_FAILURE_KEYS = Object.freeze(['primary', 'source', 'realm', 'status', 'category', 'message', 'phase', 'activeCheck', 'activeControl', 'operation', 'failureSeq', 'seqSource', 'cleanupEntry', 'c1Stage', 'gateSeq', 'gateOutcome']);
+const PHASE_RUN_FAILURE_C1_STAGES = Object.freeze(['pre-c1', 'post-c1', 'post-c1-untransferred']);
+const PHASE_RUN_FAILURE_SOURCE_REALM = Object.freeze({ 'page-phase-run': 'page', 'node-phase-run-transport': 'node' });
+const PHASE_RUN_FAILURE_SEQ_SOURCES = Object.freeze(['page-alloc', 'node-observed']);
+const PHASE_RUN_FAILURE_CLEANUP_ENTRIES = Object.freeze(['marker-allocated', 'marker-reused', 'not-entered']);
+const PHASE_RUN_FAILURE_STATUS_RE = /^[a-z-]{1,24}$/;
+const PHASE_RUN_FAILURE_OPERATION_KEYS = Object.freeze(['operationId', 'operationType', 'reason']);
+
+/** The state's failed-run record, or `null` (absent and null are the same: a run that did not fail). */
+function phaseRunFailureOf(state) { return isPlainObject(state) && state.phaseRunFailure !== undefined && state.phaseRunFailure !== null ? state.phaseRunFailure : null; }
+/** The reason every check of a failed run carries (`phase-run-<status>`). */
+function phaseRunFailureReason(f) { return `phase-run-${isPlainObject(f) ? f.status : ''}`; }
+
+function phaseRunFailureShapeProblems(f) {
+  if (!isPlainObject(f)) return ['phaseRunFailure.not-object'];
+  const out = [];
+  if (!exactKeys(f, PHASE_RUN_FAILURE_KEYS)) out.push('phaseRunFailure.keys');
+  if (f.primary !== true) out.push('phaseRunFailure.primary');
+  if (!Object.hasOwn(PHASE_RUN_FAILURE_SOURCE_REALM, f.source)) out.push('phaseRunFailure.source');
+  else if (PHASE_RUN_FAILURE_SOURCE_REALM[f.source] !== f.realm) out.push('phaseRunFailure.realm');
+  if (typeof f.status !== 'string' || !PHASE_RUN_FAILURE_STATUS_RE.test(f.status)) out.push('phaseRunFailure.status');
+  if (typeof f.category !== 'string' || f.category.length === 0 || f.category.length > 64) out.push('phaseRunFailure.category');
+  if (typeof f.message !== 'string' || f.message.length > 512) out.push('phaseRunFailure.message');
+  if (!(f.phase === null || ATTRIBUTION_PHASES.includes(f.phase))) out.push('phaseRunFailure.phase');
+  if (!(f.activeCheck === null || CHECK_NAMES.includes(f.activeCheck))) out.push('phaseRunFailure.activeCheck');
+  if (!(f.activeControl === null || CONTROL_NAMES.includes(f.activeControl))) out.push('phaseRunFailure.activeControl');
+  if (!(f.operation === null || (exactKeys(f.operation, PHASE_RUN_FAILURE_OPERATION_KEYS) && PHASE_RUN_FAILURE_OPERATION_KEYS.every((k) => f.operation[k] === null || typeof f.operation[k] === 'string')))) out.push('phaseRunFailure.operation');
+  if (!isSeq(f.failureSeq)) out.push('phaseRunFailure.failureSeq'); // a leaked page ordinal is caught by primarySeqAllocations
+  if (!PHASE_RUN_FAILURE_SEQ_SOURCES.includes(f.seqSource)) out.push('phaseRunFailure.seqSource');
+  if (!PHASE_RUN_FAILURE_CLEANUP_ENTRIES.includes(f.cleanupEntry)) out.push('phaseRunFailure.cleanupEntry');
+  // discriminated union: a transport failure was never transferred (Node-observed seq, cleanup never entered by the page);
+  // a page failure entered cleanup by allocating or reusing the marker.
+  if (f.source === 'node-phase-run-transport' && !(f.seqSource === 'node-observed' && f.cleanupEntry === 'not-entered')) out.push('phaseRunFailure.transport-combination');
+  if (f.source === 'page-phase-run' && f.cleanupEntry === 'not-entered') out.push('phaseRunFailure.page-combination');
+  // C1 boundary (Node's retained gate): pre-c1 => no gate fact; otherwise the gate's own seq + outcome are recorded.
+  if (!PHASE_RUN_FAILURE_C1_STAGES.includes(f.c1Stage)) out.push('phaseRunFailure.c1Stage');
+  else if (f.c1Stage === 'pre-c1') { if (f.gateSeq !== null || f.gateOutcome !== null) out.push('phaseRunFailure.pre-c1-gate-fact'); } else if (!isSeq(f.gateSeq) || !GATE_OUTCOMES.includes(f.gateOutcome)) out.push('phaseRunFailure.post-c1-gate-fact');
+  return out;
+}
+
+/**
+ * `failedRunRecordProblems(state)` -- the failed-run variant of the R1 record rules (a non-null `phaseRunFailure`): the
+ * record's own shape; NO gate (the run never reached it -- nothing is fabricated); every check a `check-run` BLOCKED with
+ * the failure's reason; every control a not-started `control-run` placeholder; the session tainted. Everything else in
+ * `recordSchemaProblems` (attribution, network ledger, seq uniqueness, C1 load ledger) still applies unchanged.
+ */
+function failedRunRecordProblems(state) {
+  const s = isPlainObject(state) ? state : {};
+  const f = phaseRunFailureOf(s);
+  if (f === null) return [];
+  const out = phaseRunFailureShapeProblems(f);
+  if (!isPlainObject(f)) return out;
+  if (s.sessionTainted !== true) out.push('failed-run-not-tainted');
+  const reason = phaseRunFailureReason(f);
+  const gatePresent = s.gates !== undefined && s.gates !== null;
+  const checks = isPlainObject(s.checks) ? s.checks : {};
+  const controls = isPlainObject(s.controls) ? s.controls : {};
+  const failedByRun = (c) => isPlainObject(c) && c.recordType === RECORD_TYPE.CHECK_RUN && c.verdict === 'BLOCKED' && c.reason === reason;
+  const unstartedByRun = (c) => isPlainObject(c) && c.recordType === RECORD_TYPE.CONTROL_RUN && isPlainObject(c.executionRecord) && c.executionRecord.started === false && isPlainObject(c.fields) && c.fields.reason === reason;
+  const markers = errorLedgerList(s, 'markers').filter((m) => isPlainObject(m) && isSeq(m.seq) && typeof m.name === 'string');
+  const attributed = [];
+  for (const name of ATTRIBUTED_COLLECTIONS) for (const e of attributedCollection(s, name)) if (isPlainObject(e) && isSeq(e.seq)) attributed.push(e);
+  const historyOf = (field, n) => attributed.filter((e) => e[field] === n);
+  if (f.c1Stage === 'post-c1') {
+    // truthful post-C1 history: the authoritative gate is KEPT and agrees with the record; every check/control is either a
+    // retained execution record, a legal gate-disposition, or genuinely unstarted work blocked by the failure.
+    if (!gatePresent) out.push('failed-run-post-c1-without-gate');
+    else {
+      const g = isPlainObject(s.gates.C1) ? s.gates.C1 : null;
+      if (g === null || g.gateSeq !== f.gateSeq || g.outcome !== f.gateOutcome) out.push('failed-run-gate-mismatch');
+      else if (!(f.failureSeq > g.gateSeq)) out.push('failed-run-seq-before-gate');
+    }
+    if (f.gateOutcome !== GATE_OUTCOME.OPEN) out.push('failed-run-post-c1-gate-not-open');
+    // any record carrying a phase-run-* reason must carry THIS failure's reason (no mixed statuses)
+    const foreignRunReason = (r) => typeof r === 'string' && /^phase-run-/.test(r) && r !== reason;
+    for (const n of CHECK_NAMES) if (isPlainObject(checks[n]) && foreignRunReason(checks[n].reason)) out.push(`failed-run-check-foreign-reason:${n}`);
+    for (const n of CONTROL_NAMES) if (isPlainObject(controls[n]) && isPlainObject(controls[n].fields) && foreignRunReason(controls[n].fields.reason)) out.push(`failed-run-control-foreign-reason:${n}`);
+    for (const n of CHECK_NAMES) {
+      const c = checks[n];
+      if (failedByRun(c)) {
+        if (!isPlainObject(c.evidence) || !isPlainObject(c.evidence.phaseRunFailure) || c.evidence.phaseRunFailure.name !== f.category || c.evidence.phaseRunFailure.message !== f.message) out.push(`failed-run-check-evidence-mismatch:${n}`);
+        if (n !== f.activeCheck && historyOf('activeCheck', n).length > 0) out.push(`failed-run-blocked-check-has-history:${n}`);
+      }
+    }
+    for (const n of CONTROL_NAMES) {
+      const c = controls[n];
+      if (unstartedByRun(c)) { if (n !== f.activeControl && historyOf('activeControl', n).length > 0) out.push(`failed-run-unstarted-control-has-history:${n}`); } else if (isPlainObject(c) && c.recordType === RECORD_TYPE.CONTROL_RUN && isPlainObject(c.executionRecord) && c.executionRecord.started === true && !(c.executionRecord.terminalSeq < f.failureSeq)) out.push(`failed-run-control-after-failure:${n}`);
+    }
+  } else {
+    // pre-C1 (no gate was ever established) / post-C1 whose history was not transferred: nothing downstream is claimed.
+    if (gatePresent) out.push('failed-run-gate-present');
+    for (const n of CHECK_NAMES) {
+      const c = checks[n];
+      if (!failedByRun(c)) out.push(`failed-run-check-not-blocked:${n}`);
+      else if (!isPlainObject(c.evidence) || !isPlainObject(c.evidence.phaseRunFailure) || c.evidence.phaseRunFailure.name !== f.category || c.evidence.phaseRunFailure.message !== f.message) out.push(`failed-run-check-evidence-mismatch:${n}`);
+    }
+    for (const n of CONTROL_NAMES) {
+      const c = controls[n];
+      if (!isPlainObject(c) || c.recordType !== RECORD_TYPE.CONTROL_RUN || !isPlainObject(c.executionRecord) || c.executionRecord.started !== false) out.push(`failed-run-control-not-unstarted:${n}`);
+      else if (!unstartedByRun(c)) out.push(`failed-run-control-reason-mismatch:${n}`);
+    }
+    if (f.c1Stage === 'pre-c1') {
+      if (markers.some((m) => DOWNSTREAM_PHASE_IDS.includes(m.name))) out.push('failed-run-pre-c1-downstream-marker');
+      if (attributed.some((e) => DOWNSTREAM_PHASE_IDS.includes(e.phase))) out.push('failed-run-pre-c1-downstream-history');
+    }
+  }
+  // ---- cross-validation against authoritative provenance (marker timeline, operation ledger, active item) ----
+  if (isSeq(f.failureSeq) && f.c1Stage !== 'pre-c1' && isSeq(f.gateSeq) && !(f.failureSeq > f.gateSeq)) out.push('failed-run-seq-before-gate');
+  if (isSeq(f.failureSeq)) {
+    for (const m of markers) {
+      if (m.name === 'closeout') { if (!(m.seq > f.failureSeq)) out.push('failed-run-closeout-marker-before-failure'); continue; }
+      if (m.name === 'cleanup' && f.source === 'page-phase-run' && f.seqSource === 'page-alloc') {
+        if (f.cleanupEntry === 'marker-allocated' && !(m.seq > f.failureSeq)) out.push('failed-run-cleanup-marker-order');
+        if (f.cleanupEntry === 'marker-reused' && !(m.seq < f.failureSeq)) out.push('failed-run-cleanup-marker-order');
+      } else if (!(m.seq < f.failureSeq)) out.push(`failed-run-marker-after-failure:${m.name}`);
+    }
+    if (f.source === 'page-phase-run') {
+      if (markers.filter((m) => m.name === 'cleanup').length !== 1) out.push('failed-run-cleanup-marker-count');
+      const last = markers.filter((m) => m.seq < f.failureSeq && m.name !== 'closeout' && m.name !== 'P0').sort((x, y) => y.seq - x.seq)[0];
+      if (f.seqSource === 'page-alloc' && f.phase !== null && last !== undefined && f.phase !== last.name) out.push('failed-run-phase-marker-mismatch');
+    }
+    if (isPlainObject(f.operation) && typeof f.operation.operationId === 'string') {
+      const o = errorLedgerList(s, 'opLedger').find((x) => isPlainObject(x) && x.operationId === f.operation.operationId);
+      if (o === undefined) out.push('failed-run-operation-unknown');
+      else {
+        if (f.operation.operationType !== null && o.operationType !== f.operation.operationType) out.push('failed-run-operation-type-mismatch');
+        if (isSeq(o.startSeq) && !(f.failureSeq > o.startSeq)) out.push('failed-run-seq-before-operation-start');
+      }
+    }
+    if (f.activeControl !== null && CONTROL_NAMES.includes(f.activeControl)) {
+      const c = controls[f.activeControl];
+      if (!isPlainObject(c)) out.push('failed-run-active-control-missing');
+      else if (isPlainObject(c.executionRecord) && c.executionRecord.started === true) out.push('failed-run-active-control-already-terminal');
+      if (historyOf('activeControl', f.activeControl).some((e) => e.seq > f.failureSeq)) out.push('failed-run-seq-before-referenced-start');
+    }
+    if (f.activeCheck !== null && CHECK_NAMES.includes(f.activeCheck) && historyOf('activeCheck', f.activeCheck).some((e) => e.seq > f.failureSeq)) out.push('failed-run-seq-before-referenced-start');
+  }
+  return out;
+}
+
 /**
  * `recordSchemaProblems(state)` -- the discriminated-union + gate validation shared by
  * `validateResultSchema` and §8 row 5: `checks` = check-run | gate-disposition, `controls` =
@@ -3862,11 +4050,15 @@ function recordSchemaProblems(state) {
   const out = [];
   const gatePresent = s.gates !== undefined && s.gates !== null;
   let outcome = null;
-  if (!gatePresent) { if (GATE_C1_REQUIRED) out.push('gates-missing'); } else {
+  // Failed run (a non-null `phaseRunFailure`): the gate was never reached, so the gate-presence and C1-finalization
+  // requirements are waived -- and ONLY those (`failedRunRecordProblems` below rejects a gate on a failed run).
+  const failedRun = phaseRunFailureOf(s) !== null;
+  if (!gatePresent) { if (GATE_C1_REQUIRED && !failedRun) out.push('gates-missing'); } else {
     const g = gateC1Problems(s);
     out.push(...g.problems);
     outcome = g.outcome;
   }
+  out.push(...failedRunRecordProblems(s));
   const closed = outcome === GATE_OUTCOME.CLOSED_DEPENDENCY_BLOCKED || outcome === GATE_OUTCOME.CLOSED_OTHER;
   const checks = isPlainObject(s.checks) ? s.checks : null;
   const controls = isPlainObject(s.controls) ? s.controls : null;
@@ -3878,7 +4070,7 @@ function recordSchemaProblems(state) {
     const runType = kind === 'checks' ? RECORD_TYPE.CHECK_RUN : RECORD_TYPE.CONTROL_RUN;
     if (rt === runType) {
       if (closed && name !== 'C1') out.push(`${kind}.${name}:run-record-under-closed-gate`);
-      const ps = kind === 'checks' ? checkRunProblems(name, rec, { requireFinalization: name === 'C1' && (gatePresent || GATE_C1_REQUIRED) }) : controlRunProblems(name, rec);
+      const ps = kind === 'checks' ? checkRunProblems(name, rec, { requireFinalization: name === 'C1' && (gatePresent || (GATE_C1_REQUIRED && !failedRun)) }) : controlRunProblems(name, rec);
       for (const p of ps) out.push(`${kind}.${name}:${p}`);
       // The pre-RC1-C2 downstream encoding BLOCKED(dependency:C1..) is removed: under an OPEN gate C1
       // is PASS (contradiction), under a closed gate the item must be a gate-disposition.
@@ -4007,6 +4199,9 @@ function evaluateOverallRows(state, phase) {
   const bases = {};
   for (const n of CHECK_NAMES) bases[n] = checkVerdictBase(checks[n]);
   const r3 = CHECK_NAMES.filter((n) => bases[n] === 'FAIL').map((n) => `check-fail:${n}`);
+  // A failed phase run (non-null `phaseRunFailure`): the run's root failure is a FAIL on its own (the checks it blocked are
+  // BLOCKED, never FAIL, and must not mask it). Rows are not reordered; rows 1/2 still win.
+  if (phaseRunFailureOf(s) !== null) r3.push('phase-run-failed');
 
   // Row 4 -- any mandatory control non-acceptable (incl. missing/out-of-enum and any NRDB violating
   // L1-L4); a legal NRDB is neutral. Effective state only (control-run.state | disposition).
@@ -4056,7 +4251,7 @@ function evaluateOverallRows(state, phase) {
 
   // Row 8 -- positive PASS(-eligible) predicate, evaluated on its own: every check a check-run PASS
   // (so no gate-disposition record exists), every control acceptable, records schema-valid.
-  const allChecksPass = CHECK_NAMES.every((n) => bases[n] === 'PASS') && schemaProblems.length === 0;
+  const allChecksPass = CHECK_NAMES.every((n) => bases[n] === 'PASS') && schemaProblems.length === 0 && phaseRunFailureOf(s) === null;
   const allControlsAcceptable = CONTROL_NAMES.every((n) => dispositions[n] === 'acceptable');
   const r8match = Boolean(ledger) && ledger.fatalCount === 0 && ledger.attemptDeadlineExpired === false
     && s.cleanupUnresolvedOwnership === false && Array.isArray(s.cleanupFailures) && s.cleanupFailures.length === 0
@@ -4120,7 +4315,7 @@ const RESULT_TOP_LEVEL_KEYS = Object.freeze([
   'script', 'procedure', 'authorization', 'attempt', 'harnessIntegrity', 'runtimeEnvelope', 'classifier', 'runtime',
   'targets', 'checks', 'gates', 'controls', 'sceneOwnership', 'spyLedger', 'eventLog', 'stateSnapshots', 'c4Table', 'c17', 'c20',
   'n6', 'screenshots', 'errorLedger', 'cleanupFailures', 'cleanupStepStatus', 'cleanupUnresolvedOwnership',
-  'viewerScriptIntegrityReason', 'sessionTainted', 'staleContinuationsDropped', 'overall', 'closeout', 'limitations',
+  'viewerScriptIntegrityReason', 'sessionTainted', 'staleContinuationsDropped', 'phaseRunFailure', 'overall', 'closeout', 'limitations',
   'startedAt', 'finishedAt',
 ]);
 
@@ -4302,6 +4497,8 @@ function validateResultSchema(result, mode) {
   // (rows 1-5 FAIL, 6 BLOCKED, 7 PARTIAL, 8 PASS), so a mismatched pair is invalid. (The row itself is
   // not recomputed from R1 here -- the procedure does not require re-running computeOverall.)
   else if (OVERALL_ROW_VERDICT[o.row] !== o.verdict) errors.push('overall.row-verdict-mismatch');
+  // A failed run (non-null `phaseRunFailure`) is never PASS-eligible: its R1 can only describe a FAIL primary result.
+  if (phaseRunFailureOf(result) !== null && !(isPlainObject(o) && o.verdict === VERDICT_FAIL)) errors.push('failed-run-overall-not-fail');
   const c = result.closeout;
   if (!isPlainObject(c) || Object.keys(c).sort().join(',') !== 'optional,phase,primaryOverall,primaryRow') errors.push('closeout-keys');
   else {
@@ -4484,6 +4681,7 @@ function renderSummary(S) {
     `attemptId: ${isPlainObject(run.attempt) ? String(run.attempt.attemptId) : 'null'}`,
     `journal: ${S.journalTransitions.map((t) => t.state).join(' -> ')}`,
     `finishedAt: ${S.finishedAt}`,
+    (() => { const f = phaseRunFailureOf(run); return f === null ? 'failedRun: none' : `failedRun: ${f.source}/${f.category}/${f.phase === null ? 'none' : f.phase}/seq ${f.failureSeq}/${f.c1Stage}`; })(),
     '',
     SUMMARY_REQUIRED_HEADINGS[3],
     '',
@@ -4575,15 +4773,17 @@ function validateCommitRecord(k) {
 }
 
 /** F (closeout-failure witness) content; not hashed by anything. */
-function buildFailureWitness({ attemptId, primaryOverall, primaryRow, causes, optional }) {
-  return { attemptId, primaryOverall: primaryOverall ?? null, primaryRow: primaryRow ?? null, causes: causes.slice(), optional: optional.slice() };
+function buildFailureWitness({ attemptId, primaryOverall, primaryRow, causes, optional, phaseRunFailure = null }) {
+  // `phaseRunFailure`: the run's ROOT failure (or null), kept so a closeout failure never erases the original failure.
+  return { attemptId, primaryOverall: primaryOverall ?? null, primaryRow: primaryRow ?? null, causes: causes.slice(), optional: optional.slice(), phaseRunFailure: phaseRunFailure ?? null };
 }
 
 /** Fixed F schema (diagnostic only; the reader's W-1 needs only F's existence). */
 function validateFailureWitness(f) {
   const errors = [];
-  if (!exactKeys(f, ['attemptId', 'primaryOverall', 'primaryRow', 'causes', 'optional'])) return { ok: false, errors: ['keys'] };
+  if (!exactKeys(f, ['attemptId', 'primaryOverall', 'primaryRow', 'causes', 'optional', 'phaseRunFailure'])) return { ok: false, errors: ['keys'] };
   if (!Array.isArray(f.causes) || f.causes.length === 0) errors.push('causes');
+  if (f.phaseRunFailure !== null) for (const p of phaseRunFailureShapeProblems(f.phaseRunFailure)) errors.push(p);
   return { ok: errors.length === 0, errors };
 }
 
@@ -4830,13 +5030,13 @@ function runPostCommit({ fs, D2Fd, kcPath, kPath, kcBytes }) {
  * Purely diagnostic: K does not exist, so the reader returns FAIL even if nothing here lands.
  * K is never touched.
  */
-function closeoutFailurePath({ fs, handle, fPath, kcPath, attemptId, primary, causes, optional }) {
+function closeoutFailurePath({ fs, handle, fPath, kcPath, attemptId, primary, causes, optional, phaseRunFailure = null }) {
   const out = { candidateUnlinked: false, failureWitnessWritten: false, failedAppended: false };
   if (kcPath) {
     try { fs.unlink(kcPath); out.candidateUnlinked = true; } catch (err) { if (isSimulatedCrash(err)) throw err; }
   }
   try {
-    const bytes = serializeJson(buildFailureWitness({ attemptId, primaryOverall: primary && primary.overall, primaryRow: primary && primary.row, causes, optional }));
+    const bytes = serializeJson(buildFailureWitness({ attemptId, primaryOverall: primary && primary.overall, primaryRow: primary && primary.row, causes, optional, phaseRunFailure }));
     writeExclusiveDurable({ fs, filePath: fPath, dirFd: handle.D2Fd, bytes, label: 'F' });
     out.failureWitnessWritten = true;
   } catch (err) { if (isSimulatedCrash(err)) throw err; }
@@ -5010,7 +5210,7 @@ async function closeoutProtocol(opts) {
     const cause = err instanceof CloseoutFailure ? err.closeoutCause : `internal:${errCode(err)}`;
     if (!causes.includes(cause)) causes.push(cause);
     closeD1();
-    const failurePath = closeoutFailurePath({ fs, handle, fPath: paths.F, kcPath, attemptId, primary, causes, optional });
+    const failurePath = closeoutFailurePath({ fs, handle, fPath: paths.F, kcPath, attemptId, primary, causes, optional, phaseRunFailure: phaseRunFailureOf(state) });
     const result = {
       primaryOverall: primary ? primary.overall : null,
       primaryRow: primary ? primary.row : null,
@@ -5333,6 +5533,11 @@ function deriveVerdictFromArtifacts({ attempts = {}, results = {}, authorization
         if (new Set(pos).size !== 1) problems.push('primaryOverall-differs');
         if (new Set(rowsSeen).size !== 1) problems.push('primaryRow-differs');
         if (kRec.finalOverall !== kRec.primaryOverall) problems.push('finalOverall-not-primaryOverall');
+        // A valid failed-run K is distinguishable from a PASS K: a durable R1 `phaseRunFailure` makes the committed result FAIL,
+        // never anything else (the R1 schema already forces overall FAIL; this is the reader's own independent cross-check).
+        const failedRun = r1 ? phaseRunFailureOf(r1) : null;
+        if (failedRun !== null && kRec.finalOverall !== VERDICT_FAIL) problems.push('failed-run-final-not-fail');
+        detail.failedRun = failedRun === null ? null : Object.freeze({ source: failedRun.source, category: failedRun.category, phase: failedRun.phase, failureSeq: failedRun.failureSeq, c1Stage: failedRun.c1Stage });
         if (kRec.journalSha256 !== sha256Hex(journalBytes)) problems.push('journal-sha256');
         const ids = [kRec.attemptId, journal.attemptId, reservation.attemptId];
         if (r3) ids.push(r3.attemptId);
@@ -6924,6 +7129,51 @@ async function runCleanup({ steps = {}, context = {} } = {}, { stepDeadlineMs = 
   return { cleanupFailures, cleanupStepStatus, cleanupUnresolvedOwnership, stepResults, staleContinuationsDropped: quarantine.staleContinuationsDropped };
 }
 
+/** eventLog kind of the durable operation-begin refusal detail (before-live hardening, Medium 3). */
+const OPERATION_REFUSAL_EVENT_KIND = 'operation-begin-refused';
+const OPERATION_REFUSAL_CATEGORIES = Object.freeze(['refused', 'begin-threw', 'malformed-response', 'empty-operation-id', 'binding-missing']);
+
+/**
+ * The exact, bounded/redacted cause of a requireOps operation-begin block (Medium 3), as the fields of ONE
+ * `operation-begin-refused` eventLog entry (the recorder stamps its seq/phase/activeCheck/activeControl):
+ * `category` (OPERATION_REFUSAL_CATEGORIES; derived from `response` when not given: an explicit
+ * `{ok:false, reason:<non-empty string>}` => 'refused', `{ok:true, operationId:''}` => 'empty-operation-id',
+ * anything else => 'malformed-response'); `sourceRealm` ('node' for an explicit Node refusal -- Node already holds
+ * its single violation; 'page' when the page itself observed the failure: thrown/rejected call, malformed or
+ * empty-id acknowledgement, missing binding); `reason`; the attempted operation (`operationType`, `modelId`,
+ * `operationPhase`, `invokedBy`); `operationId` (the id the answer carried, '' included, else null); `response`
+ * (bounded JSON text of a malformed / empty-id answer, else null); `error` ({name, message} of a thrown begin,
+ * else null); `at` (ISO time). Never a violation and never a verdict input: the generic harness-exception stays
+ * the summary, this is its reconstructable detail.
+ */
+function operationRefusalDetail(desc, { category = null, response, error } = {}, clock = defaultClock) {
+  const d = isPlainObject(desc) ? desc : {};
+  const text = (v, max = 256) => (v === null || v === undefined ? null : truncateUtf8(redactEvidenceText(String(v)).value, max).value);
+  const r = response;
+  let cat = OPERATION_REFUSAL_CATEGORIES.includes(category) ? category : null;
+  if (cat === null) {
+    if (isPlainObject(r) && r.ok === false && typeof r.reason === 'string' && r.reason.length > 0) cat = 'refused';
+    else if (isPlainObject(r) && r.ok === true && r.operationId === '') cat = 'empty-operation-id';
+    else cat = 'malformed-response';
+  }
+  let shown = null;
+  if (cat === 'malformed-response' || cat === 'empty-operation-id') {
+    try { const j = JSON.stringify(r); shown = text(j === undefined ? typeof r : j); } catch { shown = text(typeof r); }
+  }
+  let at = null;
+  try { at = clock && typeof clock.nowIso === 'function' ? String(clock.nowIso()) : null; } catch { at = null; }
+  return {
+    category: cat,
+    sourceRealm: cat === 'refused' ? 'node' : 'page',
+    reason: isPlainObject(r) && r.reason !== undefined ? text(r.reason) : null,
+    operationType: text(d.operationType, 64), modelId: text(d.modelId, 64), operationPhase: text(d.phase, 64), invokedBy: text(d.invokedBy, 128),
+    operationId: isPlainObject(r) && typeof r.operationId === 'string' ? text(r.operationId, 128) : null,
+    response: shown,
+    error: error === undefined ? null : summarizeThrown(error),
+    at,
+  };
+}
+
 /**
  * §9.2 acknowledgement barrier for a harness mutation invoked from the page (C16 hide, C17 unload, a
  * cleanup unload step that is about to call `viewer.unloadModel`): `ops.begin(desc)` appends the
@@ -6932,21 +7182,34 @@ async function runCleanup({ steps = {}, context = {} } = {}, { stepDeadlineMs = 
  * harness-origin spy record (`recorder.record(method, args)`, after the ack: the
  * `causalEvidence.spyRef`) -- and `ops.end({operationId, terminalOutcome, spyRef})` records the end
  * fields. With `requireOps` (the live page: a present operation-ledger binding is mandatory) a missing
- * binding, a refused / thrown / malformed begin THROWS BEFORE any recorder activity and before `invoke()`:
+ * binding, a refused / thrown / malformed begin THROWS BEFORE any spy record and before `invoke()`:
  * the mutation never starts and no operation record exists (Node already holds the violation). Without
  * `requireOps` (offline callers with no peer) a missing `ops` records nothing and the mutation runs.
+ * Before-live hardening (Medium 3): every such block first appends ONE `operation-begin-refused` eventLog
+ * entry through `recorder.logEvent` (when a recorder is given; never a spy record, never a violation) carrying
+ * the exact cause (see `operationRefusalDetail`); the page-origin event is Node-sequenced at the next fence and
+ * is mandatory page evidence (pageEvidenceProblems), so it survives the transfer into the persisted eventLog.
+ * The thrown error carries the same detail as `operationRefusal`.
  */
 async function runAcknowledgedMutation({ ops = null, desc, recorder = null, method = null, args = [], invoke, requireOps = false }) {
+  // Medium 3: the refusal event + the error to throw (no spy record, no invoke, no violation).
+  const blocked = (message, cause) => {
+    const detail = operationRefusalDetail(desc, cause);
+    if (recorder && typeof recorder.logEvent === 'function') { try { recorder.logEvent(OPERATION_REFUSAL_EVENT_KIND, detail); } catch { /* the block below still holds (fail-safe) */ } }
+    const err = new Error(message);
+    err.operationRefusal = detail;
+    return err;
+  };
   let operationId = null;
   if (ops && typeof ops.begin === 'function') {
     let r;
     try { r = await ops.begin(desc); } catch (e) {
-      if (requireOps) throw new Error(`operation-begin failed (${e && e.message ? e.message : 'threw'}): mutation not started`);
+      if (requireOps) throw blocked(`operation-begin failed (${e && e.message ? e.message : 'threw'}): mutation not started`, { category: 'begin-threw', error: e });
       r = null;
     }
     if (r && r.ok === true && typeof r.operationId === 'string' && r.operationId.length > 0) operationId = r.operationId;
-    else if (requireOps) throw new Error(`operation-begin refused (${r && r.reason ? r.reason : 'malformed-response'}): mutation not started`);
-  } else if (requireOps) throw new Error('operation-ledger binding missing: mutation not started');
+    else if (requireOps) throw blocked(`operation-begin refused (${r && r.reason ? r.reason : 'malformed-response'}): mutation not started`, { response: r });
+  } else if (requireOps) throw blocked('operation-ledger binding missing: mutation not started', { category: 'binding-missing' });
   const spyRec = recorder && method ? recorder.withOrigin('harness', () => recorder.record(method, args)) : null;
   const end = async (terminalOutcome) => {
     if (operationId === null) return;
@@ -6968,12 +7231,13 @@ async function runAcknowledgedMutation({ ops = null, desc, recorder = null, meth
  * operation record -- §9.2 slice C2: a cleanup unload mutationOperation exists only around an actual
  * `viewer.unloadModel` call, through `ops` when given).
  */
-async function guardedUnloadModel({ viewer, model, label, ops = null, modelId = null, requireOps = false }) {
+async function guardedUnloadModel({ viewer, model, label, ops = null, modelId = null, requireOps = false, recorder = null }) {
   const before = viewer.getAllModels();
   if (!Array.isArray(before)) throw new TypeError(`${label}: getAllModels() did not return an array`);
   if (model === null || model === undefined || !before.includes(model)) return { outcome: 'already-absent' };
   if ((ops || requireOps) && (modelId === 'A' || modelId === 'B')) {
-    await runAcknowledgedMutation({ ops, requireOps, desc: { operationType: 'unload', modelId, phase: 'cleanup', invokedBy: `cleanup:${label}` }, invoke: () => viewer.unloadModel(model) });
+    // `recorder` (no `method`: no spy record) only receives the Medium-3 refusal event of a blocked begin.
+    await runAcknowledgedMutation({ ops, requireOps, desc: { operationType: 'unload', modelId, phase: 'cleanup', invokedBy: `cleanup:${label}` }, recorder, invoke: () => viewer.unloadModel(model) });
   } else if (requireOps) throw new Error(`${label}: operation-ledger barrier required but no ledgered model id`);
   else await viewer.unloadModel(model);
   const after = viewer.getAllModels();
@@ -6988,11 +7252,11 @@ function verifyViewerModelSetEmpty(viewer) {
 }
 
 /** Cleanup steps for the two models, keyed by object identity (never modelId). */
-function createModelCleanupSteps({ viewer, getModelA, getModelB, ops = null, requireOps = false }) {
+function createModelCleanupSteps({ viewer, getModelA, getModelB, ops = null, requireOps = false, recorder = null }) {
   const stillLoaded = (getModel) => () => { const m = getModel(); return m != null && viewer.getAllModels().includes(m); };
   return {
-    unloadModelA: { run: () => guardedUnloadModel({ viewer, model: getModelA(), label: 'unloadModelA', ops, modelId: 'A', requireOps }), ownershipRemains: stillLoaded(getModelA) },
-    unloadModelB: { run: () => guardedUnloadModel({ viewer, model: getModelB(), label: 'unloadModelB', ops, modelId: 'B', requireOps }), ownershipRemains: stillLoaded(getModelB) },
+    unloadModelA: { run: () => guardedUnloadModel({ viewer, recorder, model: getModelA(), label: 'unloadModelA', ops, modelId: 'A', requireOps }), ownershipRemains: stillLoaded(getModelA) },
+    unloadModelB: { run: () => guardedUnloadModel({ viewer, recorder, model: getModelB(), label: 'unloadModelB', ops, modelId: 'B', requireOps }), ownershipRemains: stillLoaded(getModelB) },
     verifyViewerModelSetEmpty: { run: () => verifyViewerModelSetEmpty(viewer), ownershipRemains: () => viewer.getAllModels().length > 0 },
   };
 }
@@ -7154,8 +7418,8 @@ const PHASE_ORDER = Object.freeze([
   { id: 'P5b', name: 'create bridge #1; markers', checks: ['C7'], controls: [] },
   { id: 'P6', name: 'fit', checks: ['C6', 'C8'], controls: ['N2'] },
   { id: 'P6b', name: 'overlay rendering', checks: ['C20'], controls: ['N8'] },
-  { id: 'P7', name: 'isolation', checks: ['C9', 'C10', 'C11', 'C12', 'C13'], controls: ['N4', 'N5'] },
-  { id: 'P8', name: 'supersession + failure injection', checks: ['C14', 'C15'], controls: [] },
+  { id: 'P7', name: 'isolation', checks: ['C9', 'C10', 'C11', 'C12'], controls: ['N4', 'N5'] },
+  { id: 'P8', name: 'supersession + failure injection', checks: ['C14', 'C15', 'C13'], controls: [] },
   { id: 'P9', name: 'model events', checks: ['C16', 'C17'], controls: ['N7'] },
   { id: 'P10', name: 'bridge #1 dispose/residue', checks: ['C18a'], controls: [] },
   { id: 'P11', name: 'prohibited-call ledger', checks: ['C19'], controls: [] },
@@ -9337,19 +9601,16 @@ function n3Record(result, { liveObservationsHold = null } = {}) {
 const SUBCHECK_OF = Object.freeze({ C7alpha: 'C7', C7beta: 'C7', C18a: 'C18', C18b: 'C18' });
 /** PHASE_ORDER lists P5b's unit as 'C7' (= C7β). */
 const PHASE_UNIT_ALIAS = Object.freeze({ P5b: Object.freeze({ C7: 'C7beta' }) });
-/** C13 needs C15(b)/(c)/(e) outcomes (§C13), so it is executed with P8 (see report). */
-const DEFERRED_UNITS = Object.freeze({ C13: 'P8' });
 /** Read-only checks that may still run after taint (§5 "only read-only diagnostics may continue"). */
 const READ_ONLY_UNITS = Object.freeze(['C5', 'C13', 'C19']);
 /** Controls that are pure recomputations (no Viewer effect) and may run after taint. */
 const PURE_CONTROLS = Object.freeze(['N3', 'N6', 'N8']);
 const NON_CHECK_PHASES = Object.freeze(['P0', 'cleanup', 'closeout']);
 
-/** The executable units of a phase (aliases and deferrals applied). */
+/** The executable units of a phase (aliases applied). C13 is a P8 unit (§5: it consumes C15(b)/(c)/(e) outcomes). */
 function phaseUnits(phase) {
   const alias = PHASE_UNIT_ALIAS[phase.id] || {};
-  const checks = phase.checks.map((c) => alias[c] || c).filter((c) => !DEFERRED_UNITS[c]);
-  for (const [unit, target] of Object.entries(DEFERRED_UNITS)) if (target === phase.id) checks.push(unit);
+  const checks = phase.checks.map((c) => alias[c] || c);
   return { checks, controls: [...phase.controls] };
 }
 
@@ -9415,7 +9676,7 @@ function verdictMapOf(checks, controls) {
  * `errorLedger` (object, or a synchronous function returning it at gate time) is the ledger the gate
  * preparation finalizes/counts; when absent, `fatalCountAtGate` is 1 if `fatalObserved()` else 0.
  */
-async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phases = PHASE_ORDER, assertPhaseBaseline = null, fatalObserved = () => false, nextSeq = null, recorder = null, errorLedger = null, gateHooks = {}, clock = defaultClock, sync = null } = {}) {
+async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phases = PHASE_ORDER, assertPhaseBaseline = null, fatalObserved = () => false, nextSeq = null, recorder = null, errorLedger = null, gateHooks = {}, clock = defaultClock, sync = null, markerLog = null, partialSink = null } = {}) {
   if (mode === 'live' && !LIVE_PATH_WIRED) throw new G2RefusalError('live-path-not-wired', 'runChecksInPhaseOrder: live mode is dormant in this revision');
   if (mode === 'live' && G2_DUAL_COUNTER_GATE.resolved !== true) throw new G2RefusalError('dual-counter-gate-unresolved', 'runChecksInPhaseOrder: live mode is refused while G2_DUAL_COUNTER_GATE is unresolved');
   if (mode !== 'live' && mode !== 'offline-fake') throw new TypeError(`runChecksInPhaseOrder: unknown mode ${String(mode)}`);
@@ -9430,11 +9691,16 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
   const controlStarts = {};
   const extras = {};
   const phaseLog = [];
-  const markers = [];
+  // A caller-owned marker log (F1): the page keeps every marker emitted before a throw (the runner's result is lost on a throw).
+  const markers = Array.isArray(markerLog) ? markerLog : [];
   let sessionTainted = false;
   let taintPhase = null;
   let fatalSkip = false;
   let c1FinalizedEvent = null;
+  let gate = null;
+  // A caller-owned partial-history reader (post-C1 failed-run evidence): if the runner throws, the caller can still read
+  // every check/control record already produced (never fabricated; records of the in-flight phase are simply absent).
+  if (isPlainObject(partialSink)) partialSink.read = () => ({ units, controls, extras, phaseLog, c1FinalizedEvent, sessionTainted, taintPhase });
   // Every attribution change is a fence: with `sync` Node must acknowledge it BEFORE the action it
   // attributes can start (a refusal throws); offline there is no peer.
   // The seq a change introduces (marker / finalization / control start) is allocated BEFORE the fence, so
@@ -9527,7 +9793,8 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
       sessionTainted = true; taintPhase = taintPhase || phase.id; entry.taintedAfter = true;
       return;
     }
-    await setAttr({ activeCheck: null, activeControl: null });
+    // Completed-result retention: the driver's returned records are merged into the runner-owned maps (the partial-history
+    // sink's source) BEFORE the attribution-clear fence, so a fence refusal/throw can never erase work that already completed.
     const got = out || {};
     for (const c of runnable.checks) {
       const r = got.checks ? got.checks[c] : undefined;
@@ -9551,6 +9818,13 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
       if (deps.length && checkVerdictBase(units[c]) !== 'FAIL') setUnit(c, blockedCheck(`dependency:${deps.join(',')}`));
     }
     if (got.extras) Object.assign(extras, got.extras);
+    // Node-authoritative completed-result retention: the merged results become Node's own retained copy through the awaited
+    // retain fence BEFORE the attribution-clear fence, so no later fence / cleanup-entry refusal can lose them. Optional hook
+    // (offline callers pass none); a refusal throws and IS the phase-run failure (fail closed, recorded by Node as a violation).
+    if (sync && typeof sync.retain === 'function') await sync.retain();
+    // Final attribution-clear fence (Node must acknowledge before any later phase starts); a failure here is the phase-run failure
+    // and propagates with the completed results above already retained.
+    await setAttr({ activeCheck: null, activeControl: null });
     let taintNow = got.tainted === true;
     if (typeof assertPhaseBaseline === 'function') {
       let b;
@@ -9565,7 +9839,6 @@ async function runChecksInPhaseOrder({ drivers = {}, mode = 'offline-fake', phas
   const p1 = phases.find((p) => p.id === 'P1');
   if (p1) await runPhase(p1);
   await finalizeC1();
-  let gate;
   if (sync && typeof sync.gate === 'function') {
     // Authoritative gate: prepared by Node, synchronously, on the Node error ledger (item 24 finalization,
     // witness rebuild, fatal count and gateSeq in one section). The page only validates what comes back.
@@ -10127,7 +10400,7 @@ function createLivePhaseDrivers(env) {
       }
     },
 
-    // P7 -- isolation: C9, C10, C11 (+N5), C12 (+N4). C13 is evaluated with P8 (needs C15 outcomes).
+    // P7 -- isolation: C9, C10, C11 (+N5), C12 (+N4). C13 is P8-owned (needs C15 outcomes).
     async P7(ctx) {
       const { runnable } = ctx;
       const b = st.bridge1;
@@ -11307,6 +11580,9 @@ function g2NodeSync() {
     attribution: async (a) => { await call('attribution', { phase: a.phase, activeCheck: a.activeCheck, activeControl: a.activeControl }, 'attribution sync'); },
     gate: async (c1) => (await call('gate', { c1 }, 'C1 gate')).gate,
     drain: async () => call('drain', {}, 'drain sync'),
+    // `snapshot` is built by the caller in the SAME synchronous tick as this call's fence report (no await in between).
+    // (not the runner's no-argument `retain` hook: g2RunPhases binds it to its own partial history)
+    retainSnapshot: async (snapshot) => call('retain', { snapshot }, 'retain sync'),
   };
 }
 
@@ -11394,33 +11670,168 @@ function g2PhaseBaseline(env, phase) {
 async function g2RunPhases(arg) {
   const g = g2PageState();
   const env = g2BuildEnv({ nodeLoadOutcomes: arg && isPlainObject(arg.nodeLoadOutcomes) ? arg.nodeLoadOutcomes : null });
-  const sync = g2NodeSync();
-  const run = await runChecksInPhaseOrder({
-    drivers: createLivePhaseDrivers(env),
-    mode: 'live',
-    assertPhaseBaseline: async (phase) => g2PhaseBaseline(env, phase),
-    fatalObserved: () => g.fatal.flag === true || g.fatal.abort === true,
-    recorder: env.recorder,
-    // The C1 gate and every attribution change go through the Node authority (`sync`): the gate is
-    // prepared on the AUTHORITATIVE Node ledger. `g.fatal` above is only an abort-latch hint (it is
-    // never consulted for the gate decision).
-    sync,
-  });
-  // Final fence: the result is not returned before Node has the page high-water and fatal ids.
-  if (sync) await sync.drain();
+  const nodeSync = g2NodeSync();
+  const markerLog = [];
+  const partialSink = {};
+  // Completed-result retention: the runner's awaited `retain` hook sends Node the partial history + page evidence (built in
+  // the same synchronous tick as the fence report), so Node owns them before the attribution-clear fence can refuse.
+  const sync = nodeSync === null ? null : { ...nodeSync, retain: async () => nodeSync.retainSnapshot(g2RetainSnapshot({ partialSink, recorder: env.recorder, markerLog, snapshots: () => env.state.stateSnapshots || [] })) };
+  let run = null;
+  let failure = null;
+  let failureAttr = null;
+  try {
+    run = await runChecksInPhaseOrder({
+      drivers: createLivePhaseDrivers(env),
+      mode: 'live',
+      assertPhaseBaseline: async (phase) => g2PhaseBaseline(env, phase),
+      fatalObserved: () => g.fatal.flag === true || g.fatal.abort === true,
+      recorder: env.recorder,
+      markerLog,
+      partialSink,
+      // The C1 gate and every attribution change go through the Node authority (`sync`): the gate is
+      // prepared on the AUTHORITATIVE Node ledger. `g.fatal` above is only an abort-latch hint (it is
+      // never consulted for the gate decision).
+      sync,
+    });
+  } catch (e) { failure = e; failureAttr = g2FailureAttribution(env.recorder); }
+  // Failed run (before-live Medium 2 + failed-run closeout): the page records the failure's own ordinal (identity-bound
+  // `phase-run-failure`, allocated under the attribution in force when the runner threw), then enters the cleanup phase
+  // exactly as the runner's last act would (g2EnterCleanupAfterFailure; an already-allocated `marker:cleanup` is REUSED) and
+  // makes the SAME final transfer below, so the run's page evidence, EVERY marker emitted before the failure and every
+  // cleanup record are retained through the ordinary fences / rewrite / cleanup drain / provenance checks.
+  // Nothing transferable (no binding, refused entry, refused or unstable transfer) => the ORIGINAL failure is rethrown.
+  let entry = null;
+  let failureSeq = null;
+  if (failure !== null) {
+    try { failureSeq = env.recorder.nextSeq('alloc', 'phase-run-failure'); } catch { failureSeq = null; }
+    entry = await g2EnterCleanupAfterFailure({ sync, recorder: env.recorder, failure, markerLog });
+  }
+  let fin;
+  try { fin = await g2FinalizeRunTransfer({ sync, recorder: env.recorder, snapshots: () => env.state.stateSnapshots || [] }); } catch (e) { throw failure === null ? e : failure; }
+  if (failure !== null) {
+    return g2JsonSafe({
+      phaseRunFailure: { ...g2ErrOf(failure), ...g2FailureDetail(failure), ...failureAttr, seq: failureSeq, cleanupEntry: entry.reused ? 'marker-reused' : 'marker-allocated' },
+      markers: markerLog.slice(), partial: g2PartialHistory(partialSink), eventLog: fin.eventLog,
+      spyLedger: fin.spyLedger, screenshots: g.screenshots, stateSnapshots: fin.stateSnapshots,
+      staleContinuationsDropped: env.quarantine.staleContinuationsDropped,
+      pageHighWater: fin.pageHighWater, pageFatalSent: fin.pageFatalSent,
+    });
+  }
   const { spyInstall, ...extras } = run.extras || {};
-  // Cleanup delta boundary: everything the page allocates after this high-water is cleanup evidence (g2CleanupDrain).
-  g.runResultHw = g2FenceReport().hw;
   return g2JsonSafe({
     checks: run.checks, controls: run.controls, subchecks: run.subchecks, extras, c1FinalizedEvent: run.c1FinalizedEvent,
-    gates: run.gates, markers: run.markers, eventLog: run.eventLog,
+    // eventLog: the POST-DRAIN finalized snapshot (Medium 1), never the runner's pre-drain eventLog.
+    gates: run.gates, markers: run.markers, eventLog: fin.eventLog,
     spyInstall: spyInstall || null,
     sessionTainted: run.sessionTainted, taintPhase: run.taintPhase, phaseLog: run.phaseLog,
-    spyLedger: env.recorder.records, screenshots: g.screenshots, stateSnapshots: env.state.stateSnapshots || [],
+    spyLedger: fin.spyLedger, screenshots: g.screenshots, stateSnapshots: fin.stateSnapshots,
     staleContinuationsDropped: env.quarantine.staleContinuationsDropped,
     cameraHomeCaptured: env.cameraHomeCaptured, bridgeHistory: env.bridgeTracker.history,
-    pageHighWater: g2FenceReport().hw, pageFatalSent: g.pageFatalSent,
+    pageHighWater: fin.pageHighWater, pageFatalSent: fin.pageFatalSent,
   });
+}
+
+/**
+ * In-page. The check/control history the runner had already produced when it threw (`partialSink.read()`): only records
+ * that exist (the in-flight phase's units are absent, never fabricated). Node reads it ONLY when ITS OWN retained C1 gate
+ * says the failure was after C1 opened (`phaseRunFailure.c1Stage:'post-c1'`); otherwise it is ignored.
+ */
+function g2PartialHistory(sink) {
+  try {
+    const r = sink && typeof sink.read === 'function' ? sink.read() : null;
+    if (!r) return null;
+    const checks = {};
+    for (const n of CHECK_NAMES) {
+      if (n === 'C7') { if (r.units.C7alpha && r.units.C7beta) checks.C7 = combineSubchecks({ C7alpha: r.units.C7alpha, C7beta: r.units.C7beta }); } else if (n === 'C18') { if (r.units.C18a && r.units.C18b) checks.C18 = combineSubchecks({ C18a: r.units.C18a, C18b: r.units.C18b }); } else if (r.units[n]) checks[n] = r.units[n];
+    }
+    const { spyInstall, ...extras } = r.extras || {};
+    void spyInstall;
+    return { checks, controls: { ...r.controls }, extras, sessionTainted: r.sessionTainted, taintPhase: r.taintPhase, phaseLog: r.phaseLog };
+  } catch { return null; }
+}
+
+/**
+ * In-page. The completed-result retention snapshot sent with the awaited `retain` fence: the runner's partial history
+ * (`g2PartialHistory`; null => Node refuses, fail closed), every marker so far, the recorder's events (seq-ordered) and
+ * spy records, the state snapshots, the screenshots and the page high-water -- all read synchronously, in the same tick as
+ * the fence report of the `retain` call that carries it, so every ordinal in it is at or below the reported high-water.
+ */
+function g2RetainSnapshot({ partialSink, recorder, markerLog, snapshots = () => [] }) {
+  const g = g2PageState();
+  return g2JsonSafe({
+    partial: g2PartialHistory(partialSink), markers: markerLog.slice(),
+    eventLog: recorder.events.slice().sort((a, b) => a.seq - b.seq), spyLedger: recorder.records.slice(),
+    stateSnapshots: snapshots().slice(), screenshots: Array.isArray(g.screenshots) ? g.screenshots.slice() : [],
+    pageHighWater: g2FenceReport().hw,
+  });
+}
+
+/** In-page. The recorder attribution in force when the runner threw (`{phase, activeCheck, activeControl}`), copied before cleanup entry changes it. */
+function g2FailureAttribution(recorder) {
+  try {
+    const a = recorder.attribution();
+    return { phase: a.phase === undefined ? null : a.phase, activeCheck: a.activeCheck === undefined ? null : a.activeCheck, activeControl: a.activeControl === undefined ? null : a.activeControl };
+  } catch { return { phase: null, activeCheck: null, activeControl: null }; }
+}
+
+/** In-page. Operation detail a thrown error carries (operation id / type / reason, bounded strings), or `{operation: null}`. */
+function g2FailureDetail(e) {
+  if (e === null || typeof e !== 'object') return { operation: null };
+  const str = (v) => (typeof v === 'string' ? truncateUtf8(redactEvidenceText(v).value, 128).value : null);
+  const operation = { operationId: str(e.operationId), operationType: str(e.operationType), reason: str(e.reason) };
+  return { operation: operation.operationId === null && operation.operationType === null && operation.reason === null ? null : operation };
+}
+
+/**
+ * In-page. FINAL run transfer (before-live Medium 1). A bounded stable-fence loop like g2CleanupDrain: every round
+ * awaits the drain fence (Node ingests every unacknowledged ordinal and allocates its authoritative seq); a page
+ * callback that allocates while a fence is in flight moves the page high-water, so another round carries it. Only
+ * once the high-water did NOT move across the last awaited fence is the run finalized -- in that same synchronous
+ * tick (no await below the loop): the authoritative `eventLog` snapshot (every recorder event, each exactly once,
+ * seq-ordered) and every other ordinal-bearing collection of the result (spy records, state snapshots, the page-fatal
+ * count), the transfer high-water and `g.runResultHw` (the cleanup-delta boundary) -- so a record allocated by a later
+ * microtask (after this promise resolves) can never ride in the result above its high-water. Finalization therefore
+ * cannot precede the last drain, and an event recorded during the last drain is in the finalized eventLog (not left
+ * "missing" between the run result and the cleanup delta). Non-stabilizing / refused => throws (fail closed).
+ */
+async function g2FinalizeRunTransfer({ sync, recorder, snapshots = () => [] }) {
+  const g = g2PageState();
+  let stable = !sync;
+  for (let round = 0; !stable && round < 8; round += 1) {
+    const before = g2FenceReport().hw;
+    await sync.drain();
+    stable = g2FenceReport().hw === before;
+  }
+  if (!stable) throw new Error('run transfer drain did not stabilize');
+  const eventLog = recorder.events.slice().sort((a, b) => a.seq - b.seq);
+  const spyLedger = recorder.records.slice();
+  const stateSnapshots = snapshots().slice();
+  const pageFatalSent = g.pageFatalSent;
+  const pageHighWater = g2FenceReport().hw;
+  g.runResultHw = pageHighWater;
+  return { eventLog, spyLedger, stateSnapshots, pageFatalSent, pageHighWater };
+}
+
+/**
+ * In-page. After a FAILED phase run (before-live Medium 2): exactly what the runner's `mark('cleanup')` does as its
+ * last act -- the recorder attribution becomes `{phase:'cleanup'}`, ONE identity-bound `marker:cleanup` alloc ordinal
+ * is allocated and the attribution change is acknowledged through the awaited Node sync fence -- so every later
+ * (cleanup-step) record carries the cleanup attribution Node holds, and the cleanup boundary is provable by the
+ * unchanged marker rule. Returns the marker `{seq, name:'cleanup'}`; no sync binding, a failed marker allocation or a
+ * refused fence rethrows the ORIGINAL failure (never replaced by the cleanup-entry error).
+ */
+async function g2EnterCleanupAfterFailure({ sync, recorder, failure, markerLog = [] }) {
+  if (!sync) throw failure;
+  try {
+    recorder.setAttribution({ phase: 'cleanup', activeCheck: null, activeControl: null });
+    // The runner may already have allocated its own `marker:cleanup` (it threw at that marker's attribution fence): REUSE it --
+    // a second marker would move the cleanup boundary past events recorded in between. The attribution is re-acknowledged.
+    const existing = markerLog.find((m) => m && m.name === 'cleanup');
+    const marker = existing || { seq: recorder.nextSeq('alloc', 'marker:cleanup'), name: 'cleanup' };
+    if (!existing) markerLog.push(marker);
+    await sync.attribution(recorder.attribution());
+    return { marker, reused: Boolean(existing) };
+  } catch { throw failure; }
 }
 
 // ---- §9 page-owned cleanup steps ---------------------------------------------------------------
@@ -11446,7 +11857,7 @@ function g2CleanupStepImpls(env) {
   const models = { A: g.models.A || null, B: g.models.B || null };
   const loaded = () => viewer.getAllModels();
   const hasEntries = (list) => Array.isArray(list) && list.some((e) => e && e.ids && e.ids.length > 0);
-  const modelSteps = createModelCleanupSteps({ viewer, getModelA: () => models.A, getModelB: () => models.B, ops: env && env.ops ? env.ops : g2NodeOps(), requireOps: true });
+  const modelSteps = createModelCleanupSteps({ viewer, recorder: env ? env.recorder : null, getModelA: () => models.A, getModelB: () => models.B, ops: env && env.ops ? env.ops : g2NodeOps(), requireOps: true });
   return {
     drainPendingTokens: { run: async () => ({ staleContinuationsDropped: env ? env.quarantine.staleContinuationsDropped : 0 }), ownership: () => false },
     bridgeDispose: {
@@ -12147,6 +12558,7 @@ function buildInitialRunState({ binding, validation, startedAt }) {
     viewerScriptIntegrityReason: 'not-captured',
     sessionTainted: false,
     staleContinuationsDropped: 0,
+    phaseRunFailure: null,
     limitations: [...G2_LIMITATIONS],
     startedAt,
   };
@@ -12182,6 +12594,103 @@ function unavailablePhaseRecords(reason) {
   const controls = {};
   for (const n of CONTROL_NAMES) controls[n] = notStartedControlRun(n, reason);
   return { checks, controls };
+}
+
+/**
+ * Authenticates a page failure transfer against NODE's ingestion provenance: the failure's own page ordinal must be an ingested
+ * identity-bound `phase-run-failure` alloc (its seq is then the authoritative one), and the failure's phase / activeCheck /
+ * activeControl are the attribution Node validated at that allocation -- never the page's separate claim. A page failure without
+ * such an ingested ordinal loses its page seq (Node observes it) and its attribution claim (null). Pure; returns a new run object.
+ */
+function authenticatedFailureRun(run, authority) {
+  const pf = isPlainObject(run.phaseRunFailure) ? run.phaseRunFailure : {};
+  const row = Number.isSafeInteger(pf.seq) ? authority.provenance().find((r) => r.seq === pf.seq && r.kind === 'alloc' && r.label === 'phase-run-failure') : undefined;
+  const failure = row === undefined
+    ? { ...pf, seq: null, phase: null, activeCheck: null, activeControl: null }
+    : { ...pf, phase: row.phase, activeCheck: row.activeCheck, activeControl: row.activeControl };
+  return { ...run, phaseRunFailure: failure };
+}
+
+/**
+ * Failed-run closeout (before-live Medium 2 + failed-run R1/K) -- the Node-side verdict of a phase run that FAILED: either
+ * the page's run threw and made the failure transfer (`applyPhaseRunToState`, same rewrite / runApplied / cleanup drain /
+ * provenance checks as a completed run), or the RPC did not complete (`source:'node-phase-run-transport'`: threw / timed
+ * out; nothing transferred). Every check is BLOCKED(`phase-run-<status>`) carrying the exact (redacted, bounded) failure as
+ * evidence, every control its §7 not-started placeholder with a REAL Node-allocated seq, no gate record (the run never
+ * reached it -- nothing is fabricated). Whatever verdict-shaped fields the page sent are ignored. The ROOT failure is kept
+ * as the durable R1 record `phaseRunFailure` (Node-authoritative `failureSeq`; never replaced by later cleanup/closeout
+ * failures, which only ADD reasons). The transferred page evidence is kept as transferred: the eventLog is the page's
+ * finalized log, seq-ordered (a C1 `check-finalized` event of the failed run is retained as historical page evidence, not as
+ * a verdict). `markers` (transport branch only) are the markers Node itself ingested; the transfer carries its own.
+ * `retained` (transport branch only) is Node's OWN completed-result snapshot (`authority.retained()`, retain fence): with a
+ * usable C1 it is the post-C1 history + page evidence of a non-transferred failure (completed records kept verbatim; the
+ * failure is allocated after them; Node's last acknowledged activeCheck/activeControl is dropped when Node retained that
+ * item as completed). A page failure transfer ignores it (the page's own transfer wins; no duplicate history).
+ * Retained cleanup evidence can only ADD failures (cleanup-evidence fatals); nothing here can turn the run into a PASS.
+ */
+function applyPhaseRunFailureToState(state, run, { nextSeq, source = 'page-phase-run', status = 'threw', attribution = null, markers = null, retained = null } = {}) {
+  const f = isPlainObject(run.phaseRunFailure) ? run.phaseRunFailure : {};
+  const phaseRunFailure = summarizeThrown({ name: typeof f.name === 'string' ? f.name.slice(0, 64) : 'Error', message: typeof f.message === 'string' ? f.message : String(f.message ?? '') });
+  const attr = isPlainObject(attribution) ? attribution : f;
+  const pageAllocated = source === 'page-phase-run' && Number.isSafeInteger(f.seq);
+  const bound = (v) => (typeof v === 'string' ? truncateUtf8(redactEvidenceText(v).value, 128).value : null);
+  const op = isPlainObject(f.operation) ? { operationId: bound(f.operation.operationId), operationType: bound(f.operation.operationType), reason: bound(f.operation.reason) } : null;
+  // The C1 boundary is decided by NODE's own retained gate (never a page claim): no gate => 'pre-c1'; a gate plus a usable
+  // page-transferred history (C1's record agrees with the gate) => 'post-c1'; a gate without usable history => 'post-c1-untransferred'.
+  const gate = isPlainObject(state.authoritativeGate) ? state.authoritativeGate : null;
+  // Post-C1 history source: the page-transferred `partial` (page failure transfer, which wins), or -- for a non-transferred failure
+  // only -- Node's OWN retained completed-result snapshot (`retained`, retain fence; already in authoritative seqs). Never both.
+  const held = source === 'node-phase-run-transport' && isPlainObject(retained) ? retained : null;
+  const partialSrc = source === 'page-phase-run' ? run.partial : (held !== null ? held.partial : null);
+  const partial = isPlainObject(partialSrc) && isPlainObject(partialSrc.checks) && isPlainObject(partialSrc.controls) ? partialSrc : null;
+  const c1 = partial !== null ? partial.checks.C1 : null;
+  // A CLOSED gate is never 'usable': its downstream gate-dispositions must precede the cleanup marker (G-e) and Node cannot allocate in the past, so
+  // the honest representation is 'post-c1-untransferred' (the gate fact is kept in gateSeq/gateOutcome; nothing is fabricated).
+  const usable = gate !== null && gate.outcome === GATE_OUTCOME.OPEN && isPlainObject(c1) && validateCheckRecord(c1, 'C1').ok && c1.verdict === gate.c1Verdict && c1.reason === gate.c1Reason && c1.finalizedSeq === gate.c1FinalizedSeq;
+  // A non-transferred failure carries Node's LAST ACKNOWLEDGED attribution; an item Node itself retained as completed was not in flight.
+  const heldDone = (n, isCheck) => held !== null && usable && (isCheck ? isPlainObject(partial.checks[n]) && validateCheckRecord(partial.checks[n], n).ok : isPlainObject(partial.controls[n]) && validateControlRunRecord(n, partial.controls[n]).ok);
+  const activeCheck = CHECK_NAMES.includes(attr.activeCheck) && !heldDone(attr.activeCheck, true) ? attr.activeCheck : null;
+  const activeControl = CONTROL_NAMES.includes(attr.activeControl) && !heldDone(attr.activeControl, false) ? attr.activeControl : null;
+  const record = {
+    primary: true, source, realm: PHASE_RUN_FAILURE_SOURCE_REALM[source], status,
+    category: phaseRunFailure.name.length > 0 ? phaseRunFailure.name : 'Error', message: phaseRunFailure.message,
+    phase: ATTRIBUTION_PHASES.includes(attr.phase) ? attr.phase : null,
+    activeCheck,
+    activeControl,
+    operation: op,
+    failureSeq: pageAllocated ? f.seq : nextSeq(),
+    seqSource: pageAllocated ? 'page-alloc' : 'node-observed',
+    cleanupEntry: source === 'page-phase-run' && PHASE_RUN_FAILURE_CLEANUP_ENTRIES.includes(f.cleanupEntry) ? f.cleanupEntry : 'not-entered',
+    c1Stage: gate === null ? 'pre-c1' : (usable ? 'post-c1' : 'post-c1-untransferred'),
+    gateSeq: gate === null ? null : gate.gateSeq,
+    gateOutcome: gate === null ? null : gate.outcome,
+  };
+  state.phaseRunFailure = record;
+  const reason = phaseRunFailureReason(record);
+  if (record.c1Stage === 'post-c1') {
+    // Truthful history: the authoritative gate and every record the run had already produced are KEPT; only work that had not
+    // produced a record is represented as blocked / not started (the gate is OPEN; a closed gate is 'post-c1-untransferred').
+    const checks = {};
+    const controls = {};
+    for (const n of CHECK_NAMES) { const r = partial.checks[n]; checks[n] = isPlainObject(r) && validateCheckRecord(r, n).ok ? r : makeCheckRecord({ verdict: 'BLOCKED', reason, evidence: { phaseRunFailure } }); }
+    for (const n of CONTROL_NAMES) { const r = partial.controls[n]; controls[n] = isPlainObject(r) && validateControlRunRecord(n, r).ok ? r : notStartedControlRun(n, reason, { seq: nextSeq() }); }
+    // Page evidence: the page transfer's own (its markers were applied with the transfer), or Node's retained snapshot's
+    // (markers = the ones Node itself ingested, as for any non-transferred failure).
+    const ev = held !== null ? held : run;
+    applyPhaseRunToState(state, { checks, controls, extras: partial.extras, gates: { C1: gate }, eventLog: ev.eventLog, spyLedger: ev.spyLedger, screenshots: ev.screenshots, stateSnapshots: ev.stateSnapshots, ...(held !== null && Array.isArray(markers) ? { markers } : {}) });
+    return;
+  }
+  for (const n of CHECK_NAMES) state.checks[n] = makeCheckRecord({ verdict: 'BLOCKED', reason: phaseRunFailureReason(record), evidence: { phaseRunFailure } });
+  for (const n of CONTROL_NAMES) state.controls[n] = notStartedControlRun(n, phaseRunFailureReason(record), { seq: nextSeq() });
+  state.gates = null;
+  state.n6 = null;
+  if (Array.isArray(markers)) {
+    if (!isPlainObject(state.errorLedger)) state.errorLedger = createEmptyErrorLedger();
+    state.errorLedger.markers = [...(Array.isArray(state.errorLedger.markers) ? state.errorLedger.markers : []), ...markers];
+  }
+  if (Array.isArray(run.eventLog)) {
+    state.eventLog = run.eventLog.map((e, i) => [e, i]).sort((a, b) => ((isPlainObject(a[0]) && isPlainObject(b[0]) && a[0].seq !== b[0].seq) ? a[0].seq - b[0].seq : a[1] - b[1])).map(([e]) => e);
+  }
 }
 
 /**
@@ -12527,6 +13036,10 @@ async function runPostReservation(ctx) {
             authority.reconcilePageFatals(a.pageFatalSent);
             return { ok: true };
           }
+          if (action === 'retain') {
+            // Completed-result retention fence: drain-style ingestion + Node's own remapped snapshot (any refusal = one violation).
+            return authority.retainPageSnapshot(a);
+          }
           if (action === 'gate') {
             // Atomic authoritative gate (synchronous, no await): ingest the page ordinals (C1's finalization
             // included), reconcile the page-origin fatals (a missing/late/duplicate transfer is one fail-closed
@@ -12543,6 +13056,9 @@ async function runPostReservation(ctx) {
               finalizeAtGate: (e, { ledger, finalizedSeq }) => provisionalFinalization(e, { ledger, finalizedSeq, rules: responseRules }),
               rebuildFatalWitnessState: (ledger) => syncFatalWitnesses(ledger, { appendEntry: (entry) => sink.recordWitnessEntry(entry) }),
             });
+            // Node's own retained copy of the authoritative gate (failed-run evidence: a post-C1 phase failure keeps THIS gate,
+            // never a page-supplied one). Not a §10 key: it is never copied into R1.
+            state.authoritativeGate = gate;
             return { ok: true, gate };
           }
           return { ok: false, reason: 'unknown-action' };
@@ -12672,11 +13188,25 @@ async function runPostReservation(ctx) {
       cleanupEvidence.runApplied = true;
       authority.assertAllocated(maxRecordedSeq(state));
       if (run.sessionTainted === true) tainted = true;
+      // Before-live Medium 2: a FAILED page run made the same transfer (its evidence is applied above and the cleanup
+      // drain + provenance checks run unchanged); its verdict stays the failure, decided here by Node, never by the page.
+      if (isPlainObject(run) && Object.hasOwn(run, 'phaseRunFailure')) { applyPhaseRunFailureToState(state, authenticatedFailureRun(run, authority), { nextSeq: runSeq.next }); tainted = true; }
       state.staleContinuationsDropped += Number.isInteger(run.staleContinuationsDropped) ? run.staleContinuationsDropped : 0;
     } else {
-      const u = unavailablePhaseRecords(`phase-run-${runOut.status}`);
-      state.checks = u.checks;
-      state.controls = u.controls;
+      // The RPC did not complete (threw / timed out / no value): no run result was transferred. The failure is still a durable,
+      // schema-valid root-failure record; the markers Node itself ingested (identity-bound `marker:<name>` allocations) are retained,
+      // and Node's OWN retained completed-result snapshot (retain fence) is the post-C1 history source (failureSeq allocated after it).
+      const retainedRun = authority.retained();
+      const ingestedMarkers = authority.provenance().filter((r) => r.kind === 'alloc' && typeof r.label === 'string' && r.label.startsWith('marker:') && ATTRIBUTION_PHASES.includes(r.label.slice('marker:'.length))).map((r) => ({ seq: r.seq, name: r.label.slice('marker:'.length) }));
+      const rpcErr = runOut.status === 'threw' && runOut.error ? runOut.error : null;
+      applyPhaseRunFailureToState(state, { phaseRunFailure: { name: rpcErr && typeof rpcErr.name === 'string' ? rpcErr.name : 'Error', message: rpcErr ? String(rpcErr.message ?? rpcErr) : (runOut.status === 'completed' ? 'phase run completed without a result' : `phase run ${runOut.status}`) } }, { nextSeq: runSeq.next, source: 'node-phase-run-transport', status: runOut.status === 'completed' ? 'invalid-result' : String(runOut.status), attribution: { phase: nodeAttribution.phase, activeCheck: nodeAttribution.activeCheck, activeControl: nodeAttribution.activeControl }, markers: ingestedMarkers, retained: retainedRun });
+      // Retained-evidence completeness (procedure §9 Node-authoritative completed-result retention): page evidence admitted from
+      // Node's retained snapshot passes the SAME pageEvidenceProblems check as a transferred run, scoped to the ordinals the
+      // accepted retain fence covered. A problem only ADDS one fatal (the root phaseRunFailure and validated history stay; never a PASS).
+      if (retainedRun !== null && isPlainObject(state.phaseRunFailure) && state.phaseRunFailure.c1Stage === 'post-c1') {
+        const problems = authority.pageEvidenceProblems(state, { throughOrdinal: authority.retainedThroughOrdinal() });
+        if (problems.length > 0) sink.recordFatal('harness-exception', `retained-evidence:${problems[0]}${problems.length > 1 ? `(+${problems.length - 1})` : ''}`);
+      }
       tainted = true;
       if (runOut.status === 'timed-out' && live.rpc) promises.track(live.rpc.call('g2MarkFatal', { kind: 'phase-run-timeout', abort: true }).catch(() => {}));
     }
@@ -12780,7 +13310,8 @@ async function runPostReservation(ctx) {
   } catch (err) {
     if (err && err.simulatedCrash === true) throw err;
     // closeoutProtocol threw outside its own failure path (a harness defect): FAILED best-effort, exit 1.
-    attempt.appendBestEffort(JOURNAL_STATE.FAILED, { causes: [`harness-abort:closeout-threw:${summarizeThrown(err).name}`] });
+    // Best-effort F (carrying the run's ROOT failure) + journal FAILED: an unexpected closeout abort never erases the original phase failure.
+    closeoutFailurePath({ fs, handle: attempt, fPath: path.join(chain.D2, closeoutFailureName(attempt.authorizationId)), kcPath: null, attemptId: attempt.attemptId, primary: null, causes: [`harness-abort:closeout-threw:${summarizeThrown(err).name}`], optional: [], phaseRunFailure: phaseRunFailureOf(state) });
     attempt.close();
     try { print('G2 closeout aborted (harness error): finalOverall: FAIL, exit code: 1'); } catch { /* informational */ }
     return result({ finalOverall: VERDICT.FAIL, exitCode: exitCodeForVerdict(VERDICT.FAIL), consumed: true, closeoutAbort: summarizeThrown(err) });
@@ -13187,7 +13718,6 @@ export {
   n1Record,
   n3Record,
   SUBCHECK_OF,
-  DEFERRED_UNITS,
   READ_ONLY_UNITS,
   PURE_CONTROLS,
   phaseUnits,
@@ -13233,6 +13763,12 @@ export {
   buildInitialRunState,
   unavailablePhaseRecords,
   applyPhaseRunToState,
+  applyPhaseRunFailureToState,
+  authenticatedFailureRun,
+  phaseRunFailureOf,
+  phaseRunFailureShapeProblems,
+  failedRunRecordProblems,
+  PHASE_RUN_FAILURE_KEYS,
   buildCappedResultPayload,
   buildCleanupSteps,
   runPostReservation,
@@ -13305,6 +13841,9 @@ export {
   authoritativeGateProblems,
   g2NodeSync,
   runAcknowledgedMutation,
+  OPERATION_REFUSAL_EVENT_KIND,
+  OPERATION_REFUSAL_CATEGORIES,
+  operationRefusalDetail,
   loadCompletionOutcome,
   finalizeLoadWindows,
   c2LedgerProblems,

@@ -29,7 +29,7 @@ const REPO = path.resolve(HERE, '..', '..');
 // ---- procedure digest binding (RC1-C1 follow-up item 14) ---------------------------------------
 
 test('procedure binding: the harness binds exactly the final accepted procedure SHA-256 and the committed procedure bytes match it', () => {
-  assert.equal(ACCEPTED_PROCEDURE_SHA256, '5f9c4c7e124751d09406f07eab63f844fec53add006bd12ad676ecaca3732abb');
+  assert.equal(ACCEPTED_PROCEDURE_SHA256, 'd1ccfde224b8ae76fe74b06c93abc532e6df9612933cafaa045053c8e2e45a75');
   const bytes = readFileSync(path.join(REPO, PROCEDURE_REL_PATH));
   assert.equal(createHash('sha256').update(bytes).digest('hex'), ACCEPTED_PROCEDURE_SHA256);
 });

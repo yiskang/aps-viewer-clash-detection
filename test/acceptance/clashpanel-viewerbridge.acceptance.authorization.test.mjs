@@ -326,7 +326,7 @@ test('reject: an unexpected io error is reported as io-error, never thrown', () 
 });
 
 test('procedure binding: the accepted digest is the final RC1-C2 procedure SHA and the fixture uses those exact bytes', () => {
-  assert.equal(ACCEPTED_PROCEDURE_SHA256, '5f9c4c7e124751d09406f07eab63f844fec53add006bd12ad676ecaca3732abb');
+  assert.equal(ACCEPTED_PROCEDURE_SHA256, 'd1ccfde224b8ae76fe74b06c93abc532e6df9612933cafaa045053c8e2e45a75');
   assert.equal(DEFAULTS.proc, ACCEPTED_PROCEDURE_SHA256);
 });
 
