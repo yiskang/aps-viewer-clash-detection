@@ -234,7 +234,7 @@ test('bundle contract: the page bundle carries the shipped fence/sync/ordinal he
   assert.ok(!RAW_BUNDLE.includes('function createRunAuthority('), 'the Node authority never ships into the page');
   assert.match(BINDING_TEXT[SYNC], /authority\.syncPage\(a\)/);
   assert.match(BINDING_TEXT[OPS], /authority\.ingestFence\(a\)/);
-  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, false);
+  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
 });
 
 test('(1)-(4) awaited page events + interleaved Node-origin events share ONE allocator: unique, monotonic, contiguous 1..peek', async () => {

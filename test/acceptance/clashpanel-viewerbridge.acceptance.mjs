@@ -29,8 +29,8 @@
 //  teardown records with node-side acknowledgement barriers), durable prefix-source ledger,
 //  derivePrefixes + hashes, ambiguous-prefix accounting, `load-windows-closed` finalization and
 //  boundPrefix provenance, all recomputed at closeout. Live-readiness remediation: one composite
-//  cross-realm sequence + Node-authoritative attribution/gate (G2_DUAL_COUNTER_GATE stays
-//  unresolved until an independent re-review accepts it; see its documentation).
+//  cross-realm sequence + Node-authoritative attribution/gate (G2_DUAL_COUNTER_GATE is
+//  resolved; see its documentation).
 //
 //  Hard boundaries (procedure §1/§2, authorization §7): this file never imports clashpanel/core,
 //  any engine, catalog, `createClashPanel`, or server.js, and never issues a theming call.
@@ -3440,8 +3440,8 @@ function maxRecordedSeq(state) {
 }
 
 /**
- * UNRESOLVED BEFORE-LIVE-EXECUTION GATE (kept `resolved:false` until an INDEPENDENT re-review accepts the
- * H1 sequencing remediation below; flipping it is an owner/independent-gate decision, not this pass's).
+ * BEFORE-LIVE-EXECUTION GATE (`resolved:true`: independent re-review accepted the
+ * H1 sequencing remediation below; owner authorized the flip; LIVE_PATH_WIRED stays false).
  * History: the in-page phase run once numbered its own records from a page counter while Node numbered
  * request/response/fatal/operation events (two namespaces), and a later remediation merged them as a fenced
  * page-major/Node-minor composite -- neither is the accepted §9.2 "one node-side monotonic counter".
@@ -3455,7 +3455,7 @@ function maxRecordedSeq(state) {
  * Still coupled (M2): main() and runChecksInPhaseOrder(mode 'live') refuse with
  * 'dual-counter-gate-unresolved' while `resolved` is not true, independently of LIVE_PATH_WIRED.
  */
-const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, owner: 'before-live-execution', finding: 'h1-single-node-allocator-implemented-awaiting-independent-confirmation' });
+const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: true, owner: 'before-live-execution', finding: 'h1-single-node-allocator-implemented-awaiting-independent-confirmation' });
 
 /**
  * SINGLE-ALLOCATOR SEQUENCING CONTRACT (H1). Authoritative ordering point = NODE INGESTION: every

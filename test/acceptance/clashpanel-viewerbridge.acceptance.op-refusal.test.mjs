@@ -172,7 +172,7 @@ test('static: the live page requires the ops binding (g2BuildEnv env.requireOps=
   const { at } = opLedgerBindingText(SOURCE);
   assert.ok(at > RPR.start && at < RPR.end);
   assert.equal(H.LIVE_PATH_WIRED, false);
-  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, false);
+  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
 });
 
 test('hide begin ACCEPTED (requireOps): the action runs after the ack; the harness spy record is created after the ack; ops.end gets the spyRef', async () => {

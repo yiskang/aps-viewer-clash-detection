@@ -93,11 +93,11 @@ const NP = (w, opts) => networkLedgerProblems({ errorLedger: w.ledger, spyLedger
 // Static
 // ------------------------------------------------------------------------------------------
 
-test('static: the slice-C1 non-distinguishing stand-in is gone; LIVE_PATH_WIRED stays false; the dual-counter gate stays documented (H1 single-allocator remediation), unresolved and mechanically coupled to live (M2)', () => {
+test('static: the slice-C1 non-distinguishing stand-in is gone; LIVE_PATH_WIRED stays false; the dual-counter gate stays documented (H1 single-allocator remediation), resolved and mechanically coupled to live (M2)', () => {
   assert.equal(HARNESS_SOURCE.includes('NON_DISTINGUISHING_PREFIX_DERIVATION'), false);
   assert.equal(HARNESS_SOURCE.split('const LIVE_PATH_WIRED = false;').length - 1, 1);
   assert.equal(LIVE_PATH_WIRED, false);
-  assert.equal(G2_DUAL_COUNTER_GATE.resolved, false);
+  assert.equal(G2_DUAL_COUNTER_GATE.resolved, true);
   // Live-readiness remediation: the seqBase stopgap in g2BuildEnv is gone -- page records are numbered by
   // page-local ordinals (createPageOrdinalSource) mapped by the ONE Node allocator, never seeded from a node seqBase.
   assert.equal(HARNESS_SOURCE.includes('G2_DUAL_COUNTER_GATE (unresolved): page records are numbered here'), false, 'the seqBase stopgap label is gone');
@@ -118,7 +118,7 @@ test('static: the slice-C1 non-distinguishing stand-in is gone; LIVE_PATH_WIRED 
     assert.ok(body.includes("'dual-counter-gate-unresolved'"), `${fn}: refusal reason`);
   }
   // M1 (attribution) is named by the same gate's comment -- its history and its remediation.
-  const gateDoc = HARNESS_SOURCE.slice(HARNESS_SOURCE.indexOf('UNRESOLVED BEFORE-LIVE-EXECUTION GATE'), HARNESS_SOURCE.indexOf('const G2_DUAL_COUNTER_GATE ='));
+  const gateDoc = HARNESS_SOURCE.slice(HARNESS_SOURCE.indexOf('BEFORE-LIVE-EXECUTION GATE (`resolved:true`'), HARNESS_SOURCE.indexOf('const G2_DUAL_COUNTER_GATE ='));
   assert.match(gateDoc, /H1 sequencing remediation/);
   assert.match(gateDoc, /ONE Node-owned\s+\*\s+allocator \(`createRunSeqAllocator`\)/);
   assert.match(gateDoc, /NON-AUTHORITATIVE local ordinal \(`createPageOrdinalSource`/);

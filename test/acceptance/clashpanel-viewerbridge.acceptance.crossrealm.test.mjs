@@ -402,7 +402,7 @@ test('static: Node world lines, g2BuildEnv recorder lines and the four binding b
   const iClose = body.indexOf("state.errorLedger.markers.push({ seq: runSeq.next(), name: 'closeout' });");
   assert.ok(iRec < iRw && iRw < iApply && iApply < iAssert && body.indexOf(assertLine, iAssert + 1) < iClose);
   assert.equal(H.LIVE_PATH_WIRED, false);
-  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, false);
+  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
   assert.deepEqual([H.G2_NODE_SYNC_BINDING, H.G2_NODE_INGEST_BINDING], ['__g2NodeSync', '__g2NodeIngest']);
   assert.equal(BASE_ORD, 2 ** 50);
   for (const removed of ['SEQ_STRIDE', 'SEQ_MINOR_RESERVED', 'realmOfSeq', 'createRunSeqCounter', 'createPageSeqSource']) assert.equal(removed in H, false, `${removed} is no longer exported`);
@@ -1161,7 +1161,6 @@ test('H1: live mode without the Node fences is refused (node-sync-missing) after
   assert.ok(iw !== -1 && iw < id && id < is && is < body.indexOf('const rec = '), 'guard order: wiring, dual-counter gate, node sync, then any work');
   const M = await importMutated([
     ['const LIVE_PATH_WIRED = false;', 'const LIVE_PATH_WIRED = true;'],
-    ['const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, ', 'const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: true, '],
   ]);
   let driverCalls = 0;
   const drv = { P1: async () => { driverCalls += 1; return {}; } };

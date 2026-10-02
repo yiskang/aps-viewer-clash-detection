@@ -4,9 +4,9 @@
 // §9 cleanup, §9.1 closeout, §8 exit codes) with an ENTIRELY FAKE browser package, page, viewer
 // and filesystem. The real harness keeps LIVE_PATH_WIRED=false, so its main() can never get past
 // W0 (asserted below). To exercise the wired flow, this file imports a MUTATED COPY of the harness
-// written to an os.tmpdir() sandbox with exactly three constants changed -- LIVE_PATH_WIRED=true,
-// G2_DUAL_COUNTER_GATE.resolved=true (the dry run SIMULATES a resolved before-live gate; the real
-// harness refuses live while it is unresolved, M2) and EXPECTED_VIEWER_SHA256 = the SHA-256 of this
+// written to an os.tmpdir() sandbox with exactly two constants changed -- LIVE_PATH_WIRED=true
+// (G2_DUAL_COUNTER_GATE.resolved is already true in the real harness; M2 uses a second copy with it forced
+// back to false) and EXPECTED_VIEWER_SHA256 = the SHA-256 of this
 // file's fake viewer3D.js body -- and drives its
 // main() with deps: a recording fake fs, a fake git, a fake module server and a fake browser
 // package whose page answers the in-page registry keys. Nothing here imports playwright, launches a
@@ -33,20 +33,21 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 const FAKE_VIEWER_BODY = Buffer.from('/* fake viewer3D.js body for the offline dry run */\n');
 const WIRED_LINE = 'const LIVE_PATH_WIRED = false;';
 const SHA_LINE = `const EXPECTED_VIEWER_SHA256 = '${REAL.EXPECTED_VIEWER_SHA256}';`;
-const GATE_LINE = "const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, ";
+const GATE_LINE = "const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: true, ";
 assert.equal(REAL_SOURCE.split(WIRED_LINE).length - 1, 1);
 assert.equal(REAL_SOURCE.split(SHA_LINE).length - 1, 1);
 assert.equal(REAL_SOURCE.split(GATE_LINE).length - 1, 1);
 const WIRED_ONLY_SOURCE = REAL_SOURCE.replace(WIRED_LINE, 'const LIVE_PATH_WIRED = true;').replace(SHA_LINE, `const EXPECTED_VIEWER_SHA256 = '${sha(FAKE_VIEWER_BODY)}';`);
-const MUTATED_SOURCE = WIRED_ONLY_SOURCE.replace(GATE_LINE, 'const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: true, ');
+const MUTATED_SOURCE = WIRED_ONLY_SOURCE;
+const UNRESOLVED_SOURCE = WIRED_ONLY_SOURCE.replace(GATE_LINE, 'const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, ');
 const SANDBOX = mkdtempSync(path.join(os.tmpdir(), 'g2-mainflow-'));
 const MUTATED_FILE = path.join(SANDBOX, 'clashpanel-viewerbridge.acceptance.mjs');
 writeFileSync(MUTATED_FILE, MUTATED_SOURCE);
 const H = await import(pathToFileURL(MUTATED_FILE).href);
-// M2: a copy with ONLY the wiring flag (and the fake viewer SHA) changed -- the gate stays unresolved.
+// M2: a copy with the wiring flag set but the gate forced back to unresolved.
 const WIRED_ONLY_FILE = path.join(SANDBOX, 'wired-only', 'clashpanel-viewerbridge.acceptance.mjs');
 mkdirSync(path.dirname(WIRED_ONLY_FILE));
-writeFileSync(WIRED_ONLY_FILE, WIRED_ONLY_SOURCE);
+writeFileSync(WIRED_ONLY_FILE, UNRESOLVED_SOURCE);
 const HW = await import(pathToFileURL(WIRED_ONLY_FILE).href);
 after(() => { rmSync(SANDBOX, { recursive: true, force: true }); });
 
@@ -429,15 +430,16 @@ test('real harness: LIVE_PATH_WIRED is false and main() refuses right after W0 w
   assert.deepEqual(calls, []);
 });
 
-test('mutated copy differs from the real harness in exactly the three constants (wiring flag, simulated-resolved dual-counter gate, fake viewer SHA)', () => {
+test('mutated copy differs from the real harness in exactly the two constants (wiring flag, fake viewer SHA)', () => {
   const a = REAL_SOURCE.split('\n');
   const b = MUTATED_SOURCE.split('\n');
   assert.equal(a.length, b.length);
   const diff = a.map((l, i) => (l === b[i] ? null : i)).filter((i) => i !== null);
-  assert.equal(diff.length, 3);
+  assert.equal(diff.length, 2);
   assert.equal(H.LIVE_PATH_WIRED, true);
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
-  assert.equal(REAL.G2_DUAL_COUNTER_GATE.resolved, false);
+  assert.equal(REAL.G2_DUAL_COUNTER_GATE.resolved, true);
+  assert.equal(REAL.LIVE_PATH_WIRED, false);
 });
 
 test('M2: LIVE_PATH_WIRED=true while G2_DUAL_COUNTER_GATE is unresolved => main() refuses (dual-counter-gate-unresolved) right after the wiring gate, with no fs/git/browser/event activity; live-mode runChecksInPhaseOrder refuses too', async () => {

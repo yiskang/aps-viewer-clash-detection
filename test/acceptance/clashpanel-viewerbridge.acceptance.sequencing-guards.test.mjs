@@ -324,7 +324,7 @@ function guardPositiveInvariants(src) {
     if (!/const run = authority\.rewritePageRun\(runOut\.value, \{ stage: 'run' \}\);/.test(t)) v.push('p:applied-run-is-not-the-rewritten-run');
   }
   if (!/^const LIVE_PATH_WIRED = false;/m.test(src)) v.push('p:LIVE_PATH_WIRED-not-false');
-  if (!/const G2_DUAL_COUNTER_GATE = Object\.freeze\(\{ resolved: false,/.test(src)) v.push('p:G2_DUAL_COUNTER_GATE-resolved-not-false');
+  if (!/const G2_DUAL_COUNTER_GATE = Object\.freeze\(\{ resolved: true,/.test(src)) v.push('p:G2_DUAL_COUNTER_GATE-resolved-not-true');
   return v;
 }
 
@@ -713,7 +713,7 @@ test('sequencing guards: harness source parses and the exported contract surface
   assert.equal(typeof H.createRunAuthority, 'function');
   assert.equal(H.PAGE_LOCAL_BASE, 2 ** 50);
   assert.equal(H.LIVE_PATH_WIRED, false);
-  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, false);
+  assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
   for (const banned of ['createRunSeqCounter', 'createPageSeqSource', 'SEQ_STRIDE', 'SEQ_MINOR_RESERVED', 'realmOfSeq']) assert.equal(banned in H, false, `export ${banned} must not exist`);
 });
 
@@ -793,7 +793,7 @@ test('positive invariants: one allocator feeds every Node consumer; final transf
   expectDetects(guardPositiveInvariants, mutate(SOURCE, '      applyPhaseRunToState(state, run);\n      cleanupEvidence.runApplied = true;\n      authority.assertAllocated(maxRecordedSeq(state));', '      applyPhaseRunToState(state, run);\n      cleanupEvidence.runApplied = true;'), 'final-transfer-order-reconcile-rewrite-apply-assert', 'final transfer drops assertAllocated');
   expectDetects(guardPositiveInvariants, mutate(SOURCE, '      const run = authority.rewritePageRun(runOut.value, { stage: \'run\' });', '      const run = runOut.value; authority.rewritePageRun(runOut.value, { stage: \'run\' });'), 'applied-run-is-not-the-rewritten-run', 'raw page run is applied');
   expectDetects(guardPositiveInvariants, mutate(SOURCE, 'const LIVE_PATH_WIRED = false;', 'const LIVE_PATH_WIRED = true;'), 'LIVE_PATH_WIRED-not-false', 'LIVE_PATH_WIRED flipped');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, 'Object.freeze({ resolved: false, owner:', 'Object.freeze({ resolved: true, owner:'), 'G2_DUAL_COUNTER_GATE-resolved-not-false', 'dual-counter gate flipped');
+  expectDetects(guardPositiveInvariants, mutate(SOURCE, 'Object.freeze({ resolved: true, owner:', 'Object.freeze({ resolved: false, owner:'), 'G2_DUAL_COUNTER_GATE-resolved-not-true', 'dual-counter gate un-flipped');
 });
 
 test('guards are non-vacuous on missing structure: a renamed/removed target function fails closed', () => {
