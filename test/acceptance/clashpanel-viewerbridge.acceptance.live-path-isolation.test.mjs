@@ -47,9 +47,9 @@ const DECL = (v) => `${'const LIVE'}_PATH_WIRED = ${v};`;
 // current LIVE_PATH_WIRED value. The future activation flip (plan §9 step 1-2) is a deliberate, bounded change:
 // flip `const LIVE_PATH_WIRED = false;` in the harness and change THIS pin to `true` in the same, separately
 // authorized and independently reviewed change. No other suite should need editing for the flip.
-test('PIN (single, deliberate): the real harness currently declares LIVE_PATH_WIRED = false (dormant)', () => {
-  assert.equal(livePathWiredDeclaration(REAL_SOURCE).value, false);
-  assert.equal(REAL.LIVE_PATH_WIRED, false);
+test('PIN (single, deliberate): the real harness currently declares LIVE_PATH_WIRED = true (activated)', () => {
+  assert.equal(livePathWiredDeclaration(REAL_SOURCE).value, true);
+  assert.equal(REAL.LIVE_PATH_WIRED, true);
 });
 
 // =========================================================================================================

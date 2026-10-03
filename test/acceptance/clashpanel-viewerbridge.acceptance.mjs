@@ -116,7 +116,7 @@ const MODEL_B_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2V
  * interlock -- BEFORE record validation or any durable act -- so no record can ever be spent by
  * an unwired harness. A later implementation task flips this only when the live path exists.
  */
-const LIVE_PATH_WIRED = false;
+const LIVE_PATH_WIRED = true;
 
 // ============================================================================================
 // Section 2 -- small shared helpers.
