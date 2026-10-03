@@ -111,7 +111,7 @@ test('static: the refusal event is logged inside runAcknowledgedMutation BEFORE 
   assert.deepEqual([...H.OPERATION_REFUSAL_CATEGORIES], ['refused', 'begin-threw', 'malformed-response', 'empty-operation-id', 'binding-missing']);
   const cs = H.locateFunctionSource(SOURCE, 'g2CleanupStepImpls');
   assert.match(SOURCE.slice(cs.start, cs.end), /createModelCleanupSteps\(\{ viewer, recorder: env \? env\.recorder : null, /);
-  assert.equal(H.LIVE_PATH_WIRED, false);
+  // LIVE_PATH_WIRED is deliberately not pinned here: the single pin of the real value is in live-path-isolation.test.mjs.
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
 });
 

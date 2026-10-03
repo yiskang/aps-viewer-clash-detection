@@ -473,7 +473,7 @@ function expectAnyDetects(mutated, codePrefix, label) {
 
 test('seq-source guards: the real harness is clean under every guard', () => {
   for (const [name, g] of Object.entries(ALL_GUARDS)) expectClean(g, name);
-  assert.equal(H.LIVE_PATH_WIRED, false);
+  // LIVE_PATH_WIRED is deliberately not pinned here: the single pin of the real value is in live-path-isolation.test.mjs.
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
 });
 

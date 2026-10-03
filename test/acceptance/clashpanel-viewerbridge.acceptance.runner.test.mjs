@@ -12,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PHASE_ORDER, CHECK_NAMES, CONTROL_NAMES, LIVE_PENDING_STATUS, planChecks, phaseUnits, runChecksInPhaseOrder, makeCheckRecord, makeControlRecord,
-  checkVerdictBase, validateCheckRecord, validateControlRecord, validateControlRunRecord, evaluateOverallRows, G2RefusalError,
+  checkVerdictBase, validateCheckRecord, validateControlRecord, validateControlRunRecord, evaluateOverallRows,
   createCallRecorder, createWrapperRegistry, createFailureInjectionController, createBridgeInstanceTracker, createModelLabeler,
   createLivePhaseDrivers, enumerateCandidates, selectFitUnionPair, OFFLINE_FAKE_TARGET_BRAND, C2_REGION_ORDER, CLASSIFIER_CONFIRMED,
   validateC15eEvidence, C15_RESTORE_FAILED_NOTE,
@@ -20,6 +20,7 @@ import {
   attributionFieldProblems,
   createEmptyErrorLedger, createOperationLedger, refreshCancellationWindows, networkLedgerProblems,
 } from './clashpanel-viewerbridge.acceptance.mjs';
+import { importDormantHarness } from './support/g2-harness-copy.mjs';
 import { createViewerBridge } from '../../clashpanel/viewer/ViewerBridge.js';
 import { createViewerApi } from '../../clashpanel/viewer/viewerApi.js';
 import { createFakeViewer, createFakeModel, FAKE_EVENTS } from '../clashpanel/support/fakeViewer.mjs';
@@ -58,8 +59,11 @@ test('planner: every check/control unit, in §5 phase order, pending live execut
   assert.deepEqual(phaseUnits(PHASE_ORDER.find((p) => p.id === 'P5b')).checks, ['C7beta']);
 });
 
-test('live mode is refused while the live path is not wired; unknown modes throw', async () => {
-  await assert.rejects(runChecksInPhaseOrder({ mode: 'live' }), (e) => e instanceof G2RefusalError && e.reason === 'live-path-not-wired');
+test('live mode is refused while the live path is not wired (DORMANT copy: LIVE_PATH_WIRED forced false); unknown modes throw', async () => {
+  // Exercised on a copy with the flag FORCED false (shared helper) so the dormancy refusal stays tested across the deliberate
+  // activation flip; the real value is pinned only in live-path-isolation.test.mjs.
+  const { module: D } = await importDormantHarness();
+  await assert.rejects(D.runChecksInPhaseOrder({ mode: 'live' }), (e) => e instanceof D.G2RefusalError && e.reason === 'live-path-not-wired');
   await assert.rejects(runChecksInPhaseOrder({ mode: 'whatever' }), TypeError);
 });
 

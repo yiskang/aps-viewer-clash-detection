@@ -26,7 +26,7 @@
 // Playwright binding test lives in its own file). Non-vacuity: the guarded behaviours are re-run against
 // MUTATED COPIES of the harness source (tmp sandbox, as mainflow.test.mjs does) or of the sliced binding
 // text and shown to fail. Nothing here imports playwright, launches a browser or touches the network; the
-// real harness keeps LIVE_PATH_WIRED=false and G2_DUAL_COUNTER_GATE.resolved=false.
+// wiring flag is forced per copy through support/g2-harness-copy.mjs (never pinned here).
 
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,6 +38,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as H from './clashpanel-viewerbridge.acceptance.mjs';
+import { forceLivePathWired } from './support/g2-harness-copy.mjs';
 
 const HARNESS_FILE = fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url));
 const SOURCE = readFileSync(HARNESS_FILE, 'utf8');
@@ -65,11 +66,17 @@ function mutate(source, pairs) {
   return s;
 }
 
-async function importMutated(pairs) {
-  const src = mutate(SOURCE, pairs);
+/**
+ * Imports a mutated copy. `livePathWired` (optional boolean) FORCES the wiring flag through the shared helper
+ * (tolerant of the real file's current value, loud on an absent/ambiguous declaration); `pairs` may then be empty.
+ * The copy lives at <SANDBOX>/<n>/test/acceptance/<harness>, so its own REPO_ROOT is the isolated <SANDBOX>/<n>.
+ */
+async function importMutated(pairs, { livePathWired } = {}) {
+  const base = livePathWired === undefined ? SOURCE : forceLivePathWired(SOURCE, livePathWired);
+  const src = pairs.length === 0 && livePathWired !== undefined ? base : mutate(base, pairs);
   mutationCount += 1;
-  const dir = path.join(SANDBOX, String(mutationCount));
-  mkdirSync(dir);
+  const dir = path.join(SANDBOX, String(mutationCount), 'test', 'acceptance');
+  mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'clashpanel-viewerbridge.acceptance.mjs');
   writeFileSync(file, src);
   return import(pathToFileURL(file).href);
@@ -401,7 +408,7 @@ test('static: Node world lines, g2BuildEnv recorder lines and the four binding b
   const iAssert = body.indexOf(assertLine);
   const iClose = body.indexOf("state.errorLedger.markers.push({ seq: runSeq.next(), name: 'closeout' });");
   assert.ok(iRec < iRw && iRw < iApply && iApply < iAssert && body.indexOf(assertLine, iAssert + 1) < iClose);
-  assert.equal(H.LIVE_PATH_WIRED, false);
+  // LIVE_PATH_WIRED is deliberately not pinned here: the single pin of the real value is in live-path-isolation.test.mjs.
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
   assert.deepEqual([H.G2_NODE_SYNC_BINDING, H.G2_NODE_INGEST_BINDING], ['__g2NodeSync', '__g2NodeIngest']);
   assert.equal(BASE_ORD, 2 ** 50);
@@ -1151,17 +1158,16 @@ test('H1: a refused phase-marker fence (high-water mismatch in transit) rejects 
   assert.notEqual(node.attribution.phase, 'P3');
 });
 
-test('H1: live mode without the Node fences is refused (node-sync-missing) after the wiring/dual-counter guards; the real harness refuses earlier (live-path-not-wired)', async () => {
-  await assert.rejects(H.runChecksInPhaseOrder({ mode: 'live', sync: { attribution: async () => {}, gate: async () => ({}) } }), (e) => e instanceof H.G2RefusalError && e.reason === 'live-path-not-wired');
+test('H1: live mode without the Node fences is refused (node-sync-missing) after the wiring/dual-counter guards; a dormant copy (LIVE_PATH_WIRED forced false) refuses earlier (live-path-not-wired)', async () => {
+  const D = await importMutated([], { livePathWired: false });
+  await assert.rejects(D.runChecksInPhaseOrder({ mode: 'live', sync: { attribution: async () => {}, gate: async () => ({}) } }), (e) => e instanceof D.G2RefusalError && e.reason === 'live-path-not-wired');
   const { start, end } = H.locateFunctionSource(SOURCE, 'runChecksInPhaseOrder');
   const body = SOURCE.slice(start, end);
   const iw = body.indexOf("'live-path-not-wired'");
   const id = body.indexOf("'dual-counter-gate-unresolved'");
   const is = body.indexOf("'node-sync-missing'");
   assert.ok(iw !== -1 && iw < id && id < is && is < body.indexOf('const rec = '), 'guard order: wiring, dual-counter gate, node sync, then any work');
-  const M = await importMutated([
-    ['const LIVE_PATH_WIRED = false;', 'const LIVE_PATH_WIRED = true;'],
-  ]);
+  const M = await importMutated([], { livePathWired: true });
   let driverCalls = 0;
   const drv = { P1: async () => { driverCalls += 1; return {}; } };
   for (const sync of [undefined, null, {}, { attribution: async () => {} }, { gate: async () => ({}) }, { attribution: 1, gate: 2 }]) {

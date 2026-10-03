@@ -40,6 +40,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { homedir as nodeOsHomedir, release as nodeOsRelease, cpus as nodeOsCpus } from 'node:os';
 import {
   realpathSync,
   lstatSync as nodeLstatSync,
@@ -197,6 +198,258 @@ function parseLiveActivation({ argv, env } = {}) {
   if (missing.length > 0) return { authorized: false, reason: `missing:${missing.join(',')}`, recordPath: null };
   if (recordProblem) return { authorized: false, reason: recordProblem, recordPath: null };
   return { authorized: true, reason: null, recordPath };
+}
+
+// ============================================================================================
+// Section 3a -- hard runtime preflight gates (live plan docs/research/2026-10-02-g2-live-execution-plan.md
+// §3.1) and the Chromium headless-shell resolution contract (§3.2). Runs in main() immediately after
+// W1 and before W2a: local env/fs/os reads and pure computation only -- no Playwright import, no
+// process spawn (not even `<exe> --version`), no network, no write. Any mismatch or unavailable value
+// => G2RefusalError before any directory, reservation, AUTH_BOUND or ATTEMPT_CONSUMED exists (the
+// record stays unspent). The resolved provenance is printed to stderr (O1) only: the accepted R1
+// `runtimeEnvelope` / journal binding schemas are fixed whitelists and are NOT extended here. The
+// definitive version check of the binary actually launched stays the Phase-0 `browser-launch`
+// `browser.version()` strict equality (PREFLIGHT_FAILED, consumed:false).
+// ============================================================================================
+
+/** Exact required runtime (bound by the harness SHA; never ranges). Headed `chromium-1234` is never gated. */
+const G2_REQUIRED_RUNTIME = Object.freeze({
+  node: 'v22.23.1',
+  playwright: '1.62.1',
+  playwrightCore: '1.62.1',
+  headlessShell: Object.freeze({
+    name: 'chromium-headless-shell',
+    revision: '1234',
+    browserVersion: '151.0.7922.34',
+    platform: 'darwin',
+    arch: 'arm64',
+    directoryName: 'chromium_headless_shell-1234',
+    executableTokens: Object.freeze(['chrome-headless-shell-mac-arm64', 'chrome-headless-shell']),
+    markerName: 'INSTALLATION_COMPLETE',
+  }),
+});
+
+/** Playwright 1.62.1 `getFromENV` precedence for the browsers root (first defined source wins). */
+const G2_BROWSERS_PATH_SOURCES = Object.freeze(['PLAYWRIGHT_BROWSERS_PATH', 'npm_config_playwright_browsers_path', 'npm_package_config_playwright_browsers_path']);
+/** Every source Playwright reads PWDEBUG from; any non-empty value is refused (it can force headed). */
+const G2_PWDEBUG_SOURCES = Object.freeze(['PWDEBUG', 'npm_config_pwdebug', 'npm_package_config_pwdebug']);
+const G2_HOST_PLATFORM_OVERRIDE_ENV = 'PLAYWRIGHT_HOST_PLATFORM_OVERRIDE';
+/** Playwright's `chromium.launch()` delegates to a remote Selenium hub (never E) whenever this is non-empty. */
+const G2_SELENIUM_REMOTE_ENV = 'SELENIUM_REMOTE_URL';
+const G2_SELENIUM_SET_MARKER = '(set; value withheld)';
+
+const G2_RUNTIME_REFUSAL = Object.freeze({
+  VERSION: 'runtime-version-mismatch',
+  BROWSER_PATH: 'runtime-browser-path-unsupported',
+  CHROMIUM: 'runtime-chromium-mismatch',
+});
+
+/** Read-only fs seam for the runtime gates (no write method exists on it). */
+const G2_RUNTIME_GATE_READ_FS = Object.freeze({
+  readFileSync: (p) => nodeFsModule.readFileSync(p),
+  lstatSync: (p) => nodeFsModule.lstatSync(p),
+  realpathSync: (p) => nodeFsModule.realpathSync(p),
+  accessSync: (p, mode) => nodeFsModule.accessSync(p, mode),
+});
+const G2_X_OK = nodeFsModule.constants.X_OK;
+
+/**
+ * `resolveG2RuntimeEnvelope({repoRoot, env, fs, processVersion, platform, arch, osRelease, cpus, homedir})` -- pure
+ * detection (never throws). Every seam defaults to the real process/fs/os; tests inject them. Returns
+ * `{ok, reason, failures:[{reason, gate, step, message}], detected, required}`; `reason` is null iff ok,
+ * else the highest-priority failing class (version > browser-path > chromium). All three gates are
+ * always evaluated so every detected value is reported.
+ */
+function resolveG2RuntimeEnvelope({
+  repoRoot = REPO_ROOT, env = process.env, fs = G2_RUNTIME_GATE_READ_FS,
+  processVersion = process.version, platform = process.platform, arch = process.arch, homedir = nodeOsHomedir,
+  osRelease = nodeOsRelease, cpus = nodeOsCpus,
+  // Resolution only (no evaluation): the exact module main()'s later bare `import('playwright')` from THIS file would load.
+  resolvePlaywrightEntry = () => import.meta.resolve('playwright'),
+} = {}) {
+  const R = G2_REQUIRED_RUNTIME;
+  const S = R.headlessShell;
+  const failures = [];
+  const fail = (reason, gate, step, message) => { failures.push({ reason, gate, step, message }); };
+  const envObj = env !== null && typeof env === 'object' ? env : {};
+  const envValue = (k) => (Object.prototype.hasOwnProperty.call(envObj, k) ? envObj[k] : undefined);
+  const errCode = (fn) => { try { fn(); return null; } catch (e) { return (e && e.code) || 'ERROR'; } };
+  const nodeModules = path.join(repoRoot, 'node_modules');
+  const coreRoot = path.join(nodeModules, 'playwright-core');
+  const detected = {
+    node: typeof processVersion === 'string' ? processVersion : null,
+    playwright: null,
+    playwrightCore: null,
+    platform: typeof platform === 'string' ? platform : null,
+    arch: typeof arch === 'string' ? arch : null,
+    osRelease: (() => { try { const v = osRelease(); return typeof v === 'string' ? v : null; } catch { return null; } })(),
+    appleCpu: (() => { try { const c = cpus(); return Array.isArray(c) && c.some((x) => x && typeof x.model === 'string' && x.model.includes('Apple')); } catch { return null; } })(),
+    env: {},
+    chromium: { rootSource: null, root: null, directory: null, marker: null, executable: null, executableSize: null, descriptor: null },
+  };
+  for (const k of [G2_HOST_PLATFORM_OVERRIDE_ENV, G2_SELENIUM_REMOTE_ENV, ...G2_PWDEBUG_SOURCES, ...G2_BROWSERS_PATH_SOURCES]) {
+    const v = envValue(k);
+    // SELENIUM_REMOTE_URL may carry credentials: never retain its raw value, only whether it is non-empty.
+    detected.env[k] = v === undefined ? null : (k === G2_SELENIUM_REMOTE_ENV ? (v === '' ? '' : G2_SELENIUM_SET_MARKER) : v);
+  }
+
+  // §3.1 Node (process.version strict equality).
+  if (detected.node !== R.node) fail(G2_RUNTIME_REFUSAL.VERSION, 'node', 'node-version', `process.version ${JSON.stringify(detected.node)} !== ${R.node}`);
+  // §3.1 Playwright packages (installed package.json `version`, strict; never the range).
+  for (const [key, pkg] of [['playwright', 'playwright'], ['playwrightCore', 'playwright-core']]) {
+    try {
+      const j = JSON.parse(toBuffer(fs.readFileSync(path.join(nodeModules, pkg, 'package.json'))).toString('utf8'));
+      if (j !== null && typeof j === 'object' && j.name === pkg && typeof j.version === 'string') detected[key] = j.version;
+    } catch { /* unreadable => null => refused below */ }
+    if (detected[key] !== R[key]) fail(G2_RUNTIME_REFUSAL.VERSION, key, `${pkg}-version`, `${pkg} package.json version ${JSON.stringify(detected[key])} !== ${R[key]}`);
+  }
+  // A nested playwright-core under playwright would be a second, unchecked candidate: refuse (never guess).
+  const nestedCore = errCode(() => fs.lstatSync(path.join(nodeModules, 'playwright', 'node_modules', 'playwright-core')));
+  if (nestedCore !== 'ENOENT') fail(G2_RUNTIME_REFUSAL.VERSION, 'playwrightCore', 'playwright-core-nested', `node_modules/playwright/node_modules/playwright-core is present or unreadable (${nestedCore || 'exists'})`);
+  // The gated package must be the one the later bare import actually resolves to: a shadow under a nearer (git-ignored)
+  // node_modules, e.g. test/acceptance/node_modules or test/node_modules, would otherwise bypass the version gate.
+  (() => {
+    let entry = null;
+    let pkgReal = null;
+    try {
+      const url = resolvePlaywrightEntry();
+      if (typeof url === 'string' && url.startsWith('file:')) entry = fs.realpathSync(fileURLToPath(url));
+    } catch { entry = null; }
+    try { pkgReal = fs.realpathSync(path.join(nodeModules, 'playwright')); } catch { pkgReal = null; }
+    detected.playwrightEntry = entry;
+    const rel = entry !== null && pkgReal !== null ? path.relative(pkgReal, entry) : null;
+    if (rel === null || rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+      fail(G2_RUNTIME_REFUSAL.VERSION, 'playwright', 'playwright-resolution', `the bare playwright specifier resolves to ${JSON.stringify(entry)}, not inside the gated ${JSON.stringify(pkgReal)}`);
+    }
+  })();
+
+  // §3.2 Chromium headless-shell resolution (stops at the first failing step; never scans candidates).
+  (() => {
+    const pathFail = (step, message) => { fail(G2_RUNTIME_REFUSAL.BROWSER_PATH, 'chromium', step, message); return false; };
+    const shellFail = (step, message) => { fail(G2_RUNTIME_REFUSAL.CHROMIUM, 'chromium', step, message); return false; };
+    // Step 1: platform (+ host-platform override).
+    if (detected.platform !== S.platform || detected.arch !== S.arch) return pathFail('platform', `platform ${detected.platform}/${detected.arch} !== ${S.platform}/${S.arch}`);
+    // Playwright's own host-platform rule (calculatePlatform): `mac<N>-arm64` (=> mac-arm64 tokens) only when
+    // the Darwin major release is >= 20 (macOS >= 11) AND some os.cpus() model contains "Apple"; otherwise it
+    // would select the mac-x64 executable, so anything else is refused.
+    const darwinMajor = detected.osRelease === null ? NaN : parseInt(detected.osRelease.split('.')[0], 10);
+    if (!(darwinMajor >= 20) || detected.appleCpu !== true) return pathFail('host-platform', `Playwright would not classify this host as mac-arm64 (os.release ${JSON.stringify(detected.osRelease)}, Apple CPU ${JSON.stringify(detected.appleCpu)})`);
+    const override = envValue(G2_HOST_PLATFORM_OVERRIDE_ENV);
+    if (override !== undefined && override !== '') return pathFail('host-platform-override', `${G2_HOST_PLATFORM_OVERRIDE_ENV} is set (${JSON.stringify(override)})`);
+    // Remote Selenium hub: chromium.launch() would not run any local executable at all.
+    const selenium = envValue(G2_SELENIUM_REMOTE_ENV);
+    if (selenium !== undefined && selenium !== '') return pathFail('selenium-remote', `${G2_SELENIUM_REMOTE_ENV} is set; remote-browser environments are not permitted`);
+    // Step 2: headless mode (PWDEBUG via all three Playwright sources).
+    for (const k of G2_PWDEBUG_SOURCES) {
+      const v = envValue(k);
+      if (v !== undefined && v !== '') return pathFail('pwdebug', `${k} is set (${JSON.stringify(v)}); it can force headed chromium`);
+    }
+    // Step 3: browsers-root sources, Playwright precedence; differing non-empty values are ambiguous.
+    const defined = [];
+    for (const k of G2_BROWSERS_PATH_SOURCES) {
+      const v = envValue(k);
+      if (v === undefined) continue;
+      if (typeof v !== 'string') return pathFail('browsers-path-source', `${k} is not a string`);
+      defined.push({ source: k, value: v });
+    }
+    const nonEmpty = new Set(defined.filter((d) => d.value !== '').map((d) => d.value));
+    if (nonEmpty.size > 1) return pathFail('browsers-path-ambiguous', `conflicting browsers-root sources: ${defined.map((d) => `${d.source}=${JSON.stringify(d.value)}`).join(', ')}`);
+    const winner = defined.length > 0 ? defined[0] : null;
+    // Step 4: winning value -> root.
+    let root;
+    if (winner === null || winner.value === '') {
+      let home = null;
+      try { home = homedir(); } catch { home = null; }
+      if (typeof home !== 'string' || home === '' || !path.isAbsolute(home)) return pathFail('default-root', `os.homedir() unavailable (${JSON.stringify(home)})`);
+      root = path.join(home, 'Library', 'Caches', 'ms-playwright');
+      detected.chromium.rootSource = 'default';
+      const localBrowsers = errCode(() => fs.lstatSync(path.join(coreRoot, '.local-browsers')));
+      if (localBrowsers !== 'ENOENT') return pathFail('local-browsers-present', `${path.join(coreRoot, '.local-browsers')} is present or unreadable (${localBrowsers || 'exists'}); a second candidate root`);
+    } else {
+      detected.chromium.rootSource = winner.source;
+      const v = winner.value;
+      if (v === '0') return pathFail('browsers-path-special', `${winner.source}="0" (package-local .local-browsers) is not supported`);
+      if (!path.isAbsolute(v)) return pathFail('browsers-path-relative', `${winner.source}=${JSON.stringify(v)} is not absolute`);
+      root = v;
+    }
+    if (root.includes('\0') || path.normalize(root) !== root || (root.length > 1 && root.endsWith(path.sep))) {
+      return pathFail('browsers-path-not-normalized', `browsers root ${JSON.stringify(root)} is not a normalized absolute path`);
+    }
+    detected.chromium.root = root;
+    // Step 5: descriptor (playwright-core/browsers.json, parsed once).
+    let browsers;
+    try {
+      const j = JSON.parse(toBuffer(fs.readFileSync(path.join(coreRoot, 'browsers.json'))).toString('utf8'));
+      browsers = j && Array.isArray(j.browsers) ? j.browsers : null;
+    } catch { browsers = null; }
+    if (!browsers) return shellFail('descriptor-unreadable', `${path.join(coreRoot, 'browsers.json')} unreadable or malformed`);
+    const entries = browsers.filter((b) => b !== null && typeof b === 'object' && b.name === S.name);
+    if (entries.length !== 1) return shellFail('descriptor-count', `${entries.length} '${S.name}' descriptors (exactly one required)`);
+    const d = entries[0];
+    detected.chromium.descriptor = { revision: d.revision ?? null, browserVersion: d.browserVersion ?? null, hasRevisionOverrides: Object.prototype.hasOwnProperty.call(d, 'revisionOverrides') };
+    if (d.revision !== S.revision) return shellFail('descriptor-revision', `revision ${JSON.stringify(d.revision)} !== ${S.revision}`);
+    if (d.browserVersion !== S.browserVersion) return shellFail('descriptor-browser-version', `browserVersion ${JSON.stringify(d.browserVersion)} !== ${S.browserVersion}`);
+    if (detected.chromium.descriptor.hasRevisionOverrides) return shellFail('descriptor-revision-overrides', 'revisionOverrides present (changes the install directory)');
+    // Step 6: exact installation paths (Playwright directory rule), regular files only.
+    const D = path.join(root, S.directoryName);
+    const marker = path.join(D, S.markerName);
+    const E = path.join(D, ...S.executableTokens);
+    detected.chromium.directory = D;
+    detected.chromium.executable = E;
+    let st;
+    try { st = fs.lstatSync(marker); } catch (e) { return shellFail('marker-missing', `${marker} unavailable (${(e && e.code) || 'ERROR'})`); }
+    detected.chromium.marker = Boolean(st && st.isFile());
+    if (!detected.chromium.marker) return shellFail('marker-not-regular', `${marker} is not a regular file`);
+    try { st = fs.lstatSync(E); } catch (e) { return shellFail('executable-missing', `${E} unavailable (${(e && e.code) || 'ERROR'})`); }
+    if (!st || typeof st.isFile !== 'function' || !st.isFile()) return shellFail('executable-not-regular', `${E} is not a regular file (symlink/directory/other)`);
+    detected.chromium.executableSize = typeof st.size === 'number' ? st.size : null;
+    if (!(detected.chromium.executableSize > 0)) return shellFail('executable-empty', `${E} has size ${JSON.stringify(detected.chromium.executableSize)}`);
+    let real = null;
+    try { real = fs.realpathSync(E); } catch { real = null; }
+    if (real !== E) return shellFail('executable-realpath', `realpath(${E}) = ${JSON.stringify(real)} (symlink escape or unreadable)`);
+    const access = errCode(() => fs.accessSync(E, G2_X_OK));
+    if (access !== null) return shellFail('executable-not-executable', `${E} is not executable (${access})`);
+    return true;
+  })();
+
+  const priority = [G2_RUNTIME_REFUSAL.VERSION, G2_RUNTIME_REFUSAL.BROWSER_PATH, G2_RUNTIME_REFUSAL.CHROMIUM];
+  const reason = failures.length === 0 ? null : priority.find((p) => failures.some((f) => f.reason === p));
+  return { ok: failures.length === 0, reason, failures, detected, required: R };
+}
+
+/** Plain-text O1/stderr lines: every detected value, every required value, each failing step. */
+function formatG2RuntimeGateReport(r) {
+  const R = r.required;
+  const d = r.detected;
+  const c = d.chromium;
+  const lines = [
+    `G2 hard runtime preflight gates: ${r.ok ? 'PASSED' : `REFUSED (${r.reason})`} -- pre-reservation; nothing was reserved or spent`,
+    `node: detected=${JSON.stringify(d.node)} required=${R.node}`,
+    `playwright: detected=${JSON.stringify(d.playwright)} required=${R.playwright} resolvedEntry=${JSON.stringify(d.playwrightEntry ?? null)}`,
+    `playwright-core: detected=${JSON.stringify(d.playwrightCore)} required=${R.playwrightCore}`,
+    `platform: detected=${JSON.stringify(d.platform)}/${JSON.stringify(d.arch)} required=${R.headlessShell.platform}/${R.headlessShell.arch}; os.release=${JSON.stringify(d.osRelease)} appleCpu=${JSON.stringify(d.appleCpu)}`,
+    ...Object.keys(d.env).map((k) => `env ${k}=${d.env[k] === null ? '(unset)' : JSON.stringify(d.env[k])}`),
+    `chromium-headless-shell: required revision=${R.headlessShell.revision} browserVersion=${R.headlessShell.browserVersion}`,
+    `chromium-headless-shell: descriptor=${JSON.stringify(c.descriptor)} rootSource=${JSON.stringify(c.rootSource)} root=${JSON.stringify(c.root)}`,
+    `chromium-headless-shell: D=${JSON.stringify(c.directory)} marker=${JSON.stringify(c.marker)} E=${JSON.stringify(c.executable)} size=${JSON.stringify(c.executableSize)}`,
+    ...r.failures.map((f) => `FAILED ${f.reason} [${f.gate}/${f.step}]: ${f.message}`),
+  ];
+  return lines;
+}
+
+/**
+ * `checkG2HardRuntimeGates({...seams, stderr})` -- the enforcing wrapper main() calls between W1 and
+ * W2a. Prints the report to stderr (O1) and returns the resolution on success; otherwise throws a
+ * non-consuming G2RefusalError (`runtime-version-mismatch` / `runtime-browser-path-unsupported` /
+ * `runtime-chromium-mismatch`). Synchronous; performs no write.
+ */
+function checkG2HardRuntimeGates({ stderr = (line) => { console.error(line); }, ...seams } = {}) {
+  const r = resolveG2RuntimeEnvelope(seams);
+  for (const line of formatG2RuntimeGateReport(r)) { try { stderr(line); } catch { /* informational */ } }
+  if (!r.ok) {
+    throw new G2RefusalError(r.reason, 'hard runtime preflight gate refused before W2a; no directory, reservation or journal was created and the record is unspent', { failures: r.failures, detected: r.detected, required: r.required });
+  }
+  return r;
 }
 
 // ============================================================================================
@@ -4192,6 +4445,9 @@ function evaluateOverallRows(state, phase) {
 
   // Row 2 -- unresolved cleanup ownership (non-boolean fails closed).
   const r2 = s.cleanupUnresolvedOwnership === false ? [] : ['cleanup-unresolved-ownership'];
+  // Defensive: the boolean alone is not trusted -- any failed cleanup step whose ownership is not exactly 'resolved'
+  // (indeterminate/unresolved/missing/malformed) is unresolved => row 2 (a PARTIAL-eligible state can never carry it).
+  if (Array.isArray(s.cleanupFailures) && s.cleanupFailures.some((f) => !isPlainObject(f) || f.ownership !== 'resolved')) r2.push('cleanup-failed-step-ownership-not-resolved');
 
   // Row 3 -- any required check FAIL (verdicts read ONLY from check-run records; a gate-disposition
   // record has no verdict and yields null here).
@@ -4247,7 +4503,7 @@ function evaluateOverallRows(state, phase) {
   const r7 = [];
   for (const n of CHECK_NAMES) if (bases[n] === 'NOT_EVIDENCED') r7.push(`check-not-evidenced:${n}`);
   for (const n of CONTROL_NAMES) if (dispositions[n] === 'partial') r7.push(`control-partial:${n}`);
-  if (Array.isArray(s.cleanupFailures) && s.cleanupFailures.length > 0) r7.push('cleanup-step-failed-ownership-resolved');
+  if (Array.isArray(s.cleanupFailures) && s.cleanupFailures.length > 0 && s.cleanupFailures.every((f) => isPlainObject(f) && f.ownership === 'resolved')) r7.push('cleanup-step-failed-ownership-resolved');
 
   // Row 8 -- positive PASS(-eligible) predicate, evaluated on its own: every check a check-run PASS
   // (so no gate-disposition record exists), every control acceptable, records schema-valid.
@@ -7090,7 +7346,8 @@ const CLEANUP_STEP_NAMES = Object.freeze([
  * `{cleanupFailures, cleanupStepStatus, cleanupUnresolvedOwnership, stepResults, staleContinuationsDropped}`.
  * `steps[name]` is a function or `{run, ownershipRemains}`. After a failed/timed-out step,
  * `ownershipRemains(context)` is re-checked: true => `cleanupUnresolvedOwnership` (row 2);
- * a throwing re-check is `indeterminate` (never sets unresolved, never claims resolved; G1 rule).
+ * a throwing or missing re-check is `indeterminate` (recorded as such AND sets `cleanupUnresolvedOwnership`:
+ * only a proven `resolved` ownership may reach row 7 PARTIAL; fail-closed per procedure row 2/row 7).
  * A step with no implementation is recorded as a failure (`step-not-configured`) -- fail-closed.
  */
 async function runCleanup({ steps = {}, context = {} } = {}, { stepDeadlineMs = TABLE_T.T8.cleanupStepDeadlineMs, stepDeadlinesMs = {}, timers = DEFAULT_TIMERS, quarantine = createTimeoutQuarantine() } = {}) {
@@ -7104,6 +7361,7 @@ async function runCleanup({ steps = {}, context = {} } = {}, { stepDeadlineMs = 
     const ownershipRemains = impl && typeof impl === 'object' ? impl.ownershipRemains : undefined;
     if (typeof run !== 'function') {
       cleanupStepStatus[name] = 'not-configured';
+      cleanupUnresolvedOwnership = true; // indeterminate ownership is not resolved => row 2 (fail-closed, procedure row 7)
       cleanupFailures.push({ step: name, reason: 'step-not-configured', ownership: 'indeterminate' });
       continue;
     }
@@ -7120,9 +7378,10 @@ async function runCleanup({ steps = {}, context = {} } = {}, { stepDeadlineMs = 
     if (typeof ownershipRemains === 'function') {
       try {
         if (ownershipRemains(context)) { cleanupUnresolvedOwnership = true; failure.ownership = 'unresolved'; } else failure.ownership = 'resolved';
-      } catch { failure.ownership = 'indeterminate'; }
+      } catch { failure.ownership = 'indeterminate'; cleanupUnresolvedOwnership = true; }
     } else {
       failure.ownership = 'indeterminate';
+      cleanupUnresolvedOwnership = true;
     }
     cleanupFailures.push(failure);
   }
@@ -12969,6 +13228,11 @@ async function runPostReservation(ctx) {
       if (!chromium || typeof chromium.launch !== 'function') throw new Error('browser package exposes no chromium.launch');
       live.browser = await chromium.launch();
       try { state.runtimeEnvelope.chromium = live.browser.version(); } catch { state.runtimeEnvelope.chromium = null; }
+      // Live plan §3.1/§3.2 "two checks": the definitive version check of the binary ACTUALLY launched.
+      // A mismatch/unavailable version is a Phase-0 failure (PREFLIGHT_FAILED, consumed:false; record spent).
+      if (state.runtimeEnvelope.chromium !== G2_REQUIRED_RUNTIME.headlessShell.browserVersion) {
+        throw new Error(`launched browser.version() ${JSON.stringify(state.runtimeEnvelope.chromium)} !== required ${G2_REQUIRED_RUNTIME.headlessShell.browserVersion}`);
+      }
       return true;
     });
     await p0('context-create', async () => { live.context = await live.browser.newContext({ serviceWorkers: 'block', deviceScaleFactor: 1 }); return true; });
@@ -13327,7 +13591,8 @@ async function runPostReservation(ctx) {
 /**
  * `main({argv, env, deps})` -- the ONLY place real Playwright objects could be constructed.
  * Source order (static-tested): W0 parseLiveActivation -> LIVE_PATH_WIRED gate -> W1
- * validateAuthorizationRecord + scanAttemptsDirectoryForStartup -> W2a establishAttemptsDirectory
+ * validateAuthorizationRecord + scanAttemptsDirectoryForStartup -> hard runtime gates
+ * (checkG2HardRuntimeGates, live plan §3.1/§3.2) -> W2a establishAttemptsDirectory
  * -> W2b reserveAttempt (AUTH_BOUND durable, B3) -> only then `import('playwright')`. Everything
  * before B3 fails closed with a G2RefusalError/G2DurabilityError and no external effect. `deps`
  * lets offline tests prove the fail-closed prefix without touching the real filesystem.
@@ -13363,6 +13628,10 @@ async function main({ argv = process.argv, env = process.env, deps = {} } = {}) 
   if (!validation.ok) throw new G2RefusalError(validation.reason, 'authorization record rejected', validation.detail);
   const startup = scanAttemptsDirectoryForStartup({ fs, chain, authorizationId: validation.record.id, recordSha256: validation.record.sha256 });
   if (!startup.ok) throw new G2RefusalError(startup.reason, 'attempts directory refuses this authorization', startup.detail);
+  // Immediately after W1, before W2a (live plan §3.1/§3.2): exact Node / playwright / playwright-core /
+  // headless-shell gates -- env/fs/os reads only, no import/spawn/write; a refusal leaves the record unspent.
+  // `deps.runtimeGateSeams` is the offline tests' injection point (runCli never passes deps).
+  checkG2HardRuntimeGates({ repoRoot, ...(deps.runtimeGateSeams || {}) });
   const binding = buildBindingRecord({ validation, attemptId: randomUUID() });
 
   // W2a -- durable directory chain; W2b -- exclusive reservation + durable AUTH_BOUND (B3).
@@ -13441,6 +13710,16 @@ export {
   serializeJson,
   // W0
   parseLiveActivation,
+  // hard runtime preflight gates (live plan §3.1/§3.2; between W1 and W2a)
+  G2_REQUIRED_RUNTIME,
+  G2_BROWSERS_PATH_SOURCES,
+  G2_PWDEBUG_SOURCES,
+  G2_HOST_PLATFORM_OVERRIDE_ENV,
+  G2_SELENIUM_REMOTE_ENV,
+  G2_RUNTIME_REFUSAL,
+  resolveG2RuntimeEnvelope,
+  formatG2RuntimeGateReport,
+  checkG2HardRuntimeGates,
   // fs layer
   createNodeFsLayer,
   createRecordingFakeFs,

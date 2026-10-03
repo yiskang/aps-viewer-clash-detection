@@ -12,10 +12,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  LIVE_PATH_WIRED, OFFLINE_FAKE_TARGET_BRAND, C15_INJECTION_SPECS, createFailureInjectionController, G2InjectedError, isInjectedError,
+  OFFLINE_FAKE_TARGET_BRAND, C15_INJECTION_SPECS, createFailureInjectionController, G2InjectedError, isInjectedError,
   createCallRecorder, createWrapperRegistry, recordingWrap, runControlWithDeadline, makeControlRecord, n1Record, n3Record,
   runSpySelfTestN1, runSceneOwnershipControlN3, SCENE_CLASS, G2RefusalError, CONTROL_NAMES, CONTROL_ALLOWED_STATES,
 } from './clashpanel-viewerbridge.acceptance.mjs';
+import { importDormantHarness } from './support/g2-harness-copy.mjs';
 
 const HARNESS = fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url));
 
@@ -31,31 +32,35 @@ function fakeViewer({ branded = true } = {}) {
   return { viewer, state };
 }
 
-function spied(viewer) {
-  const recorder = createCallRecorder();
-  const registry = createWrapperRegistry();
-  for (const m of ['setAggregateIsolation', 'getAggregateIsolation', 'fitToView']) recordingWrap(viewer, m, { recorder, registry, label: `viewer.${m}` });
-  recordingWrap(viewer.overlays, 'addMesh', { recorder, registry, label: 'overlays.addMesh' });
+function spied(viewer, M = { createCallRecorder, createWrapperRegistry, recordingWrap }) {
+  const recorder = M.createCallRecorder();
+  const registry = M.createWrapperRegistry();
+  for (const m of ['setAggregateIsolation', 'getAggregateIsolation', 'fitToView']) M.recordingWrap(viewer, m, { recorder, registry, label: `viewer.${m}` });
+  M.recordingWrap(viewer.overlays, 'addMesh', { recorder, registry, label: 'overlays.addMesh' });
   return { recorder, registry };
 }
 
-test('dormancy: LIVE_PATH_WIRED is false and injection on an unbranded (real-Viewer-like) object is refused before any wrapper change', () => {
-  assert.equal(LIVE_PATH_WIRED, false);
+test('dormancy (on a DORMANT copy: LIVE_PATH_WIRED forced false): injection on an unbranded (real-Viewer-like) object is refused before any wrapper change', async () => {
+  // The dormancy behaviour is exercised on a copy with the flag FORCED false (shared helper), so it stays meaningful
+  // across the deliberate activation flip; the real value is pinned only in live-path-isolation.test.mjs.
+  const { module: D } = await importDormantHarness();
+  assert.equal(D.LIVE_PATH_WIRED, false);
+  assert.equal(D.OFFLINE_FAKE_TARGET_BRAND, OFFLINE_FAKE_TARGET_BRAND, 'Symbol.for brand is shared across module copies');
   const { viewer } = fakeViewer({ branded: false });
-  const { registry } = spied(viewer);
+  const { registry } = spied(viewer, D);
   const before = viewer.setAggregateIsolation;
   for (const allowOfflineFakes of [false, true]) {
-    const ctl = createFailureInjectionController({ registry, allowOfflineFakes });
-    for (const s of Object.keys(C15_INJECTION_SPECS)) {
-      assert.throws(() => ctl.install(s, { viewer, overlays: viewer.overlays }), (e) => e instanceof G2RefusalError && e.reason === 'failure-injection-dormant');
+    const ctl = D.createFailureInjectionController({ registry, allowOfflineFakes });
+    for (const s of Object.keys(D.C15_INJECTION_SPECS)) {
+      assert.throws(() => ctl.install(s, { viewer, overlays: viewer.overlays }), (e) => e instanceof D.G2RefusalError && e.reason === 'failure-injection-dormant');
     }
     assert.deepEqual(ctl.installed(), []);
   }
   assert.equal(viewer.setAggregateIsolation, before);
   // even a branded fake needs the explicit offline opt-in
   const branded = fakeViewer();
-  const s2 = spied(branded.viewer);
-  assert.throws(() => createFailureInjectionController({ registry: s2.registry }).install('b', { viewer: branded.viewer }), /dormant/);
+  const s2 = spied(branded.viewer, D);
+  assert.throws(() => D.createFailureInjectionController({ registry: s2.registry }).install('b', { viewer: branded.viewer }), /dormant/);
 });
 
 test('static: the only place the brand is honoured is the controller; the harness never sets it on any object', () => {

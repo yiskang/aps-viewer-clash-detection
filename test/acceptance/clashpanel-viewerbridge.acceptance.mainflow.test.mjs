@@ -2,9 +2,11 @@
 //
 // Offline end-to-end DRY RUN of the G2 main flow (procedure §4.1 W0-W3 + Phase 0, §5 phase order,
 // §9 cleanup, §9.1 closeout, §8 exit codes) with an ENTIRELY FAKE browser package, page, viewer
-// and filesystem. The real harness keeps LIVE_PATH_WIRED=false, so its main() can never get past
-// W0 (asserted below). To exercise the wired flow, this file imports a MUTATED COPY of the harness
-// written to an os.tmpdir() sandbox with exactly two constants changed -- LIVE_PATH_WIRED=true
+// and filesystem. main() is never run on the real harness module: the dormant refusal is asserted on a
+// copy with LIVE_PATH_WIRED FORCED false (support/g2-harness-copy.mjs; the real value is pinned only in
+// live-path-isolation.test.mjs). To exercise the wired flow, this file imports a MUTATED COPY of the harness
+// written to an os.tmpdir() sandbox (<SANDBOX>/test/acceptance/<harness>, so the copy's own REPO_ROOT is the
+// sandbox) with exactly two constants changed -- LIVE_PATH_WIRED FORCED true
 // (G2_DUAL_COUNTER_GATE.resolved is already true in the real harness; M2 uses a second copy with it forced
 // back to false) and EXPECTED_VIEWER_SHA256 = the SHA-256 of this
 // file's fake viewer3D.js body -- and drives its
@@ -18,9 +20,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as REAL from './clashpanel-viewerbridge.acceptance.mjs';
+import { forceLivePathWired, importDormantHarness } from './support/g2-harness-copy.mjs';
+import { passingRuntimeGateSeams } from './support/g2-runtime-gate-fakes.mjs';
 
 const vr = REAL.checkVerdictLabel;
 
@@ -31,22 +35,21 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 // ---- the mutated copy (tmp sandbox) -------------------------------------------------------------
 
 const FAKE_VIEWER_BODY = Buffer.from('/* fake viewer3D.js body for the offline dry run */\n');
-const WIRED_LINE = 'const LIVE_PATH_WIRED = false;';
 const SHA_LINE = `const EXPECTED_VIEWER_SHA256 = '${REAL.EXPECTED_VIEWER_SHA256}';`;
 const GATE_LINE = "const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: true, ";
-assert.equal(REAL_SOURCE.split(WIRED_LINE).length - 1, 1);
 assert.equal(REAL_SOURCE.split(SHA_LINE).length - 1, 1);
 assert.equal(REAL_SOURCE.split(GATE_LINE).length - 1, 1);
-const WIRED_ONLY_SOURCE = REAL_SOURCE.replace(WIRED_LINE, 'const LIVE_PATH_WIRED = true;').replace(SHA_LINE, `const EXPECTED_VIEWER_SHA256 = '${sha(FAKE_VIEWER_BODY)}';`);
+const WIRED_ONLY_SOURCE = forceLivePathWired(REAL_SOURCE, true).replace(SHA_LINE, `const EXPECTED_VIEWER_SHA256 = '${sha(FAKE_VIEWER_BODY)}';`);
 const MUTATED_SOURCE = WIRED_ONLY_SOURCE;
 const UNRESOLVED_SOURCE = WIRED_ONLY_SOURCE.replace(GATE_LINE, 'const G2_DUAL_COUNTER_GATE = Object.freeze({ resolved: false, ');
 const SANDBOX = mkdtempSync(path.join(os.tmpdir(), 'g2-mainflow-'));
-const MUTATED_FILE = path.join(SANDBOX, 'clashpanel-viewerbridge.acceptance.mjs');
+const MUTATED_FILE = path.join(SANDBOX, 'test', 'acceptance', 'clashpanel-viewerbridge.acceptance.mjs');
+mkdirSync(path.dirname(MUTATED_FILE), { recursive: true });
 writeFileSync(MUTATED_FILE, MUTATED_SOURCE);
 const H = await import(pathToFileURL(MUTATED_FILE).href);
 // M2: a copy with the wiring flag set but the gate forced back to unresolved.
-const WIRED_ONLY_FILE = path.join(SANDBOX, 'wired-only', 'clashpanel-viewerbridge.acceptance.mjs');
-mkdirSync(path.dirname(WIRED_ONLY_FILE));
+const WIRED_ONLY_FILE = path.join(SANDBOX, 'wired-only', 'test', 'acceptance', 'clashpanel-viewerbridge.acceptance.mjs');
+mkdirSync(path.dirname(WIRED_ONLY_FILE), { recursive: true });
 writeFileSync(WIRED_ONLY_FILE, UNRESOLVED_SOURCE);
 const HW = await import(pathToFileURL(WIRED_ONLY_FILE).href);
 after(() => { rmSync(SANDBOX, { recursive: true, force: true }); });
@@ -360,7 +363,8 @@ function makeWorld(opts = {}) {
   };
   const browserEmitter = new EventEmitter();
   const browser = {
-    version: () => '999.0.0.0-fake',
+    // live plan §3.1: the Phase-0 browser-launch step requires exactly the headless-shell version; a world may override it.
+    version: () => { if (opts.world && opts.world.versionThrows) throw new Error('version unavailable'); return opts.world && Object.hasOwn(opts.world, 'browserVersion') ? opts.world.browserVersion : REAL.G2_REQUIRED_RUNTIME.headlessShell.browserVersion; },
     on: (ev, fn) => browserEmitter.on(ev, fn),
     off: (ev, fn) => browserEmitter.off(ev, fn),
     async newContext(o) { log.push({ kind: 'pw', call: 'newContext', options: o }); if (opts.world && opts.world.contextThrows) throw new Error('context failed'); return context; },
@@ -377,6 +381,7 @@ function makeWorld(opts = {}) {
   const proc = new EventEmitter();
   const deps = {
     fs, repoRoot: ROOT,
+    runtimeGateSeams: passingRuntimeGateSeams({ repoRoot: ROOT, required: REAL.G2_REQUIRED_RUNTIME }).seams,
     gitHead: () => { log.push({ kind: 'git', args: ['rev-parse', 'HEAD'], at: 'W1' }); return HEAD; },
     git: (args) => {
       log.push({ kind: 'git', args });
@@ -415,23 +420,25 @@ const idx = (log, pred) => log.findIndex(pred);
 const isJournalRename = (e) => e.kind === 'fs' && e.op === 'rename' && e.to === JOURNAL_PATH;
 
 // ------------------------------------------------------------------------------------------
-// The real harness: LIVE_PATH_WIRED=false => nothing is read, written, imported or launched.
+// A DORMANT copy (LIVE_PATH_WIRED forced false) => nothing is read, written, imported or launched.
 // ------------------------------------------------------------------------------------------
 
-test('real harness: LIVE_PATH_WIRED is false and main() refuses right after W0 with no fs/git/browser/event activity', async () => {
-  assert.equal(REAL.LIVE_PATH_WIRED, false);
+test('dormant copy (LIVE_PATH_WIRED forced false): main() refuses right after W0 with no fs/git/browser/event activity', async () => {
+  const { module: DORMANT } = await importDormantHarness();
+  assert.equal(DORMANT.LIVE_PATH_WIRED, false);
   const calls = [];
   const trapFs = new Proxy({}, { get: (_t, k) => (...a) => { calls.push(['fs', String(k), ...a]); throw new Error('fs must not be touched'); } });
   const trapPkg = new Proxy({}, { get: (_t, k) => { calls.push(['browserPackage', String(k)]); throw new Error('browser package must not be touched'); } });
   await assert.rejects(
-    REAL.main({ argv: ARGV, env: ENV, deps: { fs: trapFs, repoRoot: ROOT, gitHead: () => { calls.push(['gitHead']); return HEAD; }, git: () => { calls.push(['git']); return ''; }, browserPackage: trapPkg, onEvent: (e) => calls.push(['event', e]), serveModule: () => { calls.push(['serve']); } } }),
-    (err) => err instanceof REAL.G2RefusalError && err.reason === 'live-path-not-wired',
+    DORMANT.main({ argv: ARGV, env: ENV, deps: { fs: trapFs, repoRoot: ROOT, gitHead: () => { calls.push(['gitHead']); return HEAD; }, git: () => { calls.push(['git']); return ''; }, browserPackage: trapPkg, onEvent: (e) => calls.push(['event', e]), serveModule: () => { calls.push(['serve']); } } }),
+    (err) => err instanceof DORMANT.G2RefusalError && err.reason === 'live-path-not-wired',
   );
   assert.deepEqual(calls, []);
 });
 
-test('mutated copy differs from the real harness in exactly the two constants (wiring flag, fake viewer SHA)', () => {
-  const a = REAL_SOURCE.split('\n');
+test('mutated copy differs from the (dormant-normalized) real harness in exactly the two constants (wiring flag, fake viewer SHA)', () => {
+  // Compared against the real bytes with the flag FORCED false, so this holds whatever the real file currently declares.
+  const a = forceLivePathWired(REAL_SOURCE, false).split('\n');
   const b = MUTATED_SOURCE.split('\n');
   assert.equal(a.length, b.length);
   const diff = a.map((l, i) => (l === b[i] ? null : i)).filter((i) => i !== null);
@@ -439,7 +446,7 @@ test('mutated copy differs from the real harness in exactly the two constants (w
   assert.equal(H.LIVE_PATH_WIRED, true);
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
   assert.equal(REAL.G2_DUAL_COUNTER_GATE.resolved, true);
-  assert.equal(REAL.LIVE_PATH_WIRED, false);
+  assert.equal(H.REPO_ROOT, realpathSync(SANDBOX), 'the wired copy resolves REPO_ROOT to its own sandbox, never the real repository');
 });
 
 test('M2: LIVE_PATH_WIRED=true while G2_DUAL_COUNTER_GATE is unresolved => main() refuses (dual-counter-gate-unresolved) right after the wiring gate, with no fs/git/browser/event activity; live-mode runChecksInPhaseOrder refuses too', async () => {
@@ -499,7 +506,7 @@ test('dry run: all-PASS fake session commits K; exit 0; reader PASS; exact §4.1
   for (const e of log.filter((x) => x.kind === 'rpc')) assert.ok(H.G2_IN_PAGE_FUNCTION_NAMES.includes(e.key));
   assert.equal(w.getInitScript(), H.buildPageAgentSource(MUTATED_SOURCE).source);
   // The run state recorded the runtime envelope honestly (fake versions, nothing fabricated).
-  assert.equal(r.state.runtimeEnvelope.chromium, '999.0.0.0-fake');
+  assert.equal(r.state.runtimeEnvelope.chromium, '151.0.7922.34');
   assert.equal(r.state.runtimeEnvelope.playwright, '9.99.0-fake');
   assert.equal(r.state.script.integrityResult, 'VERIFIED');
   // Cleanup ran every §9 step in order: page-owned via the registry, Node-owned directly.
@@ -577,6 +584,10 @@ const PHASE0_FAULTS = [
   ['page-agent-build', { harnessText: 'harness text without the page-agent markers\n' }],
   ['browser-package-import', { world: { importRejects: true } }],
   ['browser-launch', { world: { launchThrows: true } }],
+  // live plan §3.1/§3.2 post-launch check: launched browser.version() must be exactly 151.0.7922.34.
+  ['browser-launch', { world: { browserVersion: '151.0.7922.33' } }],
+  ['browser-launch', { world: { browserVersion: '999.0.0.0-fake' } }],
+  ['browser-launch', { world: { versionThrows: true } }],
   ['context-create', { world: { contextThrows: true } }],
   ['page-create', { world: { newPageThrows: true } }],
   ['route-setup', { world: { routeThrows: true } }],
@@ -789,9 +800,11 @@ test('cleanup: unresolved ownership after a failed page step => row 2 FAIL; a fa
   assert.equal(x.r.state.cleanupUnresolvedOwnership, false);
   assert.deepEqual(x.r.state.cleanupFailures.map((f) => [f.step, f.ownership]), [['showHiddenNodes', 'resolved']]);
   assert.equal(x.r.finalOverall, 'PARTIAL');
-  // A page step whose ownership re-check itself is unknown => indeterminate (never unresolved, never resolved).
+  // A page step whose ownership re-check itself is unknown => indeterminate => fail-closed unresolved (row 2 FAIL), never PARTIAL.
   x = await consumedRun({ handlers: { g2CleanupStep: (arg) => (arg.name === 'bridgeDispose' ? { ok: false, result: null, error: { name: 'Error', message: 'x' }, ownershipRemains: null } : { ok: true, result: null, ownershipRemains: false }) } });
   assert.deepEqual(x.r.state.cleanupFailures.map((f) => [f.step, f.ownership]), [['bridgeDispose', 'indeterminate']]);
+  assert.equal(x.r.state.cleanupUnresolvedOwnership, true);
+  assert.equal(x.r.finalOverall, 'FAIL');
 });
 
 test('closeout write fault (R1) => closeout failure: F written, journal FAILED, exit 1, reader FAIL', async () => {
@@ -1062,8 +1075,8 @@ async function mutatedHarness(pairs) {
     text = text.replace(from, () => to);
   }
   cleanupMutationCount += 1;
-  const file = path.join(SANDBOX, `cleanup-${cleanupMutationCount}`, 'clashpanel-viewerbridge.acceptance.mjs');
-  mkdirSync(path.dirname(file));
+  const file = path.join(SANDBOX, `cleanup-${cleanupMutationCount}`, 'test', 'acceptance', 'clashpanel-viewerbridge.acceptance.mjs');
+  mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, text);
   return { mod: await import(pathToFileURL(file).href), text };
 }

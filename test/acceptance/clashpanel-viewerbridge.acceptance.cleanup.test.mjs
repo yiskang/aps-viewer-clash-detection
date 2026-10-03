@@ -58,11 +58,11 @@ test('cleanup continues after a failure: every later step still runs; the failur
   assert.deepEqual(r.cleanupFailures.map((f) => [f.step, f.reason, f.error.name]), [['bridgeDispose', 'threw', 'Error'], ['removeHarnessForeignScenes', 'threw', 'TypeError']]);
   assert.equal(r.cleanupStepStatus.bridgeDispose, 'threw');
   assert.equal(r.cleanupStepStatus.unloadModelB, 'ran');
-  assert.equal(r.cleanupUnresolvedOwnership, false, 'no ownership re-check proved anything unresolved');
+  assert.equal(r.cleanupUnresolvedOwnership, true, 'no ownership probe => indeterminate => fail-closed unresolved (row 2)');
   assert.ok(r.cleanupFailures.every((f) => f.ownership === 'indeterminate'));
 });
 
-test('ownership re-check after a failed step: still owned => unresolved (row 2); gone => resolved; a throwing re-check is indeterminate', async () => {
+test('ownership re-check after a failed step: still owned => unresolved (row 2); gone => resolved; a throwing re-check is indeterminate and fails closed (unresolved)', async () => {
   const mk = (remains) => runCleanup({ steps: allSteps([], { closePage: { run: () => { throw new Error('x'); }, ownershipRemains: remains } }) });
   const a = await mk(() => true);
   assert.equal(a.cleanupUnresolvedOwnership, true);
@@ -71,7 +71,7 @@ test('ownership re-check after a failed step: still owned => unresolved (row 2);
   assert.equal(b.cleanupUnresolvedOwnership, false);
   assert.equal(b.cleanupFailures[0].ownership, 'resolved');
   const c = await mk(() => { throw new Error('page already dead'); });
-  assert.equal(c.cleanupUnresolvedOwnership, false);
+  assert.equal(c.cleanupUnresolvedOwnership, true, 'a throwing probe is indeterminate => fail-closed unresolved');
   assert.equal(c.cleanupFailures[0].ownership, 'indeterminate');
   // a successful step never triggers the re-check
   let rechecked = false;
@@ -337,4 +337,39 @@ test('N3: the oracle discriminates (real ledger PASS, mutated copy FAIL); the re
   // a bad real ledger is not a valid control baseline either
   const badReal = { ...s, ledger: injectSyntheticRemoveScene(s.ledger, FOREIGN) };
   assert.equal(runSceneOwnershipControlN3(badReal).state, 'NOT_DETECTED');
+});
+
+// ------------------------------------------------------------------------------------------
+// indeterminate cleanup ownership fails closed (procedure row 2 / row 7; plan §8, G-8)
+// ------------------------------------------------------------------------------------------
+test('G-8: closeContext timeout with no ownership probe => indeterminate recorded AND cleanupUnresolvedOwnership (row 2), never PARTIAL', async () => {
+  const r = await runCleanup(
+    { steps: allSteps([], { closeContext: () => new Promise(() => {}) }) },
+    { stepDeadlinesMs: { closeContext: 15 } },
+  );
+  assert.equal(r.cleanupStepStatus.closeContext, 'timed-out');
+  assert.equal(r.cleanupFailures[0].ownership, 'indeterminate');
+  assert.equal(r.cleanupUnresolvedOwnership, true);
+});
+
+test('G-8: closeContext throw without a probe, and a timed-out step whose probe throws, both set cleanupUnresolvedOwnership', async () => {
+  const a = await runCleanup({ steps: allSteps([], { closeContext: () => { throw new Error('ctx'); } }) });
+  assert.equal(a.cleanupFailures[0].ownership, 'indeterminate');
+  assert.equal(a.cleanupUnresolvedOwnership, true);
+  const b = await runCleanup(
+    { steps: allSteps([], { closePage: { run: () => new Promise(() => {}), ownershipRemains: () => { throw new Error('probe dead'); } } }) },
+    { stepDeadlinesMs: { closePage: 15 } },
+  );
+  assert.equal(b.cleanupFailures[0].ownership, 'indeterminate');
+  assert.equal(b.cleanupUnresolvedOwnership, true);
+});
+
+test('G-8: only resolved-ownership failures leave cleanupUnresolvedOwnership false (PARTIAL-eligible); a mix with one indeterminate is unresolved', async () => {
+  const resolved = { run: () => { throw new Error('x'); }, ownershipRemains: () => false };
+  const a = await runCleanup({ steps: allSteps([], { closePage: resolved, showHiddenNodes: resolved }) });
+  assert.deepEqual(a.cleanupFailures.map((f) => f.ownership), ['resolved', 'resolved']);
+  assert.equal(a.cleanupUnresolvedOwnership, false);
+  const b = await runCleanup({ steps: allSteps([], { showHiddenNodes: resolved, closeContext: () => { throw new Error('x'); } }) });
+  assert.deepEqual(b.cleanupFailures.map((f) => f.ownership), ['resolved', 'indeterminate']);
+  assert.equal(b.cleanupUnresolvedOwnership, true);
 });

@@ -11,11 +11,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   parseLiveActivation,
-  main,
-  G2RefusalError,
-  LIVE_PATH_WIRED,
   isDirectInvocation,
 } from './clashpanel-viewerbridge.acceptance.mjs';
+import { importDormantHarness } from './support/g2-harness-copy.mjs';
+
+// main() is NEVER invoked on the real harness module: it runs on a copy with LIVE_PATH_WIRED FORCED false, placed in an
+// isolated os.tmpdir() root (its own REPO_ROOT), so these refusals stay tested across the deliberate activation flip and
+// can never reach W1 against the real repository. The real value is pinned only in live-path-isolation.test.mjs.
+const { module: D } = await importDormantHarness();
 
 const HARNESS_FILE = fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url));
 const HARNESS_SOURCE = readFileSync(HARNESS_FILE, 'utf8');
@@ -124,23 +127,23 @@ function trapFs() {
   };
 }
 
-test('main(): unauthorized => G2RefusalError before any fs/git access', async () => {
+test('main() (dormant copy): unauthorized => G2RefusalError before any fs/git access', async () => {
   const { calls, fs } = trapFs();
   let gitCalled = false;
   await assert.rejects(
-    main({ argv: ['node', 'h'], env: {}, deps: { fs, gitHead: () => { gitCalled = true; return ''; } } }),
-    (err) => err instanceof G2RefusalError && err.reason === 'missing:flag,env,record' && err.exitCode === 1,
+    D.main({ argv: ['node', 'h'], env: {}, deps: { fs, gitHead: () => { gitCalled = true; return ''; } } }),
+    (err) => err instanceof D.G2RefusalError && err.reason === 'missing:flag,env,record' && err.exitCode === 1,
   );
   assert.deepEqual(calls, []);
   assert.equal(gitCalled, false);
 });
 
-test('main(): fully authorized interlock but LIVE_PATH_WIRED=false => refuses before validation/reservation', async () => {
-  assert.equal(LIVE_PATH_WIRED, false);
+test('main() (dormant copy, LIVE_PATH_WIRED forced false): fully authorized interlock => refuses before validation/reservation', async () => {
+  assert.equal(D.LIVE_PATH_WIRED, false);
   const { calls, fs } = trapFs();
   await assert.rejects(
-    main({ argv: ['node', 'h', FLAG, ...REC], env: ENV_OK, deps: { fs, gitHead: () => { throw new Error('git must not run'); } } }),
-    (err) => err instanceof G2RefusalError && err.reason === 'live-path-not-wired',
+    D.main({ argv: ['node', 'h', FLAG, ...REC], env: ENV_OK, deps: { fs, gitHead: () => { throw new Error('git must not run'); } } }),
+    (err) => err instanceof D.G2RefusalError && err.reason === 'live-path-not-wired',
   );
   assert.deepEqual(calls, [], 'no record read, no attempts-dir access, nothing spent');
 });
@@ -157,7 +160,7 @@ test('static: no top-level/static playwright import; exactly one dynamic import 
   assert.ok(mainBody().includes(DYNAMIC_IMPORT));
 });
 
-test('source order in main(): interlock -> wiring gate -> dual-counter gate (M2) -> record validation -> startup scan -> W2a -> W2b (AUTH_BOUND) -> playwright', () => {
+test('source order in main(): interlock -> wiring gate -> dual-counter gate (M2) -> record validation -> startup scan -> runtime gates -> W2a -> W2b (AUTH_BOUND) -> playwright', () => {
   const body = mainBody();
   const order = [
     'parseLiveActivation(',
@@ -168,6 +171,7 @@ test('source order in main(): interlock -> wiring gate -> dual-counter gate (M2)
     'if (!validation.ok)',
     'scanAttemptsDirectoryForStartup(',
     'if (!startup.ok)',
+    'checkG2HardRuntimeGates(', // live plan §3.1/§3.2: hard runtime gates after W1, before W2a
     'establishAttemptsDirectory(',
     'reserveAttempt(',
     DYNAMIC_IMPORT,

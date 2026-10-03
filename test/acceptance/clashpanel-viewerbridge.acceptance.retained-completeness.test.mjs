@@ -25,6 +25,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as H from './clashpanel-viewerbridge.acceptance.mjs';
+import { forceLivePathWired } from './support/g2-harness-copy.mjs';
+import { passingRuntimeGateSeams } from './support/g2-runtime-gate-fakes.mjs';
 
 const HARNESS_FILE = fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url));
 const SOURCE = readFileSync(HARNESS_FILE, 'utf8');
@@ -47,7 +49,8 @@ const UNSCOPED_SOURCE = replaceOnce(SOURCE, SCOPED_CALL, 'authority.pageEvidence
 
 // ---- wired sandbox copies (main() runs past W0 only on a copy; mainflow.test.mjs pattern) ---------------------------
 const FAKE_VIEWER_BODY = Buffer.from('/* fake viewer3D.js body for the offline dry run */\n');
-const wired = (src) => replaceOnce(replaceOnce(src, 'const LIVE_PATH_WIRED = false;', 'const LIVE_PATH_WIRED = true;'),
+// LIVE_PATH_WIRED is FORCED true via the shared helper (tolerates either current value; fails loudly if ambiguous).
+const wired = (src) => replaceOnce(forceLivePathWired(src, true),
   `const EXPECTED_VIEWER_SHA256 = '${H.EXPECTED_VIEWER_SHA256}';`, `const EXPECTED_VIEWER_SHA256 = '${sha(FAKE_VIEWER_BODY)}';`);
 const SANDBOX = mkdtempSync(path.join(os.tmpdir(), 'g2-retained-complete-'));
 after(() => { rmSync(SANDBOX, { recursive: true, force: true }); });
@@ -66,8 +69,9 @@ function pageBundle(text) {
 }
 async function copyOf(name, src) {
   const text = wired(src);
-  const dir = path.join(SANDBOX, name);
-  mkdirSync(dir);
+  // <SANDBOX>/<name>/test/acceptance/<harness>: the copy's own REPO_ROOT is the isolated <SANDBOX>/<name> root.
+  const dir = path.join(SANDBOX, name, 'test', 'acceptance');
+  mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'clashpanel-viewerbridge.acceptance.mjs');
   writeFileSync(file, text);
   return { name, M: await import(pathToFileURL(file).href), text, bundle: pageBundle(text) };
@@ -253,11 +257,12 @@ function makeWorld(copy, { drv = (pr) => drivers(pr), tamper = null, pageSetup =
   const context = { async newPage() { return page; }, async close() { closed.context = true; } };
   const browserEmitter = new EventEmitter();
   const browser = {
-    version: () => '999.0.0.0-fake', on: (ev, fn) => browserEmitter.on(ev, fn), off: (ev, fn) => browserEmitter.off(ev, fn),
+    version: () => H.G2_REQUIRED_RUNTIME.headlessShell.browserVersion, on: (ev, fn) => browserEmitter.on(ev, fn), off: (ev, fn) => browserEmitter.off(ev, fn),
     async newContext() { return context; }, async close() { closed.browser = true; browserEmitter.emit('disconnected'); }, isConnected: () => !closed.browser,
   };
   const deps = {
     fs, repoRoot: ROOT,
+    runtimeGateSeams: passingRuntimeGateSeams({ repoRoot: ROOT, required: H.G2_REQUIRED_RUNTIME }).seams,
     gitHead: () => HEAD,
     git: (args) => { if (args[0] === 'rev-parse' && args[1] === '--abbrev-ref') return 'main\n'; if (args[0] === 'rev-parse') return `${HEAD}\n`; return ''; },
     serveModule: ({ requestUrl, manifest }) => {
@@ -451,7 +456,7 @@ test('static: the transport branch validates the admitted retained evidence with
   const auth = H.locateFunctionSource(SOURCE, 'createRunAuthority');
   const at = SOURCE.slice(auth.start, auth.end);
   assert.ok(at.includes('retainedSnapshot = out.value;\n        retainedThroughOrd = lastOrd;'), 'the scope is fixed when (and only when) a retain is accepted');
-  assert.equal(H.LIVE_PATH_WIRED, false);
+  // LIVE_PATH_WIRED is deliberately not pinned here: the single pin of the real value is in live-path-isolation.test.mjs.
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
 });
 

@@ -23,10 +23,11 @@ import {
   recordSchemaProblems, nrdbLegality, finalizeC1Record, makeCheckRecord, makeControlRecord, makeControlRunRecord,
   validateControlRunRecord, validateResultSchema, computeOverall, evaluateOverallRows, evaluateC1, renderSummary,
   createOfflineRunStateFixture, buildBindingRecord, sha256Hex, serializeJson, MODEL_A_URN, MODEL_B_URN,
-  tokenizeJs, locateFunctionSource, LIVE_PATH_WIRED, runChecksInPhaseOrder, createCallRecorder,
+  tokenizeJs, locateFunctionSource, runChecksInPhaseOrder, createCallRecorder,
   createEmptyErrorLedger, createFatalEventSink, createNetworkInstrumentation,
   createRunSeqAllocator, createOperationLedger, finalizeLoadWindows, withNodeLoadOutcomes, c1LoadLedgerProblems,
 } from './clashpanel-viewerbridge.acceptance.mjs';
+import { livePathWiredDeclaration } from './support/g2-harness-copy.mjs';
 
 const HARNESS_SOURCE = readFileSync(fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url)), 'utf8');
 const AT = '2026-09-30T00:00:01.000Z';
@@ -297,10 +298,10 @@ test('fatalCountAtGate recomputation interface: network entries count through ex
   assert.deepEqual(recomputeFatalCountAtGate({}, 5).problems, ['fatal-entries-missing']);
 });
 
-test('integration boundary: GATE_C1_REQUIRED is true since slice B2 (a state without gates.C1 is a row-5 contradiction); LIVE_PATH_WIRED stays false', () => {
+test('integration boundary: GATE_C1_REQUIRED is true since slice B2 (a state without gates.C1 is a row-5 contradiction); LIVE_PATH_WIRED is declared exactly once', () => {
   assert.equal(GATE_C1_REQUIRED, true);
-  assert.equal(LIVE_PATH_WIRED, false);
-  assert.match(HARNESS_SOURCE, /\nconst LIVE_PATH_WIRED = false;\n/);
+  // Not a pin: only that the declaration is single and unambiguous (helper throws otherwise). The real value is pinned once, in live-path-isolation.test.mjs.
+  livePathWiredDeclaration(HARNESS_SOURCE);
   const s = baseState(); s.gates = null;
   assert.ok(recordSchemaProblems(s).includes('gates-missing'));
   assert.deepEqual([computeOverall(s, 'pre-closeout').overall, computeOverall(s, 'pre-closeout').row], ['FAIL', 5]);
@@ -627,7 +628,7 @@ test('§8 matrix: {fatal} x {cleanup} x {downstream record type: run / CDB dispo
     if (c.downstream === 'closed-with-run-record') s.checks.C11 = makeCheckRecord({ verdict: 'PASS' });
     if (c.fatal) s.errorLedger.fatalCount = 2; // post-gate (unsequenced: indeterminate, never pre-gate evidence)
     if (c.fatal) s.errorLedger.entries = [{ kind: 'pageerror', detail: 'x', seq: 99 }];
-    if (c.cleanup === 'resolved') s.cleanupFailures = ['unloadModelA'];
+    if (c.cleanup === 'resolved') s.cleanupFailures = [{ step: 'unloadModelA', reason: 'threw', ownership: 'resolved' }];
     if (c.cleanup === 'unresolved') s.cleanupUnresolvedOwnership = true;
     // check-state dimension: applied to run records only (dispositions carry no verdict)
     const target = closed ? null : 'C12';

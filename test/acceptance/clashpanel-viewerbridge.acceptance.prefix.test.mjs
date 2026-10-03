@@ -23,6 +23,7 @@ import {
   prefixSupportRefs, isPrefixLedgerFrozen, prefixSnapshotCutoff, runAcknowledgedMutation, guardedUnloadModel, buildCleanupSteps, loadCompletionOutcome,
   createCallRecorder, isVerdictCriticalSpyRecord, primarySeqAllocations, sha256Hex, canonicalJson,
 } from './clashpanel-viewerbridge.acceptance.mjs';
+import { livePathWiredDeclaration } from './support/g2-harness-copy.mjs';
 
 const HARNESS_SOURCE = readFileSync(fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url)), 'utf8');
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -93,10 +94,10 @@ const NP = (w, opts) => networkLedgerProblems({ errorLedger: w.ledger, spyLedger
 // Static
 // ------------------------------------------------------------------------------------------
 
-test('static: the slice-C1 non-distinguishing stand-in is gone; LIVE_PATH_WIRED stays false; the dual-counter gate stays documented (H1 single-allocator remediation), resolved and mechanically coupled to live (M2)', () => {
+test('static: the slice-C1 non-distinguishing stand-in is gone; LIVE_PATH_WIRED is declared exactly once; the dual-counter gate stays documented (H1 single-allocator remediation), resolved and mechanically coupled to live (M2)', () => {
   assert.equal(HARNESS_SOURCE.includes('NON_DISTINGUISHING_PREFIX_DERIVATION'), false);
-  assert.equal(HARNESS_SOURCE.split('const LIVE_PATH_WIRED = false;').length - 1, 1);
-  assert.equal(LIVE_PATH_WIRED, false);
+  // Not a pin: only that the declaration is single and unambiguous (helper throws otherwise). The real value is pinned once, in live-path-isolation.test.mjs.
+  livePathWiredDeclaration(HARNESS_SOURCE);
   assert.equal(G2_DUAL_COUNTER_GATE.resolved, true);
   // Live-readiness remediation: the seqBase stopgap in g2BuildEnv is gone -- page records are numbered by
   // page-local ordinals (createPageOrdinalSource) mapped by the ONE Node allocator, never seeded from a node seqBase.

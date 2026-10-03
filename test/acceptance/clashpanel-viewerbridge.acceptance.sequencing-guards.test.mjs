@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as H from './clashpanel-viewerbridge.acceptance.mjs';
+import { forceLivePathWired, livePathWiredDeclaration } from './support/g2-harness-copy.mjs';
 
 const SOURCE = readFileSync(fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url)), 'utf8');
 
@@ -419,7 +420,7 @@ function guardPositiveInvariants(src) {
     if (!(iFat !== -1 && iRew !== -1 && iApp !== -1 && iAss !== -1 && iAss - iApp < 160 && iFat < iRew && iRew < iApp && iApp < iAss)) v.push('p:final-transfer-order-reconcile-rewrite-apply-assert');
     if (!/const run = authority\.rewritePageRun\(runOut\.value, \{ stage: 'run' \}\);/.test(t)) v.push('p:applied-run-is-not-the-rewritten-run');
   }
-  if (!/^const LIVE_PATH_WIRED = false;/m.test(src)) v.push('p:LIVE_PATH_WIRED-not-false');
+  if (livePathWiredDeclaration(src).value !== false) v.push('p:LIVE_PATH_WIRED-not-false'); // helper throws on an absent/ambiguous declaration
   if (!/const G2_DUAL_COUNTER_GATE = Object\.freeze\(\{ resolved: true,/.test(src)) v.push('p:G2_DUAL_COUNTER_GATE-resolved-not-true');
   return v;
 }
@@ -811,7 +812,7 @@ test('sequencing guards: harness source parses and the exported contract surface
   assert.equal(typeof H.createPageOrdinalSource, 'function');
   assert.equal(typeof H.createRunAuthority, 'function');
   assert.equal(H.PAGE_LOCAL_BASE, 2 ** 50);
-  assert.equal(H.LIVE_PATH_WIRED, false);
+  // LIVE_PATH_WIRED is deliberately not pinned here: the single pin of the real value is in live-path-isolation.test.mjs.
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
   for (const banned of ['createRunSeqCounter', 'createPageSeqSource', 'SEQ_STRIDE', 'SEQ_MINOR_RESERVED', 'realmOfSeq']) assert.equal(banned in H, false, `export ${banned} must not exist`);
 });
@@ -912,16 +913,19 @@ test('(viii) guard (before-live Medium 2): a failed phase run makes the same fin
   expectDetects(guardFailedRunTransfer, `${SOURCE}\nasync function g2SecondTransfer(sync, recorder) { return g2FinalizeRunTransfer({ sync, recorder }); }\n`, 'final-transfer-call-sites', 'a second transfer path');
 });
 
-test('positive invariants: one allocator feeds every Node consumer; final transfer order; both live gates closed', () => {
-  expectClean(guardPositiveInvariants, 'positive');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, 'errorLedger: state.errorLedger, seqOf: runSeq.next, clock,', 'errorLedger: state.errorLedger, seqOf: () => Date.now(), clock,'), 'seqOf-not-runSeq.next', 'C1 gate on a foreign seq source');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, 'const ops = createOperationLedger({ ledger: state.errorLedger, nextSeq: runSeq.next, clock });', 'const ops = createOperationLedger({ ledger: state.errorLedger, nextSeq: createRunSeqAllocator().next, clock });'), 'nextSeq-not-runSeq.next', 'ops ledger on a second allocator');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, 'const sink = createFatalEventSink(state.errorLedger, { nextSeq: runSeq.next });', 'const sink = createFatalEventSink(state.errorLedger, {});'), 'sink-not-on-runSeq', 'sink without the shared allocator');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, '      const run = authority.rewritePageRun(runOut.value, { stage: \'run\' });\n      applyPhaseRunToState(state, run);', '      applyPhaseRunToState(state, runOut.value);\n      const run = authority.rewritePageRun(runOut.value, { stage: \'run\' });'), 'final-transfer-order-reconcile-rewrite-apply-assert', 'final transfer applies before rewriting');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, '      applyPhaseRunToState(state, run);\n      cleanupEvidence.runApplied = true;\n      authority.assertAllocated(maxRecordedSeq(state));', '      applyPhaseRunToState(state, run);\n      cleanupEvidence.runApplied = true;'), 'final-transfer-order-reconcile-rewrite-apply-assert', 'final transfer drops assertAllocated');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, '      const run = authority.rewritePageRun(runOut.value, { stage: \'run\' });', '      const run = runOut.value; authority.rewritePageRun(runOut.value, { stage: \'run\' });'), 'applied-run-is-not-the-rewritten-run', 'raw page run is applied');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, 'const LIVE_PATH_WIRED = false;', 'const LIVE_PATH_WIRED = true;'), 'LIVE_PATH_WIRED-not-false', 'LIVE_PATH_WIRED flipped');
-  expectDetects(guardPositiveInvariants, mutate(SOURCE, 'Object.freeze({ resolved: true, owner:', 'Object.freeze({ resolved: false, owner:'), 'G2_DUAL_COUNTER_GATE-resolved-not-true', 'dual-counter gate un-flipped');
+test('positive invariants: one allocator feeds every Node consumer; final transfer order; both live gates closed (on a DORMANT copy: LIVE_PATH_WIRED forced false)', () => {
+  // The live-gate-closed invariant is checked on a copy whose wiring flag is FORCED false (shared helper), so this guard
+  // keeps its meaning across the deliberate activation flip; the real value is pinned only in live-path-isolation.test.mjs.
+  const DORMANT = forceLivePathWired(SOURCE, false);
+  assert.deepEqual(guardPositiveInvariants(DORMANT), [], 'positive: the dormant copy must satisfy the guard');
+  expectDetects(guardPositiveInvariants, mutate(DORMANT, 'errorLedger: state.errorLedger, seqOf: runSeq.next, clock,', 'errorLedger: state.errorLedger, seqOf: () => Date.now(), clock,'), 'seqOf-not-runSeq.next', 'C1 gate on a foreign seq source');
+  expectDetects(guardPositiveInvariants, mutate(DORMANT, 'const ops = createOperationLedger({ ledger: state.errorLedger, nextSeq: runSeq.next, clock });', 'const ops = createOperationLedger({ ledger: state.errorLedger, nextSeq: createRunSeqAllocator().next, clock });'), 'nextSeq-not-runSeq.next', 'ops ledger on a second allocator');
+  expectDetects(guardPositiveInvariants, mutate(DORMANT, 'const sink = createFatalEventSink(state.errorLedger, { nextSeq: runSeq.next });', 'const sink = createFatalEventSink(state.errorLedger, {});'), 'sink-not-on-runSeq', 'sink without the shared allocator');
+  expectDetects(guardPositiveInvariants, mutate(DORMANT, '      const run = authority.rewritePageRun(runOut.value, { stage: \'run\' });\n      applyPhaseRunToState(state, run);', '      applyPhaseRunToState(state, runOut.value);\n      const run = authority.rewritePageRun(runOut.value, { stage: \'run\' });'), 'final-transfer-order-reconcile-rewrite-apply-assert', 'final transfer applies before rewriting');
+  expectDetects(guardPositiveInvariants, mutate(DORMANT, '      applyPhaseRunToState(state, run);\n      cleanupEvidence.runApplied = true;\n      authority.assertAllocated(maxRecordedSeq(state));', '      applyPhaseRunToState(state, run);\n      cleanupEvidence.runApplied = true;'), 'final-transfer-order-reconcile-rewrite-apply-assert', 'final transfer drops assertAllocated');
+  expectDetects(guardPositiveInvariants, mutate(DORMANT, '      const run = authority.rewritePageRun(runOut.value, { stage: \'run\' });', '      const run = runOut.value; authority.rewritePageRun(runOut.value, { stage: \'run\' });'), 'applied-run-is-not-the-rewritten-run', 'raw page run is applied');
+  expectDetects(guardPositiveInvariants, forceLivePathWired(DORMANT, true), 'LIVE_PATH_WIRED-not-false', 'LIVE_PATH_WIRED flipped');
+  expectDetects(guardPositiveInvariants, mutate(DORMANT, 'Object.freeze({ resolved: true, owner:', 'Object.freeze({ resolved: false, owner:'), 'G2_DUAL_COUNTER_GATE-resolved-not-true', 'dual-counter gate un-flipped');
 });
 
 test('guards are non-vacuous on missing structure: a renamed/removed target function fails closed', () => {

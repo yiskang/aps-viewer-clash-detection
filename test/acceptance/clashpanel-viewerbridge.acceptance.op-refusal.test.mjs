@@ -171,7 +171,7 @@ test('static: the live page requires the ops binding (g2BuildEnv env.requireOps=
   assert.equal(drv.split('runAcknowledgedMutation(').length - 1, 2);
   const { at } = opLedgerBindingText(SOURCE);
   assert.ok(at > RPR.start && at < RPR.end);
-  assert.equal(H.LIVE_PATH_WIRED, false);
+  // LIVE_PATH_WIRED is deliberately not pinned here: the single pin of the real value is in live-path-isolation.test.mjs.
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
 });
 

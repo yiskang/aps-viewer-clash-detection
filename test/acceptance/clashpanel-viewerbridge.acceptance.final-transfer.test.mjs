@@ -255,7 +255,7 @@ test('static: the reproduced Node final-transfer lines are runPostReservation\'s
   assert.equal(testText.replace('const env = window.__testEnv;', '').replace("drivers: env.drivers,\n      mode: 'offline-fake',\n      assertPhaseBaseline: null,", ''),
     realText.replace('const env = g2BuildEnv({ nodeLoadOutcomes: arg && isPlainObject(arg.nodeLoadOutcomes) ? arg.nodeLoadOutcomes : null });', '').replace("drivers: createLivePhaseDrivers(env),\n      mode: 'live',\n      assertPhaseBaseline: async (phase) => g2PhaseBaseline(env, phase),", ''));
   for (const n of ['g2FinalizeRunTransfer', 'g2EnterCleanupAfterFailure']) assert.ok(H.buildPageAgentSource(SOURCE).source.includes(`async function ${n}(`), `${n} ships in the page bundle`);
-  assert.equal(H.LIVE_PATH_WIRED, false);
+  // LIVE_PATH_WIRED is deliberately not pinned here: the single pin of the real value is in live-path-isolation.test.mjs.
   assert.equal(H.G2_DUAL_COUNTER_GATE.resolved, true);
 });
 

@@ -18,7 +18,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  OPTIONAL_RESPONSE_RULES, NETWORK_SEVERITY, CLASSIFIER_RESULT_KEYS, LIVE_PATH_WIRED, FATAL_ENTRY_SEQ_REQUIRED, OVERALL_PHASES,
+  OPTIONAL_RESPONSE_RULES, NETWORK_SEVERITY, CLASSIFIER_RESULT_KEYS, FATAL_ENTRY_SEQ_REQUIRED, OVERALL_PHASES,
   classifyRequestFailure, classifyHttpResponse, isHttpRuleCandidate, correlateNetworkEvents, createEmptyErrorLedger, syncFatalWitnesses,
   directWitnessEntryAppender, provisionalFinalization, applyProvisionalFinalization, finalizeNetworkLedgerAtCloseout,
   classifierResultProblems, networkLedgerProblems, primarySeqAllocations, maxRecordedSeq, createRunSeqAllocator, classifyNetworkUrl,
@@ -26,6 +26,7 @@ import {
   evaluateOverallRows, computeOverall, createOfflineRunStateFixture, buildBindingRecord, sha256Hex, MODEL_A_URN, MODEL_B_URN,
   G2_VIEWER_SCRIPT_URL, tokenizeJs, locateFunctionSource, derivePrefixes, createOperationLedger, finalizeLoadWindows,
 } from './clashpanel-viewerbridge.acceptance.mjs';
+import { livePathWiredDeclaration } from './support/g2-harness-copy.mjs';
 
 /** The non-distinguishing derivation (no load record): nothing can bind (replaces the slice-C1 stand-in). */
 const NON_DISTINGUISHING_PREFIX_DERIVATION = derivePrefixes([], []);
@@ -101,12 +102,12 @@ function stateWith(ledger) {
 // Static: frozen empty OPTIONAL_RESPONSE_RULES, no allow-list, no blanket requestfailed => fatal
 // ------------------------------------------------------------------------------------------
 
-test('static: OPTIONAL_RESPONSE_RULES is frozen and EMPTY, declared exactly once; LIVE_PATH_WIRED stays false; FATAL_ENTRY_SEQ_REQUIRED is true', () => {
+test('static: OPTIONAL_RESPONSE_RULES is frozen and EMPTY, declared exactly once; LIVE_PATH_WIRED is declared exactly once; FATAL_ENTRY_SEQ_REQUIRED is true', () => {
   assert.ok(Object.isFrozen(OPTIONAL_RESPONSE_RULES));
   assert.equal(OPTIONAL_RESPONSE_RULES.length, 0);
   assert.equal(HARNESS_SOURCE.split('const OPTIONAL_RESPONSE_RULES = Object.freeze([]);').length - 1, 1);
-  assert.equal(HARNESS_SOURCE.split('const LIVE_PATH_WIRED = false;').length - 1, 1);
-  assert.equal(LIVE_PATH_WIRED, false);
+  // Not a pin: only that the declaration is single and unambiguous (helper throws otherwise). The real value is pinned once, in live-path-isolation.test.mjs.
+  livePathWiredDeclaration(HARNESS_SOURCE);
   assert.equal(FATAL_ENTRY_SEQ_REQUIRED, true);
 });
 

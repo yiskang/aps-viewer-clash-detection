@@ -310,7 +310,7 @@ test('fail-closed inputs: missing/garbage fields never yield PASS', () => {
     ['runtime missing', (s) => { delete s.runtime; }, 6],
     ['sessionTainted undefined', (s) => { delete s.sessionTainted; }, 6],
     ['sessionTainted true', (s) => { s.sessionTainted = true; }, 6],
-    ['cleanup step failed but resolved', (s) => { s.cleanupFailures = ['closePage']; }, 7],
+    ['cleanup step failed but resolved', (s) => { s.cleanupFailures = [{ step: 'closePage', reason: 'threw', ownership: 'resolved' }]; }, 7],
   ];
   for (const [label, mut, row] of cases) {
     for (const phase of OVERALL_PHASES) {
@@ -321,6 +321,26 @@ test('fail-closed inputs: missing/garbage fields never yield PASS', () => {
   }
   assert.equal(computeOverall(null, 'pre-closeout').overall, 'FAIL');
   assert.equal(computeOverall(armClosureTrap({}), 'pre-link').overall, 'FAIL');
+});
+
+test('G-8: cleanup-failure ownership boundary -- row 7 PARTIAL only when every failed step is resolved; anything else is row 2 FAIL', () => {
+  const f = (step, ownership) => ({ step, reason: 'threw', ownership });
+  const run = (failures, unresolved = false) => OVERALL_PHASES.map((phase) => computeOverall(stateFor(phase, (s) => { s.cleanupFailures = failures; s.cleanupUnresolvedOwnership = unresolved; }), phase));
+  for (const x of run([f('closePage', 'resolved'), f('showHiddenNodes', 'resolved')])) { assert.equal(x.row, 7); assert.equal(x.overall, 'PARTIAL'); }
+  // Defensive: the boolean is false (a PARTIAL-eligible state) but a failed step is not proven resolved => FAIL, never PARTIAL.
+  for (const bad of [[f('closeContext', 'indeterminate')], [f('closePage', 'unresolved')], [f('closePage', 'resolved'), f('closeContext', 'indeterminate')], [f('closePage', undefined)], ['closePage'], [null]]) {
+    for (const x of run(bad)) { assert.equal(x.row, 2, JSON.stringify(bad)); assert.equal(x.overall, 'FAIL'); }
+  }
+  // Boolean true alone => FAIL even with only resolved failures listed.
+  for (const x of run([f('closePage', 'resolved')], true)) { assert.equal(x.row, 2); assert.equal(x.overall, 'FAIL'); }
+});
+
+test('G-8: C20 NOT_EVIDENCED alone remains row 7 PARTIAL (semantics unchanged)', () => {
+  for (const phase of OVERALL_PHASES) {
+    const x = computeOverall(stateFor(phase, (s) => { Object.assign(s.checks.C20, { verdict: 'NOT_EVIDENCED', reason: 'no-change-observed' }); }), phase);
+    assert.equal(x.row, 7);
+    assert.equal(x.overall, 'PARTIAL');
+  }
 });
 
 test('computeOverall is pure: never mutates the state', () => {
@@ -360,7 +380,7 @@ test('§8 product matrix: exactly one row, FAIL rows win over BLOCKED/NOT_EVIDEN
   };
   const apply = (s, c) => {
     if (c.fatal) s.errorLedger.fatalCount = 2;
-    if (c.cleanup === 'resolved') s.cleanupFailures = ['unloadModelA'];
+    if (c.cleanup === 'resolved') s.cleanupFailures = [{ step: 'unloadModelA', reason: 'threw', ownership: 'resolved' }];
     if (c.cleanup === 'unresolved') s.cleanupUnresolvedOwnership = true;
     if (c.checks === 'fail') s.checks.C7.verdict = 'FAIL';
     if (c.checks === 'blocked') Object.assign(s.checks.C12, { verdict: 'BLOCKED', reason: 'timeout:present' });

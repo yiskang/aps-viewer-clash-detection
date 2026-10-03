@@ -16,6 +16,7 @@ import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as H from './clashpanel-viewerbridge.acceptance.mjs';
 import * as G1 from './g1-svf2-f1-f8-verification.mjs';
+import { forceLivePathWired } from './support/g2-harness-copy.mjs';
 
 const HARNESS_FILE = fileURLToPath(new URL('./clashpanel-viewerbridge.acceptance.mjs', import.meta.url));
 const SOURCE = readFileSync(HARNESS_FILE, 'utf8');
@@ -28,8 +29,8 @@ const EXPOSE = ['sha256HexPortable', 'sha256Hex', 'Buffer', 'truncateUtf8', 'can
   'G2RefusalError', 'classifyFormatSignals', 'g2JsonSafe', 'LIVE_PATH_WIRED', 'planChecks', 'enumerateCandidates'];
 
 /** A fresh browser-like vm realm (standard JS + a few web globals, NO Node globals) with the agent loaded. */
-function loadAgent({ expose = true, extraGlobals = {} } = {}) {
-  const built = H.buildPageAgentSource(SOURCE);
+function loadAgent({ expose = true, extraGlobals = {}, source = SOURCE } = {}) {
+  const built = H.buildPageAgentSource(source);
   let src = built.source;
   if (expose) {
     const reg = 'window.__g2HarnessFns = Object.freeze(';
@@ -70,7 +71,8 @@ test('bundle prelude: only earlier-section declarations actually referenced, nev
   for (const n of ['createNodeFsLayer', 'main', 'reserveAttempt', 'closeoutProtocol', 'commitCriticalSection']) assert.equal(preludeNames.includes(n), false, n);
   const { window } = loadAgent();
   assert.equal(window.__t.LIVE_PATH_WIRED, H.LIVE_PATH_WIRED);
-  assert.equal(window.__t.LIVE_PATH_WIRED, false);
+  // Copied as bound, for EITHER forced value (shared helper); the real value is pinned only in live-path-isolation.test.mjs.
+  for (const v of [false, true]) assert.equal(loadAgent({ source: forceLivePathWired(SOURCE, v) }).window.__t.LIVE_PATH_WIRED, v, String(v));
 });
 
 test('bundle builder refuses a source without the page-agent markers; declaration scanner basics', () => {
@@ -144,8 +146,8 @@ test('vm realm: canonical JSON, redaction and the recorder digest equal the Node
   assert.equal(rv.records[0].origin, 'harness');
 });
 
-test('vm realm: spy install + N1 self-test run in the page realm; the live gates travel with the bundle', async () => {
-  const { window, ctx } = loadAgent();
+test('vm realm: spy install + N1 self-test run in the page realm; the live gates travel with the bundle (DORMANT bundle: LIVE_PATH_WIRED forced false)', async () => {
+  const { window, ctx } = loadAgent({ source: forceLivePathWired(SOURCE, false) });
   const t = window.__t;
   const viewer = vm.runInContext('({ fitToView() { return 1; }, getAggregateIsolation() { return []; }, overlays: { addMesh() {} } })', ctx);
   const recorder = t.createCallRecorder();

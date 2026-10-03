@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CHECK_NAMES, CONTROL_NAMES, PHASE_ORDER, OVERALL_PHASES, NRDB_STATE, GATE_OUTCOME, GATE_EVIDENCE_REFS, GATE_CHECK_DISPOSITION,
   GATE_CONTROL_DISPOSITION, DOWNSTREAM_ITEM_NAMES, NRDB_CONTROL_NAMES, CONTROL_DEPENDENCY_IDS, CONTROL_OWNING_PHASE, CONTROL_ACCEPTABLE_STATE,
-  DOWNSTREAM_PHASE_IDS, ATTRIBUTION_PHASES, PASSIVE_FATAL_EVENT_KINDS, GATE_C1_REQUIRED, LIVE_PATH_WIRED, OVERALL_ROW_VERDICT,
+  DOWNSTREAM_PHASE_IDS, ATTRIBUTION_PHASES, PASSIVE_FATAL_EVENT_KINDS, GATE_C1_REQUIRED, OVERALL_ROW_VERDICT,
   runChecksInPhaseOrder, createCallRecorder, createWrapperRegistry, recordingWrap, installInjectionWrapper, createMonotonicEventLog,
   makeCheckRecord, makeControlRecord, evaluateC1, applyPhaseRunToState, buildInitialRunState, buildBindingRecord, createOfflineRunStateFixture,
   recordSchemaProblems, closedGateEvidenceMatches, closedGateIllegalRecords, attributionFieldProblems, nrdbLegality, computeOverall,
@@ -194,9 +194,9 @@ test('the old runtime BLOCKED(dependency:C1) downstream encoding is never produc
   assert.equal(r.controls.N4.recordType, 'control-run');
 });
 
-test('GATE_C1_REQUIRED is true: a runner result without gates.C1 (e.g. a failed page run) is row 5; LIVE_PATH_WIRED stays false', async () => {
+test('GATE_C1_REQUIRED is true: a runner result without gates.C1 (e.g. a failed page run) is row 5', async () => {
   assert.equal(GATE_C1_REQUIRED, true);
-  assert.equal(LIVE_PATH_WIRED, false);
+  // LIVE_PATH_WIRED is deliberately not pinned here: the single pin of the real value is in live-path-isolation.test.mjs.
   const { st } = await runToState(evaluateC1(FACTS.PASS));
   st.gates = null;
   assert.ok(recordSchemaProblems(st).includes('gates-missing'));
