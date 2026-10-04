@@ -2,7 +2,34 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — G2 D0/D1 RESEARCH INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
+## LATEST — G2 D2 SPEC INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
+
+- **Baseline:** pre-checkpoint `main == origin/main == dee0850b1fbcf23ff8762cf614b4cb4ca88b2836`; the D2 spec checkpoint commit is the HEAD of `main` (see `git log -1`) and was pushed to `origin/main` under owner authorization `for-claude-g2-d2-spec-checkpoint-commit-push-only.md`. Harness SHA `cc8868cd…ef09b` and procedure SHA `d1ccfde2…5a75` unchanged; immutable evidence `docs/research/evidence/g2-live-20261004-75a3ccb9/` unchanged; historical verdict `FAIL (row 3)`.
+- **Independent authority:** [targeted re-review](../reviews/2026-10-04-g2-d2-corrected-targeted-independent-rereview.md) — **0 Critical / 0 High / 0 Medium / 3 Low; accepted** (earlier: [initial independent review](../reviews/2026-10-04-g2-d2-synthetic-transition-spec-independent-review.md), [internal review](../reviews/2026-10-04-g2-d2-synthetic-transition-spec-internal-review.md)). The three Lows are **non-blocking** and were deliberately not edited: THROW example frame number (derive expected frames from the normative rules in tests), compact trace encoding, runtime-version wording.
+- **Committed package:** [corrected D2 spec](../research/2026-10-04-g2-d2-synthetic-transition-spec.md) (52,308 exhaustive schedules + 36 `D=30` characterization schedules; durations `{1,2,3,4,6,10}`; bounded tail-stall sensitivity; numeric T4 model; non-circular request-tagged oracle; unified separation notation; `0.9` is a synthetic calibration anchor, not a margin); the three D2 reviews; the D2 spec/remediation/checkpoint prompts; this handoff.
+- **Unchanged:** **No simulator implementation exists** (no simulator directory). C8 unresolved; C6 `NOT_EVIDENCED`; no numeric C6 margin; T4 unchanged; C20 derivative BLOCKED. No live retry, new authorization record, or attempt reset occurred.
+- **Next action:** **separate owner authorization for D2-OFFLINE synthetic simulator implementation only.** D2-OFFLINE is **not** authorized. Must not begin without authorization: simulator code/directory, any live diagnostic/retry, new authorization record, attempt reset, C8/C6/N2/T4/harness/test/product/procedure changes, G3/downstream work.
+
+---
+
+(Prior state follows.)
+
+## PRIOR STATE (superseded) — G2 D2 SPEC REMEDIATION COMPLETE + INTERNALLY REVIEWED (UNCOMMITTED); AWAITING TARGETED INDEPENDENT WORK RE-REVIEW
+
+- **Baseline:** `main == origin/main == dee0850b1fbcf23ff8762cf614b4cb4ca88b2836` (D0/D1 checkpoint, independently accepted, complete). Tracked tree clean except this handoff; harness SHA `cc8868cd…ef09b` and procedure SHA `d1ccfde2…5a75` unchanged; immutable evidence unchanged; historical verdict `FAIL (row 3)`.
+- **Authority:** owner prompt `docs/prompts/for-claude-g2-d2-spec-remediation-only.md`, remediating the [independent Work review](../reviews/2026-10-04-g2-d2-synthetic-transition-spec-independent-review.md) (1 Critical / 5 High / 5 Medium).
+- **Artifacts (uncommitted):** corrected [D2 spec v2](../research/2026-10-04-g2-d2-synthetic-transition-spec.md) (Appendix A = remediation log); [internal review](../reviews/2026-10-04-g2-d2-synthetic-transition-spec-internal-review.md) (round 1 + round 2; every independent finding re-checked and closed; Codex round 2 raised 2 Critical / 3 High / 4 Medium spec-precision items, all fixed).
+- **Remediation status:** closed-loop `δ=0` causality fixed (post-H continuation slot, invariant V0); restore/autocam sync as its own enumerated `SYNC` sub-step with explicit ownership; **tagged oracle no longer circular** (state-machine-carried tokens + ownership tags); one decision-list classifier consistent with per-cell outcomes (A / B / C1-INVALID / C2-INCONCLUSIVE); **T4 numeric fidelity** (32-entry Φ samples, `1e-9`, adjacent pair, per-settle `prev`); **separation formulas unified** (`sep`, `d_min` observed only; `3×` exploratory); `0.9` relabelled **synthetic calibration anchor κ** (not a margin/threshold); timeout scaled and bounded (64 samples, synthetic frames).
+- **New domains:** durations `{1,2,3,4,6,10}` + **`D=30` characterization witness** (36 schedules, outside the exhaustive count, feeds no outcome); **bounded tail-stall sensitivity** `L ∈ {0,1,2}` in the enumeration. **Schedule count: 52,308** (cells CL-primary 4,104 / CL-tail 4,788 / OP-primary 18,144 / OP-tail 25,272; recomputed independently). Output caps: ≤ 154 traces ≤ 2.5 MiB, total ≤ 3.5 MiB.
+- **Recorded policy/recommendations (no implementation):** future simulator location `docs/research/2026-10-04-g2-d2-synthetic-transition/` (not created); undocumented Viewer observables: allowed as version-bound offline model inputs, allowed in a separately authorized diagnostic only, not a production/acceptance dependency without procedure re-acceptance.
+- **Unchanged:** C8 unresolved; C6 `NOT_EVIDENCED`; no numeric C6 margin; T4 unchanged; C20 derivative BLOCKED. No retry, new authorization record, or attempt reset. **No D2-OFFLINE implementation is authorized.**
+- **Next action:** **targeted independent Work re-review of the corrected D2 spec**, then owner decision on checkpoint commit/push and D2-OFFLINE authorization. Must not begin without authorization: simulator code, any live diagnostic/retry, new authorization record, attempt reset, C8/C6/N2/T4/harness/test/product/procedure changes, commit/push, G3/downstream work.
+
+---
+
+(Prior state follows.)
+
+## PRIOR STATE (superseded) — G2 D0/D1 RESEARCH INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
 
 - **Baseline:** pre-checkpoint `main == origin/main == ef436d4a5632692fadbddc09fb9aa6410fadc258`; the D0/D1 checkpoint commit is the HEAD of `main` (see `git log -1`) and was pushed to `origin/main` under owner authorization `for-claude-g2-d0-d1-checkpoint-commit-push-only.md`. Harness SHA `cc8868cd…ef09b` and accepted procedure SHA `d1ccfde2…5a75` unchanged; immutable evidence `docs/research/evidence/g2-live-20261004-75a3ccb9/` byte-identical; historical verdict `FAIL (row 3)`.
 - **Independent authority:** [final-wording targeted re-review](../reviews/2026-10-04-g2-d0-d1-final-wording-targeted-independent-rereview.md) — **0 Critical / 0 High / 0 Medium / 0 Low; accepted** (earlier: [initial review](../reviews/2026-10-04-g2-d0-viewer-api-evidence-d1-r1-replay-independent-review.md), [corrected re-review](../reviews/2026-10-04-g2-d0-d1-corrected-targeted-independent-rereview.md)).
