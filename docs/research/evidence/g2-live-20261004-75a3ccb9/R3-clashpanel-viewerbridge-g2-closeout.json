@@ -1,0 +1,36 @@
+{
+  "attemptId": "59b8713d-1e63-4df8-b641-ac6b830f3ea6",
+  "primaryOverall": "FAIL",
+  "primaryRow": 3,
+  "artifacts": [
+    {
+      "name": "R1",
+      "path": "test/acceptance/results/clashpanel-viewerbridge-g2-result.json",
+      "sha256": "4204e2d36c9053db8e6601952bc79b27bbf903998637b81bde6bc8dcf2e42148"
+    },
+    {
+      "name": "R2",
+      "path": "test/acceptance/results/clashpanel-viewerbridge-g2-summary.md",
+      "sha256": "5282f01c82c404cf8e39cf68fbf55288bac8509fb6b9adf6fb499f68d71d0da4"
+    }
+  ],
+  "verification": {
+    "R1": {
+      "bytesMatch": true,
+      "parsed": true,
+      "schemaValid": true,
+      "snapshotEqual": true
+    },
+    "R2": {
+      "bytesMatch": true,
+      "headingsPresent": true,
+      "primaryOverallLine": true
+    }
+  },
+  "optional": [
+    {
+      "name": "O2",
+      "status": "absent"
+    }
+  ]
+}

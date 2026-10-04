@@ -487,3 +487,6 @@ test/acceptance/results/
 test/performance/results/
 
 !.claude/settings.local.json
+# G2 live evidence preservation: keep the two immutable preserved operator logs stageable (exact paths only)
+!/docs/research/evidence/g2-live-20261004-75a3ccb9/operator-log/g2-live.log
+!/docs/research/evidence/g2-live-20261004-75a3ccb9/operator-log/server.log

@@ -1,0 +1,11 @@
+{
+  "attemptId": "59b8713d-1e63-4df8-b641-ac6b830f3ea6",
+  "finalOverall": "FAIL",
+  "primaryOverall": "FAIL",
+  "primaryRow": 3,
+  "resultSha256": "4204e2d36c9053db8e6601952bc79b27bbf903998637b81bde6bc8dcf2e42148",
+  "summarySha256": "5282f01c82c404cf8e39cf68fbf55288bac8509fb6b9adf6fb499f68d71d0da4",
+  "manifestSha256": "8de72bb0c6cf5883ad5bdd96ffe06a0d8c4c6fd769ee8984865c412a804728f0",
+  "journalSha256": "0486d39547a9854c849ebb13b014bf3c286ef9078f0b4ed405efbf87c2bf352c",
+  "committedAt": "2026-10-04T03:29:15.913Z"
+}

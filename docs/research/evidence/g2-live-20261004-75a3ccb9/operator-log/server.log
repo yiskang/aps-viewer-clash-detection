@@ -1,0 +1,12 @@
+npm notice run aps-viewer-sandbox@1.0.0 prestart
+npm notice run npm run build:vendor
+npm notice run aps-viewer-sandbox@1.0.0 build:vendor
+npm notice run node scripts/sync-vendor.mjs
+sync-vendor: copying isolated three/three-mesh-bvh builds into wwwroot/vendor/ ...
+  copied node_modules/three/build -> wwwroot/vendor/three/build
+  copied node_modules/three/examples/jsm/utils/BufferGeometryUtils.js -> wwwroot/vendor/three/examples/jsm/utils/BufferGeometryUtils.js
+  copied node_modules/three-mesh-bvh/src -> wwwroot/vendor/three-mesh-bvh/src
+sync-vendor: done.
+npm notice run aps-viewer-sandbox@1.0.0 start
+npm notice run node server.js
+Server listening on port 8080...

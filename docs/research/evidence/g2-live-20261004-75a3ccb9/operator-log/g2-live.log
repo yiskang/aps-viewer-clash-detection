@@ -1,0 +1,20 @@
+G2 hard runtime preflight gates: PASSED -- pre-reservation; nothing was reserved or spent
+node: detected="v22.23.1" required=v22.23.1
+playwright: detected="1.62.1" required=1.62.1 resolvedEntry="/Users/kangea/Workspace/Codes/aps-viewer-clash-detection/node_modules/playwright/index.mjs"
+playwright-core: detected="1.62.1" required=1.62.1
+platform: detected="darwin"/"arm64" required=darwin/arm64; os.release="27.0.0" appleCpu=true
+env PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=(unset)
+env SELENIUM_REMOTE_URL=(unset)
+env PWDEBUG=(unset)
+env npm_config_pwdebug=(unset)
+env npm_package_config_pwdebug=(unset)
+env PLAYWRIGHT_BROWSERS_PATH=(unset)
+env npm_config_playwright_browsers_path=(unset)
+env npm_package_config_playwright_browsers_path=(unset)
+chromium-headless-shell: required revision=1234 browserVersion=151.0.7922.34
+chromium-headless-shell: descriptor={"revision":"1234","browserVersion":"151.0.7922.34","hasRevisionOverrides":false} rootSource="default" root="/Users/kangea/Library/Caches/ms-playwright"
+chromium-headless-shell: D="/Users/kangea/Library/Caches/ms-playwright/chromium_headless_shell-1234" marker=true E="/Users/kangea/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell" size=163329264
+primaryOverall: FAIL (row 3)
+finalOverall: FAIL
+post-commit: unlinkCandidate=ok directoryFsync=ok readBack=match
+exit code: 1

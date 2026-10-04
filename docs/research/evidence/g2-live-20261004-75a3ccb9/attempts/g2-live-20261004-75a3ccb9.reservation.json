@@ -1,0 +1,34 @@
+{
+  "journalVersion": 1,
+  "attemptId": "59b8713d-1e63-4df8-b641-ac6b830f3ea6",
+  "authorization": {
+    "path": "docs/prompts/g2-live-execution-authorization-record-g2-live-20261004-75a3ccb9.md",
+    "sha256": "f68436dfbab09ad32a2ba248cf6ab63ce652b5615e82f8232f77aae9409c33c6",
+    "id": "g2-live-20261004-75a3ccb9"
+  },
+  "headSha": "75a3ccb9ba160f8afcf3c9b39a301f352b273c08",
+  "procedure": {
+    "path": "docs/research/2026-09-30-g2-viewerbridge-dockingpanel-live-verification-procedure.md",
+    "sha256": "d1ccfde224b8ae76fe74b06c93abc532e6df9612933cafaa045053c8e2e45a75",
+    "version": "v5"
+  },
+  "harness": {
+    "path": "test/acceptance/clashpanel-viewerbridge.acceptance.mjs",
+    "sha256": "471fae40d371c292f05d92bbdafdbdaa426a0426af0924a6e0946ac69fe77ac4"
+  },
+  "fixtures": {
+    "A": {
+      "name": "Audubon_Mechanical_clash_test.rvt",
+      "urnSha256": "db7efe5c237b10757c8e69fbb925facd9a1bf43c307a60702ae42fa2968dd10d"
+    },
+    "B": {
+      "name": "Audubon_Structure_clash_test.rvt",
+      "urnSha256": "806f99964bb937085874557ec2b03101a612db26031469a063446796d7ebb53d"
+    }
+  },
+  "runtimeEnvelopeRequested": {
+    "viewer": "7.124.2",
+    "env": "AutodeskProduction2",
+    "api": "streamingV2"
+  }
+}

@@ -2,7 +2,50 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — G2 TERMINAL-SEQUENCING GOVERNANCE CHECKPOINT (CLEAN-WINDOW RULE PERSISTED; FINAL REISSUANCE REQUIRED; LIVE UNAUTHORIZED)
+## LATEST — G2 IMMUTABLE EVIDENCE CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED; AWAITING OWNER DECISION ON REMEDIATION PLANNING
+
+- **Status:** exactly-one live G2 attempt remains closed at **`FAIL (row 3)`**. No retry, new authorization record, attempt reset, or remediation occurred or is authorized.
+- **Evidence snapshot (independently accepted):** `docs/research/evidence/g2-live-20261004-75a3ccb9/`; manifest `docs/research/evidence/g2-live-20261004-75a3ccb9/MANIFEST.md`. 10/10 source/copy SHA-256 pairs match; operator log (`g2-live.log`, `g2-live.exit`, `server.log`) preserved. O2 was absent at source and is non-blocking. No screenshots existed because C20 was `BLOCKED(dependency:C8)` and never ran.
+- **Independent authority:** [targeted preservation-correction re-review](../reviews/2026-10-04-g2-evidence-preservation-correction-targeted-independent-rereview.md) — 0 Critical / 0 High / 0 Medium / 0 Low.
+- **Checkpoint:** owner authorized one immutable docs/evidence checkpoint commit + push (`for-claude-g2-immutable-evidence-checkpoint-commit-push-only.md`); this handoff is part of that commit. Harness SHA `471fae40…7ac4`, procedure SHA `d1ccfde2…5a75` unchanged.
+- **Next action:** **owner decision on bounded C3/C8/C6 remediation planning only.** Remediation planning is NOT yet authorized. **Must not begin:** remediation planning/implementation, retry, new record, attempt reset, evidence mutation, G3/downstream work.
+
+---
+
+(Prior state follows.)
+
+## LATEST — G2 EVIDENCE COPIES MATCH, BUT IMMUTABLE CHECKPOINT IS BLOCKED BY GIT INCLUSION + MANIFEST CORRECTIONS
+
+- **Status:** exactly-one live G2 attempt remains durably closed at **`FAIL (row 3)`**. No retry, new authorization record, attempt reset, or remediation is authorized.
+- **Independent preservation review:** [immutable evidence preservation review](../reviews/2026-10-04-g2-immutable-evidence-preservation-independent-review.md) — **0 Critical / 1 High / 1 Medium / 1 Low**. The local snapshot contains 10 evidence/supporting files plus `MANIFEST.md`; all 10 source/copy SHA-256 pairs match.
+- **High blocker:** `operator-log/g2-live.log` and `operator-log/server.log` are ignored by `.gitignore:93` (`*.log`), so normal staging would silently omit them from the claimed 10-file immutable checkpoint. Their bytes must remain unchanged and their staged inclusion must be explicitly verified.
+- **Manifest correction required:** replace the contradictory “no separate exit-code artifact” wording because `g2-live.exit` exists, and state accurately that C20 never ran and no screenshot/rendering evidence existed at source. O2 remains optional and was absent originally.
+- **Working tree/scope:** `main == origin/main == 75a3ccb9…`; source evidence, harness, tests, procedure, and production code remain untouched. Uncommitted preservation work includes the snapshot, preservation authorization prompt, internal review, independent review, and this handoff, alongside older untracked governance artifacts.
+- **Next authorized action:** none yet. Owner may authorize one bounded preservation correction only: correct the manifest/accounting and ensure the two ignored logs are included in the future checkpoint, followed by targeted independent re-review. **Must not begin:** commit/push, C3/C8/C6 remediation planning, retry/second attempt, new record, evidence mutation, or downstream G3/H1/H2/OQ-1/host work.
+
+---
+
+(Prior state follows.)
+
+## LATEST — G2 DURABLY CLOSED AS FAIL (row 3); INDEPENDENT WORK REVIEW COMPLETE; AWAITING OWNER DECISION
+
+- **Current review authority:** [live evidence/verdict independent review](../reviews/2026-10-04-g2-live-evidence-verdict-independent-review.md) (ChatGPT Work; independently derived from R1–R3, reservation/journal/K, raw log, procedure, and harness). Findings: **0 Critical / 2 High / 2 Medium / 2 Low**.
+- **Confirmed:** lifecycle and record bindings are consistent; one consumed attempt and no retry are evidenced; all required artifacts exist and hashes match; R1 schema validation succeeds; the authoritative reader returns `FAIL` via W-6; `computeOverall` independently returns **`FAIL (row 3)`** for C3 and C8; all 17 cleanup steps ran with ownership resolved.
+- **Adjudication:** C3 is a proven harness-oracle literal-value defect (`PANEL_SHOWN`/`PANEL_HIDDEN` names versus `panel/shown`/`panel/hidden` values). C8 is a material frustum failure (`5.858358…` versus `1e-4`) whose causal owner remains unresolved because C8 camera/transition provenance is not retained; the prior stale-camera claim is not established. C6 remains `NOT_EVIDENCED` because N2 did not discriminate. C20 is correctly derivative/blocked.
+- **Governance/evidence:** the unlisted execution prompt was a real owner-checklist deviation, but it was not an authorization candidate and did not alter bound code or evidence; owner disposition is still needed. Live evidence remains untouched and currently git-ignored; the raw log remains under `/private/tmp`.
+- **State / next action:** `main == origin/main == 75a3ccb9…`; working tree is dirty with this modified handoff plus six untracked prompt/authorization-record files and two untracked review files; no code or retained live-evidence artifact is modified. **Owner decision only:** close G2 at FAIL, authorize bounded H1/H2/M1 remediation planning, and/or authorize immutable evidence persistence. **Must not begin without authorization:** retry/second attempt, new authorization record, harness/test/procedure/production edits, evidence copying, commit/push, or G3/H1/H2/OQ-1/host work.
+
+## PRIOR STATE (superseded) — G2 EXACTLY-ONE LIVE ATTEMPT EXECUTED: TERMINAL VERDICT FAIL (row 3); AWAITING INDEPENDENT WORK REVIEW
+
+- **State:** branch `main`, HEAD `75a3ccb9ba160f8afcf3c9b39a301f352b273c08` (`== origin/main`); no commit/push made. Working tree: tracked clean; untracked = 4 prior `docs/prompts/` files + the execution prompt `for-claude-g2-exactly-one-live-execution-only.md` + the final record, plus new `docs/reviews/2026-10-04-g2-exactly-one-live-execution-internal-review.md` and this handoff edit (uncommitted).
+- **Authorization / attempt:** ID `g2-live-20261004-75a3ccb9`; record SHA `f68436dfbab09ad32a2ba248cf6ab63ce652b5615e82f8232f77aae9409c33c6`; attempt `59b8713d-1e63-4df8-b641-ac6b830f3ea6`. `AUTH_BOUND` and `ATTEMPT_CONSUMED` both occurred; models loaded. **Authorization spent.**
+- **Identities/runtime:** harness SHA `471fae40…7ac4`, procedure SHA `d1ccfde2…5a75`; Node v22.23.1, playwright 1.62.1, headless-shell 1234 / 151.0.7922.34, Viewer 7.124.2 / AutodeskProduction2 / streamingV2.
+- **Verdict:** K `finalOverall: FAIL`, `primaryRow: 3`, exit 1. C3 FAIL(repetitions), C8 FAIL(element-outside-frustum), C6 NOT_EVIDENCED(n2-not-discriminating), C20 BLOCKED(dependency:C8); 16 other checks PASS. Fatal/request/response ledgers empty. Cleanup: all steps ran, no unresolved ownership. No crash.
+- **Evidence (git-ignored):** `test/acceptance/results/clashpanel-viewerbridge-g2-attempts/g2-live-20261004-75a3ccb9.{reservation,journal,commit}.json`; `test/acceptance/results/clashpanel-viewerbridge-g2-{result.json,summary.md,closeout.json}`; raw log `/private/tmp/claude-501/g2/g2-live.log`. Not yet copied to `docs/research/evidence/` (needs separate authorization).
+- **Review:** [post-attempt internal review](../reviews/2026-10-04-g2-exactly-one-live-execution-internal-review.md) — 0 Critical / 2 High (C8, C3) / 1 Medium (C6) / 1 Low.
+- **Next action:** independent Work review of the live G2 evidence and verdict. **Must not begin without authorization:** any retry/second attempt, new authorization record, fixes to harness/production code, evidence commit, G3/H1/H2/OQ-1/host work.
+
+## PRIOR STATE (superseded) — G2 TERMINAL-SEQUENCING GOVERNANCE CHECKPOINT (CLEAN-WINDOW RULE PERSISTED; FINAL REISSUANCE REQUIRED; LIVE UNAUTHORIZED)
 
 - **Baseline before this checkpoint:** `8a8d49f6293e9be1bd858ed76ad991319c1e9f8c` (`main == origin/main`); `LIVE_PATH_WIRED=true`; `G2_DUAL_COUNTER_GATE.resolved=true`; harness SHA `471fae40d371c292f05d92bbdafdbdaa426a0426af0924a6e0946ac69fe77ac4`; accepted procedure SHA `d1ccfde224b8ae76fe74b06c93abc532e6df9612933cafaa045053c8e2e45a75`. This checkpoint is docs-only; the commit hash is the new HEAD (see `git log -1`).
 - **Decision (durable):** [terminal clean-window sequencing decision](../reviews/2026-10-04-g2-terminal-clean-window-sequencing-decision.md) — owner-authorized bounded sequencing exception. All HEAD-affecting governance writes land before final issuance; from final issuance to the single live attempt only read-only/non-repo-mutating checks; deferred verification/evidence/review/handoff persisted right after the attempt. Basis: [independent verification](../reviews/2026-10-04-g2-superseding-authorization-record-independent-verification.md) (0 Critical / 1 High / 0 Medium / 2 Low) — `AUTH_BOUND` precedes the Phase 0 git-tree check.
