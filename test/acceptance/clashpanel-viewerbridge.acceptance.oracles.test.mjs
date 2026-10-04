@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { INTENT } from '../../clashpanel/core/intents.js';
 import {
   TABLE_T, CHECK_NAMES, computeOverall, checkVerdictBase, validateResultSchema,
   makeCheckRecord, validateCheckRecord, makeControlRecord, validateControlRecord, mergeCheckRecord, combineSubchecks,
@@ -20,6 +21,7 @@ import {
   mat4MulVec4, cameraSample, cameraFromSample, frustumPredicate, cameraSamplesWithin, cameraSamplesExactlyEqual, findSettleIndex,
   waitForCameraSettle, isAggregateFitRecord, isPerModelFitRecord, evaluateC6, evaluateN2, evaluateC8,
   titleElementContract, evaluateC2, evaluateC3, C2_REGION_ORDER,
+  PANEL_SHOWN_INTENT_VALUE, PANEL_HIDDEN_INTENT_VALUE, countC2DomainWrites, buildPageAgentSource,
   evaluateC1, evaluateC5, evaluateC7Beta, evaluateSceneOwnership, SCENE_CLASS, evaluateC9, evaluateC10, evaluateC11, evaluateN5,
   evaluateC12, evaluateN4, evaluateC13, evaluateC14, evaluateC15, evaluateC16, evaluateC18a, evaluateC19,
   markersOnlyV1Violations, THEMING_SET_METHOD, C15_FIRST_ONLY_NOTE, C15_RESTORE_FAILED_NOTE,
@@ -287,14 +289,67 @@ test('C2: PASS iff clauses (i)–(viii); base initialize count is recorded only'
 });
 
 test('C3: exactly 3 show/hide repetitions with one dispatch each, idempotent dispose, no residue', () => {
-  const rep = { showSetVisibleTrue: true, showDispatches: ['PANEL_SHOWN'], hideDispatches: ['PANEL_HIDDEN'] };
+  const rep = { showSetVisibleTrue: true, showDispatches: ['panel/shown'], hideDispatches: ['panel/hidden'] };
   const dispose = { uninitializeCalls: 1, containerInDom: false, rootFound: false, byIdFound: false, retainedCallbackDispatches: 0, setVisibleAfterUninitialize: 0, postDisposeSpyCalls: 0, postDisposeIsVisible: false };
   const ok = { showHide: [rep, rep, rep], dispose, residue: [] };
   assert.equal(evaluateC3(ok).verdict, 'PASS');
   assert.equal(vr(evaluateC3({ ...ok, showHide: [rep, rep] })), 'FAIL(repetitions)');
-  assert.equal(vr(evaluateC3({ ...ok, showHide: [rep, rep, { ...rep, hideDispatches: ['PANEL_HIDDEN', 'PANEL_HIDDEN'] }] })), 'FAIL(repetitions)');
+  assert.equal(vr(evaluateC3({ ...ok, showHide: [rep, rep, { ...rep, hideDispatches: ['panel/hidden', 'panel/hidden'] }] })), 'FAIL(repetitions)');
   assert.equal(vr(evaluateC3({ ...ok, dispose: { ...dispose, uninitializeCalls: 2 } })), 'FAIL(dispose)');
   assert.equal(vr(evaluateC3({ ...ok, residue: [{ node: 'div' }] })), 'FAIL(residue)');
+  // wrong-kind visibility intent must still FAIL
+  assert.equal(vr(evaluateC3({ ...ok, showHide: [rep, rep, { ...rep, showDispatches: ['panel/hidden'] }] })), 'FAIL(repetitions)');
+});
+
+test('C3 regression: real product INTENT values PASS; the old symbolic NAMES FAIL (name/value defect)', () => {
+  const dispose = { uninitializeCalls: 1, containerInDom: false, rootFound: false, byIdFound: false, retainedCallbackDispatches: 0, setVisibleAfterUninitialize: 0, postDisposeSpyCalls: 0, postDisposeIsVisible: false };
+  const mk = (shown, hidden) => ({ showHide: [1, 2, 3].map(() => ({ showSetVisibleTrue: true, showDispatches: [shown], hideDispatches: [hidden] })), dispose, residue: [] });
+  assert.equal(evaluateC3(mk(INTENT.PANEL_SHOWN, INTENT.PANEL_HIDDEN)).verdict, 'PASS');
+  assert.equal(vr(evaluateC3(mk('PANEL_SHOWN', 'PANEL_HIDDEN'))), 'FAIL(repetitions)');
+});
+
+test('C2 regression (viii): panel-visibility intent VALUES are not domain writes; names and other intents are', () => {
+  assert.equal(countC2DomainWrites([INTENT.PANEL_SHOWN, INTENT.PANEL_HIDDEN]), 0);
+  assert.equal(countC2DomainWrites(['PANEL_SHOWN', 'PANEL_HIDDEN']), 2);
+  assert.equal(countC2DomainWrites([INTENT.PANEL_SHOWN, INTENT.NAV_NEXT, '<non-intent>']), 2);
+  assert.equal(countC2DomainWrites([]), 0);
+  // observation path: a benign construction-time visibility dispatch reports 0 domain writes to clause (viii)
+  const obs = { ...c2ok(), dispatchesDuringConstruction: 1, domainWrites: countC2DomainWrites([INTENT.PANEL_SHOWN]) };
+  assert.equal(vr(evaluateC2(obs)), 'FAIL(vii)');
+  // page portability: helper survives the page agent's verbatim shipping and works with only prelude constants
+  const portable = new Function('PANEL_SHOWN_INTENT_VALUE', 'PANEL_HIDDEN_INTENT_VALUE', `return (${countC2DomainWrites.toString()})`)(PANEL_SHOWN_INTENT_VALUE, PANEL_HIDDEN_INTENT_VALUE);
+  assert.equal(portable([INTENT.PANEL_SHOWN]), 0);
+});
+
+test('drift guard: harness panel-visibility intent constants equal the product INTENT values; harness imports no product module', () => {
+  assert.equal(PANEL_SHOWN_INTENT_VALUE, INTENT.PANEL_SHOWN);
+  assert.equal(PANEL_HIDDEN_INTENT_VALUE, INTENT.PANEL_HIDDEN);
+  const src = readFileSync(path.join(HERE, 'clashpanel-viewerbridge.acceptance.mjs'), 'utf8');
+  assert.equal(/from\s+['"][^'"]*clashpanel\/core\/intents/.test(src), false);
+});
+
+test('bounded static guard: no quoted product INTENT key NAME is used as a dispatched-intent literal in the G2 harness', () => {
+  const src = readFileSync(path.join(HERE, 'clashpanel-viewerbridge.acceptance.mjs'), 'utf8');
+  const names = Object.keys(INTENT);
+  const hits = [];
+  for (const n of names) {
+    const re = new RegExp(`['"]${n}['"]`, 'g');
+    if (re.test(src)) hits.push(n);
+  }
+  assert.deepEqual(hits, []);
+});
+
+test('C2 probe wiring guard: domainWrites is derived from the construction dispatches via countC2DomainWrites', () => {
+  const src = readFileSync(path.join(HERE, 'clashpanel-viewerbridge.acceptance.mjs'), 'utf8');
+  assert.ok(src.includes('domainWrites: countC2DomainWrites(constructionDispatches),'));
+  assert.ok(src.includes('const constructionDispatches = dispatched.slice(dMark);'));
+});
+
+test('page agent ships the C2/C3 intent constants and helper into the page', () => {
+  const harness = readFileSync(path.join(HERE, 'clashpanel-viewerbridge.acceptance.mjs'), 'utf8');
+  const agent = buildPageAgentSource(harness).source;
+  assert.ok(agent.includes("'panel/shown'") && agent.includes("'panel/hidden'") && agent.includes('countC2DomainWrites'));
+  assert.equal(agent.includes("'PANEL_SHOWN'"), false);
 });
 
 // ---- remaining evaluators ------------------------------------------------------------------

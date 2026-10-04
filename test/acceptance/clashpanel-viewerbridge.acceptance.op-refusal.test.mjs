@@ -442,7 +442,7 @@ function buildFakeEnv() {
     unitFacts: async () => ({ A: { unitScale: 0.3048, unitString: 'ft', nativeExtent: [2, 2, 2] }, B: { unitScale: 0.3048, unitString: 'ft', nativeExtent: [2, 2, 2] } }),
     shellProbe: {
       c2: async () => ({ threw: false, containerFound: true, containerUnderViewer: true, regions: H.C2_REGION_ORDER.map((region) => ({ region, hasHeading: true, hasBody: true })), addVisibilityListenerCalls: 1, bodyChildCount: 1, title: { ok: true }, setVisibleFalseBeforeListener: true, dispatchesDuringConstruction: 0, domainWrites: 0, shellKeys: ['show', 'hide', 'toggle', 'isVisible', 'dispose'] }),
-      c3: async () => ({ showHide: [1, 2, 3].map(() => ({ showSetVisibleTrue: true, showDispatches: ['PANEL_SHOWN'], hideDispatches: ['PANEL_HIDDEN'] })), dispose: { uninitializeCalls: 1, containerInDom: false, rootFound: false, byIdFound: false, retainedCallbackDispatches: 0, setVisibleAfterUninitialize: 0, postDisposeSpyCalls: 0, postDisposeIsVisible: false }, residue: [] }),
+      c3: async () => ({ showHide: [1, 2, 3].map(() => ({ showSetVisibleTrue: true, showDispatches: ['panel/shown'], hideDispatches: ['panel/hidden'] })), dispose: { uninitializeCalls: 1, containerInDom: false, rootFound: false, byIdFound: false, retainedCallbackDispatches: 0, setVisibleAfterUninitialize: 0, postDisposeSpyCalls: 0, postDisposeIsVisible: false }, residue: [] }),
     },
     camera: { sample: () => camera, waitFrame: () => Promise.resolve(), resetHome: () => { camera = frame([[-1, -1, -1, 1, 1, 1]]); return true; } },
     capture: {

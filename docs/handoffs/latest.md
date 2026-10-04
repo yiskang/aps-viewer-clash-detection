@@ -2,7 +2,49 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — G2 IMMUTABLE EVIDENCE CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED; AWAITING OWNER DECISION ON REMEDIATION PLANNING
+## LATEST — G2 C3/C2 BOUNDED CORRECTION INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
+
+- **State:** exactly-one live G2 attempt remains historically closed at **`FAIL (row 3)`**. Immutable evidence checkpoint `6f716bc0d0d2c1b1e61d26fe50b4dbe56266f7e4` remains authoritative; `docs/research/evidence/g2-live-20261004-75a3ccb9/` is byte-identical. The C3/C2 checkpoint commit is the HEAD of `main` (see `git log -1`); it was pushed to `origin/main` under owner authorization `for-claude-g2-c3-c2-checkpoint-commit-push-only.md`.
+- **Independent authority:** [bounded C3/C2 correction review](../reviews/2026-10-04-g2-c3-c2-bounded-correction-independent-review.md) — **0 Critical / 0 High / 0 Medium / 2 Low** (coarse static-name guard; stale aggregate count in the internal review, now corrected). Internal review: [C3/C2 internal review](../reviews/2026-10-04-g2-c3-c2-bounded-correction-internal-review.md).
+- **Corrected and independently accepted:** C3 deterministic harness-oracle defect (names → values `panel/shown`/`panel/hidden`); C2 latent same-class defect (`countC2DomainWrites`). Bounded audit: **no other same-class intent-key mismatch found.**
+- **Verification:** G2 acceptance 909/909 + browser binding 8/8 = **917/917**; offline aggregate **5155 total / 5154 pass / 0 fail / 1 existing unrelated todo** (Node `v22.23.1`); `git diff --check` clean.
+- **Identities:** committed harness SHA `cc8868cd68b9c2c3382297070289a2aa165c74249c6d82896d76bacc6c6ef09b` (was `471fae40…7ac4`); procedure SHA unchanged `d1ccfde224b8ae76fe74b06c93abc532e6df9612933cafaa045053c8e2e45a75`. The spent historical authorization record binds the old harness SHA and is not executable against this HEAD.
+- **Unresolved/unimplemented:** C8 remains unresolved (root cause unproven); C6 remains `NOT_EVIDENCED`; T4 settle rule unchanged; C20 derivative BLOCKED. No retry/new authorization record/attempt reset occurred. **This does not imply retry readiness, and C8/C6 implementation is not authorized.**
+- **Next action:** **separate owner authorization for D0 Viewer API evidence + D1 R1 replay only.** Must not begin without authorization: D0/D1 work, D2/D3/D4, C8/C6/T4 changes, any live run, new authorization record, attempt reset, procedure/production changes, G3/downstream work.
+
+---
+
+(Prior state follows.)
+
+## PRIOR STATE (superseded) — G2 C3/C2 BOUNDED CORRECTION IMPLEMENTED (UNCOMMITTED); AWAITING INDEPENDENT WORK REVIEW
+
+- **Status:** exactly-one live G2 attempt remains closed at **`FAIL (row 3)`**; immutable evidence checkpoint `6f716bc0d0d2c1b1e61d26fe50b4dbe56266f7e4` (`main == origin/main`) remains authoritative and unmodified. No retry, no new authorization record, no attempt reset, no commit/push.
+- **Authority:** owner prompt `docs/prompts/for-claude-g2-c3-c2-bounded-correction-only.md`; plan [remediation plan](../research/2026-10-04-g2-c3-c8-c6-remediation-plan.md) accepted for C3/C2 only by [independent review](../reviews/2026-10-04-g2-c3-c8-c6-remediation-plan-independent-review.md).
+- **Done in working tree (uncommitted):** C3 deterministic harness-oracle defect corrected (compares `panel/shown`/`panel/hidden` values via harness-local constants); C2 latent same-class defect corrected (`countC2DomainWrites`); regression/drift/static-guard tests added; stubs in op-refusal/runner tests fixed. Files: `test/acceptance/clashpanel-viewerbridge.acceptance.mjs` and the `.oracles`/`.op-refusal`/`.runner` test files. Bounded sibling audit: **no other same-class intent-key mismatch found**.
+- **Verification (offline only):** G2 acceptance glob + binding 917/917 pass; `npm run test:offline` 5154 tests / 5153 pass / 0 fail / 1 pre-existing unrelated todo; `git diff --check` clean; mutation check (revert → 5 tests fail) confirmed. [Internal review](../reviews/2026-10-04-g2-c3-c2-bounded-correction-internal-review.md): 0 Critical / 0 High / 1 Medium (fixed) / 1 Low (accepted).
+- **Identities:** **new uncommitted harness SHA `cc8868cd68b9c2c3382297070289a2aa165c74249c6d82896d76bacc6c6ef09b`** (was `471fae40…7ac4`); procedure SHA unchanged `d1ccfde224b8ae76fe74b06c93abc532e6df9612933cafaa045053c8e2e45a75`. Prior authorization record/attempt bind the old harness SHA (historical only).
+- **Unresolved/unimplemented:** C8 (root cause unproven, settle hypothesis only inferred), C6/N2 redesign, T4 settle rule (unchanged), C20 dependency, D0/D4 diagnostics. **This does not imply retry readiness.**
+- **Next action:** **independent Work review of the bounded C3/C2 correction**, then owner decision on checkpoint commit/push and the next bounded remediation phase.
+- **Must not begin without authorization:** commit/push, C8/C6/T4 work, diagnostic or acceptance live run, new authorization record, attempt reset, procedure change, G3/downstream work.
+
+---
+
+(Prior state follows.)
+
+## PRIOR STATE (superseded) — G2 C3/C8/C6 BOUNDED REMEDIATION PLAN DRAFTED + INTERNALLY REVIEWED; AWAITING INDEPENDENT WORK REVIEW
+
+- **Status:** exactly-one live G2 attempt remains closed at **`FAIL (row 3)`**. Immutable evidence checkpoint commit: `6f716bc0d0d2c1b1e61d26fe50b4dbe56266f7e4` (`main == origin/main`, tracked tree clean at start and end; this task made no tracked change except this handoff). Harness SHA `471fae40…7ac4` and procedure SHA `d1ccfde2…5a75` re-verified unchanged. Evidence snapshot unmodified.
+- **Plan (uncommitted):** [remediation plan](../research/2026-10-04-g2-c3-c8-c6-remediation-plan.md); [internal review](../reviews/2026-10-04-g2-c3-c8-c6-remediation-plan-internal-review.md) (Codex medium, 3 Critical / 4 High / 1 Medium raised; all dispositioned/fixed within planning scope; none open at plan level).
+- **Findings carried:** **C3 confirmed** harness-oracle defect (names vs values, H:9155-9156); **C2 latent sibling** (H:11732); no other C1–C20 site in that class (unread internals flagged UNVERIFIED). **C8 materially failed, root cause unresolved** — stale-camera/settle lag is best-supported but only **inferred** from reconstructed cameras; H3 contradicted, H1 unsupported, H4 open. **C6 remains `NOT_EVIDENCED`**, likely contaminated by the same lag; control lacks self-validation. **C20 derivative BLOCKED**, no standalone workstream.
+- **Owner decisions pending (plan §9):** revise frozen T4 settle rule?; control-invalid mapping M1 vs M2; S3 margin constant; D4 diagnostic vehicle; whether C3/C2 fix may be authorized separately and first.
+- **Next action:** **independent Work review of the bounded remediation plan**, then owner decision on whether to authorize remediation implementation.
+- **No implementation is authorized. No retry, no new authorization record, no attempt reset is authorized.** Must not begin without authorization: harness/test/production/procedure edits, any live run (incl. diagnostic D4), new record, G3/downstream work, commit/push.
+
+---
+
+(Prior state follows.)
+
+## PRIOR STATE (superseded) — G2 IMMUTABLE EVIDENCE CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED; AWAITING OWNER DECISION ON REMEDIATION PLANNING
 
 - **Status:** exactly-one live G2 attempt remains closed at **`FAIL (row 3)`**. No retry, new authorization record, attempt reset, or remediation occurred or is authorized.
 - **Evidence snapshot (independently accepted):** `docs/research/evidence/g2-live-20261004-75a3ccb9/`; manifest `docs/research/evidence/g2-live-20261004-75a3ccb9/MANIFEST.md`. 10/10 source/copy SHA-256 pairs match; operator log (`g2-live.log`, `g2-live.exit`, `server.log`) preserved. O2 was absent at source and is non-blocking. No screenshots existed because C20 was `BLOCKED(dependency:C8)` and never ran.

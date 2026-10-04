@@ -9081,6 +9081,13 @@ function evaluateN7({ preObs = null, restored = null, timedOut = false, executab
 const C2_REGION_ORDER = Object.freeze(['setup', 'run', 'filters', 'results', 'selected']);
 const C3_SHOW_HIDE_REPETITIONS = TABLE_T.T12.c3ShowHideRepetitions;
 const SHELL_PUBLIC_KEYS = Object.freeze(['dispose', 'hide', 'isVisible', 'show', 'toggle']);
+/** Canonical panel-visibility intent VALUES as dispatched (`intent.type`); copied by value from clashpanel/core/intents.js (NOT the `INTENT` key names). */
+const PANEL_SHOWN_INTENT_VALUE = 'panel/shown';
+const PANEL_HIDDEN_INTENT_VALUE = 'panel/hidden';
+/** PAGE-PORTABLE. §C2 (viii): count of construction-time dispatched intent types that are NOT panel-visibility intents. */
+function countC2DomainWrites(dispatchedTypes) {
+  return dispatchedTypes.filter((t) => t !== PANEL_SHOWN_INTENT_VALUE && t !== PANEL_HIDDEN_INTENT_VALUE).length;
+}
 
 /**
  * PAGE-PORTABLE (self-contained). §C2 (vi) title-element contract. `titleReturns` = the values
@@ -9152,8 +9159,8 @@ function evaluateC3(obs) {
   const o = obs || {};
   const reps = Array.isArray(o.showHide) ? o.showHide : [];
   const repOk = reps.length === C3_SHOW_HIDE_REPETITIONS && reps.every((r) => r.showSetVisibleTrue === true
-    && Array.isArray(r.showDispatches) && r.showDispatches.length === 1 && r.showDispatches[0] === 'PANEL_SHOWN'
-    && Array.isArray(r.hideDispatches) && r.hideDispatches.length === 1 && r.hideDispatches[0] === 'PANEL_HIDDEN');
+    && Array.isArray(r.showDispatches) && r.showDispatches.length === 1 && r.showDispatches[0] === PANEL_SHOWN_INTENT_VALUE
+    && Array.isArray(r.hideDispatches) && r.hideDispatches.length === 1 && r.hideDispatches[0] === PANEL_HIDDEN_INTENT_VALUE);
   const d = o.dispose || {};
   const disposeOk = d.uninitializeCalls === 1 && d.containerInDom === false && d.rootFound === false && d.byIdFound === false
     && d.retainedCallbackDispatches === 0 && d.setVisibleAfterUninitialize === 0 && d.postDisposeSpyCalls === 0 && d.postDisposeIsVisible === false;
@@ -11729,7 +11736,7 @@ function g2CreateShellProbe(env) {
         baseInitializeCalls: construction.filter(isMethod('DockingPanel.prototype.initialize')).length,
         setVisibleFalseBeforeListener: firstHide !== -1 && firstListener !== -1 && firstHide < firstListener,
         dispatchesDuringConstruction: constructionDispatches.length,
-        domainWrites: constructionDispatches.filter((t) => t !== 'PANEL_SHOWN' && t !== 'PANEL_HIDDEN').length,
+        domainWrites: countC2DomainWrites(constructionDispatches),
         shellKeys: shell ? Object.keys(shell) : null,
         failureEvidence: { containerOuterHtmlSha256: sha256Hex(outer), containerOuterHtml: truncateUtf8(outer, TABLE_T.T22.perFieldBytes).value, classTokens },
       };
@@ -13677,6 +13684,9 @@ if (isDirectInvocation(import.meta.url, process.argv[1])) {
 
 export {
   mergeCleanupDelta,
+  PANEL_SHOWN_INTENT_VALUE,
+  PANEL_HIDDEN_INTENT_VALUE,
+  countC2DomainWrites,
   // constants
   REPO_ROOT,
   HARNESS_REL_PATH,
