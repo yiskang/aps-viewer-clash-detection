@@ -1,0 +1,67 @@
+== C6: recompute clip from preserved cameraK x preserved world corners ==
+ max|clip_recomputed - clip_preserved| = 0  worstExcess recomputed = -0.540675686826625  preserved = -0.540675686826625  diff= 0.0  pass= True
+ bitwise-equal worstExcess: True
+ V rows norms [0.999999983, 1.000000036, 0.999999982]  dots 0.0 4.2e-08 3e-08
+ projection is orthographic (P[3],P[7],P[11],P[15])= 0 0 0 1
+ ortho half-width/half-height (1/P00,1/P11) = 338.21401763277834 190.2453867910847  aspect 1.777777760278536
+ eye distance from origin along view axis (|t|)= 380.4907836914069  translation [1.078959303413285e-05, -1.8346556316828355e-05, -380.49078369140625]
+== N2: recompute excess/inside from preserved clip (camera matrices NOT preserved) ==
+ worstExcess recomputed= -0.09999997577575592  preserved= -0.09999997577575592  bitwise-equal= True  pass= True  w all =1? True
+ single-ortho-affine-camera consistency: max resid over 8 corners x 4 rows = 1.6653345369377348e-16
+== C8: recompute excess/inside from preserved clip (camera matrices NOT preserved) ==
+ worstExcess recomputed= 5.858358023546797  preserved= 5.858358023546797  bitwise-equal= True  pass= False  w all =1? True
+ single-ortho-affine-camera consistency: max resid over 8 corners x 4 rows = 8.881784197001252e-16
+== C8 target bounds ==
+ C8 evidence corner-box = [-25.502992630004883, 46.41398620605469, -0.3333333432674408, -24.502992630004883, 47.41398620605469, 0.3333333432674408]
+ c4Table[A,104].candidateBox == referenceBox == True  and == C8 box: True  fragmentCount 1
+== six-plane min signed distance (NDC units; negative=outside) over 8 corners: C6
+  {'left(x>=-1)': 0.730583437, 'right(x<=1)': 0.642361213, 'bottom(y>=-1)': 0.74249977, 'top(y<=1)': 0.540675687, 'near(z>=-1)': 0.667544662, 'far(z<=1)': 0.567731127}
+ max|ndc| = 0.45932431317337497
+== six-plane min signed distance (NDC units; negative=outside) over 8 corners: N2
+  {'left(x>=-1)': 0.212708621, 'right(x<=1)': 0.212708589, 'bottom(y>=-1)': 0.099999976, 'top(y<=1)': 0.100000073, 'near(z>=-1)': 0.60835226, 'far(z<=1)': 0.626923529}
+ max|ndc| = 0.9000000242242441
+== six-plane min signed distance (NDC units; negative=outside) over 8 corners: C8
+  {'left(x>=-1)': 6.880970153, 'right(x<=1)': -4.986101893, 'bottom(y>=-1)': -5.858358024, 'top(y<=1)': 7.678512575, 'near(z>=-1)': 1.137588147, 'far(z<=1)': 0.855978518}
+ max|ndc| = 6.858358023546797
+== union box U: C6 evidence corners == N2 evidence corners ? True  U= [-135.1979217529297, 6.334116458892822, 0.25, 126.83025360107422, 44.23081588745117, 17.309173583984375]
+== Per-sample, per-known-target framing signature: center NDC (cx,cy), half-extent h=max(hx,hy), hx,hy ==
+ sample=C6   target=U(C6 target)      center=(+0.044111,+0.100912) hx=0.313528 hy=0.358412 h=0.358412
+ sample=C6   target=A:104(C8 target)  center=(+0.045810,+0.154327) hx=0.002091 hy=0.003577 h=0.003577
+ sample=C6   target=A:105             center=(-0.153297,+0.372549) hx=0.002091 hy=0.003577 h=0.003577
+ sample=N2   target=U(C6 target)      center=(+0.000000,-0.000000) hx=0.787291 hy=0.900000 h=0.900000
+ sample=N2   target=A:104(C8 target)  center=(+0.004265,+0.134128) hx=0.005250 hy=0.008981 h=0.008981
+ sample=N2   target=A:105             center=(-0.495706,+0.682100) hx=0.005250 hy=0.008981 h=0.008981
+ sample=C8   target=U(C6 target)      center=(+5.890834,-8.111422) hx=7.882906 hy=9.011422 h=9.011422
+ sample=C8   target=A:104(C8 target)  center=(+5.933536,-6.768435) hx=0.052566 hy=0.089923 h=0.089923
+ sample=C8   target=A:105             center=(+0.927480,-1.281767) hx=0.052566 hy=0.089923 h=0.089923
+ sample=C6 visible full width=676.4280 height=380.4908 units (ortho), aspect=1.777778
+ sample=N2 visible full width=269.3779 height=151.5251 units (ortho), aspect=1.777778
+ sample=C8 visible full width=26.9036 height=15.1333 units (ortho), aspect=1.777778
+ sample=C6 view-centre line passes world (x,y)=(-0.000030,0.000015) at z=0; direction (0.57735,-0.57735,0.57735)
+ sample=N2 view-centre line passes world (x,y)=(-12.963429,34.062058) at z=0; direction (0.57735,-0.57735,0.57735)
+ sample=C8 view-centre line passes world (x,y)=(-144.166608,53.199492) at z=0; direction (0.57735,-0.57735,0.57735)
+ U centre = [-4.183834075927734, 25.282466173171997, 8.779586791992188]  ndc of U centre under N2 = [1.570226267066932e-08, -4.8404325825313066e-08, -0.009285634105214144]  under C6 = [0.044111111858721325, 0.10091204177667089, 0.04990676738986792]
+ N2 sample vs fit(U) 0.9 rule: U half-extents (hx,hy)= [0.7872913949269246, 0.8999999758199183]
+ predicted scale multiplier (rel. N2 camera) for a 0.9-margin fit of A:104 = 100.21296154580102  observed C8/N2 scale multiplier = 10.012691653335736  observed C8/C6 = 25.142616133301807  predicted fit104/C6 = 251.642226782046
+ log-scale position of C8 between N2 and predicted fit(104) = 0.5000444262828136
+== C8 sample: NDC of union corner (xmin,ymax,zmax) = [5.291770106552462e-07, 0.9000001260931754, 0.358418621195045]  (a 0.9-margin tight fit of an element occupying that corner predicts x~0,y~0.9)
+ square footprint 0.5833 (B-family b1 extent) -> implied height 16.0977, implied centre z=9.2603; implied centre ndc=[5e-07, 0.0, 0.3764291]
+ square footprint 1.0 (A-family a1 extent) -> implied height 15.6810, implied centre z=9.4687; implied centre ndc=[5e-07, 0.0, 0.3749213]
+ implied footprint squareness (a-b) from ndc_x(centre)=0: -2.013386295445811e-05
+== proxy: U under C8-sample camera ext x (-1.9920724438700663, 13.773739513585667)  y (-17.122844365695617, 0.9000001260931754)  -> worstExcess(U|C8cam) = 16.122844365695617
+ U under N2 cam worstExcess -0.09999997577575592  U under C6 cam -0.540675686826625
+== timing (atMs, ms) ==
+ seq 292 C6 fit(U) call                           12597.1
+ seq 293 add cameraTransitionCompleted (L1)       12597.6
+ seq 295 N2 fit([111],B) call                     12932.3
+ seq 296 add (L2)                                 12932.5
+ seq 297 remove                                   13114.4
+ seq 298 remove                                   13114.4
+ seq 299 C8 fit([104],A) call                     13282.2
+ seq 300 add (L3)                                 13446.0
+ seq 301 remove                                   13635.2
+ seq 302 C8 fit([105],A) call                     13769.1
+ seq 303 add (L4)                                 13771.3
+ seq 304 remove                                   14321.4
+ C6 call -> N2 call 335.2 ; N2 call -> C8 call 349.9 ; C8#1 call -> C8#2 call 486.9
+ C6 call -> E1 517.3 ; E1 -> E2 520.8 ; E2 -> E3 686.2 ; N2 call->E1 182.1 ; C8#1 add delay after call 163.8 ; add L3 -> E2 189.2

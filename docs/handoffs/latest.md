@@ -2,7 +2,20 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — G2 C3/C2 BOUNDED CORRECTION INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
+## LATEST — G2 D0/D1 RESEARCH INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
+
+- **Baseline:** pre-checkpoint `main == origin/main == ef436d4a5632692fadbddc09fb9aa6410fadc258`; the D0/D1 checkpoint commit is the HEAD of `main` (see `git log -1`) and was pushed to `origin/main` under owner authorization `for-claude-g2-d0-d1-checkpoint-commit-push-only.md`. Harness SHA `cc8868cd…ef09b` and accepted procedure SHA `d1ccfde2…5a75` unchanged; immutable evidence `docs/research/evidence/g2-live-20261004-75a3ccb9/` byte-identical; historical verdict `FAIL (row 3)`.
+- **Independent authority:** [final-wording targeted re-review](../reviews/2026-10-04-g2-d0-d1-final-wording-targeted-independent-rereview.md) — **0 Critical / 0 High / 0 Medium / 0 Low; accepted** (earlier: [initial review](../reviews/2026-10-04-g2-d0-viewer-api-evidence-d1-r1-replay-independent-review.md), [corrected re-review](../reviews/2026-10-04-g2-d0-d1-corrected-targeted-independent-rereview.md)).
+- **Committed package:** [D0/D1 research](../research/2026-10-04-g2-d0-viewer-api-evidence-d1-r1-replay.md); [replay scripts + output](../research/2026-10-04-g2-d1-replay-scripts/) (reproducibility accepted: independent replay from `/tmp` byte-identical, SHA `9d39b4d…a9`); internal reviews (initial, correction, final-wording); the four D0/D1 prompts; this handoff.
+- **Accepted conclusions:** the one-request-lag pattern remains **moderate/partial; historical causality unproved**. Exact arithmetic reproduction holds for retained finite values. D2 inputs = retained U/A:104 plus explicitly synthetic missing-target geometry; D2 would test mechanical possibility only. `restoreState(…, true)` is narrowly source-supported (pinned 7.124.2, valid-state path).
+- **Unchanged:** C6 remains `NOT_EVIDENCED`; no numeric C6 margin selected; C8 remains unresolved; T4 unchanged; C20 derivative BLOCKED. No retry, new authorization record, or attempt reset occurred. Reviewer-suggested four-gate structure (simulator spec → offline simulator → diagnostic instrumentation/live run → T4/harness remediation) is an input for a future D2 spec.
+- **D2 remains unauthorized.** **Next action:** **separate owner authorization for D2 synthetic-transition specification/research only.** Must not begin without separate authorization: D2 implementation, any live diagnostic/retry, new authorization record, attempt reset, C8/C6/N2/T4 changes, harness/test/product/procedure changes, G3/downstream work.
+
+---
+
+(Prior state follows.)
+
+## PRIOR STATE (superseded) — G2 C3/C2 BOUNDED CORRECTION INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
 
 - **State:** exactly-one live G2 attempt remains historically closed at **`FAIL (row 3)`**. Immutable evidence checkpoint `6f716bc0d0d2c1b1e61d26fe50b4dbe56266f7e4` remains authoritative; `docs/research/evidence/g2-live-20261004-75a3ccb9/` is byte-identical. The C3/C2 checkpoint commit is the HEAD of `main` (see `git log -1`); it was pushed to `origin/main` under owner authorization `for-claude-g2-c3-c2-checkpoint-commit-push-only.md`.
 - **Independent authority:** [bounded C3/C2 correction review](../reviews/2026-10-04-g2-c3-c2-bounded-correction-independent-review.md) — **0 Critical / 0 High / 0 Medium / 2 Low** (coarse static-name guard; stale aggregate count in the internal review, now corrected). Internal review: [C3/C2 internal review](../reviews/2026-10-04-g2-c3-c2-bounded-correction-internal-review.md).
