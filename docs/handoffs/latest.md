@@ -2,7 +2,61 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — G2 D2 SPEC INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
+## LATEST — G2 D2-OFFLINE CHECKPOINT COMPLETED; AWAITING OWNER AUTHORIZATION FOR DIAGNOSTIC-INSTRUMENTATION SPEC/RESEARCH
+
+- **Checkpoint:** one docs/research commit on `main` from baseline `53ea0a74b215b4a3c7463b8fe7da4bf783b8c8fb`; the checkpoint commit is the new HEAD (see `git log -1`). Authorized by owner prompt `for-claude-g2-d2-offline-checkpoint-commit-push-only.md`. The three G2 authorization records stay untracked and unchanged.
+- **Independent authority:** [targeted input-snapshot re-review](../reviews/2026-10-05-g2-d2-offline-input-snapshot-hardening-targeted-independent-rereview.md) — **0 Critical / 0 High / 0 Medium / 2 Low; ready to checkpoint**; TOCTOU Medium closed. Internal review: [hardening internal review](../reviews/2026-10-05-g2-d2-offline-input-snapshot-hardening-internal-review.md).
+- **Accepted:** simulator/results; D=30 model-invalid characterization; M-GAP witness coverage; owned input snapshots (fixtures/R1 validated and consumed from one byte snapshot); inclusive 128 B row-cap boundary tests.
+- **Verification:** D2 **55/55**; `npm run test:offline` **5,155 total / 5,154 pass / 0 fail / 1 existing todo**; 52,308 schedules, cells 4,104 / 4,788 / 18,144 / 25,272; D=30 characterization 36; two runs byte-identical; output digest `e1d1b815ed351e6feba3e34822ba9895e54035158e685bfbe7f628f6d10bbb06` (98,819 + 86,011 B).
+- **Interpretation limits:** H2/H5 are synthetic mechanical support only. C6/N2 remains outcome E with no accepted margin (`d_min=none`). D=30 supports no inference. Historical G2 `FAIL (row 3)`, C6 `NOT_EVIDENCED`, C8 unresolved, T4 unchanged. Harness SHA `cc8868cd…ef09b`, procedure SHA `d1ccfde2…5a75`, immutable evidence unchanged.
+- **Not authorized:** live diagnostic, G2 retry, new/reset authorization record, runtime remediation, G3/downstream work. **Next gate:** separate owner authorization for diagnostic-instrumentation specification/research only.
+
+---
+
+## (superseded) LATEST — G2 D2-OFFLINE BOUNDED REMEDIATION INDEPENDENTLY RE-REVIEWED; ONE INPUT-INTEGRITY CORRECTION REQUIRED BEFORE CHECKPOINT
+
+- **Baseline:** `main == origin/main == 53ea0a74b215b4a3c7463b8fe7da4bf783b8c8fb`. Harness SHA `cc8868cd…ef09b`, procedure SHA `d1ccfde2…5a75`, accepted D2 spec, immutable evidence, historical G2 `FAIL (row 3)`, C6 `NOT_EVIDENCED`, unresolved C8, and T4 are unchanged. No Viewer/browser/live run, retry, new authorization record, attempt reset, commit, or push occurred.
+- **Independent authority:** [targeted bounded-remediation re-review](../reviews/2026-10-05-g2-d2-offline-bounded-remediation-targeted-independent-rereview.md) — **0 Critical / 0 High / 1 Medium / 1 Low**. The prior D=30 and M-GAP Medium blockers are closed; provenance, production-path multi-reason dedup coverage, and stale wording/pins are accepted.
+- **Verified results:** D2 **49/49**; offline aggregate **5,155 total / 5,154 pass / 0 fail / 1 existing todo**; two fresh simulator runs byte-identical to each other and retained results. Counts remain 52,308 with cells 4,104 / 4,788 / 18,144 / 25,272; 36 model-invalid D=30 characterization schedules (36 V5, 12 `INVALID_AMBIGUOUS`, no inference); four A outcomes; H2/H5 supported in every exhaustive cell; C6/N2 E with `d_min=none`; 104 traces; outputs 98,819 + 86,011 B; digest `e1d1b815…bbb06`.
+- **Remaining Medium:** `assertInputs()` hashes `fixtures.json` and R1, then `runSimulation()` reopens them to parse. A concurrent replacement can make recorded validated hashes differ from consumed bytes. This provenance-integrity defect blocks the docs/research checkpoint. Minimum fix: read mandatory inputs once, hash those owned snapshots, and parse fixtures/R1 from the same validated snapshots.
+- **Remaining Low:** the 128 B row cap is enforced on the only trace insertion path and current rows are ASCII (observed max 47 B), but no exact boundary/one-byte-over test exists. Non-blocking by itself.
+- **Current authorization:** this review and handoff update only. **Recommended next action:** owner authorization for one bounded D2-OFFLINE input-snapshot hardening pass, directly affected tests/docs, and targeted independent re-review. Must not begin without explicit authorization: simulator/test/result remediation, checkpoint commit/push, diagnostic instrumentation/live, G2 retry, new authorization record, attempt reset, T4/C6/C8/harness/product/procedure changes, or G3.
+
+---
+
+(Prior state follows.)
+
+## LATEST — G2 D2-OFFLINE BOUNDED REMEDIATION COMPLETE + INTERNALLY REVIEWED (UNCOMMITTED); AWAITING TARGETED INDEPENDENT WORK RE-REVIEW
+
+- **Baseline:** `main == origin/main == 53ea0a74b215b4a3c7463b8fe7da4bf783b8c8fb`. Harness SHA `cc8868cd…ef09b` and procedure SHA `d1ccfde2…5a75` unchanged; immutable evidence unchanged; historical G2 `FAIL (row 3)`; C6 `NOT_EVIDENCED`; C8 unresolved; T4 unchanged. Authority: `docs/prompts/for-claude-g2-d2-offline-bounded-remediation-only.md`, remediating the [independent Work review](../reviews/2026-10-05-g2-d2-offline-implementation-results-independent-review.md) (0C/0H/2M/3L).
+- **Simulator:** `docs/research/2026-10-04-g2-d2-synthetic-transition/` (README). Reviews: [implementation internal review](../reviews/2026-10-05-g2-d2-offline-implementation-internal-review.md), [remediation internal review](../reviews/2026-10-05-g2-d2-offline-bounded-remediation-internal-review.md) (0 Critical / 0 High / 0 Medium / 2 Low; both Low deferred or rejected with reasons).
+- **M1 fixed:** the D=30 branch is now explicitly **model-invalid characterization outside the exhaustive domain**: **36/36 violate V5, 12 `INVALID_AMBIGUOUS`**; excluded from cell counts, outcomes, H2/H5 inference, `invariantResults` and exit status; no inference drawn; definitions untouched.
+- **M2 fixed:** a deterministic witness is retained per (cell, mechanism). **M-GAP witnesses:** `W-S-00497` (CL-primary), `W-S-00728` (CL-tail), `W-S-01467` (OP-primary), `W-S-02249` (OP-tail). M-PRE/M-RST/M-TAIL retained. Retained traces **104** (cap 154); outputs 98,819 + 86,011 B.
+- **Lows fixed:** provenance labels (A:104 is a comparison target only; `SYN-A`/`SYN-B` are not B:111/A:135), non-vacuous multi-reason dedup test (`selectWitnesses` helper), stale review/pin wording.
+- **Verification:** D2 tests **49/49** (was 46); `npm run test:offline` **5,155 total / 5,154 pass / 0 fail / 1 todo**; `git diff --check` clean; two clean simulator runs **byte-identical**; **new output digest `e1d1b815ed351e6feba3e34822ba9895e54035158e685bfbe7f628f6d10bbb06`** (companion `75f0596f…`).
+- **Unchanged (compared key by key against the pre-remediation run):** 52,308 schedules; cells 4,104 / 4,788 / 18,144 / 25,272; 36 D=30; classCounts, mechanismCounts, invariantResults, oracle, outcomes (all four A); H2/H5 SUPPORTED in every cell; C6/N2 outcome E (`d_min=none`, failing pair `P_C6~L_home`); no C6 margin. No historical causality claim.
+- **Deferred Lows (not blockers):** input-file read-after-hash race (hash and parse from one buffer); a per-row-cap boundary test.
+- **Not done / unchanged:** no spec, harness, test, product, procedure, T4/C6/C8 change; no Viewer/browser/live run; no retry; no new authorization record; no attempt reset; nothing committed or pushed.
+- **Next action:** **targeted independent Work re-review of the bounded D2-OFFLINE remediation**, then owner decision on checkpoint commit/push and any diagnostic-instrumentation gate. Must not begin without authorization: commit/push, diagnostic instrumentation/live, G2 retry, new authorization record, attempt reset, T4/C6/C8/harness/product changes, G3.
+
+---
+
+(Prior state follows.)
+
+## PRIOR STATE (superseded) — G2 D2-OFFLINE INDEPENDENTLY REVIEWED; BOUNDED CORRECTION REQUIRED BEFORE CHECKPOINT
+
+- **Baseline:** `main == origin/main == 53ea0a74b215b4a3c7463b8fe7da4bf783b8c8fb`. Harness SHA `cc8868cd…ef09b`, procedure SHA `d1ccfde2…5a75`, and immutable historical evidence are unchanged. Historical G2 remains `FAIL (row 3)`; C6 remains `NOT_EVIDENCED`; C8 remains unresolved; T4 remains unchanged.
+- **Independent authority:** [implementation/results review](../reviews/2026-10-05-g2-d2-offline-implementation-results-independent-review.md) — **0 Critical / 0 High / 2 Medium / 3 Low; bounded correction required.** The exhaustive implementation/result is otherwise accepted: scope, 52,308 schedule counts, state machine, numeric T4, independent ownership oracle, four A outcomes, H2/H5 mechanical support, tail branch, C6/N2 outcome E, hashes/caps, and deterministic output all verified.
+- **Blocking corrections:** (M1) D=30 has 36 V5 violations and 12 `INVALID_AMBIGUOUS`; keep it outside exhaustive cells/exit, but label it model-invalid characterization rather than “not model defects,” and draw no D=30 inference. (M2) retain at least one deterministic M-GAP witness; the current 100 traces represent M-PRE/M-RST/M-TAIL but no M-GAP. Directly related Lows: precise `SYN-A`/`SYN-B` provenance labels; non-vacuous multi-reason dedup regression test; stale internal-review/input-pin wording.
+- **Verified runs:** D2 **46/46**; two simulator runs byte-identical to each other and retained results (`outputDigestSha256 48bb1f81…ce82b`); offline aggregate **5,155 total / 5,154 pass / 0 fail / 1 existing todo**; `git diff --check` clean. Spec pin `635d1834…c574` and fixture pin `6ee6e9fa…78e0` are independently ratified.
+- **Current authorization:** review documentation/handoff update only. Simulator remediation, checkpoint commit/push, diagnostic work, and live work are not authorized.
+- **Exact next action:** owner may authorize one bounded D2-OFFLINE remediation limited to M1/M2 and directly related Low corrections, regenerated deterministic outputs, and targeted independent re-review. Must not begin without explicit authorization: simulator/results/test edits, commit/push, diagnostic instrumentation/live, G2 retry, new authorization record, attempt reset, T4/C6/C8/harness/product/procedure changes, or G3.
+
+---
+
+(Prior state follows.)
+
+## PRIOR STATE (superseded) — G2 D2 SPEC INDEPENDENTLY ACCEPTED; CHECKPOINT COMMIT/PUSH AUTHORIZED AND EXECUTED
 
 - **Baseline:** pre-checkpoint `main == origin/main == dee0850b1fbcf23ff8762cf614b4cb4ca88b2836`; the D2 spec checkpoint commit is the HEAD of `main` (see `git log -1`) and was pushed to `origin/main` under owner authorization `for-claude-g2-d2-spec-checkpoint-commit-push-only.md`. Harness SHA `cc8868cd…ef09b` and procedure SHA `d1ccfde2…5a75` unchanged; immutable evidence `docs/research/evidence/g2-live-20261004-75a3ccb9/` unchanged; historical verdict `FAIL (row 3)`.
 - **Independent authority:** [targeted re-review](../reviews/2026-10-04-g2-d2-corrected-targeted-independent-rereview.md) — **0 Critical / 0 High / 0 Medium / 3 Low; accepted** (earlier: [initial independent review](../reviews/2026-10-04-g2-d2-synthetic-transition-spec-independent-review.md), [internal review](../reviews/2026-10-04-g2-d2-synthetic-transition-spec-internal-review.md)). The three Lows are **non-blocking** and were deliberately not edited: THROW example frame number (derive expected frames from the normative rules in tests), compact trace encoding, runtime-version wording.

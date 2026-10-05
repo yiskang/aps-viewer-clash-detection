@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "pose": {
+    "home": [0, 0, 0, 0],
+    "dest": { "1": [10, 5, 2.5, 1.25], "2": [20, 10, 5, 2.5] }
+  },
+  "t4": { "toleranceAbs": 1e-9, "timeoutSamples": 64 },
+  "domains": {
+    "D": [1, 2, 3, 4, 6, 10],
+    "L": [0, 1, 2],
+    "S": [0, 1, 2],
+    "G": [0, 1],
+    "shadowCapFrame": 127
+  },
+  "tail": { "tau": 1e-10 },
+  "characterization": { "D": 30, "L": 0, "S": 1 },
+  "expectedCounts": {
+    "total": 52308,
+    "cells": { "CL-primary": 4104, "CL-tail": 4788, "OP-primary": 18144, "OP-tail": 25272 },
+    "characterization": 36
+  },
+  "caps": {
+    "maxTraces": 154,
+    "perOutputBytes": 2621440,
+    "totalOutputBytes": 3670016,
+    "summaryBytes": 524288,
+    "geometryTableBytes": 262144,
+    "traceRowBytes": 128,
+    "traceRows": 128,
+    "maxEnumerated": 60000
+  },
+  "geometry": {
+    "aspect": { "num": 676, "den": 380 },
+    "kappaAnchor": 0.9,
+    "kappaSet": [0.85, 0.9, 0.95],
+    "offsets": [-0.02, -0.01, 0, 0.01, 0.02],
+    "d": [5, 20, 50, 100, 263.8571494974672, 500],
+    "dy": [0, 38],
+    "homeMultipliers": [1.5, 2, 3, 5],
+    "stabilityFactor": 3,
+    "boxHalf": 0.5,
+    "retainedPairDistance": 263.8571494974672
+  }
+}
