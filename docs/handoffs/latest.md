@@ -2,7 +2,14 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — G2 DIAGNOSTIC-INSTRUMENTATION SCHEMA-V3 CORRECTION INDEPENDENTLY ACCEPTED; READY FOR OWNER-AUTHORIZED CHECKPOINT
+## LATEST — G2 HISTORICAL AUTHORIZATION ARTIFACTS ARCHIVED (TRACKED, NON-EXECUTABLE PROVENANCE); WORKING TREE FULLY CLEAN
+
+- **Checkpoint:** one docs/governance commit on top of diagnostic checkpoint `3a599ea744c9bd38884c4519f2803e5d60c18399` (see `git log -1`). Authorized by owner prompt `for-claude-g2-historical-authorization-artifact-archival-checkpoint.md`.
+- **Records (Case A, kept at original paths, bytes unchanged):** `75a3ccb9` spent/consumed by the single live attempt; `8a8d49f6` and `dbd97137` superseded. Status, hashes and discovery-risk findings: [`2026-10-06-g2-historical-authorization-records-status.md`](../research/2026-10-06-g2-historical-authorization-records-status.md). Presence in Git is not authorization. **No active authorization exists.**
+- **Unchanged:** harness SHA `cc8868cd…ef09b`, procedure SHA `d1ccfde2…5a75`, immutable evidence, D2 and diagnostic checkpoints, G2 `FAIL (row 3)`, C6 `NOT_EVIDENCED`, C8 unresolved, T4. No live/retry/new record/reset.
+- **Next gate:** separate owner authorization for a future live-diagnostic design/preparation package only. No live execution is authorized.
+
+## (superseded) LATEST — G2 DIAGNOSTIC-INSTRUMENTATION SCHEMA-V3 CORRECTION INDEPENDENTLY ACCEPTED; READY FOR OWNER-AUTHORIZED CHECKPOINT
 
 - **Repo/branch/HEAD:** `aps-viewer-clash-detection`, `main == origin/main == 06980ee1e17b1268d4028ed9951c5f8462016cd2`. Package/reviews/handoff remain **uncommitted**; nothing pushed.
 - **Independent authority:** [`2026-10-06-g2-diagnostic-instrumentation-schema-v3-targeted-independent-rereview.md`](../reviews/2026-10-06-g2-diagnostic-instrumentation-schema-v3-targeted-independent-rereview.md) — **0 Critical / 0 High / 0 Medium / 3 Low; ready to checkpoint**. The prior blocking schema-contract Medium is closed.
