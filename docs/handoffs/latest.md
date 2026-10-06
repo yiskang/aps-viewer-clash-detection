@@ -2,9 +2,18 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — VIEWER CLASH PANEL PRODUCT CONTINUATION ACCEPTED FOR CHECKPOINT (OWNER-AUTHORIZED COMMIT/PUSH)
+## LATEST — VIEWER CLASH PANEL DEMO EVIDENCE RECONCILIATION (DOCS/EVIDENCE-ONLY)
 
-- **Repo/branch/HEAD:** `main == origin/main == d45703f21b9001bd8114fbf0fcbc7263e5046cb1` before review writes; product package, independent review, and this handoff remain uncommitted and unpushed.
+- **Baseline:** `main == origin/main == 396db3cabe9f21c662a4de68d7264c19c6d3964f` before this reconciliation commit; tree clean (only the owner prompt untracked, committed with this change); G2/C6/C8 unchanged.
+- **Snapshot count (neither Branch A nor B needed a file change):** the authoritative reviewed set is **17 PNGs**, all present in the evidence index, inspected by the independent review, and tracked in `396db3c` (`05b`, `07b`, `13b` are separate files). The "16 PNGs" figure in the owner prompt was stale (the independent review already says so). `12-narrow-700.png` was reviewed and is tracked. **No PNG added, none regenerated**; snapshots byte-unchanged since `396db3c`. Visual adjudication unchanged.
+- **Verdicts:** **16 PASS / 0 FAIL / 1 INCONCLUSIVE**. Screenshot `13` = INCONCLUSIVE (mid-`Stopping`); `13b` = authoritative PASS (cancelled partial, 472).
+- **Lows:** the independent review found **4 Low** at review time; the warning-count documentation Low (Low 4) was corrected in the evidence report before checkpoint (it now names both `getInstanceTree` and `getAecModelData`), leaving **3 unresolved non-blocking Lows**: non-cryptographic last-resort UUID entropy; ~700 px Viewer/header clipping + horizontal overflow; no direct automated assertion of the exact `min(460px, 90vw)` width.
+- **Unchanged:** product-facing verdict (ready for product-facing checkpoint, 0C/0H/0M); no product code/tests changed; G2 `FAIL (row 3)`, C6 `NOT_EVIDENCED`, C8 unresolved remain separate debt. No retry, new/reset authorization record, procedure change, or G3 work.
+- **Next gate:** product-facing continuation based on governing artifacts, awaiting owner authorization.
+
+## (superseded) PRIOR LATEST — VIEWER CLASH PANEL PRODUCT CONTINUATION ACCEPTED FOR CHECKPOINT (COMMITTED 396db3c)
+
+- **Repo/branch/HEAD:** at review time `main == origin/main == d45703f21b9001bd8114fbf0fcbc7263e5046cb1`; since committed and pushed as `396db3c`. (Review-time Low count 4; current unresolved is 3 — see above.)
 - **Independent authority:** [product continuation independent visual/product review](../reviews/2026-10-06-viewer-clash-panel-product-continuation-independent-visual-review.md) — **0 Critical / 0 High / 0 Medium / 4 Low; ready for product-facing checkpoint**. All 11 prior Lows are closed or reduced to non-blocking debt; no owner screenshot review is required.
 - **Final-state gates:** offline **5,185 total / 5,184 pass / 0 fail / 1 existing todo**; DOM **83/83**; focused extension/host **23/23**; `git diff --check` clean before review writes.
 - **Independent headed reproduction:** Chromium completed Structure-versus-Mechanical Hard with **491 clashes**; rapid first double-click opened one Panel; Focus, Isolate, Markers, result switching, Back to all, X-close/inactive toolbar sync, reopen retention, Clear, cleanup, and the unchanged default URL passed.
