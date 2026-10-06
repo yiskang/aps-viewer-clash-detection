@@ -170,35 +170,333 @@ body, html {
     background-position: center;
 }
 
-/* Clash Panel list/readability polish (host stylesheet; the panel's own renderers only emit class names). */
+/* Clash Panel: native Viewer 7.124.2 light-theme look (host stylesheet; the panel's renderers only emit class names).
+   Values are copied from the Viewer stylesheet (docs/research/2026-10-06-viewer-clash-panel-native-style-alignment/
+   reference-audit.md); Viewer defines no CSS variables, so a local token layer scoped to the panel is used. Layout-safety
+   (no-widening) rules live in PANEL_CSS (clashpanel/ui/render/panel.js). Inline geometry stays in ClashDockingPanel.js. */
+.clash-panel-root {
+    --nv-text: #0a131c;
+    --nv-text-2: #4a555b;
+    --nv-dim: #939ca5;
+    --nv-accent: #00bfff;
+    --nv-accent-focus: #1dc6f2;
+    --nv-primary: #06a7df;
+    --nv-border: #d5dbe1;
+    --nv-band: rgba(242, 247, 250, 0.7);
+    --nv-row-hover: rgba(0, 191, 255, 0.2);
+    --nv-row-selected: #e7e7e7;
+    --nv-hairline: rgba(0, 0, 0, 0.2);
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--nv-text);
+    padding: 0 0 12px;
+}
+.clash-panel-root button,
+.clash-panel-root input,
+.clash-panel-root select {
+    font-family: inherit;
+    font-size: 12px;
+}
+.clash-panel-root p {
+    margin: 6px 0;
+}
+
+/* Section headings: native tr.logical-group band. */
+.clash-panel-root .clash-region-heading {
+    margin: 0;
+    padding: 12px 10px 8px;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.3;
+    text-transform: capitalize;
+    color: var(--nv-text);
+    background: var(--nv-band);
+}
+.clash-panel-root .clash-region-body {
+    padding: 8px 10px 4px;
+}
+
+/* Fieldsets: no browser groove; legend styled as a native setting name. */
+.clash-panel-root fieldset {
+    border: 0;
+    padding: 0;
+    margin: 0 0 8px;
+}
+.clash-panel-root legend {
+    padding: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--nv-text-2);
+}
+.clash-panel-root label {
+    color: var(--nv-text);
+}
+.clash-panel-root ul.clash-model-list,
+.clash-panel-root ul.clash-badges,
+.clash-panel-root ul.clash-validation-list,
+.clash-panel-root ul.clash-banner-details,
+.clash-panel-root ul.clash-results-lines,
+.clash-panel-root ul.clash-selected-notes,
+.clash-panel-root ul.clash-diagnostics-preview {
+    list-style: none;
+    padding-left: 0;
+    margin: 4px 0;
+}
+.clash-panel-root .clash-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+}
+.clash-panel-root .clash-model,
+.clash-panel-root .clash-mode label,
+.clash-panel-root .clash-group label {
+    margin: 2px 0;
+}
+.clash-panel-root .clash-model-state,
+.clash-panel-root .clash-model-note,
+.clash-panel-root .clash-set-scope,
+.clash-panel-root .clash-grouping-note,
+.clash-panel-root .clash-reason,
+.clash-panel-root .clash-selected-empty,
+.clash-panel-root .clash-results-message {
+    font-weight: 300;
+    color: var(--nv-text-2);
+}
+
+/* Checkbox / radio: the Viewer has none (settings use a switch); smallest native-accent styling. */
+.clash-panel-root input[type="checkbox"],
+.clash-panel-root input[type="radio"] {
+    accent-color: var(--nv-accent);
+    margin: 0 6px 0 0;
+    vertical-align: middle;
+}
+
+/* Inputs / selects: native search box + select.option-drop-down. */
+.clash-panel-root input[type="text"],
+.clash-panel-root input[type="search"],
+.clash-panel-root select {
+    color: var(--nv-text-2);
+    background: #fff;
+    border: 1px solid var(--nv-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    margin: 2px 0;
+}
+.clash-panel-root input[type="text"],
+.clash-panel-root input[type="search"] {
+    color: var(--nv-text);
+}
+.clash-panel-root input[type="text"]:focus,
+.clash-panel-root input[type="search"]:focus,
+.clash-panel-root select:focus {
+    border-color: var(--nv-accent-focus);
+}
+.clash-panel-root input[type="text"]:focus:not(:focus-visible),
+.clash-panel-root input[type="search"]:focus:not(:focus-visible),
+.clash-panel-root select:focus:not(:focus-visible) {
+    outline: 0;
+}
+.clash-panel-root input[aria-invalid="true"] {
+    border-color: #d93025;
+}
+.clash-panel-root .clash-field-error {
+    color: #d93025;
+}
+
+/* Buttons: native .adsk-button.table-button outline look. */
+.clash-panel-root button {
+    color: var(--nv-text-2);
+    background: transparent;
+    border: 1px solid var(--nv-text-2);
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin: 4px 4px 4px 0;
+    cursor: pointer;
+}
+.clash-panel-root button:hover {
+    color: var(--nv-accent);
+    border-color: var(--nv-accent);
+}
+.clash-panel-root button:focus-visible,
+.clash-panel-root input:focus-visible,
+.clash-panel-root select:focus-visible,
+.clash-panel-root summary:focus-visible {
+    outline: 2px solid var(--nv-accent-focus);
+    outline-offset: 1px;
+}
+.clash-panel-root button:active {
+    color: var(--nv-accent);
+    border-radius: 3px;
+    box-shadow: inset 0 1px 1px 0 rgba(0, 0, 0, 0.6);
+}
+.clash-panel-root button:disabled,
+.clash-panel-root input:disabled,
+.clash-panel-root select:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.clash-panel-root button:disabled:hover {
+    color: var(--nv-text-2);
+    border-color: var(--nv-text-2);
+}
+.clash-panel-root label:has(> input:disabled) {
+    opacity: 0.4;
+}
+
+/* Run = native .docking-panel-primary-button; Stop = .docking-panel-secondary-button (same box). */
+.clash-panel-root button[data-key="run-start"],
+.clash-panel-root button[data-key="run-stop"] {
+    height: 34px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 3px;
+    font-weight: 700;
+    letter-spacing: -0.1px;
+    color: #fff;
+}
+.clash-panel-root button[data-key="run-start"] {
+    background: var(--nv-primary);
+}
+.clash-panel-root button[data-key="run-stop"] {
+    background: var(--nv-dim);
+}
+.clash-panel-root button[data-key="run-start"]:hover,
+.clash-panel-root button[data-key="run-start"]:focus-visible {
+    color: #fff;
+    background: var(--nv-accent);
+}
+.clash-panel-root button[data-key="run-stop"]:hover,
+.clash-panel-root button[data-key="run-stop"]:focus-visible {
+    color: #fff;
+    background: #bec8d2;
+}
+.clash-panel-root button[data-key="run-start"]:disabled:hover {
+    color: #fff;
+    background: var(--nv-primary);
+}
+.clash-panel-root button[data-key="run-stop"]:disabled:hover {
+    color: #fff;
+    background: var(--nv-dim);
+}
+
+/* Status / validation: native setting-description text. */
+.clash-panel-root .clash-validation,
+.clash-panel-root .clash-status,
+.clash-panel-root .clash-run-state,
+.clash-panel-root .clash-counts,
+.clash-panel-root .clash-progress,
+.clash-panel-root .clash-setup-summary,
+.clash-panel-root .clash-setup-changed {
+    color: var(--nv-text-2);
+}
+.clash-panel-root .clash-validation-head {
+    font-weight: 600;
+}
+.clash-panel-root .clash-banner {
+    margin: 6px 0;
+    padding: 6px 8px;
+    background: var(--nv-band);
+    border-left: 3px solid var(--nv-dim);
+}
+.clash-panel-root .clash-banner p {
+    margin: 2px 0;
+}
+.clash-panel-root summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--nv-text-2);
+}
+.clash-panel-root dt {
+    font-weight: 600;
+    color: var(--nv-text-2);
+}
+.clash-panel-root dd {
+    margin: 0 0 4px;
+}
+
+/* Results: native tree rows (padding 6px, 12px), no outer box. */
 .clash-panel-root .clash-rows {
     list-style: none;
     margin: 0;
     padding: 0;
     max-height: 260px;
     overflow-y: auto;
-    border: 1px solid #c8ccd0;
+    border: 0;
 }
 .clash-panel-root .clash-row {
-    padding: 4px 8px;
-    border-bottom: 1px solid #e3e5e8;
+    padding: 6px;
+    margin-bottom: 1px;
+    border: 0;
+    border-left: 3px solid transparent;
     cursor: pointer;
     font-size: 12px;
     line-height: 1.35;
 }
 .clash-panel-root .clash-row:hover {
-    background: #eef3f8;
+    background: var(--nv-row-hover);
 }
-.clash-panel-root .clash-row:focus {
-    outline: 2px solid #0696d7;
+.clash-panel-root .clash-row:focus-visible {
+    outline: 2px solid var(--nv-accent-focus);
     outline-offset: -2px;
 }
 .clash-panel-root .clash-row-selected,
 .clash-panel-root .clash-row-selected:hover {
-    background: #cfe8fb;
+    background: var(--nv-row-selected);
+    font-weight: 400;
+    border-left: 3px solid #999;
+}
+.clash-panel-root .clash-liveness,
+.clash-panel-root .clash-badge,
+.clash-panel-root .clash-dbid,
+.clash-panel-root .clash-sep {
+    color: var(--nv-text-2);
+}
+
+/* Group rows: native group.category header band (bold). */
+.clash-panel-root .clash-group-row {
+    margin-bottom: 1px;
+    background: var(--nv-band);
+    font-weight: 700;
+}
+.clash-panel-root .clash-group-row button {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 8px 6px;
+    text-align: left;
+    color: var(--nv-text);
+    font-weight: 700;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+}
+.clash-panel-root .clash-group-row button:hover {
+    color: var(--nv-text);
+    background: var(--nv-row-hover);
+}
+.clash-panel-root .clash-group-row button:active {
+    box-shadow: none;
+}
+
+/* Pager / selected region. */
+.clash-panel-root .clash-nav,
+.clash-panel-root .clash-page {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 4px;
+}
+.clash-panel-root .clash-nav-label,
+.clash-panel-root .clash-page-label {
+    color: var(--nv-text-2);
+}
+.clash-panel-root .clash-selected-title {
+    font-size: 14px;
+    font-weight: 700;
+}
+.clash-panel-root .clash-detail-term {
     font-weight: 600;
-    border-left: 4px solid #0696d7;
-    padding-left: 4px;
+    color: var(--nv-text-2);
 }
 .clash-panel-root .clash-progress {
     display: flex;
@@ -206,9 +504,79 @@ body, html {
     gap: 0 0.4em;
     align-items: center;
 }
-.clash-panel-root .clash-actions {
+.clash-panel-root .clash-actions,
+.clash-panel-root .clash-run-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 4px 10px;
     align-items: center;
+}
+.clash-panel-root .clash-actions button,
+.clash-panel-root .clash-run-actions button {
+    margin: 4px 0;
+}
+
+/* Scrollbar for the inner results list (the body gets the native one from .docking-panel-scroll). */
+.clash-panel-root .clash-rows::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.clash-panel-root .clash-rows::-webkit-scrollbar-track {
+    background: none;
+}
+.clash-panel-root .clash-rows::-webkit-scrollbar-thumb {
+    border-radius: 1px;
+    background: rgb(190, 200, 210);
+}
+.clash-panel-root .clash-rows::-webkit-scrollbar-thumb:hover {
+    background: rgb(147, 156, 165);
+}
+
+/* Spacing refinements (headed-validation Lows). */
+.clash-panel-root .clash-filters label,
+.clash-panel-root fieldset.clash-group label,
+.clash-panel-root .clash-mode label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 2px 14px 2px 0;
+}
+.clash-panel-root .clash-filters label.clash-filter-text,
+.clash-panel-root .clash-filters label.clash-filter-model,
+.clash-panel-root .clash-filters label.clash-sort {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    margin: 0 0 6px;
+}
+.clash-panel-root .clash-setup-toggle {
+    display: block;
+    margin: 0 0 8px;
+}
+.clash-panel-root label.clash-name {
+    display: block;
+    margin-bottom: 4px;
+}
+.clash-panel-root legend {
+    margin-bottom: 4px;
+}
+.clash-panel-root .clash-detail-side button[data-key^="selected-only-"] {
+    display: block;
+    margin: 4px 0 8px;
+}
+.clash-panel-root .clash-actions button {
+    margin: 4px 6px 4px 0;
+}
+.clash-panel-root label:has(> input:disabled) {
+    opacity: 0.55;
+}
+.clash-panel-root label:has(> input:disabled) > input:disabled {
+    opacity: 1;   /* opacity is applied once, on the label */
+}
+/* Host fieldset spacing: higher specificity than PANEL_CSS's equal-specificity `fieldset{margin:0}`. */
+.clash-panel-root fieldset.clash-set,
+.clash-panel-root fieldset.clash-mode,
+.clash-panel-root fieldset.clash-group {
+    margin: 0 0 8px;
 }

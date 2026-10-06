@@ -2,7 +2,21 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — VIEWER CLASH PANEL PRODUCT-FACING CONTINUATION II ACCEPTED FOR CHECKPOINT
+## LATEST — VIEWER CLASH PANEL NATIVE VIEWER STYLE ALIGNMENT ACCEPTED FOR CHECKPOINT
+
+- **Repo/branch/HEAD:** `main == origin/main == 838bbad40f778483cc9bf082ecaddbab84e19ea2` before the checkpoint commit (hash recorded in `git log -1`). Committed/pushed as one scoped checkpoint under owner prompt `for-claude-viewer-clash-panel-native-style-alignment-checkpoint-commit-push-only.md`.
+- **Independent authority:** [independent visual/product review](../reviews/2026-10-06-viewer-clash-panel-native-style-alignment-independent-visual-review.md) — **0 Critical / 0 High / 0 Medium / 2 Low; native Viewer style alignment accepted; ready for checkpoint**; no owner screenshot review required. Internal review: [0C/0H/0M, no unresolved in-scope finding](../reviews/2026-10-06-viewer-clash-panel-native-style-alignment-internal-review.md).
+- **Scope (style only):** `wwwroot/main.css` (native-value token layer + panel rules scoped under `.clash-panel-root`) and `clashpanel/ui/ClashDockingPanel.js` (native `docking-panel-scroll docking-panel-container-solid-color-a` body classes, `top:50px`, no title overlap). `render/*.js`, `PANEL_CSS`, core/controller/ViewerBridge unchanged; no product semantics changed.
+- **Native references:** live Viewer 7.124.2 light-theme Model Browser and Settings panels — [reference-audit.md](../research/2026-10-06-viewer-clash-panel-native-style-alignment/reference-audit.md). Continuation II snapshots are before-state evidence only, not the target.
+- **Visual evidence:** [report](../research/2026-10-06-viewer-clash-panel-native-style-alignment/style-alignment-evidence-report.md); `after/` **16 PNG: 16 PASS / 0 FAIL / 0 INCONCLUSIVE** (earlier rounds in `after/superseded-rounds/`). Launch: `npm start`, `http://localhost:8080/?clashPanelDemo=1`. Console 0 errors (Viewer-origin `getInstanceTree` deprecation only).
+- **Tests:** offline **5,192 total / 5,191 pass / 0 fail / 1 existing todo**; DOM **83/83**; focused host-style **8/8**; `git diff --check` clean. Exact-width contract (`min(460px,90vw)`) now asserted.
+- **Responsive:** accepted — panel fits at ~700 px with no inner overflow; page overflow comes only from the external `#header` "Load as additional model" label (outside panel ownership, deferred).
+- **Two non-blocking Lows (Work-adjudicated):** (1) Group legend slightly tighter to its preceding row than Sort; (2) native `text-transform: capitalize` renders "Filters And Grouping". Opaque white body is not a finding.
+- **Other deferred product debt (unchanged):** UUID fallback entropy; ~700 px external header overflow; tiny markers; union framing (v1); cross-reload persistence; Viewer selection excluded (§9.2); prior four Continuation II Lows.
+- **G2/C6/C8 separate and unchanged:** G2 `FAIL (row 3)`, C6 `NOT_EVIDENCED`, C8 unresolved. No retry, new/reset authorization record, procedure change, or G3.
+- **Next gate:** product-facing continuation based on governing product artifacts (not renewed G2/C8 causality research), awaiting owner authorization; if none is authorized, stop.
+
+## (superseded) PRIOR LATEST — VIEWER CLASH PANEL PRODUCT-FACING CONTINUATION II ACCEPTED FOR CHECKPOINT
 
 - **Repo/branch/HEAD:** `main == origin/main == b24a005d1a7fbe8b76172806a544898fa5aaa4b4` before the checkpoint commit (hash recorded in `git log -1`). Committed/pushed as one scoped checkpoint under owner prompt `for-claude-viewer-clash-panel-product-facing-continuation-ii-checkpoint-commit-push-only.md`.
 - **Independent authority:** [independent visual/product review](../reviews/2026-10-06-viewer-clash-panel-product-facing-continuation-ii-independent-visual-review.md) — **0 Critical / 0 High / 0 Medium / 4 Low; Scope A accepted; ready for product-facing checkpoint**. Internal review: [0C/0H/0M/4L](../reviews/2026-10-06-viewer-clash-panel-product-facing-continuation-ii-internal-review.md). No owner screenshot review required.

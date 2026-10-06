@@ -261,6 +261,7 @@ test('geometry: container is anchored with a bounded height; body scrolls and is
     const b = document.querySelector('#clash-panel .clash-panel-body').style;
     return {
       position: c.position, top: c.top, left: c.left, height: c.height,
+      width: c.width, minWidth: c.minWidth, maxWidth: c.maxWidth, bodyTop: b.top, bodyClass: document.querySelector('#clash-panel .clash-panel-body').className,
       bodyPosition: b.position, overflowY: b.overflowY, bodyBackground: b.backgroundColor,
     };
   }, panelVm());
@@ -268,6 +269,11 @@ test('geometry: container is anchored with a bounded height; body scrolls and is
   assert.notEqual(r.top, '');
   assert.notEqual(r.left, '');
   assert.match(r.height, /^(calc\(.+\)|\d+(\.\d+)?(px|%|vh))$/, 'container height must be bounded');
+  assert.equal(r.width.replace(/\s+/g, ''), 'min(460px,90vw)', `width contract, got "${r.width}"`);
+  assert.equal(r.minWidth.replace(/\s+/g, ''), 'min(340px,90vw)');
+  assert.equal(r.maxWidth, '90vw');
+  assert.equal(r.bodyTop, '50px');
+  assert.match(r.bodyClass, /docking-panel-scroll/);
   assert.equal(r.bodyPosition, 'absolute');
   assert.equal(r.overflowY, 'auto');
   assert.ok(r.bodyBackground !== '' && r.bodyBackground !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(r.bodyBackground), `opaque body background, got "${r.bodyBackground}"`);

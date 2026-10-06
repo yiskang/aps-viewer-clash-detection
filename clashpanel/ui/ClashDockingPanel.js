@@ -15,6 +15,8 @@ import { INTENT } from '../core/intents.js';
 import { renderPanel } from './render/panel.js';
 
 const BODY_CLASS = 'clash-panel-body';
+// Native Viewer scroll surface (7.124.2): 6px themed scrollbar + solid light surface. Added alongside BODY_CLASS.
+const NATIVE_BODY_CLASSES = 'docking-panel-scroll docking-panel-container-solid-color-a';
 
 export function createClashDockingPanelClass(Autodesk) {
   const Base = Autodesk?.Viewing?.UI?.DockingPanel;
@@ -30,7 +32,7 @@ export function createClashDockingPanelClass(Autodesk) {
       this.container.appendChild(this.closer);
       this.initializeMoveHandlers(this.title);
       const body = doc.createElement('div');
-      body.className = BODY_CLASS;
+      body.className = `${BODY_CLASS} ${NATIVE_BODY_CLASSES}`;
       // Geometry: the base DockingPanel leaves a panel unpositioned (it would land below the viewer), so anchor it
       // top-left with a bounded height and let the body scroll.
       const box = this.container.style;
@@ -44,15 +46,15 @@ export function createClashDockingPanelClass(Autodesk) {
       box.resize = 'none';
       const bodyBox = body.style;
       bodyBox.position = 'absolute';
-      bodyBox.top = '40px';
+      bodyBox.top = '50px';   // native .docking-panel-title is 50px tall (49px + 1px border)
       bodyBox.left = '0';
       bodyBox.right = '0';
       bodyBox.bottom = '0';
       bodyBox.overflowY = 'auto';
       bodyBox.overflowX = 'hidden';
-      bodyBox.padding = '6px 10px';
+      bodyBox.height = 'auto';   // native .docking-panel-scroll sets height:100%, which would defeat top/bottom
       bodyBox.boxSizing = 'border-box';
-      bodyBox.background = '#fff';   // the 3D canvas must not show through the text
+      bodyBox.background = '#fff';   // opaque: the 3D canvas must not show through the text (padding/colours live in main.css)
       this.container.appendChild(body);
     }
   };
