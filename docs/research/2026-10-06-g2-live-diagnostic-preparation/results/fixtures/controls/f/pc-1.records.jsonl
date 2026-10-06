@@ -1,0 +1,22 @@
+{"ad":"00000000-0000-4000-8000-000000000000","ah":"ff375a1168aa2587171441c981fed22b45d362fb461c658bce554303adbfb636","ai":"synthetic-fixture-not-an-authorization","at":["P-FRM","P-TC","V-PEND","V-EDGE"],"ba":"FALSE","bp":"NULL","br":"synthetic 0","cp":{"bytesPerEvent":256,"bytesPerNv":406,"controlWindowFrames":1801,"dataEvents":24576,"deadlineMs":5000,"endBytes":384,"maxFits":9,"maxRefreshHz":360,"maxRestores":4,"maxSettles":4,"metaBytes":1536,"projectedEventsMax":8192,"projectedSamplesPerSettle":64,"reserveBytes":2048,"retainedExcerpts":32,"retainedNumericSamples":512,"settleSamples":1801,"targetWindowFrames":3576,"totalTraceBytes":6400000,"viewerDispatchAllowance":1024},"cs":1,"ec":{"max":24576,"min":0},"ei":"LOW","f":0,"hh":"b71043924421a7e0e32091cdb3acb772b5bcc4f057dfd40d8b42b0947fac8944","id":"ON","k":"META","lb":1,"ph":"d1ccfde224b8ae76fe74b06c93abc532e6df9612933cafaa045053c8e2e45a75","pk":"fe2308aca50dbe315009e57de78227927635293af89b15aea5f632ef99faf206","q0":1,"qe":0,"rc":1,"rl":"PC-1","rr":60,"run":"syn-f-pc1","sh":"385993ba1b5bdb30687ab3235c01f651bca5be2690e5ccdfa6fecd9ed7be594e","sv":2,"sw":"OPEN","tm":0,"tq":"c32df1cfb25ff1c6e3ca87c3bf1cb7e9c5e5f2d839ff473c9c0998c87c0e6a14","vb":{"VB-1":1,"VB-2":1,"VB-3":1},"vd":"12b9fe49f41dc99ccec62535e5c887da915980829da2e941cfe4da3d7197c02e","vg":1,"vv":"7.124.2"}
+{"cl":0,"dg":"610cc6673b6c7d53","f":0,"k":"FS","q":1,"tm":0}
+{"f":0,"hq":1,"k":"PS","q":2,"rd":"frame","sp":0,"sx":"none","tm":1}
+{"cl":0,"dg":"610cc6673b6c7d53","f":1,"k":"FS","q":3,"tm":167}
+{"f":1,"hq":3,"k":"PS","q":4,"rd":"frame","sp":0,"sx":"none","tm":168}
+{"f":1,"k":"RQ","pp":"pre","q":5,"r":1,"sp":0,"sx":"none","tm":169}
+{"cl":0,"co":"returned","dg":"610cc6673b6c7d53","f":1,"k":"RQ","nw":1,"pp":"post","q":6,"r":1,"sb":1,"sp":1,"sx":"appear","tm":170}
+{"cl":0,"dg":"610cc6673b6c7d53","f":2,"k":"FS","q":7,"tm":334}
+{"f":2,"hq":7,"k":"PS","q":8,"rd":"frame","sb":1,"sp":1,"sx":"none","tm":335}
+{"ev":1,"f":2,"k":"TE","pa":1,"q":9,"tm":336}
+{"cl":1,"dg":"c7f34870af217843","f":3,"k":"FS","q":10,"tm":501}
+{"f":3,"hq":10,"k":"PS","q":11,"rd":"frame","sp":0,"sx":"clear","tm":502}
+{"cl":2,"dg":"8bc6788c99d85249","f":4,"k":"FS","q":12,"tm":668}
+{"f":4,"hq":12,"k":"PS","q":13,"rd":"frame","sp":0,"sx":"none","tm":669}
+{"ev":0,"f":4,"k":"TE","pa":0,"q":14,"tm":670}
+{"f":4,"k":"TC","q":15,"tm":671}
+{"cl":2,"dg":"8bc6788c99d85249","f":5,"k":"FS","q":16,"tm":835}
+{"f":5,"hq":16,"k":"PS","q":17,"rd":"frame","sp":0,"sx":"none","tm":836}
+{"f":5,"k":"TZ","q":18,"tm":837,"zc":"normal","zp":"targetEnd"}
+{"ci":"PC-1","cr":"PASSED","f":5,"fb":50,"fu":5,"k":"CT","q":19,"tm":838}
+{"f":5,"k":"TZ","q":20,"tm":839,"zc":"normal","zp":"final"}
+{"cg":0,"ds":0,"f":5,"iv":0,"k":"END","lq":20,"lr":1,"mx":0,"nb":1341,"ne":20,"nvn":0,"nvx":0,"overflow":0,"pc":{"VB-3":0},"rj":0,"run":"syn-f-pc1","sd":"1839341fd291c71f2dbc0e77423c75e3f89d15928e720fb9f70b96e0ffd680e5","tm":839,"truncated":0,"ts":"OK","zt":18}
