@@ -235,6 +235,8 @@ test('two shells mounted at once keep separate radio groups (Soft / Element in o
     for (const id of ['pa', 'pb']) {
       const shell = createPanelShell({ Autodesk: window.Autodesk, parentContainer: host, controller: createFakeController(vm), id, title: id });
       shell.show();
+      // The shell anchors every panel at left:10px; place them side by side so neither covers the other's inputs.
+      if (id === 'pb') document.getElementById(id).style.left = '600px';
     }
   }, panelVm());
   await page.check('#pa [data-key="setup-mode-soft"]');
@@ -248,4 +250,25 @@ test('two shells mounted at once keep separate radio groups (Soft / Element in o
     };
   });
   assert.deepEqual(r, { a: [true, true], b: [true, false, true, false], names: 4 });
+}));
+
+test('geometry: container is anchored with a bounded height; body scrolls and is opaque (live-validation regression)', () => withPage(async ({ page }) => {
+  await page.evaluate(PRELUDE);
+  const r = await page.evaluate((vm) => {
+    const { createPanelShell, createFakeController, host } = window.__t;
+    createPanelShell({ Autodesk: window.Autodesk, parentContainer: host, controller: createFakeController(vm), id: 'clash-panel', title: 'T' });
+    const c = document.getElementById('clash-panel').style;
+    const b = document.querySelector('#clash-panel .clash-panel-body').style;
+    return {
+      position: c.position, top: c.top, left: c.left, height: c.height,
+      bodyPosition: b.position, overflowY: b.overflowY, bodyBackground: b.backgroundColor,
+    };
+  }, panelVm());
+  assert.equal(r.position, 'absolute');
+  assert.notEqual(r.top, '');
+  assert.notEqual(r.left, '');
+  assert.match(r.height, /^(calc\(.+\)|\d+(\.\d+)?(px|%|vh))$/, 'container height must be bounded');
+  assert.equal(r.bodyPosition, 'absolute');
+  assert.equal(r.overflowY, 'auto');
+  assert.ok(r.bodyBackground !== '' && r.bodyBackground !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(r.bodyBackground), `opaque body background, got "${r.bodyBackground}"`);
 }));

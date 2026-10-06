@@ -187,12 +187,17 @@ test('real tree: every file under clashpanel/ is correctly placed and obeys its 
   }
 });
 
-test('real tree: nothing under clashtest/, collision/ or wwwroot/ imports clashpanel', () => {
+// H1 (host composition): the sample host module is the ONE file outside clashpanel/ allowed to import the Panel
+// (its composition root, ../../clashpanel/index.js). Everything else under the frozen layers stays guarded.
+const HOST_COMPOSITION_ALLOWLIST = new Map([['wwwroot/extensions/clashPanelHost.js', ['../../clashpanel/index.js']]]);
+
+test('real tree: nothing under clashtest/, collision/ or wwwroot/ imports clashpanel (except the H1 host composition module)', () => {
   const files = ['clashtest', 'collision', 'wwwroot'].flatMap((d) => walk(join(ROOT, d))).filter((f) => /\.(m?js)$/.test(f));
   assert.ok(files.length > 50, 'the reverse guard must actually scan the frozen layers');
   for (const f of files) {
-    assert.deepEqual(importsClashpanel(readFileSync(f, 'utf8')), [], rel(f));
+    assert.deepEqual(importsClashpanel(readFileSync(f, 'utf8')), HOST_COMPOSITION_ALLOWLIST.get(rel(f)) ?? [], rel(f));
   }
+  assert.ok(files.some((f) => HOST_COMPOSITION_ALLOWLIST.has(rel(f))), 'the allow-listed host module must exist');
 });
 
 test('real tree: nobody in clashpanel/ reaches clashtest/viewer, clashtest internals or collision (explicit AC-P10 pin)', () => {

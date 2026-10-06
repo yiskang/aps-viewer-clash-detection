@@ -31,6 +31,27 @@ export function createClashDockingPanelClass(Autodesk) {
       this.initializeMoveHandlers(this.title);
       const body = doc.createElement('div');
       body.className = BODY_CLASS;
+      // Geometry: the base DockingPanel leaves a panel unpositioned (it would land below the viewer), so anchor it
+      // top-left with a bounded height and let the body scroll.
+      const box = this.container.style;
+      box.position = 'absolute';
+      box.top = '10px';
+      box.left = '10px';
+      box.width = '460px';
+      box.height = 'calc(100% - 80px)';
+      box.minWidth = '340px';
+      box.resize = 'none';
+      const bodyBox = body.style;
+      bodyBox.position = 'absolute';
+      bodyBox.top = '40px';
+      bodyBox.left = '0';
+      bodyBox.right = '0';
+      bodyBox.bottom = '0';
+      bodyBox.overflowY = 'auto';
+      bodyBox.overflowX = 'hidden';
+      bodyBox.padding = '6px 10px';
+      bodyBox.boxSizing = 'border-box';
+      bodyBox.background = '#fff';   // the 3D canvas must not show through the text
       this.container.appendChild(body);
     }
   };

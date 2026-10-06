@@ -6,6 +6,8 @@ import modelsRouter from './routes/models.js';
 let app = express();
 app.use(express.static('wwwroot'));
 app.use('/collision', express.static('collision'));
+app.use('/clashtest', express.static('clashtest'));
+app.use('/clashpanel', express.static('clashpanel'));
 app.use(authRouter);
 app.use(modelsRouter);
 app.listen(PORT, function () { console.log(`Server listening on port ${PORT}...`); });

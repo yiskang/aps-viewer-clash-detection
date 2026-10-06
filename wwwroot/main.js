@@ -1,16 +1,27 @@
 import { initViewer, loadModel } from './viewer.js';
 import { openModelPicker } from './model-picker.js';
 import { normalizeUrn, urnFromHash, shouldLoadFromHash } from './urn.js';
+import { resolveViewerOptions, currentSearch } from './viewerOptions.js';
+import { loadDemoModels } from './clashPanelDemo.js';
 
 /** The URN most recently handed to `onModelSelected`; see `shouldLoadFromHash`. */
 let lastRequestedUrn = '';
 
+const viewerOptions = resolveViewerOptions(currentSearch());
+
 initViewer(document.getElementById('preview')).then(viewer => {
     window.viewer = viewer;
-    setupUrnInput(viewer);
+    setupUrnInput(viewer, { skipInitialHashLoad: viewerOptions.demo });
+    if (viewerOptions.demo) {
+        // ?clashPanelDemo=1: Structure then Mechanical as federated models. Never writes the location hash.
+        loadDemoModels(viewer, { loadModel }).catch(err => {
+            console.error('Clash Panel demo: could not load the demo models', err);
+            alert('Could not load the Clash Panel demo models. See the console for more details.');
+        });
+    }
 });
 
-function setupUrnInput(viewer) {
+function setupUrnInput(viewer, { skipInitialHashLoad = false } = {}) {
     const input = document.getElementById('urn');
     const loadButton = document.getElementById('load');
     const browseButton = document.getElementById('browse');
@@ -54,7 +65,7 @@ function setupUrnInput(viewer) {
     });
 
     const initialUrn = urnFromHash(window.location.hash);
-    if (initialUrn) {
+    if (initialUrn && !skipInitialHashLoad) {
         input.value = initialUrn;
         request(initialUrn);
     }

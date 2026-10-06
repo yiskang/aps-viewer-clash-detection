@@ -161,3 +161,54 @@ body, html {
 .picker-spacer {
     flex: 1 1 auto;
 }
+
+/* Clash Panel toolbar button (wwwroot/extensions/ClashPanelExtension.js): inline-SVG icon, no asset file. */
+#clash-panel-toolbar-button .adsk-button-icon {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='3' y='5' width='11' height='11' fill='none' stroke='%23999' stroke-width='2'/><rect x='10' y='9' width='11' height='11' fill='none' stroke='%23e8590c' stroke-width='2'/></svg>");
+    background-size: 24px 24px;
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+/* Clash Panel list/readability polish (host stylesheet; the panel's own renderers only emit class names). */
+.clash-panel-root .clash-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid #c8ccd0;
+}
+.clash-panel-root .clash-row {
+    padding: 4px 8px;
+    border-bottom: 1px solid #e3e5e8;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.35;
+}
+.clash-panel-root .clash-row:hover {
+    background: #eef3f8;
+}
+.clash-panel-root .clash-row:focus {
+    outline: 2px solid #0696d7;
+    outline-offset: -2px;
+}
+.clash-panel-root .clash-row-selected,
+.clash-panel-root .clash-row-selected:hover {
+    background: #cfe8fb;
+    font-weight: 600;
+    border-left: 4px solid #0696d7;
+    padding-left: 4px;
+}
+.clash-panel-root .clash-progress {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 0.4em;
+    align-items: center;
+}
+.clash-panel-root .clash-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    align-items: center;
+}

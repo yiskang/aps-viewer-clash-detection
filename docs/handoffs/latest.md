@@ -2,7 +2,29 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — G2 FUTURE LIVE-DIAGNOSTIC DESIGN/PREPARATION PACKAGE ACCEPTED AND CHECKPOINTED (SC-C03 BLOCKER CLOSED)
+## LATEST — VIEWER CLASH PANEL DEMO-READY PACKAGE INDEPENDENTLY ACCEPTED; READY FOR OWNER-AUTHORIZED CHECKPOINT
+
+- **Repo/branch/HEAD:** `main == origin/main == eeb356dcf14f66afc62735724f134769c7d72e48`. The demo-ready implementation/evidence/review package remains uncommitted; nothing was pushed.
+- **Independent authority:** [visual/product review](../reviews/2026-10-06-viewer-clash-panel-demo-ready-independent-visual-product-review.md) — **0 Critical / 0 High / 0 Medium / 11 Low; ready for demo/product-facing checkpoint**. All Lows are non-blocking polish, narrow failure-path hardening, explicit demo limits, or one evidence-index correction.
+- **Visual/product proof:** all **16** retained PNGs independently inspected: **16 PASS / 0 FAIL / 0 INCONCLUSIVE**. A fresh headed reproduction produced **491 completed clashes** and **394 cancelled partial clashes**; result selection, focus-on-select, markers/outlines, guarded isolation, Back to All, filtering, paging, clear, hide/reopen and cleanup worked; console had **0 errors** (one expected Viewer deprecation warning).
+- **Adjudications:** union framing is **acceptable current v1 behavior** despite small Floor-type clashes/markers; governing spec §9.2 explicitly excludes Viewer selection, so the prompt criterion means Panel selection/presentation rather than `viewer.select`; interim `urn#loadSeq` cross-reload non-resume is an explicit, non-blocking v1/OQ-1 limitation. No owner screenshot decision is required before checkpoint.
+- **Default-path containment:** full `clashtest`/`clashpanel` composition is dynamically imported only on first Panel use. Default URL stayed error-free; legacy SVF initializer plus Room Locator/Clash Finder defaults remain asserted; Panel demo/SVF2 behavior is opt-in.
+- **Tests:** `npm run test:offline` **5,177 total / 5,176 pass / 0 fail / 1 existing todo**; `npm run test:clashpanel:dom` **83/83**; `git diff --check` clean.
+- **G2 debt remains separate and unchanged:** G2 `FAIL (row 3)`; C6 `NOT_EVIDENCED`; C8 unresolved; no retry, diagnostic, new/reset authorization record, acceptance-procedure change, or G3 work.
+- **Current authorization:** owner authorized exactly one scoped checkpoint commit + push of the demo-ready package, evidence, reviews, prompts and this handoff (prompt `for-claude-viewer-clash-panel-demo-ready-checkpoint-commit-push-only.md`). No owner screenshot review is required. **Next gate after the checkpoint:** product-facing continuation (not renewed G2 causality research), awaiting owner authorization. G2/G3 work, authorization changes, retry/reset and acceptance claims remain unauthorized.
+
+## (superseded) PRIOR LATEST — VIEWER CLASH PANEL DEMO-READY / PRODUCT-FACING PACKAGE DONE (UNCOMMITTED); READY FOR INDEPENDENT WORK VISUAL/PRODUCT REVIEW
+
+- **Repo/branch/HEAD:** `main == origin/main == eeb356d` (no commit/push made). **Working tree:** modified `clashpanel/ui/ClashDockingPanel.js`, `server.js`, `wwwroot/{main.css,main.js,viewer.js}`, tests `test/clashpanel/dom/shell.dom.mjs`, `test/clashpanel/layering.test.mjs`, `test/viewer.extensionIds.test.mjs`; new `wwwroot/{viewerOptions.js,clashPanelDemo.js}`, `wwwroot/extensions/{ClashPanelExtension,clashPanelHost,clashPanelNames}.js`, 4 new test files, `docs/research/2026-10-06-viewer-clash-panel-demo-ready/`, one internal review, the owner prompt.
+- **Launch:** `npm start` (needs `.env` APS creds), open `http://localhost:8080/?clashPanelDemo=1` (SVF2; Audubon Structure + Mechanical federated). Default URL (no flag) is unchanged: SVF, no panel.
+- **Visible now:** toolbar button → panel; run federated Hard test (491 clashes; Stop → partial 394); results list with selected-row highlight, filter/sort/pager, Focus / Isolate / Markers / Back to all, switch results, close/reopen, clear, empty-filter state; overlays and isolation cleaned on close/clear/back-to-all; 0 console errors.
+- **Evidence:** [evidence report](../research/2026-10-06-viewer-clash-panel-demo-ready/demo-ready-evidence-report.md) (15 snapshots under `snapshots/`, Claude visual PASS matrix, fixes, limitations), [gap note](../research/2026-10-06-viewer-clash-panel-demo-ready/implementation-gap-note.md), [internal review](../reviews/2026-10-06-viewer-clash-panel-demo-ready-internal-review.md): **0 Critical / 0 High / 3 Medium / 10 Low**; M1 fixed (lazy host import); M2/M3 recorded as spec-defined limitations/product decisions.
+- **Tests:** `npm run test:offline` 5177 tests, 5176 pass, 0 fail, 1 pre-existing todo; `npm run test:clashpanel:dom` 83/83.
+- **Known limitations:** Focus frames union of both elements (small clash on large Floor = speck); marker tiny; panel does not select Viewer objects (spec §9.2; owner/Work decision vs prompt wording); toolbar active state not synced; interim `modelKey=urn#loadSeq` (OQ-1 open); no `measurementBasis`; demo limited to Structure+Mechanical under SVF2.
+- **G2 verification debt (separate, unchanged):** G2 `FAIL (row 3)`; C6 `NOT_EVIDENCED`; C8 unresolved; no live diagnostic/retry/new authorization/reset; no acceptance-procedure change; no G3.
+- **Next action:** independent Work visual/product review of the Viewer Clash Panel demo-ready package. Commit/push, any owner decision on M2/M3, G2/G3 and anything else remain **awaiting owner authorization**.
+
+## (superseded) PRIOR LATEST — G2 FUTURE LIVE-DIAGNOSTIC DESIGN/PREPARATION PACKAGE ACCEPTED AND CHECKPOINTED (SC-C03 BLOCKER CLOSED)
 
 - **Repo/branch/HEAD:** `aps-viewer-clash-detection`, `main == origin/main == f3bab74f460eacd6b6f69bc8fb90110455ceeb68` (verified before review writes). Baseline before the checkpoint commit.
 - **Independent authority:** [`2026-10-06-g2-live-diagnostic-sc-c03-targeted-independent-rereview.md`](../reviews/2026-10-06-g2-live-diagnostic-sc-c03-targeted-independent-rereview.md) — **0 Critical / 0 High / 0 Medium / 1 Low; ready to checkpoint**. The prior SC-C03 blocking Medium is closed.

@@ -3,6 +3,8 @@
 // registerExtension matching and unregisterContextMenuCallback.
 import { RoomLocatorExtension, EXTENSION_ID as ROOM_LOCATOR_EXTENSION_ID } from './extensions/RoomLocatorExtension.js';
 import { ClashFinderExtension, EXTENSION_ID as CLASH_FINDER_EXTENSION_ID } from './extensions/ClashFinderExtension.js';
+import { ClashPanelExtension, EXTENSION_ID as CLASH_PANEL_EXTENSION_ID } from './extensions/ClashPanelExtension.js';
+import { resolveViewerOptions, initializerOptions, currentSearch } from './viewerOptions.js';
 
 async function getAccessToken(callback) {
     try {
@@ -18,16 +20,24 @@ async function getAccessToken(callback) {
     }
 }
 
-export function initViewer(container) {
+// `search` defaults to the page's own query string. Only an opt-in flag (?svf2=1, ?clashPanel=1,
+// ?clashPanelDemo=1; see viewerOptions.js) changes anything: default = legacy SVF, two extensions.
+export function initViewer(container, { search = currentSearch() } = {}) {
+    const options = resolveViewerOptions(search);
     return new Promise(function (resolve, reject) {
-        Autodesk.Viewing.Initializer({ env: 'AutodeskProduction', getAccessToken }, function () {
+        Autodesk.Viewing.Initializer(initializerOptions(options, getAccessToken), function () {
             Autodesk.Viewing.theExtensionManager.registerExtension(ROOM_LOCATOR_EXTENSION_ID, RoomLocatorExtension);
             Autodesk.Viewing.theExtensionManager.registerExtension(CLASH_FINDER_EXTENSION_ID, ClashFinderExtension);
+            // Always registered (so it can be loaded on demand), but only auto-loaded on opt-in.
+            Autodesk.Viewing.theExtensionManager.registerExtension(CLASH_PANEL_EXTENSION_ID, ClashPanelExtension);
             const extensions = [
                 'Autodesk.DocumentBrowser',
                 ROOM_LOCATOR_EXTENSION_ID,
                 CLASH_FINDER_EXTENSION_ID,
             ];
+            if (options.clashPanel) {
+                extensions.push(CLASH_PANEL_EXTENSION_ID);
+            }
 
             const config = { extensions };
             const viewer = new Autodesk.Viewing.GuiViewer3D(container, config);
