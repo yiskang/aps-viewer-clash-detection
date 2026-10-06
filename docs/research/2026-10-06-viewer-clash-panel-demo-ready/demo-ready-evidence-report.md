@@ -31,12 +31,13 @@ Status: **Ready for independent Work visual/product review.** Uncommitted. Produ
 | 7 | 07-isolate.png | PASS | Aggregate isolation 1+1 ids; everything else hidden |
 | 8 | 08-markers.png | PASS (marker small) | Marker at the elbow/beam crossing; radius is tiny (limitation L2) |
 | 9 | 09-switch-result-1.png | PASS (framing limit) | Selection/isolation/outline update coherently; framing is the whole Floor (L1) |
-| 10 | 10-switch-result-20.png | PASS | Repeated switch coherent; overlay counts stay 1 marker / 2 outlines |
-| 11 | 11-panel-closed.png | PASS | Panel hidden; overlays 0, isolation restored |
-| 12 | 12-panel-reopened.png | PASS | Results retained; no stale marker/isolation (was FAIL before fix: transparent body) |
-| 13 | 13-empty-filter-state.png | PASS | "No clashes match the current filters" + Clear filters |
-| 14 | 14-cleared.png | PASS | Idle · Ready to run; overlays 0 |
-| 15 | 15-cancelled-run.png | PASS | "Cancelled · Stopped — partial results (394)" + partial-coverage banner; readable (was FAIL before fix) |
+| 10 | 09-switch-result-5.png | PASS (framing limit) | Clash #5 (Round Elbow vs Concrete-Rectangular Beam) selected; Prev/Next + detail shown; framing is the long Beam, marker a small speck (L1/L2) |
+| 11 | 10-switch-result-20.png | PASS | Repeated switch coherent; overlay counts stay 1 marker / 2 outlines |
+| 12 | 11-panel-closed.png | PASS | Panel hidden; overlays 0, isolation restored |
+| 13 | 12-panel-reopened.png | PASS | Results retained; no stale marker/isolation (was FAIL before fix: transparent body) |
+| 14 | 13-empty-filter-state.png | PASS | "No clashes match the current filters" + Clear filters |
+| 15 | 14-cleared.png | PASS | Idle · Ready to run; overlays 0 |
+| 16 | 15-cancelled-run.png | PASS | "Cancelled · Stopped — partial results (394)" + partial-coverage banner; readable (was FAIL before fix) |
 
 No video (screenshots sufficient). A hard error state was not forced (no safe repro); the cancelled/partial state is the interruption path exercised. Console: 0 errors, 1 expected deprecation warning (`getInstanceTree`).
 
@@ -64,6 +65,7 @@ Open/close panel; configure and run a federated Hard test; see progress, stop, p
 - L4 Toolbar button active state is not synced when the panel is closed with its X.
 - L5 Interim `modelKey = urn#loadSeq` (OQ-1 open): results cannot be resumed across a reload. No `measurementBasis`: Soft across models fails closed.
 - L6 Demo needs SVF2 opt-in; default sample path is unchanged (SVF, no panel). Structure+Mechanical only.
+- L9 In demo mode a later URL hash change can replace the demo model pair (the demo loader re-evaluates the hash), which invalidates the current results/test setup. Not guarded in this package; do not change the hash while a demo session is in use.
 - Group by Element exists in the panel; roll-ups remain deferred.
 
 ## Verification debt (separate; unchanged by this package)

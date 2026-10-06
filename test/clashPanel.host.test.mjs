@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHostCatalog, createClashPanelHost, viewerEventNames } from '../wwwroot/extensions/clashPanelHost.js';
+import { createHostCatalog, createClashPanelHost, viewerEventNames, makeFallbackUuid, ensureRandomUUID } from '../wwwroot/extensions/clashPanelHost.js';
 import { declareModelDisplayName, clearDeclaredDisplayNames } from '../wwwroot/extensions/clashPanelNames.js';
 import { loadDemoModels, waitForModelReady, DEMO_MODELS } from '../wwwroot/clashPanelDemo.js';
 
@@ -38,7 +38,7 @@ test('catalog: list/keyOfModel/displayNameFor, unique keys per load, URN-derived
   assert.match(row.modelKey, /^urn:AAA#\d+$/);
   assert.equal(cat.keyOfModel(a), row.modelKey);
   assert.equal(reg.calls.length, 1);
-  assert.equal(reg.calls[0][2].modelVersion, 'urn:urn:AAA');
+  assert.equal(reg.calls[0][2].modelVersion, 'urn:AAA');
   cat.list(); assert.equal(reg.calls.length, 1, 'registered once');
   // same URN reloaded as a new Model object gets a fresh key
   v.remove(a); const a2 = fakeModel('urn:AAA'); v.add(a2);
@@ -150,4 +150,52 @@ test('waitForModelReady: waits for geometry then object tree', async () => {
   await Promise.resolve(); assert.equal(settled, false);
   model._d = true; v.emit('g', { model });
   await p; assert.equal(settled, true); assert.equal(v.count('g'), 0);
+});
+
+test('L3: failed registration warns once and is not retried on later events', () => {
+  clearDeclaredDisplayNames();
+  const v = new FakeViewer(); const reports = [];
+  const reg = { n: 0, register() { this.n++; throw new Error('reg boom'); } };
+  const cat = createHostCatalog({ viewer: v, registry: reg, events: EV, report: (s) => reports.push(s) });
+  const m = fakeModel('urn:BAD'); v.add(m);
+  v.emit(EV.GEOMETRY_LOADED, { model: m }); v.emit(EV.OBJECT_TREE_CREATED, { model: m }); cat.list();
+  assert.equal(reg.n, 1); assert.equal(reports.filter((s) => s === 'register').length, 1);
+  cat.dispose();
+});
+
+test('L4: catalog listeners are removed before engine disposal begins; all steps still run if catalog throws', async () => {
+  const order = []; const v = new FakeViewer(); const deps = fakeDeps(order);
+  let countAtEngine = null;
+  const baseEngine = deps.createClashTestEngine;
+  deps.createClashTestEngine = (a) => { const e = baseEngine(a); const d0 = e.dispose; e.dispose = async () => { countAtEngine = v.count(EV.MODEL_ADDED); return d0(); }; return e; };
+  const host = await createClashPanelHost({ viewer: v, deps });
+  await host.dispose();
+  assert.equal(countAtEngine, 0);
+  const order2 = []; const v2 = new FakeViewer();
+  const host2 = await createClashPanelHost({ viewer: v2, deps: fakeDeps(order2) });
+  host2.catalog.dispose = () => { throw new Error('cat boom'); };
+  await assert.rejects(host2.dispose(), (e) => e instanceof AggregateError && e.errors.length === 1);
+  assert.deepEqual(order2, ['panel', 'engine', 'wiring', 'world']);
+});
+
+test('L6: fallback uuid is v4-shaped and unique; ensureRandomUUID only fills when missing', () => {
+  for (const c of [{ getRandomValues: (a) => { for (let i = 0; i < a.length; i++) a[i] = (i * 37 + Math.random() * 255) & 255; return a; } }, {}]) {
+    const gen = makeFallbackUuid(c);
+    const a = gen(); const b = gen();
+    assert.match(a, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.notEqual(a, b);
+  }
+  const g = { crypto: {} }; ensureRandomUUID(g);
+  assert.equal(typeof g.crypto.randomUUID(), 'string');
+  const own = () => 'x'; const g2 = { crypto: { randomUUID: own } }; ensureRandomUUID(g2);
+  assert.equal(g2.crypto.randomUUID, own);
+});
+
+test('L10: modelVersion never double-prefixes urn:', () => {
+  clearDeclaredDisplayNames();
+  const v = new FakeViewer(); const reg = fakeRegistry(); const cat = createHostCatalog({ viewer: v, registry: reg, events: EV });
+  v.add(fakeModel('urn:AAA')); v.add(fakeModel('BBB'));
+  assert.equal(reg.calls[0][2].modelVersion, 'urn:AAA');
+  assert.equal(reg.calls[1][2].modelVersion, 'urn:BBB');
+  cat.dispose();
 });

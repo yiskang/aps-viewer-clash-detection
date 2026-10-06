@@ -12,7 +12,7 @@ import { CollisionWorld } from '../../collision/index.js';
 import { createClashTestEngine } from '../../clashtest/index.js';
 import { createViewerElementEnumerator, wireModelUnload } from '../../clashtest/viewer/index.js';
 import { createClashPanel } from '../../clashpanel/index.js';
-import { declaredDisplayNameFor } from './clashPanelNames.js';
+import { declaredDisplayNameFor, normalizeUrnKey } from './clashPanelNames.js';
 
 const DEFAULT_DEPS = Object.freeze({ CollisionWorld, createClashTestEngine, createViewerElementEnumerator, wireModelUnload, createClashPanel });
 
@@ -32,6 +32,30 @@ function safe(fn, fallback = null) {
   try { return fn(); } catch { return fallback; }
 }
 
+/**
+ * L6: crypto.randomUUID exists only in secure contexts (https/localhost); plain-HTTP LAN origins lack it. The engine and
+ * panel controller call globalThis.crypto.randomUUID() directly, so install a fallback only when it is missing.
+ */
+export function makeFallbackUuid(c = globalThis.crypto) {
+  let counter = 0;
+  const hex = (n) => n.toString(16).padStart(2, '0');
+  return () => {
+    const b = new Uint8Array(16);
+    if (c && typeof c.getRandomValues === 'function') c.getRandomValues(b);
+    else { let t = Date.now() + (++counter); for (let i = 0; i < 16; i++) { b[i] = (Math.random() * 256) ^ (t & 255); t = Math.floor(t / 7) + counter; } }
+    b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+    const h = Array.from(b, hex).join('');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  };
+}
+
+export function ensureRandomUUID(g = globalThis) {
+  try {
+    if (!g.crypto) { g.crypto = {}; }
+    if (typeof g.crypto.randomUUID !== 'function') g.crypto.randomUUID = makeFallbackUuid(g.crypto);
+  } catch { /* read-only crypto: nothing more we can do */ }
+}
+
 function readUrn(model) {
   const urn = safe(() => model.getData()?.urn);
   return typeof urn === 'string' && urn !== '' ? urn : null;
@@ -45,6 +69,7 @@ export function createHostCatalog({ viewer, registry, events, nameForUrn = decla
   const keyByModel = new WeakMap();      // survives unload/unregister (README: keyOfModel)
   const urnByKey = new Map();            // strings only; survives unload (README: displayNameFor)
   const fallbackNameByKey = new Map();
+  const failedModels = new WeakSet();   // L3: a model whose registration threw is not retried (warn once)
   const subscribers = new Set();
   let loadSeq = 0;
   let disposed = false;
@@ -60,16 +85,17 @@ export function createHostCatalog({ viewer, registry, events, nameForUrn = decla
     if (disposed) return;
     const models = safe(() => viewer.getAllModels(), []) ?? [];
     for (const model of models) {
-      if (keyByModel.has(model)) continue;
+      if (keyByModel.has(model) || failedModels.has(model)) continue;
       const urn = readUrn(model);
       if (urn === null) continue; // not identifiable yet; a later event/list() retries
       const seq = ++loadSeq;
       const modelKey = `${urn}#${seq}`;
       const guid = safe(() => model.getData()?.loadOptions?.bubbleNode?.guid?.());
-      const modelVersion = typeof guid === 'string' && guid !== '' ? `urn:${urn}|guid:${guid}` : `urn:${urn}`;
+      const modelVersion = typeof guid === 'string' && guid !== '' ? `urn:${normalizeUrnKey(urn)}|guid:${guid}` : `urn:${normalizeUrnKey(urn)}`;
       try {
         registry.register(modelKey, model, { modelVersion });
       } catch (e) {
+        failedModels.add(model);
         safeReport('register', e);
         continue;
       }
@@ -133,10 +159,11 @@ export function createHostCatalog({ viewer, registry, events, nameForUrn = decla
 /**
  * createClashPanelHost({ viewer, Autodesk?, THREE?, deps?, report? }) -> Promise<{ panel, engine, world, catalog,
  *   show, hide, toggle, isVisible, dispose(): Promise<void> }>
- * dispose(): panel (awaited) -> engine -> unload wiring -> catalog -> world. Every step runs even when an earlier one
+ * dispose(): catalog (listeners off first) -> panel (awaited) -> engine -> unload wiring -> world. Every step runs even when an earlier one
  * fails; a single AggregateError is thrown afterwards. Idempotent (same promise).
  */
 export async function createClashPanelHost({ viewer, Autodesk = globalThis.Autodesk, THREE = globalThis.THREE, deps = {}, report = () => {} } = {}) {
+  ensureRandomUUID();
   const d = { ...DEFAULT_DEPS, ...deps };
   const events = viewerEventNames(Autodesk);
   let world; let engine; let wiring; let catalog; let panel;
@@ -160,10 +187,10 @@ export async function createClashPanelHost({ viewer, Autodesk = globalThis.Autod
   } catch (e) {
     // Partial construction: unwind what exists, in the same order, then surface the original failure.
     const partial = [
+      ['catalog', catalog && (() => catalog.dispose())],
       ['panel', panel && (() => panel.dispose())],
       ['engine', engine && (() => engine.dispose())],
       ['wiring', wiring && (() => wiring.dispose())],
-      ['catalog', catalog && (() => catalog.dispose())],
       ['world', world && (() => world.dispose())],
     ].filter(([, fn]) => fn);
     teardown.push(...partial);
@@ -171,10 +198,10 @@ export async function createClashPanelHost({ viewer, Autodesk = globalThis.Autod
     throw e;
   }
   teardown.push(
+    ['catalog', () => catalog.dispose()],   // L4: stop catalog events first, before engine disposal begins
     ['panel', () => panel.dispose()],       // MUST complete before engine.dispose() (clashpanel/README.md)
     ['engine', () => engine.dispose()],
     ['wiring', () => wiring.dispose()],
-    ['catalog', () => catalog.dispose()],
     ['world', () => world.dispose()],
   );
   let disposePromise = null;

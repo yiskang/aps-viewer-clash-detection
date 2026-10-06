@@ -37,9 +37,10 @@ export function createClashDockingPanelClass(Autodesk) {
       box.position = 'absolute';
       box.top = '10px';
       box.left = '10px';
-      box.width = '460px';
+      box.width = 'min(460px, 90vw)';   // 460px on desktop; never wider than the viewport on a narrow canvas
       box.height = 'calc(100% - 80px)';
-      box.minWidth = '340px';
+      box.minWidth = 'min(340px, 90vw)';
+      box.maxWidth = '90vw';
       box.resize = 'none';
       const bodyBox = body.style;
       bodyBox.position = 'absolute';

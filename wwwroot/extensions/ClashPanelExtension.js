@@ -27,12 +27,16 @@ export class ClashPanelExtension extends ExtensionBase {
     this._group = null;
     this._button = null;
     this._hostPromise = null;
+    this._firstOpen = null;
+    this._host = null;
+    this._unloadPromise = null;
     this._unloaded = true;
     this._onToolbarCreatedBound = () => this._createToolbarUI();
   }
 
   load() {
     this._unloaded = false;
+    this._unloadPromise = null;
     if (this._viewer.toolbar) {
       this._createToolbarUI();
     } else {
@@ -79,23 +83,66 @@ export class ClashPanelExtension extends ExtensionBase {
     return this._hostPromise;
   }
 
-  async toggle() {
-    if (this._unloaded) return false;
+  /** Reflect panel visibility on the toolbar button (also callable after the panel closes itself). Never throws. */
+  syncButtonState() {
+    if (this._unloaded || !this._button) return;
+    try {
+      const State = globalThis.Autodesk?.Viewing?.UI?.Button?.State;
+      const visible = this._host?.isVisible?.() === true;
+      this._button.setState?.(visible ? (State?.ACTIVE ?? 0) : (State?.INACTIVE ?? 1));
+    } catch { /* cosmetic only */ }
+  }
+
+  /** Rapid clicks while the host is still being created coalesce into ONE open. */
+  toggle() {
+    if (this._unloaded) return Promise.resolve(false);
+    if (this._host) return Promise.resolve(this._applyToggle(this._host));
+    if (!this._firstOpen) {
+      const p = this._open();
+      this._firstOpen = p;
+      const clear = () => { if (this._firstOpen === p) this._firstOpen = null; };
+      p.then(clear, clear);
+    }
+    return this._firstOpen;
+  }
+
+  async _open() {
     let host;
     try {
       host = await this._ensureHost();
     } catch (err) {
+      if (this._unloaded) return false;
       console.error('ClashPanelExtension: could not create the Clash Panel', err);
       if (typeof alert === 'function') alert(`Could not open the Clash Panel: ${err?.message ?? err}`);
       return false;
     }
     if (this._unloaded) return false; // unload() raced creation; it disposes the host itself
-    host.toggle();
+    this._host = host;
+    // L1: the panel's own close (X) button hides without going through toggle(); follow controller updates too.
+    try { host.panel?.controller?.subscribe?.(() => this.syncButtonState()); } catch { /* best-effort */ }
+    return this._applyToggle(host);
+  }
+
+  _applyToggle(host) {
+    try {
+      host.toggle();
+    } catch (err) {
+      if (this._unloaded) return false;
+      console.error('ClashPanelExtension: could not toggle the Clash Panel', err);
+      return false;
+    } finally {
+      this.syncButtonState();
+    }
     return true;
   }
 
-  async unload() {
+  unload() {
     this._unloaded = true;
+    if (!this._unloadPromise) this._unloadPromise = this._doUnload();
+    return this._unloadPromise;
+  }
+
+  async _doUnload() {
     // Synchronous part first: nothing of ours stays in the toolbar even if disposal is slow or fails.
     try { this._viewer.removeEventListener(this._toolbarCreatedEvent(), this._onToolbarCreatedBound); } catch (e) { console.warn(e); }
     try {
@@ -108,6 +155,8 @@ export class ClashPanelExtension extends ExtensionBase {
     this._group = null;
     const hostPromise = this._hostPromise;
     this._hostPromise = null;
+    this._host = null;
+    this._firstOpen = null;
     if (hostPromise) {
       try {
         const host = await hostPromise;

@@ -8,15 +8,15 @@ import {
 
 const PANEL = ['/clashpanel/ui/render/panel.js', 'renderPanel'];
 
-test('panel: five regions in fixed order with headings 1 TEST SETUP … 5 SELECTED CLASH', () => withPage(async ({ page }) => {
+test('panel: five regions in fixed order with headings Test setup … Selected clash', () => withPage(async ({ page }) => {
   await mountRenderer(page, ...PANEL, panelVm());
   const r = await page.evaluate(() => [...document.querySelectorAll('#clash-root > section')].map((s) => [s.dataset.region, s.querySelector('h2').textContent, s.getAttribute('aria-label')]));
   assert.deepEqual(r, [
-    ['setup', '1 TEST SETUP', '1 TEST SETUP'],
-    ['run', '2 RUN / STATUS', '2 RUN / STATUS'],
-    ['filters', '3 FILTERS / GROUPING', '3 FILTERS / GROUPING'],
-    ['results', '4 RESULTS', '4 RESULTS'],
-    ['selected', '5 SELECTED CLASH', '5 SELECTED CLASH'],
+    ['setup', 'Test setup', 'Test setup'],
+    ['run', 'Run status', 'Run status'],
+    ['filters', 'Filters and grouping', 'Filters and grouping'],
+    ['results', 'Results', 'Results'],
+    ['selected', 'Selected clash', 'Selected clash'],
   ]);
 }));
 

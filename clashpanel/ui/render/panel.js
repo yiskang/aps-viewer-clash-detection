@@ -10,11 +10,11 @@ import { renderResults } from './results.js';
 import { renderSelected } from './selected.js';
 
 export const REGIONS = Object.freeze([
-  Object.freeze({ id: 'setup', heading: '1 TEST SETUP', part: 'setup', render: renderSetup }),
-  Object.freeze({ id: 'run', heading: '2 RUN / STATUS', part: 'run', render: renderRun }),
-  Object.freeze({ id: 'filters', heading: '3 FILTERS / GROUPING', part: 'filters', render: renderFilters }),
-  Object.freeze({ id: 'results', heading: '4 RESULTS', part: 'results', render: renderResults }),
-  Object.freeze({ id: 'selected', heading: '5 SELECTED CLASH', part: 'selected', render: renderSelected }),
+  Object.freeze({ id: 'setup', heading: 'Test setup', part: 'setup', render: renderSetup }),
+  Object.freeze({ id: 'run', heading: 'Run status', part: 'run', render: renderRun }),
+  Object.freeze({ id: 'filters', heading: 'Filters and grouping', part: 'filters', render: renderFilters }),
+  Object.freeze({ id: 'results', heading: 'Results', part: 'results', render: renderResults }),
+  Object.freeze({ id: 'selected', heading: 'Selected clash', part: 'selected', render: renderSelected }),
 ]);
 
 function ensureSection(root, doc, region, index) {

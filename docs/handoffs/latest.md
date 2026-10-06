@@ -2,7 +2,20 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — VIEWER CLASH PANEL DEMO-READY PACKAGE INDEPENDENTLY ACCEPTED; READY FOR OWNER-AUTHORIZED CHECKPOINT
+## LATEST — VIEWER CLASH PANEL PRODUCT CONTINUATION ACCEPTED FOR CHECKPOINT (OWNER-AUTHORIZED COMMIT/PUSH)
+
+- **Repo/branch/HEAD:** `main == origin/main == d45703f21b9001bd8114fbf0fcbc7263e5046cb1` before review writes; product package, independent review, and this handoff remain uncommitted and unpushed.
+- **Independent authority:** [product continuation independent visual/product review](../reviews/2026-10-06-viewer-clash-panel-product-continuation-independent-visual-review.md) — **0 Critical / 0 High / 0 Medium / 4 Low; ready for product-facing checkpoint**. All 11 prior Lows are closed or reduced to non-blocking debt; no owner screenshot review is required.
+- **Final-state gates:** offline **5,185 total / 5,184 pass / 0 fail / 1 existing todo**; DOM **83/83**; focused extension/host **23/23**; `git diff --check` clean before review writes.
+- **Independent headed reproduction:** Chromium completed Structure-versus-Mechanical Hard with **491 clashes**; rapid first double-click opened one Panel; Focus, Isolate, Markers, result switching, Back to all, X-close/inactive toolbar sync, reopen retention, Clear, cleanup, and the unchanged default URL passed.
+- **Snapshots:** all **17** actual PNGs inspected: **16 PASS / 0 FAIL / 1 INCONCLUSIVE**. Screenshot 13 is correctly inconclusive while `Stopping`; 13b is the authoritative cancelled-partial PASS at 472. The 394/472 variation is valid asynchronous cancellation timing, not a defect.
+- **Non-blocking Lows:** non-cryptographic last-resort UUID entropy; ~700 px Viewer/header clipping and horizontal overflow; no direct automated assertion of the exact `min(460px, 90vw)` width; independent run saw additional Viewer-origin `getAecModelData` deprecation warnings despite zero errors (the evidence report's literal one-warning count is too narrow).
+- **Product limits unchanged:** tiny markers, union framing, no cross-reload persistence, no Viewer selection (§9.2), and documented demo hash replacement. Hard-error visual, Soft, Group by Element, hash-change, other-browser, and video coverage are acceptable deferred/test-covered items for this checkpoint.
+- **G2/C6/C8 debt remains separate and unchanged:** G2 `FAIL (row 3)`; C6 `NOT_EVIDENCED`; C8 unresolved. No retry, new/reset authorization record, attempt reset, procedure change, or G3 work occurred.
+- **Checkpoint:** accepted for checkpoint (0 Critical / 0 High / 0 Medium / 4 non-blocking Low); console 0 errors, Viewer-origin warnings include both `getInstanceTree` and `getAecModelData` (evidence report wording corrected). Framing v1 accepted; Viewer selection excluded per §9.2; reload persistence deferred; partial count timing-dependent/non-contractual. Committed/pushed as one scoped checkpoint under owner prompt `for-claude-viewer-clash-panel-product-continuation-checkpoint-commit-push-only.md` (see `git log -1`).
+- **Exact next gate:** product-facing continuation based on governing artifacts (not renewed G2/C8 causality research), awaiting owner authorization; G2 retry, new/reset records, procedure changes and G3 remain unauthorized.
+
+## (superseded) PRIOR LATEST — VIEWER CLASH PANEL DEMO-READY PACKAGE INDEPENDENTLY ACCEPTED (CHECKPOINTED d45703f)
 
 - **Repo/branch/HEAD:** `main == origin/main == eeb356dcf14f66afc62735724f134769c7d72e48`. The demo-ready implementation/evidence/review package remains uncommitted; nothing was pushed.
 - **Independent authority:** [visual/product review](../reviews/2026-10-06-viewer-clash-panel-demo-ready-independent-visual-product-review.md) — **0 Critical / 0 High / 0 Medium / 11 Low; ready for demo/product-facing checkpoint**. All Lows are non-blocking polish, narrow failure-path hardening, explicit demo limits, or one evidence-index correction.

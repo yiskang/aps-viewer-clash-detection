@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const created = [];
-class FakeButton { constructor(id) { this.id = id; this.container = { id }; } setToolTip(t) { this.tip = t; } }
+class FakeButton { constructor(id) { this.id = id; this.container = { id }; this.states = []; } setToolTip(t) { this.tip = t; } setState(st) { this.state = st; this.states.push(st); } }
+FakeButton.State = { ACTIVE: 0, INACTIVE: 1, DISABLED: 2 };
 class FakeGroup { constructor(id) { this.id = id; this.controls = []; } addControl(c) { this.controls.push(c); } removeControl(c) { this.controls = this.controls.filter((x) => x !== c); } }
 globalThis.Autodesk = { Viewing: { TOOLBAR_CREATED_EVENT: 'toolbarCreated', UI: { Button: FakeButton, ControlGroup: FakeGroup } } };
 const { ClashPanelExtension, EXTENSION_ID, TOOLBAR_BUTTON_ID, TOOLBAR_BUTTON_TITLE } = await import('../wwwroot/extensions/ClashPanelExtension.js');
@@ -40,7 +41,7 @@ test('load adds a button with stable id + tooltip; click lazily creates the host
   assert.equal(creates, 0, 'no host before first toggle');
   await Promise.all([ext.toggle(), ext.toggle()]);
   assert.equal(creates, 1);
-  assert.deepEqual(log, ['toggle', 'toggle']);
+  assert.deepEqual(log, ['toggle'], 'rapid first-use clicks coalesce into ONE open');
   await ext.unload();
 });
 
@@ -98,4 +99,58 @@ test('failed creation does not poison later toggles', async () => {
     assert.deepEqual(log, ['toggle']);
     await ext.unload();
   } finally { console.error = origErr; globalThis.alert = prevAlert; }
+});
+
+test('L2: rapid clicks during creation end open; a later click then closes', async () => {
+  const log = []; let host;
+  const ext = new ClashPanelExtension(fakeViewer(), { createHost: async () => { host = fakeHost(log); return host; } });
+  ext.load();
+  await Promise.all([ext.toggle(), ext.toggle(), ext.toggle()]);
+  assert.equal(host.isVisible(), true);
+  await ext.toggle();
+  assert.equal(host.isVisible(), false);
+  await ext.unload();
+});
+
+test('L1: toolbar button active state follows panel visibility (open, close, unload)', async () => {
+  const viewer = fakeViewer();
+  const ext = new ClashPanelExtension(viewer, { createHost: async () => fakeHost([]) });
+  ext.load();
+  const button = viewer.groups[0].controls[0];
+  await ext.toggle();
+  assert.equal(button.state, FakeButton.State.ACTIVE);
+  await ext.toggle();
+  assert.equal(button.state, FakeButton.State.INACTIVE);
+  await ext.toggle();
+  assert.equal(button.state, FakeButton.State.ACTIVE);
+  ext.syncButtonState(); // e.g. after the panel's own close (X) button
+  assert.equal(button.state, FakeButton.State.ACTIVE);
+  await ext.unload();
+  assert.equal(ext.syncButtonState(), undefined); // quiet after unload
+});
+
+test('L5: unload is idempotent (one dispose), and late callbacks after unload are quiet', async () => {
+  const log = []; let release;
+  const gate = new Promise((r) => { release = r; });
+  const ext = new ClashPanelExtension(fakeViewer(), { createHost: async () => { await gate; return { ...fakeHost(log), toggle() { throw new Error('late'); } }; } });
+  ext.load();
+  const t = ext.toggle();
+  const u1 = ext.unload();
+  const u2 = ext.unload();
+  release();
+  assert.equal(await t, false);
+  assert.equal(await u1, true);
+  assert.equal(await u2, true);
+  assert.equal(log.filter((x) => x === 'dispose').length, 1);
+  ext._createToolbarUI(); // late toolbarCreated callback
+  assert.equal(ext._button, null);
+  assert.equal(await ext.toggle(), false);
+});
+
+test('L5: a host.toggle that throws after unload is swallowed; before unload it surfaces as failure', async () => {
+  const ext = new ClashPanelExtension(fakeViewer(), { createHost: async () => ({ ...fakeHost([]), toggle() { throw new Error('x'); } }) });
+  ext.load();
+  const origErr = console.error; console.error = () => {};
+  try { assert.equal(await ext.toggle(), false); } finally { console.error = origErr; }
+  await ext.unload();
 });
