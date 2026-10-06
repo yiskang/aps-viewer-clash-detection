@@ -88,10 +88,15 @@ function buildSetupRegion(input) {
   const checking = soft.pending === true;
   // While the basis verdict is pending, Soft stays unavailable (Run disabled, fail closed) but is never described
   // as "not a verified basis": the Soft finding reads as a check in progress and no explanation is shown.
-  const messages = (validation?.findings ?? []).map((f) => ({
-    control: f.control,
-    text: checking && (f.code === 'soft-checking' || f.code === 'soft-unavailable') ? SOFT_CHECKING_TEXT : f.text,
-  }));
+  // §6.1/§6.2 step 4: the clearance field exists only while Soft is available; while it is hidden the Soft finding
+  // (explanation / check in progress) is the blocking reason, so a request to fill the hidden field is not shown.
+  const clearanceVisible = draft.mode === 'soft' && soft.available === true && !checking;
+  const messages = (validation?.findings ?? [])
+    .filter((f) => clearanceVisible || f.control !== 'clearance')
+    .map((f) => ({
+      control: f.control,
+      text: checking && (f.code === 'soft-checking' || f.code === 'soft-unavailable') ? SOFT_CHECKING_TEXT : f.text,
+    }));
   const scopeA = describeScope(draft.setA, s.modelName);
   const scopeB = draft.selfClash ? 'Same as Set A' : describeScope(draft.setB, s.modelName);
   const modeText = draft.mode === 'soft' ? `Soft (clearance ${draft.clearance === '' ? 'not set' : draft.clearance})` : 'Hard';
@@ -103,7 +108,7 @@ function buildSetupRegion(input) {
     softAvailability: { available: soft.available === true && !checking, pending: checking, explanation: checking ? null : (soft.explanation ?? null) },
     clearance: {
       value: draft.clearance,
-      visible: draft.mode === 'soft' && soft.available === true && !checking,   // §6.1: only while Soft is available
+      visible: clearanceVisible,   // §6.1: only while Soft is available
       error: messages.find((m) => m.control === 'clearance')?.text ?? null,
     },
     models: s.models.map((m) => ({

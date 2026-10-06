@@ -1041,7 +1041,10 @@ function onModelLeft(c, event) {
 function navOf(c) {
   const ordered = c.pipe?.ordered ?? null;
   const sel = c.selection;
-  const label = sel === null ? 'No clash selected' : `Clash #${selectedCanonical(c) + 1}${sel.navScope !== null ? ' (within its group)' : ''}`;
+  // The group-scope suffix only when Prev/Next actually step that group: grouped view with the scope group expanded
+  // (orderedList.navNeighbor's own condition). After Group → None the flat list has no group scope.
+  const scoped = sel !== null && sel.navScope !== null && ordered !== null && ordered.view === 'grouped' && c.view.expanded.has(sel.navScope);
+  const label = sel === null ? 'No clash selected' : `Clash #${selectedCanonical(c) + 1}${scoped ? ' (within its group)' : ''}`;
   if (ordered === null) return { canPrev: false, canNext: false, label };
   const occ = sel?.occurrence ?? null;
   const scope = sel?.navScope ?? null;

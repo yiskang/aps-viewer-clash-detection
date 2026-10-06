@@ -2,7 +2,20 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — VIEWER CLASH PANEL DEMO EVIDENCE RECONCILIATION (DOCS/EVIDENCE-ONLY)
+## LATEST — VIEWER CLASH PANEL PRODUCT-FACING CONTINUATION II ACCEPTED FOR CHECKPOINT
+
+- **Repo/branch/HEAD:** `main == origin/main == b24a005d1a7fbe8b76172806a544898fa5aaa4b4` before the checkpoint commit (hash recorded in `git log -1`). Committed/pushed as one scoped checkpoint under owner prompt `for-claude-viewer-clash-panel-product-facing-continuation-ii-checkpoint-commit-push-only.md`.
+- **Independent authority:** [independent visual/product review](../reviews/2026-10-06-viewer-clash-panel-product-facing-continuation-ii-independent-visual-review.md) — **0 Critical / 0 High / 0 Medium / 4 Low; Scope A accepted; ready for product-facing checkpoint**. Internal review: [0C/0H/0M/4L](../reviews/2026-10-06-viewer-clash-panel-product-facing-continuation-ii-internal-review.md). No owner screenshot review required.
+- **Scope A (owner-chosen; accepted):** headed validation of Group None/Element (§10.2/AC-P17), grouped-row Focus/Isolate/Markers/Back to all, Soft-unavailable with two models (§6.2 step 4/AC-P18), reachable empty/stopped/cleared states. Full Structure/Mechanical run remains **491**. Launch: `npm start`, `http://localhost:8080/?clashPanelDemo=1`.
+- **Closed:** D1 (stale "Enter a clearance for Soft mode." when Soft unavailable) and D2 (`(within its group)` only when Prev/Next really navigate in-group); both tests fail at baseline, pass now.
+- **Final-state tests:** offline 5,187 total / 5,186 pass / 0 fail / 1 existing todo; DOM 83/83; focused core 313/313; `git diff --check` clean.
+- **Visual evidence:** [report](../research/2026-10-06-viewer-clash-panel-product-facing-continuation-ii/evidence-report.md), 22 PNGs: **21 current PASS / 0 current FAIL / 0 current INCONCLUSIVE / 1 superseded pre-fix FAIL (`04a`, retained; `04` is the corrected PASS)**.
+- **Four non-blocking Lows:** (1) a filtered-away origin group can leave `(within its group)` visible while navigation stays correct; (2) a multi-valued grouping note can show over an empty filtered list; (3) `Idle · Ready to run` can coexist with `Not ready`; (4) `Completed · Completed` repeats wording.
+- **Deferred limits:** Soft verified-basis headed run unavailable (demo host has no `measurementBasis`); fault-injection hard-error states offline-only; UUID fallback entropy; ~700 px overflow; no exact-width assertion; tiny markers; union framing accepted for v1; cross-reload persistence deferred; Viewer selection excluded (§9.2).
+- **G2/C6/C8 separate and unchanged:** G2 `FAIL (row 3)`, C6 `NOT_EVIDENCED`, C8 unresolved. No retry, new/reset authorization record, procedure change, or G3.
+- **Next gate:** product-facing continuation based on governing artifacts, awaiting owner authorization; if none is authorized, stop. No further scope is authorized now.
+
+## (superseded) PRIOR LATEST — VIEWER CLASH PANEL DEMO EVIDENCE RECONCILIATION (DOCS/EVIDENCE-ONLY)
 
 - **Baseline:** `main == origin/main == 396db3cabe9f21c662a4de68d7264c19c6d3964f` before this reconciliation commit; tree clean (only the owner prompt untracked, committed with this change); G2/C6/C8 unchanged.
 - **Snapshot count (neither Branch A nor B needed a file change):** the authoritative reviewed set is **17 PNGs**, all present in the evidence index, inspected by the independent review, and tracked in `396db3c` (`05b`, `07b`, `13b` are separate files). The "16 PNGs" figure in the owner prompt was stale (the independent review already says so). `12-narrow-700.png` was reviewed and is tracked. **No PNG added, none regenerated**; snapshots byte-unchanged since `396db3c`. Visual adjudication unchanged.

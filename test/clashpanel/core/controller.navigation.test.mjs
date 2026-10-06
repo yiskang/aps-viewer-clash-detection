@@ -151,6 +151,24 @@ test('AC-P17: a grouped occurrence keeps page and navScope across re-sort and fi
   assert.equal(h.vm().results.nav.label, 'Clash #7 (within its group)');
 });
 
+test('headed finding: after Group → None the nav label no longer claims "(within its group)" and Next steps the flat list', async () => {
+  const results = Array.from({ length: 60 }, (_, i) => ({ a: ['mA', 1000 + i], b: ['mB', 10] }));
+  const h = await doneWith(makeSet({ runId: 'run-1', results }));
+  await h.dispatch({ type: INTENT.GROUP_MODE, value: 'element' });
+  const gMB10 = JSON.stringify(['element', {}, { dbId: 10, modelKey: 'mB' }]);
+  await h.dispatch({ type: INTENT.NAV_SELECT, resultId: 'r5', groupId: gMB10 });
+  assert.equal(h.vm().results.nav.label, 'Clash #6 (within its group)');
+  await h.dispatch({ type: INTENT.GROUP_MODE, value: 'none' });
+  assert.equal(h.vm().selected.resultId, 'r5');                              // selection survives grouping (§12.3)
+  assert.equal(h.vm().results.nav.label, 'Clash #6');                        // the flat list has no group scope
+  await h.dispatch({ type: INTENT.GROUP_MODE, value: 'element' });           // back to grouped, group still expanded
+  assert.equal(h.vm().results.nav.label, 'Clash #6 (within its group)');
+  await h.dispatch({ type: INTENT.GROUP_MODE, value: 'none' });
+  await h.dispatch({ type: INTENT.NAV_NEXT });
+  assert.equal(h.vm().selected.resultId, 'r6');
+  assert.equal(h.vm().results.nav.label, 'Clash #7');
+});
+
 test('collapsing the navScope group ends group-scoped navigation: Next lands on a rendered occurrence and the page follows', async () => {
   const results = Array.from({ length: 60 }, (_, i) => ({ a: ['mA', 1000 + i], b: ['mB', 10] }));
   const h = await doneWith(makeSet({ runId: 'run-1', results }));

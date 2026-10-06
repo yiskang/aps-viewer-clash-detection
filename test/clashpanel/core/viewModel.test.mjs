@@ -255,6 +255,27 @@ test('run.details shows the Soft basis verdict captured when the run was admitte
   assert.equal(h.vm().setup.softAvailability.available, false);           // the live setup verdict did change
 });
 
+test('§6.2 step 4: while Soft is unavailable the hidden clearance field is not asked for; the explanation stays and Run stays blocked', async () => {
+  const h = makeHarness({ basis: { state: 'incompatible', reason: 'frames differ' } });
+  await h.readyHard();
+  await h.dispatch({ type: INTENT.SETUP_MODE, value: 'soft' });
+  await h.settle();
+  const setup = h.vm().setup;
+  assert.equal(setup.softAvailability.available, false);
+  assert.equal(setup.clearance.visible, false);
+  assert.equal(setup.clearance.error, null);
+  assert.equal(setup.validation.state, 'blocked');
+  assert.equal(setup.validation.messages.some((m) => m.control === 'clearance'), false);
+  assert.equal(setup.validation.messages.some((m) => m.control === 'mode' && m.text.includes('frames differ')), true);
+  // Soft available (verified basis): an empty clearance is still asked for, next to its visible field.
+  const v = makeHarness({ basis: { state: 'verified', basisKey: 'shared-frame' } });
+  await v.readyHard();
+  await v.dispatch({ type: INTENT.SETUP_MODE, value: 'soft' });
+  await v.settle();
+  assert.equal(v.vm().setup.clearance.visible, true);
+  assert.equal(v.vm().setup.validation.messages.some((m) => m.control === 'clearance'), true);
+});
+
 test('statusLive: headline + filtered count + pending freshness + an extra error; plain text for aria-live', () => {
   const run = {
     headline: 'Completed — 12 clashes', counts: { total: 12, filtered: 5 }, badges: { freshness: { pending: true } },
