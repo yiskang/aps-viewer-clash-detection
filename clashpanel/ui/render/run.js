@@ -9,7 +9,24 @@ const STATE_LABEL = Object.freeze({
   idle: 'Idle', preparing: 'Preparing', planning: 'Planning', running: 'Running',
   stopping: 'Stopping', finalizing: 'Finalizing',
 });
-const DONE_LABEL = Object.freeze({ completed: 'Completed', cancelled: 'Cancelled', failed: 'Failed', invalidated: 'Invalidated' });
+const DONE_LABEL = Object.freeze({ completed: 'Completed', cancelled: 'Stopped', failed: 'Failed', invalidated: 'Invalidated' });
+
+const bare = (t) => String(t).replace(/[\s.…]+$/u, '').toLowerCase();
+
+/**
+ * One concise status per state (owner decision 2026-10-07): the headline is shown only when it adds something. An idle
+ * Panel shows just `Idle` (readiness lives in Test Setup), and a headline that already starts with the state label
+ * (`Completed — 491 clashes`, `Running…`, `Stopping… (finishing the current step)`) replaces the label instead of repeating it.
+ */
+export function visibleStatus(run) {
+  const label = stateLabel(run);
+  const headline = typeof run.headline === 'string' ? run.headline : '';
+  if (run.state === 'idle' || headline === '') return { label, headline: null };
+  // A banner below that already says the same thing (e.g. "Stopped before any results") makes the headline redundant.
+  if ((run.banners ?? []).some((b) => bare(b.text) === bare(headline))) return { label, headline: null };
+  if (bare(headline).startsWith(bare(label))) return { label: null, headline };
+  return { label, headline };
+}
 
 export function stateLabel(run) {
   if (run.state === 'done') return DONE_LABEL[run.doneKind] ?? 'Done';
@@ -159,9 +176,10 @@ export function renderRun(root, run, dispatch, doc) {
         on: { click: () => dispatch({ type: INTENT.RESULTS_CLEAR }) },
       }) : null,
     ]));
+    const shown = visibleStatus(run);
     body.appendChild(el(doc, 'p', { class: 'clash-run-state', attrs: { 'data-state': run.state } }, [
-      el(doc, 'span', { class: 'clash-run-state-label', text: stateLabel(run) }),
-      run.headline ? el(doc, 'span', { class: 'clash-run-headline', text: ` · ${run.headline}` }) : null,
+      shown.label ? el(doc, 'span', { class: 'clash-run-state-label', text: shown.label }) : null,
+      shown.headline ? el(doc, 'span', { class: 'clash-run-headline', text: shown.label ? ` · ${shown.headline}` : shown.headline }) : null,
     ]));
     if (run.waitingForOtherRun) body.appendChild(el(doc, 'p', { class: 'clash-run-waiting', text: 'Waiting for another run to finish…' }));
     const progress = progressBlock(doc, run.progress);

@@ -15,3 +15,10 @@ export const GAP_DECIMALS = 3;                   // fixed decimals for a display
 
 // PD-17 / spec 6.2 step 4: the fixed sentence shown whenever Soft is unavailable.
 export const SOFT_UNAVAILABLE_TEXT = "Soft (clearance) isn't available for these models: they don't share a verified common measurement basis.";
+
+// Owner decision 2026-10-07 (Test Setup UX cleanup): an unverified measurement basis no longer disables Soft.
+// The user may attest a unit for the participating models, or choose raw model units. Neither is ever `verified`.
+export const SOFT_BASIS_HEADLINE = 'Soft clearance needs a measurement basis. Hard clash is available.';
+export const SOFT_BASIS_NOT_VERIFIED_TEXT = 'Measurement basis was not verified automatically. Choose the units/basis to run a Soft clearance test.';
+export const BASIS_UNITS = Object.freeze(['mm', 'cm', 'm', 'in', 'ft']);   // declared units: LABELS only, never converted
+export const BASIS_RAW = 'raw';                                             // "Model units (raw, unverified)"

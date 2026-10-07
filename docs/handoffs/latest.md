@@ -2,7 +2,20 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — VIEWER CLASH PANEL NATIVE VIEWER STYLE ALIGNMENT ACCEPTED FOR CHECKPOINT
+## LATEST — VIEWER CLASH PANEL TEST SETUP / INTERACTION UX CLEANUP INDEPENDENTLY ACCEPTED; CHECKPOINT COMMITTED/PUSHED
+
+- **Repo/branch/HEAD:** `main == origin/main == 060b7385d9ee9f8e73a857111fe8861a7daa83df`. Before the checkpoint commit. Owner authorized one scoped checkpoint commit + push of the package, reports, reviews, prompts, workflow edits and this handoff (hash in `git log -1`).
+- **Independent authority:** [Independent Work Review Report](../reviews/2026-10-07-viewer-clash-panel-test-setup-ux-cleanup-independent-work-review.md) — **accepted for checkpoint; 0 Critical / 0 High / 0 Medium / 4 Low; no blocker**.
+- **Upstream package report (read-only input):** [final report](../research/2026-10-07-viewer-clash-panel-test-setup-ux-cleanup-final-report.md). It remains unchanged. Its §1 inventory undercounts the current tree by one modified existing test path; the independent report records the exact discrepancy and upstream ownership boundary.
+- **Scope accepted:** `New test` top-row placement/reset; expanded/collapsed behavior; Soft basis states (`verified` / `user-supplied` / `raw-model-units` / `unavailable`); fail-closed pending/invalid admission; unchanged numeric clearance into Core; Hard availability; readiness/status cleanup; Set A/B, selection and self-clash interactions; keyboard/focus and narrow-panel behavior. Governing design: §23; implementation plan unchanged.
+- **Independent verification:** focused **100/100**, DOM **94/94**, offline **5,228 total / 5,227 pass / 0 fail / 1 existing todo**, `git diff --check` clean. Fresh headed Hard Structure × Mechanical completed with **491 clashes**; targeted Soft admission/progress/Stop and New-test reset matched the package.
+- **Visual adjudication:** [evidence report](../research/2026-10-07-viewer-clash-panel-test-setup-ux-cleanup/evidence-report.md); all 24 PNG files inspected, 21 scenario images = **19 PASS / 0 FAIL / 2 INCONCLUSIVE** (non-empty Soft list and held-unsaved confirmation not demonstrated headed). No owner screenshot escalation required.
+- **Internal review input:** [internal review](../reviews/2026-10-07-viewer-clash-panel-test-setup-ux-cleanup-internal-review.md).
+- **Non-blocking Lows:** clearance error lacks `aria-describedby`; stopped details retain raw `cancelled` / `cancel-requested`; narrow `Max gap` label wraps; upstream final-report tree inventory is off by one modified existing test path. Soft caveat discoverability and a uniform-scale demo fixture remain owner/product choices.
+- **Protected boundaries:** G2 remains `FAIL (row 3)`, C6 `NOT_EVIDENCED`, C8 unresolved. No collision, Viewer Adapter/Core/M4, OQ-1/host, acceptance-procedure, authorization-record, attempt-reset, G2 retry, or G3 work occurred or is authorized.
+- **Exact next gate:** checkpoint done with the four Lows recorded; next is a separate owner decision on an optional bounded polish pass for L1–L3 (+ targeted re-review) or further product scope. **Must not begin without explicit owner authorization:** polish/package remediation, upstream-report correction, commit/push, further product scope, G2/C6/C8 work, record issuance/reset, procedure change, G3, or another milestone.
+
+## (superseded) PRIOR LATEST — VIEWER CLASH PANEL NATIVE VIEWER STYLE ALIGNMENT ACCEPTED FOR CHECKPOINT
 
 - **Repo/branch/HEAD:** `main == origin/main == 838bbad40f778483cc9bf082ecaddbab84e19ea2` before the checkpoint commit (hash recorded in `git log -1`). Committed/pushed as one scoped checkpoint under owner prompt `for-claude-viewer-clash-panel-native-style-alignment-checkpoint-commit-push-only.md`.
 - **Independent authority:** [independent visual/product review](../reviews/2026-10-06-viewer-clash-panel-native-style-alignment-independent-visual-review.md) — **0 Critical / 0 High / 0 Medium / 2 Low; native Viewer style alignment accepted; ready for checkpoint**; no owner screenshot review required. Internal review: [0C/0H/0M, no unresolved in-scope finding](../reviews/2026-10-06-viewer-clash-panel-native-style-alignment-internal-review.md).

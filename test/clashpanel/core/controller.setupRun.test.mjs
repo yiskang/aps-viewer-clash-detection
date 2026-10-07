@@ -4,8 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ResultCapacityError, RunQueueFullError } from '../../../clashtest/index.js';
 import { INTENT } from '../../../clashpanel/core/intents.js';
-import { SOFT_UNAVAILABLE_TEXT, READINESS_POLL_MS } from '../../../clashpanel/core/constants.js';
-import { SOFT_CHECKING_TEXT } from '../../../clashpanel/core/viewModel.js';
+import { SOFT_UNAVAILABLE_TEXT, READINESS_POLL_MS, SOFT_BASIS_HEADLINE, SOFT_BASIS_NOT_VERIFIED_TEXT } from '../../../clashpanel/core/constants.js';
+import { SOFT_CHECKING_TEXT, READY_TEXT, NOT_READY_TEXT } from '../../../clashpanel/core/viewModel.js';
 import { definitionKey } from '../../../clashpanel/core/draft.js';
 import { createPanelController } from '../../../clashpanel/core/controller.js';
 import { makeHarness, makeSet, createScriptedEngine, createRecordingBridge } from '../support/controllerHarness.mjs';
@@ -71,17 +71,28 @@ test('setup: model checklist, scope text, validation ready ⇒ Run enabled; unre
   assert.equal(h.engine.forbidden.length, 0);                             // never tries to (re-)register (AC-P20)
 });
 
-test('AC-P18: Soft availability is async and fail-closed; pending counts as unavailable', async () => {
+test('AC-P18 (owner decision 2026-10-07): an unverified basis does NOT disable Soft; it needs a user basis. Pending still fails closed', async () => {
   const h = makeHarness({ basis: { state: 'unverified', reason: 'units differ' } });
   await h.readyHard();
   await h.controller.dispatch({ type: INTENT.SETUP_MODE, value: 'soft' });
   await h.dispatch({ type: INTENT.SETUP_CLEARANCE, value: '0.05' });
   const vm = h.vm();
-  assert.equal(vm.setup.softAvailability.available, false);
-  assert.equal(vm.setup.softAvailability.pending, false);
-  assert.ok(vm.setup.softAvailability.explanation.startsWith(SOFT_UNAVAILABLE_TEXT));
-  assert.equal(vm.setup.clearance.visible, false);
-  assert.equal(vm.run.canRun, false);                                      // Soft selected + unavailable ⇒ Run disabled
+  assert.equal(vm.setup.softChecking, false);
+  assert.equal('softAvailability' in vm.setup, false);
+  assert.equal(vm.setup.clearance.visible, true);                          // the clearance stays enterable
+  assert.equal(vm.setup.basis.required, true);
+  assert.equal(vm.setup.basis.state, 'unavailable');
+  assert.equal(vm.setup.basis.headline, SOFT_BASIS_HEADLINE);
+  assert.equal(vm.setup.basis.message, SOFT_BASIS_NOT_VERIFIED_TEXT);
+  assert.equal(vm.setup.basis.detail, 'units differ');
+  assert.equal(vm.setup.basis.error, 'Choose the units/basis for this Soft test.');
+  assert.equal(vm.run.canRun, false);                                      // Soft + no basis yet ⇒ Run disabled
+  assert.equal(vm.run.headline, NOT_READY_TEXT);
+  assert.equal(vm.setup.validation.messages.some((m) => m.text.startsWith(SOFT_UNAVAILABLE_TEXT)), false);
+  await h.dispatch({ type: INTENT.SETUP_BASIS, value: 'mm' });
+  assert.equal(h.vm().run.canRun, true);                                   // attested basis ⇒ Soft runnable
+  assert.equal(h.vm().run.headline, READY_TEXT);
+  assert.equal(h.vm().setup.basis.state, 'user-supplied');
   await h.dispatch({ type: INTENT.SETUP_MODE, value: 'hard' });
   assert.equal(h.vm().run.canRun, true);                                   // Hard unaffected
 
@@ -89,18 +100,21 @@ test('AC-P18: Soft availability is async and fail-closed; pending counts as unav
   await v.readyHard();
   await v.dispatch({ type: INTENT.SETUP_MODE, value: 'soft' });
   await v.dispatch({ type: INTENT.SETUP_CLEARANCE, value: '0.05' });
-  assert.equal(v.vm().setup.softAvailability.available, true);
+  assert.equal(v.vm().setup.basis.required, false);
+  assert.equal(v.vm().setup.basis.state, 'verified');
   assert.equal(v.vm().setup.clearance.visible, true);
-  assert.equal(v.vm().run.canRun, true);
+  assert.equal(v.vm().run.canRun, true);                                   // verified: no attestation needed
 
-  // Pending: a basis verdict that never settles keeps Soft unavailable (and Run disabled) until it does.
+  // Pending: a basis verdict that never settles blocks Soft (fail closed) until it does; no basis request is shown.
   const p = makeHarness({ basis: () => new Promise(() => {}) });
   await p.readyHard();
   await p.dispatch({ type: INTENT.SETUP_MODE, value: 'soft' });
   await p.dispatch({ type: INTENT.SETUP_CLEARANCE, value: '0.05' });
-  assert.equal(p.vm().setup.softAvailability.pending, true);
-  assert.equal(p.vm().setup.softAvailability.available, false);
-  assert.equal(p.vm().setup.softAvailability.explanation, null);          // never "not a verified basis" while checking
+  await p.dispatch({ type: INTENT.SETUP_BASIS, value: 'mm' });             // an attestation does not bypass a pending check
+  assert.equal(p.vm().setup.softChecking, true);
+  assert.equal(p.vm().setup.clearance.visible, false);
+  assert.equal(p.vm().setup.basis.required, false);
+  assert.equal(p.vm().setup.basis.state, null);
   assert.equal(p.vm().run.canRun, false);
   const texts = p.vm().setup.validation.messages.map((m) => m.text);
   assert.ok(texts.includes(SOFT_CHECKING_TEXT));

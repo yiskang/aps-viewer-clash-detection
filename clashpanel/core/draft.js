@@ -1,6 +1,7 @@
 // clashpanel/core/draft.js
 // The setup form as pure data, and its mapping to a Core ClashTestDefinition (spec 6.1, PD-8, OD-9). Nothing here reads a
 // clock, an id source or a global: the controller mints ids and decides when to adopt the draft `prepareRun` returns.
+import { isBasisChoice } from './measurementBasis.js';
 const MAX_NAME = 256;                                   // Core schema bound for `name` (1-256), not an option default
 const DECIMAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 const SIDE_KEY = Object.freeze({ A: 'setA', B: 'setB' });
@@ -35,7 +36,7 @@ function freezeDraft(d) {
 export function createDraft({ testId, testNumber = 1 } = {}) {
   if (typeof testId !== 'string' || testId.length === 0) throw new TypeError('createDraft: testId must be a non-empty string');
   return freezeDraft({
-    testId, revision: 1, name: `Clash test ${testNumber}`, mode: 'hard', clearance: '', selfClash: false,
+    testId, revision: 1, name: `Clash test ${testNumber}`, mode: 'hard', clearance: '', basisUnit: '', selfClash: false,
     setA: emptySide(), setB: emptySide(), lastRun: null, testCounter: testNumber,
   });
 }
@@ -51,9 +52,23 @@ function normalizeElements(elements) {
 
 const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+/** Model keys on either side that take part in the test (Set A, plus Set B unless self-clash), sorted. */
+export function participantKeysOf(draft) {
+  const keys = selectionEntriesOf(draft.setA).map((e) => e.modelKey);
+  if (!draft.selfClash) keys.push(...selectionEntriesOf(draft.setB).map((e) => e.modelKey));
+  return [...new Set(keys)].sort();
+}
+
 /** Pure reducer. An invalid or no-op action returns the SAME draft object (identity), so callers can skip notifying. */
 export function draftReduce(draft, action) {
-  const set = (patch) => freezeDraft({ ...draft, ...patch });
+  // The user's basis attestation is about THESE participating models: any change of the participant set drops it, so
+  // an attestation made for A+B can never carry over to A+C (owner decision 2026-10-07).
+  const set = (patch) => {
+    const next = { ...draft, ...patch };
+    if (next.basisUnit !== '' && !('basisUnit' in patch)
+      && participantKeysOf(next).join('\u0000') !== participantKeysOf(draft).join('\u0000')) next.basisUnit = '';
+    return freezeDraft(next);
+  };
   switch (action?.type) {
     case 'name':
       return typeof action.value === 'string' && action.value !== draft.name ? set({ name: action.value }) : draft;
@@ -61,6 +76,8 @@ export function draftReduce(draft, action) {
       return (action.value === 'hard' || action.value === 'soft') && action.value !== draft.mode ? set({ mode: action.value }) : draft;
     case 'clearance':
       return typeof action.value === 'string' && action.value !== draft.clearance ? set({ clearance: action.value }) : draft;
+    case 'basisUnit':
+      return isBasisChoice(action.value) && action.value !== draft.basisUnit ? set({ basisUnit: action.value }) : draft;
     case 'selfClash':
       return typeof action.value === 'boolean' && action.value !== draft.selfClash ? set({ selfClash: action.value }) : draft;
     case 'toggleModel': {
@@ -112,7 +129,12 @@ function deepFreeze(value) {
   return value;
 }
 
-export function buildDefinition(draft) {
+/**
+ * `verifiedBasis` (default false = fail closed: a caller that supplies no basis information gets the basis requirement): false means the
+ * measurement basis was NOT verified, so a Soft test also needs the user's basis attestation (`draft.basisUnit`).
+ * The clearance number is never converted: it is the raw Core value in every case (see measurementBasis.js).
+ */
+export function buildDefinition(draft, { verifiedBasis = false } = {}) {
   const problems = [];
   const name = draft.name.trim();
   if (name.length === 0) problems.push({ control: 'name', code: 'name-required', text: 'Enter a name for this test.' });
@@ -123,6 +145,9 @@ export function buildDefinition(draft) {
     const parsed = parseClearance(draft.clearance);
     if (parsed.value === undefined) problems.push({ control: 'clearance', code: parsed.code, text: parsed.text });
     else clearance = parsed.value;
+    if (!verifiedBasis && draft.basisUnit === '') {
+      problems.push({ control: 'basis', code: 'basis-required', text: 'Choose the units/basis for this Soft test.' });
+    }
   }
   const entriesA = selectionEntriesOf(draft.setA);
   const entriesB = draft.selfClash ? entriesA : selectionEntriesOf(draft.setB);
@@ -162,12 +187,12 @@ export function definitionKey(definition) {
  * differs from the previous RUN's; it is monotone and never reused (edit-and-revert bumps again but yields the same
  * definitionKey). Pure: the caller adopts the returned draft after startRun returned a handle.
  */
-export function prepareRun(draft) {
-  const first = buildDefinition(draft);
+export function prepareRun(draft, basisOptions) {
+  const first = buildDefinition(draft, basisOptions);
   if (first.definition === null) return { draft, definition: null, problems: first.problems };
   const key = definitionKey(first.definition);
   const bump = draft.lastRun !== null && draft.lastRun.definitionKey !== key;
   const revision = bump ? draft.revision + 1 : draft.revision;
   const next = freezeDraft({ ...draft, revision, lastRun: { definitionKey: key, revision } });
-  return { draft: next, definition: bump ? buildDefinition(next).definition : first.definition, problems: [] };
+  return { draft: next, definition: bump ? buildDefinition(next, basisOptions).definition : first.definition, problems: [] };
 }

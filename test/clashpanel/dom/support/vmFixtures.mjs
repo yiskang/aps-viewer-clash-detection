@@ -12,8 +12,15 @@ export function setupVm(over = {}) {
     summary: 'Clash test 1 · Hard · A: Architecture · B: Structure',
     name: 'Clash test 1',
     mode: 'hard',
-    softAvailability: { available: true, pending: false, explanation: null },
-    clearance: { value: '', visible: false, error: null },
+    softChecking: false,
+    basis: {
+      required: false, state: null, headline: null, message: null, detail: null, status: null, value: '',
+      options: [{ value: '', label: 'Choose units…' }, { value: 'mm', label: 'mm' }, { value: 'cm', label: 'cm' }, { value: 'm', label: 'm' },
+        { value: 'in', label: 'in' }, { value: 'ft', label: 'ft' }, { value: 'raw', label: 'Model units (raw, unverified)' }],
+      unitLabel: '', error: null,
+    },
+    clearance: { value: '', visible: false, unitLabel: '', error: null },
+    newTest: { enabled: true },
     models: [
       { modelKey: 'mA', displayName: 'Architecture', ready: true, registered: true, inA: true, inB: false, note: null },
       { modelKey: 'mB', displayName: 'Structure', ready: true, registered: true, inA: false, inB: true, note: null },

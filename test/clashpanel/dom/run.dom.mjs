@@ -14,7 +14,7 @@ test('run: Run/Stop enabled from vm.canRun/canStop and dispatch run/start, run/s
   assert.deepEqual(await page.evaluate(() => [document.querySelector('[data-key="run-start"]').disabled, document.querySelector('[data-key="run-stop"]').disabled]), [true, false]);
   await page.click('[data-key="run-stop"]');
   assert.deepEqual(await intents(page), [{ type: 'run/start' }, { type: 'run/stop' }]);
-  assert.equal(await page.textContent('.clash-run-state'), 'Planning · Planning…');
+  assert.equal(await page.textContent('.clash-run-state'), 'Planning…');
 }));
 
 test('run: progress bar exposes aria values; indeterminate when fraction is null; counts/elapsed text; no ETA', () => withPage(async ({ page }) => {
@@ -49,7 +49,7 @@ test('run: totals, badges, banners with details, state labels for done kinds', (
     banners: [...document.querySelectorAll('.clash-banner')].map((b) => ({ id: b.dataset.bannerId, cls: b.className, role: b.getAttribute('role'), text: b.querySelector('.clash-banner-text').textContent, details: [...b.querySelectorAll('li')].map((li) => li.textContent) })),
   }));
   assert.deepEqual(r, {
-    state: 'Cancelled · Stopped — partial results (812)',
+    state: 'Stopped — partial results (812)',
     counts: '812 clashes · 37 match filters',
     badges: ['Coverage: partial', 'Integrity: caveated', 'Freshness: current'],
     banners: [

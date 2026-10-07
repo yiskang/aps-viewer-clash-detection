@@ -118,7 +118,7 @@ test('programmer errors reject with TypeError (participants must be an array of 
   assert.equal((await evaluateSoftAvailability({ participants: ['mA'], catalog: null })).available, true);
 });
 
-test('AC-P18 end to end: unavailable Soft blocks a Soft draft with the explanation, keeps Hard ready, and one participating model makes Soft available again', async () => {
+test('AC-P18 end to end: an unverified basis asks for a user basis (not "unavailable") for Soft, keeps Hard ready, and one participating model makes Soft available again', async () => {
   const catalog = createFakeCatalog({
     models: [{ modelKey: 'mA', displayName: 'Arch' }, { modelKey: 'mB', displayName: 'Struct' }],
     basis: { state: 'incompatible', reason: 'Model units differ.' },
@@ -134,8 +134,12 @@ test('AC-P18 end to end: unavailable Soft blocks a Soft draft with the explanati
   const soft = reduce(twoModels, { type: 'mode', value: 'soft' }, { type: 'clearance', value: '0.05' });
   const blocked = validateSetup({ draft: soft, engine, catalog, softAvailability });
   assert.equal(blocked.state, 'blocked');
-  assert.deepEqual(blocked.findings, [{ control: 'mode', code: 'soft-unavailable', text: `${SOFT_UNAVAILABLE_TEXT} Model units differ.` }]);
+  assert.deepEqual(blocked.findings, [{ control: 'basis', code: 'basis-required', text: 'Choose the units/basis for this Soft test.' }]);
   assert.equal(blocked.definition, null);
+  assert.ok(softAvailability.explanation.startsWith(SOFT_UNAVAILABLE_TEXT));   // the explanation text survives as detail
+  const attested = validateSetup({ draft: reduce(soft, { type: 'basisUnit', value: 'mm' }), engine, catalog, softAvailability });
+  assert.equal(attested.state, 'ready');
+  assert.equal(attested.definition.clearance, 0.05);
   const hard = validateSetup({ draft: twoModels, engine, catalog, softAvailability });
   assert.equal(hard.state, 'ready');
   const single = reduce(base, { type: 'toggleModel', side: 'A', modelKey: 'mA' }, { type: 'selfClash', value: true }, { type: 'mode', value: 'soft' }, { type: 'clearance', value: '0.05' });

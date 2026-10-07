@@ -18,7 +18,7 @@ const DEFINITION_KEYS = ['schemaVersion', 'testId', 'revision', 'name', 'selecti
 test('createDraft: defaults per catalog (name "Clash test N", Hard, NO default clearance, empty sets, revision 1) and deep-frozen', () => {
   const d = fresh();
   assert.deepEqual(d, {
-    testId: 'T-1', revision: 1, name: 'Clash test 1', mode: 'hard', clearance: '', selfClash: false,
+    testId: 'T-1', revision: 1, name: 'Clash test 1', mode: 'hard', clearance: '', basisUnit: '', selfClash: false,
     setA: { modelKeys: [], elements: {} }, setB: { modelKeys: [], elements: {} }, lastRun: null, testCounter: 1,
   });
   assert.ok(Object.isFrozen(d) && Object.isFrozen(d.setA) && Object.isFrozen(d.setA.modelKeys) && Object.isFrozen(d.setB.elements));
@@ -109,7 +109,7 @@ test('buildDefinition: Hard ignores whatever is in the clearance field (even inv
 test('buildDefinition: Soft maps to clearance mode and parses the clearance as a positive finite decimal (no default)', () => {
   const soft = (text) => reduce(ready(), { type: 'mode', value: 'soft' }, { type: 'clearance', value: text });
   for (const [text, value] of [['0.05', 0.05], [' 0.25 ', 0.25], ['1e-3', 0.001], ['.5', 0.5], ['5.', 5], ['+2', 2], ['12', 12], ['1E2', 100]]) {
-    const { definition, problems } = buildDefinition(soft(text));
+    const { definition, problems } = buildDefinition(soft(text), { verifiedBasis: true });
     assert.deepEqual(problems, [], text);
     assert.equal(definition.mode, 'clearance');
     assert.equal(definition.clearance, value, text);
@@ -122,7 +122,7 @@ test('buildDefinition: Soft maps to clearance mode and parses the clearance as a
     '0b1': 'clearance-invalid', '1,5': 'clearance-invalid', '1_0': 'clearance-invalid', '1 2': 'clearance-invalid', '.': 'clearance-invalid',
   };
   for (const [text, code] of Object.entries(expected)) {
-    const { definition, problems } = buildDefinition(soft(text));
+    const { definition, problems } = buildDefinition(soft(text), { verifiedBasis: true });
     assert.equal(definition, null, JSON.stringify(text));
     assert.deepEqual(problems.map((p) => [p.control, p.code]), [['clearance', code]], JSON.stringify(text));
     assert.ok(problems[0].text.length > 0);
@@ -159,7 +159,7 @@ test('buildDefinition: name is trimmed and 1-256 code units; problems come in co
   assert.deepEqual(named('x'.repeat(257)).problems.map((p) => [p.control, p.code]), [['name', 'name-too-long']]);
   assert.deepEqual(named('   ').problems.map((p) => [p.control, p.code]), [['name', 'name-required']]);
   assert.equal(named('  ' + 'y'.repeat(256) + '  ').definition.name.length, 256);
-  const all = buildDefinition(reduce(fresh(), { type: 'name', value: '' }, { type: 'mode', value: 'soft' }));
+  const all = buildDefinition(reduce(fresh(), { type: 'name', value: '' }, { type: 'mode', value: 'soft' }), { verifiedBasis: true });
   assert.equal(all.definition, null);
   assert.deepEqual(all.problems.map((p) => [p.control, p.code]), [
     ['name', 'name-required'], ['clearance', 'clearance-required'], ['setA', 'selection-empty'], ['setB', 'selection-empty'],
@@ -191,13 +191,13 @@ test('AC-P1: every definition the mapping produces is accepted by the REAL valid
   }
   assert.equal(drafts.length, 12);
   for (const d of drafts) {
-    const { definition, problems } = buildDefinition(d);
+    const { definition, problems } = buildDefinition(d, { verifiedBasis: true });
     assert.deepEqual(problems, []);
     assert.deepEqual(issuesOf(definition), [], JSON.stringify(definition));
     assert.ok(Object.keys(definition).every((k) => DEFINITION_KEYS.includes(k)));
     assert.equal(definition.mode === 'clearance', 'clearance' in definition);
   }
-  assert.deepEqual(issuesOf(prepareRun(drafts[0]).definition), []);
+  assert.deepEqual(issuesOf(prepareRun(drafts[0], { verifiedBasis: true }).definition), []);
 });
 
 // ---- definitionKey / identity lifecycle -------------------------------------------------------------------------------
@@ -234,7 +234,7 @@ test('lifecycle: any change to the normalized definition (including the NAME) bu
   assert.equal(renamed.definition.revision, 2);
   const widened = prepareRun(draftReduce(r1.draft, { type: 'toggleModel', side: 'B', modelKey: 'mC' }));
   assert.equal(widened.definition.revision, 2);
-  const soft = prepareRun(reduce(r1.draft, { type: 'mode', value: 'soft' }, { type: 'clearance', value: '0.1' }));
+  const soft = prepareRun(reduce(r1.draft, { type: 'mode', value: 'soft' }, { type: 'clearance', value: '0.1' }), { verifiedBasis: true });
   assert.equal(soft.definition.revision, 2);
   assert.equal(prepareRun(renamed.draft).definition.revision, 2);
 });
@@ -282,4 +282,130 @@ test('lifecycle: New test mints the new testId, increments the counter, resets t
   assert.deepEqual([again.testId, again.testCounter, again.name], ['T-3', 3, 'Clash test 3']);
   assert.notEqual(prepareRun(withSets(n)).definition.testId, r2.definition.testId);
   assert.equal(prepareRun(withSets(n)).definition.revision, 1);
+});
+
+// ---- measurement basis attestation (owner decision 2026-10-07) -------------------------------------------------------
+import { participantKeysOf } from '../../../clashpanel/core/draft.js';
+
+const softReady = (clearance = '0.05') => reduce(ready(), { type: 'mode', value: 'soft' }, { type: 'clearance', value: clearance });
+const UNVERIFIED = { verifiedBasis: false };
+
+test('basisUnit action: accepts "", the five units and raw; invalid or no-op values return the SAME draft', () => {
+  const d = fresh();
+  for (const value of ['mm', 'cm', 'm', 'in', 'ft', 'raw']) assert.equal(draftReduce(d, { type: 'basisUnit', value }).basisUnit, value);
+  assert.equal(draftReduce(draftReduce(d, { type: 'basisUnit', value: 'mm' }), { type: 'basisUnit', value: '' }).basisUnit, '');
+  for (const bad of ['km', 'MM', 'verified', null, undefined, 5, {}]) assert.equal(draftReduce(d, { type: 'basisUnit', value: bad }), d);
+  assert.equal(draftReduce(d, { type: 'basisUnit', value: '' }), d);              // no-op
+  const mm = draftReduce(d, { type: 'basisUnit', value: 'mm' });
+  assert.equal(draftReduce(mm, { type: 'basisUnit', value: 'mm' }), mm);
+  assert.ok(Object.isFrozen(mm));
+});
+
+test('participantKeysOf: Set A plus Set B (unless self-clash), de-duplicated and sorted', () => {
+  assert.deepEqual(participantKeysOf(fresh()), []);
+  assert.deepEqual(participantKeysOf(withSets(fresh(), ['mB'], ['mA'])), ['mA', 'mB']);
+  assert.deepEqual(participantKeysOf(withSets(fresh(), ['mA'], ['mA'])), ['mA']);
+  assert.deepEqual(participantKeysOf(reduce(withSets(fresh(), ['mA'], ['mB']), { type: 'selfClash', value: true })), ['mA']);
+  assert.deepEqual(participantKeysOf(reduce(fresh(), { type: 'setElements', side: 'B', elements: { mZ: [1] } })), ['mZ']);
+});
+
+test('Soft + unverified basis + no attestation => basis-required problem and NO definition; an attestation (unit or raw) clears it', () => {
+  const built = buildDefinition(softReady(), UNVERIFIED);
+  assert.equal(built.definition, null);
+  assert.deepEqual(built.problems, [{ control: 'basis', code: 'basis-required', text: 'Choose the units/basis for this Soft test.' }]);
+  for (const value of ['mm', 'cm', 'm', 'in', 'ft', 'raw']) {
+    const ok = buildDefinition(reduce(softReady(), { type: 'basisUnit', value }), UNVERIFIED);
+    assert.deepEqual(ok.problems, [], value);
+    assert.equal(ok.definition.mode, 'clearance');
+  }
+});
+
+test('verifiedBasis defaults to FALSE (fail closed): omitted flag on a Soft draft needs an attestation; verified never asks; Hard never asks', () => {
+  const omitted = buildDefinition(softReady());
+  assert.equal(softReady().basisUnit, '');
+  assert.equal(omitted.definition, null);
+  assert.deepEqual(omitted.problems.map((p) => p.code), ['basis-required']);
+  const attested = buildDefinition(reduce(softReady('0.05'), { type: 'basisUnit', value: 'mm' }));
+  assert.deepEqual(attested.problems, []);
+  assert.equal(attested.definition.mode, 'clearance');
+  assert.equal(attested.definition.clearance, 0.05);
+  assert.equal(buildDefinition(softReady(), { verifiedBasis: true }).problems.length, 0);
+  assert.equal(buildDefinition(softReady(), { verifiedBasis: true }).definition.mode, 'clearance');
+  assert.equal(buildDefinition(ready()).definition.mode, 'volume-overlap');
+  assert.deepEqual(buildDefinition(ready()).problems, []);
+  assert.equal(buildDefinition(ready(), UNVERIFIED).definition.mode, 'volume-overlap');
+  assert.deepEqual(buildDefinition(ready(), UNVERIFIED).problems, []);
+  assert.equal('clearance' in buildDefinition(ready(), UNVERIFIED).definition, false);
+});
+
+test('the clearance number is NEVER converted: definition.clearance is the typed number for every unit and for raw', () => {
+  for (const value of ['mm', 'cm', 'm', 'in', 'ft', 'raw']) {
+    const { definition } = buildDefinition(reduce(softReady('12.5'), { type: 'basisUnit', value }), UNVERIFIED);
+    assert.equal(definition.clearance, 12.5, value);
+    assert.equal(Object.keys(definition).some((k) => /unit|basis/i.test(k)), false, `${value}: no basis/unit leaks into the Core definition`);
+  }
+  assert.equal(buildDefinition(reduce(softReady('0.05'), { type: 'basisUnit', value: 'mm' }), UNVERIFIED).definition.clearance, 0.05);
+});
+
+test('the basis attestation does not change the definition key / revision: same definition with or without it', () => {
+  const a = prepareRun(softReady(), UNVERIFIED.verifiedBasis === false ? { verifiedBasis: true } : undefined);
+  const mm = prepareRun(reduce(softReady(), { type: 'basisUnit', value: 'mm' }), UNVERIFIED);
+  const raw = prepareRun(reduce(softReady(), { type: 'basisUnit', value: 'raw' }), UNVERIFIED);
+  assert.equal(definitionKey(a.definition), definitionKey(mm.definition));
+  assert.equal(definitionKey(mm.definition), definitionKey(raw.definition));
+});
+
+test('invalid, zero and negative clearance are still rejected with a basis attested (basis never papers over the number)', () => {
+  for (const value of ['mm', 'raw']) {
+    const withBasis = (c) => buildDefinition(reduce(softReady(c), { type: 'basisUnit', value }), UNVERIFIED);
+    for (const bad of ['', 'abc', '0', '-1', '-0.05', '1e999', 'NaN']) {
+      const r = withBasis(bad);
+      assert.equal(r.definition, null, `${value}/${bad}`);
+      assert.ok(r.problems.some((p) => p.control === 'clearance'), `${value}/${bad}`);
+      assert.equal(r.problems.some((p) => p.code === 'basis-required'), false, `${value}/${bad}`);
+    }
+  }
+  // Both problems together when neither is satisfied: the number AND the basis are asked for.
+  const both = buildDefinition(softReady('abc'), UNVERIFIED);
+  assert.deepEqual(both.problems.map((p) => p.control), ['clearance', 'basis']);
+});
+
+test('any change of the participant set drops the attestation (toggleModel, setElements, selfClash); non-participant edits keep it', () => {
+  const attested = reduce(softReady(), { type: 'basisUnit', value: 'mm' });
+  assert.equal(attested.basisUnit, 'mm');
+  assert.equal(reduce(attested, { type: 'toggleModel', side: 'B', modelKey: 'mB' }).basisUnit, '');                       // B removed
+  assert.equal(reduce(attested, { type: 'toggleModel', side: 'B', modelKey: 'mC' }).basisUnit, '');                       // C added
+  assert.equal(reduce(attested, { type: 'setElements', side: 'B', elements: { mC: [1] } }).basisUnit, '');
+  assert.equal(reduce(attested, { type: 'selfClash', value: true }).basisUnit, '');                                       // {A,B} -> {A}
+  // Edits that leave the participant set identical keep the attestation.
+  for (const action of [{ type: 'name', value: 'Renamed' }, { type: 'clearance', value: '0.1' }, { type: 'mode', value: 'hard' },
+    { type: 'toggleModel', side: 'A', modelKey: 'mB' }]) {
+    assert.equal(reduce(attested, action).basisUnit, 'mm', JSON.stringify(action));
+  }
+  const raw = reduce(softReady(), { type: 'basisUnit', value: 'raw' });
+  assert.equal(reduce(raw, { type: 'toggleModel', side: 'B', modelKey: 'mC' }).basisUnit, '');
+});
+
+test('the A+B attestation cannot carry over to A+C: after the switch buildDefinition asks for a basis again', () => {
+  const attested = reduce(softReady(), { type: 'basisUnit', value: 'cm' });
+  assert.equal(buildDefinition(attested, UNVERIFIED).problems.length, 0);
+  const switched = reduce(attested, { type: 'toggleModel', side: 'B', modelKey: 'mB' }, { type: 'toggleModel', side: 'B', modelKey: 'mC' });
+  assert.deepEqual(participantKeysOf(switched), ['mA', 'mC']);
+  assert.equal(switched.basisUnit, '');
+  assert.deepEqual(buildDefinition(switched, UNVERIFIED).problems.map((p) => p.code), ['basis-required']);
+});
+
+test('newTest resets basisUnit along with every other field of the draft', () => {
+  const dirty = reduce(softReady('3'), { type: 'basisUnit', value: 'ft' }, { type: 'name', value: 'Custom' });
+  const n = draftReduce(dirty, { type: 'newTest', testId: 'T-2' });
+  assert.equal(n.basisUnit, '');
+  assert.deepEqual(n, createDraft({ testId: 'T-2', testNumber: dirty.testCounter + 1 }));
+});
+
+test('prepareRun threads basisOptions: an unattested Soft draft is refused, an attested one admitted with the clearance unchanged', () => {
+  assert.equal(prepareRun(softReady(), UNVERIFIED).definition, null);
+  assert.deepEqual(prepareRun(softReady(), UNVERIFIED).problems.map((p) => p.code), ['basis-required']);
+  const ok = prepareRun(reduce(softReady('7'), { type: 'basisUnit', value: 'in' }), UNVERIFIED);
+  assert.equal(ok.definition.clearance, 7);
+  assert.equal(ok.draft.basisUnit, 'in');                                           // the attestation survives admission
 });

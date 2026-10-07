@@ -5,7 +5,7 @@ import { buildViewModel, describeStatusLive, EMPTY_FILTERED_TEXT } from '../../.
 import { createDraft } from '../../../clashpanel/core/draft.js';
 import { initialRunState, reduceRun } from '../../../clashpanel/core/runMachine.js';
 import { runHeadline, STATEMENTS } from '../../../clashpanel/core/runReport.js';
-import { PAGE_SIZE } from '../../../clashpanel/core/constants.js';
+import { PAGE_SIZE, SOFT_BASIS_HEADLINE } from '../../../clashpanel/core/constants.js';
 import { INTENT } from '../../../clashpanel/core/intents.js';
 import { makeSet, makeHarness } from '../support/controllerHarness.mjs';
 
@@ -81,7 +81,7 @@ function assertNoBareNoClashes(vm) {
 
 const SHAPE = {
   top: ['filters', 'results', 'run', 'selected', 'setup', 'version'],
-  setup: ['clearance', 'collapsed', 'mode', 'models', 'name', 'scope', 'selfClash', 'setupChangedSinceRun', 'softAvailability', 'summary', 'useSelectionEnabled', 'validation'],
+  setup: ['basis', 'clearance', 'collapsed', 'mode', 'models', 'name', 'newTest', 'scope', 'selfClash', 'setupChangedSinceRun', 'softChecking', 'summary', 'useSelectionEnabled', 'validation'],
   run: ['badges', 'banners', 'canRun', 'canStop', 'counts', 'details', 'diagnostics', 'doneKind', 'headline', 'progress', 'state', 'statusLive', 'waitingForOtherRun'],
   filters: ['active', 'busy', 'elementOnly', 'groupBy', 'groupingNote', 'hasLocation', 'maxGap', 'modelOptions', 'models', 'sort', 'sortOptions', 'text', 'unverified'],
   results: ['hiddenByFiltersNote', 'lines', 'message', 'multiValuedNote', 'nav', 'page', 'rows', 'state', 'view'],
@@ -102,13 +102,18 @@ test('every region has exactly the catalog shape and the whole ViewModel is deep
   for (const vm of [buildViewModel(input()), buildViewModel(input({ phase: 'running' })), buildViewModel(input({ phase: 'done', set, list: listFor(set), selected }))]) {
     assert.deepEqual(keys(vm), SHAPE.top);
     assert.deepEqual(keys(vm.setup), SHAPE.setup);
+    assert.deepEqual(keys(vm.setup.basis), ['detail', 'error', 'headline', 'message', 'options', 'required', 'state', 'status', 'unitLabel', 'value']);
+    assert.deepEqual(keys(vm.setup.clearance), ['error', 'unitLabel', 'value', 'visible']);
+    assert.deepEqual(keys(vm.setup.newTest), ['enabled']);
     assert.deepEqual(keys(vm.run), SHAPE.run);
     assert.deepEqual(keys(vm.filters), SHAPE.filters);
     assert.deepEqual(keys(vm.results), SHAPE.results);
     assert.deepEqual(keys(vm.results.nav), ['canNext', 'canPrev', 'label']);
     assert.deepEqual(keys(vm.results.page), ['count', 'index', 'size']);
+    // every entry, including the shared basis option objects, is deeply frozen.
     const walk = (v) => { if (v !== null && typeof v === 'object') { assert.ok(Object.isFrozen(v)); Object.values(v).forEach(walk); } };
     walk(vm);
+    assert.ok(Object.isFrozen(vm.setup.basis.options));
     assert.equal(vm.version, 7);
   }
   const vm = buildViewModel(input({ phase: 'done', set, list: listFor(set), selected }));
@@ -228,6 +233,10 @@ test('selected actions: enable/disable reasons for no live side, isolation prere
   assert.deepEqual(vm.selected.actions.focusOnSelect, { checked: false });
 });
 
+test('vm.setup.basis.options entries are frozen', () => {
+  for (const o of buildViewModel(input()).setup.basis.options) assert.ok(Object.isFrozen(o));
+});
+
 test('run.details (§8.4): null before a set; plain-string lines from the sealed set; hostile names raw; no elementCount', () => {
   assert.equal(buildViewModel(input()).run.details, null);
   const hostile = '<img src=x onerror=alert(1)>';
@@ -252,28 +261,43 @@ test('run.details shows the Soft basis verdict captured when the run was admitte
   await h.settle();
   const basis = h.vm().run.details.lines.find((l) => l.label === 'Measurement basis (at run start)');
   assert.equal(basis.value, 'verified (shared-frame)');
-  assert.equal(h.vm().setup.softAvailability.available, false);           // the live setup verdict did change
+  assert.equal(h.vm().setup.basis.state, 'unavailable');                  // the live setup verdict did change (now needs a user basis)
+  assert.equal(h.vm().setup.basis.required, true);
 });
 
-test('§6.2 step 4: while Soft is unavailable the hidden clearance field is not asked for; the explanation stays and Run stays blocked', async () => {
+test('§6.2 step 4 (owner decision 2026-10-07): an unverified basis keeps the clearance field visible and asks for a basis; the host reason is only detail; Run stays blocked until one is chosen', async () => {
   const h = makeHarness({ basis: { state: 'incompatible', reason: 'frames differ' } });
   await h.readyHard();
   await h.dispatch({ type: INTENT.SETUP_MODE, value: 'soft' });
   await h.settle();
   const setup = h.vm().setup;
-  assert.equal(setup.softAvailability.available, false);
-  assert.equal(setup.clearance.visible, false);
-  assert.equal(setup.clearance.error, null);
+  assert.equal(setup.softChecking, false);
+  assert.equal(setup.clearance.visible, true);
+  assert.equal(setup.basis.required, true);
+  assert.equal(setup.basis.state, 'unavailable');
+  assert.equal(setup.basis.detail, 'frames differ');
+  assert.equal(setup.basis.headline, SOFT_BASIS_HEADLINE);
   assert.equal(setup.validation.state, 'blocked');
-  assert.equal(setup.validation.messages.some((m) => m.control === 'clearance'), false);
-  assert.equal(setup.validation.messages.some((m) => m.control === 'mode' && m.text.includes('frames differ')), true);
-  // Soft available (verified basis): an empty clearance is still asked for, next to its visible field.
+  assert.equal(setup.validation.messages.some((m) => m.control === 'basis'), true);
+  assert.equal(setup.validation.messages.some((m) => m.control === 'clearance'), true);   // empty clearance is asked for next to its visible field
+  assert.equal(setup.validation.messages.some((m) => m.control === 'mode' && m.text.includes('frames differ')), false);
+  assert.equal(h.vm().run.canRun, false);
+  // Soft available (verified basis): no basis request at all.
   const v = makeHarness({ basis: { state: 'verified', basisKey: 'shared-frame' } });
   await v.readyHard();
   await v.dispatch({ type: INTENT.SETUP_MODE, value: 'soft' });
   await v.settle();
   assert.equal(v.vm().setup.clearance.visible, true);
+  assert.equal(v.vm().setup.basis.required, false);
+  assert.equal(v.vm().setup.basis.headline, null);
+  assert.equal(v.vm().setup.validation.messages.some((m) => m.control === 'basis'), false);
   assert.equal(v.vm().setup.validation.messages.some((m) => m.control === 'clearance'), true);
+  // Hard: neither field is asked for and the basis block is absent.
+  await h.dispatch({ type: INTENT.SETUP_MODE, value: 'hard' });
+  assert.equal(h.vm().setup.basis.required, false);
+  assert.equal(h.vm().setup.basis.state, null);
+  assert.equal(h.vm().setup.clearance.visible, false);
+  assert.equal(h.vm().setup.validation.messages.some((m) => m.control === 'basis' || m.control === 'clearance'), false);
 });
 
 test('statusLive: headline + filtered count + pending freshness + an extra error; plain text for aria-live', () => {

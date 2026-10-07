@@ -118,7 +118,8 @@ test('Soft (clearance), single participating model self-clash: real distance, ga
   await t.dispatch({ type: INTENT.SETUP_SELF_CLASH, value: true });
   await t.dispatch({ type: INTENT.SETUP_MODE, value: 'soft' });
   await t.dispatch({ type: INTENT.SETUP_CLEARANCE, value: '0.05' });
-  assert.equal(t.vm().setup.softAvailability.available, true);              // |P| = 1 ⇒ trivially common basis
+  assert.equal(t.vm().setup.basis.state, 'verified');                        // |P| = 1 ⇒ trivially common basis
+  assert.equal(t.vm().setup.basis.required, false);
   assert.equal(t.vm().run.canRun, true);
   await t.runAndWait();
   const vm = t.vm();

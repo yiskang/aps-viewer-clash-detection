@@ -2,6 +2,7 @@
 // The ONLY vocabulary the UI may dispatch to the controller (catalog §4; frozen). Payload fields, all optional
 // unless noted — `value` carries a control's new value:
 //   SETUP_NAME/SETUP_MODE('hard'|'soft')/SETUP_CLEARANCE(string)/SETUP_SELF_CLASH(boolean): {value}
+//   SETUP_BASIS: {value: ''|'mm'|'cm'|'m'|'in'|'ft'|'raw'} — the user's Soft basis attestation (never `verified`)
 //   SETUP_TOGGLE_MODEL: {side:'A'|'B', modelKey}      SETUP_USE_SELECTION: {side:'A'|'B'}
 //   FILTER_TEXT(string)/FILTER_MAX_GAP(string)/FILTER_UNVERIFIED(boolean)/FILTER_HAS_LOCATION(boolean): {value}
 //   FILTER_MODEL: {value: string[]} ([] = all models)  FILTER_ELEMENT: {ref:{modelKey,dbId}|null}
@@ -14,7 +15,7 @@
 //   DIAGNOSTICS_COPY is the one intent whose dispatch() RESOLVES WITH A VALUE: the plain-JSON diagnostics string
 //   (or null when no result set is displayed); the UI copies it to the clipboard.
 export const INTENT = Object.freeze({
-  SETUP_NAME: 'setup/name', SETUP_MODE: 'setup/mode', SETUP_CLEARANCE: 'setup/clearance',
+  SETUP_NAME: 'setup/name', SETUP_MODE: 'setup/mode', SETUP_CLEARANCE: 'setup/clearance', SETUP_BASIS: 'setup/basis',
   SETUP_TOGGLE_MODEL: 'setup/toggleModel',
   SETUP_USE_SELECTION: 'setup/useSelection',
   SETUP_SELF_CLASH: 'setup/selfClash',

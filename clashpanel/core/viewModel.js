@@ -10,11 +10,13 @@
 //     run:       { machine (runMachine RunState), snapshot|null, elapsedMs|null, canRun, canStop, admission|null, confirm|null,
 //                  releaseErrors[], releaseStuck?, residencyNotice|null, setupChanged, isolationNotice|null },
 //     displayed: null | { runId, status, resultSet|null, persistence, freshness|null, freshnessPending, claim|null, claimPending, summary|null,
-//                  runRecord?: null | { basisVerdict } },
+//                  runRecord?: null | { basisVerdict, basis:{state,unit} } },
 //     list:      null | { total, filtered|null, busy, maskUnavailable?, spec, textDraft, maxGapText, maxGapError, groupBy, groupingState,
 //                  groupingReason, sort, isSoft, clearance, modelOptions, elementOnly, view, page, rows, nav, hiddenByFilters },
 //     selected:  null | { resultId, ordinal, side1, side2, gap, hasLocation, liveness, notes, hiddenByFilters, anyLive, isolation, toggles } }
-import { PAGE_SIZE } from './constants.js';
+import { PAGE_SIZE, GAP_UNIT_LABEL, BASIS_UNITS, BASIS_RAW, SOFT_BASIS_HEADLINE, SOFT_BASIS_NOT_VERIFIED_TEXT } from './constants.js';
+import { resolveBasis, BASIS_STATE, basisProvenanceText } from './measurementBasis.js';
+import { participatingModelKeys } from './setupValidation.js';
 import { runHeadline, STATEMENTS, describeAxes, bannersFor, emptyStatement } from './runReport.js';
 import { isFilterActive, FILTER_MASK_UNAVAILABLE_TEXT } from './filters.js';
 import { GROUPING_UNAVAILABLE_TEXT, MULTI_VALUED_NOTE } from './grouping.js';
@@ -34,6 +36,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const NON_TERMINAL = new Set(['preparing', 'planning', 'running', 'stopping', 'finalizing']);
 
 export const READY_TEXT = 'Ready to run';
+export const NOT_READY_TEXT = 'Not ready to run';
 export const PHASE_TEXT = Object.freeze({
   preparing: 'Preparing…', planning: 'Planning…', running: 'Running…',
   stopping: 'Stopping… (finishing the current step)', finalizing: 'Finalizing…',
@@ -82,35 +85,73 @@ function inSide(side, modelKey) {
   return modelKey !== null && (side.modelKeys.includes(modelKey) || Object.prototype.hasOwnProperty.call(side.elements, modelKey));
 }
 
+const BASIS_UNIT_OPTIONS = Object.freeze([
+  { value: '', label: 'Choose units…' },
+  ...BASIS_UNITS.map((u) => ({ value: u, label: u })),
+  { value: BASIS_RAW, label: 'Model units (raw, unverified)' },
+].map((o) => Object.freeze(o)));
+
+/**
+ * Soft measurement basis (owner decision 2026-10-07). While the host verdict is pending nothing about the basis is
+ * shown (fail closed, never "not verified" yet). Not verified (and models chosen): the user may attest a unit or pick
+ * raw model units — never labelled `verified`. Hard is unaffected and says so.
+ */
+function buildBasisView({ draft, soft, checking, participants }) {
+  const softMode = draft.mode === 'soft';
+  const verified = soft.available === true && !checking;
+  const required = softMode && !checking && !verified && participants > 0;
+  const basis = resolveBasis({ basisUnit: draft.basisUnit, verifiedBasis: verified && participants > 0 });
+  const reason = typeof soft.verdict?.reason === 'string' && soft.verdict.reason.length > 0 ? soft.verdict.reason : null;
+  let status = null;
+  if (required && basis.state === BASIS_STATE.USER_SUPPLIED) status = `User-supplied: all selected models are in ${basis.unit}. Not verified.`;
+  else if (required && basis.state === BASIS_STATE.RAW) status = 'Raw model units. Not verified — no physical unit is implied.';
+  return {
+    required,
+    state: softMode && !checking && participants > 0 ? basis.state : null,
+    headline: required ? SOFT_BASIS_HEADLINE : null,
+    message: required ? SOFT_BASIS_NOT_VERIFIED_TEXT : null,
+    detail: required && reason !== null ? reason : null,
+    status,
+    value: draft.basisUnit,
+    options: BASIS_UNIT_OPTIONS,
+    unitLabel: basis.state === BASIS_STATE.VERIFIED ? GAP_UNIT_LABEL : basis.state === BASIS_STATE.USER_SUPPLIED ? basis.unit : basis.state === BASIS_STATE.RAW ? 'model units (raw)' : '',
+  };
+}
+
 function buildSetupRegion(input) {
   const s = input.setup;
   const { draft, validation, soft } = s;
   const checking = soft.pending === true;
-  // While the basis verdict is pending, Soft stays unavailable (Run disabled, fail closed) but is never described
-  // as "not a verified basis": the Soft finding reads as a check in progress and no explanation is shown.
-  // §6.1/§6.2 step 4: the clearance field exists only while Soft is available; while it is hidden the Soft finding
-  // (explanation / check in progress) is the blocking reason, so a request to fill the hidden field is not shown.
-  const clearanceVisible = draft.mode === 'soft' && soft.available === true && !checking;
+  const participants = participatingModelKeys(draft).length;
+  const softMode = draft.mode === 'soft';
+  const basis = buildBasisView({ draft, soft, checking, participants });
+  // While the basis verdict is pending, Soft stays blocked (Run disabled, fail closed) and reads as a check in
+  // progress; clearance/basis requests are not shown until it settles. Basis requests also wait for chosen models.
   const messages = (validation?.findings ?? [])
-    .filter((f) => clearanceVisible || f.control !== 'clearance')
+    .filter((f) => !((checking || !softMode) && (f.control === 'clearance' || f.control === 'basis')))
+    .filter((f) => !(f.control === 'basis' && participants === 0))
     .map((f) => ({
       control: f.control,
       text: checking && (f.code === 'soft-checking' || f.code === 'soft-unavailable') ? SOFT_CHECKING_TEXT : f.text,
     }));
   const scopeA = describeScope(draft.setA, s.modelName);
   const scopeB = draft.selfClash ? 'Same as Set A' : describeScope(draft.setB, s.modelName);
-  const modeText = draft.mode === 'soft' ? `Soft (clearance ${draft.clearance === '' ? 'not set' : draft.clearance})` : 'Hard';
+  const unitSuffix = basis.state === BASIS_STATE.USER_SUPPLIED ? ` ${basis.unitLabel} (user-supplied)` : basis.state === BASIS_STATE.RAW ? ' model units (raw, unverified)' : '';
+  const modeText = softMode ? `Soft (clearance ${draft.clearance === '' ? 'not set' : `${draft.clearance}${unitSuffix}`})` : 'Hard';
   return {
     collapsed: s.collapsed === true,
     summary: `${draft.name} · ${modeText} · A: ${scopeA} · B: ${scopeB}`,
     name: draft.name,
     mode: draft.mode,
-    softAvailability: { available: soft.available === true && !checking, pending: checking, explanation: checking ? null : (soft.explanation ?? null) },
+    softChecking: checking,
+    basis: { ...basis, error: messages.find((m) => m.control === 'basis')?.text ?? null },
     clearance: {
       value: draft.clearance,
-      visible: clearanceVisible,   // §6.1: only while Soft is available
+      visible: softMode && !checking,
+      unitLabel: basis.unitLabel,
       error: messages.find((m) => m.control === 'clearance')?.text ?? null,
     },
+    newTest: { enabled: s.runActive !== true },
     models: s.models.map((m) => ({
       modelKey: m.modelKey, displayName: m.displayName, ready: m.loaded, registered: m.registered,
       inA: inSide(draft.setA, m.modelKey),
@@ -147,7 +188,7 @@ function progressOf(run) {
 
 function headlineOf(input) {
   const m = input.run.machine;
-  if (m.phase === 'idle') return READY_TEXT;
+  if (m.phase === 'idle') return input.run.canRun === true ? READY_TEXT : NOT_READY_TEXT;
   if (m.phase === 'preparing' && m.waitingForOtherRun === true) return WAITING_TEXT;
   if (PHASE_TEXT[m.phase] !== undefined) return PHASE_TEXT[m.phase];
   const d = input.displayed;
@@ -262,7 +303,8 @@ function buildRunRegion(input) {
 
 const text = (v) => (typeof v === 'string' ? v : v === null || v === undefined ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 
-function basisText(verdict) {
+function basisText(verdict, basis) {
+  if (basis !== null && basis !== undefined) return basisProvenanceText(basis, verdict);
   if (verdict === null || verdict === undefined) return 'single model (no cross-model comparison)';
   if (verdict.state === 'verified') return `verified (${text(verdict.basisKey)})`;
   return `${text(verdict.state)}: ${text(verdict.reason)}`;
@@ -292,7 +334,7 @@ export function buildRunDetails({ resultSet, runRecord = null, modelName = (key)
   }
   const exclusions = Array.isArray(provenance.libraryExclusions) ? provenance.libraryExclusions : [];
   add('Library exclusions', exclusions.length === 0 ? 'none' : exclusions.map(text).join('; '));
-  if (definition?.mode === 'clearance') add('Measurement basis (at run start)', basisText(runRecord?.basisVerdict));
+  if (definition?.mode === 'clearance') add('Measurement basis (at run start)', basisText(runRecord?.basisVerdict, runRecord?.basis));
   return lines;
 }
 

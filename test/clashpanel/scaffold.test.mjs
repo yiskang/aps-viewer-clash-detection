@@ -17,6 +17,7 @@ const EXPECTED_MODULES = [
   'core/draft.js',
   'core/setupValidation.js',
   'core/softAvailability.js',
+  'core/measurementBasis.js',
   'core/derivationQueue.js',
   'core/runMachine.js',
   'core/residency.js',

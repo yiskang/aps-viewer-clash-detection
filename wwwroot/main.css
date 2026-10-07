@@ -550,9 +550,52 @@ body, html {
     gap: 2px;
     margin: 0 0 6px;
 }
-.clash-panel-root .clash-setup-toggle {
-    display: block;
+.clash-panel-root .clash-setup-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 8px;
     margin: 0 0 8px;
+}
+.clash-panel-root .clash-setup-toggle,
+.clash-panel-root .clash-setup-new-test {
+    display: inline-block;
+    margin: 0;
+}
+/* The Run/Stop/Clear status is announced through the aria-live region; its text repeats the visible state line. */
+.clash-panel-root .clash-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+.clash-panel-root .clash-basis {
+    margin: 0 0 8px;
+}
+.clash-panel-root .clash-basis p {
+    margin: 0 0 4px;
+}
+.clash-panel-root .clash-basis-headline {
+    font-weight: 600;
+}
+.clash-panel-root .clash-basis-message,
+.clash-panel-root .clash-basis-status,
+.clash-panel-root .clash-basis-detail,
+.clash-panel-root .clash-clearance-unit {
+    color: var(--nv-text-2);
+}
+.clash-panel-root .clash-basis-detail {
+    font-size: 11px;
+}
+.clash-panel-root label.clash-basis-units {
+    display: block;
+    margin: 4px 0;
 }
 .clash-panel-root label.clash-name {
     display: block;
@@ -579,4 +622,20 @@ body, html {
 .clash-panel-root fieldset.clash-mode,
 .clash-panel-root fieldset.clash-group {
     margin: 0 0 8px;
+}
+
+/* Clearance + its unit label share one line; an error wraps below. */
+.clash-panel-root .clash-clearance {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0 4px;
+    margin: 0 0 8px;
+}
+.clash-panel-root .clash-clearance .clash-clearance-unit {
+    padding-bottom: 7px;
+}
+.clash-panel-root .clash-clearance .clash-field-error {
+    flex-basis: 100%;
+    margin: 2px 0 0;
 }

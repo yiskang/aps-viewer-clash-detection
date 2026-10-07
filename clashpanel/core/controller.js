@@ -18,6 +18,7 @@ import { narrowEnginePort, assertCatalogPort, assertBridgePort } from './ports.j
 import { createDraft, draftReduce, prepareRun } from './draft.js';
 import { validateSetup, participatingModelKeys } from './setupValidation.js';
 import { evaluateSoftAvailability } from './softAvailability.js';
+import { resolveBasis } from './measurementBasis.js';
 import { createDerivationQueue } from './derivationQueue.js';
 import { RUN_PHASE, initialRunState, reduceRun, canRun, canStop } from './runMachine.js';
 import { createResidency } from './residency.js';
@@ -208,6 +209,7 @@ function applySetup(c, action) {
 function onSetupName(c, intent) { applySetup(c, { type: 'name', value: String(intent.value ?? '') }); }
 function onSetupMode(c, intent) { if (intent.value === 'hard' || intent.value === 'soft') applySetup(c, { type: 'mode', value: intent.value }); }
 function onSetupClearance(c, intent) { applySetup(c, { type: 'clearance', value: String(intent.value ?? '') }); }
+function onSetupBasis(c, intent) { if (typeof intent.value === 'string') applySetup(c, { type: 'basisUnit', value: intent.value }); }
 function onSetupSelfClash(c, intent) { applySetup(c, { type: 'selfClash', value: intent.value === true }); }
 
 function onSetupToggleModel(c, intent) {
@@ -283,7 +285,8 @@ function onRunStart(c) {
  */
 function startRun(c, { acknowledgeUnsaved }) {
   c.confirm = null;
-  const prepared = prepareRun(c.draft);
+  const verifiedBasis = c.soft.available === true && c.soft.pending !== true;
+  const prepared = prepareRun(c.draft, { verifiedBasis });
   if (prepared.definition === null) { c.validation = safeValidate(c); touch(c); return; }
   const confirmedDiscard = acknowledgeUnsaved === true;
   if (confirmedDiscard) retireDisplayed(c, { acknowledgeUnsaved: true });   // consented: free the slot first
@@ -302,7 +305,9 @@ function startRun(c, { acknowledgeUnsaved }) {
   c.draft = prepared.draft;                                       // revision rule applied only for an admitted run
   c.admission = null;
   if (!confirmedDiscard) retireDisplayed(c, { acknowledgeUnsaved: false });   // ONLY now: generation++, bridge.clear(), release
-  c.runRecord = { basisVerdict: c.soft.verdict };                 // §6.2 step 4: the basis verdict this run was admitted under
+  // §6.2 step 4 + owner decision 2026-10-07: the basis this run was admitted under. A user-supplied or raw basis is
+  // recorded as exactly that and can never read `verified`: only a host `verified` verdict (or a single model) does.
+  c.runRecord = { basisVerdict: c.soft.verdict, basis: resolveBasis({ basisUnit: c.draft.basisUnit, verifiedBasis }) };
   c.hasRun = true;
   c.setupChanged = false;
   c.setupCollapsed = true;                                        // spec §14.3: collapses when a run starts
@@ -1149,6 +1154,7 @@ const DISPATCH = {
   [INTENT.SETUP_NAME]: onSetupName,
   [INTENT.SETUP_MODE]: onSetupMode,
   [INTENT.SETUP_CLEARANCE]: onSetupClearance,
+  [INTENT.SETUP_BASIS]: onSetupBasis,
   [INTENT.SETUP_TOGGLE_MODEL]: onSetupToggleModel,
   [INTENT.SETUP_USE_SELECTION]: onSetupUseSelection,
   [INTENT.SETUP_SELF_CLASH]: onSetupSelfClash,

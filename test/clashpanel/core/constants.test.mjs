@@ -9,8 +9,8 @@ test('constants: exports exactly the catalog names, nothing else', () => {
   assert.deepEqual(Object.keys(constants).sort(), [
     'BASIS_VERDICT_TIMEOUT_MS', 'DERIVATION_BUSY_MAX_RETRIES', 'DERIVATION_BUSY_RETRY_MS', 'FILTER_DEBOUNCE_MS',
     'GAP_DECIMALS', 'GAP_UNIT_LABEL', 'LABEL_CACHE_MAX', 'LIST_CHUNK_SIZE', 'PAGE_SIZE', 'READINESS_POLL_MS',
-    'SOFT_UNAVAILABLE_TEXT',
-  ]);
+    'SOFT_UNAVAILABLE_TEXT', 'BASIS_RAW', 'BASIS_UNITS', 'SOFT_BASIS_HEADLINE', 'SOFT_BASIS_NOT_VERIFIED_TEXT',
+  ].sort());
 });
 
 test('constants: values are the provisional presentation defaults of spec 12.4', () => {
@@ -29,8 +29,19 @@ test('constants: values are the provisional presentation defaults of spec 12.4',
 test('constants: every numeric constant is a positive safe integer (no fractional or unbounded values)', () => {
   for (const [name, value] of Object.entries(constants)) {
     if (typeof value === 'number') assert.ok(Number.isSafeInteger(value) && value > 0, name);
+    else if (Array.isArray(value)) assert.ok(Object.isFrozen(value) && value.every((x) => typeof x === 'string'), name);
     else assert.equal(typeof value, 'string', name);
   }
+});
+
+test('owner decision 2026-10-07: basis constants (declared units are labels, raw is its own choice, wording never claims verification)', () => {
+  assert.deepEqual([...constants.BASIS_UNITS], ['mm', 'cm', 'm', 'in', 'ft']);
+  assert.ok(Object.isFrozen(constants.BASIS_UNITS));
+  assert.equal(constants.BASIS_RAW, 'raw');
+  assert.ok(!constants.BASIS_UNITS.includes(constants.BASIS_RAW));
+  assert.equal(constants.SOFT_BASIS_HEADLINE, 'Soft clearance needs a measurement basis. Hard clash is available.');
+  assert.match(constants.SOFT_BASIS_NOT_VERIFIED_TEXT, /not verified automatically/);
+  assert.doesNotMatch(constants.SOFT_BASIS_HEADLINE, /approx|estimate/i);
 });
 
 test('AC-P11: no exported name presents a presentation constant as an engine limit or a capacity', () => {

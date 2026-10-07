@@ -2,14 +2,13 @@
 // Region 1 validation (spec 6.2): Panel problems -> engine.validateTest issues (authoritative, mapped by RFC 6901 path)
 // -> advisory pre-checks (registered, bound, loaded) -> Soft availability. Registration is READ-ONLY (PD-18): only
 // `registry.bindingFor` is called. Nothing here checks a numeric engine limit (spec 5.2).
-import { SOFT_UNAVAILABLE_TEXT } from './constants.js';
-import { buildDefinition, selectionEntriesOf } from './draft.js';
+import { buildDefinition, participantKeysOf, selectionEntriesOf } from './draft.js';
 
 const LABEL = Object.freeze({
-  name: 'Test name', mode: 'Mode', clearance: 'Clearance', setA: 'Set A', setB: 'Set B', general: 'Test definition',
+  name: 'Test name', mode: 'Mode', clearance: 'Clearance', basis: 'Measurement basis', setA: 'Set A', setB: 'Set B', general: 'Test definition',
 });
 const HEAD_TO_CONTROL = Object.freeze({
-  name: 'name', mode: 'mode', clearance: 'clearance', selectionA: 'setA', selectionB: 'setB',
+  name: 'name', mode: 'mode', clearance: 'clearance', basis: 'basis', selectionA: 'setA', selectionB: 'setB',
 });
 
 /** '/clearance' -> clearance, '/selectionA/...' -> setA, '/selectionB/...' -> setB, '/name' -> name, '/mode' -> mode, else general. */
@@ -19,11 +18,7 @@ export function controlForIssuePath(path) {
   return { control: Object.hasOwn(HEAD_TO_CONTROL, head) ? HEAD_TO_CONTROL[head] : 'general' };
 }
 
-export function participatingModelKeys(draft) {
-  const keys = selectionEntriesOf(draft.setA).map((e) => e.modelKey);
-  if (!draft.selfClash) keys.push(...selectionEntriesOf(draft.setB).map((e) => e.modelKey));
-  return [...new Set(keys)].sort();
-}
+export const participatingModelKeys = participantKeysOf;
 
 const asText = (v) => (typeof v === 'string' ? v : '');
 
@@ -76,19 +71,20 @@ function modelFindings({ draft, engine, catalog }) {
   return out;
 }
 
+/**
+ * An unverified basis does NOT block Soft any more (owner decision 2026-10-07): the user supplies the basis, and a
+ * missing one is the `basis-required` problem from buildDefinition. Only an evaluation still in flight blocks (fail closed).
+ */
 function softFinding(draft, softAvailability) {
   if (draft.mode !== 'soft' || participatingModelKeys(draft).length === 0) return [];
-  if (softAvailability && softAvailability.available === true) return [];
   if (softAvailability && softAvailability.pending === true) {
     return [{ control: 'mode', code: 'soft-checking', text: 'Checking whether Soft (clearance) is available…' }];
   }
-  const text = typeof softAvailability?.explanation === 'string' && softAvailability.explanation.length > 0
-    ? softAvailability.explanation : SOFT_UNAVAILABLE_TEXT;
-  return [{ control: 'mode', code: 'soft-unavailable', text }];
+  return [];
 }
 
 export function validateSetup({ draft, engine, catalog, softAvailability }) {
-  const built = buildDefinition(draft);
+  const built = buildDefinition(draft, { verifiedBasis: softAvailability?.available === true && softAvailability?.pending !== true });
   const findings = built.problems.map(({ control, code, text }) => ({ control, code, text }));
   let issuesTruncated = false;
   if (built.definition !== null) {

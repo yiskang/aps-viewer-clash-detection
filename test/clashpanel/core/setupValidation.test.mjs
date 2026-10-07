@@ -38,7 +38,7 @@ test('controlForIssuePath: maps the documented paths and treats every other path
 });
 
 test('controlForIssuePath: every issue the REAL validateTest can report for a mutated definition lands on the expected control', () => {
-  const good = buildDefinition(softDraft()).definition;
+  const good = buildDefinition(softDraft(), { verifiedBasis: true }).definition;
   const model = (modelKey) => ({ kind: 'model', modelKey });
   const cases = [
     ['name empty', { ...good, name: '' }, 'name'],
@@ -251,38 +251,56 @@ test('AC-P20: registration is READ-ONLY: only validateTest and registry.bindingF
 });
 
 // ---- Soft availability (AC-P18, validateSetup level) ---------------------------------------------------------------------------
-test('AC-P18: Soft with an unavailable basis is blocked with the explanation; the SAME unavailability leaves Hard ready', () => {
+test('AC-P18 (owner decision 2026-10-07): Soft with an unverified basis is blocked ONLY by basis-required (no soft-unavailable); an attested basis makes it ready; Hard stays ready', () => {
   const unavailable = { available: false, explanation: `${SOFT_UNAVAILABLE_TEXT} They use different units.` };
   const soft = run(softDraft(), world(), unavailable);
-  assert.deepEqual(soft.findings, [{ control: 'mode', code: 'soft-unavailable', text: unavailable.explanation }]);
+  assert.deepEqual(soft.findings, [{ control: 'basis', code: 'basis-required', text: 'Choose the units/basis for this Soft test.' }]);
   assert.equal(soft.state, 'blocked');
   assert.equal(soft.definition, null);
+  for (const choice of ['mm', 'cm', 'm', 'in', 'ft', 'raw']) {
+    const attested = run(reduce(softDraft(), { type: 'basisUnit', value: choice }), world(), unavailable);
+    assert.equal(attested.state, 'ready', choice);
+    assert.equal(attested.definition.mode, 'clearance');
+    assert.equal(attested.definition.clearance, 0.05);                       // never converted
+  }
   const hard = run(hardDraft(), world(), unavailable);
   assert.equal(hard.state, 'ready');
   assert.equal(hard.definition.mode, 'volume-overlap');
 });
 
-test('AC-P18: Soft with no explanation falls back to the fixed text; a pending evaluation blocks as "checking"; a missing result fails closed', () => {
-  assert.equal(run(softDraft(), world(), { available: false, explanation: null }).findings[0].text, SOFT_UNAVAILABLE_TEXT);
-  assert.deepEqual(flat(run(softDraft(), world(), { available: false, explanation: null, pending: true })), [['mode', 'soft-checking']]);
-  assert.deepEqual(flat(run(softDraft(), world(), null)), [['mode', 'soft-unavailable']]);
+test('AC-P18: a verified basis needs no attestation; a pending evaluation still blocks as "checking" (an attestation does not bypass it); a missing result needs a basis (fail closed)', () => {
+  assert.equal(run(softDraft(), world(), { available: false, explanation: null }).findings[0].text, 'Choose the units/basis for this Soft test.');
+  const pendingBlocked = run(softDraft(), world(), { available: false, explanation: null, pending: true });
+  assert.equal(pendingBlocked.state, 'blocked');
+  assert.ok(flat(pendingBlocked).some(([c, k]) => c === 'mode' && k === 'soft-checking'));
+  const pendingAttested = run(reduce(softDraft(), { type: 'basisUnit', value: 'mm' }), world(), { available: true, pending: true });
+  assert.equal(pendingAttested.state, 'blocked');                           // available:true with pending:true is not verified
+  assert.deepEqual(flat(pendingAttested), [['mode', 'soft-checking']]);
+  assert.equal(pendingAttested.definition, null);
+  assert.deepEqual(flat(run(softDraft(), world(), null)), [['basis', 'basis-required']]);
+  assert.equal(run(reduce(softDraft(), { type: 'basisUnit', value: 'raw' }), world(), null).state, 'ready');
   const ok = run(softDraft(), world(), AVAILABLE);
   assert.equal(ok.state, 'ready');
   assert.equal(ok.definition.mode, 'clearance');
   assert.equal(ok.definition.clearance, 0.05);
 });
 
-test('AC-P18: with no participating model the Soft finding is suppressed (the empty selections already block); Hard never consults softAvailability', () => {
+test('AC-P18: with no participating model the Soft/basis findings are suppressed (the empty selections already block); Hard never consults softAvailability', () => {
   const empty = reduce(createDraft({ testId: 'T' }), { type: 'mode', value: 'soft' }, { type: 'clearance', value: '1' });
-  assert.deepEqual(flat(run(empty, world(), { available: false, explanation: null })), [['setA', 'selection-empty'], ['setB', 'selection-empty']]);
+  assert.deepEqual(flat(run(empty, world(), { available: false, explanation: null })), [['basis', 'basis-required'], ['setA', 'selection-empty'], ['setB', 'selection-empty']]);
+  assert.deepEqual(flat(run(empty, world(), { available: false, explanation: null, pending: true })).filter(([, k]) => k === 'soft-checking'), []);
   let read = 0;
   const trap = { get available() { read += 1; return false; }, explanation: null };
   assert.equal(run(hardDraft(), world(), trap).state, 'ready');
-  assert.equal(read, 0);
+  assert.equal(read, 1);                                                    // validateSetup derives verifiedBasis once; Hard is unaffected by it
 });
 
-test('findings order: Panel problems, then Core issues, then pre-checks, then the Soft finding', () => {
+test('findings order: Panel problems (incl. basis-required), then Core issues, then pre-checks, then the Soft finding', () => {
   const w = world({ registered: ['mA'], validate: () => ({ issues: [{ path: '/clearance', code: 'not-positive', message: 'bad' }], issuesTruncated: false }) });
   const v = run(softDraft(), w, { available: false, explanation: null });
-  assert.deepEqual(flat(v), [['clearance', 'not-positive'], ['setB', 'model-not-registered'], ['mode', 'soft-unavailable']]);
+  assert.deepEqual(flat(v), [['basis', 'basis-required'], ['setB', 'model-not-registered']]);   // basis-required means no Core definition, so no Core issues
+  const attested = run(reduce(softDraft(), { type: 'basisUnit', value: 'mm' }), w, { available: false, explanation: null, pending: true });
+  assert.deepEqual(flat(attested), [['clearance', 'not-positive'], ['setB', 'model-not-registered'], ['mode', 'soft-checking']]);
+  const attestedIssue = run(reduce(softDraft(), { type: 'basisUnit', value: 'mm' }), w, { available: false, explanation: null });
+  assert.deepEqual(flat(attestedIssue), [['clearance', 'not-positive'], ['setB', 'model-not-registered']]);
 });

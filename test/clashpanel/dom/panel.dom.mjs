@@ -69,7 +69,7 @@ function hostileVm() {
   return panelVm({
     setup: setupVm({
       summary: `${HOSTILE} summary`, name: HOSTILE2,
-      softAvailability: { available: false, pending: false, explanation: `Soft unavailable ${HOSTILE}` },
+      basis: { ...setupVm().basis, required: true, state: 'unavailable', headline: `Basis ${HOSTILE}`, message: `Soft unavailable ${HOSTILE2}`, detail: HOSTILE, status: HOSTILE2, error: `bad ${HOSTILE}` },
       models: [{ modelKey: 'mA', displayName: HOSTILE, ready: false, registered: true, inA: true, inB: false, note: HOSTILE2 }],
       scope: { A: HOSTILE, B: HOSTILE2 },
       validation: { state: 'blocked', messages: [{ control: 'setA', text: `${HOSTILE} is not registered` }], issuesTruncated: false },

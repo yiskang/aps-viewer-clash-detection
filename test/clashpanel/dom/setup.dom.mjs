@@ -7,7 +7,7 @@ import { setupVm } from './support/vmFixtures.mjs';
 const SETUP = ['/clashpanel/ui/render/setup.js', 'renderSetup'];
 
 test('setup: every control dispatches its exact INTENT payload', () => withPage(async ({ page }) => {
-  await mountRenderer(page, ...SETUP, setupVm({ softAvailability: { available: true, pending: false, explanation: null } }));
+  await mountRenderer(page, ...SETUP, setupVm());
   await page.fill('[data-key="setup-name"]', 'Level 2 MEP');
   await page.check('[data-key="setup-mode-soft"]');
   await page.click('[data-key="setup-B-mA"]');
@@ -26,20 +26,8 @@ test('setup: every control dispatches its exact INTENT payload', () => withPage(
   ]);
 }));
 
-test('setup: Soft unavailable ⇒ Soft radio disabled, fixed explanation shown, no clearance field', () => withPage(async ({ page }) => {
-  const explanation = "Soft (clearance) isn't available for these models: they don't share a verified common measurement basis.";
-  await mountRenderer(page, ...SETUP, setupVm({ softAvailability: { available: false, pending: false, explanation } }));
-  const r = await page.evaluate(() => ({
-    softDisabled: document.querySelector('[data-key="setup-mode-soft"]').disabled,
-    hardDisabled: document.querySelector('[data-key="setup-mode-hard"]').disabled,
-    explanation: document.querySelector('.clash-soft-explanation')?.textContent ?? null,
-    clearance: document.querySelector('[data-key="setup-clearance"]'),
-  }));
-  assert.deepEqual(r, { softDisabled: true, hardDisabled: false, explanation, clearance: null });
-}));
-
 test('setup: clearance field only when visible; input dispatches the raw string; error is shown', () => withPage(async ({ page }) => {
-  await mountRenderer(page, ...SETUP, setupVm({ mode: 'soft', clearance: { value: '0.5', visible: true, error: 'Enter a clearance greater than 0' } }));
+  await mountRenderer(page, ...SETUP, setupVm({ mode: 'soft', clearance: { value: '0.5', visible: true, unitLabel: '', error: 'Enter a clearance greater than 0' } }));
   const r = await page.evaluate(() => ({
     value: document.querySelector('[data-key="setup-clearance"]').value,
     invalid: document.querySelector('[data-key="setup-clearance"]').getAttribute('aria-invalid'),

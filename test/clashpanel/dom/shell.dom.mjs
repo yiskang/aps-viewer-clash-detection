@@ -81,7 +81,7 @@ test('controller notifications re-render the body; DOM events reach controller.d
     document.querySelector('#clash-panel [data-key="run-stop"]').click();
     return { before, after, dispatched: controller.dispatched };
   }, [panelVm(), panelVm({ run: runVm({ state: 'running', canRun: false, canStop: true, headline: 'Running' }) })]);
-  assert.deepEqual(r, { before: 'Idle · Ready to run', after: 'Running · Running', dispatched: [{ type: 'run/stop' }] });
+  assert.deepEqual(r, { before: 'Idle', after: 'Running', dispatched: [{ type: 'run/stop' }] });
 }));
 
 test('dispose: unsubscribes, uninitializes ONCE, never calls setVisible afterwards, is idempotent, ignores late events', () => withPage(async ({ page }) => {
