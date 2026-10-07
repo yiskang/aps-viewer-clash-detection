@@ -1,0 +1,36 @@
+npm notice run aps-viewer-sandbox@1.0.0 test:acceptance
+npm notice run node test/acceptance/room-locator.acceptance.mjs
+
+=== Loading acceptance model ===
+
+=== Tier 1: UI-driven "Locate Room" flow ===
+  PASS  bathtub name lookup (full bracketed display name) resolves exactly one dbId
+        expected=1 actual=1
+  PASS  expected room name lookup (Master Bath 207 [857194]) resolves exactly one dbId
+        expected=1 actual=1
+  PASS  selection still contains the bathtub after right-click (context menu landed on it)
+        expected=true actual=true
+  [alert] Located 1 room(s) for element 4965. The result may be incomplete — 1 diagnostic(s): crossing-budget-exhausted.
+  PASS  highlighted/isolated room is Master Bath 207 [857194] (mode: isolation)
+        expected=true actual=true
+  Screenshot saved for manual visual sign-off: /Users/kangea/Workspace/Codes/aps-viewer-clash-detection/test/acceptance/results/locate-room-result.png
+  PASS  window.THREE.REVISION === '71' before the query
+        expected="71" actual="71"
+  PASS  window.THREE.REVISION === '71' unchanged after the query
+        expected="71" actual="71"
+  PASS  no failed /vendor/ responses
+        expected=[] actual=[]
+  PASS  no failed /vendor/ network-level requests
+        expected=[] actual=[]
+  PASS  BufferGeometryUtils.js was requested and resolved successfully
+        expected=true actual=true
+
+=== Tier 2: exact vertex-count regression (spike ground truth) ===
+  PASS  bathtub has 1003 world-space vertices post-weld
+        expected=1003 actual=1003
+  PASS  Master Bath 207 [857194] has 907 vertices inside
+        expected=907 actual=907
+  PASS  exactly 13 other rooms present
+        expected=13 actual=13
+  PASS  every other room scores exactly 0
+        expected=true actual=true

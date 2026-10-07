@@ -98,6 +98,14 @@ export const maxTlasCandidatePairs = 200_000;
 // (test/performance/run-gate-m3.mjs).
 export const maxClearanceNarrowPhasePairs = 20_000;
 
+// SVF2 non-uniform fragment clearance (docs/superpowers/specs/
+// 2026-10-07-svf2-nonuniform-fragment-clearance-design.md §5.2): hard per-epoch byte budget for the
+// clearance-private derived ("prescaled") geometry cache -- actual retained position + index + BVH
+// bytes of its ready entries. Exceeding it (or the entry cap, maxCollisionInstancesPerEpoch) evicts
+// least-recently-used entries; eviction only costs a rebuild, never changes a result. Provisional,
+// same M3-gate retuning discipline as maxClearanceNarrowPhasePairs above.
+export const maxClearanceDerivedGeometryBytesPerEpoch = 256 * 1024 * 1024; // 256 MiB
+
 // M3 — the design spec leaves both qualitative ("a small relative tolerance"); picked here to match
 // the existing weld-epsilon order of magnitude. Provisional, same tuning discipline as above.
 export const clearanceUniformScaleRelativeTolerance = 1e-4;

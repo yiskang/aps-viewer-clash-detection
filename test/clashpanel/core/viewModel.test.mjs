@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildViewModel, describeStatusLive, EMPTY_FILTERED_TEXT } from '../../../clashpanel/core/viewModel.js';
-import { createDraft } from '../../../clashpanel/core/draft.js';
+import { createDraft, draftReduce } from '../../../clashpanel/core/draft.js';
 import { initialRunState, reduceRun } from '../../../clashpanel/core/runMachine.js';
 import { runHeadline, STATEMENTS } from '../../../clashpanel/core/runReport.js';
 import { PAGE_SIZE, SOFT_BASIS_HEADLINE } from '../../../clashpanel/core/constants.js';
@@ -81,7 +81,7 @@ function assertNoBareNoClashes(vm) {
 
 const SHAPE = {
   top: ['filters', 'results', 'run', 'selected', 'setup', 'version'],
-  setup: ['basis', 'clearance', 'collapsed', 'mode', 'models', 'name', 'newTest', 'scope', 'selfClash', 'setupChangedSinceRun', 'softChecking', 'summary', 'useSelectionEnabled', 'validation'],
+  setup: ['basis', 'clearance', 'collapsed', 'mode', 'models', 'name', 'newTest', 'overlap', 'overlapText', 'scope', 'selfClash', 'setupChangedSinceRun', 'softChecking', 'summary', 'useSelectionEnabled', 'validation'],
   run: ['badges', 'banners', 'canRun', 'canStop', 'counts', 'details', 'diagnostics', 'doneKind', 'headline', 'progress', 'state', 'statusLive', 'waitingForOtherRun'],
   filters: ['active', 'busy', 'elementOnly', 'groupBy', 'groupingNote', 'hasLocation', 'maxGap', 'modelOptions', 'models', 'sort', 'sortOptions', 'text', 'unverified'],
   results: ['hiddenByFiltersNote', 'lines', 'message', 'multiValuedNote', 'nav', 'page', 'rows', 'state', 'view'],
@@ -309,4 +309,50 @@ test('statusLive: headline + filtered count + pending freshness + an extra error
   assert.equal(describeStatusLive({ headline: 'Planning…', counts: { total: null, filtered: null }, badges: null, banners: [] }), 'Planning.');
   const vm = buildViewModel(input({ phase: 'running' }));
   assert.equal(vm.run.statusLive, describeStatusLive(vm.run));
+});
+
+// ── Set A / Set B overlap: loaded-model identity (modelKey), never display name ───────────────────────────────
+
+function overlapVm(models, setup) {
+  const base = input();
+  const draft = [...(setup.a ?? []).map((modelKey) => ({ type: 'toggleModel', side: 'A', modelKey })), ...(setup.b ?? []).map((modelKey) => ({ type: 'toggleModel', side: 'B', modelKey })), ...(setup.extra ?? [])]
+    .reduce(draftReduce, createDraft({ testId: 't', testNumber: 1 }));
+  const names = Object.fromEntries(models.map((m) => [m.modelKey, m.displayName]));
+  return buildViewModel({ ...base, setup: { ...base.setup, draft, models: models.map((m) => ({ ...m, loaded: true, registered: true })), modelName: (k) => names[k] ?? k } }).setup;
+}
+const MODELS = [{ modelKey: 'S', displayName: 'Structure' }, { modelKey: 'Arch', displayName: 'Architecture' }, { modelKey: 'Mech', displayName: 'Mechanical' }];
+
+test('overlap: the same modelKey in A and B is listed with a self-clash note (mixed sets list only the shared model)', () => {
+  const one = overlapVm(MODELS, { a: ['S'], b: ['S'] });
+  assert.deepEqual(one.overlap, [{ modelKey: 'S', displayName: 'Structure' }]);
+  assert.equal(one.overlapText, 'Self-clash: Structure is in both sets.');
+  const mixed = overlapVm(MODELS, { a: ['S', 'Arch'], b: ['S', 'Mech'] });
+  assert.deepEqual(mixed.overlap, [{ modelKey: 'S', displayName: 'Structure' }]);
+  const two = overlapVm(MODELS, { a: ['S', 'Arch'], b: ['Arch', 'S'] });
+  assert.deepEqual(two.overlap.map((o) => o.modelKey), ['Arch', 'S']);
+  assert.equal(two.overlapText, 'Self-clash: 2 models are in both sets.');
+});
+
+test('overlap: an element-level selection counts as presence of that model in a set', () => {
+  const vm = overlapVm(MODELS, { a: ['S'], extra: [{ type: 'setElements', side: 'B', elements: { S: [1, 2] } }] });
+  assert.deepEqual(vm.overlap.map((o) => o.modelKey), ['S']);
+});
+
+test('overlap: two different models with the SAME display name are NOT an overlap (keys decide, never names)', () => {
+  const dup = [{ modelKey: 'k1', displayName: 'Same.rvt' }, { modelKey: 'k2', displayName: 'Same.rvt' }];
+  const vm = overlapVm(dup, { a: ['k1'], b: ['k2'] });
+  assert.deepEqual(vm.overlap, []);
+  assert.equal(vm.overlapText, null);
+  assert.deepEqual(vm.models.map((m) => [m.modelKey, m.inA, m.inB]), [['k1', true, false], ['k2', false, true]]);
+  // same URN loaded twice (urn#1 / urn#2, identical name): behaves the same
+  const twice = overlapVm([{ modelKey: 'u#1', displayName: 'Tower' }, { modelKey: 'u#2', displayName: 'Tower' }], { a: ['u#1'], b: ['u#2'] });
+  assert.deepEqual(twice.overlap, []);
+  assert.equal(twice.overlapText, null);
+});
+
+test('overlap: empty under the selfClash mirror (Set B = Set A is its own explicit mode)', () => {
+  const vm = overlapVm(MODELS, { a: ['S'], b: ['S'], extra: [{ type: 'selfClash', value: true }] });
+  assert.deepEqual(vm.overlap, []);
+  assert.equal(vm.overlapText, null);
+  assert.equal(vm.scope.B, 'Same as Set A');
 });

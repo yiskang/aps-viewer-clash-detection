@@ -1,0 +1,4809 @@
+{
+ "findClashes": {
+  "near-miss same-model linear": [
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "type": "clearance",
+      "distance": 0.5,
+      "clearance": 1,
+      "witness": {
+       "sourcePoint": [
+        1,
+        1,
+        -1
+       ],
+       "targetPoint": [
+        1.5,
+        1,
+        -1
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 1,
+     "clearanceDistanceQueriesRun": 1,
+     "clearanceExactAabbSurvivors": 1,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 1,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 1,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   }
+  ],
+  "multi-fragment dbId minimum wins": [
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "type": "clearance",
+      "distance": 0.2999999999999998,
+      "clearance": 1,
+      "witness": {
+       "sourcePoint": [
+        8.7,
+        1,
+        -1
+       ],
+       "targetPoint": [
+        9,
+        1,
+        -1
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 2,
+     "clearanceDistanceQueriesRun": 2,
+     "clearanceExactAabbSurvivors": 2,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 1,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 2,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   }
+  ],
+  "pure hard clash excluded": [
+   {
+    "pairs": [],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 1,
+     "clearanceDistanceQueriesRun": 0,
+     "clearanceExactAabbSurvivors": 1,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 1,
+     "clearanceHits": 0,
+     "clearanceOverlapPrechecksRun": 1,
+     "narrowPhasePairs": 1,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   }
+  ],
+  "federated scene linear and tlas": [
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 1
+      },
+      "target": {
+       "modelId": 2,
+       "dbId": 1
+      },
+      "type": "clearance",
+      "distance": 0.5,
+      "clearance": 3,
+      "witness": {
+       "sourcePoint": [
+        1,
+        1,
+        -1
+       ],
+       "targetPoint": [
+        1.5,
+        1,
+        -1
+       ]
+      }
+     },
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 1
+      },
+      "target": {
+       "modelId": 2,
+       "dbId": 2
+      },
+      "type": "clearance",
+      "distance": 0.5,
+      "clearance": 3,
+      "witness": {
+       "sourcePoint": [
+        -1,
+        1,
+        -1
+       ],
+       "targetPoint": [
+        -1.5,
+        1,
+        -1
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 5,
+     "clearanceDistanceQueriesRun": 2,
+     "clearanceExactAabbSurvivors": 3,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 1,
+     "clearanceHits": 2,
+     "clearanceOverlapPrechecksRun": 1,
+     "narrowPhasePairs": 3,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": [
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 0
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 1
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 2
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 3
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 4
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 5
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 6
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 7
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 8
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 9
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 10
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 11
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 12
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 13
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 14
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 15
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 16
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 17
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 18
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 19
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 20
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 21
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 22
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 23
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 24
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 25
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 26
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 27
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 28
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 29
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 30
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 31
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 32
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 33
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 34
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 35
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 36
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 37
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 38
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 39
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 40
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 41
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 42
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 43
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 44
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 45
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 46
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 47
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 48
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 49
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 50
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 51
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 52
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 53
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 54
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 55
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 56
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 57
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 58
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 59
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 60
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 61
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 62
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 63
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 64
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 65
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 66
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 67
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 68
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 69
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 70
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 71
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 72
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 73
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 74
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 75
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 76
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 77
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 78
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 79
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 80
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 81
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 82
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 83
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 84
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 85
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 86
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 87
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 88
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 89
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 90
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 91
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 92
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 93
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 94
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 95
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 96
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 97
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 98
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 99
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 100
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 101
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 102
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 103
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 104
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 105
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 106
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 107
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 108
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 109
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 110
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 111
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 112
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 113
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 114
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 115
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 116
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 117
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 118
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 119
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 120
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 121
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 122
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 123
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 124
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 125
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 126
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 127
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 128
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 129
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 130
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 131
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 132
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 133
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 134
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 135
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 136
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 137
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 138
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 139
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 140
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 141
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 142
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 143
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 144
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 145
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 146
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 147
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 148
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 149
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 150
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 151
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 152
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 153
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 154
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 155
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 156
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 157
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 158
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 159
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 160
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 161
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 162
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 163
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 164
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 165
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 166
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 167
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 168
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 169
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 170
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 171
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 172
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 173
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 174
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 175
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 176
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 177
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 178
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 179
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 180
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 181
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 182
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 183
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 184
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 185
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 186
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 187
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 188
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 189
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 190
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 191
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 192
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 193
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 194
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 195
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 196
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 197
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 198
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 199
+      }
+     }
+    ]
+   },
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 1
+      },
+      "target": {
+       "modelId": 2,
+       "dbId": 1
+      },
+      "type": "clearance",
+      "distance": 0.5,
+      "clearance": 3,
+      "witness": {
+       "sourcePoint": [
+        1,
+        1,
+        -1
+       ],
+       "targetPoint": [
+        1.5,
+        1,
+        -1
+       ]
+      }
+     },
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 1
+      },
+      "target": {
+       "modelId": 2,
+       "dbId": 2
+      },
+      "type": "clearance",
+      "distance": 0.5,
+      "clearance": 3,
+      "witness": {
+       "sourcePoint": [
+        -1,
+        1,
+        -1
+       ],
+       "targetPoint": [
+        -1.5,
+        1,
+        -1
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 4,
+     "clearanceDistanceQueriesRun": 2,
+     "clearanceExactAabbSurvivors": 3,
+     "clearanceExpandedCandidatePairs": 4,
+     "clearanceHardClashExclusions": 1,
+     "clearanceHits": 2,
+     "clearanceOverlapPrechecksRun": 1,
+     "narrowPhasePairs": 3,
+     "tlasBuilds": 1,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 3,
+     "tlasLeafRangeEmissions": 1,
+     "tlasNarrowPhaseInputPairs": 3,
+     "tlasPrimitiveCandidatePairs": 5,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": [
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 0
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 1
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 2
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 3
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 4
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 5
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 6
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 7
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 8
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 9
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 10
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 11
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 12
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 13
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 14
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 15
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 16
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 17
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 18
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 19
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 20
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 21
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 22
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 23
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 24
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 25
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 26
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 27
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 28
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 29
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 30
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 31
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 32
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 33
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 34
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 35
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 36
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 37
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 38
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 39
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 40
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 41
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 42
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 43
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 44
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 45
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 46
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 47
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 48
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 49
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 50
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 51
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 52
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 53
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 54
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 55
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 56
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 57
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 58
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 59
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 60
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 61
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 62
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 63
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 64
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 65
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 66
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 67
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 68
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 69
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 70
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 71
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 72
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 73
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 74
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 75
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 76
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 77
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 78
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 79
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 80
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 81
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 82
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 83
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 84
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 85
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 86
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 87
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 88
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 89
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 90
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 91
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 92
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 93
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 94
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 95
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 96
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 97
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 98
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 99
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 100
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 101
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 102
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 103
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 104
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 105
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 106
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 107
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 108
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 109
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 110
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 111
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 112
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 113
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 114
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 115
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 116
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 117
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 118
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 119
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 120
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 121
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 122
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 123
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 124
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 125
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 126
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 127
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 128
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 129
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 130
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 131
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 132
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 133
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 134
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 135
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 136
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 137
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 138
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 139
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 140
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 141
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 142
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 143
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 144
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 145
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 146
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 147
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 148
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 149
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 150
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 151
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 152
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 153
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 154
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 155
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 156
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 157
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 158
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 159
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 160
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 161
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 162
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 163
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 164
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 165
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 166
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 167
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 168
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 169
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 170
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 171
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 172
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 173
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 174
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 175
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 176
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 177
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 178
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 179
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 180
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 181
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 182
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 183
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 184
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 185
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 186
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 187
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 188
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 189
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 190
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 191
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 192
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 193
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 194
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 195
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 196
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 197
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 198
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "fragment-owner-unresolvable",
+      "role": "target",
+      "fragment": {
+       "modelId": 2,
+       "dbId": null,
+       "fragId": 199
+      }
+     }
+    ]
+   }
+  ],
+  "legacy target shape linear and tlas": [
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "type": "clearance",
+      "distance": 0.5,
+      "clearance": 1,
+      "witness": {
+       "sourcePoint": [
+        1,
+        1,
+        -1
+       ],
+       "targetPoint": [
+        1.5,
+        1,
+        -1
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 2,
+     "clearanceDistanceQueriesRun": 1,
+     "clearanceExactAabbSurvivors": 1,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 1,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 1,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   },
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "type": "clearance",
+      "distance": 0.5,
+      "clearance": 1,
+      "witness": {
+       "sourcePoint": [
+        1,
+        1,
+        -1
+       ],
+       "targetPoint": [
+        1.5,
+        1,
+        -1
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 1,
+     "clearanceDistanceQueriesRun": 1,
+     "clearanceExactAabbSurvivors": 1,
+     "clearanceExpandedCandidatePairs": 1,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 1,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 1,
+     "tlasBuilds": 1,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 1,
+     "tlasLeafRangeEmissions": 1,
+     "tlasNarrowPhaseInputPairs": 1,
+     "tlasPrimitiveCandidatePairs": 3,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   }
+  ],
+  "rotated uniformly-scaled operands (legacy uniform class)": [
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "type": "clearance",
+      "distance": 1.113433725144013,
+      "clearance": 2,
+      "witness": {
+       "sourcePoint": [
+        1.3660254037844382,
+        -0.36602540378443865,
+        -0.4452243292063366
+       ],
+       "targetPoint": [
+        2.4744636336817565,
+        -0.26067194731444504,
+        -0.4452243292063369
+       ]
+      }
+     },
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 30
+      },
+      "type": "clearance",
+      "distance": 0.17296045887785366,
+      "clearance": 2,
+      "witness": {
+       "sourcePoint": [
+        -1.3660254037844386,
+        0.36602540378443854,
+        -0.044658201599511956
+       ],
+       "targetPoint": [
+        -1.5276002845457317,
+        0.42774151385475634,
+        -0.04465820159951178
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 2,
+     "clearanceDistanceQueriesRun": 2,
+     "clearanceExactAabbSurvivors": 2,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 2,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 2,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   },
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "type": "clearance",
+      "distance": 1.113433725144013,
+      "clearance": 2,
+      "witness": {
+       "sourcePoint": [
+        1.3660254037844382,
+        -0.36602540378443865,
+        -0.4452243292063366
+       ],
+       "targetPoint": [
+        2.4744636336817565,
+        -0.26067194731444504,
+        -0.4452243292063369
+       ]
+      }
+     },
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 30
+      },
+      "type": "clearance",
+      "distance": 0.17296045887785366,
+      "clearance": 2,
+      "witness": {
+       "sourcePoint": [
+        -1.3660254037844386,
+        0.36602540378443854,
+        -0.044658201599511956
+       ],
+       "targetPoint": [
+        -1.5276002845457317,
+        0.42774151385475634,
+        -0.04465820159951178
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 2,
+     "clearanceDistanceQueriesRun": 2,
+     "clearanceExactAabbSurvivors": 2,
+     "clearanceExpandedCandidatePairs": 2,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 2,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 2,
+     "tlasBuilds": 1,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 2,
+     "tlasLeafRangeEmissions": 1,
+     "tlasNarrowPhaseInputPairs": 2,
+     "tlasPrimitiveCandidatePairs": 3,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   }
+  ],
+  "mixed small/large uniform scales (anchor rule)": [
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "type": "clearance",
+      "distance": 0.4120154286996826,
+      "clearance": 1.5,
+      "witness": {
+       "sourcePoint": [
+        0.2448580265045166,
+        0,
+        -0.05044352635741234
+       ],
+       "targetPoint": [
+        0.6384713996240527,
+        -2.498001805406602e-16,
+        -0.17220241099440314
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 1,
+     "clearanceDistanceQueriesRun": 1,
+     "clearanceExactAabbSurvivors": 1,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 1,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 1,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   },
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "type": "clearance",
+      "distance": 0.4120154286996826,
+      "clearance": 1.5,
+      "witness": {
+       "sourcePoint": [
+        0.6384713996240527,
+        -2.498001805406602e-16,
+        -0.17220241099440314
+       ],
+       "targetPoint": [
+        0.2448580265045166,
+        0,
+        -0.05044352635741234
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 1,
+     "clearanceDistanceQueriesRun": 1,
+     "clearanceExactAabbSurvivors": 1,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 1,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 1,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   }
+  ],
+  "beyond threshold after broad phase (diagonal sphere)": [
+   {
+    "pairs": [],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 1,
+     "clearanceDistanceQueriesRun": 1,
+     "clearanceExactAabbSurvivors": 1,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 0,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 1,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   }
+  ],
+  "open plane near a box": [
+   {
+    "pairs": [
+     {
+      "source": {
+       "modelId": 1,
+       "dbId": 10
+      },
+      "target": {
+       "modelId": 1,
+       "dbId": 20
+      },
+      "type": "clearance",
+      "distance": 0.3999999999999999,
+      "clearance": 1,
+      "witness": {
+       "sourcePoint": [
+        -1,
+        -1,
+        1
+       ],
+       "targetPoint": [
+        -1,
+        -1,
+        1.4
+       ]
+      }
+     }
+    ],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 1,
+     "clearanceDistanceQueriesRun": 1,
+     "clearanceExactAabbSurvivors": 1,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 1,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 1,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": []
+   }
+  ],
+  "reflected operands stay diagnosed unsupported (owner decision O-1)": [
+   {
+    "pairs": [],
+    "statistics": {
+     "blasBuilt": 0,
+     "blasCacheHits": 0,
+     "broadPhasePairs": 2,
+     "clearanceDistanceQueriesRun": 0,
+     "clearanceExactAabbSurvivors": 2,
+     "clearanceExpandedCandidatePairs": 0,
+     "clearanceHardClashExclusions": 0,
+     "clearanceHits": 0,
+     "clearanceOverlapPrechecksRun": 0,
+     "narrowPhasePairs": 2,
+     "tlasBuilds": 0,
+     "tlasCacheHits": 0,
+     "tlasExactRetestSurvivors": 0,
+     "tlasLeafRangeEmissions": 0,
+     "tlasNarrowPhaseInputPairs": 0,
+     "tlasPrimitiveCandidatePairs": 0,
+     "tlasSharedBuildWaits": 0
+    },
+    "diagnostics": [
+     {
+      "scope": "fragment",
+      "reason": "clearance-anisotropic-scale-unsupported",
+      "role": "target",
+      "fragment": {
+       "modelId": 1,
+       "dbId": 20,
+       "fragId": 200
+      }
+     },
+     {
+      "scope": "fragment",
+      "reason": "clearance-anisotropic-scale-unsupported",
+      "role": "target",
+      "fragment": {
+       "modelId": 1,
+       "dbId": 30,
+       "fragId": 300
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "directQuery": {
+  "boxes gap 0.5": {
+   "toleranceFloor": 0.0000034641016151377543,
+   "result": {
+    "withinClearance": true,
+    "distance": 0.5,
+    "witness": {
+     "sourcePoint": [
+      1,
+      1,
+      -1
+     ],
+     "targetPoint": [
+      1.5,
+      1,
+      -1
+     ]
+    }
+   }
+  },
+  "rotated uniform scales": {
+   "toleranceFloor": 0.0000034641016151377543,
+   "result": {
+    "withinClearance": true,
+    "distance": 1.1709476022339205,
+    "witness": {
+     "sourcePoint": [
+      1.1431461315514484,
+      -0.18059028987947934,
+      0.08658473854345097
+     ],
+     "targetPoint": [
+      2.239496600627899,
+      0.18590673804283145,
+      -0.1
+     ]
+    }
+   }
+  },
+  "beyond clearance": {
+   "toleranceFloor": 0.0000034641016151377543,
+   "result": {
+    "withinClearance": false,
+    "distance": null
+   }
+  },
+  "touching below tolerance floor": {
+   "toleranceFloor": 0.0000034641016151377543,
+   "result": {
+    "withinClearance": false,
+    "distance": 0
+   }
+  }
+ }
+}

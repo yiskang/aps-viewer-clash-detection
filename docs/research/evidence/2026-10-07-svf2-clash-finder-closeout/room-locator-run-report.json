@@ -1,0 +1,120 @@
+{
+  "tier1": {
+    "consoleWarnings": [
+      "RoomLocatorExtension: findClashes reported diagnostics [Object]"
+    ],
+    "alertMessage": "Located 1 room(s) for element 4965. The result may be incomplete — 1 diagnostic(s): crossing-budget-exhausted.",
+    "highlightedNodes": [
+      521
+    ]
+  },
+  "tier2": {
+    "totalVerts": 1003,
+    "perRoom": {
+      "267": 0,
+      "268": 0,
+      "269": 0,
+      "272": 0,
+      "273": 0,
+      "275": 0,
+      "520": 0,
+      "521": 907,
+      "522": 0,
+      "523": 0,
+      "524": 0,
+      "525": 0,
+      "526": 0,
+      "563": 0
+    }
+  },
+  "vendorFailures": [],
+  "vendorRequestFailedEvents": [],
+  "revisionCheck": {
+    "before": "71",
+    "after": "71"
+  },
+  "checks": [
+    {
+      "name": "bathtub name lookup (full bracketed display name) resolves exactly one dbId",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "expected room name lookup (Master Bath 207 [857194]) resolves exactly one dbId",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "selection still contains the bathtub after right-click (context menu landed on it)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "highlighted/isolated room is Master Bath 207 [857194] (mode: isolation)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "window.THREE.REVISION === '71' before the query",
+      "ok": true,
+      "expected": "71",
+      "actual": "71"
+    },
+    {
+      "name": "window.THREE.REVISION === '71' unchanged after the query",
+      "ok": true,
+      "expected": "71",
+      "actual": "71"
+    },
+    {
+      "name": "no failed /vendor/ responses",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "no failed /vendor/ network-level requests",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "BufferGeometryUtils.js was requested and resolved successfully",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "bathtub has 1003 world-space vertices post-weld",
+      "ok": true,
+      "expected": 1003,
+      "actual": 1003
+    },
+    {
+      "name": "Master Bath 207 [857194] has 907 vertices inside",
+      "ok": true,
+      "expected": 907,
+      "actual": 907
+    },
+    {
+      "name": "exactly 13 other rooms present",
+      "ok": true,
+      "expected": 13,
+      "actual": 13
+    },
+    {
+      "name": "every other room scores exactly 0",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    }
+  ],
+  "resolvedFixtures": {
+    "bathtubDbId": 4965,
+    "expectedRoomDbId": 521
+  }
+}

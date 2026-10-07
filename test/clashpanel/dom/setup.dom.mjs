@@ -102,3 +102,19 @@ test('setup: the collapse toggle reflects vm.setup.collapsed (aria-expanded) and
   await page.click('[data-key="setup-toggle-collapsed"]');
   assert.deepEqual(await intents(page), [{ type: 'setup/toggleCollapsed' }, { type: 'setup/toggleCollapsed' }]);
 }));
+
+test('setup: self-clash checkbox carries the new label; overlap note renders as plain text only when the vm has one', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...SETUP, setupVm());
+  const base = await page.evaluate(() => ({
+    label: document.querySelector('.clash-self-clash').textContent,
+    overlap: document.querySelector('[data-key="setup-overlap"]'),
+  }));
+  assert.equal(base.label, 'Compare Set A against itself (Set B = Set A)');
+  assert.equal(base.overlap, null);
+  await rerender(page, setupVm({ overlap: [{ modelKey: 'mA', displayName: '<b>Architecture</b>' }], overlapText: 'Self-clash: <b>Architecture</b> is in both sets.' }));
+  const shown = await page.evaluate(() => {
+    const p = document.querySelector('p.clash-setup-overlap[data-key="setup-overlap"]');
+    return { text: p.textContent, children: p.children.length };
+  });
+  assert.deepEqual(shown, { text: 'Self-clash: <b>Architecture</b> is in both sets.', children: 0 });
+}));

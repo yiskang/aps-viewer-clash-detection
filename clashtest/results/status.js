@@ -18,7 +18,8 @@
 //   3. A benign `witness-unavailable` taint is REPORTED in `caveats[]` but does not, by itself,
 //      downgrade `covered-clean` to `covered-caveated` (register S-P4-4, spec §12.3 erratum A5).
 //      `execution/diagnostics.js` records the table unfiltered (it is the evidence base AND the
-//      ledger); the filter lives only here, at taint rule 1.
+//      ledger); the filter lives only here, at taint rules 1 and 2 (rule 2 since 2026-10-07, for the
+//      informational target-model-attributed `fragment-null-geometry`; rule 3 stays unconditional).
 
 import { elementRefKey } from '../identity/ids.js';                    // P1 row N12: one key encoding
 import { isCompletenessAffecting } from '../execution/diagnostics.js'; // P4: the ONE completeness predicate
@@ -242,7 +243,12 @@ function makeReader(resultSet, ledger, resultByPair, index) {
       }
       if (t.kind === 'target-model' && t.modelKey === targetModelKey
           && wholeModelTarget(index, unit, targetModelKey)) {
-        note(caveat(t.reason, 'target-model', t.occurrences), true);                         // rule 2
+        // rule 2 -- ALWAYS reported; only a completeness-affecting reason downgrades. Before 2026-10-07
+        // this was an unconditional `true`, which was equivalent: the only informational reason then
+        // (`witness-unavailable`) is pair-scoped and can never be target-model-attributed. The
+        // owner-authorized `fragment-null-geometry` reason IS (whole-model target, dbId null), so the
+        // ONE predicate is now consulted here exactly as rule 1 already does.
+        note(caveat(t.reason, 'target-model', t.occurrences), isCompletenessAffecting(t.reason));
       }
       if (t.kind === 'unit') note(caveat(t.reason, 'unit', t.occurrences), true);            // rule 3
     }

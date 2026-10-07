@@ -123,6 +123,11 @@ function toUint32Index(indexAttribute) {
  * @param {number} [options.weldEpsilon] If provided, use this value directly; otherwise
  *   derive from getUnitScale. Must be a finite, positive number -- throws TypeError
  *   otherwise (a caller contract violation, not malformed input geometry).
+ * @param {number[]} [options.positionScale] Clearance-only (SVF2 non-uniform fragment clearance
+ *   design 2026-10-07 §5.2): per-axis scale applied to the compacted positions before the weld.
+ *   Three finite positive numbers (TypeError otherwise). A scaled coordinate that is not finite
+ *   returns `{ scaledPositionNonFinite: true, activeTriangleCount }` (never passed to the weld).
+ *   Canonical (GeometryRegistry) callers never pass it.
  */
 export function compactAndWeld(triangleGeometryView, options = {}) {
   // Finding 5: options.weldEpsilon is a programmer-facing API override (not untrusted
@@ -134,6 +139,16 @@ export function compactAndWeld(triangleGeometryView, options = {}) {
     const eps = options.weldEpsilon;
     if (typeof eps !== 'number' || !Number.isFinite(eps) || eps <= 0) {
       throw new TypeError(`compactAndWeld: options.weldEpsilon must be a finite positive number, got ${eps}`);
+    }
+  }
+
+  // Same caller-contract posture for the clearance-only `positionScale` (design 2026-10-07 §5.2):
+  // `undefined` means absent; anything else must be exactly three finite positive numbers.
+  const { positionScale } = options;
+  if (positionScale !== undefined) {
+    if (!Array.isArray(positionScale) || positionScale.length !== 3
+      || !positionScale.every((s) => typeof s === 'number' && Number.isFinite(s) && s > 0)) {
+      throw new TypeError(`compactAndWeld: options.positionScale must be three finite positive numbers, got ${positionScale}`);
     }
   }
 
@@ -161,6 +176,25 @@ export function compactAndWeld(triangleGeometryView, options = {}) {
   }
 
   const compact = buildCompactBuffers(triangleGeometryView, triangleVertexIds);
+
+  // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.2): the clearance-only derived path
+  // prescales the compacted float32 positions by S = diag(s0, s1, s2) -- multiply in float64, store
+  // float32 -- BEFORE welding, so the weld epsilon below applies in the scaled (world-unit) frame.
+  // Absent (every canonical caller) => this block never runs and the output is byte-identical.
+  if (positionScale !== undefined) {
+    const p = compact.position;
+    for (let i = 0; i < p.length; i += 3) {
+      p[i] = p[i] * positionScale[0];
+      p[i + 1] = p[i + 1] * positionScale[1];
+      p[i + 2] = p[i + 2] * positionScale[2];
+      if (!Number.isFinite(p[i]) || !Number.isFinite(p[i + 1]) || !Number.isFinite(p[i + 2])) {
+        // A float32 overflow (or a non-finite source coordinate) must never reach mergeVertices.
+        // Deliberately NOT an OversizedMarker / diagnostic reason: only the clearance derived path
+        // passes positionScale, and it maps this to its own unsupported outcome (design §5.6).
+        return { scaledPositionNonFinite: true, activeTriangleCount };
+      }
+    }
+  }
 
   // Strip to position+index BEFORE welding: mergeVertices compares ALL attributes on
   // the geometry it's given, so per-face normals/uvs would make every vertex unique

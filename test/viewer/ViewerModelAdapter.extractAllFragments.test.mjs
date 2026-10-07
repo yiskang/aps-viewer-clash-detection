@@ -42,6 +42,36 @@ test('a not-loaded fragment is excluded from records and diagnosed with dbId: nu
   ]);
 });
 
+// Owner-authorized bounded contract change (2026-10-07): OTG/SVF2 null-geometry fragments. The Viewer's
+// OtgLoader marks a fragment with geometry id INVALID_GEOM_ID (0) MESH_NOTLOADED on purpose; it is reported
+// as the informational 'fragment-null-geometry', never as the ordinary 'fragment-not-loaded'.
+test('a not-loaded fragment with geometry id 0 (OTG null geometry) is excluded and diagnosed as fragment-null-geometry, not fragment-not-loaded', async () => {
+  const { model, stats } = buildMockModel(
+    [{ dbId: 1, fragments: [0, 1] }, { dbId: 2, fragments: [2] }],
+    new Map([[0, { geometryIndex: 4 }], [1, { geometryIndex: 0 }], [2, { geometryIndex: 7 }]]),
+    { notLoadedFragIds: [1, 2] },
+  );
+  const { records, diagnostics } = await extractAllFragments(model, LOAD_EPOCH, {});
+  assert.deepEqual([...records.keys()], [0]);
+  assert.deepEqual(diagnostics, [
+    { scope: 'fragment', reason: 'fragment-null-geometry', role: 'target', fragment: { modelId: model, dbId: null, fragId: 1 } },
+    // not loaded but with a real (non-zero) geometry id -- selective loading / dbId filter / mesh error / unload --
+    // stays the ordinary completeness-affecting reason.
+    { scope: 'fragment', reason: 'fragment-not-loaded', role: 'target', fragment: { modelId: model, dbId: null, fragId: 2 } },
+  ]);
+  assert.equal(stats.getDbIdsCalls, 1, 'the owner is still never read for either not-loaded class (only fragId 0 is resolved)');
+});
+
+test('a fragment with geometry id 0 that is NOT flagged not-loaded (e.g. an OTG fragment record still streaming) never becomes fragment-null-geometry', async () => {
+  const { model } = buildMockModel(
+    [{ dbId: 1, fragments: [0] }],
+    new Map([[0, { geometryIndex: 0 }]]),
+  );
+  const { records, diagnostics } = await extractAllFragments(model, LOAD_EPOCH, {});
+  assert.deepEqual(diagnostics, []);
+  assert.deepEqual([...records.keys()], [0], 'unchanged pre-existing behavior: enumerated like any loaded fragment');
+});
+
 test('an unresolvable owner (getDbIds returns undefined) is excluded from records and diagnosed, never guessed', async () => {
   // fragId 1 is in-range (fragmentCount explicitly set to 2) but owned by no node in the tree --
   // fragId2dbId.get(1) is undefined, exactly like a real Viewer's sparse fragId2dbId lookup miss.

@@ -271,3 +271,93 @@ test('Finding 5: options.weldEpsilon negative is rejected', () => {
   const view = buildIsolatedTriangleView(1);
   assert.throws(() => compactAndWeld(view, { weldEpsilon: -1 }), TypeError);
 });
+
+// ---- SVF2 non-uniform fragment clearance design §5.2 / §8 T2: optional `positionScale` ----------
+// Applied to the compacted float32 positions (multiply in float64, store float32) BEFORE welding, so
+// the weld epsilon applies in the scaled frame. Absent => byte-identical to the unscaled function.
+
+function boxView(geometry = new THREE.BoxGeometry(1, 1, 1)) {
+  return adaptViewerGeometry({
+    attributes: { position: { array: geometry.attributes.position.array, itemSize: 3 } },
+    index: { array: geometry.index.array },
+  });
+}
+
+// The equivalent pre-scaled input: every raw position replaced by fround(p * s) per axis.
+function prescaledView(view, scale) {
+  const positions = Float32Array.from(view.positions);
+  const vertexCount = Math.floor(positions.length / view.positionStride);
+  for (let v = 0; v < vertexCount; v++) {
+    const base = v * view.positionStride + view.positionOffset;
+    for (let k = 0; k < 3; k++) positions[base + k] = Math.fround(positions[base + k] * scale[k]);
+  }
+  return { ...view, positions };
+}
+
+function assertSameWeld(actual, expected) {
+  assert.equal(actual.triangleCount, expected.triangleCount);
+  assert.deepEqual(Array.from(actual.index), Array.from(expected.index));
+  assert.deepEqual(Array.from(actual.position), Array.from(expected.position));
+  assert.ok(actual.position instanceof Float32Array);
+}
+
+test('positionScale absent / undefined: identical output to the unscaled call (canonical callers unchanged)', () => {
+  const view = boxView();
+  assertSameWeld(compactAndWeld(view, { weldEpsilon: 1e-4, positionScale: undefined }), compactAndWeld(view, { weldEpsilon: 1e-4 }));
+  // Scale (1,1,1) reproduces the unscaled output exactly (fround(p * 1) === p for float32 p).
+  assertSameWeld(compactAndWeld(view, { weldEpsilon: 1e-4, positionScale: [1, 1, 1] }), compactAndWeld(view, { weldEpsilon: 1e-4 }));
+});
+
+test('positionScale present: positions are fround(p * s) before the weld (equals the pre-scaled input)', () => {
+  const view = boxView(new THREE.BoxGeometry(1, 1, 1, 2, 3, 1));
+  const scale = [0.5833333134651184, 7.333335876464844, 206.6];
+  const scaled = compactAndWeld(view, { weldEpsilon: 1e-4, positionScale: scale });
+  assertSameWeld(scaled, compactAndWeld(prescaledView(view, scale), { weldEpsilon: 1e-4 }));
+  // Spot-check one coordinate against the float64-multiply/float32-store rule.
+  const xs = new Set(Array.from(scaled.position).filter((_, i) => i % 3 === 0));
+  assert.ok(xs.has(Math.fround(0.5 * scale[0])));
+});
+
+test('positionScale: the weld epsilon applies in SCALED units', () => {
+  // Two triangles whose nearest vertices are 3e-5 apart along x in LOCAL units: merged unscaled
+  // (well inside a 1e-4 weld), 3e-3 apart after a x100 scale (never merged).
+  const positions = new Float32Array([
+    0, 0, 0, -1, 0, 0, -1, 1, 0,
+    3e-5, 0, 0, 1, 0, 0, 1, 1, 0,
+  ]);
+  const view = {
+    unsupported: false, positions, positionStride: 3, positionOffset: 0, index: new Uint32Array([0, 1, 2, 3, 4, 5]),
+    ranges: [{ start: 0, count: 6 }], activeTriangleCount: 2,
+  };
+  const unscaled = compactAndWeld(view, { weldEpsilon: 1e-4 });
+  const scaled = compactAndWeld(view, { weldEpsilon: 1e-4, positionScale: [100, 1, 1] });
+  assert.equal(unscaled.position.length / 3, 5, 'unscaled: the two near vertices weld');
+  assert.equal(scaled.position.length / 3, 6, 'scaled: 3e-3 apart in the scaled frame, not welded');
+  assertSameWeld(scaled, compactAndWeld(prescaledView(view, [100, 1, 1]), { weldEpsilon: 1e-4 }));
+});
+
+test('positionScale: flat-axis partial collapse and full 0-triangle collapse match the pre-scaled input', () => {
+  // Flat y axis: the box's +-y faces' triangles survive, every side face degenerates.
+  const view = boxView();
+  const flat = [2, 1e-9, 3];
+  const partial = compactAndWeld(view, { weldEpsilon: 1e-4, positionScale: flat });
+  assertSameWeld(partial, compactAndWeld(prescaledView(view, flat), { weldEpsilon: 1e-4 }));
+  assert.ok(partial.triangleCount > 0 && partial.triangleCount < 12, `partial collapse, got ${partial.triangleCount}`);
+  // Collapse two axes: every triangle degenerates.
+  const full = compactAndWeld(view, { weldEpsilon: 1e-4, positionScale: [1e-9, 1e-9, 3] });
+  assertSameWeld(full, compactAndWeld(prescaledView(view, [1e-9, 1e-9, 3]), { weldEpsilon: 1e-4 }));
+  assert.equal(full.triangleCount, 0);
+});
+
+test('positionScale: a non-finite scaled coordinate is reported, never passed to the weld', () => {
+  const view = boxView();
+  const result = compactAndWeld(view, { weldEpsilon: 1e-4, positionScale: [1e39, 1, 1] });
+  assert.deepEqual(result, { scaledPositionNonFinite: true, activeTriangleCount: 12 });
+});
+
+test('positionScale: an invalid scale vector is a caller contract violation (TypeError)', () => {
+  const view = boxView();
+  for (const bad of [[1, 1], [1, 0, 1], [1, -2, 1], [1, NaN, 1], [1, Infinity, 1], 'x', null]) {
+    assert.throws(() => compactAndWeld(view, { weldEpsilon: 1e-4, positionScale: bad }), TypeError, `positionScale ${bad}`);
+  }
+});

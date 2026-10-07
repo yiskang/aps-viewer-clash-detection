@@ -1,12 +1,11 @@
 // wwwroot/viewerOptions.js
 //
-// Pure decision helper for the sample's opt-in Viewer Clash Panel / SVF2 mode. No globals, no DOM:
-// the caller passes `location.search`. DEFAULT behaviour (no recognised query flag) is unchanged:
-// legacy SVF initializer, no Clash Panel extension in the GuiViewer3D extension list.
+// Pure decision helper for the sample's Viewer mode. No globals, no DOM: the caller passes `location.search`.
+// DEFAULT (flag-free URL): SVF2 initializer + Room Locator + Clash Finder + Clash Panel extension.
 //
-//   ?svf2=1            -> SVF2 initializer + Clash Panel extension
-//   ?clashPanel=1      -> same
-//   ?clashPanelDemo=1  -> same, plus the Structure + Mechanical demo loader (implies the opt-in)
+//   (none)             -> SVF2 + Clash Panel (normal app)
+//   ?svf2=1, ?clashPanel=1 -> harmless legacy aliases of the default
+//   ?clashPanelDemo=1  -> same, plus the Structure + Mechanical demo loader (never gates a feature)
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 
@@ -26,8 +25,7 @@ export function resolveViewerOptions(search) {
         params = new URLSearchParams('');
     }
     const demo = flag(params, 'clashPanelDemo');
-    const optIn = demo || flag(params, 'svf2') || flag(params, 'clashPanel');
-    return { svf2: optIn, clashPanel: optIn, demo };
+    return { svf2: true, clashPanel: true, demo };
 }
 
 /** The `Autodesk.Viewing.Initializer` options for the resolved mode. */

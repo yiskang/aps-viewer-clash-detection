@@ -20,15 +20,15 @@ async function getAccessToken(callback) {
     }
 }
 
-// `search` defaults to the page's own query string. Only an opt-in flag (?svf2=1, ?clashPanel=1,
-// ?clashPanelDemo=1; see viewerOptions.js) changes anything: default = legacy SVF, two extensions.
+// `search` defaults to the page's own query string. Default (no flags) = SVF2 initializer + Room Locator +
+// Clash Finder + Clash Panel; the legacy ?svf2/?clashPanel flags are aliases (see viewerOptions.js).
 export function initViewer(container, { search = currentSearch() } = {}) {
     const options = resolveViewerOptions(search);
     return new Promise(function (resolve, reject) {
         Autodesk.Viewing.Initializer(initializerOptions(options, getAccessToken), function () {
             Autodesk.Viewing.theExtensionManager.registerExtension(ROOM_LOCATOR_EXTENSION_ID, RoomLocatorExtension);
             Autodesk.Viewing.theExtensionManager.registerExtension(CLASH_FINDER_EXTENSION_ID, ClashFinderExtension);
-            // Always registered (so it can be loaded on demand), but only auto-loaded on opt-in.
+            // Registered always; auto-loaded whenever options.clashPanel (true by default).
             Autodesk.Viewing.theExtensionManager.registerExtension(CLASH_PANEL_EXTENSION_ID, ClashPanelExtension);
             const extensions = [
                 'Autodesk.DocumentBrowser',

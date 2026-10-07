@@ -344,6 +344,7 @@ diagnostic entry**, using the shape `{scope: 'fragment', reason, role: 'target',
 | Condition | Confirmed accessor | Reason string | `fragment.dbId` |
 |---|---|---|---|
 | Not loaded / excluded from loading | `fragList.isNotLoaded(fragId) === true` | `'fragment-not-loaded'` | `null` (never resolved — check happens before any `getDbIds` call) |
+| **Added 2026-10-07 (owner-authorized):** not loaded **and** null geometry — an OTG fragment the Viewer deliberately never loads | `fragList.isNotLoaded(fragId) === true && fragList.getGeometryId(fragId) === 0` (`INVALID_GEOM_ID`) | `'fragment-null-geometry'` (**informational** — see the OTG / SVF2 section below) | `null` (same check position, before any `getDbIds` call) |
 | Index-range hole (defensive; not reproduced in this build's normal load path) | no live data at `fragId` (mechanism unconfirmed — see Version/Context Scope) | `'fragment-index-hole'` | `null` |
 | Owning dbId unresolvable | `fragList.getDbIds(fragId) === undefined` | `'fragment-owner-unresolvable'` | `null` |
 | ~~Hidden~~ **SUPERSEDED — see below** | ~~`instanceTree.isNodeHidden(ownerDbId) === true`, checked **after** `ownerDbId` is resolved`~~ | ~~`'fragment-hidden'`~~ | ~~the real, resolved `ownerDbId` (a number)~~ |
@@ -393,6 +394,68 @@ ceiling is a reasonable default absent evidence a legitimate model's fragment co
 exceeds it. This note does not pick the exact bound value or throw semantics; that is Task 5's own
 implementation decision, same as the plan's existing `CapacityExceededError('whole-model-
 enumeration', ...)` scaffold already anticipates.
+
+## OTG / SVF2: intentionally omitted null-geometry fragments (owner-authorized, 2026-10-07)
+
+**Status: binding.** Owner-authorized bounded protected-contract change ("Cause 2"). Scope: Viewer
+`7.124.2` (pinned), standard 3D OTG/SVF2 load, Audubon fixtures; revalidate on any other Viewer
+build (same `viewer-version` trigger as "Revalidation Needed" below). It amends the "not loaded" row of
+"Resolved for Task 5" above; nothing else in this note changes.
+
+**Evidence — live (Chromium, `http://localhost:8080`, SVF2 default env, Architecture + Structure +
+Mechanical loaded, headed Playwright probe, 2026-10-07).** Audubon Architecture under SVF2: 5,435
+fragments; exactly two are `isNotLoaded() === true` — fragIds **4600** and **4601**, owned by
+"Sink-Mop-2D [1603808]" (dbId 2082) and "Sink-Mop-2D [1309898]" (dbId 1154). For both:
+`getGeometryId() === 0`, `vizflags === 0x45` (`MESH_VISIBLE | MESH_HIDE | MESH_NOTLOADED`),
+`getGeometry() === null`, world bounds a zero-size point, `getDbIds()` still returns the owner, and
+`instanceTree.enumNodeFragments(owner)` **does** list the fragment (tree-reachable) next to the
+owner's real fragment (904 / 905). Structure (543) and Mechanical (1,496) have no not-loaded fragment.
+The same two fragments under legacy SVF are ordinary loaded 2-vertex line geometries (geometry ids
+2055 / 2056, `vizflags 0x09`, `isNotLoaded() === false`) with zero-size bounds — a zero-length 2D
+symbol line that SVF2's loader drops and SVF keeps.
+
+**Evidence — pinned source (formatted `viewer3D.js` 7.124.2, same line convention as Evidence §2).**
+- `INVALID_GEOM_ID = 0` (`:108871`); `GeometryList` keeps index 0 reserved for it (`:138171`).
+- `MeshFlags.MESH_NOTLOADED: 0x40` — "the fragment's geometry hasn't been loaded (or was unloaded) and
+  there's no intention to load it" (`:145922`).
+- `OtgLoader.prototype.stopLoadingFragment` sets `MESH_NOTLOADED` + `setFragOff` (`:53691-53695`).
+  Its callers in `tryToActivateFragment`: the **null-geometry branch** — `if (geomId ===
+  INVALID_GEOM_ID) { ... this.stopLoadingFragment(fragId); }` ("Invalid geometry shouldn't block
+  overall progress", `:53771-53780`) — and the **skipLoad** branch (dbId filter / selective loading /
+  `skipHiddenFragments`, `:53712-53723`), which runs after the fragment record arrived, so its
+  geometry id is already the real one. `onMeshError` (`:54113-54126`) and `FragmentList.unload`
+  (`:139672-139681`, leaves `geomids` untouched) also set `MESH_NOTLOADED` with a real, non-zero id.
+- An OTG fragment whose record has **not yet streamed** has geometry id 0 (`geomDataIndexes` is
+  zero-allocated, `:48796`) but **no** `MESH_NOTLOADED` flag, so `isNotLoaded()` is false and it
+  never enters this branch.
+- The Viewer itself treats a 3D fragment with geometry id 0 as permanently geometry-less: "For 3d,
+  fragments can have no geometry, in which case the geomid is 0. These will never load"
+  (`ModelIteratorLinear`, `:149709-149711`).
+
+**Rule (binding).** In `extractAllFragments`, inside the existing `isNotLoaded(fragId)` branch (still
+checked before any owner lookup, `dbId: null`):
+- `fragList.getGeometryId(fragId) === 0` → reason **`'fragment-null-geometry'`**;
+- otherwise → reason `'fragment-not-loaded'` (unchanged).
+The fragment is excluded from `records` either way. The discriminator is the conjunction: geometry id
+0 alone is also a still-streaming fragment, and `MESH_NOTLOADED` alone is also selective loading /
+mesh error / unload — neither is reclassified.
+
+**Classification.** `'fragment-null-geometry'` is **informational, not completeness-affecting**: the
+fragment has no geometry any query could have tested, so its omission does not make the answer
+incomplete. It is carried in `statistics.diagnostics` (never silently dropped) and is the library's
+second documented carve-out next to `witness-unavailable` (collision `README.md`, "Diagnostics");
+`ClashFinderExtension`'s caveat partition and the Federated Clash Test predicate
+(`clashtest/execution/diagnostics.js`, design spec erratum A18) exclude it. `clashtest/viewer/
+populationScan.js` applies the same discriminator (class `N` kept for digest stability, plus a
+transient `nullGeometry` flag; see `clashtest/viewer/README.md`).
+
+**Known limits (recorded, not changed by this rule).** (1) The fragment is tree-reachable, so
+`extractFragments` (per-dbId walk, protected, unchanged) still extracts it when its owner is an
+**explicit** operand (e.g. "Find Clashes" with Sink-Mop-2D 2082 as the source); the narrow phase then
+reports it as `geometry-not-yet-available` (live: one such source-role diagnostic for fragId 4600).
+(2) The Federated Clash Test Viewer enumerator's D-V6 fail-closed policy still rejects a
+tree-reachable `N` fragment, so whole-model planning of Architecture under SVF2 fails
+`tree-reachable-fragment-unattributable` (live). Both need a separate owner decision.
 
 ## Contradictions
 
@@ -547,3 +610,7 @@ work.
   has no `docs/research/` directory). A third, Minor finding (the plan's own Task 5 scaffold sketch
   is missing 2 of the 4 diagnostic branches and still shows `dbId: undefined`) was deferred by the
   task reviewer and is not addressed in this revision.
+- **Revision 4** (2026-10-07, owner-authorized bounded protected-contract change): added the
+  "OTG / SVF2: intentionally omitted null-geometry fragments" section and the matching row in
+  "Resolved for Task 5" — new informational reason `'fragment-null-geometry'` for `isNotLoaded &&
+  getGeometryId === 0`, with live and pinned-source evidence.

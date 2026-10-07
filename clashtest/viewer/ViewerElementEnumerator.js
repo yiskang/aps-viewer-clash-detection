@@ -161,7 +161,11 @@ export function createViewerElementEnumerator({ scheduleTimeout, clearScheduled,
       if (reachable[fragId] === 0) {
         const rec = records[fragId];
         if (rec.cls === 'L') { unreachableCount += 1; unreachableOwners.add(rec.ownerDbId); }
-        else if (rec.cls === 'N') notLoaded += 1;
+        // An intentionally omitted null-geometry fragment (populationScan's `nullGeometry` flag, owner-authorized
+        // 2026-10-07) is informational: it has no geometry any query could test, the library reports it as the
+        // non-completeness-affecting `fragment-null-geometry`, and it stays visible as an 'N' row in the population
+        // digest. It is therefore not counted as an unattributable (completeness-affecting) unreachable fragment.
+        else if (rec.cls === 'N') { if (rec.nullGeometry !== true) notLoaded += 1; }
         else ownerUnresolvable += 1;
       }
       if ((fragId + 1) % CHECK_EVERY === 0) { const p = checkpointNow(ctx); if (p) await p; }

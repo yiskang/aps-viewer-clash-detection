@@ -409,3 +409,34 @@ test('prepareRun threads basisOptions: an unattested Soft draft is refused, an a
   assert.equal(ok.definition.clearance, 7);
   assert.equal(ok.draft.basisUnit, 'in');                                           // the attestation survives admission
 });
+
+test('same modelKey in Set A and Set B (self-clash by hand): definition carries it in both selections; participants are de-duplicated', () => {
+  const d = withSets(fresh(), ['S'], ['S']);
+  const { definition, problems } = buildDefinition(d);
+  assert.deepEqual(problems, []);
+  assert.deepEqual(definition.selectionA.entries, [{ kind: 'model', modelKey: 'S' }]);
+  assert.deepEqual(definition.selectionB.entries, [{ kind: 'model', modelKey: 'S' }]);
+  assert.deepEqual(participantKeysOf(d), ['S']);
+  assert.deepEqual(issuesOf(definition), []);
+});
+
+test('two modelKeys that share a display name stay two distinct models; the same URN loaded twice (u#1, u#2) is two models', () => {
+  for (const [a, b] of [['k1', 'k2'], ['urn:x#1', 'urn:x#2']]) {
+    const d = withSets(fresh(), [a], [b]);
+    const { definition } = buildDefinition(d);
+    assert.deepEqual(definition.selectionA.entries.map((e) => e.modelKey), [a]);
+    assert.deepEqual(definition.selectionB.entries.map((e) => e.modelKey), [b]);
+    assert.deepEqual(participantKeysOf(d), [a, b]);
+    const toggledOff = reduce(d, { type: 'toggleModel', side: 'B', modelKey: b });
+    assert.deepEqual(selectionEntriesOf(toggledOff.setA).map((e) => e.modelKey), [a]);   // A untouched
+    assert.deepEqual(selectionEntriesOf(toggledOff.setB), []);
+  }
+});
+
+test('mixed sets A=[S,Arch], B=[S,Mech]: shared model appears in both selections, participants are the union', () => {
+  const d = withSets(fresh(), ['S', 'Arch'], ['S', 'Mech']);
+  const { definition } = buildDefinition(d);
+  assert.deepEqual(definition.selectionA.entries.map((e) => e.modelKey), ['Arch', 'S']);
+  assert.deepEqual(definition.selectionB.entries.map((e) => e.modelKey), ['Mech', 'S']);
+  assert.deepEqual(participantKeysOf(d), ['Arch', 'Mech', 'S']);
+});

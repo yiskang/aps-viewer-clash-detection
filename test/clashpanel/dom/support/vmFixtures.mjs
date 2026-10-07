@@ -27,6 +27,8 @@ export function setupVm(over = {}) {
       { modelKey: 'mC', displayName: 'Mechanical', ready: false, registered: true, inA: false, inB: false, note: 'Model Mechanical is still loading' },
     ],
     selfClash: false,
+    overlap: [],
+    overlapText: null,
     useSelectionEnabled: true,
     scope: { A: '1 model', B: '1 model' },
     validation: { state: 'ready', messages: [], issuesTruncated: false },

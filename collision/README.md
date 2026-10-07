@@ -355,18 +355,40 @@ diagnostic reason above. The existing developer-facing `console.warn` log is unp
 logs every diagnostic, `witness-unavailable` included — only the user-facing completeness caveat is
 partitioned.
 
+**Whole-model target diagnostics (`extractAllFragments`).** A `targets` entry with `dbIds` omitted
+enumerates every fragment of that model; a fragment it cannot use is excluded and reported as a
+`{ scope: 'fragment', reason, role: 'target', fragment: { modelId, dbId: null, fragId } }` entry
+(deduped per `(epoch, fragId, reason)` within one call):
+
+| Reason | Condition | Counts toward "may be incomplete"? |
+|---|---|---|
+| `fragment-not-loaded` | `fragList.isNotLoaded(fragId)` with a real (non-zero) geometry id — excluded from loading (dbId filter / selective loading), mesh load error, or unloaded | **yes** |
+| `fragment-null-geometry` | `fragList.isNotLoaded(fragId)` **and** `fragList.getGeometryId(fragId) === 0` (`INVALID_GEOM_ID`) — under SVF2/OTG the Viewer deliberately never loads a fragment that has no geometry (e.g. a zero-length 2D-symbol line) | **no — informational** |
+| `fragment-owner-unresolvable` | `fragList.getDbIds(fragId)` is `undefined` or an array (2D) | **yes** |
+
+**2026-10-07 exception (owner-authorized): `reason: 'fragment-null-geometry'` diagnostics do not
+count toward the caveat either.** There was no geometry any query could have tested, so the answer is
+not incomplete; the entry is still carried (never silently dropped) so the omission stays visible.
+Like `witness-unavailable`, a consumer partitions on the full emitted shape (`scope: 'fragment'` +
+this reason) and keeps it in developer logs. A still-streaming OTG fragment is never reported this
+way (it is not flagged not-loaded), and every other not-loaded fragment stays `fragment-not-loaded`.
+Evidence and the binding rule: `docs/superpowers/specs/m2-extractAllFragments-viewer-evidence.md`,
+"OTG / SVF2: intentionally omitted null-geometry fragments". Not covered: when the null-geometry
+fragment's owner is an **explicit** operand (`dbIds` listed), the per-dbId walk still extracts it and
+the narrow phase may report `geometry-not-yet-available` for it (unchanged behavior).
+
 **M3: four new clearance diagnostic reasons.** Emitted only by a `mode: 'clearance'` call:
 
 | Reason | Scope | Emitted when |
 |---|---|---|
 | `clearance-invalid-transform` | **fragment**, deduped per `(epoch, fragmentId)` | Clearance's own admission validation found a non-finite/singular `worldMatrix`, or non-finite/mis-ordered `worldBounds`, for an extracted instance. Fires **before any pair exists** — it is an admission-time filter, not a pair evaluation. |
-| `clearance-anisotropic-scale-unsupported` | **fragment**, deduped per `(epoch, fragmentId)`, one per offending side — with one rare exception, see the note below the table | An operand's `worldMatrix` failed `validateUniformScale` — anisotropic, sheared, reflected/negative, or otherwise unsupported scale. Diagnosed, never approximated. |
+| `clearance-anisotropic-scale-unsupported` | **fragment**, deduped per `(epoch, fragmentId)`, one per offending side — with one rare exception, see the note below the table | An operand's transform is **outside the supported clearance transform class** (see "Supported clearance transforms" below): shear/non-orthogonal basis columns beyond the `1e-4` gate, reflected (negative determinant), or outside the float32 numeric domain of the prescaled mesh — or its derived prescaled mesh turned out unusable (a non-finite prescaled coordinate, or a world-unit weld that left 0 triangles **from a canonical record that has triangles**). Diagnosed, never approximated. A canonical record with **0 triangles** under a non-uniform transform is *not* this reason: it has no clearance surface and is a silent clean negative (`'no-surface'`, amendment 2026-10-07). Since 2026-10-07 an orthogonal-column non-uniform scale (every SVF2 fragment) is **measured**, not diagnosed; the reason string, scope and dedup are unchanged (meaning narrowed, not renamed). |
 | `clearance-hard-clash-precheck-inconclusive` | **pair** (`sourceFragment` + `targetFragment`) | The tri-state Hard-Clash exclusion precheck could neither prove nor disprove volume overlap for this fragment pair (e.g. its crossing term exhausted one of its deterministic work budgets, or a containment term could not resolve every component), so the pair was dropped rather than assumed non-overlapping. **This is a deterministic property of the geometry, never of machine speed** — see the "Deterministic crossing budgets" note below. |
 | `clearance-distance-unavailable` | **pair** (`sourceFragment` + `targetFragment`) | `clearanceQuery` reached `closestPointToGeometry` but could not produce a trustworthy answer: a non-finite local distance, a failed world-space conversion of a closest point, or the two independently-derived world distances disagreeing beyond the documented cross-check tolerance. |
 
 **Scope caveat on `clearance-anisotropic-scale-unsupported`.** It is fragment-scoped on the ordinary
-emission path — the `validateUniformScale` rejection, which is where every realistic occurrence comes
-from — but it **can** be emitted **pair**-scoped (`sourceFragment` + `targetFragment`, no
+emission path — the transform-class rejection (or an unusable derived mesh), which is where every
+realistic occurrence comes from — but it **can** be emitted **pair**-scoped (`sourceFragment` + `targetFragment`, no
 `role`/`fragment`, undeduped) in one extremely rare case: `clearanceQuery`'s own anchor-inverse guard
 aborts with this same reason when the anchor operand's scale is uniform and *accepted* by
 `validateUniformScale` yet small enough that `Matrix4.invert()`'s `1 / determinant` overflows to
@@ -601,16 +623,60 @@ separated by ~`1e-6` of their own size are, for this library's purposes, touchin
 Hard Clash concern, not a Soft Clash one. It is also the source of the dead band documented under
 "Known M3 limitations" below.
 
-**Uniform scale only — diagnosed, never approximated.** Every clearance operand's `worldMatrix` must
-decompose to rigid motion plus **positive uniform scale**. `validateUniformScale`
-(`collision/query/ClearanceTransform.js`) rejects, structurally rather than by magnitude alone:
-non-finite elements, a projective bottom row, a non-finite or exactly-zero determinant (checked
-*before* trusting `Matrix4.decompose()`, which silently reports scale `(1,1,1)` for a degenerate
-matrix), reflected/negative scale, per-axis scales that disagree by more than
+**Uniform scale inside the distance query — diagnosed, never approximated.** Every operand that
+reaches `clearanceQuery` has a `matrix` that decomposes to rigid motion plus **positive uniform
+scale**. `validateUniformScale` (`collision/query/ClearanceTransform.js`) checks, structurally rather
+than by magnitude alone: non-finite elements, a projective bottom row, a non-finite or exactly-zero
+determinant (checked *before* trusting `Matrix4.decompose()`, which silently reports scale `(1,1,1)`
+for a degenerate matrix), reflected/negative scale, per-axis scales that disagree by more than
 `clearanceUniformScaleRelativeTolerance` (`1e-4` relative, `collision/constants.js`), and
-shear/non-orthogonal basis columns. Anything rejected produces a
-`clearance-anisotropic-scale-unsupported` diagnostic — the pair is never evaluated with an
-approximated transform.
+shear/non-orthogonal basis columns. `clearanceQuery` itself is unchanged and keeps that gate as
+defence in depth.
+
+**Supported clearance transforms (2026-10-07, SVF2 non-uniform fragment clearance —
+`docs/superpowers/specs/2026-10-07-svf2-nonuniform-fragment-clearance-design.md`).** SVF2 (OTG)
+normalizes every mesh to the `[-0.5, 0.5]³` unit cube and moves the element's dimensions into the
+fragment world matrix as per-axis scale, so almost every SVF2 fragment fails the uniform-scale gate.
+Before the distance query, `CollisionWorld` therefore classifies each operand
+(`collision/query/ClearanceTransformClass.js`, `classifyClearanceTransform`):
+
+| Class | Condition | How it is measured |
+|---|---|---|
+| `'uniform'` | `validateUniformScale(M)` accepts it (evaluated **first**) | canonical instance, exactly as before — **legacy (e.g. SVF) results are bit-identical** (golden baseline `test/CollisionWorld.clearanceLegacyGolden.test.mjs`) |
+| `'no-surface'` (amendment, 2026-10-07, design §5.7) | not `'uniform'`, and the canonical record has **0 triangles** (an empty position set, or e.g. a two-vertex line whose only primitive is degenerate) — decided **before** every rule below | not measured: the operand has no clearance surface, so the pair is a clean negative decided before the precheck — **no diagnostic** (legacy-SVF parity), no precheck, no distance query, no derived build. Counted in `noSurfaceOperands` (accessor below). A genuinely unsupported partner is still diagnosed first. A uniform zero-triangle operand keeps the legacy path unchanged |
+| `'derived'` | `M = [A │ t]` with mutually orthogonal columns `aᵢ`, `sᵢ = ‖aᵢ‖ > 0`, `det A > 0`; the rigid remainder `[Q │ t]`, `Q = A·S⁻¹`, passes `validateUniformScale`; and `maxᵢ sᵢ·max(│localBox.minᵢ│, │localBox.maxᵢ│)·(1 + 2⁻²⁴) ≤ float32 max` | a clearance-private **derived mesh**: the raw Viewer geometry re-read, compacted, prescaled by `S = diag(s₀, s₁, s₂)` (multiply in float64, store float32), welded with the existing weld epsilon in that **world-unit** frame (the same normalization the legacy path applies to SVF geometry), with its own BVH — placed by `[Q │ t]` read from the live placement at every query |
+| `'unsupported'` | shear beyond `1e-4`, reflected (negative determinant — owner decision O-1 keeps reflection unsupported), numeric domain, or non-finite/projective | `clearance-anisotropic-scale-unsupported`, before the precheck (unchanged shape) |
+
+The Hard-Clash exclusion precheck still runs `volumeOverlapQuery` on the **canonical** instances;
+derived meshes are built lazily, only after it says `proceed`/`skip-precheck`, and never reach any
+Hard mode. The derived world surface differs from the raw world triangles only by float32 storage of
+`S·v` (`≤ √3·2⁻²⁴·m_X` per vertex, `m_X = max‖S·v‖∞`) and the world-unit weld (`≤ √3·ε_w` where it
+merged distinct vertices) — design §3. The derived cache
+(`collision/geometry/ClearanceDerivedGeometryCache.js`) is keyed `(loadEpoch, geometryIndex, exact
+float64 bits of S)`, single-flight, released on eviction/dispose, detached **non-cancellingly** on
+`invalidateModelPlacement` and on a placement-refresh publish, and bounded per epoch by
+`maxClearanceDerivedGeometryBytesPerEpoch` (256 MiB, provisional) plus an entry cap of
+`maxCollisionInstancesPerEpoch` with LRU eviction (eviction only costs a rebuild; results never
+depend on it). Both bound **settled** entries; an in-flight derived build holds no geometry and is
+never evicted or refused — at most one is in flight per concurrently running `findClashes` call. Canonical mesh identity, `GeometryRegistry` entries, geometry digests,
+`getEpochGeometryEntries` and the BLAS/TLAS caches are untouched. Observability:
+`world.getEpochClearanceDerivedGeometryDiagnostics(epoch)` →
+`{ readyEntries, buildingEntries, unsupportedEntries, builds, hits, sharedWaits, evictions,
+retainedPositionBytes, retainedIndexBytes, retainedBvhBytes, noSurfaceOperands }` (cumulative counters
+per live epoch; throws `WorldDisposedError` once disposed; all-zero default otherwise).
+`noSurfaceOperands` counts operands short-circuited as `'no-surface'` (one per such side per pair
+evaluation; world-owned, so also present without a derived cache; released on eviction, kept across
+placement invalidation). No `statistics` key and no diagnostic reason was added. A `'no-surface'`
+pair emits the recorder-only `hard-clash-precheck` event `stage: 'not-run'`,
+`precheckNotRunReason: 'no-clearance-surface-before-precheck'`. The `clearance-distance-query` recorder event gains
+`sourceTransformPath`/`targetTransformPath` (`'uniform'|'derived'`), and its triangle counts now
+describe the instance actually traversed.
+
+**Supported limitation — per-epoch geometry immutability.** The derived build re-reads raw Viewer
+geometry (a second read of the same `(loadEpoch, geometryIndex)` the canonical registry already
+cached). Like the canonical registry, it relies on that raw geometry being **immutable while the
+epoch is live**; no runtime mismatch detection is added. A second read that comes back without a
+proxy or with an unsupported layout is a transient `geometry-not-yet-available`, retried next call.
 
 **The documented error bound that buys.** When a matrix *is* accepted, the single `scaleFactor` the
 validator reports may differ from any one axis's true scale by up to `1e-4` relative, so a world
@@ -741,9 +807,12 @@ scene for "Find Clashes" to query.
    every involved model. Unlike Room Locator's quieter silent-on-clean-success convention, this
    workflow's own result is always reported via `alert()` — `"N clashes found (X in this model, Y
    in other models)"` or `"No clashes found."` — every single call, per the spec's own "UI reports"
-   requirement. As with Room Locator, a non-empty `statistics.diagnostics` appends "The result may
-   be incomplete — …" to that same alert, on either outcome, rather than letting it read as a plain
-   negative/positive.
+   requirement. As with Room Locator, completeness-affecting `statistics.diagnostics` append "The
+   result may be incomplete — …" to that same alert, on either outcome, rather than letting it read
+   as a plain negative/positive. The two informational shapes — pair-scoped `witness-unavailable`
+   and fragment-scoped `fragment-null-geometry` (see "Diagnostics" above) — are excluded
+   (`ClashFinderExtension.isCompletenessAffecting`), so an SVF2 Architecture target's two
+   intentionally omitted null-geometry fragments leave a clean negative reading "No clashes found.".
 
 **Known acceptance example** (`test/acceptance/clash-finder.acceptance.mjs`, live-verified against
 a real federated 3-discipline Revit host+links scene — an Architecture host file
@@ -926,14 +995,22 @@ to Float32 quantization) — a cross-check that uses no part of the collision pi
 
 ## Known M3 limitations
 
-- **Uniform scale only.** `mode: 'clearance'` supports rigid motion plus *positive uniform* scale and
-  nothing else. Anisotropic, sheared, reflected, and negative-scale transforms are **diagnosed
-  unsupported** (`clearance-anisotropic-scale-unsupported`) and the pair is dropped — the library
-  never approximates a distance through a transform it can't honestly handle. This is a real
-  restriction on federated scenes that use non-uniformly scaled links, not a theoretical one. And
-  even *within* the supported class there is admitted slack: an accepted transform's reported
-  `scaleFactor` may be up to `1e-4` relative off any single axis's true scale, so a reported
-  `distance` carries a bounded relative error of that order. Documented, not silently exact.
+- **Supported transform class (revised 2026-10-07).** `mode: 'clearance'` supports rigid motion plus
+  *positive uniform* scale (legacy path) **and** orthogonal-column, positive-determinant non-uniform
+  scale (every SVF2 fragment — measured on a derived prescaled mesh, see "Supported clearance
+  transforms" above). Sheared (non-orthogonal beyond `1e-4`) and reflected (negative-determinant)
+  transforms remain **diagnosed unsupported** (`clearance-anisotropic-scale-unsupported`) and the
+  pair is dropped — the library never approximates a distance through a transform it can't honestly
+  handle. Reflection is exactly supportable by folding the sign into `S`, but stays unsupported by
+  owner decision (it would change legacy-SVF results for the reflected fragments). Within the
+  supported class there is admitted slack: an accepted uniform transform's reported `scaleFactor`
+  may be up to `1e-4` relative off any single axis's true scale (a derived operand's rigid remainder
+  inherits the same bound for residual non-orthogonality), plus the derived path's float32/weld
+  bound above. Documented, not silently exact.
+- **SVF vs SVF2 geometry differ slightly.** The two formats' world geometry for the same element
+  differ by format-level float32 placement (measured world Hausdorff ≤ 7e-6 on the Audubon fixtures),
+  so an SVF2 Soft distance can differ from the SVF value for the same pair by ~1e-6 even though each
+  is exact for its own geometry (e.g. 0.0416673037 vs 0.0416661634 on the Soft acceptance pair).
 - **A narrow, deliberate dead band that no mode reports.** Because `toleranceFloor` is *exclusive*
   ("touching is not a clearance violation") while `surface-intersection` performs exact, zero-tolerance
   intersection testing, a real, strictly-positive gap smaller than

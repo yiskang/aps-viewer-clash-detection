@@ -379,6 +379,20 @@ export class ClashFinderExtension extends ExtensionBase {
     return `${diagnostics.length} diagnostic(s): ${reasons.join(', ')}`;
   }
 
+  // The user-facing completeness partition shared by "Find Clashes" and "Find Soft Clashes": true for
+  // every diagnostic EXCEPT the library's two documented informational shapes (collision/README.md
+  // "Diagnostics"), each matched on its full emitted shape (scope AND reason), never on reason alone:
+  //   - {scope:'pair', reason:'witness-unavailable'} (M2.1 -- see the Find Clashes comment below);
+  //   - {scope:'fragment', reason:'fragment-null-geometry'} (owner-authorized, 2026-10-07 -- an OTG
+  //     fragment the Viewer deliberately never loads because it has no geometry, e.g. a zero-length
+  //     2D-symbol line; there was nothing to test, so the answer is not incomplete).
+  // Informational entries still reach the developer-facing console.warn, which stays unpartitioned.
+  static isCompletenessAffecting(d) {
+    if (d?.scope === 'pair' && d?.reason === 'witness-unavailable') return false;
+    if (d?.scope === 'fragment' && d?.reason === 'fragment-null-geometry') return false;
+    return true;
+  }
+
   // [Task 1, M3-adjacent aggregate-isolation fix] Computes the per-model UNION of
   // _hardIsolationByModel and _softIsolationByModel, then applies it to the Viewer with exactly ONE
   // `viewer.setAggregateIsolation(isolation)` call -- the Viewer's public AGGREGATE isolation API,
@@ -803,8 +817,10 @@ export class ClashFinderExtension extends ExtensionBase {
         // -- the full shape CollisionWorld.js's sole production emitter actually produces -- rather
         // than reason alone, so a hypothetical future (or malformed) diagnostic that reuses the same
         // reason string under a different scope is never silently swallowed into the presentation-only
-        // bucket it wasn't shown to belong to.
-        const completenessAffecting = diagnostics.filter((d) => !(d?.scope === 'pair' && d?.reason === 'witness-unavailable'));
+        // bucket it wasn't shown to belong to. Since 2026-10-07 the partition also carves out the
+        // informational {scope:'fragment', reason:'fragment-null-geometry'} shape -- see
+        // ClashFinderExtension.isCompletenessAffecting.
+        const completenessAffecting = diagnostics.filter(ClashFinderExtension.isCompletenessAffecting);
         // The caveat is surfaced on BOTH outcomes below, not only the empty one -- a non-empty
         // result can also be incomplete (one real clash found, another skipped), and the user acting
         // on a partial isolate deserves to know that as much as the user told "no clashes found"
@@ -951,7 +967,7 @@ export class ClashFinderExtension extends ExtensionBase {
         // (no visualization drawn for that one pair) and must never contribute to the user-facing
         // completeness caveat, even though it is still worth a developer's attention below.
         const diagnostics = result.statistics?.diagnostics ?? [];
-        const completenessAffecting = diagnostics.filter((d) => !(d?.scope === 'pair' && d?.reason === 'witness-unavailable'));
+        const completenessAffecting = diagnostics.filter(ClashFinderExtension.isCompletenessAffecting);
         const caveat = completenessAffecting.length > 0
           ? ` The result may be incomplete — ${ClashFinderExtension.describeDiagnostics(completenessAffecting)}.`
           : '';

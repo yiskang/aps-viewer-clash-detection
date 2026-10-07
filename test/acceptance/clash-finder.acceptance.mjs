@@ -7,6 +7,21 @@
 // file, sibling to test/acceptance/room-locator.acceptance.mjs and mirroring its structure, launch
 // args, proxy handling, and check()/results-writing conventions.
 //
+// --- Format-local expectations (2026-10-07 owner decision) -----------------------------------------
+//
+// This suite runs on whichever format the page loads (SVF2/OTG by default; legacy SVF via a
+// viewerOptions override) and detects it LIVE from Model.isOTG(). A small set of Soft Clash values is
+// legitimately format-specific and lives in SOFT_FORMAT_BASELINES (see its comment): the near-miss
+// distance (SVF vs SVF2 source geometry itself differs -- ~1.14e-6 for SVF2 6618 / SVF 4135 -- per the
+// O-2 evidence in docs/superpowers/specs/2026-10-07-svf2-nonuniform-fragment-clearance-design.md; the
+// 1e-6 tolerance is NOT widened, each format is checked against its OWN recorded value), the
+// clearance-5 pair count and roof presence (Cause 1), and the expected INFORMATIONAL diagnostics
+// (Cause 2: 2 x fragment-null-geometry on SVF2 Architecture). Alignment invariance is asserted within
+// the run against its own pre-move measurement, never across formats. "Nothing diagnosed" checks count
+// only completeness-affecting diagnostics, partitioned by the product's own
+// ClashFinderExtension.isCompletenessAffecting; informational ones are recorded in
+// results.informationalDiagnostics and asserted to be exactly the expected format-local set.
+//
 // --- The fixture: three genuinely separate, independently-translated discipline models -----------
 //
 // This is a real, properly-coordinated Revit multi-discipline link setup -- an Architecture host file
@@ -46,9 +61,22 @@
 //   - Source dbId 2734 (Structure model, "SMBH-W-Wide Flange [272782]", a wide-flange steel beam)
 //     directly owns exactly one real fragment -- confirmed via the SAME `extractFragments` helper
 //     CollisionWorld.findClashes itself uses (collision/viewer/ViewerModelAdapter.js). Queried against
-//     all three loaded models: exactly 2 pairs -- ONE cross-model (Architecture model, dbId 3686) and
-//     ONE same-model (Structure model, dbId 3663) -- a single query that genuinely demonstrates BOTH
-//     same-model and cross-model classification together. Diagnostics: 12 (non-zero, so its alert is
+//     all three loaded models: [ORIGINAL legacy-SVF record] exactly 2 pairs -- ONE cross-model
+//     (Architecture model, dbId 3686) and ONE same-model (Structure model, dbId 3663).
+//     [CORRECTED 2026-10-07, owner-authorized re-baseline -- Cause 1 in
+//     docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11] The
+//     same-model struct 2734 -> struct 3663 ("Basic Roof") 'containment' pair is a FALSE POSITIVE:
+//     ContainmentQuery's fixed-direction ray parity runs in the target's LOCAL frame against an OPEN
+//     roof mesh (parity undefined; library tags it unverified-parity-operand). Legacy SVF's
+//     translation-only fragment matrices keep those rays pointing up (1 crossing -> "inside"); SVF2's
+//     unit-cube-normalized local frame maps them elsewhere (0 hits -> "outside"). Geometry is identical
+//     in both formats (world Hausdorff <= 7e-6 ft). World truth: the flange (z 12.084-13.076) lies
+//     BELOW the roof (z 12.736-14.378), nearest vertex distance 0.1216 ft, no surface intersection; the
+//     recorded witness z=12.103 is outside the roof. So the verified expectation is exactly 1 pair --
+//     the cross-model surface-crossing pair to Architecture 3686 (SVF2 5750 -> 5428) -- and NO pair to
+//     struct 3663 (SVF2 253), which this file now asserts positively ("[mixed][roof]" checks).
+//     Collision containment semantics were deliberately NOT changed (owner decision).
+//     Diagnostics: 12 on legacy SVF (non-zero, so its alert is
 //     expected to carry the usual incompleteness caveat -- asserted as a prefix/substring match below,
 //     never a bare exact-string match, for the same reason as every prior round of this fixture).
 //     Mechanical (model 3) has zero involvement in this query -- it is never isolated/fit for this
@@ -164,12 +192,16 @@
 //
 //   - struct 2734 -> arch   3686 : witness.kind === 'surface-crossing', point ~[37.1876, 22.1075, 12.1733]
 //   - struct 2734 -> struct 3663 : witness.kind === 'containment',      point ~[51.9688, 22.1577, 12.1028]
+//     ^ [CORRECTED 2026-10-07, Cause 1 re-baseline] FALSE POSITIVE (local-frame ray parity against an
+//       open roof mesh; see the "Ground truth" correction above). Not a clash; no longer expected.
 //
-// So this ONE existing fixture case already covers BOTH witness branches, crossing AND containment
-// -- Task 10 Step 2's "if no containment case exists, find or build one" contingency never fires,
-// and no additional purpose-built fixture model is needed. Both kinds are asserted explicitly below
-// (MIXED_CASE.expectedPairs carries the expected `witnessKind` per pair), so a regression that
-// silently collapses both pairs onto one branch, or drops a witness entirely, fails immediately.
+// [Original Task 10 text, now superseded] This ONE fixture case was believed to cover BOTH witness
+// branches, crossing AND containment, so Task 10 Step 2's "find or build a containment case"
+// contingency never fired. After the Cause 1 re-baseline only the crossing branch is covered by a
+// verified live pair; the containment branch has NO true live fixture in this suite (none is invented
+// here). MIXED_CASE.expectedPairs carries the expected `witnessKind` per pair, so a regression that
+// drops the crossing witness -- or a reappearance of the false-positive containment pair -- fails
+// immediately.
 //
 // `via` ('crossing' | 'containment(A in B)' | 'containment(B in A)') is INTERNAL to
 // collision/query/VolumeOverlapQuery.js and deliberately never reaches the public ClashPair --
@@ -177,6 +209,12 @@
 // branch fired, and is what this file asserts.
 //
 // --- Enclosed-witness visibility: how "visible THROUGH opaque geometry" is actually proven ---------
+//
+// [Cause 1 re-baseline] Everything in this section was derived against the struct 3663 containment
+// witness, which is now a recorded FALSE POSITIVE. Under the verified truth this fixture yields no
+// enclosed witness, so the "[enclosed]" checks are reported NOT APPLICABLE (neither pass nor fail,
+// with the reason printed) rather than deleted; the proof below only runs if a containment witness
+// reappears. The original rationale is kept for when a TRUE enclosed-witness fixture exists.
 //
 // The containment witness (struct 3663) is by construction a point INSIDE a solid, so proving the
 // marker "remains visible through opaque geometry" needs more than an object-presence check on
@@ -250,6 +288,8 @@
 // have to make. The Structure model is translated +3 in X and MIXED_CASE is re-run through the SAME
 // real right-click path; the transform is then restored and the whole thing re-run once more.
 //
+// [Cause 1 re-baseline] Only the cross-model crossing pair remains; the same-model rigid-motion
+// check below is reported NOT APPLICABLE because its pair was the recorded false positive.
 // The two pairs are asserted DIFFERENTLY on purpose. The same-model containment pair (struct 2734 ->
 // struct 3663) has both operands inside the model that just moved, so its witness must translate by
 // exactly the alignment delta and nothing else -- a genuine rigid-motion invariant, asserted exactly
@@ -305,45 +345,51 @@ const EXPECTED_MAX_MARKER_RADIUS = 2.0;
 // this live server in THIS session's own Playwright run before being hardcoded here. Source model is
 // always the Structure model for both cases.
 const MIXED_CASE = {
-  name: 'mixed same+cross-model (Structure dbId 2734)',
+  name: 'positive cross-model crossing (Structure dbId 2734)',
   sourceDbId: 2734,
   expectedNameIncludes: 'SMBH-W-Wide Flange',
-  expectedTotal: 2,
-  expectedSameModelCount: 1,
+  // [2026-10-07 owner-authorized re-baseline, Cause 1] Was 2 total / 1 same-model / 1 cross-model,
+  // when this case also expected a same-model 'containment' pair struct 2734 -> struct 3663 (Basic
+  // Roof). That pair was a FALSE POSITIVE of local-frame ray parity against an OPEN roof mesh (see
+  // the header comment's "Ground truth" correction and
+  // docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11
+  // Cause 1). The verified world-space truth is the crossing pair ONLY.
+  expectedTotal: 1,
+  expectedSameModelCount: 0,
   expectedCrossModelCount: 1,
   // Exact {targetModelKey, targetDbId} pairs -- source.dbId is always 2734 itself (it directly owns
   // its own single fragment; no group/leaf-owner divergence in this fixture).
   // M2.1 Task 10: `witnessKind` per pair, from this task's own live discovery spike (see the header
-  // comment's own "Discovery spike result" section) -- this one fixture case covers BOTH branches.
+  // comment's own "Discovery spike result" section). [Cause 1 re-baseline] The former second entry,
+  // { targetModelKey: 'struct', targetDbId: 3663, witnessKind: 'containment' }, was removed: it is
+  // not a real clash (the flange lies BELOW the roof, nearest vertex distance 0.1216 ft).
   expectedPairs: [
     { targetModelKey: 'arch', targetDbId: 3686, witnessKind: 'surface-crossing' },
-    { targetModelKey: 'struct', targetDbId: 3663, witnessKind: 'containment' },
   ],
-  // Structure: {selected source dbId} union {same-model target}. Architecture: {cross-model target}.
+  // Structure: {selected source dbId} union {same-model targets} -- there are none now, so just the
+  // source (was [2734, 3663]). Architecture: {cross-model target}.
   // Mechanical: untouched entirely -- no isolate/fitToView call for it at all (asserted explicitly).
-  expectedIsolatedStruct: [2734, 3663],
+  expectedIsolatedStruct: [2734],
   expectedIsolatedArch: [3686],
-  // M2.1 Task 10: the containment (enclosed) witness's own world point, live-derived in this task's
-  // discovery spike, and the dbId of the element it is enclosed by -- the camera is fitted to that
-  // element for the through-opaque-geometry visibility check. Asserted with a tolerance band (not an
-  // exact match): this is real floating-point geometry output, and the check exists to catch the
-  // witness relocating to a meaningfully different place, not to pin its last bit.
-  containmentTargetDbId: 3663,
-  expectedContainmentWitnessPoint: [51.96875238418579, 22.157734554260948, 12.102793365716934],
-  containmentWitnessTolerance: 0.01,
-  // The viewing direction used for the enclosed-witness visibility check, and the camera's distance
-  // from the witness along it. Both are live-derived fixture ground truth, NOT arbitrary: this
-  // witness turns out to sit only shallowly inside the solid that encloses it, so most viewing
-  // directions leave the marker sphere (radius ~1.045) partly protruding in FRONT of the occluding
-  // surface -- which would make "the marker is visible" prove nothing about rendering THROUGH
-  // geometry. A 62-direction live sweep (see the header comment) found this direction gives the
-  // largest genuine gap: the nearest opaque, ISOLATED geometry along this ray sits 1.439 world units
-  // in front of the witness, so the whole marker sphere along the centre ray is behind it.
+  // [Cause 1 re-baseline] The Structure "Basic Roof" element (ElementId 593772) that the legacy-SVF
+  // run reported as enclosing the source (a false-positive 'containment' witness at
+  // [51.96875238418579, 22.157734554260948, 12.102793365716934]). Kept ONLY so the corrected truth
+  // can be asserted positively: a source -> roof query returns NO pair at all (see the
+  // "[mixed][roof]" checks). Formerly `containmentTargetDbId`; the fields asserting the false-positive
+  // witness itself (expectedContainmentWitnessPoint, containmentWitnessTolerance) were removed.
+  roofTargetDbId: 3663,
+  // Camera parameters for the enclosed-witness visibility proof (header comment, "Enclosed-witness
+  // visibility"). Live-derived on legacy SVF against the false-positive containment witness above,
+  // via a 62-direction sweep (nearest isolated opaque geometry 1.439 units in front of the witness,
+  // marker radius ~1.045). [Cause 1 re-baseline] Under SVF2 this fixture yields NO enclosed witness,
+  // so the "[enclosed]" section is reported NOT APPLICABLE and these are only consumed if a
+  // containment witness ever reappears in the result (e.g. a legacy-SVF run, where the false
+  // positive still fires) -- kept so the marker-rendering proof machinery is not silently deleted.
   enclosedWitnessViewDirection: [0.433, -0.75, -0.5],
   enclosedWitnessViewDistance: 40,
-  // M3 Task 17: the SURFACE-CROSSING target of the two expectedPairs above, named explicitly so the
+  // M3 Task 17: the SURFACE-CROSSING target of the expectedPairs above, named explicitly so the
   // Soft Clash Hard-Clash-exclusion case below can reference it by intent rather than by array index.
-  // The crossing target is the correct one to use there, NOT the containment target (struct 3663): a
+  // The crossing target is the correct one to use there, NOT the roof (struct 3663): a
   // crossing pair's true surface distance is exactly 0, i.e. the two elements are genuinely TOUCHING,
   // so its absence from a clearance result is a claim about the Hard-Clash exclusion rule itself --
   // whereas a merely far-apart target would be absent from a `clearance: 5` result for the wholly
@@ -354,8 +400,9 @@ const MIXED_CASE = {
 
 // M2.1 Task 10. The one alignment operation this file performs (see the header comment's own
 // "Alignment" section): a pure +3-unit translation in X of the Structure model's placement transform.
-// Large enough that both marker positions move unambiguously, small enough that both MIXED_CASE pairs
-// still clash afterwards (confirmed live -- the same 2 pairs, same targets, same witness kinds).
+// Large enough that the marker position moves unambiguously, small enough that the MIXED_CASE pair
+// still clashes afterwards (originally confirmed live with 2 pairs; after the Cause 1 re-baseline the
+// expected set is the single crossing pair -- same target, same witness kind).
 const ALIGNMENT_DELTA_X = 3;
 const NEGATIVE_CASE = {
   name: 'negative (Structure dbId 3965)',
@@ -449,15 +496,19 @@ const SOFT_CLASH_POSITIVE_CASE = {
   // No override: this is DEFAULT_CLEARANCE itself, asserted to still be what the live extension
   // resolved, so this case exercises the untouched production action.
   clearance: EXPECTED_DEFAULT_CLEARANCE,
+  // `elementId` (stable across formats) keys the FORMAT-LOCAL expected distance below.
   expectedPairs: [
-    { targetModelKey: 'struct', targetDbId: 3976 },
-    { targetModelKey: 'struct', targetDbId: 4135 },
+    { targetModelKey: 'struct', targetDbId: 3976, elementId: '682525' },
+    { targetModelKey: 'struct', targetDbId: 4135, elementId: '790734' },
   ],
-  // Both pairs measure the same gap to within ~2e-15; which of the two carries the ...325 and which
-  // the ...503 last bits is NOT stable across runs (observed swapping between a baseline and an
-  // alignment re-run), so the distance is asserted per-pair against this ONE value with a tolerance,
-  // never as an exact per-target mapping.
-  expectedDistance: 0.04166616338460325,
+  // [2026-10-07 owner decision, per-format re-baseline] The expected near-miss distance is
+  // FORMAT-LOCAL: SOFT_FORMAT_BASELINES[format].nearMissDistanceByElementId (see that constant's own
+  // comment for why SVF and SVF2 legitimately differ). applyFormatBaselines() resolves it at runtime
+  // into `expectedDistanceByTargetDbId` from the loaded model's own format (model.isOTG()). On legacy
+  // SVF both pairs measure the same gap to within ~2e-15 (which of the two carries the ...325 and which
+  // the ...503 last bits is NOT stable across runs), so both SVF entries carry the ONE value
+  // 0.04166616338460325; the tolerance below is UNCHANGED and is applied against the format-local value.
+  expectedDistanceByTargetDbId: null, // set by applyFormatBaselines()
   distanceTolerance: 1e-6,
   // The same gap, re-derived from the InstanceTree's own Float32 node boxes -- see the header
   // comment above. The tolerance covers Float32 node-box quantization, nothing else.
@@ -468,7 +519,126 @@ const SOFT_CLASH_POSITIVE_CASE = {
   expectedAlertMessage: '2 clashes found (2 in this model, 0 in other models)',
 };
 
-// Comfortably below SOFT_CLASH_POSITIVE_CASE.expectedDistance (0.04166616...), the smallest
+// --- FORMAT-LOCAL Soft Clash baselines (2026-10-07 owner decision) --------------------------------
+//
+// The sample loads SVF2 (OTG) by default, and this suite must also stay valid on legacy SVF. A few
+// Soft Clash ground-truth values are legitimately DIFFERENT between the two formats, so each is
+// recorded per format and SELECTED AT RUNTIME from the loaded models' own format
+// (Model.isOTG(), read live -- never hardcoded by environment; see detectModelFormat in main()):
+//
+//   - Near-miss distance (3965 -> 3976 / 4135; SVF2 197 -> 6615 / 6618). The SOURCE GEOMETRY ITSELF
+//     differs slightly between the two translations (format-level float32 placement differences:
+//     SVF2 stores each mesh normalized to a unit cube with the element dimensions moved into the
+//     fragment matrix, SVF uses translation-only matrices; measured world Hausdorff <= 7e-6), so the
+//     same world-space surface distance comes out ~1.14e-6 different for 6618 (SVF2 0.04166730373737729 vs SVF 0.04166616338460325) -- the
+//     "O-2" evidence in docs/superpowers/specs/2026-10-07-svf2-nonuniform-fragment-clearance-design.md
+//     and docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §12.
+//     The owner decision is NOT to widen the global 1e-6 distance tolerance and NOT to require SVF2 to
+//     equal SVF: each format is checked within the unchanged 1e-6 against ITS OWN recorded value.
+//   - Clearance-5 result set from struct 2734 (SVF2 5750). Legacy SVF: 33 pairs, with struct 3663
+//     ("Basic Roof") ABSENT because SVF's false-positive containment verdict (Cause 1) makes the
+//     Hard-Clash precheck exclude it. SVF2: the roof is a legitimate Soft pair (verified world-space
+//     nearest gap 0.12163605688 ft < 5), so it is PRESENT and the count differs accordingly.
+//   - Informational diagnostics (ClashFinderExtension.isCompletenessAffecting === false). SVF2's OTG
+//     translation drops two zero-length 2D-symbol lines in Architecture (frags 4600/4601 ->
+//     `fragment-null-geometry`, Cause 2); legacy SVF has none. They are informational, NOT
+//     completeness-affecting, so "nothing diagnosed" checks ignore them -- but they are recorded and
+//     positively asserted to be EXACTLY this expected set, so they stay visible rather than discarded.
+const SOFT_FORMAT_BASELINES = {
+  svf: {
+    nearMissDistanceByElementId: { '682525': 0.04166616338460325, '790734': 0.04166616338460325 },
+    clearance5PairCount: 33,
+    roofPresentInClearance5: false,
+    informationalDiagnostics: [],
+  },
+  svf2: {
+    // Recorded live under SVF2 (see the final report §12); per-target, since the two SVF2 values
+    // differ by ~9.5e-7.
+    nearMissDistanceByElementId: { '682525': 0.041666350063060874, '790734': 0.04166730373737729 },
+    // Observed on two consecutive SVF2 runs (2026-10-07) before being baselined here.
+    clearance5PairCount: 34,
+    roofPresentInClearance5: true,
+    // Lower bound for the roof pair's reported distance: the verified world-space nearest gap
+    // (offline float64, report §11 Cause 1). The reported value is NOT asserted equal to it: the
+    // nearest roof fragment 0 is dropped with `clearance-hard-clash-precheck-inconclusive` on the
+    // open roof mesh, so the pair is reported from fragment 1 (observed ~0.7883) -- recorded, not pinned.
+    roofTrueWorldGap: 0.12163605688,
+    informationalDiagnostics: [
+      { scope: 'fragment', reason: 'fragment-null-geometry', modelKey: 'arch', fragId: 4600 },
+      { scope: 'fragment', reason: 'fragment-null-geometry', modelKey: 'arch', fragId: 4601 },
+    ],
+  },
+};
+let softFormatBaseline = null; // set by applyFormatBaselines()
+
+// Resolves the format-local baselines above for the LOADED format. Must run after
+// applyResolvedFixtureDbIds() (it keys the near-miss distances by live target dbId).
+function applyFormatBaselines(format) {
+  softFormatBaseline = SOFT_FORMAT_BASELINES[format];
+  if (!softFormatBaseline) throw new Error(`no Soft Clash baseline for model format ${format}`);
+  SOFT_CLASH_POSITIVE_CASE.expectedDistanceByTargetDbId = Object.fromEntries(
+    SOFT_CLASH_POSITIVE_CASE.expectedPairs.map((p) => [p.targetDbId, softFormatBaseline.nearMissDistanceByElementId[p.elementId]]),
+  );
+}
+
+// --- Fixture identity is the Revit ElementId, NOT the dbId (SVF2 default, owner decision) ---------
+//
+// Every dbId literal in the case objects above is the LEGACY SVF ground truth these cases were
+// originally derived and verified against. The sample now loads SVF2 (OTG) by default, and SVF2
+// RENUMBERS dbIds for the very same Revit elements, while the Revit ElementId carried as the
+// "[ElementId]" suffix of each element's instance-tree node name stays stable across both formats.
+// So every fixture element is identified here by (model, ElementId), and resolveFixtureDbIds()
+// below maps it to the LIVE dbId at runtime by walking that model's own instance tree
+// (enumNodeChildren/getNodeName) -- viewer.search() cannot be used: bracketed text returns [] under
+// SVF2. applyResolvedFixtureDbIds() then rewrites every dbId-bearing field of the case objects
+// above in place, so every downstream assertion keeps EXACTLY its original meaning (same elements,
+// same pairs, same isolation sets) whichever format the page happens to load. The `svfDbId` column
+// is documentation of the original SVF ground truth only. Mapping, verified live 2026-10-07 by
+// loading the same URNs in both formats (fragment counts identical in both):
+//   struct [272782] SMBH-W-Wide Flange                     SVF 2734 -> SVF2 5750 (1 fragment)
+//   struct [593772] Basic Roof                             SVF 3663 -> SVF2  253 (2 fragments)
+//                   (NOT a clash target -- see the Cause 1 re-baseline; asserted as a no-pair target)
+//   struct [681589] HSS-Hollow Structural Section-Column   SVF 3965 -> SVF2  197 (1 fragment)
+//   struct [682525] SMBH-HSS-Hollow Structural Section     SVF 3976 -> SVF2 6615 (2 fragments)
+//   struct [790734] SMBH-HSS-Hollow Structural Section     SVF 4135 -> SVF2 6618 (2 fragments)
+//   arch   [935021] Basic Roof                             SVF 3686 -> SVF2 5428 (2 fragments)
+const FIXTURE_ELEMENTS = [
+  { modelKey: 'struct', elementId: '272782', svfDbId: 2734 },
+  { modelKey: 'struct', elementId: '593772', svfDbId: 3663 },
+  { modelKey: 'struct', elementId: '681589', svfDbId: 3965 },
+  { modelKey: 'struct', elementId: '682525', svfDbId: 3976 },
+  { modelKey: 'struct', elementId: '790734', svfDbId: 4135 },
+  { modelKey: 'arch', elementId: '935021', svfDbId: 3686 },
+];
+
+// Rewrites every dbId-bearing case field from its SVF ground-truth value to the live dbId of the
+// SAME (model, ElementId). `resolved` maps `${modelKey}:${svfDbId}` -> live dbId. Throws on any
+// unmapped value rather than silently keeping an SVF dbId.
+function applyResolvedFixtureDbIds(resolved) {
+  const live = (modelKey, svfDbId) => {
+    const v = resolved[`${modelKey}:${svfDbId}`];
+    if (typeof v !== 'number') throw new Error(`fixture dbId ${modelKey}:${svfDbId} was not resolved`);
+    return v;
+  };
+  const eidOf = (modelKey, svfDbId) => FIXTURE_ELEMENTS.find((f) => f.modelKey === modelKey && f.svfDbId === svfDbId).elementId;
+  const mixedSvf = MIXED_CASE.sourceDbId;
+  MIXED_CASE.sourceDbId = live('struct', mixedSvf);
+  MIXED_CASE.expectedPairs = MIXED_CASE.expectedPairs.map((p) => ({ ...p, targetDbId: live(p.targetModelKey, p.targetDbId) }));
+  MIXED_CASE.expectedIsolatedStruct = MIXED_CASE.expectedIsolatedStruct.map((d) => live('struct', d));
+  MIXED_CASE.expectedIsolatedArch = MIXED_CASE.expectedIsolatedArch.map((d) => live('arch', d));
+  MIXED_CASE.roofTargetDbId = live('struct', MIXED_CASE.roofTargetDbId);
+  MIXED_CASE.hardClashTargetDbId = live(MIXED_CASE.hardClashTargetModelKey, MIXED_CASE.hardClashTargetDbId);
+  MIXED_CASE.name = `positive cross-model crossing (Structure dbId ${MIXED_CASE.sourceDbId}, ElementId ${eidOf('struct', mixedSvf)})`;
+  const negSvf = NEGATIVE_CASE.sourceDbId;
+  NEGATIVE_CASE.sourceDbId = live('struct', negSvf);
+  NEGATIVE_CASE.name = `negative (Structure dbId ${NEGATIVE_CASE.sourceDbId}, ElementId ${eidOf('struct', negSvf)})`;
+  SOFT_CLASH_POSITIVE_CASE.sourceDbId = NEGATIVE_CASE.sourceDbId;
+  SOFT_CLASH_POSITIVE_CASE.expectedPairs = SOFT_CLASH_POSITIVE_CASE.expectedPairs.map((p) => ({ ...p, targetDbId: live(p.targetModelKey, p.targetDbId) }));
+  SOFT_CLASH_POSITIVE_CASE.expectedSoftIsolatedStruct = SOFT_CLASH_POSITIVE_CASE.expectedSoftIsolatedStruct.map((d) => live('struct', d));
+  SOFT_CLASH_POSITIVE_CASE.name = `soft clash positive: discovered near-miss (Structure dbId ${SOFT_CLASH_POSITIVE_CASE.sourceDbId}, ElementId ${eidOf('struct', negSvf)}, production default clearance)`;
+}
+
+// Comfortably below the near-miss distance (format-local, ~0.041666 in both formats), the smallest
 // distance the clearance query reports for dbId 3965. Deliberately NOT the brief's own placeholder
 // 0.001 and not the sweep's own 0.01 either: 0.02 is still less than half that measured distance
 // (so the zero-pair outcome is unambiguous) while being 20x larger than 0.001, which makes it a far
@@ -517,6 +687,14 @@ function check(name, actual, expected) {
   results.checks.push({ name, ok, expected, actual });
   if (!ok) process.exitCode = 1;
   return ok;
+}
+
+// [Cause 1 re-baseline] An explicitly NOT-APPLICABLE check: printed with its reason and recorded in
+// results.notApplicable, but counted as NEITHER pass nor fail (it never enters results.checks), so a
+// check whose fixture precondition no longer exists is visible rather than silently deleted.
+function notApplicable(name, reason) {
+  console.log(`  N/A   ${name}\n        reason=${reason}`);
+  (results.notApplicable ??= []).push({ name, reason });
 }
 
 // Identical to room-locator.acceptance.mjs's own helper -- see that file's inline comment for the
@@ -625,6 +803,49 @@ async function main() {
   check('Structure model resolved by URN', modelIdentities.hasStruct, true);
   check('Mechanical model resolved by URN', modelIdentities.hasMech, true);
 
+  // Resolve every fixture element's LIVE dbId from its stable Revit ElementId (see FIXTURE_ELEMENTS).
+  // Each ElementId must name exactly ONE node in its model's instance tree -- asserted, and a hard
+  // stop otherwise, since every hardcoded expectation below is about those exact elements.
+  const fixtureResolution = await page.evaluate((fixtures) => {
+    const modelByKey = { arch: window.__test.modelArch, struct: window.__test.modelStruct, mech: window.__test.modelMech };
+    return fixtures.map((f) => {
+      const it = modelByKey[f.modelKey].getInstanceTree();
+      const suffix = `[${f.elementId}]`;
+      const hits = [];
+      const walk = (id) => {
+        const name = it.getNodeName(id);
+        if (typeof name === 'string' && name.endsWith(suffix)) hits.push(id);
+        it.enumNodeChildren(id, walk);
+      };
+      walk(it.getRootId());
+      return { ...f, liveDbIds: hits };
+    });
+  }, FIXTURE_ELEMENTS);
+  const resolvedFixtureDbIds = {};
+  for (const f of fixtureResolution) {
+    check(`fixture element ${f.modelKey} [${f.elementId}] (SVF dbId ${f.svfDbId}) resolves to exactly one live dbId`, f.liveDbIds.length, 1);
+    if (f.liveDbIds.length === 1) resolvedFixtureDbIds[`${f.modelKey}:${f.svfDbId}`] = f.liveDbIds[0];
+  }
+  results.fixtureResolution = fixtureResolution;
+  console.log(`  fixture dbIds (SVF -> live): ${fixtureResolution.map((f) => `${f.modelKey}[${f.elementId}] ${f.svfDbId}->${f.liveDbIds.join('|')}`).join(', ')}`);
+  applyResolvedFixtureDbIds(resolvedFixtureDbIds);
+
+  // [2026-10-07 owner decision] Detect the LOADED format from the live models themselves
+  // (Model.isOTG()) -- never from environment/config -- and select the format-local Soft Clash
+  // baselines (SOFT_FORMAT_BASELINES). All three models must agree.
+  const modelFormats = await page.evaluate(() => ['arch', 'struct', 'mech'].map((k) => {
+    const m = window.__test[`model${k[0].toUpperCase()}${k.slice(1)}`];
+    return typeof m?.isOTG === 'function' ? (m.isOTG() ? 'svf2' : 'svf') : 'unknown';
+  }));
+  check('all three loaded models report the same format (Model.isOTG()), so one format-local baseline applies',
+    new Set(modelFormats).size === 1 && modelFormats[0] !== 'unknown', true);
+  const modelFormat = modelFormats[0];
+  results.modelFormat = modelFormat;
+  console.log(`  loaded model format: ${modelFormat} (arch/struct/mech = ${modelFormats.join('/')})`);
+  applyFormatBaselines(modelFormat);
+  results.softFormatBaseline = { format: modelFormat, ...softFormatBaseline,
+    nearMissDistanceByTargetDbId: SOFT_CLASH_POSITIVE_CASE.expectedDistanceByTargetDbId };
+
   // --- Task 16 Step 0's own explicit acceptance precondition: the regression check for the exact
   // bug (extension never registered) Task 16 was created to fix. ---
   const extensionLoaded = await page.evaluate((id) => !!window.viewer.getExtension(id), CLASH_FINDER_EXTENSION_ID);
@@ -653,6 +874,14 @@ async function main() {
       if (model === window.__test.modelArch) return 'arch';
       if (model === window.__test.modelStruct) return 'struct';
       if (model === window.__test.modelMech) return 'mech';
+      return 'unknown';
+    };
+    // Diagnostics carry the Adapter's modelId (Model.id), not the Model object.
+    const modelKeyOfId = (modelId) => {
+      for (const k of ['arch', 'struct', 'mech']) {
+        const m = window.__test[`model${k[0].toUpperCase()}${k.slice(1)}`];
+        if (m && (m.id === modelId || m === modelId)) return k;
+      }
       return 'unknown';
     };
 
@@ -725,6 +954,17 @@ async function main() {
           narrowPhasePairs: result.statistics?.narrowPhasePairs ?? null,
         },
         diagnosticReasons: [...new Set((result.statistics?.diagnostics ?? []).map((d) => d?.reason ?? 'unknown'))],
+        // [2026-10-07 owner decision] Every diagnostic, partitioned by the PRODUCT'S OWN predicate
+        // (ClashFinderExtension.isCompletenessAffecting, read off the live extension's class -- not
+        // mirrored), so "nothing diagnosed" checks can ignore informational reasons
+        // (fragment-null-geometry, witness-unavailable) while those stay visible in the report.
+        diagnostics: (result.statistics?.diagnostics ?? []).map((d) => ({
+          scope: d?.scope ?? null,
+          reason: d?.reason ?? 'unknown',
+          modelKey: d?.fragment ? modelKeyOfId(d.fragment.modelId) : null,
+          fragId: d?.fragment?.fragId ?? null,
+          completenessAffecting: ext.constructor.isCompletenessAffecting(d),
+        })),
       });
       return result;
     };
@@ -1113,7 +1353,9 @@ async function main() {
   const orangeFraction = (pixels) => pixels.filter(isMarkerOrange).length / pixels.length;
 
   const maxAbsDelta = (actual, expected) => Math.max(...actual.map((v, i) => Math.abs(v - expected[i])));
-  const pointsWithin = (actual, expected, tolerance) => actual.length === expected.length
+  // Null-safe (Cause 1 robustness pass): a missing point is a FALSE result, never a TypeError.
+  const pointsWithin = (actual, expected, tolerance) => Array.isArray(actual) && Array.isArray(expected)
+    && actual.length === expected.length
     && maxAbsDelta(actual, expected) <= tolerance;
 
   // Applies/reads the Structure model's placement transform. The original transform's 16 elements are
@@ -1177,7 +1419,7 @@ async function main() {
   const expectedWitnessTupleKeys = MIXED_CASE.expectedPairs
     .map((p) => `${p.targetModelKey}:${p.targetDbId}:${p.witnessKind}`).sort();
 
-  // === Positive case: mixed same+cross-model, Structure dbId 2734 =================================
+  // === Positive case: cross-model crossing, Structure dbId 2734 (re-baselined, Cause 1) ============
   console.log(`\n=== Case: ${MIXED_CASE.name} ===`);
 
   // Fixture-identity guard: confirms the live model still matches what this fixture assumes before
@@ -1210,13 +1452,16 @@ async function main() {
   // --- exact-pair assertions on the REAL captured findClashes invocation (not a second, separately
   // issued query -- see header comment) ---
   check('[mixed] exactly one findClashes call made by the real click', mixedSpy.findClashesCalls.length, 1);
-  const mixedCall = mixedSpy.findClashesCalls[0];
+  // Robustness: a missing call must surface as FAIL checks below, never as a TypeError that aborts
+  // the run before the final X/Y summary line.
+  const EMPTY_CALL = { sourceModelKey: null, sourceDbIds: null, mode: null, groupBy: null, pairs: [] };
+  const mixedCall = mixedSpy.findClashesCalls[0] ?? EMPTY_CALL;
   check('[mixed] captured call: source is the Structure model', mixedCall.sourceModelKey, 'struct');
   check('[mixed] captured call: source.dbIds is exactly the selected dbId', mixedCall.sourceDbIds, [MIXED_CASE.sourceDbId]);
   check('[mixed] captured call: mode is volume-overlap', mixedCall.mode, 'volume-overlap');
   check('[mixed] captured call: groupBy is dbId', mixedCall.groupBy, 'dbId');
   check('[mixed] captured call: every pair uses volume-overlap mode', mixedCall.pairs.every((p) => p.type === 'volume-overlap'), true);
-  check('[mixed] captured call: every pair\'s source really is Structure dbId 2734', mixedCall.pairs.every((p) => p.sourceModelKey === 'struct' && p.sourceDbId === MIXED_CASE.sourceDbId), true);
+  check(`[mixed] captured call: every pair's source really is Structure dbId ${MIXED_CASE.sourceDbId}`, mixedCall.pairs.every((p) => p.sourceModelKey === 'struct' && p.sourceDbId === MIXED_CASE.sourceDbId), true);
 
   const tupleKey = (p) => `${p.targetModelKey}:${p.targetDbId}`;
   const actualTupleKeys = mixedCall.pairs.map(tupleKey).sort();
@@ -1228,7 +1473,7 @@ async function main() {
   check('[mixed] captured call: same-model pair count (correct provenance labeling)', actualSameModelCount, MIXED_CASE.expectedSameModelCount);
   check('[mixed] captured call: cross-model pair count (correct provenance labeling)', actualCrossModelCount, MIXED_CASE.expectedCrossModelCount);
   check('[mixed] captured call: the one cross-model pair is correctly attributed to the Architecture model',
-    mixedCall.pairs.some((p) => p.targetModelKey === 'arch' && p.targetDbId === 3686), true);
+    mixedCall.pairs.some((p) => p.targetModelKey === 'arch' && p.targetDbId === MIXED_CASE.hardClashTargetDbId), true);
   const pairKey = (p) => `${p.sourceModelKey}:${p.sourceDbId}:${p.targetModelKey}:${p.targetDbId}`;
   check('[mixed] captured call: no duplicate pairs', new Set(mixedCall.pairs.map(pairKey)).size, mixedCall.pairs.length);
 
@@ -1240,7 +1485,9 @@ async function main() {
 
   // --- isolate/fitToView visualization check, bound to the REAL setAggregateIsolation()/fitToView()
   // calls the production callback made (not just the observable end-state) ---
-  check('[mixed] setAggregateIsolation() entry for Structure carries {selected dbId}+{same-model target}',
+  // [Cause 1 re-baseline] There is no same-model target any more, so the Structure entry is exactly
+  // {selected dbId} (was {selected dbId}+{same-model target 3663}).
+  check('[mixed] setAggregateIsolation() entry for Structure carries exactly {selected dbId} (no same-model target)',
     sortNums(isolateCallFor(mixedSpy, 'struct')?.dbIds ?? []), sortNums(MIXED_CASE.expectedIsolatedStruct));
   check('[mixed] setAggregateIsolation() entry for Architecture carries exactly the cross-model target',
     sortNums(isolateCallFor(mixedSpy, 'arch')?.dbIds ?? []), sortNums(MIXED_CASE.expectedIsolatedArch));
@@ -1268,18 +1515,64 @@ async function main() {
   check('[mixed] captured call: every witness point is 3 finite numbers (plain array, never a Vector3)',
     mixedCall.pairs.every((p) => Array.isArray(p.witnessPoint) && p.witnessPoint.length === 3
       && p.witnessPoint.every(Number.isFinite)), true);
-  // The discovery-spike ground truth: this one case genuinely exercises BOTH witness branches.
-  check('[mixed] captured call: exact {targetModel, targetDbId, witnessKind} set -- covers BOTH the crossing and containment branches',
+  // The re-baselined ground truth (Cause 1): this case exercises the CROSSING witness branch only.
+  // (Was: "covers BOTH the crossing and containment branches" -- the containment branch fired only
+  // through the recorded legacy-SVF false positive against struct 3663.)
+  check('[mixed] captured call: exact {targetModel, targetDbId, witnessKind} set -- the arch surface-crossing pair only (verified world-space truth)',
     witnessTupleKeys(mixedCall), expectedWitnessTupleKeys);
   check('[mixed] captured call: zero pairs left without a witness',
     mixedCall.pairs.filter((p) => p.witnessKind === null).length, 0);
+  check('[mixed] captured call: the crossing pair (arch target) carries a \'surface-crossing\' witness with a finite point',
+    mixedCall.pairs.some((p) => p.targetModelKey === MIXED_CASE.hardClashTargetModelKey
+      && p.targetDbId === MIXED_CASE.hardClashTargetDbId && p.witnessKind === 'surface-crossing'
+      && Array.isArray(p.witnessPoint) && p.witnessPoint.length === 3 && p.witnessPoint.every(Number.isFinite)), true);
 
-  const containmentPair = mixedCall.pairs.find((p) => p.witnessKind === 'containment');
-  check('[mixed] the containment witness belongs to the expected same-model pair',
-    containmentPair ? { targetModelKey: containmentPair.targetModelKey, targetDbId: containmentPair.targetDbId } : null,
-    { targetModelKey: 'struct', targetDbId: MIXED_CASE.containmentTargetDbId });
-  check(`[mixed] the containment witness point is within ${MIXED_CASE.containmentWitnessTolerance} of this fixture's recorded ground truth`,
-    pointsWithin(containmentPair.witnessPoint, MIXED_CASE.expectedContainmentWitnessPoint, MIXED_CASE.containmentWitnessTolerance), true);
+  // --- [Cause 1 re-baseline] Positive documentation of the corrected truth: source -> roof is NOT a
+  // clash. Replaces the former "containment witness belongs to struct 3663" and "containment witness
+  // point within 0.01 of [51.969, 22.158, 12.103]" checks. World truth (final report §11 Cause 1):
+  // the flange (z 12.084-13.076) lies BELOW the open roof surface (z 12.736-14.378), nearest vertex
+  // distance 0.1216 ft, no surface intersection. The two elements' BOUNDING BOXES do overlap in z, so
+  // box separation is deliberately NOT asserted -- only the query outcome is.
+  check(`[mixed][roof] the production result contains NO pair (of any witness kind) targeting struct ${MIXED_CASE.roofTargetDbId} (Basic Roof)`,
+    mixedCall.pairs.some((p) => p.targetModelKey === 'struct' && p.targetDbId === MIXED_CASE.roofTargetDbId), false);
+  check('[mixed][roof] the production result contains NO containment-kind witness at all',
+    mixedCall.pairs.filter((p) => p.witnessKind === 'containment').length, 0);
+  // Companion DIRECT query scoped to ONLY the roof (the UI cannot narrow target scope -- same
+  // precedent as the Soft Clash arch-only companion probe below). Wrapped in try/catch in-page so a
+  // rejection is a legible failing check, not an aborted run.
+  const roofProbe = await page.evaluate(async ({ extensionId, sourceDbId, targetDbId }) => {
+    const ext = window.viewer.getExtension(extensionId);
+    try {
+      const r = await ext._world.findClashes({
+        source: { model: window.__test.modelStruct, dbIds: [sourceDbId] },
+        target: { targets: [{ model: window.__test.modelStruct, dbIds: [targetDbId] }] },
+        mode: 'volume-overlap',
+        groupBy: 'dbId',
+      });
+      return {
+        ok: true,
+        pairCount: r.pairs.length,
+        pairs: r.pairs.map((p) => ({ targetDbId: p.target.dbId, witnessKind: p.witness?.kind ?? null })),
+        broadPhasePairs: r.statistics.broadPhasePairs,
+        narrowPhasePairs: r.statistics.narrowPhasePairs,
+        diagnosticReasons: [...new Set(r.statistics.diagnostics.map((d) => d?.reason ?? 'unknown'))],
+      };
+    } catch (err) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }, { extensionId: CLASH_FINDER_EXTENSION_ID, sourceDbId: MIXED_CASE.sourceDbId, targetDbId: MIXED_CASE.roofTargetDbId });
+  // The companion call went through the wrapped findClashes too; clear it so it is never attributed
+  // to a later production click.
+  await resetSpyCapture();
+  results.cases[MIXED_CASE.name].roofProbe = roofProbe;
+  console.log(`  [roof probe] ${JSON.stringify(roofProbe)}`);
+  check(`[mixed][roof] the struct-${MIXED_CASE.roofTargetDbId}-only companion volume-overlap query completed`, roofProbe.ok, true);
+  check(`[mixed][roof] scoped to ONLY struct ${MIXED_CASE.roofTargetDbId}, the source produces ZERO pairs (no containment, no crossing)`,
+    roofProbe.pairCount, 0);
+  // Makes the absence meaningful: the roof really reached narrow phase (overlapping boxes), so "no
+  // pair" is a narrow-phase verdict, not a broad-phase cull.
+  check(`[mixed][roof] that pair was genuinely evaluated in narrow phase (narrowPhasePairs >= 1), so the zero-pair verdict is not a broad-phase cull`,
+    roofProbe.narrowPhasePairs >= 1, true);
 
   // --- M2.1 Task 10 Step 4: a real marker mesh really is in the real overlay scene, per witness ----
   const mixedMarkers = await readMarkerState();
@@ -1300,7 +1593,10 @@ async function main() {
   // Each marker sits exactly on its own pair's witness point -- the marker positions and the witness
   // points are matched as SETS (marker creation order follows the pairs array, but asserting the set
   // makes this independent of that ordering).
-  const sortedPointKeys = (points) => points.map((p) => p.map((v) => v.toFixed(6)).join(',')).sort();
+  // Null-safe: a missing/non-array point becomes the literal key 'null' (so it still mismatches and
+  // FAILs the comparison) instead of throwing.
+  const sortedPointKeys = (points) => (points ?? [])
+    .map((p) => (Array.isArray(p) ? p.map((v) => Number(v).toFixed(6)).join(',') : 'null')).sort();
   check('[mixed] every marker mesh sits exactly on its pair\'s own witness point',
     sortedPointKeys(mixedMarkers.positions), sortedPointKeys(mixedCall.pairs.map((p) => p.witnessPoint)));
 
@@ -1308,6 +1604,41 @@ async function main() {
   // See the header comment's own "Enclosed-witness visibility" section for the full rationale of
   // this two-part proof and of the coarse color band.
   console.log('\n=== Enclosed-witness visibility (containment witness, through opaque geometry) ===');
+  // [Cause 1 re-baseline] This whole proof needs an ENCLOSED (containment) witness. The only one this
+  // fixture ever produced was the recorded legacy-SVF false positive (struct 2734 -> struct 3663,
+  // final report §11 Cause 1); under the verified world-space truth there is none, and no other
+  // fixture in this suite yields a true enclosed witness (none is invented here). So when the result
+  // carries no containment witness -- the expected, re-baselined outcome -- every "[enclosed]" check
+  // is reported NOT APPLICABLE (neither pass nor fail) with that reason, instead of being deleted.
+  // If a containment witness does reappear (already a FAIL in the witness-set checks above), the
+  // original proof below runs unchanged, as evidence about marker rendering only.
+  const ENCLOSED_CHECK_NAMES = [
+    '[enclosed] the camera really reached the requested viewpoint (not overridden by fitToView\'s own transition)',
+    '[enclosed] the containment witness projects inside the canvas',
+    '[enclosed] opaque model geometry is hit at the witness point\'s own projected position',
+    '[enclosed] the occluder is one of the elements this query isolated (a known opaque element, not just any hit)',
+    '[enclosed] the opaque occluder is in front of the witness by MORE than the marker\'s own radius (the sphere cannot merely be poking through)',
+    '[enclosed] the pixel at the occluded witness point\'s exact projected position is the MARKER colour',
+    '[enclosed] the whole 3x3 block centred on that exact position is marker-coloured',
+    '[enclosed] the marker dominates its own 7x7 pixel neighbourhood (>=50% marker-coloured)',
+    '[enclosed] the containment witness\'s own marker mesh is identifiable in _activeMarkers',
+    '[enclosed] detaching THIS marker mesh removes the marker colour from that exact pixel (the marker is what painted it)',
+    '[enclosed] with the marker detached, the occluding geometry is what shows through instead',
+    '[enclosed] re-attaching the marker mesh restores the marker colour at that exact pixel',
+    '[enclosed] with depthTest:true the occluder wins at that pixel -- so depthTest:false is what makes the marker show through',
+    '[enclosed] restoring depthTest:false brings the marker back at that pixel',
+    '[enclosed] the depth-tested frame shows exactly what the marker-less frame showed',
+  ];
+  const ENCLOSED_NA_REASON = 'fixture no longer yields an enclosed (containment) witness: the only one it ever produced, '
+    + 'legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh '
+    + '(docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); '
+    + 'no other true enclosed-witness fixture exists in this suite';
+  const containmentPair = mixedCall.pairs.find((p) => p.witnessKind === 'containment'
+    && Array.isArray(p.witnessPoint) && p.witnessPoint.length === 3);
+  if (!containmentPair) {
+    for (const name of ENCLOSED_CHECK_NAMES) notApplicable(name, ENCLOSED_NA_REASON);
+    results.cases[MIXED_CASE.name].enclosedWitness = { notApplicable: true, reason: ENCLOSED_NA_REASON };
+  } else {
   // The camera is aimed deliberately rather than left wherever fitToView put it -- see this
   // constant's own comment in MIXED_CASE for why the direction is fixture ground truth and not an
   // arbitrary choice. Aiming at the witness point also puts its projection exactly at the canvas
@@ -1448,6 +1779,7 @@ async function main() {
     depthTestedCentre: centreOf(depthTestedPixels),
     depthTestRestoredCentre: centreOf(depthTestRestoredPixels),
   };
+  } // end of the containment-witness-present branch of the "[enclosed]" section
 
   // Keep references to THESE exact meshes so the negative case below can prove they were genuinely
   // removed from the overlay scene, not just dropped from _activeMarkers.
@@ -1530,7 +1862,7 @@ async function main() {
     Math.abs((movedStructPlacement[12] - originalStructPlacement[12]) - ALIGNMENT_DELTA_X) <= 1e-6, true);
 
   const { message: alignedMessage, spy: alignedSpy } = await runFindClashesCase(MIXED_CASE.sourceDbId);
-  const alignedCall = alignedSpy.findClashesCalls[0];
+  const alignedCall = alignedSpy.findClashesCalls[0] ?? EMPTY_CALL;
   const alignedMarkers = await readMarkerState();
   results.alignment.aligned = { message: alignedMessage, spy: alignedSpy, markers: alignedMarkers };
   check('[alignment] exactly one findClashes call made by the re-run\'s real click', alignedSpy.findClashesCalls.length, 1);
@@ -1551,26 +1883,31 @@ async function main() {
   );
   const witnessBefore = witnessByPairKey(mixedCall);
   const witnessAfter = witnessByPairKey(alignedCall);
-  const containmentKey = `struct:${MIXED_CASE.containmentTargetDbId}`;
   const crossingKey = `arch:${MIXED_CASE.expectedIsolatedArch[0]}`;
-  const deltaOf = (key) => witnessAfter[key].map((v, i) => v - witnessBefore[key][i]);
-  const containmentDelta = deltaOf(containmentKey);
+  // Null-safe: a pair missing from either run yields null (-> explicit FAIL below), never a TypeError.
+  const deltaOf = (key) => (Array.isArray(witnessAfter[key]) && Array.isArray(witnessBefore[key])
+    ? witnessAfter[key].map((v, i) => v - witnessBefore[key][i]) : null);
   const crossingDelta = deltaOf(crossingKey);
-  results.alignment.witnessDeltas = { [containmentKey]: containmentDelta, [crossingKey]: crossingDelta };
-  console.log(`  [alignment] witness delta ${containmentKey} = ${JSON.stringify(containmentDelta)}`);
+  results.alignment.witnessDeltas = { [crossingKey]: crossingDelta };
   console.log(`  [alignment] witness delta ${crossingKey}    = ${JSON.stringify(crossingDelta)}`);
-  // The SAME-model (containment) pair is a genuine rigid-motion invariant: both its operands live in
-  // the model that just moved, so its witness must translate by exactly the alignment delta and by
-  // nothing else. Asserted exactly (1e-6).
-  check(`[alignment] the same-model containment witness moved by exactly (+${ALIGNMENT_DELTA_X}, 0, 0) -- a rigid-motion invariant`,
-    pointsWithin(containmentDelta, [ALIGNMENT_DELTA_X, 0, 0], 1e-6), true);
+  // [Cause 1 re-baseline] The SAME-model rigid-motion invariant check ("the same-model containment
+  // witness moved by exactly (+3, 0, 0)") needs a same-model witness-bearing pair; the only one this
+  // fixture had was the recorded false-positive struct 3663 containment pair. Reported NOT
+  // APPLICABLE rather than deleted. The rigid-motion invariant itself is still exercised
+  // independently by the Soft Clash alignment step (same-model struct pairs) -- though that check is
+  // only meaningful when the soft near-miss pairs actually resolve (separate Cause 3 package).
+  notApplicable(`[alignment] the same-model containment witness moved by exactly (+${ALIGNMENT_DELTA_X}, 0, 0) -- a rigid-motion invariant`,
+    'no same-model witness-bearing pair exists under the verified world-space truth: the only one was the legacy-SVF '
+    + 'false-positive containment pair struct 2734 -> struct 3663 (final report §11 Cause 1)');
+  check('[alignment] the cross-model crossing witness is present in BOTH the baseline and the aligned run',
+    crossingDelta !== null, true);
   // The CROSS-model (crossing) pair has no such invariant: only the Structure model moved, so where
   // its surface crosses the stationary Architecture element can change non-rigidly. Asserting an
   // exact +3 here would overconstrain the test (codex-advisor, Task 10) even though this fixture
   // happens to produce exactly that today -- the observed delta is recorded in the run report
   // instead, and only MATERIAL movement is asserted.
   check('[alignment] the cross-model crossing witness moved materially (no rigid-motion invariant applies to it)',
-    Math.max(...crossingDelta.map(Math.abs)) > 1e-3, true);
+    crossingDelta !== null && Math.max(...crossingDelta.map(Math.abs)) > 1e-3, true);
 
   // Restore the placement and re-run: the markers must come back to exactly where they started.
   await restoreStructPlacement(originalStructPlacement);
@@ -1578,7 +1915,7 @@ async function main() {
   check('[alignment] the Structure model\'s placement transform was restored exactly',
     restoredStructPlacement, originalStructPlacement);
   const { spy: restoredSpy } = await runFindClashesCase(MIXED_CASE.sourceDbId);
-  const restoredCall = restoredSpy.findClashesCalls[0];
+  const restoredCall = restoredSpy.findClashesCalls[0] ?? EMPTY_CALL;
   const restoredMarkers = await readMarkerState();
   results.alignment.restored = { spy: restoredSpy, markers: restoredMarkers };
   check('[alignment] after restoring the placement, the same pair/witness set resolves again',
@@ -1627,15 +1964,18 @@ async function main() {
     discoverySpike: {
       // Recorded verbatim from the live bounded spike described in this file's own M3 Task 17 header
       // comment -- the honest record of what Step 1 actually did and found (Task 17 Step 4).
-      sourceDbIdsProbed: [NEGATIVE_CASE.sourceDbId],
+      // The spike ran on legacy SVF, so its dbIds are SVF dbIds (with the stable ElementId alongside);
+      // see FIXTURE_ELEMENTS for the live mapping this run actually used.
+      dbIdFormat: 'svf',
+      sourceDbIdsProbed: [3965], // ElementId 681589
       clearanceSweep: [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0],
       cappedIterations: { clearanceValues: 7, fallbackNeighbourDbIds: 4, fallbackClearancesPerNeighbour: 3 },
       callsActuallyIssued: 2,
       neighbourFallbackFired: false,
       nearMissFound: true,
       nearMissPairs: [
-        { targetModelKey: 'struct', targetDbId: 3976, distance: 0.04166616338460325 },
-        { targetModelKey: 'struct', targetDbId: 4135, distance: 0.04166616338460503 },
+        { targetModelKey: 'struct', targetDbId: 3976, elementId: '682525', distance: 0.04166616338460325 },
+        { targetModelKey: 'struct', targetDbId: 4135, elementId: '790734', distance: 0.04166616338460503 },
       ],
       // Named precisely: this is the smallest distance the clearance query itself reports for this
       // source, NOT an independently-proven global minimum over the scene (see the header comment).
@@ -1876,8 +2216,17 @@ async function main() {
   const softClearanceAtSectionStart = await page.evaluate((id) => window.viewer.getExtension(id)._clearance, CLASH_FINDER_EXTENSION_ID);
   check('[soft] the live extension resolved its clearance to the production DEFAULT_CLEARANCE',
     softClearanceAtSectionStart, EXPECTED_DEFAULT_CLEARANCE);
-  check('[soft] the known-negative clearance sits below the smallest distance this query reports for dbId 3965 (so the two cases really do bracket the same source)',
-    SOFT_CLASH_NEGATIVE_CLEARANCE < SOFT_CLASH_POSITIVE_CASE.expectedDistance, true);
+  check(`[soft] the known-negative clearance sits below the smallest distance this query reports for dbId ${NEGATIVE_CASE.sourceDbId} (so the two cases really do bracket the same source)`,
+    SOFT_CLASH_NEGATIVE_CLEARANCE < Math.min(...Object.values(SOFT_CLASH_POSITIVE_CASE.expectedDistanceByTargetDbId)), true);
+  // Format-aware diagnostic helpers (2026-10-07 owner decision). Informational = the product's own
+  // ClashFinderExtension.isCompletenessAffecting(d) === false (captured per diagnostic by the spy).
+  const completenessAffectingDiagnostics = (call) => (call?.diagnostics ?? []).filter((d) => d.completenessAffecting);
+  const informationalDiagnostics = (call) => (call?.diagnostics ?? []).filter((d) => !d.completenessAffecting);
+  const diagKey = (d) => `${d.scope}:${d.reason}:${d.modelKey}:${d.fragId}`;
+  const sortedDiagKeys = (list) => list.map(diagKey).sort();
+  // Format-local expected near-miss distance for one captured pair (keyed by live target dbId).
+  const expectedNearMissDistanceOf = (p) => SOFT_CLASH_POSITIVE_CASE.expectedDistanceByTargetDbId[p.targetDbId];
+  results.informationalDiagnostics = {};
 
   // === Always run 1: known-negative, no false positive ===========================================
   // Same source element as this file's own Hard Clash negative case (dbId 3965), at a clearance
@@ -1918,9 +2267,18 @@ async function main() {
     negativeSoft.message, 'No clashes found.');
   // Zero diagnostics means nothing was diagnosed as skipped, aborted or unavailable -- it does NOT
   // by itself demonstrate that a distance query ran (the check above records that none did).
-  check('[soft][known-negative] nothing was skipped, aborted or diagnosed as unavailable during this query',
-    negativeSoftCall.diagnosticsCount, 0);
-  check('[soft][known-negative] no Hard Clash exclusion fired here (this negative is a genuine distance verdict, not an exclusion)',
+  // [2026-10-07 owner decision] Counts only COMPLETENESS-AFFECTING diagnostics, partitioned by the
+  // product's own ClashFinderExtension.isCompletenessAffecting (the same predicate that decides the
+  // alert caveat). Informational reasons (fragment-null-geometry, witness-unavailable) are not
+  // "diagnosed as unavailable" -- they are recorded in results.informationalDiagnostics and asserted
+  // EXACTLY against the format-local expected set just below, so they remain visible.
+  const negativeInformational = informationalDiagnostics(negativeSoftCall);
+  results.informationalDiagnostics['soft:known-negative'] = negativeInformational;
+  console.log(`  [soft][known-negative] informational diagnostics (${modelFormat}): ${JSON.stringify(negativeInformational)}`);
+  check('[soft][known-negative] nothing was skipped, aborted or diagnosed as unavailable during this query (completeness-affecting diagnostics only)',
+    completenessAffectingDiagnostics(negativeSoftCall).length, 0);
+  check(`[soft][known-negative] the informational (non-completeness-affecting) diagnostics are EXACTLY this fixture's expected ${modelFormat} set (${modelFormat === 'svf2' ? '2 x fragment-null-geometry, Architecture frags 4600/4601' : 'none'}) -- visible, not discarded`,
+    sortedDiagKeys(negativeInformational), sortedDiagKeys(softFormatBaseline.informationalDiagnostics));  check('[soft][known-negative] no Hard Clash exclusion fired here (this negative is a genuine distance verdict, not an exclusion)',
     negativeSoftCall.clearanceStatistics.clearanceHardClashExclusions, 0);
   // Soft Clash's own visualization is empty on a zero-result run. This is also the FIRST Soft Clash
   // invocation of the whole session, which makes the check stronger than a bare "zero objects":
@@ -1982,23 +2340,51 @@ async function main() {
     exclusionSoftCall.sourceDbIds, [MIXED_CASE.sourceDbId]);
   checkClearancePairInvariants('hard-clash-exclusion', exclusionSoftCall, SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE);
   // Non-vacuity: this query really did produce clearance results, so the absences below are absences
-  // from a genuinely populated result set. The exact count (33 live, stable across 10 observed runs)
-  // is RECORDED rather than asserted: the Hard-Clash precheck's own crossing term carries a
-  // wall-clock frame budget, so how many candidate pairs come back 'inconclusive' -- and therefore
-  // how many pairs survive -- is in principle load-dependent, and pinning it would buy nothing this
-  // case actually needs.
+  // from a genuinely populated result set.
   check('[soft][hard-clash-exclusion] the query produced a genuinely populated clearance result set (so the absences below are meaningful)',
     exclusionSoftCall.pairs.length > 0, true);
+  // [2026-10-07 owner decision] The exact pair count is now asserted against a FORMAT-LOCAL baseline
+  // (SOFT_FORMAT_BASELINES: legacy SVF 33 -- stable across 10 observed runs -- with struct 3663
+  // excluded; SVF2 34 -- observed identical on two consecutive runs before baselining -- with the
+  // roof present). Caveat kept on record: the Hard-Clash precheck's crossing term carries a
+  // wall-clock frame budget, so the number of 'inconclusive' candidates (and hence survivors) is in
+  // principle load-dependent; if this check ever flakes under load, that is the first suspect.
+  check(`[soft][hard-clash-exclusion] exact clearance pair count matches the ${modelFormat} format-local baseline (${softFormatBaseline.clearance5PairCount})`,
+    exclusionSoftCall.pairs.length, softFormatBaseline.clearance5PairCount);
   // The tie-in that makes this a real claim rather than a bare absence: the Hard Clash query run
   // EARLIER IN THIS SAME SESSION, from the SAME source element, against the SAME loaded models, did
   // return this exact target.
-  check('[soft][hard-clash-exclusion] precondition: the Hard Clash query above genuinely DID return the crossing target arch 3686',
+  check(`[soft][hard-clash-exclusion] precondition: the Hard Clash query above genuinely DID return the crossing target arch ${MIXED_CASE.hardClashTargetDbId}`,
     mixedCall.pairs.some((p) => p.targetModelKey === MIXED_CASE.hardClashTargetModelKey
       && p.targetDbId === MIXED_CASE.hardClashTargetDbId && p.witnessKind === 'surface-crossing'), true);
   check(`[soft][hard-clash-exclusion] that proven Hard Clash target (${MIXED_CASE.hardClashTargetModelKey} ${MIXED_CASE.hardClashTargetDbId}, surface-crossing) is ABSENT from the clearance result`,
     exclusionTargetKeys.includes(`${MIXED_CASE.hardClashTargetModelKey}:${MIXED_CASE.hardClashTargetDbId}`), false);
-  check(`[soft][hard-clash-exclusion] the other proven Hard Clash target (struct ${MIXED_CASE.containmentTargetDbId}, containment) is ABSENT too`,
-    exclusionTargetKeys.includes(`struct:${MIXED_CASE.containmentTargetDbId}`), false);
+  // [Cause 1 re-baseline] Field renamed containmentTargetDbId -> roofTargetDbId and the label no
+  // longer calls struct 3663 a "proven Hard Clash target" (it was a legacy-SVF false positive).
+  // [2026-10-07 owner decision, FORMAT-LOCAL] Legacy SVF: the roof is ABSENT (its false-positive
+  // containment verdict makes the Hard-Clash precheck exclude it -- the original assertion, kept for
+  // that format). SVF2: the roof is a LEGITIMATE Soft pair consistent with the verified world-space
+  // truth (flange below the roof, true nearest gap 0.12163605688 ft < clearance 5), so it must be
+  // PRESENT, with a finite reported distance no smaller than that true gap (minus the unchanged 1e-6
+  // tolerance). The reported value is NOT asserted equal to the gap: the nearest roof fragment 0 is
+  // dropped with `clearance-hard-clash-precheck-inconclusive` on the open roof mesh, so the pair is
+  // reported from fragment 1 (observed ~0.7883) -- recorded in the run report, not pinned.
+  const roofKey = `struct:${MIXED_CASE.roofTargetDbId}`;
+  const roofPair = exclusionSoftCall.pairs.find((p) => softTupleKey(p) === roofKey) ?? null;
+  results.softClash.cases['hard-clash-never-in-clearance-results'].roofPair = roofPair
+    ? { distance: roofPair.distance, witnessSourcePoint: roofPair.witnessSourcePoint, witnessTargetPoint: roofPair.witnessTargetPoint }
+    : null;
+  if (softFormatBaseline.roofPresentInClearance5) {
+    console.log(`  [soft][hard-clash-exclusion] observed roof (struct ${MIXED_CASE.roofTargetDbId}) distance = ${roofPair?.distance}`);
+    check(`[soft][hard-clash-exclusion] [${modelFormat}] the roof (struct ${MIXED_CASE.roofTargetDbId}, Basic Roof) is PRESENT as a legitimate Soft pair (verified world gap ${softFormatBaseline.roofTrueWorldGap} ft < clearance ${SOFT_CLASH_HARD_CLASH_EXCLUSION_CLEARANCE})`,
+      roofPair !== null, true);
+    check(`[soft][hard-clash-exclusion] [${modelFormat}] the roof pair's reported distance is finite and >= the true world-space gap ${softFormatBaseline.roofTrueWorldGap} (minus ${SOFT_CLASH_POSITIVE_CASE.distanceTolerance}) -- never closer than the verified truth`,
+      roofPair !== null && Number.isFinite(roofPair.distance)
+        && roofPair.distance >= softFormatBaseline.roofTrueWorldGap - SOFT_CLASH_POSITIVE_CASE.distanceTolerance, true);
+  } else {
+    check(`[soft][hard-clash-exclusion] [${modelFormat}] the former legacy-SVF containment target (struct ${MIXED_CASE.roofTargetDbId}, Basic Roof) is ABSENT too (excluded by the legacy false-positive precheck)`,
+      roofPair !== null, false);
+  }
   // THE mechanism-specific proof (Important #5). Nonzero is only reachable through
   // classifyHardClashPrecheck returning 'excluded', i.e. volumeOverlapQuery PROVING overlap for a
   // contributing fragment pair. A disabled/short-circuited precheck cannot produce it.
@@ -2017,14 +2403,19 @@ async function main() {
   // This query DOES carry completeness-affecting diagnostics (live: 3 x
   // 'clearance-hard-clash-precheck-inconclusive'), so its alert must carry the caveat -- the exact
   // count/reasons are recorded, not asserted, for the same wall-clock-budget reason as above.
-  check('[soft][hard-clash-exclusion] the alert carries the incompleteness caveat its own diagnostics require',
-    exclusionSoftCall.diagnosticsCount > 0 ? exclusionSoft.message.includes('may be incomplete') : true, true);
+  // [2026-10-07 owner decision] Keyed on COMPLETENESS-AFFECTING diagnostics only (the product's own
+  // isCompletenessAffecting partition -- informational reasons never require the caveat); the
+  // informational ones are recorded for visibility.
+  results.informationalDiagnostics['soft:hard-clash-exclusion'] = informationalDiagnostics(exclusionSoftCall);
+  check('[soft][hard-clash-exclusion] the alert carries the incompleteness caveat its own completeness-affecting diagnostics require',
+    completenessAffectingDiagnostics(exclusionSoftCall).length > 0 ? exclusionSoft.message.includes('may be incomplete') : true, true);
 
   // --- Target-specific mechanism proof for arch 3686 ---------------------------------------------
   // [fix round, codex-advisor Finding 1] The assertions above are as strong as a MENU-DRIVEN case
   // can be, but `clearanceHardClashExclusions` is a WHOLE-QUERY counter, not a per-target one: on
-  // the 33-pair query above it could in principle have been produced entirely by the OTHER known
-  // Hard Clash target (struct 3663) while arch 3686 was absent for some unrelated reason -- its own
+  // the 33-pair (SVF) / 34-pair (SVF2) query above it could in principle have been produced entirely by
+  // some OTHER excluded target (on legacy SVF, the false-positive struct 3663 roof) while arch 3686 was
+  // absent for some unrelated reason -- its own
   // precheck coming back 'inconclusive', or its geometry being unavailable. The aggregate statistic
   // cannot distinguish those.
   //
@@ -2077,7 +2468,7 @@ async function main() {
   // own production click.
   await resetSpyCapture();
   results.softClash.cases['hard-clash-never-in-clearance-results'].targetedExclusionProbe = targetedExclusionProbe;
-  check('[soft][hard-clash-exclusion] the arch-3686-only companion query completed',
+  check(`[soft][hard-clash-exclusion] the arch-${MIXED_CASE.hardClashTargetDbId}-only companion query completed`,
     targetedExclusionProbe.ok, true);
   check(`[soft][hard-clash-exclusion] scoped to ONLY arch ${MIXED_CASE.hardClashTargetDbId}, that target still produces ZERO clearance pairs`,
     targetedExclusionProbe.pairCount, 0);
@@ -2142,7 +2533,7 @@ async function main() {
   check('[soft][near-miss] captured call: exact {targetModel, targetDbId} pair set matches the discovery spike\'s own finding',
     positiveSoftCall.pairs.map(softTupleKey).sort(),
     SOFT_CLASH_POSITIVE_CASE.expectedPairs.map(softTupleKey).sort());
-  check('[soft][near-miss] captured call: every pair\'s source really is Structure dbId 3965',
+  check(`[soft][near-miss] captured call: every pair's source really is Structure dbId ${SOFT_CLASH_POSITIVE_CASE.sourceDbId}`,
     positiveSoftCall.pairs.every((p) => p.sourceModelKey === 'struct' && p.sourceDbId === SOFT_CLASH_POSITIVE_CASE.sourceDbId), true);
   // Model provenance: this near-miss is entirely same-model, and the query really did span all three
   // models (whole-model scope for every loaded model), so "no cross-model pair" is a real finding.
@@ -2153,8 +2544,13 @@ async function main() {
   check('[soft][near-miss] captured call: source dbId excluded from its OWN model\'s results (same-model self-clash)',
     positiveSoftCall.pairs.some((p) => p.targetModelKey === 'struct' && p.targetDbId === SOFT_CLASH_POSITIVE_CASE.sourceDbId), false);
   // --- the measured distance itself ---
-  check(`[soft][near-miss] every measured distance is within ${SOFT_CLASH_POSITIVE_CASE.distanceTolerance} of this fixture's recorded ground truth (${SOFT_CLASH_POSITIVE_CASE.expectedDistance})`,
-    positiveSoftCall.pairs.every((p) => Math.abs(p.distance - SOFT_CLASH_POSITIVE_CASE.expectedDistance) <= SOFT_CLASH_POSITIVE_CASE.distanceTolerance), true);
+  // [2026-10-07 owner decision] Against the FORMAT-LOCAL recorded value per target (SOFT_FORMAT_BASELINES),
+  // with the tolerance unchanged; SVF2 is never required to equal SVF.
+  check(`[soft][near-miss] [${modelFormat}] every measured distance is within ${SOFT_CLASH_POSITIVE_CASE.distanceTolerance} of this fixture's ${modelFormat} format-local recorded ground truth (${JSON.stringify(SOFT_CLASH_POSITIVE_CASE.expectedDistanceByTargetDbId)})`,
+    positiveSoftCall.pairs.length > 0 && positiveSoftCall.pairs.every((p) => typeof expectedNearMissDistanceOf(p) === 'number'
+      && Math.abs(p.distance - expectedNearMissDistanceOf(p)) <= SOFT_CLASH_POSITIVE_CASE.distanceTolerance), true);
+  results.softClash.cases['discovered-near-miss-positive'].measuredDistances = Object.fromEntries(
+    positiveSoftCall.pairs.map((p) => [softTupleKey(p), p.distance]));
   check('[soft][near-miss] every measured distance sits strictly inside the queried clearance band (a genuine near-miss, not a touch)',
     positiveSoftCall.pairs.every((p) => p.distance > 0 && p.distance < SOFT_CLASH_POSITIVE_CASE.clearance), true);
   // Independent corroboration from a wholly different data source: the InstanceTree's own node
@@ -2173,7 +2569,7 @@ async function main() {
   results.softClash.cases['discovered-near-miss-positive'].nodeBoxGaps = nodeBoxGaps;
   console.log(`  [near-miss] independent node-box Y gaps: ${JSON.stringify(nodeBoxGaps.map((g) => g.gapY))}`);
   check(`[soft][near-miss] the measured surface distance is independently corroborated by the InstanceTree's own node boxes (within ${SOFT_CLASH_POSITIVE_CASE.nodeBoxGapTolerance})`,
-    nodeBoxGaps.every((g) => Math.abs(g.gapY - SOFT_CLASH_POSITIVE_CASE.expectedDistance) <= SOFT_CLASH_POSITIVE_CASE.nodeBoxGapTolerance), true);
+    nodeBoxGaps.every((g) => Math.abs(g.gapY - SOFT_CLASH_POSITIVE_CASE.expectedDistanceByTargetDbId[g.dbId]) <= SOFT_CLASH_POSITIVE_CASE.nodeBoxGapTolerance), true);
   check('[soft][near-miss] alert message reports the near-miss exactly, with no incompleteness caveat',
     positiveSoft.message, SOFT_CLASH_POSITIVE_CASE.expectedAlertMessage);
   await page.screenshot({ path: path.join(RESULTS_DIR, `clash-finder-soft-${SOFT_CLASH_POSITIVE_CASE.sourceDbId}-result.png`), fullPage: false });
@@ -2280,8 +2676,16 @@ async function main() {
     alignedSoft.spy.findClashesCalls.length, 1);
   check('[soft][alignment] the same {targetModel, targetDbId} pair set still resolves after the alignment',
     [...alignedSoftCall.pairs.map(softTupleKey)].sort(), SOFT_CLASH_POSITIVE_CASE.expectedPairs.map(softTupleKey).sort());
-  check('[soft][alignment] every measured distance is unchanged (a rigid motion cannot change a distance between two operands that both moved with it)',
-    alignedSoftCall.pairs.every((p) => Math.abs(p.distance - SOFT_CLASH_POSITIVE_CASE.expectedDistance) <= SOFT_CLASH_POSITIVE_CASE.distanceTolerance), true);
+  // [2026-10-07 owner decision] Invariance is asserted WITHIN the loaded format, against THIS run's
+  // own pre-move measurement of the same pair (matched by pair identity) -- never against a
+  // cross-format value. Tolerance unchanged.
+  const softDistanceBefore = Object.fromEntries(positiveSoftCall.pairs.map((p) => [softTupleKey(p), p.distance]));
+  const distanceUnchangedVsOriginal = (call) => call.pairs.length > 0 && call.pairs.every((p) => typeof softDistanceBefore[softTupleKey(p)] === 'number'
+    && Math.abs(p.distance - softDistanceBefore[softTupleKey(p)]) <= SOFT_CLASH_POSITIVE_CASE.distanceTolerance);
+  results.softClash.cases['discovered-near-miss-positive'].alignment.distanceDeltasVsOriginal = Object.fromEntries(
+    alignedSoftCall.pairs.map((p) => [softTupleKey(p), p.distance - (softDistanceBefore[softTupleKey(p)] ?? NaN)]));
+  check(`[soft][alignment] [${modelFormat}] every measured distance is unchanged vs this run's own pre-move measurement of the same pair (a rigid motion cannot change a distance between two operands that both moved with it)`,
+    distanceUnchangedVsOriginal(alignedSoftCall), true);
   check(`[soft][alignment] BOTH witness points of every pair moved by exactly (+${ALIGNMENT_DELTA_X}, 0, 0) -- a rigid-motion invariant, matched by pair identity`,
     Object.values(softWitnessDeltas).every((pts) => pts.every((d) => pointsWithin(d, [ALIGNMENT_DELTA_X, 0, 0], 1e-6))), true);
   const alignedWitnessPointPairs = alignedSoftCall.pairs.map((p) => [p.witnessSourcePoint, p.witnessTargetPoint]);
@@ -2314,6 +2718,10 @@ async function main() {
   };
   check('[soft][alignment] after restoring the placement, the same pair set resolves again',
     [...restoredSoftCall.pairs.map(softTupleKey)].sort(), SOFT_CLASH_POSITIVE_CASE.expectedPairs.map(softTupleKey).sort());
+  results.softClash.cases['discovered-near-miss-positive'].restored.distanceDeltasVsOriginal = Object.fromEntries(
+    restoredSoftCall.pairs.map((p) => [softTupleKey(p), p.distance - (softDistanceBefore[softTupleKey(p)] ?? NaN)]));
+  check(`[soft][alignment] [${modelFormat}] after restoring the placement, every measured distance is unchanged vs this run's own pre-move measurement of the same pair`,
+    distanceUnchangedVsOriginal(restoredSoftCall), true);
   check('[soft][alignment] after restoring the placement, BOTH witness points of every pair return to their original world positions (matched by pair identity)',
     Object.keys(softWitnessBefore).every((key) => softWitnessRestored[key]
       && softWitnessRestored[key].every((pt, i) => pointsWithin(pt, softWitnessBefore[key][i], 1e-6))), true);
@@ -2397,6 +2805,8 @@ async function main() {
 
   const failed = results.checks.filter((c) => !c.ok).length;
   console.log(`\n${results.checks.length - failed}/${results.checks.length} checks passed.`);
+  // N/A checks are reported separately and are NEITHER passed nor failed (see notApplicable()).
+  if (results.notApplicable?.length) console.log(`${results.notApplicable.length} check(s) NOT APPLICABLE (not counted): ${[...new Set(results.notApplicable.map((n) => n.name.split(']')[0] + ']'))].join(', ')}`);
 }
 
 // Same guard as room-locator.acceptance.mjs, for the same reason (Node's `node --test` default
@@ -2407,6 +2817,10 @@ if (isMainModule) {
   main().catch(async (err) => {
     console.error(err);
     process.exitCode = 1;
+    // Robustness: even a fatal abort still records an explicit FAIL and prints the X/Y summary line.
+    results.checks.push({ name: `FATAL: run aborted before completion (${String(err?.message ?? err)})`, ok: false });
+    const failedOnAbort = results.checks.filter((c) => !c.ok).length;
+    console.log(`\n${results.checks.length - failedOnAbort}/${results.checks.length} checks passed. (run ABORTED -- remaining checks never executed)`);
     await browser?.close().catch(() => {});
     await writeFile(path.join(RESULTS_DIR, REPORT_FILE), JSON.stringify({ ...results, fatalError: String(err) }, null, 2)).catch(() => {});
   });

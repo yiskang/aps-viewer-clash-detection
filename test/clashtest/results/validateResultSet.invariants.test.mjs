@@ -1435,3 +1435,31 @@ test('P5-REM11 follow-up: the duplicateConflict loop checkpoints for the result 
   const delta = crossFieldStepCount(noConflict) - crossFieldStepCount(lastConflict);
   assert.equal(delta, 0, `expected the breaking result's own checkpoint to still fire (delta 0), got ${delta}`);
 });
+
+// 2026-10-07 (owner-authorized informational `fragment-null-geometry`; codex-advisor finding): read-back now
+// re-derives each retained diagnostic's `completenessAffecting` from the ONE predicate, so a flag that disagrees
+// with its reason is rejected even when every counter agrees with it.
+test('a retained diagnostic whose completenessAffecting flag disagrees with the ONE predicate is rejected', async () => {
+  const nullGeom = (affecting) => (s) => {
+    s.diagnostics = {
+      ...s.diagnostics,
+      diagnostics: [{ scope: 'fragment', reason: 'fragment-null-geometry', completenessAffecting: affecting,
+        attribution: 'target-model', fragment: { modelKey: MODEL_B, dbId: null, fragId: 4600, role: 'target' },
+        occurrences: 1, unitIds: ['u1'] }],
+      total: 1,
+      countsByReason: [{ scope: 'fragment', reason: 'fragment-null-geometry', count: 1 }],
+      completenessAffectingCount: affecting ? 1 : 0,
+      completenessAffectingUpperBound: affecting ? 1 : 0,
+    };
+    s.outcome.integrity = affecting ? 'caveated' : 'clean';
+  };
+  // Correct (informational) flag: valid, and integrity stays clean.
+  const good = await resealed(nullGeom(false), 'positives');
+  assert.deepEqual(validateResultSet(good, { limits }), { ok: true, issues: [] });
+  // Same row flagged completeness-affecting, every counter self-consistent with that flag: rejected.
+  const forged = await resealed(nullGeom(true), 'positives');
+  const { ok, issues } = validateResultSet(forged, { limits });
+  assert.equal(ok, false);
+  assert.ok(issues.some((i) => i.code === 'diagnostics-counts-inconsistent'
+    && i.path === '/diagnostics/diagnostics/0/completenessAffecting'), JSON.stringify(issues));
+});

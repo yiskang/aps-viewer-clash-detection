@@ -304,3 +304,20 @@ test('findings order: Panel problems (incl. basis-required), then Core issues, t
   const attestedIssue = run(reduce(softDraft(), { type: 'basisUnit', value: 'mm' }), w, { available: false, explanation: null });
   assert.deepEqual(flat(attestedIssue), [['clearance', 'not-positive'], ['setB', 'model-not-registered']]);
 });
+
+test('same loaded model in Set A and Set B (self-clash by hand) validates ready with that model in both selections; identical display names on different keys are two models', () => {
+  const same = reduce(createDraft({ testId: 'T-1' }), toggle('A', 'mA'), toggle('B', 'mA'));
+  const v = run(same, world());
+  assert.equal(v.state, 'ready');
+  assert.deepEqual(v.definition.selectionA.entries, [{ kind: 'model', modelKey: 'mA' }]);
+  assert.deepEqual(v.definition.selectionB.entries, [{ kind: 'model', modelKey: 'mA' }]);
+  assert.deepEqual(participatingModelKeys(same), ['mA']);
+  // two models, one display name: both must be registered/loaded independently; unloading one blocks only that key
+  const catalog = createFakeCatalog({ models: [{ modelKey: 'u#1', displayName: 'Tower', loaded: true }, { modelKey: 'u#2', displayName: 'Tower', loaded: false }] });
+  const fake = createFakeEngine();
+  for (const k of ['u#1', 'u#2']) fake.setBinding({ modelKey: k, model: catalog.modelOf(k) });
+  fake.setValidate(validateTest);
+  const dup = reduce(createDraft({ testId: 'T-1' }), toggle('A', 'u#1'), toggle('B', 'u#2'));
+  const r = validateSetup({ draft: dup, engine: narrowEnginePort(fake), catalog, softAvailability: AVAILABLE });
+  assert.deepEqual(flat(r), [['setB', 'model-loading']]);
+});

@@ -93,26 +93,26 @@ check(
   registerCalls.some((r) => r.id === CLASH_FINDER_EXTENSION_ID && r.ctor === ClashFinderExtension),
   true,
 );
-// The Clash Panel extension is ALWAYS registered (so it can be loaded on demand) but, by default, NOT in the
-// GuiViewer3D `extensions` list -- default behaviour (SVF, two auto-loaded extensions) is unchanged.
+// The Clash Panel extension is part of the normal app (owner decision 2026-10-07): registered AND auto-loaded on the
+// flag-free default URL, with the SVF2 initializer (PD-15). `?clashPanelDemo=1` only adds the demo fixture loader.
 const { EXTENSION_ID: CLASH_PANEL_EXTENSION_ID } = await import('../wwwroot/extensions/ClashPanelExtension.js');
 check('exactly three extensions were registered (Room Locator, Clash Finder, Clash Panel; no duplicate/missing)', registerCalls.length, 3);
-check('default config.extensions does NOT include the Clash Panel extension', capturedConfig?.extensions?.includes(CLASH_PANEL_EXTENSION_ID), false);
-check('default initializer is the legacy SVF one', initializerCalls[0]?.env, 'AutodeskProduction');
-check('default initializer has no api override', initializerCalls[0]?.api, undefined);
+check('default config.extensions includes the Clash Panel extension (normal app)', capturedConfig?.extensions?.includes(CLASH_PANEL_EXTENSION_ID), true);
+check('default initializer is SVF2', initializerCalls[0]?.env, 'AutodeskProduction2');
+check('default initializer api is streamingV2', initializerCalls[0]?.api, 'streamingV2');
 check('GuiViewer3D config.extensions includes Autodesk.DocumentBrowser', capturedConfig?.extensions?.includes('Autodesk.DocumentBrowser'), true);
 check('GuiViewer3D config.extensions includes RoomLocatorExtension\'s id', capturedConfig?.extensions?.includes(ROOM_LOCATOR_EXTENSION_ID), true);
 check('GuiViewer3D config.extensions includes ClashFinderExtension\'s id', capturedConfig?.extensions?.includes(CLASH_FINDER_EXTENSION_ID), true);
 check('GuiViewer3D was constructed with the container initViewer was given', capturedContainer, fakeContainer);
 check('initViewer resolves with the constructed GuiViewer3D instance', viewer instanceof FakeGuiViewer3D, true);
 
-// === opt-in (?svf2=1): SVF2 initializer and the Clash Panel extension auto-loaded ====================
+// === legacy alias (?svf2=1): same as the default (SVF2 initializer, Clash Panel auto-loaded) ====================
 await initViewer(fakeContainer, { search: '?svf2=1' });
-check('opt-in config.extensions includes the Clash Panel extension', capturedConfig?.extensions?.includes(CLASH_PANEL_EXTENSION_ID), true);
-check('opt-in config.extensions still includes Room Locator and Clash Finder', capturedConfig?.extensions?.includes(ROOM_LOCATOR_EXTENSION_ID) && capturedConfig?.extensions?.includes(CLASH_FINDER_EXTENSION_ID), true);
+check('legacy-alias config.extensions includes the Clash Panel extension', capturedConfig?.extensions?.includes(CLASH_PANEL_EXTENSION_ID), true);
+check('legacy-alias config.extensions still includes Room Locator and Clash Finder', capturedConfig?.extensions?.includes(ROOM_LOCATOR_EXTENSION_ID) && capturedConfig?.extensions?.includes(CLASH_FINDER_EXTENSION_ID), true);
 const optIn = initializerCalls[initializerCalls.length - 1];
-check('opt-in initializer env is AutodeskProduction2', optIn.env, 'AutodeskProduction2');
-check('opt-in initializer api is streamingV2', optIn.api, 'streamingV2');
+check('legacy-alias initializer env is AutodeskProduction2', optIn.env, 'AutodeskProduction2');
+check('legacy-alias initializer api is streamingV2', optIn.api, 'streamingV2');
 
 // === loadModel forwards keepCurrentModels to loadDocumentNode's third argument (Task 16 Step 1) ===
 const loadDocumentNodeCalls = [];

@@ -1,0 +1,594 @@
+npm notice run aps-viewer-sandbox@1.0.0 test:acceptance:clash-finder
+npm notice run node test/acceptance/clash-finder.acceptance.mjs
+
+=== Loading model 1 (Architecture) ===
+
+=== Loading model 2 (Structure) as additional ===
+
+=== Loading model 3 (Mechanical) as additional ===
+  PASS  exactly three Model objects loaded
+        expected=3 actual=3
+  PASS  Architecture model resolved by URN
+        expected=true actual=true
+  PASS  Structure model resolved by URN
+        expected=true actual=true
+  PASS  Mechanical model resolved by URN
+        expected=true actual=true
+  PASS  fixture element struct [272782] (SVF dbId 2734) resolves to exactly one live dbId
+        expected=1 actual=1
+  PASS  fixture element struct [593772] (SVF dbId 3663) resolves to exactly one live dbId
+        expected=1 actual=1
+  PASS  fixture element struct [681589] (SVF dbId 3965) resolves to exactly one live dbId
+        expected=1 actual=1
+  PASS  fixture element struct [682525] (SVF dbId 3976) resolves to exactly one live dbId
+        expected=1 actual=1
+  PASS  fixture element struct [790734] (SVF dbId 4135) resolves to exactly one live dbId
+        expected=1 actual=1
+  PASS  fixture element arch [935021] (SVF dbId 3686) resolves to exactly one live dbId
+        expected=1 actual=1
+  fixture dbIds (SVF -> live): struct[272782] 2734->5750, struct[593772] 3663->253, struct[681589] 3965->197, struct[682525] 3976->6615, struct[790734] 4135->6618, arch[935021] 3686->5428
+  PASS  all three loaded models report the same format (Model.isOTG()), so one format-local baseline applies
+        expected=true actual=true
+  loaded model format: svf2 (arch/struct/mech = svf2/svf2/svf2)
+  PASS  viewer.getExtension("Autodesk.Sandbox.ClashFinder") returns a loaded instance
+        expected=true actual=true
+
+=== Case: positive cross-model crossing (Structure dbId 5750, ElementId 272782) ===
+  PASS  [mixed] fixture identity: dbId 5750's name includes "SMBH-W-Wide Flange"
+        expected=true actual=true
+  PASS  [mixed] fixture identity: dbId 5750 owns exactly one real fragment
+        expected=1 actual=1
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 5750
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 5750 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 5750 (selection preserved)
+        expected=true actual=true
+  [alert] 1 clashes found (0 in this model, 1 in other models) The result may be incomplete — 12 diagnostic(s): non-manifold-component, unverified-parity-operand, unverified-open-component.
+  PASS  [mixed] alert message starts with the expected summary
+        expected=true actual=true
+  PASS  [mixed] alert message includes the incompleteness caveat
+        expected=true actual=true
+  PASS  [mixed] exactly one findClashes call made by the real click
+        expected=1 actual=1
+  PASS  [mixed] captured call: source is the Structure model
+        expected="struct" actual="struct"
+  PASS  [mixed] captured call: source.dbIds is exactly the selected dbId
+        expected=[5750] actual=[5750]
+  PASS  [mixed] captured call: mode is volume-overlap
+        expected="volume-overlap" actual="volume-overlap"
+  PASS  [mixed] captured call: groupBy is dbId
+        expected="dbId" actual="dbId"
+  PASS  [mixed] captured call: every pair uses volume-overlap mode
+        expected=true actual=true
+  PASS  [mixed] captured call: every pair's source really is Structure dbId 5750
+        expected=true actual=true
+  PASS  [mixed] captured call: exact {targetModel, targetDbId} pair set matches this regression's expected set
+        expected=["arch:5428"] actual=["arch:5428"]
+  PASS  [mixed] captured call: same-model pair count (correct provenance labeling)
+        expected=0 actual=0
+  PASS  [mixed] captured call: cross-model pair count (correct provenance labeling)
+        expected=1 actual=1
+  PASS  [mixed] captured call: the one cross-model pair is correctly attributed to the Architecture model
+        expected=true actual=true
+  PASS  [mixed] captured call: no duplicate pairs
+        expected=1 actual=1
+  PASS  [mixed] captured call: source dbId excluded from its OWN model's results (same-model self-clash)
+        expected=false actual=false
+  PASS  [mixed] setAggregateIsolation() entry for Structure carries exactly {selected dbId} (no same-model target)
+        expected=[5750] actual=[5750]
+  PASS  [mixed] setAggregateIsolation() entry for Architecture carries exactly the cross-model target
+        expected=[5428] actual=[5428]
+  PASS  [mixed] real fitToView() called for Structure with the SAME dbId set as its own setAggregateIsolation() entry
+        expected=[5750] actual=[5750]
+  PASS  [mixed] real fitToView() called for Architecture with the SAME dbId set as its own setAggregateIsolation() entry
+        expected=[5428] actual=[5428]
+  PASS  [mixed] Mechanical has no entry in the aggregate isolation call (and is therefore hidden by the full-replace semantics)
+        expected=undefined actual=undefined
+  PASS  [mixed] Mechanical model never fitToView'd (no pairs involve it)
+        expected=undefined actual=undefined
+  PASS  [mixed] end-state: Structure isolated set matches
+        expected=[5750] actual=[5750]
+  PASS  [mixed] end-state: Architecture isolated set matches
+        expected=[5428] actual=[5428]
+  PASS  [mixed] end-state: Mechanical isolated set is empty
+        expected=[] actual=[]
+  PASS  [mixed] captured call: every pair has a non-null witness
+        expected=true actual=true
+  PASS  [mixed] captured call: every witness point is 3 finite numbers (plain array, never a Vector3)
+        expected=true actual=true
+  PASS  [mixed] captured call: exact {targetModel, targetDbId, witnessKind} set -- the arch surface-crossing pair only (verified world-space truth)
+        expected=["arch:5428:surface-crossing"] actual=["arch:5428:surface-crossing"]
+  PASS  [mixed] captured call: zero pairs left without a witness
+        expected=0 actual=0
+  PASS  [mixed] captured call: the crossing pair (arch target) carries a 'surface-crossing' witness with a finite point
+        expected=true actual=true
+  PASS  [mixed][roof] the production result contains NO pair (of any witness kind) targeting struct 253 (Basic Roof)
+        expected=false actual=false
+  PASS  [mixed][roof] the production result contains NO containment-kind witness at all
+        expected=0 actual=0
+  [roof probe] {"ok":true,"pairCount":0,"pairs":[],"broadPhasePairs":1,"narrowPhasePairs":1,"diagnosticReasons":["unverified-parity-operand","non-manifold-component"]}
+  PASS  [mixed][roof] the struct-253-only companion volume-overlap query completed
+        expected=true actual=true
+  PASS  [mixed][roof] scoped to ONLY struct 253, the source produces ZERO pairs (no containment, no crossing)
+        expected=0 actual=0
+  PASS  [mixed][roof] that pair was genuinely evaluated in narrow phase (narrowPhasePairs >= 1), so the zero-pair verdict is not a broad-phase cull
+        expected=true actual=true
+  PASS  [mixed] one active marker per witness-bearing pair
+        expected=1 actual=1
+  PASS  [mixed] the marker overlay scene is registered
+        expected=true actual=true
+  PASS  [mixed] every active marker mesh is really in the overlay scene (public overlays.hasMesh)
+        expected=[true] actual=[true]
+  PASS  [mixed] the overlay scene holds exactly that many meshes (internal corroboration)
+        expected=1 actual=1
+  PASS  [mixed] every marker is uniformly scaled
+        expected=true actual=true
+  PASS  [mixed] every marker radius is inside the clamped [MIN, MAX] band
+        expected=true actual=true
+  PASS  [mixed] every marker mesh sits exactly on its pair's own witness point
+        expected=["37.178615,22.097634,12.182736"] actual=["37.178615,22.097634,12.182736"]
+
+=== Enclosed-witness visibility (containment witness, through opaque geometry) ===
+  N/A   [enclosed] the camera really reached the requested viewpoint (not overridden by fitToView's own transition)
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] the containment witness projects inside the canvas
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] opaque model geometry is hit at the witness point's own projected position
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] the occluder is one of the elements this query isolated (a known opaque element, not just any hit)
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] the opaque occluder is in front of the witness by MORE than the marker's own radius (the sphere cannot merely be poking through)
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] the pixel at the occluded witness point's exact projected position is the MARKER colour
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] the whole 3x3 block centred on that exact position is marker-coloured
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] the marker dominates its own 7x7 pixel neighbourhood (>=50% marker-coloured)
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] the containment witness's own marker mesh is identifiable in _activeMarkers
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] detaching THIS marker mesh removes the marker colour from that exact pixel (the marker is what painted it)
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] with the marker detached, the occluding geometry is what shows through instead
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] re-attaching the marker mesh restores the marker colour at that exact pixel
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] with depthTest:true the occluder wins at that pixel -- so depthTest:false is what makes the marker show through
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] restoring depthTest:false brings the marker back at that pixel
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+  N/A   [enclosed] the depth-tested frame shows exactly what the marker-less frame showed
+        reason=fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite
+
+=== Case: negative (Structure dbId 197, ElementId 681589) ===
+  PASS  [negative] fixture identity: dbId 197's name includes "HSS-Hollow Structural Section-Column"
+        expected=true actual=true
+  PASS  [negative] fixture identity: dbId 197 owns exactly one real fragment (genuinely real geometry)
+        expected=1 actual=1
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 197
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 197 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 197 (selection preserved)
+        expected=true actual=true
+  [alert] No clashes found.
+  PASS  [negative] alert message is exactly "No clashes found." with no caveat
+        expected="No clashes found." actual="No clashes found."
+  PASS  [negative] captured call: zero pairs
+        expected=0 actual=0
+  PASS  [negative] the extension made a setAggregateIsolation call during this click (proves _clearIsolation() ran)
+        expected=true actual=true
+  PASS  [negative] that call's array is empty -- setAggregateIsolation([]), the documented clear-all case (proves _clearIsolation() iterated the prior case's own isolated Structure+Architecture models)
+        expected=[] actual=[]
+  PASS  [negative] no fitToView() calls on the zero-pairs early-return branch
+        expected=0 actual=0
+  PASS  [negative] end-state: Structure isolation cleared
+        expected=[] actual=[]
+  PASS  [negative] end-state: Architecture isolation cleared
+        expected=[] actual=[]
+  PASS  [negative] end-state: Mechanical isolation still empty
+        expected=[] actual=[]
+  PASS  [negative] no active markers remain
+        expected=0 actual=0
+  PASS  [negative] the overlay scene holds zero meshes
+        expected=0 actual=0
+  PASS  [negative] the mixed case's own marker meshes were really removed from the overlay scene
+        expected=[false] actual=[false]
+  PASS  [negative] the overlay scene itself still exists (only unload removes it)
+        expected=true actual=true
+
+=== Case: alignment (+3 X on the Structure model) ===
+  PASS  [alignment] the Structure model's placement transform really moved by the expected delta in X
+        expected=true actual=true
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 5750
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 5750 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 5750 (selection preserved)
+        expected=true actual=true
+  [alert] 1 clashes found (0 in this model, 1 in other models) The result may be incomplete — 12 diagnostic(s): non-manifold-component, unverified-parity-operand, unverified-open-component.
+  PASS  [alignment] exactly one findClashes call made by the re-run's real click
+        expected=1 actual=1
+  PASS  [alignment] the same {targetModel, targetDbId, witnessKind} set still resolves after the alignment
+        expected=["arch:5428:surface-crossing"] actual=["arch:5428:surface-crossing"]
+  PASS  [alignment] the same number of markers is drawn
+        expected=1 actual=1
+  PASS  [alignment] every marker sits exactly on a witness point from the RE-RUN's own result
+        expected=["40.178615,22.097634,12.182736"] actual=["40.178615,22.097634,12.182736"]
+  [alignment] witness delta arch:5428    = [3,0,0]
+  N/A   [alignment] the same-model containment witness moved by exactly (+3, 0, 0) -- a rigid-motion invariant
+        reason=no same-model witness-bearing pair exists under the verified world-space truth: the only one was the legacy-SVF false-positive containment pair struct 2734 -> struct 3663 (final report §11 Cause 1)
+  PASS  [alignment] the cross-model crossing witness is present in BOTH the baseline and the aligned run
+        expected=true actual=true
+  PASS  [alignment] the cross-model crossing witness moved materially (no rigid-motion invariant applies to it)
+        expected=true actual=true
+  PASS  [alignment] the Structure model's placement transform was restored exactly
+        expected=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1] actual=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 5750
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 5750 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 5750 (selection preserved)
+        expected=true actual=true
+  [alert] 1 clashes found (0 in this model, 1 in other models) The result may be incomplete — 12 diagnostic(s): non-manifold-component, unverified-parity-operand, unverified-open-component.
+  PASS  [alignment] after restoring the placement, the same pair/witness set resolves again
+        expected=["arch:5428:surface-crossing"] actual=["arch:5428:surface-crossing"]
+  PASS  [alignment] after restoring the placement, EVERY pair's witness returns to its original world point (matched by pair identity)
+        expected=true actual=true
+  PASS  [alignment] after restoring the placement, every marker sits on a restored witness point
+        expected=["37.178615,22.097634,12.182736"] actual=["37.178615,22.097634,12.182736"]
+
+=== M3 Task 17: Soft Clash (clearance mode) ===
+  PASS  [soft] the live extension resolved its clearance to the production DEFAULT_CLEARANCE
+        expected=0.05 actual=0.05
+  PASS  [soft] the known-negative clearance sits below the smallest distance this query reports for dbId 197 (so the two cases really do bracket the same source)
+        expected=true actual=true
+
+=== Soft Clash case: known-negative-no-false-positive (dbId 197 @ clearance 0.02) ===
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 197
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 197 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 197 (selection preserved)
+        expected=true actual=true
+  [alert] No clashes found.
+  PASS  [soft] the real context menu offers BOTH production actions as distinct entries
+        expected=true actual=true
+  PASS  [soft][known-negative] exactly one findClashes call made by the real "Find Soft Clashes" click
+        expected=1 actual=1
+  PASS  [soft][known-negative] captured call: source is the Structure model
+        expected="struct" actual="struct"
+  PASS  [soft][known-negative] captured call: source.dbIds is exactly the selected dbId
+        expected=[197] actual=[197]
+  PASS  [soft][known-negative] captured call: mode is clearance
+        expected="clearance" actual="clearance"
+  PASS  [soft][known-negative] captured call: groupBy is dbId
+        expected="dbId" actual="dbId"
+  PASS  [soft][known-negative] captured call: target scope is whole-model for all three loaded models (so an absence is a real absence, not an un-queried model)
+        expected=[{"modelKey":"arch","scope":"whole-model"},{"modelKey":"mech","scope":"whole-model"},{"modelKey":"struct","scope":"whole-model"}] actual=[{"modelKey":"arch","scope":"whole-model"},{"modelKey":"mech","scope":"whole-model"},{"modelKey":"struct","scope":"whole-model"}]
+  PASS  [soft][known-negative] captured call: the clearance threshold the production action actually issued
+        expected=0.02 actual=0.02
+  PASS  [soft][known-negative] captured call: every pair's type is 'clearance' (never 'volume-overlap')
+        expected=true actual=true
+  PASS  [soft][known-negative] captured call: every pair echoes the query's own clearance threshold
+        expected=true actual=true
+  PASS  [soft][known-negative] captured call: every distance is a finite number strictly greater than 0
+        expected=true actual=true
+  PASS  [soft][known-negative] captured call: no distance exceeds the queried clearance threshold
+        expected=true actual=true
+  PASS  [soft][known-negative] captured call: every pair carries the CLEARANCE witness shape {sourcePoint, targetPoint}
+        expected=true actual=true
+  PASS  [soft][known-negative] captured call: no pair carries Hard Clash's own {kind, point} witness shape
+        expected=true actual=true
+  PASS  [soft][known-negative] captured call: every pair's reported distance equals the separation of its OWN two witness points
+        expected=true actual=true
+  PASS  [soft][known-negative] captured call: no duplicate {targetModel, targetDbId} pairs
+        expected=0 actual=0
+  PASS  [soft][known-negative] captured call: statistics.clearanceHits agrees with the emitted pair count
+        expected=0 actual=0
+  PASS  [soft][known-negative] ZERO clearance pairs -- no false positive at a threshold below the smallest distance this query reports for this source
+        expected=0 actual=0
+  PASS  [soft][known-negative] this negative is decided in the clearance BROAD PHASE (zero expanded candidate pairs, zero distance queries) -- recorded precisely, not overstated
+        expected=[0,0] actual=[0,0]
+  PASS  [soft][known-negative] alert message is exactly "No clashes found." with no caveat
+        expected="No clashes found." actual="No clashes found."
+  [soft][known-negative] informational diagnostics (svf2): [{"scope":"fragment","reason":"fragment-null-geometry","modelKey":"arch","fragId":4600,"completenessAffecting":false},{"scope":"fragment","reason":"fragment-null-geometry","modelKey":"arch","fragId":4601,"completenessAffecting":false}]
+  PASS  [soft][known-negative] nothing was skipped, aborted or diagnosed as unavailable during this query (completeness-affecting diagnostics only)
+        expected=0 actual=0
+  PASS  [soft][known-negative] the informational (non-completeness-affecting) diagnostics are EXACTLY this fixture's expected svf2 set (2 x fragment-null-geometry, Architecture frags 4600/4601) -- visible, not discarded
+        expected=["fragment:fragment-null-geometry:arch:4600","fragment:fragment-null-geometry:arch:4601"] actual=["fragment:fragment-null-geometry:arch:4600","fragment:fragment-null-geometry:arch:4601"]
+  PASS  [soft][known-negative] no Hard Clash exclusion fired here (this negative is a genuine distance verdict, not an exclusion)
+        expected=0 actual=0
+  PASS  [soft][known-negative] no Soft Clash overlay objects remain
+        expected=0 actual=0
+  PASS  [soft][known-negative] a zero-result Soft Clash leaves NO overlay trace at all -- the scene is never even registered, and the shared geometry/material are never allocated
+        expected=[false,null,null] actual=[false,null,null]
+  PASS  [soft][known-negative] Hard Clash's own markers survive a zero-result Soft Clash run
+        expected=1 actual=1
+  PASS  [soft][known-negative] Hard Clash's own overlay scene still holds its own meshes
+        expected=1 actual=1
+  PASS  [soft][known-negative] Hard Clash's Structure isolation survives a zero-result Soft Clash run
+        expected=[5750] actual=[5750]
+  PASS  [soft][known-negative] Hard Clash's Architecture isolation survives a zero-result Soft Clash run
+        expected=[5428] actual=[5428]
+  PASS  [soft][known-negative] Mechanical is still not isolated
+        expected=[] actual=[]
+  PASS  [soft][known-negative] no fitToView() calls on the zero-pairs early-return branch
+        expected=0 actual=0
+
+=== Soft Clash case: hard-clash-never-in-clearance-results (dbId 5750 @ clearance 5) ===
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 5750
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 5750 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 5750 (selection preserved)
+        expected=true actual=true
+  [alert] 34 clashes found (15 in this model, 19 in other models) The result may be incomplete — 3 diagnostic(s): clearance-hard-clash-precheck-inconclusive.
+  PASS  [soft][hard-clash-exclusion] exactly one findClashes call made by the real "Find Soft Clashes" click
+        expected=1 actual=1
+  PASS  [soft][hard-clash-exclusion] captured call: source.dbIds is exactly the selected dbId
+        expected=[5750] actual=[5750]
+  PASS  [soft][hard-clash-exclusion] captured call: mode is clearance
+        expected="clearance" actual="clearance"
+  PASS  [soft][hard-clash-exclusion] captured call: groupBy is dbId
+        expected="dbId" actual="dbId"
+  PASS  [soft][hard-clash-exclusion] captured call: target scope is whole-model for all three loaded models (so an absence is a real absence, not an un-queried model)
+        expected=[{"modelKey":"arch","scope":"whole-model"},{"modelKey":"mech","scope":"whole-model"},{"modelKey":"struct","scope":"whole-model"}] actual=[{"modelKey":"arch","scope":"whole-model"},{"modelKey":"mech","scope":"whole-model"},{"modelKey":"struct","scope":"whole-model"}]
+  PASS  [soft][hard-clash-exclusion] captured call: the clearance threshold the production action actually issued
+        expected=5 actual=5
+  PASS  [soft][hard-clash-exclusion] captured call: every pair's type is 'clearance' (never 'volume-overlap')
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] captured call: every pair echoes the query's own clearance threshold
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] captured call: every distance is a finite number strictly greater than 0
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] captured call: no distance exceeds the queried clearance threshold
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] captured call: every pair carries the CLEARANCE witness shape {sourcePoint, targetPoint}
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] captured call: no pair carries Hard Clash's own {kind, point} witness shape
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] captured call: every pair's reported distance equals the separation of its OWN two witness points
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] captured call: no duplicate {targetModel, targetDbId} pairs
+        expected=34 actual=34
+  PASS  [soft][hard-clash-exclusion] captured call: statistics.clearanceHits agrees with the emitted pair count
+        expected=34 actual=34
+  PASS  [soft][hard-clash-exclusion] the query produced a genuinely populated clearance result set (so the absences below are meaningful)
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] exact clearance pair count matches the svf2 format-local baseline (34)
+        expected=34 actual=34
+  PASS  [soft][hard-clash-exclusion] precondition: the Hard Clash query above genuinely DID return the crossing target arch 5428
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] that proven Hard Clash target (arch 5428, surface-crossing) is ABSENT from the clearance result
+        expected=false actual=false
+  [soft][hard-clash-exclusion] observed roof (struct 253) distance = 0.7883000316222609
+  PASS  [soft][hard-clash-exclusion] [svf2] the roof (struct 253, Basic Roof) is PRESENT as a legitimate Soft pair (verified world gap 0.12163605688 ft < clearance 5)
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] [svf2] the roof pair's reported distance is finite and >= the true world-space gap 0.12163605688 (minus 0.000001) -- never closer than the verified truth
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] statistics.clearanceHardClashExclusions >= 1 -- the tri-state precheck genuinely RAN and PROVED overlap
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] the precheck was actually exercised (clearanceOverlapPrechecksRun >= clearanceHardClashExclusions >= 1)
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] the source dbId is excluded from its OWN model's clearance results (same-model self-clash)
+        expected=false actual=false
+  PASS  [soft][hard-clash-exclusion] the alert's own summary matches the captured result exactly
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] the alert carries the incompleteness caveat its own completeness-affecting diagnostics require
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] the arch-5428-only companion query completed
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] scoped to ONLY arch 5428, that target still produces ZERO clearance pairs
+        expected=0 actual=0
+  PASS  [soft][hard-clash-exclusion] the query was genuinely exercised against that one target (broad phase produced candidate pairs for it)
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] the tri-state precheck genuinely RAN for the (5750, 5428) pair
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] TARGET-SPECIFIC PROOF: with arch 5428 as the ONLY target in scope, clearanceHardClashExclusions >= 1 -- the precheck proved overlap for THAT pair, not merely for some pair
+        expected=true actual=true
+  PASS  [soft][hard-clash-exclusion] that exclusion is a PROVEN overlap, not an inconclusive precheck in disguise (an inconclusive outcome can never increment this counter), and no clearance pair survived for the pair
+        expected=[true,0] actual=[true,0]
+
+=== Soft Clash case: soft clash positive: discovered near-miss (Structure dbId 197, ElementId 681589, production default clearance) ===
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 197
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 197 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 197 (selection preserved)
+        expected=true actual=true
+  [alert] 2 clashes found (2 in this model, 0 in other models)
+  PASS  [soft][near-miss] exactly one findClashes call made by the real "Find Soft Clashes" click
+        expected=1 actual=1
+  PASS  [soft][near-miss] captured call: source is the Structure model
+        expected="struct" actual="struct"
+  PASS  [soft][near-miss] captured call: source.dbIds is exactly the selected dbId
+        expected=[197] actual=[197]
+  PASS  [soft][near-miss] captured call: mode is clearance
+        expected="clearance" actual="clearance"
+  PASS  [soft][near-miss] captured call: groupBy is dbId
+        expected="dbId" actual="dbId"
+  PASS  [soft][near-miss] captured call: target scope is whole-model for all three loaded models (so an absence is a real absence, not an un-queried model)
+        expected=[{"modelKey":"arch","scope":"whole-model"},{"modelKey":"mech","scope":"whole-model"},{"modelKey":"struct","scope":"whole-model"}] actual=[{"modelKey":"arch","scope":"whole-model"},{"modelKey":"mech","scope":"whole-model"},{"modelKey":"struct","scope":"whole-model"}]
+  PASS  [soft][near-miss] captured call: the clearance threshold the production action actually issued
+        expected=0.05 actual=0.05
+  PASS  [soft][near-miss] captured call: every pair's type is 'clearance' (never 'volume-overlap')
+        expected=true actual=true
+  PASS  [soft][near-miss] captured call: every pair echoes the query's own clearance threshold
+        expected=true actual=true
+  PASS  [soft][near-miss] captured call: every distance is a finite number strictly greater than 0
+        expected=true actual=true
+  PASS  [soft][near-miss] captured call: no distance exceeds the queried clearance threshold
+        expected=true actual=true
+  PASS  [soft][near-miss] captured call: every pair carries the CLEARANCE witness shape {sourcePoint, targetPoint}
+        expected=true actual=true
+  PASS  [soft][near-miss] captured call: no pair carries Hard Clash's own {kind, point} witness shape
+        expected=true actual=true
+  PASS  [soft][near-miss] captured call: every pair's reported distance equals the separation of its OWN two witness points
+        expected=true actual=true
+  PASS  [soft][near-miss] captured call: no duplicate {targetModel, targetDbId} pairs
+        expected=2 actual=2
+  PASS  [soft][near-miss] captured call: statistics.clearanceHits agrees with the emitted pair count
+        expected=2 actual=2
+  PASS  [soft][near-miss] captured call: the clearance used is the production DEFAULT, never an override from this test
+        expected=0.05 actual=0.05
+  PASS  [soft][near-miss] captured call: exact {targetModel, targetDbId} pair set matches the discovery spike's own finding
+        expected=["struct:6615","struct:6618"] actual=["struct:6615","struct:6618"]
+  PASS  [soft][near-miss] captured call: every pair's source really is Structure dbId 197
+        expected=true actual=true
+  PASS  [soft][near-miss] captured call: same-model pair count (correct provenance labeling)
+        expected=2 actual=2
+  PASS  [soft][near-miss] captured call: cross-model pair count (correct provenance labeling)
+        expected=0 actual=0
+  PASS  [soft][near-miss] captured call: source dbId excluded from its OWN model's results (same-model self-clash)
+        expected=false actual=false
+  PASS  [soft][near-miss] [svf2] every measured distance is within 0.000001 of this fixture's svf2 format-local recorded ground truth ({"6615":0.041666350063060874,"6618":0.04166730373737729})
+        expected=true actual=true
+  PASS  [soft][near-miss] every measured distance sits strictly inside the queried clearance band (a genuine near-miss, not a touch)
+        expected=true actual=true
+  [near-miss] independent node-box Y gaps: [0.041667938232421875,0.041667938232421875]
+  PASS  [soft][near-miss] the measured surface distance is independently corroborated by the InstanceTree's own node boxes (within 0.0001)
+        expected=true actual=true
+  PASS  [soft][near-miss] alert message reports the near-miss exactly, with no incompleteness caveat
+        expected="2 clashes found (2 in this model, 0 in other models)" actual="2 clashes found (2 in this model, 0 in other models)"
+  PASS  [soft][near-miss] the Soft Clash overlay holds exactly two endpoint spheres + one connecting line per pair
+        expected=6 actual=6
+  PASS  [soft][near-miss] the object families are exactly {2 x Mesh, 1 x Line} per pair
+        expected=[4,2] actual=[4,2]
+  PASS  [soft][near-miss] every endpoint sphere sits exactly on one of the pairs' own world-space closest points
+        expected=["134.070318,20.772480,1.878184","134.070318,20.814147,1.878184","134.575526,20.772481,6.961517","134.575526,20.814147,6.961517"] actual=["134.070318,20.772480,1.878184","134.070318,20.814147,1.878184","134.575526,20.772481,6.961517","134.575526,20.814147,6.961517"]
+  PASS  [soft][near-miss] the connecting lines match the pairs' closest-point segments ONE-TO-ONE (no line duplicated, none missing)
+        expected=true actual=true
+  PASS  [soft][near-miss] the Soft Clash overlay scene is registered
+        expected=true actual=true
+  PASS  [soft][near-miss] every Soft Clash object is really in the overlay scene (public overlays.hasMesh)
+        expected=[true,true,true,true,true,true] actual=[true,true,true,true,true,true]
+  PASS  [soft][near-miss] the Soft Clash overlay scene holds exactly that many objects (internal corroboration)
+        expected=6 actual=6
+  PASS  [soft][near-miss] every endpoint sphere is uniformly scaled
+        expected=true actual=true
+  PASS  [soft][near-miss] every endpoint sphere radius is inside Soft Clash's own clamped [MIN, MAX] band
+        expected=true actual=true
+  PASS  [soft][near-miss] every sphere reuses the ONE shared Soft Clash geometry
+        expected=true actual=true
+  PASS  [soft][near-miss] every sphere reuses the ONE shared Soft Clash material
+        expected=true actual=true
+  PASS  [soft][near-miss] every line reuses the ONE shared Soft Clash line material
+        expected=true actual=true
+  PASS  [soft][near-miss] each line owns its OWN distinct geometry (never the shared sphere geometry, never a shared one)
+        expected=true actual=true
+  PASS  [soft][near-miss] the Soft Clash colour is its own SOFT_CLASH_COLOR, visually distinct from Hard Clash's
+        expected=[2854911,2854911,16738816] actual=[2854911,2854911,16738816]
+  PASS  [soft][near-miss] Soft Clash markers render through opaque geometry too (depthTest:false, same as Hard Clash's)
+        expected=false actual=false
+  PASS  [soft][near-miss] the two overlay scenes are separate and both registered at once
+        expected=true actual=true
+  PASS  [soft][near-miss] Hard Clash's own markers are still on screen, untouched by the Soft Clash run
+        expected=[1,1] actual=[1,1]
+  PASS  [soft][near-miss] setAggregateIsolation() entry for Structure is the UNION of Hard Clash's and Soft Clash's own contributions
+        expected=[197,5750,6615,6618] actual=[197,5750,6615,6618]
+  PASS  [soft][near-miss] setAggregateIsolation() entry for Architecture re-applies Hard Clash's own contribution unchanged (Soft Clash never touched that model)
+        expected=[5428] actual=[5428]
+  PASS  [soft][near-miss] Mechanical has no entry in the aggregate isolation call (and is therefore hidden by the full-replace semantics)
+        expected=undefined actual=undefined
+  PASS  [soft][near-miss] exactly one real fitToView() call, for the Structure model only
+        expected=["struct"] actual=["struct"]
+  PASS  [soft][near-miss] real fitToView() frames only what THIS action found, never the isolation union
+        expected=[197,6615,6618] actual=[197,6615,6618]
+  PASS  [soft][near-miss] end-state: Structure isolation really is the union
+        expected=[197,5750,6615,6618] actual=[197,5750,6615,6618]
+  PASS  [soft][near-miss] end-state: Architecture isolation is unchanged
+        expected=[5428] actual=[5428]
+  PASS  [soft][near-miss] end-state: Mechanical isolation is still empty
+        expected=[] actual=[]
+
+=== Soft Clash case: alignment (+3 X on the Structure model), near-miss re-run ===
+  PASS  [soft][alignment] the Structure model's placement transform really moved by the expected delta in X
+        expected=true actual=true
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 197
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 197 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 197 (selection preserved)
+        expected=true actual=true
+  [alert] 2 clashes found (2 in this model, 0 in other models)
+  [soft][alignment] witness deltas = {"struct:6618":[[3,0,0],[3,0,0]],"struct:6615":[[3,0,0],[3,0,0]]}
+  PASS  [soft][alignment] exactly one findClashes call made by the re-run's real click
+        expected=1 actual=1
+  PASS  [soft][alignment] the same {targetModel, targetDbId} pair set still resolves after the alignment
+        expected=["struct:6615","struct:6618"] actual=["struct:6615","struct:6618"]
+  PASS  [soft][alignment] [svf2] every measured distance is unchanged vs this run's own pre-move measurement of the same pair (a rigid motion cannot change a distance between two operands that both moved with it)
+        expected=true actual=true
+  PASS  [soft][alignment] BOTH witness points of every pair moved by exactly (+3, 0, 0) -- a rigid-motion invariant, matched by pair identity
+        expected=true actual=true
+  PASS  [soft][alignment] every endpoint sphere sits on a closest point from the RE-RUN's own result (matched as a multiset, never by array order)
+        expected=["137.070318,20.772480,1.878184","137.070318,20.814147,1.878184","137.575526,20.772481,6.961517","137.575526,20.814147,6.961517"] actual=["137.070318,20.772480,1.878184","137.070318,20.814147,1.878184","137.575526,20.772481,6.961517","137.575526,20.814147,6.961517"]
+  PASS  [soft][alignment] the connecting lines match the RE-RUN's closest-point segments ONE-TO-ONE
+        expected=true actual=true
+  PASS  [soft][alignment] the same number of Soft Clash overlay objects is drawn
+        expected=6 actual=6
+  PASS  [soft][alignment] the PRE-alignment overlay objects were really removed from the overlay scene
+        expected=[false,false,false,false,false,false] actual=[false,false,false,false,false,false]
+  PASS  [soft][alignment] the overlay scene holds exactly the re-run's own objects and nothing left over
+        expected=6 actual=6
+  PASS  [soft][alignment] the Structure model's placement transform was restored exactly
+        expected=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1] actual=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]
+  PASS  Structure model's placement change is still a pure translation when projecting dbId 197
+        expected=true actual=true
+  PASS  projected screen position for Structure dbId 197 settled within the canvas
+        expected=true actual=true
+  PASS  right-click landed on Structure dbId 197 (selection preserved)
+        expected=true actual=true
+  [alert] 2 clashes found (2 in this model, 0 in other models)
+  PASS  [soft][alignment] after restoring the placement, the same pair set resolves again
+        expected=["struct:6615","struct:6618"] actual=["struct:6615","struct:6618"]
+  PASS  [soft][alignment] [svf2] after restoring the placement, every measured distance is unchanged vs this run's own pre-move measurement of the same pair
+        expected=true actual=true
+  PASS  [soft][alignment] after restoring the placement, BOTH witness points of every pair return to their original world positions (matched by pair identity)
+        expected=true actual=true
+  PASS  [soft][alignment] after restoring the placement, every endpoint sphere sits on a restored closest point
+        expected=["134.070318,20.772480,1.878184","134.070318,20.814147,1.878184","134.575526,20.772481,6.961517","134.575526,20.814147,6.961517"] actual=["134.070318,20.772480,1.878184","134.070318,20.814147,1.878184","134.575526,20.772481,6.961517","134.575526,20.814147,6.961517"]
+  PASS  [soft][alignment] after restoring the placement, the connecting lines match the restored segments ONE-TO-ONE
+        expected=true actual=true
+  PASS  [soft][alignment] the ALIGNED run's overlay objects were really removed by the restore re-run
+        expected=[false,false,false,false,false,false] actual=[false,false,false,false,false,false]
+  PASS  [soft][alignment] after restoring, the overlay scene holds exactly the restored run's own objects and nothing left over
+        expected=6 actual=6
+  PASS  [soft] the extension's own clearance was restored to the production default after every override
+        expected=0.05 actual=0.05
+  PASS  [soft] the whole Soft Clash section introduced ZERO new console errors
+        expected=[] actual=[]
+  PASS  [soft] the whole Soft Clash section introduced ZERO new uncaught page exceptions
+        expected=[] actual=[]
+
+=== Case: unloading a participating model (Architecture) ===
+  PASS  [unload] markers really are on screen before the unload (the precondition this step needs)
+        expected=true actual=true
+  PASS  [unload] the Architecture model really is gone
+        expected=2 actual=2
+  PASS  [unload] no active markers remain
+        expected=0 actual=0
+  PASS  [unload] the overlay scene holds zero meshes
+        expected=0 actual=0
+  PASS  [unload] the pre-unload marker meshes were really removed from the overlay scene
+        expected=[false] actual=[false]
+  PASS  [unload] the extension's own isolated-models bookkeeping was cleared
+        expected=0 actual=0
+  PASS  [unload] Structure isolation cleared
+        expected=[] actual=[]
+  PASS  [unload] Mechanical isolation still empty
+        expected=[] actual=[]
+  PASS  [unload] no Soft Clash overlay objects remain either
+        expected=0 actual=0
+  PASS  [unload] the Soft Clash overlay scene holds zero objects
+        expected=0 actual=0
+  PASS  [unload] the Soft Clash overlay scene itself still exists (only unload() removes it)
+        expected=true actual=true
+  PASS  zero console errors across the whole run (viewer bootstrap, 3 model loads, 4 Find Clashes runs, 4 Find Soft Clashes runs, 2 alignment cycles, unload)
+        expected=[] actual=[]
+  PASS  zero uncaught page exceptions across the whole run
+        expected=[] actual=[]
+
+257/257 checks passed.
+16 check(s) NOT APPLICABLE (not counted): [enclosed], [alignment]

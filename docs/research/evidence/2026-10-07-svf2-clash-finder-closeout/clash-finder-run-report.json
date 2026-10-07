@@ -1,0 +1,3738 @@
+{
+  "extensionLoaded": true,
+  "cases": {
+    "positive cross-model crossing (Structure dbId 5750, ElementId 272782)": {
+      "tier1AlertMessage": "1 clashes found (0 in this model, 1 in other models) The result may be incomplete — 12 diagnostic(s): non-manifold-component, unverified-parity-operand, unverified-open-component.",
+      "spy": {
+        "findClashesCalls": [
+          {
+            "sourceModelKey": "struct",
+            "sourceDbIds": [
+              5750
+            ],
+            "mode": "volume-overlap",
+            "groupBy": "dbId",
+            "clearance": null,
+            "targetScope": [
+              {
+                "modelKey": "arch",
+                "scope": "whole-model"
+              },
+              {
+                "modelKey": "struct",
+                "scope": "whole-model"
+              },
+              {
+                "modelKey": "mech",
+                "scope": "whole-model"
+              }
+            ],
+            "pairs": [
+              {
+                "sourceModelKey": "struct",
+                "sourceDbId": 5750,
+                "targetModelKey": "arch",
+                "targetDbId": 5428,
+                "type": "volume-overlap",
+                "witnessKind": "surface-crossing",
+                "witnessPoint": [
+                  37.178614794646144,
+                  22.097634131382524,
+                  12.182735977187074
+                ],
+                "witnessSourcePoint": null,
+                "witnessTargetPoint": null,
+                "distance": null,
+                "clearance": null
+              }
+            ],
+            "diagnosticsCount": 14,
+            "clearanceStatistics": {
+              "clearanceExpandedCandidatePairs": 0,
+              "clearanceExactAabbSurvivors": 0,
+              "clearanceOverlapPrechecksRun": 0,
+              "clearanceHardClashExclusions": 0,
+              "clearanceDistanceQueriesRun": 0,
+              "clearanceHits": 0,
+              "narrowPhasePairs": 5
+            },
+            "diagnosticReasons": [
+              "fragment-null-geometry",
+              "non-manifold-component",
+              "unverified-parity-operand",
+              "unverified-open-component"
+            ],
+            "diagnostics": [
+              {
+                "scope": "fragment",
+                "reason": "fragment-null-geometry",
+                "modelKey": "arch",
+                "fragId": 4600,
+                "completenessAffecting": false
+              },
+              {
+                "scope": "fragment",
+                "reason": "fragment-null-geometry",
+                "modelKey": "arch",
+                "fragId": 4601,
+                "completenessAffecting": false
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-open-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              }
+            ]
+          }
+        ],
+        "isolateCalls": [
+          {
+            "dbIds": [
+              5750
+            ],
+            "modelKey": "struct"
+          },
+          {
+            "dbIds": [
+              5428
+            ],
+            "modelKey": "arch"
+          }
+        ],
+        "setAggregateIsolationCalls": [
+          [
+            {
+              "modelKey": "struct",
+              "dbIds": [
+                5750
+              ]
+            },
+            {
+              "modelKey": "arch",
+              "dbIds": [
+                5428
+              ]
+            }
+          ]
+        ],
+        "fitToViewCalls": [
+          {
+            "dbIds": [
+              5750
+            ],
+            "modelKey": "struct"
+          },
+          {
+            "dbIds": [
+              5428
+            ],
+            "modelKey": "arch"
+          }
+        ]
+      },
+      "roofProbe": {
+        "ok": true,
+        "pairCount": 0,
+        "pairs": [],
+        "broadPhasePairs": 1,
+        "narrowPhasePairs": 1,
+        "diagnosticReasons": [
+          "unverified-parity-operand",
+          "non-manifold-component"
+        ]
+      },
+      "markers": {
+        "activeMarkerCount": 1,
+        "positions": [
+          [
+            37.178614794646144,
+            22.097634131382524,
+            12.182735977187074
+          ]
+        ],
+        "radii": [
+          0.12803903216943172
+        ],
+        "uniformScale": true,
+        "hasScene": true,
+        "hasMeshFlags": [
+          true
+        ],
+        "overlaySceneMeshCount": 1
+      },
+      "enclosedWitness": {
+        "notApplicable": true,
+        "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+      }
+    },
+    "negative (Structure dbId 197, ElementId 681589)": {
+      "tier1AlertMessage": "No clashes found.",
+      "spy": {
+        "findClashesCalls": [
+          {
+            "sourceModelKey": "struct",
+            "sourceDbIds": [
+              197
+            ],
+            "mode": "volume-overlap",
+            "groupBy": "dbId",
+            "clearance": null,
+            "targetScope": [
+              {
+                "modelKey": "arch",
+                "scope": "whole-model"
+              },
+              {
+                "modelKey": "struct",
+                "scope": "whole-model"
+              },
+              {
+                "modelKey": "mech",
+                "scope": "whole-model"
+              }
+            ],
+            "pairs": [],
+            "diagnosticsCount": 2,
+            "clearanceStatistics": {
+              "clearanceExpandedCandidatePairs": 0,
+              "clearanceExactAabbSurvivors": 0,
+              "clearanceOverlapPrechecksRun": 0,
+              "clearanceHardClashExclusions": 0,
+              "clearanceDistanceQueriesRun": 0,
+              "clearanceHits": 0,
+              "narrowPhasePairs": 0
+            },
+            "diagnosticReasons": [
+              "fragment-null-geometry"
+            ],
+            "diagnostics": [
+              {
+                "scope": "fragment",
+                "reason": "fragment-null-geometry",
+                "modelKey": "arch",
+                "fragId": 4600,
+                "completenessAffecting": false
+              },
+              {
+                "scope": "fragment",
+                "reason": "fragment-null-geometry",
+                "modelKey": "arch",
+                "fragId": 4601,
+                "completenessAffecting": false
+              }
+            ]
+          }
+        ],
+        "isolateCalls": [],
+        "setAggregateIsolationCalls": [
+          []
+        ],
+        "fitToViewCalls": []
+      },
+      "markers": {
+        "activeMarkerCount": 0,
+        "positions": [],
+        "radii": [],
+        "uniformScale": true,
+        "hasScene": true,
+        "hasMeshFlags": [],
+        "overlaySceneMeshCount": 0
+      }
+    }
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "checks": [
+    {
+      "name": "exactly three Model objects loaded",
+      "ok": true,
+      "expected": 3,
+      "actual": 3
+    },
+    {
+      "name": "Architecture model resolved by URN",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "Structure model resolved by URN",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "Mechanical model resolved by URN",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "fixture element struct [272782] (SVF dbId 2734) resolves to exactly one live dbId",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "fixture element struct [593772] (SVF dbId 3663) resolves to exactly one live dbId",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "fixture element struct [681589] (SVF dbId 3965) resolves to exactly one live dbId",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "fixture element struct [682525] (SVF dbId 3976) resolves to exactly one live dbId",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "fixture element struct [790734] (SVF dbId 4135) resolves to exactly one live dbId",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "fixture element arch [935021] (SVF dbId 3686) resolves to exactly one live dbId",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "all three loaded models report the same format (Model.isOTG()), so one format-local baseline applies",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "viewer.getExtension(\"Autodesk.Sandbox.ClashFinder\") returns a loaded instance",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] fixture identity: dbId 5750's name includes \"SMBH-W-Wide Flange\"",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] fixture identity: dbId 5750 owns exactly one real fragment",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 5750",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 5750 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 5750 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] alert message starts with the expected summary",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] alert message includes the incompleteness caveat",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] exactly one findClashes call made by the real click",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[mixed] captured call: source is the Structure model",
+      "ok": true,
+      "expected": "struct",
+      "actual": "struct"
+    },
+    {
+      "name": "[mixed] captured call: source.dbIds is exactly the selected dbId",
+      "ok": true,
+      "expected": [
+        5750
+      ],
+      "actual": [
+        5750
+      ]
+    },
+    {
+      "name": "[mixed] captured call: mode is volume-overlap",
+      "ok": true,
+      "expected": "volume-overlap",
+      "actual": "volume-overlap"
+    },
+    {
+      "name": "[mixed] captured call: groupBy is dbId",
+      "ok": true,
+      "expected": "dbId",
+      "actual": "dbId"
+    },
+    {
+      "name": "[mixed] captured call: every pair uses volume-overlap mode",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] captured call: every pair's source really is Structure dbId 5750",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] captured call: exact {targetModel, targetDbId} pair set matches this regression's expected set",
+      "ok": true,
+      "expected": [
+        "arch:5428"
+      ],
+      "actual": [
+        "arch:5428"
+      ]
+    },
+    {
+      "name": "[mixed] captured call: same-model pair count (correct provenance labeling)",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[mixed] captured call: cross-model pair count (correct provenance labeling)",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[mixed] captured call: the one cross-model pair is correctly attributed to the Architecture model",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] captured call: no duplicate pairs",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[mixed] captured call: source dbId excluded from its OWN model's results (same-model self-clash)",
+      "ok": true,
+      "expected": false,
+      "actual": false
+    },
+    {
+      "name": "[mixed] setAggregateIsolation() entry for Structure carries exactly {selected dbId} (no same-model target)",
+      "ok": true,
+      "expected": [
+        5750
+      ],
+      "actual": [
+        5750
+      ]
+    },
+    {
+      "name": "[mixed] setAggregateIsolation() entry for Architecture carries exactly the cross-model target",
+      "ok": true,
+      "expected": [
+        5428
+      ],
+      "actual": [
+        5428
+      ]
+    },
+    {
+      "name": "[mixed] real fitToView() called for Structure with the SAME dbId set as its own setAggregateIsolation() entry",
+      "ok": true,
+      "expected": [
+        5750
+      ],
+      "actual": [
+        5750
+      ]
+    },
+    {
+      "name": "[mixed] real fitToView() called for Architecture with the SAME dbId set as its own setAggregateIsolation() entry",
+      "ok": true,
+      "expected": [
+        5428
+      ],
+      "actual": [
+        5428
+      ]
+    },
+    {
+      "name": "[mixed] Mechanical has no entry in the aggregate isolation call (and is therefore hidden by the full-replace semantics)",
+      "ok": true
+    },
+    {
+      "name": "[mixed] Mechanical model never fitToView'd (no pairs involve it)",
+      "ok": true
+    },
+    {
+      "name": "[mixed] end-state: Structure isolated set matches",
+      "ok": true,
+      "expected": [
+        5750
+      ],
+      "actual": [
+        5750
+      ]
+    },
+    {
+      "name": "[mixed] end-state: Architecture isolated set matches",
+      "ok": true,
+      "expected": [
+        5428
+      ],
+      "actual": [
+        5428
+      ]
+    },
+    {
+      "name": "[mixed] end-state: Mechanical isolated set is empty",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[mixed] captured call: every pair has a non-null witness",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] captured call: every witness point is 3 finite numbers (plain array, never a Vector3)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] captured call: exact {targetModel, targetDbId, witnessKind} set -- the arch surface-crossing pair only (verified world-space truth)",
+      "ok": true,
+      "expected": [
+        "arch:5428:surface-crossing"
+      ],
+      "actual": [
+        "arch:5428:surface-crossing"
+      ]
+    },
+    {
+      "name": "[mixed] captured call: zero pairs left without a witness",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[mixed] captured call: the crossing pair (arch target) carries a 'surface-crossing' witness with a finite point",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed][roof] the production result contains NO pair (of any witness kind) targeting struct 253 (Basic Roof)",
+      "ok": true,
+      "expected": false,
+      "actual": false
+    },
+    {
+      "name": "[mixed][roof] the production result contains NO containment-kind witness at all",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[mixed][roof] the struct-253-only companion volume-overlap query completed",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed][roof] scoped to ONLY struct 253, the source produces ZERO pairs (no containment, no crossing)",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[mixed][roof] that pair was genuinely evaluated in narrow phase (narrowPhasePairs >= 1), so the zero-pair verdict is not a broad-phase cull",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] one active marker per witness-bearing pair",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[mixed] the marker overlay scene is registered",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] every active marker mesh is really in the overlay scene (public overlays.hasMesh)",
+      "ok": true,
+      "expected": [
+        true
+      ],
+      "actual": [
+        true
+      ]
+    },
+    {
+      "name": "[mixed] the overlay scene holds exactly that many meshes (internal corroboration)",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[mixed] every marker is uniformly scaled",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] every marker radius is inside the clamped [MIN, MAX] band",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[mixed] every marker mesh sits exactly on its pair's own witness point",
+      "ok": true,
+      "expected": [
+        "37.178615,22.097634,12.182736"
+      ],
+      "actual": [
+        "37.178615,22.097634,12.182736"
+      ]
+    },
+    {
+      "name": "[negative] fixture identity: dbId 197's name includes \"HSS-Hollow Structural Section-Column\"",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[negative] fixture identity: dbId 197 owns exactly one real fragment (genuinely real geometry)",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 197",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 197 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 197 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[negative] alert message is exactly \"No clashes found.\" with no caveat",
+      "ok": true,
+      "expected": "No clashes found.",
+      "actual": "No clashes found."
+    },
+    {
+      "name": "[negative] captured call: zero pairs",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[negative] the extension made a setAggregateIsolation call during this click (proves _clearIsolation() ran)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[negative] that call's array is empty -- setAggregateIsolation([]), the documented clear-all case (proves _clearIsolation() iterated the prior case's own isolated Structure+Architecture models)",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[negative] no fitToView() calls on the zero-pairs early-return branch",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[negative] end-state: Structure isolation cleared",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[negative] end-state: Architecture isolation cleared",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[negative] end-state: Mechanical isolation still empty",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[negative] no active markers remain",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[negative] the overlay scene holds zero meshes",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[negative] the mixed case's own marker meshes were really removed from the overlay scene",
+      "ok": true,
+      "expected": [
+        false
+      ],
+      "actual": [
+        false
+      ]
+    },
+    {
+      "name": "[negative] the overlay scene itself still exists (only unload removes it)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[alignment] the Structure model's placement transform really moved by the expected delta in X",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 5750",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 5750 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 5750 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[alignment] exactly one findClashes call made by the re-run's real click",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[alignment] the same {targetModel, targetDbId, witnessKind} set still resolves after the alignment",
+      "ok": true,
+      "expected": [
+        "arch:5428:surface-crossing"
+      ],
+      "actual": [
+        "arch:5428:surface-crossing"
+      ]
+    },
+    {
+      "name": "[alignment] the same number of markers is drawn",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[alignment] every marker sits exactly on a witness point from the RE-RUN's own result",
+      "ok": true,
+      "expected": [
+        "40.178615,22.097634,12.182736"
+      ],
+      "actual": [
+        "40.178615,22.097634,12.182736"
+      ]
+    },
+    {
+      "name": "[alignment] the cross-model crossing witness is present in BOTH the baseline and the aligned run",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[alignment] the cross-model crossing witness moved materially (no rigid-motion invariant applies to it)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[alignment] the Structure model's placement transform was restored exactly",
+      "ok": true,
+      "expected": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "actual": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 5750",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 5750 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 5750 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[alignment] after restoring the placement, the same pair/witness set resolves again",
+      "ok": true,
+      "expected": [
+        "arch:5428:surface-crossing"
+      ],
+      "actual": [
+        "arch:5428:surface-crossing"
+      ]
+    },
+    {
+      "name": "[alignment] after restoring the placement, EVERY pair's witness returns to its original world point (matched by pair identity)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[alignment] after restoring the placement, every marker sits on a restored witness point",
+      "ok": true,
+      "expected": [
+        "37.178615,22.097634,12.182736"
+      ],
+      "actual": [
+        "37.178615,22.097634,12.182736"
+      ]
+    },
+    {
+      "name": "[soft] the live extension resolved its clearance to the production DEFAULT_CLEARANCE",
+      "ok": true,
+      "expected": 0.05,
+      "actual": 0.05
+    },
+    {
+      "name": "[soft] the known-negative clearance sits below the smallest distance this query reports for dbId 197 (so the two cases really do bracket the same source)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 197",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 197 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 197 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft] the real context menu offers BOTH production actions as distinct entries",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][known-negative] exactly one findClashes call made by the real \"Find Soft Clashes\" click",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[soft][known-negative] captured call: source is the Structure model",
+      "ok": true,
+      "expected": "struct",
+      "actual": "struct"
+    },
+    {
+      "name": "[soft][known-negative] captured call: source.dbIds is exactly the selected dbId",
+      "ok": true,
+      "expected": [
+        197
+      ],
+      "actual": [
+        197
+      ]
+    },
+    {
+      "name": "[soft][known-negative] captured call: mode is clearance",
+      "ok": true,
+      "expected": "clearance",
+      "actual": "clearance"
+    },
+    {
+      "name": "[soft][known-negative] captured call: groupBy is dbId",
+      "ok": true,
+      "expected": "dbId",
+      "actual": "dbId"
+    },
+    {
+      "name": "[soft][known-negative] captured call: target scope is whole-model for all three loaded models (so an absence is a real absence, not an un-queried model)",
+      "ok": true,
+      "expected": [
+        {
+          "modelKey": "arch",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "mech",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "struct",
+          "scope": "whole-model"
+        }
+      ],
+      "actual": [
+        {
+          "modelKey": "arch",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "mech",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "struct",
+          "scope": "whole-model"
+        }
+      ]
+    },
+    {
+      "name": "[soft][known-negative] captured call: the clearance threshold the production action actually issued",
+      "ok": true,
+      "expected": 0.02,
+      "actual": 0.02
+    },
+    {
+      "name": "[soft][known-negative] captured call: every pair's type is 'clearance' (never 'volume-overlap')",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][known-negative] captured call: every pair echoes the query's own clearance threshold",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][known-negative] captured call: every distance is a finite number strictly greater than 0",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][known-negative] captured call: no distance exceeds the queried clearance threshold",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][known-negative] captured call: every pair carries the CLEARANCE witness shape {sourcePoint, targetPoint}",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][known-negative] captured call: no pair carries Hard Clash's own {kind, point} witness shape",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][known-negative] captured call: every pair's reported distance equals the separation of its OWN two witness points",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][known-negative] captured call: no duplicate {targetModel, targetDbId} pairs",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[soft][known-negative] captured call: statistics.clearanceHits agrees with the emitted pair count",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[soft][known-negative] ZERO clearance pairs -- no false positive at a threshold below the smallest distance this query reports for this source",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[soft][known-negative] this negative is decided in the clearance BROAD PHASE (zero expanded candidate pairs, zero distance queries) -- recorded precisely, not overstated",
+      "ok": true,
+      "expected": [
+        0,
+        0
+      ],
+      "actual": [
+        0,
+        0
+      ]
+    },
+    {
+      "name": "[soft][known-negative] alert message is exactly \"No clashes found.\" with no caveat",
+      "ok": true,
+      "expected": "No clashes found.",
+      "actual": "No clashes found."
+    },
+    {
+      "name": "[soft][known-negative] nothing was skipped, aborted or diagnosed as unavailable during this query (completeness-affecting diagnostics only)",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[soft][known-negative] the informational (non-completeness-affecting) diagnostics are EXACTLY this fixture's expected svf2 set (2 x fragment-null-geometry, Architecture frags 4600/4601) -- visible, not discarded",
+      "ok": true,
+      "expected": [
+        "fragment:fragment-null-geometry:arch:4600",
+        "fragment:fragment-null-geometry:arch:4601"
+      ],
+      "actual": [
+        "fragment:fragment-null-geometry:arch:4600",
+        "fragment:fragment-null-geometry:arch:4601"
+      ]
+    },
+    {
+      "name": "[soft][known-negative] no Hard Clash exclusion fired here (this negative is a genuine distance verdict, not an exclusion)",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[soft][known-negative] no Soft Clash overlay objects remain",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[soft][known-negative] a zero-result Soft Clash leaves NO overlay trace at all -- the scene is never even registered, and the shared geometry/material are never allocated",
+      "ok": true,
+      "expected": [
+        false,
+        null,
+        null
+      ],
+      "actual": [
+        false,
+        null,
+        null
+      ]
+    },
+    {
+      "name": "[soft][known-negative] Hard Clash's own markers survive a zero-result Soft Clash run",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[soft][known-negative] Hard Clash's own overlay scene still holds its own meshes",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[soft][known-negative] Hard Clash's Structure isolation survives a zero-result Soft Clash run",
+      "ok": true,
+      "expected": [
+        5750
+      ],
+      "actual": [
+        5750
+      ]
+    },
+    {
+      "name": "[soft][known-negative] Hard Clash's Architecture isolation survives a zero-result Soft Clash run",
+      "ok": true,
+      "expected": [
+        5428
+      ],
+      "actual": [
+        5428
+      ]
+    },
+    {
+      "name": "[soft][known-negative] Mechanical is still not isolated",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[soft][known-negative] no fitToView() calls on the zero-pairs early-return branch",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 5750",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 5750 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 5750 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] exactly one findClashes call made by the real \"Find Soft Clashes\" click",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: source.dbIds is exactly the selected dbId",
+      "ok": true,
+      "expected": [
+        5750
+      ],
+      "actual": [
+        5750
+      ]
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: mode is clearance",
+      "ok": true,
+      "expected": "clearance",
+      "actual": "clearance"
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: groupBy is dbId",
+      "ok": true,
+      "expected": "dbId",
+      "actual": "dbId"
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: target scope is whole-model for all three loaded models (so an absence is a real absence, not an un-queried model)",
+      "ok": true,
+      "expected": [
+        {
+          "modelKey": "arch",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "mech",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "struct",
+          "scope": "whole-model"
+        }
+      ],
+      "actual": [
+        {
+          "modelKey": "arch",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "mech",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "struct",
+          "scope": "whole-model"
+        }
+      ]
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: the clearance threshold the production action actually issued",
+      "ok": true,
+      "expected": 5,
+      "actual": 5
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: every pair's type is 'clearance' (never 'volume-overlap')",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: every pair echoes the query's own clearance threshold",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: every distance is a finite number strictly greater than 0",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: no distance exceeds the queried clearance threshold",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: every pair carries the CLEARANCE witness shape {sourcePoint, targetPoint}",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: no pair carries Hard Clash's own {kind, point} witness shape",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: every pair's reported distance equals the separation of its OWN two witness points",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: no duplicate {targetModel, targetDbId} pairs",
+      "ok": true,
+      "expected": 34,
+      "actual": 34
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] captured call: statistics.clearanceHits agrees with the emitted pair count",
+      "ok": true,
+      "expected": 34,
+      "actual": 34
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] the query produced a genuinely populated clearance result set (so the absences below are meaningful)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] exact clearance pair count matches the svf2 format-local baseline (34)",
+      "ok": true,
+      "expected": 34,
+      "actual": 34
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] precondition: the Hard Clash query above genuinely DID return the crossing target arch 5428",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] that proven Hard Clash target (arch 5428, surface-crossing) is ABSENT from the clearance result",
+      "ok": true,
+      "expected": false,
+      "actual": false
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] [svf2] the roof (struct 253, Basic Roof) is PRESENT as a legitimate Soft pair (verified world gap 0.12163605688 ft < clearance 5)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] [svf2] the roof pair's reported distance is finite and >= the true world-space gap 0.12163605688 (minus 0.000001) -- never closer than the verified truth",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] statistics.clearanceHardClashExclusions >= 1 -- the tri-state precheck genuinely RAN and PROVED overlap",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] the precheck was actually exercised (clearanceOverlapPrechecksRun >= clearanceHardClashExclusions >= 1)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] the source dbId is excluded from its OWN model's clearance results (same-model self-clash)",
+      "ok": true,
+      "expected": false,
+      "actual": false
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] the alert's own summary matches the captured result exactly",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] the alert carries the incompleteness caveat its own completeness-affecting diagnostics require",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] the arch-5428-only companion query completed",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] scoped to ONLY arch 5428, that target still produces ZERO clearance pairs",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] the query was genuinely exercised against that one target (broad phase produced candidate pairs for it)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] the tri-state precheck genuinely RAN for the (5750, 5428) pair",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] TARGET-SPECIFIC PROOF: with arch 5428 as the ONLY target in scope, clearanceHardClashExclusions >= 1 -- the precheck proved overlap for THAT pair, not merely for some pair",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][hard-clash-exclusion] that exclusion is a PROVEN overlap, not an inconclusive precheck in disguise (an inconclusive outcome can never increment this counter), and no clearance pair survived for the pair",
+      "ok": true,
+      "expected": [
+        true,
+        0
+      ],
+      "actual": [
+        true,
+        0
+      ]
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 197",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 197 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 197 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] exactly one findClashes call made by the real \"Find Soft Clashes\" click",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[soft][near-miss] captured call: source is the Structure model",
+      "ok": true,
+      "expected": "struct",
+      "actual": "struct"
+    },
+    {
+      "name": "[soft][near-miss] captured call: source.dbIds is exactly the selected dbId",
+      "ok": true,
+      "expected": [
+        197
+      ],
+      "actual": [
+        197
+      ]
+    },
+    {
+      "name": "[soft][near-miss] captured call: mode is clearance",
+      "ok": true,
+      "expected": "clearance",
+      "actual": "clearance"
+    },
+    {
+      "name": "[soft][near-miss] captured call: groupBy is dbId",
+      "ok": true,
+      "expected": "dbId",
+      "actual": "dbId"
+    },
+    {
+      "name": "[soft][near-miss] captured call: target scope is whole-model for all three loaded models (so an absence is a real absence, not an un-queried model)",
+      "ok": true,
+      "expected": [
+        {
+          "modelKey": "arch",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "mech",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "struct",
+          "scope": "whole-model"
+        }
+      ],
+      "actual": [
+        {
+          "modelKey": "arch",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "mech",
+          "scope": "whole-model"
+        },
+        {
+          "modelKey": "struct",
+          "scope": "whole-model"
+        }
+      ]
+    },
+    {
+      "name": "[soft][near-miss] captured call: the clearance threshold the production action actually issued",
+      "ok": true,
+      "expected": 0.05,
+      "actual": 0.05
+    },
+    {
+      "name": "[soft][near-miss] captured call: every pair's type is 'clearance' (never 'volume-overlap')",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] captured call: every pair echoes the query's own clearance threshold",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] captured call: every distance is a finite number strictly greater than 0",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] captured call: no distance exceeds the queried clearance threshold",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] captured call: every pair carries the CLEARANCE witness shape {sourcePoint, targetPoint}",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] captured call: no pair carries Hard Clash's own {kind, point} witness shape",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] captured call: every pair's reported distance equals the separation of its OWN two witness points",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] captured call: no duplicate {targetModel, targetDbId} pairs",
+      "ok": true,
+      "expected": 2,
+      "actual": 2
+    },
+    {
+      "name": "[soft][near-miss] captured call: statistics.clearanceHits agrees with the emitted pair count",
+      "ok": true,
+      "expected": 2,
+      "actual": 2
+    },
+    {
+      "name": "[soft][near-miss] captured call: the clearance used is the production DEFAULT, never an override from this test",
+      "ok": true,
+      "expected": 0.05,
+      "actual": 0.05
+    },
+    {
+      "name": "[soft][near-miss] captured call: exact {targetModel, targetDbId} pair set matches the discovery spike's own finding",
+      "ok": true,
+      "expected": [
+        "struct:6615",
+        "struct:6618"
+      ],
+      "actual": [
+        "struct:6615",
+        "struct:6618"
+      ]
+    },
+    {
+      "name": "[soft][near-miss] captured call: every pair's source really is Structure dbId 197",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] captured call: same-model pair count (correct provenance labeling)",
+      "ok": true,
+      "expected": 2,
+      "actual": 2
+    },
+    {
+      "name": "[soft][near-miss] captured call: cross-model pair count (correct provenance labeling)",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[soft][near-miss] captured call: source dbId excluded from its OWN model's results (same-model self-clash)",
+      "ok": true,
+      "expected": false,
+      "actual": false
+    },
+    {
+      "name": "[soft][near-miss] [svf2] every measured distance is within 0.000001 of this fixture's svf2 format-local recorded ground truth ({\"6615\":0.041666350063060874,\"6618\":0.04166730373737729})",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] every measured distance sits strictly inside the queried clearance band (a genuine near-miss, not a touch)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] the measured surface distance is independently corroborated by the InstanceTree's own node boxes (within 0.0001)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] alert message reports the near-miss exactly, with no incompleteness caveat",
+      "ok": true,
+      "expected": "2 clashes found (2 in this model, 0 in other models)",
+      "actual": "2 clashes found (2 in this model, 0 in other models)"
+    },
+    {
+      "name": "[soft][near-miss] the Soft Clash overlay holds exactly two endpoint spheres + one connecting line per pair",
+      "ok": true,
+      "expected": 6,
+      "actual": 6
+    },
+    {
+      "name": "[soft][near-miss] the object families are exactly {2 x Mesh, 1 x Line} per pair",
+      "ok": true,
+      "expected": [
+        4,
+        2
+      ],
+      "actual": [
+        4,
+        2
+      ]
+    },
+    {
+      "name": "[soft][near-miss] every endpoint sphere sits exactly on one of the pairs' own world-space closest points",
+      "ok": true,
+      "expected": [
+        "134.070318,20.772480,1.878184",
+        "134.070318,20.814147,1.878184",
+        "134.575526,20.772481,6.961517",
+        "134.575526,20.814147,6.961517"
+      ],
+      "actual": [
+        "134.070318,20.772480,1.878184",
+        "134.070318,20.814147,1.878184",
+        "134.575526,20.772481,6.961517",
+        "134.575526,20.814147,6.961517"
+      ]
+    },
+    {
+      "name": "[soft][near-miss] the connecting lines match the pairs' closest-point segments ONE-TO-ONE (no line duplicated, none missing)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] the Soft Clash overlay scene is registered",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] every Soft Clash object is really in the overlay scene (public overlays.hasMesh)",
+      "ok": true,
+      "expected": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "actual": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "name": "[soft][near-miss] the Soft Clash overlay scene holds exactly that many objects (internal corroboration)",
+      "ok": true,
+      "expected": 6,
+      "actual": 6
+    },
+    {
+      "name": "[soft][near-miss] every endpoint sphere is uniformly scaled",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] every endpoint sphere radius is inside Soft Clash's own clamped [MIN, MAX] band",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] every sphere reuses the ONE shared Soft Clash geometry",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] every sphere reuses the ONE shared Soft Clash material",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] every line reuses the ONE shared Soft Clash line material",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] each line owns its OWN distinct geometry (never the shared sphere geometry, never a shared one)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] the Soft Clash colour is its own SOFT_CLASH_COLOR, visually distinct from Hard Clash's",
+      "ok": true,
+      "expected": [
+        2854911,
+        2854911,
+        16738816
+      ],
+      "actual": [
+        2854911,
+        2854911,
+        16738816
+      ]
+    },
+    {
+      "name": "[soft][near-miss] Soft Clash markers render through opaque geometry too (depthTest:false, same as Hard Clash's)",
+      "ok": true,
+      "expected": false,
+      "actual": false
+    },
+    {
+      "name": "[soft][near-miss] the two overlay scenes are separate and both registered at once",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][near-miss] Hard Clash's own markers are still on screen, untouched by the Soft Clash run",
+      "ok": true,
+      "expected": [
+        1,
+        1
+      ],
+      "actual": [
+        1,
+        1
+      ]
+    },
+    {
+      "name": "[soft][near-miss] setAggregateIsolation() entry for Structure is the UNION of Hard Clash's and Soft Clash's own contributions",
+      "ok": true,
+      "expected": [
+        197,
+        5750,
+        6615,
+        6618
+      ],
+      "actual": [
+        197,
+        5750,
+        6615,
+        6618
+      ]
+    },
+    {
+      "name": "[soft][near-miss] setAggregateIsolation() entry for Architecture re-applies Hard Clash's own contribution unchanged (Soft Clash never touched that model)",
+      "ok": true,
+      "expected": [
+        5428
+      ],
+      "actual": [
+        5428
+      ]
+    },
+    {
+      "name": "[soft][near-miss] Mechanical has no entry in the aggregate isolation call (and is therefore hidden by the full-replace semantics)",
+      "ok": true
+    },
+    {
+      "name": "[soft][near-miss] exactly one real fitToView() call, for the Structure model only",
+      "ok": true,
+      "expected": [
+        "struct"
+      ],
+      "actual": [
+        "struct"
+      ]
+    },
+    {
+      "name": "[soft][near-miss] real fitToView() frames only what THIS action found, never the isolation union",
+      "ok": true,
+      "expected": [
+        197,
+        6615,
+        6618
+      ],
+      "actual": [
+        197,
+        6615,
+        6618
+      ]
+    },
+    {
+      "name": "[soft][near-miss] end-state: Structure isolation really is the union",
+      "ok": true,
+      "expected": [
+        197,
+        5750,
+        6615,
+        6618
+      ],
+      "actual": [
+        197,
+        5750,
+        6615,
+        6618
+      ]
+    },
+    {
+      "name": "[soft][near-miss] end-state: Architecture isolation is unchanged",
+      "ok": true,
+      "expected": [
+        5428
+      ],
+      "actual": [
+        5428
+      ]
+    },
+    {
+      "name": "[soft][near-miss] end-state: Mechanical isolation is still empty",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[soft][alignment] the Structure model's placement transform really moved by the expected delta in X",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 197",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 197 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 197 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][alignment] exactly one findClashes call made by the re-run's real click",
+      "ok": true,
+      "expected": 1,
+      "actual": 1
+    },
+    {
+      "name": "[soft][alignment] the same {targetModel, targetDbId} pair set still resolves after the alignment",
+      "ok": true,
+      "expected": [
+        "struct:6615",
+        "struct:6618"
+      ],
+      "actual": [
+        "struct:6615",
+        "struct:6618"
+      ]
+    },
+    {
+      "name": "[soft][alignment] [svf2] every measured distance is unchanged vs this run's own pre-move measurement of the same pair (a rigid motion cannot change a distance between two operands that both moved with it)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][alignment] BOTH witness points of every pair moved by exactly (+3, 0, 0) -- a rigid-motion invariant, matched by pair identity",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][alignment] every endpoint sphere sits on a closest point from the RE-RUN's own result (matched as a multiset, never by array order)",
+      "ok": true,
+      "expected": [
+        "137.070318,20.772480,1.878184",
+        "137.070318,20.814147,1.878184",
+        "137.575526,20.772481,6.961517",
+        "137.575526,20.814147,6.961517"
+      ],
+      "actual": [
+        "137.070318,20.772480,1.878184",
+        "137.070318,20.814147,1.878184",
+        "137.575526,20.772481,6.961517",
+        "137.575526,20.814147,6.961517"
+      ]
+    },
+    {
+      "name": "[soft][alignment] the connecting lines match the RE-RUN's closest-point segments ONE-TO-ONE",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][alignment] the same number of Soft Clash overlay objects is drawn",
+      "ok": true,
+      "expected": 6,
+      "actual": 6
+    },
+    {
+      "name": "[soft][alignment] the PRE-alignment overlay objects were really removed from the overlay scene",
+      "ok": true,
+      "expected": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "actual": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "name": "[soft][alignment] the overlay scene holds exactly the re-run's own objects and nothing left over",
+      "ok": true,
+      "expected": 6,
+      "actual": 6
+    },
+    {
+      "name": "[soft][alignment] the Structure model's placement transform was restored exactly",
+      "ok": true,
+      "expected": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "actual": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "name": "Structure model's placement change is still a pure translation when projecting dbId 197",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "projected screen position for Structure dbId 197 settled within the canvas",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "right-click landed on Structure dbId 197 (selection preserved)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][alignment] after restoring the placement, the same pair set resolves again",
+      "ok": true,
+      "expected": [
+        "struct:6615",
+        "struct:6618"
+      ],
+      "actual": [
+        "struct:6615",
+        "struct:6618"
+      ]
+    },
+    {
+      "name": "[soft][alignment] [svf2] after restoring the placement, every measured distance is unchanged vs this run's own pre-move measurement of the same pair",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][alignment] after restoring the placement, BOTH witness points of every pair return to their original world positions (matched by pair identity)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][alignment] after restoring the placement, every endpoint sphere sits on a restored closest point",
+      "ok": true,
+      "expected": [
+        "134.070318,20.772480,1.878184",
+        "134.070318,20.814147,1.878184",
+        "134.575526,20.772481,6.961517",
+        "134.575526,20.814147,6.961517"
+      ],
+      "actual": [
+        "134.070318,20.772480,1.878184",
+        "134.070318,20.814147,1.878184",
+        "134.575526,20.772481,6.961517",
+        "134.575526,20.814147,6.961517"
+      ]
+    },
+    {
+      "name": "[soft][alignment] after restoring the placement, the connecting lines match the restored segments ONE-TO-ONE",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[soft][alignment] the ALIGNED run's overlay objects were really removed by the restore re-run",
+      "ok": true,
+      "expected": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ],
+      "actual": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "name": "[soft][alignment] after restoring, the overlay scene holds exactly the restored run's own objects and nothing left over",
+      "ok": true,
+      "expected": 6,
+      "actual": 6
+    },
+    {
+      "name": "[soft] the extension's own clearance was restored to the production default after every override",
+      "ok": true,
+      "expected": 0.05,
+      "actual": 0.05
+    },
+    {
+      "name": "[soft] the whole Soft Clash section introduced ZERO new console errors",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[soft] the whole Soft Clash section introduced ZERO new uncaught page exceptions",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[unload] markers really are on screen before the unload (the precondition this step needs)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "[unload] the Architecture model really is gone",
+      "ok": true,
+      "expected": 2,
+      "actual": 2
+    },
+    {
+      "name": "[unload] no active markers remain",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[unload] the overlay scene holds zero meshes",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[unload] the pre-unload marker meshes were really removed from the overlay scene",
+      "ok": true,
+      "expected": [
+        false
+      ],
+      "actual": [
+        false
+      ]
+    },
+    {
+      "name": "[unload] the extension's own isolated-models bookkeeping was cleared",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[unload] Structure isolation cleared",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[unload] Mechanical isolation still empty",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "[unload] no Soft Clash overlay objects remain either",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[unload] the Soft Clash overlay scene holds zero objects",
+      "ok": true,
+      "expected": 0,
+      "actual": 0
+    },
+    {
+      "name": "[unload] the Soft Clash overlay scene itself still exists (only unload() removes it)",
+      "ok": true,
+      "expected": true,
+      "actual": true
+    },
+    {
+      "name": "zero console errors across the whole run (viewer bootstrap, 3 model loads, 4 Find Clashes runs, 4 Find Soft Clashes runs, 2 alignment cycles, unload)",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    },
+    {
+      "name": "zero uncaught page exceptions across the whole run",
+      "ok": true,
+      "expected": [],
+      "actual": []
+    }
+  ],
+  "fixtureResolution": [
+    {
+      "modelKey": "struct",
+      "elementId": "272782",
+      "svfDbId": 2734,
+      "liveDbIds": [
+        5750
+      ]
+    },
+    {
+      "modelKey": "struct",
+      "elementId": "593772",
+      "svfDbId": 3663,
+      "liveDbIds": [
+        253
+      ]
+    },
+    {
+      "modelKey": "struct",
+      "elementId": "681589",
+      "svfDbId": 3965,
+      "liveDbIds": [
+        197
+      ]
+    },
+    {
+      "modelKey": "struct",
+      "elementId": "682525",
+      "svfDbId": 3976,
+      "liveDbIds": [
+        6615
+      ]
+    },
+    {
+      "modelKey": "struct",
+      "elementId": "790734",
+      "svfDbId": 4135,
+      "liveDbIds": [
+        6618
+      ]
+    },
+    {
+      "modelKey": "arch",
+      "elementId": "935021",
+      "svfDbId": 3686,
+      "liveDbIds": [
+        5428
+      ]
+    }
+  ],
+  "modelFormat": "svf2",
+  "softFormatBaseline": {
+    "format": "svf2",
+    "nearMissDistanceByElementId": {
+      "682525": 0.041666350063060874,
+      "790734": 0.04166730373737729
+    },
+    "clearance5PairCount": 34,
+    "roofPresentInClearance5": true,
+    "roofTrueWorldGap": 0.12163605688,
+    "informationalDiagnostics": [
+      {
+        "scope": "fragment",
+        "reason": "fragment-null-geometry",
+        "modelKey": "arch",
+        "fragId": 4600
+      },
+      {
+        "scope": "fragment",
+        "reason": "fragment-null-geometry",
+        "modelKey": "arch",
+        "fragId": 4601
+      }
+    ],
+    "nearMissDistanceByTargetDbId": {
+      "6615": 0.041666350063060874,
+      "6618": 0.04166730373737729
+    }
+  },
+  "notApplicable": [
+    {
+      "name": "[enclosed] the camera really reached the requested viewpoint (not overridden by fitToView's own transition)",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] the containment witness projects inside the canvas",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] opaque model geometry is hit at the witness point's own projected position",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] the occluder is one of the elements this query isolated (a known opaque element, not just any hit)",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] the opaque occluder is in front of the witness by MORE than the marker's own radius (the sphere cannot merely be poking through)",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] the pixel at the occluded witness point's exact projected position is the MARKER colour",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] the whole 3x3 block centred on that exact position is marker-coloured",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] the marker dominates its own 7x7 pixel neighbourhood (>=50% marker-coloured)",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] the containment witness's own marker mesh is identifiable in _activeMarkers",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] detaching THIS marker mesh removes the marker colour from that exact pixel (the marker is what painted it)",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] with the marker detached, the occluding geometry is what shows through instead",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] re-attaching the marker mesh restores the marker colour at that exact pixel",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] with depthTest:true the occluder wins at that pixel -- so depthTest:false is what makes the marker show through",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] restoring depthTest:false brings the marker back at that pixel",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[enclosed] the depth-tested frame shows exactly what the marker-less frame showed",
+      "reason": "fixture no longer yields an enclosed (containment) witness: the only one it ever produced, legacy-SVF struct 2734 -> struct 3663, is a recorded local-frame-parity FALSE POSITIVE against an open roof mesh (docs/research/2026-10-07-viewer-clash-panel-normal-app-model-identity-final-report.md §11 Cause 1); no other true enclosed-witness fixture exists in this suite"
+    },
+    {
+      "name": "[alignment] the same-model containment witness moved by exactly (+3, 0, 0) -- a rigid-motion invariant",
+      "reason": "no same-model witness-bearing pair exists under the verified world-space truth: the only one was the legacy-SVF false-positive containment pair struct 2734 -> struct 3663 (final report §11 Cause 1)"
+    }
+  ],
+  "alignment": {
+    "originalStructPlacement": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+    ],
+    "aligned": {
+      "message": "1 clashes found (0 in this model, 1 in other models) The result may be incomplete — 12 diagnostic(s): non-manifold-component, unverified-parity-operand, unverified-open-component.",
+      "spy": {
+        "findClashesCalls": [
+          {
+            "sourceModelKey": "struct",
+            "sourceDbIds": [
+              5750
+            ],
+            "mode": "volume-overlap",
+            "groupBy": "dbId",
+            "clearance": null,
+            "targetScope": [
+              {
+                "modelKey": "arch",
+                "scope": "whole-model"
+              },
+              {
+                "modelKey": "struct",
+                "scope": "whole-model"
+              },
+              {
+                "modelKey": "mech",
+                "scope": "whole-model"
+              }
+            ],
+            "pairs": [
+              {
+                "sourceModelKey": "struct",
+                "sourceDbId": 5750,
+                "targetModelKey": "arch",
+                "targetDbId": 5428,
+                "type": "volume-overlap",
+                "witnessKind": "surface-crossing",
+                "witnessPoint": [
+                  40.178614794646144,
+                  22.097634131382524,
+                  12.182735977187074
+                ],
+                "witnessSourcePoint": null,
+                "witnessTargetPoint": null,
+                "distance": null,
+                "clearance": null
+              }
+            ],
+            "diagnosticsCount": 14,
+            "clearanceStatistics": {
+              "clearanceExpandedCandidatePairs": 0,
+              "clearanceExactAabbSurvivors": 0,
+              "clearanceOverlapPrechecksRun": 0,
+              "clearanceHardClashExclusions": 0,
+              "clearanceDistanceQueriesRun": 0,
+              "clearanceHits": 0,
+              "narrowPhasePairs": 5
+            },
+            "diagnosticReasons": [
+              "fragment-null-geometry",
+              "non-manifold-component",
+              "unverified-parity-operand",
+              "unverified-open-component"
+            ],
+            "diagnostics": [
+              {
+                "scope": "fragment",
+                "reason": "fragment-null-geometry",
+                "modelKey": "arch",
+                "fragId": 4600,
+                "completenessAffecting": false
+              },
+              {
+                "scope": "fragment",
+                "reason": "fragment-null-geometry",
+                "modelKey": "arch",
+                "fragId": 4601,
+                "completenessAffecting": false
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-open-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              }
+            ]
+          }
+        ],
+        "isolateCalls": [
+          {
+            "dbIds": [
+              5750
+            ],
+            "modelKey": "struct"
+          },
+          {
+            "dbIds": [
+              5428
+            ],
+            "modelKey": "arch"
+          }
+        ],
+        "setAggregateIsolationCalls": [
+          [
+            {
+              "modelKey": "struct",
+              "dbIds": [
+                5750
+              ]
+            },
+            {
+              "modelKey": "arch",
+              "dbIds": [
+                5428
+              ]
+            }
+          ]
+        ],
+        "fitToViewCalls": [
+          {
+            "dbIds": [
+              5750
+            ],
+            "modelKey": "struct"
+          },
+          {
+            "dbIds": [
+              5428
+            ],
+            "modelKey": "arch"
+          }
+        ]
+      },
+      "markers": {
+        "activeMarkerCount": 1,
+        "positions": [
+          [
+            40.178614794646144,
+            22.097634131382524,
+            12.182735977187074
+          ]
+        ],
+        "radii": [
+          0.12803903216943172
+        ],
+        "uniformScale": true,
+        "hasScene": true,
+        "hasMeshFlags": [
+          true
+        ],
+        "overlaySceneMeshCount": 1
+      }
+    },
+    "witnessDeltas": {
+      "arch:5428": [
+        3,
+        0,
+        0
+      ]
+    },
+    "restored": {
+      "spy": {
+        "findClashesCalls": [
+          {
+            "sourceModelKey": "struct",
+            "sourceDbIds": [
+              5750
+            ],
+            "mode": "volume-overlap",
+            "groupBy": "dbId",
+            "clearance": null,
+            "targetScope": [
+              {
+                "modelKey": "arch",
+                "scope": "whole-model"
+              },
+              {
+                "modelKey": "struct",
+                "scope": "whole-model"
+              },
+              {
+                "modelKey": "mech",
+                "scope": "whole-model"
+              }
+            ],
+            "pairs": [
+              {
+                "sourceModelKey": "struct",
+                "sourceDbId": 5750,
+                "targetModelKey": "arch",
+                "targetDbId": 5428,
+                "type": "volume-overlap",
+                "witnessKind": "surface-crossing",
+                "witnessPoint": [
+                  37.178614794646144,
+                  22.097634131382524,
+                  12.182735977187074
+                ],
+                "witnessSourcePoint": null,
+                "witnessTargetPoint": null,
+                "distance": null,
+                "clearance": null
+              }
+            ],
+            "diagnosticsCount": 14,
+            "clearanceStatistics": {
+              "clearanceExpandedCandidatePairs": 0,
+              "clearanceExactAabbSurvivors": 0,
+              "clearanceOverlapPrechecksRun": 0,
+              "clearanceHardClashExclusions": 0,
+              "clearanceDistanceQueriesRun": 0,
+              "clearanceHits": 0,
+              "narrowPhasePairs": 5
+            },
+            "diagnosticReasons": [
+              "fragment-null-geometry",
+              "non-manifold-component",
+              "unverified-parity-operand",
+              "unverified-open-component"
+            ],
+            "diagnostics": [
+              {
+                "scope": "fragment",
+                "reason": "fragment-null-geometry",
+                "modelKey": "arch",
+                "fragId": 4600,
+                "completenessAffecting": false
+              },
+              {
+                "scope": "fragment",
+                "reason": "fragment-null-geometry",
+                "modelKey": "arch",
+                "fragId": 4601,
+                "completenessAffecting": false
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-open-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "non-manifold-component",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              },
+              {
+                "scope": "pair",
+                "reason": "unverified-parity-operand",
+                "modelKey": null,
+                "fragId": null,
+                "completenessAffecting": true
+              }
+            ]
+          }
+        ],
+        "isolateCalls": [
+          {
+            "dbIds": [
+              5750
+            ],
+            "modelKey": "struct"
+          },
+          {
+            "dbIds": [
+              5428
+            ],
+            "modelKey": "arch"
+          }
+        ],
+        "setAggregateIsolationCalls": [
+          [
+            {
+              "modelKey": "struct",
+              "dbIds": [
+                5750
+              ]
+            },
+            {
+              "modelKey": "arch",
+              "dbIds": [
+                5428
+              ]
+            }
+          ]
+        ],
+        "fitToViewCalls": [
+          {
+            "dbIds": [
+              5750
+            ],
+            "modelKey": "struct"
+          },
+          {
+            "dbIds": [
+              5428
+            ],
+            "modelKey": "arch"
+          }
+        ]
+      },
+      "markers": {
+        "activeMarkerCount": 1,
+        "positions": [
+          [
+            37.178614794646144,
+            22.097634131382524,
+            12.182735977187074
+          ]
+        ],
+        "radii": [
+          0.12803903216943172
+        ],
+        "uniformScale": true,
+        "hasScene": true,
+        "hasMeshFlags": [
+          true
+        ],
+        "overlaySceneMeshCount": 1
+      }
+    }
+  },
+  "softClash": {
+    "discoverySpike": {
+      "dbIdFormat": "svf",
+      "sourceDbIdsProbed": [
+        3965
+      ],
+      "clearanceSweep": [
+        0.01,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2
+      ],
+      "cappedIterations": {
+        "clearanceValues": 7,
+        "fallbackNeighbourDbIds": 4,
+        "fallbackClearancesPerNeighbour": 3
+      },
+      "callsActuallyIssued": 2,
+      "neighbourFallbackFired": false,
+      "nearMissFound": true,
+      "nearMissPairs": [
+        {
+          "targetModelKey": "struct",
+          "targetDbId": 3976,
+          "elementId": "682525",
+          "distance": 0.04166616338460325
+        },
+        {
+          "targetModelKey": "struct",
+          "targetDbId": 4135,
+          "elementId": "790734",
+          "distance": 0.04166616338460503
+        }
+      ],
+      "smallestReportedDistanceForSource": 0.04166616338460325,
+      "independentGlobalMinimumProven": false,
+      "fineBracket": {
+        "emptyAt": [
+          0.02,
+          0.03,
+          0.04,
+          0.0416
+        ],
+        "nonEmptyAt": [
+          0.042,
+          0.05
+        ]
+      }
+    },
+    "cases": {
+      "known-negative-no-false-positive": {
+        "clearance": 0.02,
+        "sourceDbId": 197,
+        "alertMessage": "No clashes found.",
+        "menuTitles": [
+          "Show properties",
+          "Isolate",
+          "Hide selected",
+          "Show all objects",
+          "Focus",
+          "Pivot",
+          "Clear selection",
+          "Find Clashes",
+          "Find Soft Clashes",
+          "Section"
+        ],
+        "spy": {
+          "findClashesCalls": [
+            {
+              "sourceModelKey": "struct",
+              "sourceDbIds": [
+                197
+              ],
+              "mode": "clearance",
+              "groupBy": "dbId",
+              "clearance": 0.02,
+              "targetScope": [
+                {
+                  "modelKey": "arch",
+                  "scope": "whole-model"
+                },
+                {
+                  "modelKey": "struct",
+                  "scope": "whole-model"
+                },
+                {
+                  "modelKey": "mech",
+                  "scope": "whole-model"
+                }
+              ],
+              "pairs": [],
+              "diagnosticsCount": 2,
+              "clearanceStatistics": {
+                "clearanceExpandedCandidatePairs": 0,
+                "clearanceExactAabbSurvivors": 0,
+                "clearanceOverlapPrechecksRun": 0,
+                "clearanceHardClashExclusions": 0,
+                "clearanceDistanceQueriesRun": 0,
+                "clearanceHits": 0,
+                "narrowPhasePairs": 0
+              },
+              "diagnosticReasons": [
+                "fragment-null-geometry"
+              ],
+              "diagnostics": [
+                {
+                  "scope": "fragment",
+                  "reason": "fragment-null-geometry",
+                  "modelKey": "arch",
+                  "fragId": 4600,
+                  "completenessAffecting": false
+                },
+                {
+                  "scope": "fragment",
+                  "reason": "fragment-null-geometry",
+                  "modelKey": "arch",
+                  "fragId": 4601,
+                  "completenessAffecting": false
+                }
+              ]
+            }
+          ],
+          "isolateCalls": [
+            {
+              "dbIds": [
+                5750
+              ],
+              "modelKey": "struct"
+            },
+            {
+              "dbIds": [
+                5428
+              ],
+              "modelKey": "arch"
+            }
+          ],
+          "setAggregateIsolationCalls": [
+            [
+              {
+                "modelKey": "struct",
+                "dbIds": [
+                  5750
+                ]
+              },
+              {
+                "modelKey": "arch",
+                "dbIds": [
+                  5428
+                ]
+              }
+            ]
+          ],
+          "fitToViewCalls": []
+        },
+        "visualization": {
+          "objectCount": 0,
+          "types": [],
+          "meshPositions": [],
+          "meshRadii": [],
+          "meshUniformScale": true,
+          "lineEndpoints": [],
+          "meshesShareGeometry": true,
+          "meshesShareMaterial": true,
+          "linesShareMaterial": true,
+          "lineGeometriesAreDistinct": true,
+          "softColor": null,
+          "softLineColor": null,
+          "softDepthTest": null,
+          "hasScene": false,
+          "hasMeshFlags": [],
+          "overlaySceneMeshCount": null,
+          "hardMarkerCount": 1,
+          "hardOverlaySceneMeshCount": 1,
+          "hardColor": 16738816,
+          "overlayScenesAreDistinct": false
+        }
+      },
+      "hard-clash-never-in-clearance-results": {
+        "clearance": 5,
+        "sourceDbId": 5750,
+        "alertMessage": "34 clashes found (15 in this model, 19 in other models) The result may be incomplete — 3 diagnostic(s): clearance-hard-clash-precheck-inconclusive.",
+        "pairCount": 34,
+        "targetKeys": [
+          "arch:5510",
+          "arch:5512",
+          "arch:5513",
+          "arch:5514",
+          "arch:5515",
+          "arch:5523",
+          "arch:5524",
+          "arch:5525",
+          "arch:5544",
+          "arch:5545",
+          "arch:5546",
+          "arch:5547",
+          "arch:5607",
+          "arch:5608",
+          "arch:5612",
+          "arch:5616",
+          "arch:5617",
+          "arch:5618",
+          "arch:5624",
+          "struct:192",
+          "struct:253",
+          "struct:5727",
+          "struct:5749",
+          "struct:6265",
+          "struct:6282",
+          "struct:6286",
+          "struct:6297",
+          "struct:6305",
+          "struct:6309",
+          "struct:6314",
+          "struct:6317",
+          "struct:6318",
+          "struct:6566",
+          "struct:90"
+        ],
+        "clearanceStatistics": {
+          "clearanceExpandedCandidatePairs": 47,
+          "clearanceExactAabbSurvivors": 45,
+          "clearanceOverlapPrechecksRun": 5,
+          "clearanceHardClashExclusions": 1,
+          "clearanceDistanceQueriesRun": 40,
+          "clearanceHits": 34,
+          "narrowPhasePairs": 45
+        },
+        "diagnosticReasons": [
+          "fragment-null-geometry",
+          "clearance-hard-clash-precheck-inconclusive"
+        ],
+        "distanceRange": [
+          0.041667178525372696,
+          4.817074281959788
+        ],
+        "roofPair": {
+          "distance": 0.7883000316222609,
+          "witnessSourcePoint": [
+            37.17708515763912,
+            22.271178305320706,
+            13.076426153145752
+          ],
+          "witnessTargetPoint": [
+            37.17708513917369,
+            22.287597079607945,
+            13.864555180467141
+          ]
+        },
+        "targetedExclusionProbe": {
+          "ok": true,
+          "pairCount": 0,
+          "targetKeys": [],
+          "clearanceExpandedCandidatePairs": 2,
+          "clearanceOverlapPrechecksRun": 2,
+          "clearanceHardClashExclusions": 1,
+          "clearanceDistanceQueriesRun": 0,
+          "clearanceHits": 0,
+          "diagnosticsCount": 0,
+          "diagnosticReasons": []
+        }
+      },
+      "discovered-near-miss-positive": {
+        "clearance": 0.05,
+        "clearanceWasOverridden": false,
+        "sourceDbId": 197,
+        "alertMessage": "2 clashes found (2 in this model, 0 in other models)",
+        "spy": {
+          "findClashesCalls": [
+            {
+              "sourceModelKey": "struct",
+              "sourceDbIds": [
+                197
+              ],
+              "mode": "clearance",
+              "groupBy": "dbId",
+              "clearance": 0.05,
+              "targetScope": [
+                {
+                  "modelKey": "arch",
+                  "scope": "whole-model"
+                },
+                {
+                  "modelKey": "struct",
+                  "scope": "whole-model"
+                },
+                {
+                  "modelKey": "mech",
+                  "scope": "whole-model"
+                }
+              ],
+              "pairs": [
+                {
+                  "sourceModelKey": "struct",
+                  "sourceDbId": 197,
+                  "targetModelKey": "struct",
+                  "targetDbId": 6618,
+                  "type": "clearance",
+                  "witnessKind": null,
+                  "witnessPoint": null,
+                  "witnessSourcePoint": [
+                    134.07031759619713,
+                    20.81414732336998,
+                    1.8781839570973395
+                  ],
+                  "witnessTargetPoint": [
+                    134.07031759477093,
+                    20.772480019632603,
+                    1.8781839570973395
+                  ],
+                  "distance": 0.04166730373737729,
+                  "clearance": 0.05
+                },
+                {
+                  "sourceModelKey": "struct",
+                  "sourceDbId": 197,
+                  "targetModelKey": "struct",
+                  "targetDbId": 6615,
+                  "type": "clearance",
+                  "witnessKind": null,
+                  "witnessPoint": null,
+                  "witnessSourcePoint": [
+                    134.57552590966225,
+                    20.81414732336998,
+                    6.961517210957809
+                  ],
+                  "witnessTargetPoint": [
+                    134.57552591108842,
+                    20.77248097330692,
+                    6.961517210957808
+                  ],
+                  "distance": 0.041666350063060874,
+                  "clearance": 0.05
+                }
+              ],
+              "diagnosticsCount": 2,
+              "clearanceStatistics": {
+                "clearanceExpandedCandidatePairs": 2,
+                "clearanceExactAabbSurvivors": 2,
+                "clearanceOverlapPrechecksRun": 0,
+                "clearanceHardClashExclusions": 0,
+                "clearanceDistanceQueriesRun": 2,
+                "clearanceHits": 2,
+                "narrowPhasePairs": 2
+              },
+              "diagnosticReasons": [
+                "fragment-null-geometry"
+              ],
+              "diagnostics": [
+                {
+                  "scope": "fragment",
+                  "reason": "fragment-null-geometry",
+                  "modelKey": "arch",
+                  "fragId": 4600,
+                  "completenessAffecting": false
+                },
+                {
+                  "scope": "fragment",
+                  "reason": "fragment-null-geometry",
+                  "modelKey": "arch",
+                  "fragId": 4601,
+                  "completenessAffecting": false
+                }
+              ]
+            }
+          ],
+          "isolateCalls": [
+            {
+              "dbIds": [
+                5750,
+                197,
+                6618,
+                6615
+              ],
+              "modelKey": "struct"
+            },
+            {
+              "dbIds": [
+                5428
+              ],
+              "modelKey": "arch"
+            }
+          ],
+          "setAggregateIsolationCalls": [
+            [
+              {
+                "modelKey": "struct",
+                "dbIds": [
+                  5750,
+                  197,
+                  6618,
+                  6615
+                ]
+              },
+              {
+                "modelKey": "arch",
+                "dbIds": [
+                  5428
+                ]
+              }
+            ]
+          ],
+          "fitToViewCalls": [
+            {
+              "dbIds": [
+                197,
+                6618,
+                6615
+              ],
+              "modelKey": "struct"
+            }
+          ]
+        },
+        "visualization": {
+          "objectCount": 6,
+          "types": [
+            "Mesh",
+            "Mesh",
+            "Line",
+            "Mesh",
+            "Mesh",
+            "Line"
+          ],
+          "meshPositions": [
+            [
+              134.07031759619713,
+              20.81414732336998,
+              1.8781839570973395
+            ],
+            [
+              134.07031759477093,
+              20.772480019632603,
+              1.8781839570973395
+            ],
+            [
+              134.57552590966225,
+              20.81414732336998,
+              6.961517210957809
+            ],
+            [
+              134.57552591108842,
+              20.77248097330692,
+              6.961517210957808
+            ]
+          ],
+          "meshRadii": [
+            0.05,
+            0.05,
+            0.05,
+            0.05
+          ],
+          "meshUniformScale": true,
+          "lineEndpoints": [
+            [
+              [
+                134.0703125,
+                20.81414794921875,
+                1.8781839609146118
+              ],
+              [
+                134.0703125,
+                20.772480010986328,
+                1.8781839609146118
+              ]
+            ],
+            [
+              [
+                134.57553100585938,
+                20.81414794921875,
+                6.961517333984375
+              ],
+              [
+                134.57553100585938,
+                20.77248191833496,
+                6.961517333984375
+              ]
+            ]
+          ],
+          "meshesShareGeometry": true,
+          "meshesShareMaterial": true,
+          "linesShareMaterial": true,
+          "lineGeometriesAreDistinct": true,
+          "softColor": 2854911,
+          "softLineColor": 2854911,
+          "softDepthTest": false,
+          "hasScene": true,
+          "hasMeshFlags": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ],
+          "overlaySceneMeshCount": 6,
+          "hardMarkerCount": 1,
+          "hardOverlaySceneMeshCount": 1,
+          "hardColor": 16738816,
+          "overlayScenesAreDistinct": true
+        },
+        "measuredDistances": {
+          "struct:6618": 0.04166730373737729,
+          "struct:6615": 0.041666350063060874
+        },
+        "nodeBoxGaps": [
+          {
+            "dbId": 6615,
+            "gapY": 0.041667938232421875,
+            "sourceBox": [
+              134.03125,
+              20.81414794921875,
+              0.211517333984375,
+              134.6145782470703,
+              21.39748191833496,
+              7.544853210449219
+            ],
+            "targetBox": [
+              134.03125,
+              11.064148902893066,
+              6.961517333984375,
+              134.6145782470703,
+              20.772480010986328,
+              7.544850826263428
+            ]
+          },
+          {
+            "dbId": 6618,
+            "gapY": 0.041667938232421875,
+            "sourceBox": [
+              134.03125,
+              20.81414794921875,
+              0.211517333984375,
+              134.6145782470703,
+              21.39748191833496,
+              7.544853210449219
+            ],
+            "targetBox": [
+              134.03125,
+              11.064148902893066,
+              1.8781839609146118,
+              134.6145782470703,
+              20.772480010986328,
+              2.461517333984375
+            ]
+          }
+        ],
+        "alignment": {
+          "deltaX": 3,
+          "alertMessage": "2 clashes found (2 in this model, 0 in other models)",
+          "witnessDeltas": {
+            "struct:6618": [
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                3,
+                0,
+                0
+              ]
+            ],
+            "struct:6615": [
+              [
+                3,
+                0,
+                0
+              ],
+              [
+                3,
+                0,
+                0
+              ]
+            ]
+          },
+          "visualization": {
+            "objectCount": 6,
+            "types": [
+              "Mesh",
+              "Mesh",
+              "Line",
+              "Mesh",
+              "Mesh",
+              "Line"
+            ],
+            "meshPositions": [
+              [
+                137.07031759619713,
+                20.81414732336998,
+                1.8781839570973395
+              ],
+              [
+                137.07031759477093,
+                20.772480019632603,
+                1.8781839570973395
+              ],
+              [
+                137.57552590966225,
+                20.81414732336998,
+                6.961517210957809
+              ],
+              [
+                137.57552591108842,
+                20.77248097330692,
+                6.961517210957808
+              ]
+            ],
+            "meshRadii": [
+              0.05,
+              0.05,
+              0.05,
+              0.05
+            ],
+            "meshUniformScale": true,
+            "lineEndpoints": [
+              [
+                [
+                  137.0703125,
+                  20.81414794921875,
+                  1.8781839609146118
+                ],
+                [
+                  137.0703125,
+                  20.772480010986328,
+                  1.8781839609146118
+                ]
+              ],
+              [
+                [
+                  137.57553100585938,
+                  20.81414794921875,
+                  6.961517333984375
+                ],
+                [
+                  137.57553100585938,
+                  20.77248191833496,
+                  6.961517333984375
+                ]
+              ]
+            ],
+            "meshesShareGeometry": true,
+            "meshesShareMaterial": true,
+            "linesShareMaterial": true,
+            "lineGeometriesAreDistinct": true,
+            "softColor": 2854911,
+            "softLineColor": 2854911,
+            "softDepthTest": false,
+            "hasScene": true,
+            "hasMeshFlags": [
+              true,
+              true,
+              true,
+              true,
+              true,
+              true
+            ],
+            "overlaySceneMeshCount": 6,
+            "hardMarkerCount": 1,
+            "hardOverlaySceneMeshCount": 1,
+            "hardColor": 16738816,
+            "overlayScenesAreDistinct": true
+          },
+          "distanceDeltasVsOriginal": {
+            "struct:6618": 0,
+            "struct:6615": 0
+          }
+        },
+        "restored": {
+          "alertMessage": "2 clashes found (2 in this model, 0 in other models)",
+          "visualization": {
+            "objectCount": 6,
+            "types": [
+              "Mesh",
+              "Mesh",
+              "Line",
+              "Mesh",
+              "Mesh",
+              "Line"
+            ],
+            "meshPositions": [
+              [
+                134.07031759619713,
+                20.81414732336998,
+                1.8781839570973395
+              ],
+              [
+                134.07031759477093,
+                20.772480019632603,
+                1.8781839570973395
+              ],
+              [
+                134.57552590966225,
+                20.81414732336998,
+                6.961517210957809
+              ],
+              [
+                134.57552591108842,
+                20.77248097330692,
+                6.961517210957808
+              ]
+            ],
+            "meshRadii": [
+              0.05,
+              0.05,
+              0.05,
+              0.05
+            ],
+            "meshUniformScale": true,
+            "lineEndpoints": [
+              [
+                [
+                  134.0703125,
+                  20.81414794921875,
+                  1.8781839609146118
+                ],
+                [
+                  134.0703125,
+                  20.772480010986328,
+                  1.8781839609146118
+                ]
+              ],
+              [
+                [
+                  134.57553100585938,
+                  20.81414794921875,
+                  6.961517333984375
+                ],
+                [
+                  134.57553100585938,
+                  20.77248191833496,
+                  6.961517333984375
+                ]
+              ]
+            ],
+            "meshesShareGeometry": true,
+            "meshesShareMaterial": true,
+            "linesShareMaterial": true,
+            "lineGeometriesAreDistinct": true,
+            "softColor": 2854911,
+            "softLineColor": 2854911,
+            "softDepthTest": false,
+            "hasScene": true,
+            "hasMeshFlags": [
+              true,
+              true,
+              true,
+              true,
+              true,
+              true
+            ],
+            "overlaySceneMeshCount": 6,
+            "hardMarkerCount": 1,
+            "hardOverlaySceneMeshCount": 1,
+            "hardColor": 16738816,
+            "overlayScenesAreDistinct": true
+          },
+          "distanceDeltasVsOriginal": {
+            "struct:6618": 0,
+            "struct:6615": 0
+          }
+        }
+      }
+    }
+  },
+  "informationalDiagnostics": {
+    "soft:known-negative": [
+      {
+        "scope": "fragment",
+        "reason": "fragment-null-geometry",
+        "modelKey": "arch",
+        "fragId": 4600,
+        "completenessAffecting": false
+      },
+      {
+        "scope": "fragment",
+        "reason": "fragment-null-geometry",
+        "modelKey": "arch",
+        "fragId": 4601,
+        "completenessAffecting": false
+      }
+    ],
+    "soft:hard-clash-exclusion": [
+      {
+        "scope": "fragment",
+        "reason": "fragment-null-geometry",
+        "modelKey": "arch",
+        "fragId": 4600,
+        "completenessAffecting": false
+      },
+      {
+        "scope": "fragment",
+        "reason": "fragment-null-geometry",
+        "modelKey": "arch",
+        "fragId": 4601,
+        "completenessAffecting": false
+      }
+    ]
+  },
+  "unload": {
+    "unloadState": {
+      "modelCount": 2,
+      "isolatedModelsSize": 0,
+      "isolatedStruct": [],
+      "isolatedMech": []
+    },
+    "markers": {
+      "activeMarkerCount": 0,
+      "positions": [],
+      "radii": [],
+      "uniformScale": true,
+      "hasScene": true,
+      "hasMeshFlags": [],
+      "overlaySceneMeshCount": 0
+    },
+    "softClash": {
+      "objectCount": 0,
+      "types": [],
+      "meshPositions": [],
+      "meshRadii": [],
+      "meshUniformScale": true,
+      "lineEndpoints": [],
+      "meshesShareGeometry": true,
+      "meshesShareMaterial": true,
+      "linesShareMaterial": true,
+      "lineGeometriesAreDistinct": true,
+      "softColor": 2854911,
+      "softLineColor": 2854911,
+      "softDepthTest": false,
+      "hasScene": true,
+      "hasMeshFlags": [],
+      "overlaySceneMeshCount": 0,
+      "hardMarkerCount": 0,
+      "hardOverlaySceneMeshCount": 0,
+      "hardColor": 16738816,
+      "overlayScenesAreDistinct": true
+    }
+  }
+}

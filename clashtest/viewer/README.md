@@ -46,6 +46,7 @@ Not evidenced (OQ-4 §7); per-case behavior below. The planned T3 script (Task 1
 | 2D sheets | Untested; same as above. |
 | Non-Revit content | Untested; same as above. |
 | Not-loaded (N), owner-unresolvable (U) or out-of-range tree-reachable fragments | Whole-model planning fails for the run (D-V6, below). |
+| Null-geometry not-loaded fragments (OTG/SVF2, geometry id 0) | Population class `N` with a transient `nullGeometry` flag (below). Unreachable: informational, not counted as unattributable. Tree-reachable: still fails planning under D-V6 (live: Audubon Architecture under SVF2, fragments 4600/4601). |
 | Unreachable or mixed-owner content | Owner mismatch and unreachable fragments are reported through the port (offline-tested); a fragment reachable under two roots fails planning. Not evidenced live. |
 | PairId role-symmetry half of AC-15 (g) | Not evidenced; the adapter enables no such claim. |
 | Tree-unavailable failure path, live | Offline-tested only; maps to `ObjectTreeUnavailableError`. |
@@ -62,6 +63,21 @@ design. There is no partial-planning carrier: no partial roots, no population, n
 `{dbIds}` scopes keep their declared boundary (no independent population witness, same as the library's
 `extractFragments`) and are not subject to D-V6; a value an explicit walk cannot digest still fails closed through
 the digest producers.
+
+## Null-geometry not-loaded fragments (owner-authorized, 2026-10-07)
+
+`populationScan` applies the collision library's own discriminator
+(`docs/superpowers/specs/m2-extractAllFragments-viewer-evidence.md`, "OTG / SVF2"): a fragment with
+`fragList.isNotLoaded(fragId)` **and** `fragList.getGeometryId(fragId) === 0` is one the Viewer
+deliberately never loads because it has no geometry. Its record stays class `N` (the population and
+scope digests are byte-identical to before; `scopeDigest.js` encodes an `N` record as `[fragId, 'N']`
+only) and carries `nullGeometry: true`. During whole-model reconciliation an **unreachable** such
+fragment is informational: it is counted in neither `unreachable.unattributable.notLoaded` nor
+`ownerUnresolvable`, so on its own it adds no `unreachablePopulation` row. A **tree-reachable** one is
+still rejected by D-V6 (unchanged; relaxing it is a separate owner decision). The library reports the
+fragment as the informational `fragment-null-geometry` diagnostic, which is not completeness-affecting
+(`clashtest/execution/diagnostics.js`, design spec erratum A18); its presence in a Result Set is
+best-effort telemetry, not a ledger guarantee.
 
 ## Bounded planning (D-V9, owner-approved)
 

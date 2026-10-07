@@ -1,10 +1,10 @@
 // wwwroot/clashPanelDemo.js
 //
 // ?clashPanelDemo=1 helper: loads the two evidenced SVF2 Audubon fixtures (Structure, then Mechanical as a
-// federated additional model) and tells the Clash Panel catalog their friendly names. Deliberately never
+// federated additional model). Model names come from Viewer metadata via the host catalog; none are declared here. Deliberately never
 // touches the location hash (the hash identifies the PRIMARY model for share/reload; see main.js).
-import { declareModelDisplayName } from './extensions/clashPanelNames.js';
 
+// `name` is a log/comment label only; it is never used for UI naming.
 // URNs copied by value from test/acceptance/clashpanel-viewerbridge.acceptance.mjs (MODEL_B / MODEL_A).
 export const DEMO_MODELS = Object.freeze([
   Object.freeze({ name: 'Structure', urn: 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0' }),
@@ -43,13 +43,12 @@ export function waitForModelReady(viewer, model, { geometryLoadedEvent = 'geomet
 
 /**
  * Loads DEMO_MODELS sequentially: the first with keepCurrentModels:false, every later one with true (federated).
- * Each is awaited including its object tree. Friendly names are declared before loading.
+ * Each is awaited including its object tree.
  */
-export async function loadDemoModels(viewer, { loadModel, models = DEMO_MODELS, declareName = declareModelDisplayName, wait = waitForModelReady } = {}) {
+export async function loadDemoModels(viewer, { loadModel, models = DEMO_MODELS, wait = waitForModelReady } = {}) {
   const loaded = [];
   for (let i = 0; i < models.length; i++) {
     const { name, urn } = models[i];
-    declareName(urn, name);
     const model = await loadModel(viewer, urn, { keepCurrentModels: i > 0 });
     await wait(viewer, model);
     loaded.push({ name, urn, model });

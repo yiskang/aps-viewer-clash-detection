@@ -61,7 +61,9 @@ import { fileURLToPath } from 'node:url';
 const PORT = process.env.PORT || 8080;
 const BASE_URL = `http://localhost:${PORT}`;
 const URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL3JhY2Jhc2ljc2FtcGxlcHJvamVjdC5ydnQ';
-const EXPECTED_ROOM_DBID = 3885;          // Master Bath 207 [857194]
+// Resolved at runtime from this exact instance-tree display name (stable Revit ElementId 857194);
+// the dbId differs between SVF (3885) and SVF2 (521) and is never hardcoded.
+const EXPECTED_ROOM_NAME = 'Master Bath 207 [857194]';
 const EXPECTED_VERTS_INSIDE = 907;
 const EXPECTED_VERTS_TOTAL = 1003;
 const OTHER_ROOM_COUNT = 13;
@@ -179,19 +181,30 @@ async function main() {
   // FINDINGS.md's known target). This still resolves the dbId via viewer.search() like a real user's
   // selection would, and still never hardcodes 2530 itself as an input anywhere in this script --
   // consistent with this test's own "protected invariant" against hardcoding the dbId directly.
-  const bathtubDbIds = await page.evaluate(() => new Promise((resolve, reject) => {
-    // Viewer3D.search (confirmed in node_modules/@types/forge-viewer/index.d.ts) -- distinct from
-    // Model.search used for room resolution below (which needs the searchHidden option Viewer3D's
-    // own search does not expose).
-    window.viewer.search(
-      'Bathtub-TOTO-Nexus-FBF794S [420270]',
-      resolve,
-      reject,
-      ['name'],
-    );
-  }));
-  check('bathtub name search (full bracketed display name) returns exactly one dbId', bathtubDbIds.length, 1);
+  //
+  // SVF2 UPDATE (owner-authorized, 2026-10-07): the default env is now SVF2, under which dbIds are
+  // renumbered vs legacy SVF (bathtub SVF 2530 -> SVF2 4965; Master Bath 207 SVF 3885 -> SVF2 521),
+  // and Viewer3D.search(..., ['name']) no longer matches the bracketed "[ElementId]" suffix (it
+  // returns [] for the full display name under SVF2, verified live) even though the instance tree's
+  // own node name -- the string the model browser shows the user -- is still exactly
+  // "Bathtub-TOTO-Nexus-FBF794S [420270]". Both fixtures are therefore resolved by an EXACT match on
+  // that full bracketed instance-tree display name (stable Revit ElementId identity), on whatever
+  // format the page loaded -- no SVF or SVF2 dbId is hardcoded anywhere in this script.
+  const resolveByExactNodeName = (name) => page.evaluate((target) => {
+    const tree = window.viewer.model.getInstanceTree();
+    const matches = [];
+    tree.enumNodeChildren(tree.getRootId(), (dbId) => {
+      if (tree.getNodeName(dbId) === target) matches.push(dbId);
+    }, true);
+    return matches;
+  }, name);
+  const bathtubDbIds = await resolveByExactNodeName('Bathtub-TOTO-Nexus-FBF794S [420270]');
+  check('bathtub name lookup (full bracketed display name) resolves exactly one dbId', bathtubDbIds.length, 1);
   const bathtubDbId = bathtubDbIds[0];
+  const expectedRoomDbIds = await resolveByExactNodeName(EXPECTED_ROOM_NAME);
+  check(`expected room name lookup (${EXPECTED_ROOM_NAME}) resolves exactly one dbId`, expectedRoomDbIds.length, 1);
+  const EXPECTED_ROOM_DBID = expectedRoomDbIds[0];
+  results.resolvedFixtures = { bathtubDbId, expectedRoomDbId: EXPECTED_ROOM_DBID };
 
   await page.evaluate((dbId) => window.viewer.select([dbId]), bathtubDbId);
   // Fit the camera to the selection and let it settle before computing a screen position -- an

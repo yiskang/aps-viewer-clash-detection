@@ -10,11 +10,19 @@ import {
   isCompletenessAffecting, KNOWN_DIAGNOSTIC_REASONS, NON_COMPLETENESS_AFFECTING_REASONS,
 } from '../../../clashtest/execution/diagnostics.js';
 
-test('exactly one known reason is non-completeness-affecting', () => {
-  assert.deepEqual([...NON_COMPLETENESS_AFFECTING_REASONS], ['witness-unavailable']);
+test('exactly two known reasons are non-completeness-affecting (informational)', () => {
+  const informational = ['witness-unavailable', 'fragment-null-geometry'];
+  assert.deepEqual([...NON_COMPLETENESS_AFFECTING_REASONS], informational);
   for (const reason of KNOWN_DIAGNOSTIC_REASONS) {
-    assert.equal(isCompletenessAffecting(reason), reason !== 'witness-unavailable', reason);
+    assert.equal(isCompletenessAffecting(reason), !informational.includes(reason), reason);
   }
+});
+
+test('fragment-null-geometry is informational; the ordinary fragment-not-loaded still counts', () => {
+  assert.ok(KNOWN_DIAGNOSTIC_REASONS.has('fragment-null-geometry'));
+  assert.equal(isCompletenessAffecting('fragment-null-geometry'), false);
+  assert.equal(isCompletenessAffecting('fragment-not-loaded'), true);
+  assert.equal(isCompletenessAffecting('fragment-owner-unresolvable'), true);
 });
 
 test('all four clearance reasons count (the M2.1 carve-out does not transfer)', () => {

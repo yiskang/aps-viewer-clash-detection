@@ -13,7 +13,7 @@ initViewer(document.getElementById('preview')).then(viewer => {
     window.viewer = viewer;
     setupUrnInput(viewer, { skipInitialHashLoad: viewerOptions.demo });
     if (viewerOptions.demo) {
-        // ?clashPanelDemo=1: Structure then Mechanical as federated models. Never writes the location hash.
+        // ?clashPanelDemo=1 (loader only; the panel is on by default): Structure then Mechanical as federated models. Never writes the location hash.
         loadDemoModels(viewer, { loadModel }).catch(err => {
             console.error('Clash Panel demo: could not load the demo models', err);
             alert('Could not load the Clash Panel demo models. See the console for more details.');

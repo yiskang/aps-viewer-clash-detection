@@ -149,8 +149,9 @@ export function renderSetup(root, setup, dispatch, doc) {
           props: { checked: setup.selfClash },
           on: { change: (e) => dispatch({ type: INTENT.SETUP_SELF_CLASH, value: e.target.checked }) },
         }),
-        el(doc, 'span', { text: 'Self-clash (Set A against itself)' }),
+        el(doc, 'span', { text: 'Compare Set A against itself (Set B = Set A)' }),
       ]),
+      setup.overlapText ? el(doc, 'p', { class: 'clash-setup-overlap', attrs: { 'data-key': 'setup-overlap' }, text: setup.overlapText }) : null,
       validationBlock(doc, setup.validation, setup),
       setup.setupChangedSinceRun ? el(doc, 'p', { class: 'clash-setup-changed', text: 'The setup has changed since the last run.' }) : null,
     ]));

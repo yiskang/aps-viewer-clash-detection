@@ -253,7 +253,7 @@ test('F8: `forEach` does not leak the underlying Set (the ONE predicate stays fi
   );
   assert.equal(isCompletenessAffecting('inconclusive-crossing'), true, 'the predicate must be unchanged');
   assert.equal(NON_COMPLETENESS_AFFECTING_REASONS.has('witness-unavailable'), true, 'and still usable');
-  assert.deepEqual([...NON_COMPLETENESS_AFFECTING_REASONS], ['witness-unavailable'], 'iteration still works');
+  assert.deepEqual([...NON_COMPLETENESS_AFFECTING_REASONS], ['witness-unavailable', 'fragment-null-geometry'], 'iteration still works');
 });
 
 // ---- F9: canonical pair order does not alias a legal '\uffff' modelKey ---------------------------

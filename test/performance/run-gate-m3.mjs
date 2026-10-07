@@ -15,6 +15,22 @@
 //
 // Run: node test/performance/run-gate-m3.mjs   (npm run test:performance:gate:m3)
 //
+// --- SVF2 non-uniform fragment clearance extension (design 2026-10-07 §8 T7) -----------------------
+//
+// docs/superpowers/specs/2026-10-07-svf2-nonuniform-fragment-clearance-design.md. The protocol below
+// now runs once per format -- the app default SVF2 (OTG) and forced legacy SVF (a page.route override
+// of /viewerOptions.js flipping `svf2: true` to `false`, test-side only; the shipped default is not
+// touched) -- each in its own browser, writing its own `m3-gate-<format>-<ts>.json`. Each run also
+// records the clearance-private derived-geometry cache of every measured world (resolution/key
+// accounting via a wrapper around `_clearanceDerivedCache.get`, plus
+// `getEpochClearanceDerivedGeometryDiagnostics` and the canonical `getEpochGeometryDiagnostics` byte
+// sums). With both formats measured, `m3-gate-svf2-criteria-<ts>.json` records the four pass/fail
+// criteria: (a) builds <= distinct (geometryIndex, S) keys touched and builds + hits + sharedWaits ==
+// derived resolutions; (b) peak retained derived bytes <= the same scene's SVF canonical retained
+// bytes x 1.25; (c) SVF2 Soft wall time <= 2 x the same queries on legacy SVF (provisional); (d) the
+// legacy-SVF run stays inside this gate's existing thresholds (MEASURED + criterion-6 GO). Select
+// formats with M3_GATE_FORMATS=svf2,svf (default both); criteria need both.
+//
 // --- What this script reports, and what it deliberately does NOT do --------------------------------
 //
 // This script REPORTS; it does not gate CI on the result, and it does not retune any shipped
@@ -66,7 +82,11 @@
 const ARCH_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0';
 const STRUCTURE_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0';
 const MECHANICAL_URN = 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA';
-const SOURCE_DB_ID = 3076;  // Structure model (index 1) -- see header comment.
+// Legacy-SVF dbId of the source -- see header comment. dbIds are NOT stable across formats (SVF2
+// renumbers), so each format pass resolves the live dbId from the Revit ElementId below (design
+// 2026-10-07 §8 T7) and reassigns SOURCE_DB_ID before using it.
+let SOURCE_DB_ID = 3076;  // Structure model (index 1), "Floor [401326]" under legacy SVF.
+const SOURCE_ELEMENT_ID = '401326';
 const CLEARANCE = 0.05;     // DEFAULT_CLEARANCE (ClashFinderExtension.js:60), model units.
 
 import { chromium } from 'playwright';
@@ -175,7 +195,59 @@ function clearanceSpanMs(run) {
   return run.spans.filter((s) => s.label === CLEARANCE_SPAN_LABEL).map((s) => s.ms);
 }
 
-async function main() {
+// Design 2026-10-07 §8 T7: page-side instrumentation of a world's derived-geometry cache. Counts
+// every derived resolution (one per `get`) and the distinct (geometryIndex, S) keys touched; a world
+// with no derived cache (legacy builds) records nothing.
+function installDerivedInstrumentation(page, worldHandle) {
+  return page.evaluate(({ worldHandle }) => {
+    const world = window[worldHandle];
+    const cache = world && world._clearanceDerivedCache;
+    const record = { resolutions: 0, keys: new Set(), peakRetainedBytes: 0 };
+    window.__derivedInstrumentation = window.__derivedInstrumentation ?? {};
+    window.__derivedInstrumentation[worldHandle] = record;
+    if (!cache) return { instrumented: false };
+    const realGet = cache.get.bind(cache);
+    cache.get = (args) => {
+      record.resolutions++;
+      record.keys.add(`${args.loadEpoch}|${args.geometryIndex}|${args.scale.join(',')}`);
+      return realGet(args);
+    };
+    return { instrumented: true };
+  }, { worldHandle });
+}
+
+function sampleDerivedState(page, worldHandle, epochs) {
+  return page.evaluate(({ worldHandle, epochs }) => {
+    const world = window[worldHandle];
+    const record = window.__derivedInstrumentation?.[worldHandle];
+    const perEpoch = {};
+    let derivedRetainedBytes = 0;
+    let canonicalRetainedBytes = 0;
+    const totals = { builds: 0, hits: 0, sharedWaits: 0, evictions: 0, readyEntries: 0, unsupportedEntries: 0, buildingEntries: 0 };
+    for (const [name, epoch] of Object.entries(epochs)) {
+      const derived = typeof world.getEpochClearanceDerivedGeometryDiagnostics === 'function'
+        ? world.getEpochClearanceDerivedGeometryDiagnostics(epoch) : null;
+      const canonical = world.getEpochGeometryDiagnostics(epoch);
+      const canonicalBytes = canonical.reduce((sum, e) => sum + (e.weldedPositionBytes ?? 0) + (e.weldedIndexBytes ?? 0)
+        + (e.bvhRootBytes ?? 0) + (e.bvhIndirectBytes ?? 0), 0);
+      canonicalRetainedBytes += canonicalBytes;
+      if (derived) {
+        derivedRetainedBytes += derived.retainedPositionBytes + derived.retainedIndexBytes + derived.retainedBvhBytes;
+        for (const k of Object.keys(totals)) totals[k] += derived[k];
+      }
+      perEpoch[name] = { epoch, derived, canonicalEntries: canonical.length, canonicalRetainedBytes: canonicalBytes };
+    }
+    if (record) record.peakRetainedBytes = Math.max(record.peakRetainedBytes, derivedRetainedBytes);
+    return {
+      perEpoch, totals, derivedRetainedBytes, canonicalRetainedBytes,
+      resolutions: record ? record.resolutions : null,
+      distinctKeysTouched: record ? record.keys.size : null,
+      peakDerivedRetainedBytes: record ? record.peakRetainedBytes : null,
+    };
+  }, { worldHandle, epochs });
+}
+
+async function runProtocol(format) {
   await mkdir(RESULTS_DIR, { recursive: true });
   const browser = await chromium.launch({
     // Same forced launch args this repo's own sandbox needs -- see run-gate.mjs's header comment.
@@ -184,6 +256,15 @@ async function main() {
   });
   const browserVersion = await browser.version();
   const page = await browser.newPage();
+  if (format === 'svf') {
+    // Test-side forced legacy SVF (design 2026-10-07 §8 T7): the shipped default stays SVF2.
+    await page.route('**/viewerOptions.js', async (route) => {
+      const response = await route.fetch();
+      const body = (await response.text()).replace('return { svf2: true,', 'return { svf2: false,');
+      if (!body.includes('return { svf2: false,')) throw new Error('forced-legacy route override did not apply -- viewerOptions.js shape changed');
+      await route.fulfill({ response, body });
+    });
+  }
   const consoleWarnings = [];
   page.on('console', (msg) => {
     if (/error|warn/i.test(msg.text())) consoleWarnings.push(msg.text().slice(0, 300));
@@ -212,6 +293,27 @@ async function main() {
     await page.waitForFunction(() => window.viewer.getAllModels().every((m) => m.getData() && m.getData().instanceTree), null, { timeout: 180_000 });
 
     await page.addScriptTag({ path: 'test/performance/browser-probes.mjs' });
+
+    // Design 2026-10-07 §8 T7: confirm the loaded format is the one this pass is meant to measure.
+    const loadedFormats = await page.evaluate(() => window.viewer.getAllModels().map((m) => (m.isOTG && m.isOTG() ? 'svf2' : 'svf')));
+    console.log(`\n=== Format pass: ${format} (loaded: ${loadedFormats.join(', ')}) ===`);
+    if (!loadedFormats.every((f) => f === format)) {
+      throw new Error(`Format pass '${format}' loaded ${JSON.stringify(loadedFormats)} -- refusing to report mislabeled measurements`);
+    }
+
+    // Design 2026-10-07 §8 T7: resolve the source dbId for THIS format from its Revit ElementId.
+    SOURCE_DB_ID = await page.evaluate(({ elementId }) => {
+      const it = window.viewer.getAllModels()[1].getInstanceTree();
+      let found = null;
+      const walk = (id) => {
+        const name = it.getNodeName(id);
+        if (found === null && typeof name === 'string' && name.endsWith(`[${elementId}]`)) found = id;
+        it.enumNodeChildren(id, walk);
+      };
+      walk(it.getRootId());
+      return found;
+    }, { elementId: SOURCE_ELEMENT_ID });
+    console.log(`\n=== Source "[${SOURCE_ELEMENT_ID}]" resolves to Structure dbId ${SOURCE_DB_ID} under ${format} ===`);
 
     // ---- Step 2: independently re-confirm the fixture identity against THIS live run ----
     const identity = await page.evaluate(({ sourceDbId }) => {
@@ -369,15 +471,18 @@ async function main() {
       return { epochArch: leaseArch.epoch, epochStructure: leaseStructure.epoch, epochMechanical: leaseMechanical.epoch };
     });
     console.log('\n=== TLAS world leases ===\n', JSON.stringify(tlasLeases, null, 2));
+    await installDerivedInstrumentation(page, '__tlasWorld');
 
     console.log('\n=== Clearance TLAS cold (no TLAS/BLAS cached in THIS world; V8/JIT pre-warmed by Step 3) ===');
     const tlasCold = await runClearanceQuery('__tlasWorld', 'tlas-cold', 'tlas');
     const tlasColdSpanSummary = summarizeSpans(tlasCold.spans);
+    const derivedTlasAfterCold = await sampleDerivedState(page, '__tlasWorld', tlasLeases);
     console.log(JSON.stringify({ wallMs: tlasCold.wallMs, error: tlasCold.error, pairCount: tlasCold.pairCount, clearanceSpanCount: clearanceSpanMs(tlasCold).length, statistics: tlasCold.statistics && { ...tlasCold.statistics, diagnostics: summarizeDiagnostics(tlasCold.statistics.diagnostics) } }, null, 2));
 
     console.log('\n=== Clearance TLAS warm (TLAS+BLAS already built, immediately after) ===');
     const tlasWarm = await runClearanceQuery('__tlasWorld', 'tlas-warm', 'tlas');
     const tlasWarmSpanSummary = summarizeSpans(tlasWarm.spans);
+    const derivedTlasAfterWarm = await sampleDerivedState(page, '__tlasWorld', tlasLeases);
     console.log(JSON.stringify({ wallMs: tlasWarm.wallMs, error: tlasWarm.error, pairCount: tlasWarm.pairCount, clearanceSpanCount: clearanceSpanMs(tlasWarm).length, statistics: tlasWarm.statistics && { ...tlasWarm.statistics, diagnostics: summarizeDiagnostics(tlasWarm.statistics.diagnostics) } }, null, 2));
 
     // codex-review finding #4 (resource hygiene): dispose the TLAS world and drop its handle BEFORE
@@ -402,15 +507,18 @@ async function main() {
       return { epochArch: leaseArch.epoch, epochStructure: leaseStructure.epoch, epochMechanical: leaseMechanical.epoch };
     });
     console.log('\n=== Linear world leases ===\n', JSON.stringify(linearLeases, null, 2));
+    await installDerivedInstrumentation(page, '__linearWorld');
 
     console.log('\n=== Clearance linear cold (fresh world, no BLAS cached) ===');
     const linearCold = await runClearanceQuery('__linearWorld', 'linear-cold', 'linear');
     const linearColdSpanSummary = summarizeSpans(linearCold.spans);
+    const derivedLinearAfterCold = await sampleDerivedState(page, '__linearWorld', linearLeases);
     console.log(JSON.stringify({ wallMs: linearCold.wallMs, error: linearCold.error, pairCount: linearCold.pairCount, clearanceSpanCount: clearanceSpanMs(linearCold).length, statistics: linearCold.statistics && { ...linearCold.statistics, diagnostics: summarizeDiagnostics(linearCold.statistics.diagnostics) } }, null, 2));
 
     console.log('\n=== Clearance linear warm (same world, BLAS cached, immediately after) ===');
     const linearWarm = await runClearanceQuery('__linearWorld', 'linear-warm', 'linear');
     const linearWarmSpanSummary = summarizeSpans(linearWarm.spans);
+    const derivedLinearAfterWarm = await sampleDerivedState(page, '__linearWorld', linearLeases);
     console.log(JSON.stringify({ wallMs: linearWarm.wallMs, error: linearWarm.error, pairCount: linearWarm.pairCount, clearanceSpanCount: clearanceSpanMs(linearWarm).length, statistics: linearWarm.statistics && { ...linearWarm.statistics, diagnostics: summarizeDiagnostics(linearWarm.statistics.diagnostics) } }, null, 2));
 
     // ---- Validation: a run that ERRORED must never be silently folded into a 'MEASURED'
@@ -762,6 +870,7 @@ async function main() {
       // follow-up (a thrown query vs. a genuine result/statistics divergence). Neither ever reads
       // 'MEASURED'.
       disposition: anyErrors ? 'FAILED' : anyValidationFailures ? 'FAILED_VALIDATION' : 'MEASURED',
+      format,
       erroredRuns: anyErrors ? erroredRuns : undefined,
       validationFailures: anyValidationFailures ? validationFailures : undefined,
       environment: {
@@ -874,9 +983,15 @@ async function main() {
       narrowPhaseBudgetHeadroom,
       constants: { frameBudgetMs, maxClearanceNarrowPhasePairs, maxTlasCandidatePairs, maxCollisionInstancesPerEpoch },
       gateAnswer,
+      // Design 2026-10-07 §8 T7: the clearance-private derived-geometry cache of each measured world,
+      // sampled after every measured run (cumulative counters; peak = max retained over the samples).
+      derivedGeometry: {
+        tlasWorld: { afterCold: derivedTlasAfterCold, afterWarm: derivedTlasAfterWarm },
+        linearWorld: { afterCold: derivedLinearAfterCold, afterWarm: derivedLinearAfterWarm },
+      },
     };
 
-    await writeFile(`${RESULTS_DIR}/m3-gate-${Date.now()}.json`, JSON.stringify(report, null, 2));
+    await writeFile(`${RESULTS_DIR}/m3-gate-${format}-${Date.now()}.json`, JSON.stringify(report, null, 2));
     console.log('\n=== Full M3 gate report (summarized spans/diagnostics) ===\n', JSON.stringify(report, null, 2));
     console.log(`\n=== Criterion 6 disposition: ${disposition.verdict} ===`);
 
@@ -890,8 +1005,75 @@ async function main() {
     if (anyErrors || anyValidationFailures) {
       process.exitCode = 1;
     }
+    return report;
   } finally {
     await browser.close();
+  }
+}
+
+// Design 2026-10-07 §8 T7: the four SVF2 pass/fail criteria, computed from one SVF2 and one legacy-SVF
+// protocol report of the same scene and queries.
+function computeSvf2Criteria(svf2, svf) {
+  const runNames = ['tlasCold', 'tlasWarm', 'linearCold', 'linearWarm'];
+  const worlds = { tlasWorld: svf2.derivedGeometry.tlasWorld.afterWarm, linearWorld: svf2.derivedGeometry.linearWorld.afterWarm };
+  const accounting = {};
+  let aPass = true;
+  for (const [name, sample] of Object.entries(worlds)) {
+    const { builds, hits, sharedWaits } = sample.totals;
+    const buildsWithinKeys = builds <= sample.distinctKeysTouched;
+    const identityHolds = builds + hits + sharedWaits === sample.resolutions;
+    const exercised = sample.resolutions > 0;
+    accounting[name] = { builds, hits, sharedWaits, resolutions: sample.resolutions, distinctKeysTouched: sample.distinctKeysTouched, buildsWithinKeys, identityHolds, exercised };
+    aPass = aPass && buildsWithinKeys && identityHolds && exercised;
+  }
+  const peakDerived = Math.max(
+    svf2.derivedGeometry.tlasWorld.afterWarm.peakDerivedRetainedBytes ?? 0,
+    svf2.derivedGeometry.linearWorld.afterWarm.peakDerivedRetainedBytes ?? 0,
+  );
+  const svfCanonical = Math.max(
+    svf.derivedGeometry.tlasWorld.afterWarm.canonicalRetainedBytes,
+    svf.derivedGeometry.linearWorld.afterWarm.canonicalRetainedBytes,
+  );
+  const bLimit = svfCanonical * 1.25;
+  const wallRatios = {};
+  let cPass = true;
+  for (const run of runNames) {
+    const r = ratio(svf2[run].wallMs, svf[run].wallMs);
+    wallRatios[run] = { svf2WallMs: svf2[run].wallMs, svfWallMs: svf[run].wallMs, ratio: r };
+    cPass = cPass && r !== null && r <= 2;
+  }
+  const dPass = svf.disposition === 'MEASURED' && typeof svf.singleCallSpanDisposition?.verdict === 'string'
+    && svf.singleCallSpanDisposition.verdict.startsWith('GO');
+  const criteria = {
+    a_derivedBuildAccounting: { pass: aPass, perWorld: accounting },
+    b_peakDerivedBytesVsSvfCanonical: { pass: peakDerived <= bLimit, peakDerivedRetainedBytes: peakDerived, svfCanonicalRetainedBytes: svfCanonical, limitBytes: bLimit, ratio: ratio(peakDerived, svfCanonical) },
+    c_svf2WallTimeVsSvf: { pass: cPass, limitRatio: 2, provisional: true, perRun: wallRatios },
+    d_legacySvfWithinExistingThresholds: { pass: dPass, svfDisposition: svf.disposition, svfCriterion6Verdict: svf.singleCallSpanDisposition?.verdict, svfWorstSpanMs: svf.singleCallSpanDisposition?.worstSpanMs },
+  };
+  const results = {
+    svf2Pairs: { tlasCold: svf2.tlasCold.pairCount, linearCold: svf2.linearCold.pairCount },
+    svfPairs: { tlasCold: svf.tlasCold.pairCount, linearCold: svf.linearCold.pairCount },
+    svf2Diagnostics: svf2.tlasCold.statistics?.diagnostics?.byReason,
+    svfDiagnostics: svf.tlasCold.statistics?.diagnostics?.byReason,
+  };
+  return { criteria, allPass: Object.values(criteria).every((c) => c.pass), results };
+}
+
+async function main() {
+  const formats = (process.env.M3_GATE_FORMATS || 'svf2,svf').split(',').map((f) => f.trim()).filter(Boolean);
+  for (const f of formats) {
+    if (f !== 'svf2' && f !== 'svf') throw new Error(`M3_GATE_FORMATS: unknown format '${f}' (expected svf2 and/or svf)`);
+  }
+  const reports = {};
+  for (const format of formats) reports[format] = await runProtocol(format);
+  if (reports.svf2 && reports.svf) {
+    const svf2Criteria = computeSvf2Criteria(reports.svf2, reports.svf);
+    await writeFile(`${RESULTS_DIR}/m3-gate-svf2-criteria-${Date.now()}.json`, JSON.stringify(svf2Criteria, null, 2));
+    console.log('\n=== SVF2 derived-geometry criteria (design 2026-10-07 §8 T7) ===\n', JSON.stringify(svf2Criteria, null, 2));
+    console.log(`\n=== SVF2 criteria: ${svf2Criteria.allPass ? 'ALL PASS' : 'FAIL'} ===`);
+    if (!svf2Criteria.allPass) process.exitCode = 1;
+  } else {
+    console.log('\n=== SVF2 criteria NOT COMPUTED -- needs both formats (M3_GATE_FORMATS=svf2,svf) ===');
   }
 }
 

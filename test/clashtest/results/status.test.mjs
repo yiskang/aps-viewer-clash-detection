@@ -345,3 +345,20 @@ test('the hierarchy-internal fixture is a genuinely schema-valid sealed set', as
   const set = await sealedSet('hierarchy-internal');
   assert.deepEqual(validateResultSet(set, { limits }), { ok: true, issues: [] });
 });
+
+// 2026-10-07 (owner-authorized): taint rule 2 consults the ONE predicate, like rule 1. The informational
+// `fragment-null-geometry` (whole-model target, dbId null => target-model attribution) is REPORTED but does not
+// downgrade; the ordinary `fragment-not-loaded` on the same whole-model target still does.
+test('a target-model fragment-null-geometry taint is REPORTED but does not downgrade; fragment-not-loaded still does', async () => {
+  const set = structuredClone(await sealedSet('positives'));
+  set.ledger.units[0].taints.push({ kind: 'target-model', modelKey: MODEL_B, dbId: null, reason: 'fragment-null-geometry', occurrences: 2 });
+  const s = getPairStatus(set, pairOf(MODEL_A, 100, MODEL_B, 200));
+  assert.equal(s.verdict, 'covered-clean');
+  assert.deepEqual(s.caveats, [{ reason: 'fragment-null-geometry', count: 2, attribution: 'target-model' }]);
+
+  const mixed = structuredClone(set);
+  mixed.ledger.units[0].taints.push({ kind: 'target-model', modelKey: MODEL_B, dbId: null, reason: 'fragment-not-loaded', occurrences: 1 });
+  const m = getPairStatus(mixed, pairOf(MODEL_A, 100, MODEL_B, 200));
+  assert.equal(m.verdict, 'covered-caveated');
+  assert.deepEqual(m.caveats.map((c) => c.reason), ['fragment-null-geometry', 'fragment-not-loaded']);
+});

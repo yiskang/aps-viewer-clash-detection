@@ -1,0 +1,2803 @@
+{
+  "disposition": "MEASURED",
+  "format": "svf2",
+  "environment": {
+    "browserVersion": "151.0.7922.34",
+    "os": "darwin 27.0.0 (arm64)",
+    "urns": {
+      "arch": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+      "structure": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+      "mechanical": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA"
+    },
+    "sourceModel": "structure",
+    "sourceDbId": 180,
+    "clearance": 0.05,
+    "clearanceNote": "CLEARANCE is the real production default (DEFAULT_CLEARANCE = 0.05, wwwroot/extensions/ClashFinderExtension.js:60), in this model's own units -- not a value chosen to make any verdict come out a particular way.",
+    "fixtureNote": "The same real 3-discipline federated Revit host+links package run-gate-m2.mjs uses (Architecture/Structure/Mechanical, each independently translated, sharing one real coordinate system) -- NOT a same-URN-twice substitution. Architecture loaded first (normally), Structure and Mechanical loaded as-additional via #keep-current-models. Federated target scope: viewer.getAllModels().map(m => ({model: m})) -- ALL three currently loaded models.",
+    "identity": {
+      "modelCount": 3,
+      "archFragmentTotal": 5435,
+      "structureFragmentTotal": 543,
+      "mechanicalFragmentTotal": 1496,
+      "sourceName": "Floor [401326]",
+      "sourceFragmentCount": 1
+    },
+    "consoleWarnings": []
+  },
+  "modelProfile": {
+    "archFragmentTotal": 5435,
+    "structureFragmentTotal": 543,
+    "mechanicalFragmentTotal": 1496,
+    "totalFragments": 7474
+  },
+  "blasInstrumentationNote": "blasBuilt and blasCacheHits are hardcoded to 0 in every Statistics object this library produces (a pre-existing M1-era limitation, unrelated to clearance) -- they do NOT mean no BLAS work happened. The cold runs' large narrowPhaseMs values include real, uninstrumented BLAS-build cost for every geometry touched on first access.",
+  "tlasCold": {
+    "wallMs": 2852.5,
+    "error": null,
+    "pairCount": 30,
+    "sameModelPairCount": 1,
+    "crossModelPairCount": 29,
+    "statistics": {
+      "broadPhasePairs": 1978,
+      "narrowPhasePairs": 1978,
+      "blasBuilt": 0,
+      "blasCacheHits": 0,
+      "broadPhaseMs": 5.900000035762787,
+      "narrowPhaseMs": 2838,
+      "totalMs": 2852.5,
+      "diagnostics": {
+        "count": 290,
+        "byReason": {
+          "fragment-null-geometry": 2,
+          "clearance-hard-clash-precheck-inconclusive": 288
+        },
+        "sample": [
+          {
+            "scope": "fragment",
+            "reason": "fragment-null-geometry",
+            "role": "target",
+            "fragment": {
+              "modelId": 1,
+              "dbId": null,
+              "fragId": 4600
+            }
+          },
+          {
+            "scope": "fragment",
+            "reason": "fragment-null-geometry",
+            "role": "target",
+            "fragment": {
+              "modelId": 1,
+              "dbId": null,
+              "fragId": 4601
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 472,
+              "fragId": 975
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 472,
+              "fragId": 1203
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 331,
+              "fragId": 107
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 3862,
+              "fragId": 518
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 3862,
+              "fragId": 288
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 3840,
+              "fragId": 272
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 958,
+              "fragId": 285
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4915,
+              "fragId": 204
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 333,
+              "fragId": 150
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1050,
+              "fragId": 909
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 959,
+              "fragId": 124
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 959,
+              "fragId": 121
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1096,
+              "fragId": 106
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1096,
+              "fragId": 117
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4030,
+              "fragId": 1518
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4184,
+              "fragId": 1215
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4210,
+              "fragId": 1195
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4183,
+              "fragId": 1213
+            }
+          }
+        ]
+      },
+      "tlasLeafRangeEmissions": 606,
+      "tlasPrimitiveCandidatePairs": 4007,
+      "tlasExactRetestSurvivors": 1978,
+      "tlasNarrowPhaseInputPairs": 1978,
+      "tlasBuilds": 3,
+      "tlasCacheHits": 0,
+      "tlasSharedBuildWaits": 0,
+      "tlasBuildMs": 4.199999988079071,
+      "tlasQueryMs": 1.2000000476837158,
+      "clearanceExpandedCandidatePairs": 1978,
+      "clearanceExactAabbSurvivors": 1978,
+      "clearanceOverlapPrechecksRun": 1727,
+      "clearanceHardClashExclusions": 1199,
+      "clearanceDistanceQueriesRun": 108,
+      "clearanceHits": 30,
+      "clearanceQueryMs": 82.60000032186508
+    },
+    "longestSpan": {
+      "label": "clearance-total-wallclock-tlas-cold",
+      "ms": 2852.5,
+      "source": "manual"
+    },
+    "spansByLabel": {
+      "extraction-node-visit": {
+        "count": 1,
+        "maxMs": 0.09999996423721313,
+        "sumMs": 0.09999996423721313,
+        "source": "manual",
+        "meanMs": 0.09999996423721313
+      },
+      "whole-model-enumeration-start": {
+        "count": 3,
+        "maxMs": 0.30000001192092896,
+        "sumMs": 0.30000001192092896,
+        "source": "manual",
+        "meanMs": 0.10000000397364299
+      },
+      "whole-model-fragment-visit": {
+        "count": 7474,
+        "maxMs": 0.10000002384185791,
+        "sumMs": 4.899999976158142,
+        "source": "manual",
+        "meanMs": 0.0006556060979606826
+      },
+      "capacity-admission-commit": {
+        "count": 1,
+        "maxMs": 1.5,
+        "sumMs": 1.5,
+        "source": "manual",
+        "meanMs": 1.5
+      },
+      "tlas-build": {
+        "count": 3,
+        "maxMs": 2.300000011920929,
+        "sumMs": 4,
+        "source": "manual",
+        "meanMs": 1.3333333333333333
+      },
+      "clearance-tlas-broad-phase-query": {
+        "count": 3,
+        "maxMs": 6.100000023841858,
+        "sumMs": 9,
+        "source": "manual",
+        "meanMs": 3
+      },
+      "clearance-narrow-phase-pair": {
+        "count": 1978,
+        "maxMs": 17.400000035762787,
+        "sumMs": 1064.8000002503395,
+        "source": "manual",
+        "meanMs": 0.5383215370325276
+      },
+      "geometry-extraction": {
+        "count": 840,
+        "maxMs": 0.10000002384185791,
+        "sumMs": 2.900000035762787,
+        "source": "manual",
+        "meanMs": 0.0034523809949556987
+      },
+      "geometry-weld": {
+        "count": 840,
+        "maxMs": 4,
+        "sumMs": 207.89999932050705,
+        "source": "manual",
+        "meanMs": 0.24749999919107982
+      },
+      "weld": {
+        "count": 840,
+        "maxMs": 4,
+        "sumMs": 211.6999992132187,
+        "source": "manual",
+        "meanMs": 0.2520238085871651
+      },
+      "connectivity": {
+        "count": 840,
+        "maxMs": 1.699999988079071,
+        "sumMs": 89.89999973773956,
+        "source": "manual",
+        "meanMs": 0.10702380921159471
+      },
+      "bvh-construction": {
+        "count": 840,
+        "maxMs": 1.4000000357627869,
+        "sumMs": 79.19999998807907,
+        "source": "manual",
+        "meanMs": 0.0942857142715227
+      },
+      "composed-narrow-phase-stage": {
+        "count": 1926,
+        "maxMs": 12.199999988079071,
+        "sumMs": 897.9999999403954,
+        "source": "manual",
+        "meanMs": 0.4662512979960516
+      },
+      "clearance-distance-query": {
+        "count": 108,
+        "maxMs": 7.399999976158142,
+        "sumMs": 82.60000032186508,
+        "source": "manual",
+        "meanMs": 0.764814817795047
+      },
+      "clearance-total-wallclock-tlas-cold": {
+        "count": 1,
+        "maxMs": 2852.5,
+        "sumMs": 2852.5,
+        "source": "manual",
+        "meanMs": 2852.5
+      }
+    },
+    "topSpans": [
+      {
+        "label": "clearance-total-wallclock-tlas-cold",
+        "ms": 2852.5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 17.400000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 15.400000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 15.199999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 14.799999952316284,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 12.900000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 12.900000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 12.599999964237213,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 12.300000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 12.299999952316284,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 12.199999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 12.099999964237213,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 11,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.899999976158142,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 10.899999976158142,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 10.899999976158142,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 10.800000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.699999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.599999964237213,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.5,
+        "source": "manual"
+      }
+    ]
+  },
+  "tlasWarm": {
+    "wallMs": 464.5,
+    "error": null,
+    "pairCount": 30,
+    "sameModelPairCount": 1,
+    "crossModelPairCount": 29,
+    "statistics": {
+      "broadPhasePairs": 1978,
+      "narrowPhasePairs": 1978,
+      "blasBuilt": 0,
+      "blasCacheHits": 0,
+      "broadPhaseMs": 1.699999988079071,
+      "narrowPhaseMs": 454.30000001192093,
+      "totalMs": 464.5,
+      "diagnostics": {
+        "count": 290,
+        "byReason": {
+          "fragment-null-geometry": 2,
+          "clearance-hard-clash-precheck-inconclusive": 288
+        },
+        "sample": [
+          {
+            "scope": "fragment",
+            "reason": "fragment-null-geometry",
+            "role": "target",
+            "fragment": {
+              "modelId": 1,
+              "dbId": null,
+              "fragId": 4600
+            }
+          },
+          {
+            "scope": "fragment",
+            "reason": "fragment-null-geometry",
+            "role": "target",
+            "fragment": {
+              "modelId": 1,
+              "dbId": null,
+              "fragId": 4601
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 472,
+              "fragId": 975
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 472,
+              "fragId": 1203
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 331,
+              "fragId": 107
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 3862,
+              "fragId": 518
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 3862,
+              "fragId": 288
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 3840,
+              "fragId": 272
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 958,
+              "fragId": 285
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4915,
+              "fragId": 204
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 333,
+              "fragId": 150
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1050,
+              "fragId": 909
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 959,
+              "fragId": 124
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 959,
+              "fragId": 121
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1096,
+              "fragId": 106
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1096,
+              "fragId": 117
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4030,
+              "fragId": 1518
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4184,
+              "fragId": 1215
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4210,
+              "fragId": 1195
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4183,
+              "fragId": 1213
+            }
+          }
+        ]
+      },
+      "tlasLeafRangeEmissions": 606,
+      "tlasPrimitiveCandidatePairs": 4007,
+      "tlasExactRetestSurvivors": 1978,
+      "tlasNarrowPhaseInputPairs": 1978,
+      "tlasBuilds": 0,
+      "tlasCacheHits": 3,
+      "tlasSharedBuildWaits": 0,
+      "tlasBuildMs": 0,
+      "tlasQueryMs": 1.100000023841858,
+      "clearanceExpandedCandidatePairs": 1978,
+      "clearanceExactAabbSurvivors": 1978,
+      "clearanceOverlapPrechecksRun": 1727,
+      "clearanceHardClashExclusions": 1199,
+      "clearanceDistanceQueriesRun": 108,
+      "clearanceHits": 30,
+      "clearanceQueryMs": 59.500000178813934
+    },
+    "longestSpan": {
+      "label": "clearance-total-wallclock-tlas-warm",
+      "ms": 464.5,
+      "source": "manual"
+    },
+    "spansByLabel": {
+      "extraction-node-visit": {
+        "count": 1,
+        "maxMs": 0,
+        "sumMs": 0,
+        "source": "manual",
+        "meanMs": 0
+      },
+      "whole-model-enumeration-start": {
+        "count": 3,
+        "maxMs": 0.3999999761581421,
+        "sumMs": 0.5,
+        "source": "manual",
+        "meanMs": 0.16666666666666666
+      },
+      "whole-model-fragment-visit": {
+        "count": 7474,
+        "maxMs": 0.10000002384185791,
+        "sumMs": 5,
+        "source": "manual",
+        "meanMs": 0.000668985817500669
+      },
+      "capacity-admission-commit": {
+        "count": 1,
+        "maxMs": 1.100000023841858,
+        "sumMs": 1.100000023841858,
+        "source": "manual",
+        "meanMs": 1.100000023841858
+      },
+      "clearance-tlas-broad-phase-query": {
+        "count": 3,
+        "maxMs": 3.300000011920929,
+        "sumMs": 4.199999988079071,
+        "source": "manual",
+        "meanMs": 1.399999996026357
+      },
+      "clearance-narrow-phase-pair": {
+        "count": 1978,
+        "maxMs": 5.800000011920929,
+        "sumMs": 125.89999973773956,
+        "source": "manual",
+        "meanMs": 0.06365015153576317
+      },
+      "composed-narrow-phase-stage": {
+        "count": 1926,
+        "maxMs": 3.099999964237213,
+        "sumMs": 184.20000010728836,
+        "source": "manual",
+        "meanMs": 0.09563862933919437
+      },
+      "clearance-distance-query": {
+        "count": 108,
+        "maxMs": 5.800000011920929,
+        "sumMs": 59.500000178813934,
+        "source": "manual",
+        "meanMs": 0.5509259275816105
+      },
+      "clearance-total-wallclock-tlas-warm": {
+        "count": 1,
+        "maxMs": 464.5,
+        "sumMs": 464.5,
+        "source": "manual",
+        "meanMs": 464.5
+      }
+    },
+    "topSpans": [
+      {
+        "label": "clearance-total-wallclock-tlas-warm",
+        "ms": 464.5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 5.800000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 5.800000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 3.5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 3.5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-tlas-broad-phase-query",
+        "ms": 3.300000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 3.099999964237213,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 3,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 3,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 3,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 2.899999976158142,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 2.899999976158142,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.800000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.700000047683716,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.699999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.600000023841858,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.600000023841858,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.400000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 2.399999976158142,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 2.399999976158142,
+        "source": "manual"
+      }
+    ]
+  },
+  "linearCold": {
+    "wallMs": 3044.300000011921,
+    "error": null,
+    "pairCount": 30,
+    "sameModelPairCount": 1,
+    "crossModelPairCount": 29,
+    "statistics": {
+      "broadPhasePairs": 7471,
+      "narrowPhasePairs": 1978,
+      "blasBuilt": 0,
+      "blasCacheHits": 0,
+      "broadPhaseMs": 1.9000000357627869,
+      "narrowPhaseMs": 3033.800000011921,
+      "totalMs": 3044.300000011921,
+      "diagnostics": {
+        "count": 290,
+        "byReason": {
+          "fragment-null-geometry": 2,
+          "clearance-hard-clash-precheck-inconclusive": 288
+        },
+        "sample": [
+          {
+            "scope": "fragment",
+            "reason": "fragment-null-geometry",
+            "role": "target",
+            "fragment": {
+              "modelId": 1,
+              "dbId": null,
+              "fragId": 4600
+            }
+          },
+          {
+            "scope": "fragment",
+            "reason": "fragment-null-geometry",
+            "role": "target",
+            "fragment": {
+              "modelId": 1,
+              "dbId": null,
+              "fragId": 4601
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 339,
+              "fragId": 55
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 330,
+              "fragId": 85
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 380,
+              "fragId": 88
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 380,
+              "fragId": 89
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 346,
+              "fragId": 96
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 330,
+              "fragId": 103
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1096,
+              "fragId": 106
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 331,
+              "fragId": 107
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 411,
+              "fragId": 115
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1096,
+              "fragId": 117
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4914,
+              "fragId": 118
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 959,
+              "fragId": 121
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 959,
+              "fragId": 124
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1056,
+              "fragId": 139
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1057,
+              "fragId": 140
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 2084,
+              "fragId": 145
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 333,
+              "fragId": 150
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 387,
+              "fragId": 159
+            }
+          }
+        ]
+      },
+      "tlasLeafRangeEmissions": 0,
+      "tlasPrimitiveCandidatePairs": 0,
+      "tlasExactRetestSurvivors": 0,
+      "tlasNarrowPhaseInputPairs": 0,
+      "tlasBuilds": 0,
+      "tlasCacheHits": 0,
+      "tlasSharedBuildWaits": 0,
+      "tlasBuildMs": 0,
+      "tlasQueryMs": 0,
+      "clearanceExpandedCandidatePairs": 0,
+      "clearanceExactAabbSurvivors": 1978,
+      "clearanceOverlapPrechecksRun": 1727,
+      "clearanceHardClashExclusions": 1199,
+      "clearanceDistanceQueriesRun": 108,
+      "clearanceHits": 30,
+      "clearanceQueryMs": 84.60000002384186
+    },
+    "longestSpan": {
+      "label": "clearance-total-wallclock-linear-cold",
+      "ms": 3044.300000011921,
+      "source": "manual"
+    },
+    "spansByLabel": {
+      "extraction-node-visit": {
+        "count": 1,
+        "maxMs": 0,
+        "sumMs": 0,
+        "source": "manual",
+        "meanMs": 0
+      },
+      "whole-model-enumeration-start": {
+        "count": 3,
+        "maxMs": 0.3999999761581421,
+        "sumMs": 0.5999999642372131,
+        "source": "manual",
+        "meanMs": 0.19999998807907104
+      },
+      "whole-model-fragment-visit": {
+        "count": 7474,
+        "maxMs": 0.10000002384185791,
+        "sumMs": 4.400000035762787,
+        "source": "manual",
+        "meanMs": 0.0005887075241855481
+      },
+      "capacity-admission-commit": {
+        "count": 1,
+        "maxMs": 1.5999999642372131,
+        "sumMs": 1.5999999642372131,
+        "source": "manual",
+        "meanMs": 1.5999999642372131
+      },
+      "clearance-broad-phase-scan": {
+        "count": 7472,
+        "maxMs": 3.5,
+        "sumMs": 5.300000011920929,
+        "source": "manual",
+        "meanMs": 0.000709314776756013
+      },
+      "clearance-narrow-phase-pair": {
+        "count": 1978,
+        "maxMs": 16,
+        "sumMs": 1160.000000655651,
+        "source": "manual",
+        "meanMs": 0.5864509608977002
+      },
+      "geometry-extraction": {
+        "count": 840,
+        "maxMs": 0.10000002384185791,
+        "sumMs": 2.8000001311302185,
+        "source": "manual",
+        "meanMs": 0.003333333489440736
+      },
+      "geometry-weld": {
+        "count": 840,
+        "maxMs": 4.100000023841858,
+        "sumMs": 219.79999899864197,
+        "source": "manual",
+        "meanMs": 0.2616666654745738
+      },
+      "weld": {
+        "count": 840,
+        "maxMs": 4.100000023841858,
+        "sumMs": 223.99999928474426,
+        "source": "manual",
+        "meanMs": 0.26666666581517173
+      },
+      "connectivity": {
+        "count": 840,
+        "maxMs": 2.300000011920929,
+        "sumMs": 95.5,
+        "source": "manual",
+        "meanMs": 0.11369047619047619
+      },
+      "bvh-construction": {
+        "count": 840,
+        "maxMs": 1.5,
+        "sumMs": 88.10000091791153,
+        "source": "manual",
+        "meanMs": 0.1048809534737042
+      },
+      "composed-narrow-phase-stage": {
+        "count": 1926,
+        "maxMs": 12.600000023841858,
+        "sumMs": 951.5999991297722,
+        "source": "manual",
+        "meanMs": 0.49408099643290354
+      },
+      "clearance-distance-query": {
+        "count": 108,
+        "maxMs": 6.800000011920929,
+        "sumMs": 84.60000002384186,
+        "source": "manual",
+        "meanMs": 0.7833333335540913
+      },
+      "clearance-total-wallclock-linear-cold": {
+        "count": 1,
+        "maxMs": 3044.300000011921,
+        "sumMs": 3044.300000011921,
+        "source": "manual",
+        "meanMs": 3044.300000011921
+      }
+    },
+    "topSpans": [
+      {
+        "label": "clearance-total-wallclock-linear-cold",
+        "ms": 3044.300000011921,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 16,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 13.800000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 12.600000023841858,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 12.5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 12.199999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 11.699999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 11.400000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 11.199999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 11.199999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 11,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 11,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.899999976158142,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.700000047683716,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.699999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.699999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.600000023841858,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.599999964237213,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.400000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 10.399999976158142,
+        "source": "manual"
+      }
+    ]
+  },
+  "linearWarm": {
+    "wallMs": 424.5,
+    "error": null,
+    "pairCount": 30,
+    "sameModelPairCount": 1,
+    "crossModelPairCount": 29,
+    "statistics": {
+      "broadPhasePairs": 7471,
+      "narrowPhasePairs": 1978,
+      "blasBuilt": 0,
+      "blasCacheHits": 0,
+      "broadPhaseMs": 1.899999976158142,
+      "narrowPhaseMs": 414.80000001192093,
+      "totalMs": 424.5,
+      "diagnostics": {
+        "count": 290,
+        "byReason": {
+          "fragment-null-geometry": 2,
+          "clearance-hard-clash-precheck-inconclusive": 288
+        },
+        "sample": [
+          {
+            "scope": "fragment",
+            "reason": "fragment-null-geometry",
+            "role": "target",
+            "fragment": {
+              "modelId": 1,
+              "dbId": null,
+              "fragId": 4600
+            }
+          },
+          {
+            "scope": "fragment",
+            "reason": "fragment-null-geometry",
+            "role": "target",
+            "fragment": {
+              "modelId": 1,
+              "dbId": null,
+              "fragId": 4601
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 339,
+              "fragId": 55
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 330,
+              "fragId": 85
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 380,
+              "fragId": 88
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 380,
+              "fragId": 89
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 346,
+              "fragId": 96
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 330,
+              "fragId": 103
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1096,
+              "fragId": 106
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 331,
+              "fragId": 107
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 411,
+              "fragId": 115
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1096,
+              "fragId": 117
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 4914,
+              "fragId": 118
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 959,
+              "fragId": 121
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 959,
+              "fragId": 124
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1056,
+              "fragId": 139
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 1057,
+              "fragId": 140
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 2084,
+              "fragId": 145
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 333,
+              "fragId": 150
+            }
+          },
+          {
+            "scope": "pair",
+            "reason": "clearance-hard-clash-precheck-inconclusive",
+            "sourceFragment": {
+              "modelId": 2,
+              "dbId": 180,
+              "fragId": 537
+            },
+            "targetFragment": {
+              "modelId": 1,
+              "dbId": 387,
+              "fragId": 159
+            }
+          }
+        ]
+      },
+      "tlasLeafRangeEmissions": 0,
+      "tlasPrimitiveCandidatePairs": 0,
+      "tlasExactRetestSurvivors": 0,
+      "tlasNarrowPhaseInputPairs": 0,
+      "tlasBuilds": 0,
+      "tlasCacheHits": 0,
+      "tlasSharedBuildWaits": 0,
+      "tlasBuildMs": 0,
+      "tlasQueryMs": 0,
+      "clearanceExpandedCandidatePairs": 0,
+      "clearanceExactAabbSurvivors": 1978,
+      "clearanceOverlapPrechecksRun": 1727,
+      "clearanceHardClashExclusions": 1199,
+      "clearanceDistanceQueriesRun": 108,
+      "clearanceHits": 30,
+      "clearanceQueryMs": 53.60000026226044
+    },
+    "longestSpan": {
+      "label": "clearance-total-wallclock-linear-warm",
+      "ms": 424.5,
+      "source": "manual"
+    },
+    "spansByLabel": {
+      "extraction-node-visit": {
+        "count": 1,
+        "maxMs": 0,
+        "sumMs": 0,
+        "source": "manual",
+        "meanMs": 0
+      },
+      "whole-model-enumeration-start": {
+        "count": 3,
+        "maxMs": 0.3999999761581421,
+        "sumMs": 0.5,
+        "source": "manual",
+        "meanMs": 0.16666666666666666
+      },
+      "whole-model-fragment-visit": {
+        "count": 7474,
+        "maxMs": 0.10000002384185791,
+        "sumMs": 4,
+        "source": "manual",
+        "meanMs": 0.0005351886540005352
+      },
+      "capacity-admission-commit": {
+        "count": 1,
+        "maxMs": 0.800000011920929,
+        "sumMs": 0.800000011920929,
+        "source": "manual",
+        "meanMs": 0.800000011920929
+      },
+      "clearance-broad-phase-scan": {
+        "count": 7472,
+        "maxMs": 3.400000035762787,
+        "sumMs": 5.100000023841858,
+        "source": "manual",
+        "meanMs": 0.0006825481830623471
+      },
+      "clearance-narrow-phase-pair": {
+        "count": 1978,
+        "maxMs": 5,
+        "sumMs": 114.40000027418137,
+        "source": "manual",
+        "meanMs": 0.05783619831859523
+      },
+      "composed-narrow-phase-stage": {
+        "count": 1926,
+        "maxMs": 2.699999988079071,
+        "sumMs": 168.1999995112419,
+        "source": "manual",
+        "meanMs": 0.08733125623636652
+      },
+      "clearance-distance-query": {
+        "count": 108,
+        "maxMs": 5,
+        "sumMs": 53.60000026226044,
+        "source": "manual",
+        "meanMs": 0.49629629872463366
+      },
+      "clearance-total-wallclock-linear-warm": {
+        "count": 1,
+        "maxMs": 424.5,
+        "sumMs": 424.5,
+        "source": "manual",
+        "meanMs": 424.5
+      }
+    },
+    "topSpans": [
+      {
+        "label": "clearance-total-wallclock-linear-warm",
+        "ms": 424.5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-broad-phase-scan",
+        "ms": 3.400000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 3.300000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 3.300000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 2.900000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 2.900000035762787,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.699999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.600000023841858,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 2.5,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-narrow-phase-pair",
+        "ms": 2.5,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.399999976158142,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.300000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.300000011920929,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.199999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.199999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "composed-narrow-phase-stage",
+        "ms": 2.199999988079071,
+        "source": "manual"
+      },
+      {
+        "label": "clearance-distance-query",
+        "ms": 2.199999988079071,
+        "source": "manual"
+      }
+    ]
+  },
+  "metrics": {
+    "m1_m2_candidateCountsAndReduction": {
+      "tlas": {
+        "broadPhasePairs": 1978,
+        "clearanceExpandedCandidatePairs": 1978,
+        "clearanceExactAabbSurvivors": 1978,
+        "tlasLeafRangeEmissions": 606,
+        "tlasPrimitiveCandidatePairs": 4007,
+        "tlasExactRetestSurvivors": 1978,
+        "tlasNarrowPhaseInputPairs": 1978
+      },
+      "linear": {
+        "broadPhasePairs": 7471,
+        "clearanceExpandedCandidatePairs": 0,
+        "clearanceExactAabbSurvivors": 1978,
+        "narrowPhasePairs": 1978
+      },
+      "candidateReductionRatio": 3.777047522750253,
+      "candidateReductionRatioPlainly": "TLAS examined 1978 clearance candidates where linear examined 7471 -- a 3.78x reduction (TLAS looked at 26.5% as many candidates as linear).",
+      "rawExpansionReductionRatio": 1.8644871474918892,
+      "verdict": "CANDIDATE_REDUCTION_OBSERVED"
+    },
+    "m3_precheckVsDistanceQuerySplit": {
+      "tlasCold": {
+        "clearanceOverlapPrechecksRun": 1727,
+        "clearanceDistanceQueriesRun": 108,
+        "narrowPhasePairs": 1978,
+        "clearanceHardClashExclusions": 1199,
+        "prechecksSkipped": 251,
+        "prechecksRunFraction": 0.8731041456016178,
+        "distanceQueriesRunFraction": 0.054600606673407485,
+        "candidatesWithNoDistanceQuery": 1870
+      },
+      "tlasWarm": {
+        "clearanceOverlapPrechecksRun": 1727,
+        "clearanceDistanceQueriesRun": 108,
+        "narrowPhasePairs": 1978,
+        "clearanceHardClashExclusions": 1199,
+        "prechecksSkipped": 251,
+        "prechecksRunFraction": 0.8731041456016178,
+        "distanceQueriesRunFraction": 0.054600606673407485,
+        "candidatesWithNoDistanceQuery": 1870
+      },
+      "linearCold": {
+        "clearanceOverlapPrechecksRun": 1727,
+        "clearanceDistanceQueriesRun": 108,
+        "narrowPhasePairs": 1978,
+        "clearanceHardClashExclusions": 1199,
+        "prechecksSkipped": 251,
+        "prechecksRunFraction": 0.8731041456016178,
+        "distanceQueriesRunFraction": 0.054600606673407485,
+        "candidatesWithNoDistanceQuery": 1870
+      },
+      "linearWarm": {
+        "clearanceOverlapPrechecksRun": 1727,
+        "clearanceDistanceQueriesRun": 108,
+        "narrowPhasePairs": 1978,
+        "clearanceHardClashExclusions": 1199,
+        "prechecksSkipped": 251,
+        "prechecksRunFraction": 0.8731041456016178,
+        "distanceQueriesRunFraction": 0.054600606673407485,
+        "candidatesWithNoDistanceQuery": 1870
+      },
+      "note": "clearanceOverlapPrechecksRun counts candidates whose AABBs touched (aabbMinDistance == 0), for which the Hard-Clash exclusion precheck actually ran volumeOverlapQuery; a candidate with disjoint-but-near AABBs returns 'skip-precheck' and is never counted. clearanceDistanceQueriesRun counts the actual clearanceQuery() calls -- one per captured production span."
+    },
+    "m4_clearanceQueryMsOverTotalMs": {
+      "tlasCold": {
+        "clearanceQueryMs": 82.60000032186508,
+        "totalMs": 2852.5,
+        "narrowPhaseMs": 2838,
+        "broadPhaseMs": 5.900000035762787,
+        "wallMs": 2852.5,
+        "clearanceQueryMsOverTotalMs": 0.028957055327560065,
+        "clearanceQueryMsOverNarrowPhaseMs": 0.02910500363702082
+      },
+      "tlasWarm": {
+        "clearanceQueryMs": 59.500000178813934,
+        "totalMs": 464.5,
+        "narrowPhaseMs": 454.30000001192093,
+        "broadPhaseMs": 1.699999988079071,
+        "wallMs": 464.5,
+        "clearanceQueryMsOverTotalMs": 0.1280947258962625,
+        "clearanceQueryMsOverNarrowPhaseMs": 0.13097072458122969
+      },
+      "linearCold": {
+        "clearanceQueryMs": 84.60000002384186,
+        "totalMs": 3044.300000011921,
+        "narrowPhaseMs": 3033.800000011921,
+        "broadPhaseMs": 1.9000000357627869,
+        "wallMs": 3044.300000011921,
+        "clearanceQueryMsOverTotalMs": 0.02778963966215898,
+        "clearanceQueryMsOverNarrowPhaseMs": 0.027885819771741524
+      },
+      "linearWarm": {
+        "clearanceQueryMs": 53.60000026226044,
+        "totalMs": 424.5,
+        "narrowPhaseMs": 414.80000001192093,
+        "broadPhaseMs": 1.899999976158142,
+        "wallMs": 424.5,
+        "clearanceQueryMsOverTotalMs": 0.12626619614195628,
+        "clearanceQueryMsOverNarrowPhaseMs": 0.12921890130356806
+      }
+    },
+    "m5_coldWarmWallClockBothBroadPhases": {
+      "tlasColdWallMs": 2852.5,
+      "tlasWarmWallMs": 464.5,
+      "linearColdWallMs": 3044.300000011921,
+      "linearWarmWallMs": 424.5,
+      "tlasColdTotalMs": 2852.5,
+      "tlasWarmTotalMs": 464.5,
+      "linearColdTotalMs": 3044.300000011921,
+      "linearWarmTotalMs": 424.5,
+      "broadPhaseMs": {
+        "tlasCold": 5.900000035762787,
+        "tlasWarm": 1.699999988079071,
+        "linearCold": 1.9000000357627869,
+        "linearWarm": 1.899999976158142
+      },
+      "narrowPhaseMs": {
+        "tlasCold": 2838,
+        "tlasWarm": 454.30000001192093,
+        "linearCold": 3033.800000011921,
+        "linearWarm": 414.80000001192093
+      },
+      "tlasBuildMs": {
+        "cold": 4.199999988079071,
+        "warm": 0
+      },
+      "tlasQueryMs": {
+        "cold": 1.2000000476837158,
+        "warm": 1.100000023841858
+      }
+    },
+    "m6_worstSingleClearanceQuerySpan": {
+      "spanLabel": "clearance-distance-query",
+      "totalSpansCaptured": 432,
+      "perRunSpanCounts": {
+        "tlasCold": 108,
+        "tlasWarm": 108,
+        "linearCold": 108,
+        "linearWarm": 108
+      },
+      "unionDistribution": {
+        "count": 432,
+        "maxMs": 7.399999976158142,
+        "meanMs": 0.6488425944138456,
+        "sumMs": 280.3000007867813,
+        "p50Ms": 0.30000001192092896,
+        "p95Ms": 2.699999988079071,
+        "p99Ms": 5,
+        "overFrameBudgetCount": 0,
+        "overFrameBudgetFraction": 0
+      },
+      "perRunDistribution": {
+        "tlasCold": {
+          "count": 108,
+          "maxMs": 7.399999976158142,
+          "meanMs": 0.764814817795047,
+          "sumMs": 82.60000032186508,
+          "p50Ms": 0.30000001192092896,
+          "p95Ms": 3.300000011920929,
+          "p99Ms": 5.400000035762787,
+          "overFrameBudgetCount": 0,
+          "overFrameBudgetFraction": 0
+        },
+        "tlasWarm": {
+          "count": 108,
+          "maxMs": 5.800000011920929,
+          "meanMs": 0.5509259275816105,
+          "sumMs": 59.500000178813934,
+          "p50Ms": 0.2999999523162842,
+          "p95Ms": 2.300000011920929,
+          "p99Ms": 3.5,
+          "overFrameBudgetCount": 0,
+          "overFrameBudgetFraction": 0
+        },
+        "linearCold": {
+          "count": 108,
+          "maxMs": 6.800000011920929,
+          "meanMs": 0.7833333335540913,
+          "sumMs": 84.60000002384186,
+          "p50Ms": 0.3999999761581421,
+          "p95Ms": 2.900000035762787,
+          "p99Ms": 4.599999964237213,
+          "overFrameBudgetCount": 0,
+          "overFrameBudgetFraction": 0
+        },
+        "linearWarm": {
+          "count": 108,
+          "maxMs": 5,
+          "meanMs": 0.49629629872463366,
+          "sumMs": 53.60000026226044,
+          "p50Ms": 0.19999998807907104,
+          "p95Ms": 2.100000023841858,
+          "p99Ms": 3.300000011920929,
+          "overFrameBudgetCount": 0,
+          "overFrameBudgetFraction": 0
+        }
+      }
+    },
+    "m7_allSevenClearanceStatisticsFields": {
+      "tlasCold": {
+        "clearanceExpandedCandidatePairs": 1978,
+        "clearanceExactAabbSurvivors": 1978,
+        "clearanceOverlapPrechecksRun": 1727,
+        "clearanceHardClashExclusions": 1199,
+        "clearanceDistanceQueriesRun": 108,
+        "clearanceHits": 30,
+        "narrowPhasePairs": 1978
+      },
+      "tlasWarm": {
+        "clearanceExpandedCandidatePairs": 1978,
+        "clearanceExactAabbSurvivors": 1978,
+        "clearanceOverlapPrechecksRun": 1727,
+        "clearanceHardClashExclusions": 1199,
+        "clearanceDistanceQueriesRun": 108,
+        "clearanceHits": 30,
+        "narrowPhasePairs": 1978
+      },
+      "linearCold": {
+        "clearanceExpandedCandidatePairs": 0,
+        "clearanceExactAabbSurvivors": 1978,
+        "clearanceOverlapPrechecksRun": 1727,
+        "clearanceHardClashExclusions": 1199,
+        "clearanceDistanceQueriesRun": 108,
+        "clearanceHits": 30,
+        "narrowPhasePairs": 1978
+      },
+      "linearWarm": {
+        "clearanceExpandedCandidatePairs": 0,
+        "clearanceExactAabbSurvivors": 1978,
+        "clearanceOverlapPrechecksRun": 1727,
+        "clearanceHardClashExclusions": 1199,
+        "clearanceDistanceQueriesRun": 108,
+        "clearanceHits": 30,
+        "narrowPhasePairs": 1978
+      },
+      "note": "clearanceExpandedCandidatePairs is a TLAS-path-only counter (CollisionWorld.js:2058) and reads 0 on a linear run by construction -- reported here as measured, not silently omitted."
+    }
+  },
+  "singleCallSpanDisposition": {
+    "verdict": "GO — worst single-call span within frameBudgetMs",
+    "worstSpanMs": 7.399999976158142,
+    "frameBudgetMs": 8,
+    "spanLabel": "clearance-distance-query",
+    "spanSource": "collision/CollisionWorld.js:2321 -- reportSpan('clearance-distance-query', distanceQueryMs), the real production instrumentation wrapped around every clearanceQuery() call, captured here via setSpanRecorder(CheckpointRecorder.asSpanRecorder()) from collision/scheduler.js. NOT a re-timing performed by this script.",
+    "spanScope": "Union of all four measured runs (tlas-cold, tlas-warm, linear-cold, linear-warm). The unmeasured Step 3 warm-up installs no span recorder, so none of its calls can contribute.",
+    "distribution": {
+      "count": 432,
+      "maxMs": 7.399999976158142,
+      "meanMs": 0.6488425944138456,
+      "sumMs": 280.3000007867813,
+      "p50Ms": 0.30000001192092896,
+      "p95Ms": 2.699999988079071,
+      "p99Ms": 5,
+      "overFrameBudgetCount": 0,
+      "overFrameBudgetFraction": 0
+    },
+    "perRunDistribution": {
+      "tlasCold": {
+        "count": 108,
+        "maxMs": 7.399999976158142,
+        "meanMs": 0.764814817795047,
+        "sumMs": 82.60000032186508,
+        "p50Ms": 0.30000001192092896,
+        "p95Ms": 3.300000011920929,
+        "p99Ms": 5.400000035762787,
+        "overFrameBudgetCount": 0,
+        "overFrameBudgetFraction": 0
+      },
+      "tlasWarm": {
+        "count": 108,
+        "maxMs": 5.800000011920929,
+        "meanMs": 0.5509259275816105,
+        "sumMs": 59.500000178813934,
+        "p50Ms": 0.2999999523162842,
+        "p95Ms": 2.300000011920929,
+        "p99Ms": 3.5,
+        "overFrameBudgetCount": 0,
+        "overFrameBudgetFraction": 0
+      },
+      "linearCold": {
+        "count": 108,
+        "maxMs": 6.800000011920929,
+        "meanMs": 0.7833333335540913,
+        "sumMs": 84.60000002384186,
+        "p50Ms": 0.3999999761581421,
+        "p95Ms": 2.900000035762787,
+        "p99Ms": 4.599999964237213,
+        "overFrameBudgetCount": 0,
+        "overFrameBudgetFraction": 0
+      },
+      "linearWarm": {
+        "count": 108,
+        "maxMs": 5,
+        "meanMs": 0.49629629872463366,
+        "sumMs": 53.60000026226044,
+        "p50Ms": 0.19999998807907104,
+        "p95Ms": 2.100000023841858,
+        "p99Ms": 3.300000011920929,
+        "overFrameBudgetCount": 0,
+        "overFrameBudgetFraction": 0
+      }
+    },
+    "dispositionCaveat": "This is a REPORTED finding, not a CI gate: this script never fails a build on the verdict, and never retunes a shipped constant on its own initiative. Per the M3 spec a genuine NO-GO does not by itself block M3 -- a tighter DEFAULT_CLEARANCE, or scoping Soft Clash to smaller selections, may be sufficient mitigation."
+  },
+  "correctnessCrossCheck": {
+    "tlasColdPairCount": 30,
+    "linearColdPairCount": 30,
+    "tlasWarmPairCount": 30,
+    "linearWarmPairCount": 30,
+    "tlasColdVsLinearColdPairSignaturesEqual": true,
+    "tlasWarmVsLinearWarmPairSignaturesEqual": true,
+    "tlasColdVsTlasWarmPairSignaturesEqual": true,
+    "linearColdVsLinearWarmPairSignaturesEqual": true,
+    "tlasColdVsLinearColdDistances": {
+      "comparedKeys": 30,
+      "maxAbsoluteDelta": 0
+    },
+    "exactAabbSurvivorsAgree": true,
+    "tlasColdExactAabbSurvivors": 1978,
+    "linearColdExactAabbSurvivors": 1978,
+    "witnessShapeOk": {
+      "tlasCold": true,
+      "tlasWarm": true,
+      "linearCold": true,
+      "linearWarm": true
+    },
+    "note": "Signature-set equality is checked over the full {sourceModelTag, sourceDbId, targetModelTag, targetDbId, clashType} tuple for every returned pair, not merely pairs.length; the reported per-pair distance is compared separately as a max absolute delta over the shared keys. As in run-gate-m2.mjs: this proves the two paths agree on the final dbId-AGGREGATED clearance result, NOT that they retested an identical underlying per-fragment candidate set (this script does not capture per-fragment candidate identity).",
+    "allSignatureSetsAgree": true
+  },
+  "statisticsInequalityChain": {
+    "tlasCold": {
+      "tlasSpecific": {
+        "tlasPrimitiveCandidatePairs_gte_broadPhasePairs": true,
+        "broadPhasePairs_eq_clearanceExpandedCandidatePairs": true,
+        "clearanceExpandedCandidatePairs_gte_clearanceExactAabbSurvivors": true,
+        "clearanceExactAabbSurvivors_eq_tlasExactRetestSurvivors": true,
+        "tlasExactRetestSurvivors_eq_tlasNarrowPhaseInputPairs": true,
+        "tlasNarrowPhaseInputPairs_eq_narrowPhasePairs": true
+      },
+      "shared": {
+        "broadPhasePairs_gte_clearanceExactAabbSurvivors": true,
+        "clearanceExactAabbSurvivors_eq_narrowPhasePairs": true,
+        "narrowPhasePairs_gte_clearanceOverlapPrechecksRun": true,
+        "narrowPhasePairs_gte_clearanceDistanceQueriesRun": true,
+        "clearanceDistanceQueriesRun_gte_clearanceHits": true,
+        "distanceQueriesRun_eq_capturedSpanCount": true,
+        "clearanceDistanceQueriesRun": 108,
+        "capturedSpanCount": 108
+      }
+    },
+    "tlasWarm": {
+      "tlasSpecific": {
+        "tlasPrimitiveCandidatePairs_gte_broadPhasePairs": true,
+        "broadPhasePairs_eq_clearanceExpandedCandidatePairs": true,
+        "clearanceExpandedCandidatePairs_gte_clearanceExactAabbSurvivors": true,
+        "clearanceExactAabbSurvivors_eq_tlasExactRetestSurvivors": true,
+        "tlasExactRetestSurvivors_eq_tlasNarrowPhaseInputPairs": true,
+        "tlasNarrowPhaseInputPairs_eq_narrowPhasePairs": true
+      },
+      "shared": {
+        "broadPhasePairs_gte_clearanceExactAabbSurvivors": true,
+        "clearanceExactAabbSurvivors_eq_narrowPhasePairs": true,
+        "narrowPhasePairs_gte_clearanceOverlapPrechecksRun": true,
+        "narrowPhasePairs_gte_clearanceDistanceQueriesRun": true,
+        "clearanceDistanceQueriesRun_gte_clearanceHits": true,
+        "distanceQueriesRun_eq_capturedSpanCount": true,
+        "clearanceDistanceQueriesRun": 108,
+        "capturedSpanCount": 108
+      }
+    },
+    "linearCold": {
+      "tlasSpecific": null,
+      "shared": {
+        "broadPhasePairs_gte_clearanceExactAabbSurvivors": true,
+        "clearanceExactAabbSurvivors_eq_narrowPhasePairs": true,
+        "narrowPhasePairs_gte_clearanceOverlapPrechecksRun": true,
+        "narrowPhasePairs_gte_clearanceDistanceQueriesRun": true,
+        "clearanceDistanceQueriesRun_gte_clearanceHits": true,
+        "distanceQueriesRun_eq_capturedSpanCount": true,
+        "clearanceDistanceQueriesRun": 108,
+        "capturedSpanCount": 108
+      },
+      "linearPathNote": "clearanceExpandedCandidatePairs and every tlas* field read 0 on a linear run BY CONSTRUCTION (only _runClearanceTlasBroadPhase increments them, CollisionWorld.js:2029-2078) -- not a measurement failure, and deliberately not checked here."
+    },
+    "linearWarm": {
+      "tlasSpecific": null,
+      "shared": {
+        "broadPhasePairs_gte_clearanceExactAabbSurvivors": true,
+        "clearanceExactAabbSurvivors_eq_narrowPhasePairs": true,
+        "narrowPhasePairs_gte_clearanceOverlapPrechecksRun": true,
+        "narrowPhasePairs_gte_clearanceDistanceQueriesRun": true,
+        "clearanceDistanceQueriesRun_gte_clearanceHits": true,
+        "distanceQueriesRun_eq_capturedSpanCount": true,
+        "clearanceDistanceQueriesRun": 108,
+        "capturedSpanCount": 108
+      }
+    }
+  },
+  "narrowPhaseBudgetHeadroom": {
+    "maxClearanceNarrowPhasePairs": 20000,
+    "observedNarrowPhasePairsTlasCold": 1978,
+    "observedNarrowPhasePairsLinearCold": 1978,
+    "fractionOfBudgetUsed": 0.0989,
+    "note": "Evidence for the provisional constant, not a proposed revision -- this gate reports, it does not retune shipped defaults. Measured from ONE source instance (sourceFragmentCount=1); a multi-instance Soft Clash selection scales this count roughly with source-instance count, so the headroom shown here is not the headroom a large selection would see."
+  },
+  "constants": {
+    "frameBudgetMs": 8,
+    "maxClearanceNarrowPhasePairs": 20000,
+    "maxTlasCandidatePairs": 200000,
+    "maxCollisionInstancesPerEpoch": 20000
+  },
+  "gateAnswer": {
+    "question": "M3 spec §17: on a realistic federated case, what does clearance mode actually cost -- (a) TLAS vs linear clearance broad-phase candidate volume, and (b) the duration of a single clearanceQuery call against frameBudgetMs?",
+    "singleCallSpanDispositionSummary": "GO — worst single-call span within frameBudgetMs",
+    "dimensions": {
+      "clearanceCandidateReduction": {
+        "description": "broadPhasePairs on each path -- the mode-agnostic field both clearance broad phases increment at the same point (linear: CollisionWorld.js:1966; TLAS: :2057), and therefore the directly comparable clearance candidate-search cost between them.",
+        "tlasBroadPhasePairs": 1978,
+        "linearBroadPhasePairs": 7471,
+        "reductionRatio": 3.777047522750253,
+        "verdict": "CANDIDATE_REDUCTION_OBSERVED",
+        "lowerBoundNote": "Measured with exactly ONE source instance (sourceFragmentCount=1). Linear cost scales as sourceCount x targetCount; TLAS traversal cost does not scale the same way (each source instance queries the SAME already-built target TLAS). This ratio is therefore a LOWER BOUND on the reduction a multi-instance Soft Clash selection would see -- stated as a bound, never extrapolated to a specific larger number."
+      },
+      "rawTlasPrimitiveExpansion": {
+        "description": "Upstream of the target-scope/self-exclusion filters -- the raw per-primitive expansion the TLAS traversal itself incurs before filtering. Reported separately so the filtered ratio above is not misread as total search-cost reduction: TLAS pays real cost at this earlier, unfiltered stage too.",
+        "tlasLeafRangeEmissions": 606,
+        "tlasPrimitiveCandidatePairs": 4007,
+        "linearBroadPhasePairsForComparison": 7471,
+        "rawExpansionReductionRatio": 1.8644871474918892
+      },
+      "broadPhaseElapsedBenefitWarm": {
+        "description": "Warm-vs-warm broadPhaseMs -- the fairest amortized comparison, since TLAS build cost is a one-time cost a single cold query never amortizes.",
+        "tlasWarmBroadPhaseMs": 1.699999988079071,
+        "linearWarmBroadPhaseMs": 1.899999976158142,
+        "verdict": "OBSERVED"
+      },
+      "endToEndElapsedBenefit": {
+        "description": "Read broadPhaseShareOfWallClockCold before interpreting these: broad phase is the only part the two paths differ in, and on this fixture clearance narrow phase (Hard-Clash precheck + closestPointToGeometry) dominates total time -- so an end-to-end NOT_OBSERVED here mostly reflects narrow-phase noise, not a broad-phase regression.",
+        "cold": {
+          "tlasColdWallMs": 2852.5,
+          "linearColdWallMs": 3044.300000011921,
+          "verdict": "OBSERVED"
+        },
+        "warm": {
+          "tlasWarmWallMs": 464.5,
+          "linearWarmWallMs": 424.5,
+          "verdict": "NOT_OBSERVED"
+        },
+        "broadPhaseShareOfWallClockCold": {
+          "tlas": 0.0020683610993033432,
+          "linear": 0.0006241172143860154
+        }
+      }
+    },
+    "timingConfidenceCaveat": "Wall-clock figures are descriptive, single-session measurements from one Playwright page, one sample per state. A sacrificial warm-up (Step 3: one unmeasured clearance TLAS query + one unmeasured clearance linear query, in throwaway worlds disposed before any measured world existed) removes the largest, cheapest-to-fix confound -- first-ever-call V8 JIT/module-initialization bias -- but residual order/GC/OS-scheduling noise from a single sample each cannot be ruled out. Candidate-count comparisons are structural and order-independent and are the more reliable evidence; the per-call span distribution is a population of thousands of samples, so its percentiles are far better supported than any single wall-clock number here."
+  },
+  "derivedGeometry": {
+    "tlasWorld": {
+      "afterCold": {
+        "perEpoch": {
+          "epochArch": {
+            "epoch": 1,
+            "derived": {
+              "readyEntries": 42,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 42,
+              "hits": 12,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 5280,
+              "retainedIndexBytes": 8496,
+              "retainedBvhBytes": 7176,
+              "noSurfaceOperands": 12
+            },
+            "canonicalEntries": 491,
+            "canonicalRetainedBytes": 497010
+          },
+          "epochStructure": {
+            "epoch": 2,
+            "derived": {
+              "readyEntries": 16,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 16,
+              "hits": 107,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 34140,
+              "retainedIndexBytes": 51840,
+              "retainedBvhBytes": 50176,
+              "noSurfaceOperands": 0
+            },
+            "canonicalEntries": 112,
+            "canonicalRetainedBytes": 4326830
+          },
+          "epochMechanical": {
+            "epoch": 3,
+            "derived": {
+              "readyEntries": 38,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 38,
+              "hits": 1,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 44196,
+              "retainedIndexBytes": 84288,
+              "retainedBvhBytes": 80288,
+              "noSurfaceOperands": 208
+            },
+            "canonicalEntries": 237,
+            "canonicalRetainedBytes": 2082542
+          }
+        },
+        "totals": {
+          "builds": 96,
+          "hits": 120,
+          "sharedWaits": 0,
+          "evictions": 0,
+          "readyEntries": 96,
+          "unsupportedEntries": 0,
+          "buildingEntries": 0
+        },
+        "derivedRetainedBytes": 365880,
+        "canonicalRetainedBytes": 6906382,
+        "resolutions": 216,
+        "distinctKeysTouched": 96,
+        "peakDerivedRetainedBytes": 365880
+      },
+      "afterWarm": {
+        "perEpoch": {
+          "epochArch": {
+            "epoch": 1,
+            "derived": {
+              "readyEntries": 42,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 42,
+              "hits": 66,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 5280,
+              "retainedIndexBytes": 8496,
+              "retainedBvhBytes": 7176,
+              "noSurfaceOperands": 24
+            },
+            "canonicalEntries": 491,
+            "canonicalRetainedBytes": 497010
+          },
+          "epochStructure": {
+            "epoch": 2,
+            "derived": {
+              "readyEntries": 16,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 16,
+              "hits": 230,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 34140,
+              "retainedIndexBytes": 51840,
+              "retainedBvhBytes": 50176,
+              "noSurfaceOperands": 0
+            },
+            "canonicalEntries": 112,
+            "canonicalRetainedBytes": 4326830
+          },
+          "epochMechanical": {
+            "epoch": 3,
+            "derived": {
+              "readyEntries": 38,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 38,
+              "hits": 40,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 44196,
+              "retainedIndexBytes": 84288,
+              "retainedBvhBytes": 80288,
+              "noSurfaceOperands": 416
+            },
+            "canonicalEntries": 237,
+            "canonicalRetainedBytes": 2082542
+          }
+        },
+        "totals": {
+          "builds": 96,
+          "hits": 336,
+          "sharedWaits": 0,
+          "evictions": 0,
+          "readyEntries": 96,
+          "unsupportedEntries": 0,
+          "buildingEntries": 0
+        },
+        "derivedRetainedBytes": 365880,
+        "canonicalRetainedBytes": 6906382,
+        "resolutions": 432,
+        "distinctKeysTouched": 96,
+        "peakDerivedRetainedBytes": 365880
+      }
+    },
+    "linearWorld": {
+      "afterCold": {
+        "perEpoch": {
+          "epochArch": {
+            "epoch": 1,
+            "derived": {
+              "readyEntries": 42,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 42,
+              "hits": 12,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 5280,
+              "retainedIndexBytes": 8496,
+              "retainedBvhBytes": 7176,
+              "noSurfaceOperands": 12
+            },
+            "canonicalEntries": 491,
+            "canonicalRetainedBytes": 497010
+          },
+          "epochStructure": {
+            "epoch": 2,
+            "derived": {
+              "readyEntries": 16,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 16,
+              "hits": 107,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 34140,
+              "retainedIndexBytes": 51840,
+              "retainedBvhBytes": 50176,
+              "noSurfaceOperands": 0
+            },
+            "canonicalEntries": 112,
+            "canonicalRetainedBytes": 4326830
+          },
+          "epochMechanical": {
+            "epoch": 3,
+            "derived": {
+              "readyEntries": 38,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 38,
+              "hits": 1,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 44196,
+              "retainedIndexBytes": 84288,
+              "retainedBvhBytes": 80288,
+              "noSurfaceOperands": 208
+            },
+            "canonicalEntries": 237,
+            "canonicalRetainedBytes": 2082542
+          }
+        },
+        "totals": {
+          "builds": 96,
+          "hits": 120,
+          "sharedWaits": 0,
+          "evictions": 0,
+          "readyEntries": 96,
+          "unsupportedEntries": 0,
+          "buildingEntries": 0
+        },
+        "derivedRetainedBytes": 365880,
+        "canonicalRetainedBytes": 6906382,
+        "resolutions": 216,
+        "distinctKeysTouched": 96,
+        "peakDerivedRetainedBytes": 365880
+      },
+      "afterWarm": {
+        "perEpoch": {
+          "epochArch": {
+            "epoch": 1,
+            "derived": {
+              "readyEntries": 42,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 42,
+              "hits": 66,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 5280,
+              "retainedIndexBytes": 8496,
+              "retainedBvhBytes": 7176,
+              "noSurfaceOperands": 24
+            },
+            "canonicalEntries": 491,
+            "canonicalRetainedBytes": 497010
+          },
+          "epochStructure": {
+            "epoch": 2,
+            "derived": {
+              "readyEntries": 16,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 16,
+              "hits": 230,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 34140,
+              "retainedIndexBytes": 51840,
+              "retainedBvhBytes": 50176,
+              "noSurfaceOperands": 0
+            },
+            "canonicalEntries": 112,
+            "canonicalRetainedBytes": 4326830
+          },
+          "epochMechanical": {
+            "epoch": 3,
+            "derived": {
+              "readyEntries": 38,
+              "buildingEntries": 0,
+              "unsupportedEntries": 0,
+              "builds": 38,
+              "hits": 40,
+              "sharedWaits": 0,
+              "evictions": 0,
+              "retainedPositionBytes": 44196,
+              "retainedIndexBytes": 84288,
+              "retainedBvhBytes": 80288,
+              "noSurfaceOperands": 416
+            },
+            "canonicalEntries": 237,
+            "canonicalRetainedBytes": 2082542
+          }
+        },
+        "totals": {
+          "builds": 96,
+          "hits": 336,
+          "sharedWaits": 0,
+          "evictions": 0,
+          "readyEntries": 96,
+          "unsupportedEntries": 0,
+          "buildingEntries": 0
+        },
+        "derivedRetainedBytes": 365880,
+        "canonicalRetainedBytes": 6906382,
+        "resolutions": 432,
+        "distinctKeysTouched": 96,
+        "peakDerivedRetainedBytes": 365880
+      }
+    }
+  }
+}

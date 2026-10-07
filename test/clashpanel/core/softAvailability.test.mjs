@@ -5,7 +5,7 @@ import { evaluateSoftAvailability } from '../../../clashpanel/core/softAvailabil
 import { BASIS_FAILURE_REASONS, narrowEnginePort } from '../../../clashpanel/core/ports.js';
 import { BASIS_VERDICT_TIMEOUT_MS, SOFT_UNAVAILABLE_TEXT } from '../../../clashpanel/core/constants.js';
 import { createDraft, draftReduce } from '../../../clashpanel/core/draft.js';
-import { validateSetup } from '../../../clashpanel/core/setupValidation.js';
+import { participatingModelKeys, validateSetup } from '../../../clashpanel/core/setupValidation.js';
 import { validateTest } from '../../../clashtest/index.js';
 import { createFakeCatalog, createFakeEngine, createFakeScheduler } from '../support/index.mjs';
 
@@ -149,4 +149,13 @@ test('AC-P18 end to end: an unverified basis asks for a user basis (not "unavail
   const ok = validateSetup({ draft: single, engine, catalog, softAvailability: oneModel });
   assert.equal(ok.state, 'ready');
   assert.equal(ok.definition.mode, 'clearance');
+});
+
+test('Soft with the same single model in Set A and Set B: one participant key, so Soft is available with no catalog call', async () => {
+  const catalog = catalogOf({ state: 'incompatible', reason: 'x' });
+  const d = reduce(createDraft({ testId: 'T-1' }), { type: 'toggleModel', side: 'A', modelKey: 'mA' }, { type: 'toggleModel', side: 'B', modelKey: 'mA' }, { type: 'mode', value: 'soft' });
+  const participants = participatingModelKeys(d);
+  assert.deepEqual(participants, ['mA']);
+  assert.deepEqual(await evaluate(participants, catalog), { available: true, verdict: null, explanation: null });
+  assert.equal(catalog.calls.measurementBasis.length, 0);
 });

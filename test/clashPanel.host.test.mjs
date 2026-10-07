@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHostCatalog, createClashPanelHost, viewerEventNames, makeFallbackUuid, ensureRandomUUID } from '../wwwroot/extensions/clashPanelHost.js';
-import { declareModelDisplayName, clearDeclaredDisplayNames } from '../wwwroot/extensions/clashPanelNames.js';
+import { createHostCatalog, resolveModelDisplayName, normalizeUrnKey, createClashPanelHost, viewerEventNames, makeFallbackUuid, ensureRandomUUID } from '../wwwroot/extensions/clashPanelHost.js';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { loadDemoModels, waitForModelReady, DEMO_MODELS } from '../wwwroot/clashPanelDemo.js';
 
 const EV = viewerEventNames(undefined);
@@ -29,7 +29,6 @@ const fakeModel = (urn, { done = true, tree = true } = {}) => ({
 const fakeRegistry = () => ({ calls: [], register(k, m, o) { this.calls.push([k, m, o]); } });
 
 test('catalog: list/keyOfModel/displayNameFor, unique keys per load, URN-derived version', () => {
-  clearDeclaredDisplayNames();
   const v = new FakeViewer(); const reg = fakeRegistry();
   const cat = createHostCatalog({ viewer: v, registry: reg, events: EV });
   const a = fakeModel('urn:AAA'); v.add(a);
@@ -49,7 +48,6 @@ test('catalog: list/keyOfModel/displayNameFor, unique keys per load, URN-derived
 });
 
 test('catalog: loaded == load done AND object tree; onChange fires and unsubscribes; names survive unload', () => {
-  clearDeclaredDisplayNames();
   const v = new FakeViewer(); const cat = createHostCatalog({ viewer: v, registry: fakeRegistry(), events: EV });
   let fired = 0; const off = cat.onChange(() => { fired++; });
   const m = fakeModel('urn:BBB', { done: false, tree: false }); v.add(m);
@@ -58,13 +56,12 @@ test('catalog: loaded == load done AND object tree; onChange fires and unsubscri
   m._tree = true; v.emit(EV.OBJECT_TREE_CREATED, { model: m });
   assert.equal(cat.list()[0].loaded, true);
   assert.ok(fired >= 2);
-  declareModelDisplayName('BBB', 'Structure'); // declared after creation, 'urn:' prefix normalised
   const key = cat.keyOfModel(m);
-  assert.equal(cat.displayNameFor(key), 'Structure');
-  assert.equal(cat.list()[0].displayName, 'Structure');
+  assert.match(cat.displayNameFor(key), /^Model \d+$/);
+  const nm = cat.list()[0].displayName;
   v.remove(m);
   assert.deepEqual(cat.list(), []);
-  assert.equal(cat.displayNameFor(key), 'Structure', 'survives unload');
+  assert.equal(cat.displayNameFor(key), nm, 'survives unload');
   assert.equal(cat.displayNameFor('nope'), null);
   const before = fired; off(); v.add(fakeModel('urn:CCC')); assert.equal(fired, before);
   cat.dispose();
@@ -72,7 +69,6 @@ test('catalog: loaded == load done AND object tree; onChange fires and unsubscri
 });
 
 test('catalog: model without URN is unkeyed until identifiable', () => {
-  clearDeclaredDisplayNames();
   const v = new FakeViewer(); const reg = fakeRegistry(); const cat = createHostCatalog({ viewer: v, registry: reg, events: EV });
   const m = fakeModel(null); v.add(m);
   assert.equal(cat.list()[0].modelKey, null);
@@ -122,7 +118,6 @@ test('host: construction failure unwinds what was built and rethrows', async () 
 });
 
 test('host: models added after creation are registered and removed models are tolerated', async () => {
-  clearDeclaredDisplayNames();
   const order = []; const v = new FakeViewer();
   const deps = fakeDeps(order); const host = await createClashPanelHost({ viewer: v, deps });
   const m = fakeModel('urn:LATE2'); v.add(m);
@@ -132,13 +127,11 @@ test('host: models added after creation are registered and removed models are to
   await host.dispose();
 });
 
-test('demo loader: sequential Structure then Mechanical, second keepCurrentModels:true, names declared', async () => {
-  clearDeclaredDisplayNames();
-  const calls = []; const declared = [];
+test('demo loader: sequential Structure then Mechanical, second keepCurrentModels:true, no names declared', async () => {
+  const calls = [];
   const loadModel = async (viewer, urn, opts) => { calls.push([urn, opts.keepCurrentModels]); return { urn }; };
-  const out = await loadDemoModels({}, { loadModel, wait: async (_v, m) => m, declareName: (u, n) => declared.push([u, n]) });
+  const out = await loadDemoModels({}, { loadModel, wait: async (_v, m) => m });
   assert.deepEqual(calls, [[DEMO_MODELS[0].urn, false], [DEMO_MODELS[1].urn, true]]);
-  assert.deepEqual(declared.map((d) => d[1]), ['Structure', 'Mechanical']);
   assert.equal(out.length, 2);
 });
 
@@ -153,7 +146,6 @@ test('waitForModelReady: waits for geometry then object tree', async () => {
 });
 
 test('L3: failed registration warns once and is not retried on later events', () => {
-  clearDeclaredDisplayNames();
   const v = new FakeViewer(); const reports = [];
   const reg = { n: 0, register() { this.n++; throw new Error('reg boom'); } };
   const cat = createHostCatalog({ viewer: v, registry: reg, events: EV, report: (s) => reports.push(s) });
@@ -192,10 +184,81 @@ test('L6: fallback uuid is v4-shaped and unique; ensureRandomUUID only fills whe
 });
 
 test('L10: modelVersion never double-prefixes urn:', () => {
-  clearDeclaredDisplayNames();
   const v = new FakeViewer(); const reg = fakeRegistry(); const cat = createHostCatalog({ viewer: v, registry: reg, events: EV });
   v.add(fakeModel('urn:AAA')); v.add(fakeModel('BBB'));
   assert.equal(reg.calls[0][2].modelVersion, 'urn:AAA');
   assert.equal(reg.calls[1][2].modelVersion, 'urn:BBB');
   cat.dispose();
+});
+
+// ---- metadata-driven naming ----
+const node = (name, role, parent = null) => ({ parent, data: { role }, name: () => name });
+const bubbleModel = (urn, bubble) => ({ ...fakeModel(urn), getData() { return { urn, loadOptions: { bubbleNode: bubble } }; } });
+const viewableChain = (file, own = 'New Construction') => node(own, 'geometry', node('3D', 'graphics', node(file, 'viewable', node('root', null))));
+
+test('naming (a): nearest viewable ancestor, extension stripped, beats bubble own name', () => {
+  const m = bubbleModel('urn:A', viewableChain('Audubon_Structure_clash_test.rvt'));
+  assert.equal(resolveModelDisplayName(m, 1, { fallbackLabel: 'FX' }), 'Audubon_Structure_clash_test');
+  assert.equal(resolveModelDisplayName(bubbleModel('urn:A', viewableChain('a.b.rvt')), 1), 'a.b');
+  assert.equal(resolveModelDisplayName(bubbleModel('urn:A', viewableChain('NoExt')), 1), 'NoExt');
+});
+
+test('naming (b): bubble own name when no viewable ancestor (or it has no name)', () => {
+  const noViewable = node('New Construction', 'geometry', node('3D', 'graphics'));
+  assert.equal(resolveModelDisplayName(bubbleModel('urn:A', noViewable), 3, { fallbackLabel: 'FX' }), 'New Construction');
+  const emptyViewable = node('Own', 'geometry', node('', 'viewable'));
+  assert.equal(resolveModelDisplayName(bubbleModel('urn:A', emptyViewable), 3), 'Own');
+});
+
+test('naming (c)/(d): fixture fallback label, then Model <seq>; throwing nodes are tolerated', () => {
+  const m = bubbleModel('urn:A', null);
+  assert.equal(resolveModelDisplayName(m, 4, { fallbackLabel: 'Fixture' }), 'Fixture');
+  assert.equal(resolveModelDisplayName(m, 4), 'Model 4');
+  assert.equal(resolveModelDisplayName(m, 4, { fallbackLabel: '  ' }), 'Model 4');
+  const bad = { get parent() { throw new Error('x'); }, name() { throw new Error('y'); }, data: null };
+  assert.equal(resolveModelDisplayName(bubbleModel('urn:A', bad), 5), 'Model 5');
+  assert.equal(resolveModelDisplayName(fakeModel(null), 6), 'Model 6');
+});
+
+test('catalog: names come from metadata; fixture fallbackLabel option used only as (c)', () => {
+  const v = new FakeViewer(); const cat = createHostCatalog({ viewer: v, registry: fakeRegistry(), events: EV, fallbackLabel: 'FX' });
+  const a = bubbleModel('urn:A', viewableChain('S.rvt')); const b = fakeModel('urn:B');
+  v.add(a); v.add(b);
+  assert.equal(cat.displayNameFor(cat.keyOfModel(a)), 'S');
+  assert.equal(cat.displayNameFor(cat.keyOfModel(b)), 'FX');
+  cat.dispose();
+});
+
+test('catalog: identical display names, different models stay independent', () => {
+  const v = new FakeViewer(); const reg = fakeRegistry(); const cat = createHostCatalog({ viewer: v, registry: reg, events: EV });
+  const a = bubbleModel('urn:A', viewableChain('Same.rvt')); const b = bubbleModel('urn:B', viewableChain('Same.rvt'));
+  v.add(a); v.add(b);
+  const rows = cat.list();
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].displayName, 'Same'); assert.equal(rows[1].displayName, 'Same');
+  assert.notEqual(rows[0].modelKey, rows[1].modelKey);
+  assert.equal(rows[0].model, a); assert.equal(rows[1].model, b);
+  assert.equal(reg.calls.length, 2);
+  cat.dispose();
+});
+
+test('catalog: same URN loaded twice (concurrently) -> two distinct keys, both registered', () => {
+  const v = new FakeViewer(); const reg = fakeRegistry(); const cat = createHostCatalog({ viewer: v, registry: reg, events: EV });
+  const a = bubbleModel('urn:A', viewableChain('Same.rvt')); const a2 = bubbleModel('urn:A', viewableChain('Same.rvt'));
+  v.add(a); v.add(a2);
+  assert.equal(reg.calls.length, 2);
+  assert.notEqual(reg.calls[0][0], reg.calls[1][0]);
+  assert.equal(reg.calls[0][1], a); assert.equal(reg.calls[1][1], a2);
+  assert.deepEqual(cat.list().map((r) => r.modelKey), [reg.calls[0][0], reg.calls[1][0]]);
+  cat.dispose();
+});
+
+test('normalizeUrnKey lives in the host; no URN->name registry remains in wwwroot', () => {
+  assert.equal(normalizeUrnKey(' urn:abc '), 'abc'); assert.equal(normalizeUrnKey('abc'), 'abc'); assert.equal(normalizeUrnKey(5), '');
+  assert.equal(existsSync(new URL('../wwwroot/extensions/clashPanelNames.js', import.meta.url)), false);
+  const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(new URL(`${e.name}/`, d)) : [new URL(e.name, d)]);
+  for (const f of walk(new URL('../wwwroot/', import.meta.url)).filter((u) => /\.(js|mjs|html)$/.test(u.pathname))) {
+    const t = readFileSync(f, 'utf8');
+    assert.ok(!/declareModelDisplayName|declaredDisplayNameFor|clashPanelNames/.test(t), f.pathname);
+  }
 });

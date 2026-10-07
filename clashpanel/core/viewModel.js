@@ -17,6 +17,7 @@
 import { PAGE_SIZE, GAP_UNIT_LABEL, BASIS_UNITS, BASIS_RAW, SOFT_BASIS_HEADLINE, SOFT_BASIS_NOT_VERIFIED_TEXT } from './constants.js';
 import { resolveBasis, BASIS_STATE, basisProvenanceText } from './measurementBasis.js';
 import { participatingModelKeys } from './setupValidation.js';
+import { selectionEntriesOf } from './draft.js';
 import { runHeadline, STATEMENTS, describeAxes, bannersFor, emptyStatement } from './runReport.js';
 import { isFilterActive, FILTER_MASK_UNAVAILABLE_TEXT } from './filters.js';
 import { GROUPING_UNAVAILABLE_TEXT, MULTI_VALUED_NOTE } from './grouping.js';
@@ -85,6 +86,21 @@ function inSide(side, modelKey) {
   return modelKey !== null && (side.modelKeys.includes(modelKey) || Object.prototype.hasOwnProperty.call(side.elements, modelKey));
 }
 
+/** Models present (whole-model or element entries) in BOTH sets — by modelKey only, never by display name. Empty under selfClash. */
+function overlapOf(draft, models, modelName) {
+  if (draft.selfClash) return [];
+  const inB = new Set(selectionEntriesOf(draft.setB).map((e) => e.modelKey));
+  return selectionEntriesOf(draft.setA).map((e) => e.modelKey).filter((k) => inB.has(k)).sort().map((modelKey) => {
+    const m = models.find((x) => x.modelKey === modelKey);
+    return Object.freeze({ modelKey, displayName: m ? m.displayName : modelName(modelKey) });
+  });
+}
+
+function overlapTextOf(overlap) {
+  if (overlap.length === 0) return null;
+  return overlap.length === 1 ? `Self-clash: ${overlap[0].displayName} is in both sets.` : `Self-clash: ${overlap.length} models are in both sets.`;
+}
+
 const BASIS_UNIT_OPTIONS = Object.freeze([
   { value: '', label: 'Choose units…' },
   ...BASIS_UNITS.map((u) => ({ value: u, label: u })),
@@ -134,6 +150,7 @@ function buildSetupRegion(input) {
       control: f.control,
       text: checking && (f.code === 'soft-checking' || f.code === 'soft-unavailable') ? SOFT_CHECKING_TEXT : f.text,
     }));
+  const overlap = Object.freeze(overlapOf(draft, s.models, s.modelName));
   const scopeA = describeScope(draft.setA, s.modelName);
   const scopeB = draft.selfClash ? 'Same as Set A' : describeScope(draft.setB, s.modelName);
   const unitSuffix = basis.state === BASIS_STATE.USER_SUPPLIED ? ` ${basis.unitLabel} (user-supplied)` : basis.state === BASIS_STATE.RAW ? ' model units (raw, unverified)' : '';
@@ -159,6 +176,8 @@ function buildSetupRegion(input) {
       note: modelNote(m),
     })),
     selfClash: draft.selfClash,
+    overlap,
+    overlapText: overlapTextOf(overlap),
     useSelectionEnabled: s.runActive !== true,
     scope: { A: scopeA, B: scopeB },
     validation: { state: validation?.state === 'ready' ? 'ready' : 'blocked', messages, issuesTruncated: validation?.issuesTruncated === true },

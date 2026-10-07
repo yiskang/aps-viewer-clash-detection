@@ -129,3 +129,28 @@ test('library statistics aggregate as sums plus libraryMsTotal and maxUnitMs (§
   assert.equal(s.libraryMsTotal, 30, 'Σ of the library\'s own in-call totalMs, not of unit durations');
   assert.equal(s.maxUnitMs, 30, 'max unit durationMs');
 });
+
+// 2026-10-07 (owner-authorized): the library's informational whole-model-target `fragment-null-geometry`, projected
+// through the real projectDiagnostic, is carried (retained + counted by reason) but never completeness-affecting.
+test('fragment-null-geometry is carried in the aggregate but excluded from the completeness-affecting counters', async () => {
+  const { projectDiagnostic, createUnitBindingTable } = await import('../../../clashtest/execution/diagnostics.js');
+  const table = createUnitBindingTable([{ modelKey: 'mk-arch', modelId: 7 }]);
+  const raw = (reason, fragId) => ({ scope: 'fragment', reason, role: 'target', fragment: { modelId: 7, dbId: null, fragId } });
+  const p1 = projectDiagnostic(raw('fragment-null-geometry', 4600), table);
+  const p2 = projectDiagnostic(raw('fragment-null-geometry', 4601), table);
+  assert.equal(p1.ok, true);
+  assert.equal(p1.diagnostic.completenessAffecting, false);
+  assert.equal(p1.diagnostic.attribution, 'target-model');
+  const a = agg();
+  await a.addUnit('u1', outcomeWith([p1.diagnostic, p2.diagnostic]));
+  const snap = a.snapshot();
+  assert.equal(snap.total, 2);
+  assert.equal(snap.completenessAffectingCount, 0);
+  assert.equal(snap.completenessAffectingUpperBound, 0);
+  assert.deepEqual(snap.countsByReason, [{ scope: 'fragment', reason: 'fragment-null-geometry', count: 2 }]);
+  assert.equal(snap.diagnostics.length, 2);
+  // The ordinary fragment-not-loaded still counts.
+  const b = agg();
+  await b.addUnit('u1', outcomeWith([projectDiagnostic(raw('fragment-not-loaded', 9), table).diagnostic]));
+  assert.equal(b.snapshot().completenessAffectingUpperBound, 1);
+});

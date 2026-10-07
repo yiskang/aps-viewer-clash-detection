@@ -164,6 +164,11 @@ function modelIdOf(model) {
   return model && model.id !== undefined ? model.id : model;
 }
 
+// The Viewer's reserved "no geometry" id (`Autodesk.Viewing.Private.INVALID_GEOM_ID === 0` in the
+// pinned 7.124.2 build; GeometryList keeps index 0 reserved for it). Mirrored as a literal rather than
+// read from the runtime global -- this module never reads Viewer globals other than the injected THREE.
+const INVALID_GEOM_ID = 0;
+
 // extractAllFragments: a whole-model enumeration primitive -- a DIFFERENT walk shape from
 // extractFragments's per-dbId subtree walk above ("every live fragment this model holds," not a
 // parameterization of it, design spec §3.3). A new sibling export; extractFragments itself is
@@ -241,8 +246,20 @@ export async function extractAllFragments(model, loadEpoch, { checkpoint, THREE 
 
     // 1. Excluded from loading, or unloaded -- checked BEFORE any owner lookup at all, so this
     // diagnostic's dbId is always null (never resolved).
+    //
+    // Split by geometry id (owner-authorized bounded contract change, 2026-10-07; evidence and rule:
+    // docs/superpowers/specs/m2-extractAllFragments-viewer-evidence.md "OTG / SVF2: intentionally
+    // omitted null-geometry fragments"): under OTG the Viewer's own loader marks a fragment whose
+    // geometry id is INVALID_GEOM_ID (0) as MESH_NOTLOADED on purpose -- it has no geometry to load
+    // (e.g. a zero-length 2D-symbol line), so there is nothing a clash query could have tested. That
+    // case is reported as the INFORMATIONAL 'fragment-null-geometry' reason (carried, never silently
+    // dropped, but not completeness-affecting -- see collision/README.md "Diagnostics"). Every other
+    // not-loaded fragment (selective loading / dbId filter, mesh error, unload -- all of which keep a
+    // real non-zero geometry id) stays the ordinary, completeness-affecting 'fragment-not-loaded'.
+    // A still-streaming OTG fragment never reaches this branch: it is not flagged MESH_NOTLOADED.
     if (fragList.isNotLoaded(fragId)) {
-      pushDiagnostic('fragment-not-loaded', null, fragId);
+      if (fragList.getGeometryId(fragId) === INVALID_GEOM_ID) pushDiagnostic('fragment-null-geometry', null, fragId);
+      else pushDiagnostic('fragment-not-loaded', null, fragId);
       continue;
     }
 

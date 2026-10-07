@@ -1,7 +1,7 @@
 // test/clashtest/viewer/differential.test.mjs  (spec 6.2.1 "Conformance", AC-2: adapter == library extraction)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import '../../fixtures/mockInstanceTree.mjs'; // installs globalThis.THREE for the library functions (test-only)
+import { buildMockModel } from '../../fixtures/mockInstanceTree.mjs'; // also installs globalThis.THREE for the library functions (test-only)
 import { extractFragments, extractAllFragments } from '../../../collision/viewer/ViewerModelAdapter.js';
 import { digestPopulation, digestSubtree } from '../../../clashtest/planning/scopeDigest.js';
 import { createViewerElementEnumerator } from '../../../clashtest/viewer/ViewerElementEnumerator.js';
@@ -33,7 +33,7 @@ for (const [name, tree] of Object.entries(SHAPES)) {
     const { model } = rootedModel(tree, { fragmentCount: 6, notLoadedFragIds: [4], ownerDbIdOverrides: new Map([[5, undefined]]) });
     const fragList = model.getFragmentList();
     const { records, diagnostics } = await extractAllFragments(model, 0, { checkpoint: undefined, THREE: globalThis.THREE });
-    const dropped = new Map(diagnostics.map((d) => [d.fragment.fragId, d.reason === 'fragment-not-loaded' ? 'N' : 'U']));
+    const dropped = new Map(diagnostics.map((d) => [d.fragment.fragId, (d.reason === 'fragment-not-loaded' || d.reason === 'fragment-null-geometry') ? 'N' : 'U']));
     const rows = [];
     for (let f = 0; f < fragList.getCount(); f++) {
       if (dropped.has(f)) rows.push({ fragId: f, cls: dropped.get(f) });
@@ -50,4 +50,28 @@ test('differential: an explicit multi-root call agrees with the library called w
   const lib = await extractFragments(model, [10, 20], 0, { checkpoint: undefined, THREE: globalThis.THREE });
   const rr = await enumerator.resolveRoots(bindingOf('k', model), { dbIds: [10, 20] }, liveCtx().ctx);
   assert.equal(lib.size, rr.roots.reduce((n, r) => n + r.fragmentCount, 0));
+});
+
+// 2026-10-07 (owner-authorized): an unreachable not-loaded fragment with geometry id 0 is the library's informational
+// `fragment-null-geometry`; it is still population class N, so the differential population digest still agrees.
+test('differential: a null-geometry not-loaded fragment (library fragment-null-geometry) is population class N; digests agree', async () => {
+  const tree = [{ dbId: 10, fragments: [0, 1] }];
+  const { model: raw } = buildMockModel([{ dbId: 1, children: tree }],
+    new Map([[0, { geometryIndex: 5 }], [1, { geometryIndex: 6 }], [2, { geometryIndex: 0 }], [3, { geometryIndex: 8 }]]),
+    { fragmentCount: 4, notLoadedFragIds: [2, 3] });
+  const model = { ...raw, id: 'm1' };
+  const fragList = model.getFragmentList();
+  const { records, diagnostics } = await extractAllFragments(model, 0, { checkpoint: undefined, THREE: globalThis.THREE });
+  assert.deepEqual(diagnostics.map((d) => [d.fragment.fragId, d.reason]), [[2, 'fragment-null-geometry'], [3, 'fragment-not-loaded']]);
+  const dropped = new Map(diagnostics.map((d) => [d.fragment.fragId, (d.reason === 'fragment-not-loaded' || d.reason === 'fragment-null-geometry') ? 'N' : 'U']));
+  const rows = [];
+  for (let f = 0; f < fragList.getCount(); f++) {
+    if (dropped.has(f)) rows.push({ fragId: f, cls: dropped.get(f) });
+    else { const r = records.get(f); rows.push({ fragId: f, cls: 'L', ownerDbId: r.ownerDbId, geometryId: fragList.getGeometryId(f) }); }
+  }
+  const expected = await digestPopulation({ count: fragList.getCount(), records: rows });
+  const got = await enumerator.digestScope(bindingOf('k', model), 'whole', liveCtx().ctx);
+  assert.equal(got.digest, expected.digest);
+  const rr = await enumerator.resolveRoots(bindingOf('k', model), 'whole', liveCtx().ctx);
+  assert.deepEqual(rr.unreachable.unattributable, { notLoaded: 1, ownerUnresolvable: 0 }, 'only the real-geometry not-loaded fragment counts');
 });

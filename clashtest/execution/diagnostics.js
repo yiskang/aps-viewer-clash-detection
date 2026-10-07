@@ -51,12 +51,16 @@ function immutableSet(values) {
 }
 
 /**
- * The ONE completeness predicate (spec §12.3). `witness-unavailable` is the library's single
- * documented carve-out (README M2.1: the volume-overlap verdict is settled before witness capture).
- * EVERYTHING else — including every clearance reason and every reason this table does not know —
- * counts, because a future library diagnostic must default to "may be incomplete".
+ * The ONE completeness predicate (spec §12.3). Two documented library carve-outs, both INFORMATIONAL
+ * (carried in every diagnostics table/ledger, never counted as completeness-affecting):
+ *   - `witness-unavailable` (README M2.1: the volume-overlap verdict is settled before witness capture);
+ *   - `fragment-null-geometry` (owner-authorized, 2026-10-07: an OTG fragment the Viewer deliberately
+ *     never loads because its geometry id is INVALID_GEOM_ID — there is no geometry a query could test;
+ *     docs/superpowers/specs/m2-extractAllFragments-viewer-evidence.md, "OTG / SVF2" section).
+ * EVERYTHING else — including every clearance reason, `fragment-not-loaded`, and every reason this
+ * table does not know — counts, because a future library diagnostic must default to "may be incomplete".
  */
-export const NON_COMPLETENESS_AFFECTING_REASONS = immutableSet(['witness-unavailable']);
+export const NON_COMPLETENESS_AFFECTING_REASONS = immutableSet(['witness-unavailable', 'fragment-null-geometry']);
 
 /**
  * Informative, NOT normative (§12.3). Verified as `reason:` literals in `collision/` at the time of
@@ -64,7 +68,7 @@ export const NON_COMPLETENESS_AFFECTING_REASONS = immutableSet(['witness-unavail
  * is CONSCIOUSLY classified rather than silently defaulted.
  */
 export const KNOWN_DIAGNOSTIC_REASONS = immutableSet([
-  'fragment-not-loaded', 'fragment-owner-unresolvable', 'geometry-not-yet-available',
+  'fragment-not-loaded', 'fragment-null-geometry', 'fragment-owner-unresolvable', 'geometry-not-yet-available',
   'unsupported-geometry-layout', 'rejected-primitive-range', 'geometry-too-large-for-sync-build',
   'geometry-aspect-ratio-exceeds-tolerance-model', 'index-references-invalid-vertex',
   'crossing-budget-exhausted', 'inconclusive-crossing', 'inconclusive-containment',

@@ -1,5 +1,48 @@
 # Changelog
 
+## Soft (clearance) queries now measure SVF2 non-uniform fragment transforms (not yet tagged)
+
+**What was wrong.** SVF2 (OTG) normalizes every mesh to the `[-0.5, 0.5]³` unit cube and moves the
+element's dimensions into the fragment world matrix as per-axis scale. `mode: 'clearance'` accepted
+only rigid × positive-uniform-scale operands, so almost every SVF2 fragment (541/543 Structure,
+5432/5435 Architecture on the Audubon fixtures) was diagnosed `clearance-anisotropic-scale-unsupported`
+and an SVF2 Soft query returned 0 pairs.
+
+**What changed (owner-authorized, `docs/superpowers/specs/2026-10-07-svf2-nonuniform-fragment-clearance-design.md`).**
+Each clearance operand is now classified (`collision/query/ClearanceTransformClass.js`). Operands the
+legacy path supported are unchanged and **bit-identical** (golden baseline). An affine transform with
+mutually orthogonal columns and positive determinant is measured on a **clearance-private derived
+mesh** — the raw geometry prescaled by its per-axis scale and welded in world units, placed by the
+transform's rigid remainder — through the unchanged `clearanceQuery`
+(`collision/geometry/ClearanceDerivedGeometryCache.js`). The Hard-Clash exclusion precheck still runs on
+the canonical instances. Sheared and reflected transforms stay diagnosed unsupported.
+
+**What did not change.** Canonical mesh identity, `GeometryRegistry` entries, geometry digests,
+`getEpochGeometryEntries`, BLAS/TLAS caches, every Hard mode, the clearance distance definition and
+`(toleranceFloor, clearance]` window, `statistics` keys, diagnostic reason strings and
+`clashtest/`'s `KNOWN_DIAGNOSTIC_REASONS`. `clearanceQuery` itself is unchanged.
+
+**Additive surface.** `CollisionWorld#getEpochClearanceDerivedGeometryDiagnostics(epoch)` (read-only);
+`collision/constants.js` `maxClearanceDerivedGeometryBytesPerEpoch` (256 MiB, provisional);
+`compactAndWeld`'s optional `positionScale` (absent ⇒ byte-identical); the `clearance-distance-query`
+recorder event's `sourceTransformPath`/`targetTransformPath`. The meaning of
+`clearance-anisotropic-scale-unsupported` is narrowed to "outside the supported clearance transform
+class" (string, scope and dedup unchanged). The M3 fixture-15 tests were re-pointed at a sheared matrix;
+`scale(1,2,1)`-style cases now measure correctly.
+
+**Amendment — no-clearance-surface operands (owner-authorized, design §5.7).** A non-uniform operand
+whose canonical record has 0 triangles (SVF2 Audubon: 207 empty records + 5 two-vertex lines) is no
+longer reported `clearance-anisotropic-scale-unsupported`: it has no clearance surface, so the pair is a
+clean negative decided before the precheck with no diagnostic (legacy-SVF parity). Visible only through
+the accessor's new `noSurfaceOperands` counter and a recorder-only precheck not-run reason
+`no-clearance-surface-before-precheck`. A non-empty canonical whose derived mesh collapses to 0
+triangles is still diagnosed; uniform operands are unchanged.
+
+**Known limits.** Reflected (negative-determinant) fragments stay unsupported (owner decision O-1).
+The derived build re-reads raw Viewer geometry and relies on the same per-epoch geometry immutability
+the canonical registry already assumes. SVF and SVF2 geometry for the same element differ by ~1e-6
+(format-level float32 placement), so SVF2 Soft distances can differ from SVF ones at that level.
+
 ## Federated clash-test core engine — new `clashtest/` layer, additive (not yet tagged)
 
 **What was added.** `clashtest/` is a Viewer-independent core engine for saved clash tests and their

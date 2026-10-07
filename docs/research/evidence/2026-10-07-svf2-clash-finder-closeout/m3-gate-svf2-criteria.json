@@ -1,0 +1,87 @@
+{
+  "criteria": {
+    "a_derivedBuildAccounting": {
+      "pass": true,
+      "perWorld": {
+        "tlasWorld": {
+          "builds": 96,
+          "hits": 336,
+          "sharedWaits": 0,
+          "resolutions": 432,
+          "distinctKeysTouched": 96,
+          "buildsWithinKeys": true,
+          "identityHolds": true,
+          "exercised": true
+        },
+        "linearWorld": {
+          "builds": 96,
+          "hits": 336,
+          "sharedWaits": 0,
+          "resolutions": 432,
+          "distinctKeysTouched": 96,
+          "buildsWithinKeys": true,
+          "identityHolds": true,
+          "exercised": true
+        }
+      }
+    },
+    "b_peakDerivedBytesVsSvfCanonical": {
+      "pass": true,
+      "peakDerivedRetainedBytes": 365880,
+      "svfCanonicalRetainedBytes": 7595514,
+      "limitBytes": 9494392.5,
+      "ratio": 0.04817053855736426
+    },
+    "c_svf2WallTimeVsSvf": {
+      "pass": true,
+      "limitRatio": 2,
+      "provisional": true,
+      "perRun": {
+        "tlasCold": {
+          "svf2WallMs": 2852.5,
+          "svfWallMs": 2184.199999988079,
+          "ratio": 1.305970149260859
+        },
+        "tlasWarm": {
+          "svf2WallMs": 464.5,
+          "svfWallMs": 449.5,
+          "ratio": 1.0333704115684093
+        },
+        "linearCold": {
+          "svf2WallMs": 3044.300000011921,
+          "svfWallMs": 2245.400000035763,
+          "ratio": 1.3557940678558091
+        },
+        "linearWarm": {
+          "svf2WallMs": 424.5,
+          "svfWallMs": 442.19999998807907,
+          "ratio": 0.9599728629838168
+        }
+      }
+    },
+    "d_legacySvfWithinExistingThresholds": {
+      "pass": true,
+      "svfDisposition": "MEASURED",
+      "svfCriterion6Verdict": "GO — worst single-call span within frameBudgetMs",
+      "svfWorstSpanMs": 7.299999952316284
+    }
+  },
+  "allPass": true,
+  "results": {
+    "svf2Pairs": {
+      "tlasCold": 30,
+      "linearCold": 30
+    },
+    "svfPairs": {
+      "tlasCold": 30,
+      "linearCold": 30
+    },
+    "svf2Diagnostics": {
+      "fragment-null-geometry": 2,
+      "clearance-hard-clash-precheck-inconclusive": 288
+    },
+    "svfDiagnostics": {
+      "clearance-hard-clash-precheck-inconclusive": 461
+    }
+  }
+}

@@ -92,16 +92,34 @@ const SINGULAR_MATRIX = [
   0, 0, 0, 1,
 ];
 
-// A well-formed, FINITE, INVERTIBLE worldMatrix (translate(2.5,0,0) * scale(1,2,1)) that still
-// admits cleanly (isValidClearanceTransform, Task 8, checks only finiteness/invertibility) but is
-// NOT uniform scale -- validateUniformScale's own finer-grained gate (ClearanceTransform.js) rejects
-// it. World bounds are computed by hand to match this transform exactly (the box's own local -1..1
+// A well-formed, FINITE, INVERTIBLE worldMatrix (translate(2.5,0,0) * scale(1,2,1)). Until the SVF2
+// non-uniform fragment clearance design (docs/superpowers/specs/
+// 2026-10-07-svf2-nonuniform-fragment-clearance-design.md, §8 T0) it was diagnosed unsupported; an
+// axis-aligned anisotropic scale is now INSIDE the supported clearance class (measured on a derived,
+// prescaled mesh), so the tests below that pin the residual-unsupported diagnostic were re-pointed at
+// SHEARED_MATRIX, and each gained a sibling asserting this scale(1,2,1) case now measures correctly.
+// World bounds are computed by hand to match this transform exactly (the box's own local -1..1
 // extent on y is doubled by the scale(1,2,1) before translation), since this fixture's raw `matrix`
 // override bypasses the `at`-only translation the shared bounds helper assumes.
 const ANISOTROPIC_MATRIX = new THREE.Matrix4()
   .compose(new THREE.Vector3(2.5, 0, 0), new THREE.Quaternion(), new THREE.Vector3(1, 2, 1))
   .toArray();
 const ANISOTROPIC_BOUNDS = { min: [1.5, -2, -1], max: [3.5, 2, 1] };
+
+// A well-formed, FINITE, INVERTIBLE worldMatrix (translate(tx,0,0) * shear x += 0.25*y) that still
+// admits cleanly (isValidClearanceTransform checks only finiteness/invertibility) but lies OUTSIDE
+// the supported clearance transform class: its basis columns are non-orthogonal far beyond the 1e-4
+// gate, so ClearanceTransformClass classifies it 'unsupported'/'non-orthogonal' and the narrow phase
+// emits the (kept, meaning-narrowed) clearance-anisotropic-scale-unsupported diagnostic. Bounds by
+// hand: box(2,2,2)'s x extent widens by 0.25 * |y| <= 0.25 on each side.
+const shearedMatrix = (tx) => new THREE.Matrix4().set(
+  1, 0.25, 0, tx,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+).toArray();
+const SHEARED_MATRIX = shearedMatrix(2.5);
+const SHEARED_BOUNDS = { min: [1.25, -1, -1], max: [3.75, 1, 1] };
 
 // Fixture 17: non-finite/invalid transform -> clearance-invalid-transform diagnostic, pair excluded,
 // never silently dropped with zero diagnostics.
@@ -160,7 +178,7 @@ test('singular (non-invertible) worldMatrix -> clearance-invalid-transform diagn
 // `scope: 'pair'` with `sourceFragment`/`targetFragment` fields deduped per-fragment underneath --
 // codex-review caught that this hybrid silently dropped diagnostics for later pairs sharing an
 // already-diagnosed offending fragment, with attribution depending on candidate traversal order).
-test('a well-formed but non-uniformly-scaled worldMatrix -> clearance-anisotropic-scale-unsupported diagnostic', async () => {
+test('a well-formed but sheared (non-orthogonal) worldMatrix -> clearance-anisotropic-scale-unsupported diagnostic', async () => {
   const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
     rootNodesA: [{ dbId: 1, fragments: [100] }],
     fragSpecsA: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
@@ -168,7 +186,7 @@ test('a well-formed but non-uniformly-scaled worldMatrix -> clearance-anisotropi
     fragSpecsB: {
       200: {
         geometryIndex: 0, geometry: box(2, 2, 2), at: [2.5, 0, 0],
-        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS,
+        matrix: SHEARED_MATRIX, bounds: SHEARED_BOUNDS,
       },
     },
   });
@@ -190,6 +208,40 @@ test('a well-formed but non-uniformly-scaled worldMatrix -> clearance-anisotropi
   assert.equal(diag.fragment.fragId, 200);
 });
 
+// Sibling (SVF2 non-uniform clearance design §8 T0): the scale(1,2,1) target the test above used to
+// pin is now inside the supported class and is measured on its derived prescaled mesh -- world gap
+// 0.5 (target occupies x in [1.5, 3.5], source face at x = 1), no diagnostic.
+test('sibling: a well-formed scale(1,2,1) worldMatrix is now measured correctly (no diagnostic)', async () => {
+  const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [100] }],
+    fragSpecsA: { 100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] } },
+    rootNodesB: [{ dbId: 1, fragments: [200] }],
+    fragSpecsB: {
+      200: {
+        geometryIndex: 0, geometry: box(2, 2, 2), at: [2.5, 0, 0],
+        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS,
+      },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await world.admitModel(sourceModel);
+  await world.admitModel(targetModel);
+
+  const { pairs, statistics } = await world.findClashes({
+    source: { model: sourceModel, dbIds: [1] },
+    target: { targets: [{ model: targetModel }] },
+    mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'linear',
+  });
+
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].distance, 0.5);
+  assert.equal(pairs[0].witness.sourcePoint[0], 1);
+  assert.equal(pairs[0].witness.targetPoint[0], 1.5);
+  // (The whole-model mock target also reports its owner-less placeholder fragments as
+  // fragment-owner-unresolvable -- a fixture artifact unrelated to transforms.)
+  assert.deepEqual(statistics.diagnostics.filter((d) => d.reason !== 'fragment-owner-unresolvable'), []);
+});
+
 // Batch-2 review fix (Important #1, reviewer-reproduced bug, corrected shape after a codex-review
 // finding on this fix's own first draft): a single anisotropically-scaled fragment paired against N
 // targets used to emit N identical `clearance-anisotropic-scale-unsupported` diagnostics --
@@ -200,15 +252,15 @@ test('a well-formed but non-uniformly-scaled worldMatrix -> clearance-anisotropi
 // anisotropic transform on the SOURCE side (the sibling test above puts it on the target side) and
 // pairs it against TWO distinct, well-formed target fragments, both within clearance range -- proving
 // exactly one diagnostic survives, not two.
-test('one anisotropically-scaled source fragment paired against 2 targets -> exactly one deduped diagnostic', async () => {
+test('one sheared (unsupported) source fragment paired against 2 targets -> exactly one deduped diagnostic', async () => {
   const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
     rootNodesA: [{ dbId: 1, fragments: [100] }],
     fragSpecsA: {
-      // occupies x in [1.5, 3.5], y in [-2, 2], z in [-1, 1] (same ANISOTROPIC_MATRIX/BOUNDS pair the
-      // sibling test above uses, just on the source operand this time).
+      // occupies x in [1.25, 3.75], y in [-1, 1], z in [-1, 1] (same SHEARED_MATRIX/BOUNDS pair the
+      // test above uses, just on the source operand this time).
       100: {
         geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0],
-        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS,
+        matrix: SHEARED_MATRIX, bounds: SHEARED_BOUNDS,
       },
     },
     rootNodesB: [
@@ -216,8 +268,8 @@ test('one anisotropically-scaled source fragment paired against 2 targets -> exa
       { dbId: 3, fragments: [300] },
     ],
     fragSpecsB: {
-      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [6, 0, 0] }, // gap 1.5 from source's face at x=3.5
-      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [-2, 0, 0] }, // gap 2.5 from source's face at x=1.5
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [6, 0, 0] }, // AABB gap 1.25 from source's x=3.75
+      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [-2, 0, 0] }, // AABB gap 2.25 from source's x=1.25
     },
   });
   const world = await freshWorld(viewer, { now: frozenClock() });
@@ -230,7 +282,7 @@ test('one anisotropically-scaled source fragment paired against 2 targets -> exa
     mode: 'clearance', clearance: 3, groupBy: 'dbId', broadPhase: 'linear',
   });
 
-  assert.equal(pairs.length, 0, 'an anisotropic operand can never produce a hit');
+  assert.equal(pairs.length, 0, 'an unsupported (sheared) operand can never produce a hit');
   // Both candidate pairs genuinely reached narrow-phase evaluation (not skipped by broad phase) --
   // this is what proves the dedup below is collapsing TWO real diagnosed events into one, not just
   // reflecting that only one pair was ever evaluated.
@@ -242,10 +294,86 @@ test('one anisotropically-scaled source fragment paired against 2 targets -> exa
   assert.equal(anisotropicDiagnostics[0].fragment.fragId, 100);
 });
 
+// Sibling (design §8 T0): the same scene with the scale(1,2,1) source the test above used to pin --
+// both pairs are now measured (gaps 1.5 and 2.5 from the source's faces at x = 3.5 / 1.5), zero
+// diagnostics.
+test('sibling: one scale(1,2,1) source fragment paired against 2 targets -> both pairs measured, no diagnostic', async () => {
+  const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [100] }],
+    fragSpecsA: {
+      100: {
+        geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0],
+        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS,
+      },
+    },
+    rootNodesB: [
+      { dbId: 2, fragments: [200] },
+      { dbId: 3, fragments: [300] },
+    ],
+    fragSpecsB: {
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [6, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [-2, 0, 0] },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await world.admitModel(sourceModel);
+  await world.admitModel(targetModel);
+
+  const { pairs, statistics } = await world.findClashes({
+    source: { model: sourceModel, dbIds: [1] },
+    target: { targets: [{ model: targetModel }] },
+    mode: 'clearance', clearance: 3, groupBy: 'dbId', broadPhase: 'linear',
+  });
+
+  assert.equal(statistics.narrowPhasePairs, 2);
+  assert.deepEqual(pairs.map((p) => [p.target.dbId, p.distance]).sort((a, b) => a[0] - b[0]), [[2, 1.5], [3, 2.5]]);
+  assert.deepEqual(statistics.diagnostics.filter((d) => d.reason === 'clearance-anisotropic-scale-unsupported'), []);
+});
+
 // Mirror image of the test above (codex-review coverage gap #1): one anisotropically-scaled TARGET
 // fragment paired against TWO distinct SOURCE fragments -- proves the dedup/diagnosis logic is
 // genuinely symmetric between source and target, not an artifact of always checking source first.
-test('one anisotropically-scaled target fragment paired against 2 sources -> exactly one deduped diagnostic', async () => {
+test('one sheared (unsupported) target fragment paired against 2 sources -> exactly one deduped diagnostic', async () => {
+  const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
+    rootNodesA: [
+      { dbId: 10, fragments: [100] },
+      { dbId: 20, fragments: [101] },
+    ],
+    fragSpecsA: {
+      100: { geometryIndex: 0, geometry: box(2, 2, 2), at: [6, 0, 0] }, // AABB gap 1.25 from target's x=3.75
+      101: { geometryIndex: 1, geometry: box(2, 2, 2), at: [-2, 0, 0] }, // AABB gap 2.25 from target's x=1.25
+    },
+    rootNodesB: [{ dbId: 1, fragments: [200] }],
+    fragSpecsB: {
+      // occupies x in [1.25, 3.75], y in [-1, 1], z in [-1, 1] -- same SHEARED_MATRIX/BOUNDS pair,
+      // on the target operand this time.
+      200: {
+        geometryIndex: 2, geometry: box(2, 2, 2), at: [0, 0, 0],
+        matrix: SHEARED_MATRIX, bounds: SHEARED_BOUNDS,
+      },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await world.admitModel(sourceModel);
+  await world.admitModel(targetModel);
+
+  const { pairs, statistics } = await world.findClashes({
+    source: { model: sourceModel, dbIds: [10, 20] },
+    target: { targets: [{ model: targetModel }] },
+    mode: 'clearance', clearance: 3, groupBy: 'dbId', broadPhase: 'linear',
+  });
+
+  assert.equal(pairs.length, 0, 'an unsupported (sheared) operand can never produce a hit');
+  assert.equal(statistics.narrowPhasePairs, 2);
+  const anisotropicDiagnostics = statistics.diagnostics.filter((d) => d.reason === 'clearance-anisotropic-scale-unsupported');
+  assert.equal(anisotropicDiagnostics.length, 1, `expected exactly one deduped diagnostic, got ${anisotropicDiagnostics.length}`);
+  assert.equal(anisotropicDiagnostics[0].scope, 'fragment');
+  assert.equal(anisotropicDiagnostics[0].role, 'target');
+  assert.equal(anisotropicDiagnostics[0].fragment.fragId, 200);
+});
+
+// Sibling (design §8 T0): the mirror scene with the scale(1,2,1) target -- both pairs measured.
+test('sibling: one scale(1,2,1) target fragment paired against 2 sources -> both pairs measured, no diagnostic', async () => {
   const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
     rootNodesA: [
       { dbId: 10, fragments: [100] },
@@ -257,8 +385,6 @@ test('one anisotropically-scaled target fragment paired against 2 sources -> exa
     },
     rootNodesB: [{ dbId: 1, fragments: [200] }],
     fragSpecsB: {
-      // occupies x in [1.5, 3.5], y in [-2, 2], z in [-1, 1] -- same ANISOTROPIC_MATRIX/BOUNDS pair,
-      // on the target operand this time.
       200: {
         geometryIndex: 2, geometry: box(2, 2, 2), at: [0, 0, 0],
         matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS,
@@ -275,37 +401,31 @@ test('one anisotropically-scaled target fragment paired against 2 sources -> exa
     mode: 'clearance', clearance: 3, groupBy: 'dbId', broadPhase: 'linear',
   });
 
-  assert.equal(pairs.length, 0, 'an anisotropic operand can never produce a hit');
   assert.equal(statistics.narrowPhasePairs, 2);
-  const anisotropicDiagnostics = statistics.diagnostics.filter((d) => d.reason === 'clearance-anisotropic-scale-unsupported');
-  assert.equal(anisotropicDiagnostics.length, 1, `expected exactly one deduped diagnostic, got ${anisotropicDiagnostics.length}`);
-  assert.equal(anisotropicDiagnostics[0].scope, 'fragment');
-  assert.equal(anisotropicDiagnostics[0].role, 'target');
-  assert.equal(anisotropicDiagnostics[0].fragment.fragId, 200);
+  assert.deepEqual(pairs.map((p) => [p.source.dbId, p.distance]).sort((a, b) => a[0] - b[0]), [[10, 1.5], [20, 2.5]]);
+  assert.deepEqual(statistics.diagnostics.filter((d) => d.reason === 'clearance-anisotropic-scale-unsupported'), []);
 });
 
 // codex-review coverage gap #2: BOTH operands anisotropic in the same pair must produce TWO
 // diagnostics (one per offending fragment), never one -- each side is diagnosed independently, so
 // neither side's dedup check can suppress the other's.
-test('both source and target anisotropically-scaled in the same pair -> two distinct diagnostics', async () => {
+test('both source and target sheared (unsupported) in the same pair -> two distinct diagnostics', async () => {
   const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
     rootNodesA: [{ dbId: 1, fragments: [100] }],
     fragSpecsA: {
       100: {
         geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0],
-        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS, // occupies x in [1.5, 3.5]
+        matrix: SHEARED_MATRIX, bounds: SHEARED_BOUNDS, // occupies x in [1.25, 3.75]
       },
     },
     rootNodesB: [{ dbId: 1, fragments: [200] }],
     fragSpecsB: {
-      // A second, independently-anisotropic transform (translate(6,0,0) * scale(1,2,1)) so this
-      // target is ALSO non-uniformly-scaled, not merely near the source.
+      // A second, independently-sheared transform (translate(6,0,0) * shear) so this target is ALSO
+      // outside the supported class, not merely near the source.
       200: {
         geometryIndex: 1, geometry: box(2, 2, 2),
-        matrix: new THREE.Matrix4()
-          .compose(new THREE.Vector3(6, 0, 0), new THREE.Quaternion(), new THREE.Vector3(1, 2, 1))
-          .toArray(),
-        bounds: { min: [5, -2, -1], max: [7, 2, 1] }, // gap 1.5 from source's face at x=3.5
+        matrix: shearedMatrix(6),
+        bounds: { min: [4.75, -1, -1], max: [7.25, 1, 1] }, // AABB gap 1.0 from source's x=3.75
       },
     },
   });
@@ -329,6 +449,43 @@ test('both source and target anisotropically-scaled in the same pair -> two dist
   assert.ok(anisotropicDiagnostics.some((d) => d.role === 'target' && d.fragment.fragId === 200));
 });
 
+// Sibling (design §8 T0): both operands scale(1,2,1) -- both derived, the pair is measured (gap 1.5).
+test('sibling: both source and target scale(1,2,1) in the same pair -> measured, no diagnostic', async () => {
+  const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [100] }],
+    fragSpecsA: {
+      100: {
+        geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0],
+        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS, // occupies x in [1.5, 3.5]
+      },
+    },
+    rootNodesB: [{ dbId: 1, fragments: [200] }],
+    fragSpecsB: {
+      200: {
+        geometryIndex: 1, geometry: box(2, 2, 2),
+        matrix: new THREE.Matrix4()
+          .compose(new THREE.Vector3(6, 0, 0), new THREE.Quaternion(), new THREE.Vector3(1, 2, 1))
+          .toArray(),
+        bounds: { min: [5, -2, -1], max: [7, 2, 1] }, // gap 1.5 from source's face at x=3.5
+      },
+    },
+  });
+  const world = await freshWorld(viewer, { now: frozenClock() });
+  await world.admitModel(sourceModel);
+  await world.admitModel(targetModel);
+
+  const { pairs, statistics } = await world.findClashes({
+    source: { model: sourceModel, dbIds: [1] },
+    target: { targets: [{ model: targetModel }] },
+    mode: 'clearance', clearance: 3, groupBy: 'dbId', broadPhase: 'linear',
+  });
+
+  assert.equal(statistics.narrowPhasePairs, 1);
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].distance, 1.5);
+  assert.deepEqual(statistics.diagnostics.filter((d) => d.reason !== 'fragment-owner-unresolvable'), []);
+});
+
 // codex-review coverage gap #3: diagnostic completeness must hold regardless of candidate traversal
 // order -- under fragment-scoped dedup this is true by construction (each offending fragment is
 // diagnosed independently of pair order), but this proves it empirically under BOTH broadPhase:'linear'
@@ -339,7 +496,7 @@ test('anisotropic-scale diagnostic completeness holds under both broadPhase:"lin
     fragSpecsA: {
       100: {
         geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0],
-        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS,
+        matrix: SHEARED_MATRIX, bounds: SHEARED_BOUNDS,
       },
     },
     rootNodesB: [
@@ -365,6 +522,43 @@ test('anisotropic-scale diagnostic completeness holds under both broadPhase:"lin
     assert.equal(anisotropicDiagnostics.length, 1, `broadPhase:${broadPhase} expected exactly one diagnostic, got ${anisotropicDiagnostics.length}`);
     assert.equal(anisotropicDiagnostics[0].fragment.fragId, 100, `broadPhase:${broadPhase}`);
   }
+});
+
+// Sibling (design §8 T0): the same scene with the scale(1,2,1) source -- linear and TLAS agree on
+// the two measured pairs, zero diagnostics either way.
+test('sibling: scale(1,2,1) source measured identically under broadPhase:"linear" and broadPhase:"tlas"', async () => {
+  const { modelA: sourceModel, modelB: targetModel, viewer } = makeTwoModelFixture({
+    rootNodesA: [{ dbId: 1, fragments: [100] }],
+    fragSpecsA: {
+      100: {
+        geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0],
+        matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS,
+      },
+    },
+    rootNodesB: [
+      { dbId: 2, fragments: [200] },
+      { dbId: 3, fragments: [300] },
+    ],
+    fragSpecsB: {
+      200: { geometryIndex: 1, geometry: box(2, 2, 2), at: [6, 0, 0] },
+      300: { geometryIndex: 2, geometry: box(2, 2, 2), at: [-2, 0, 0] },
+    },
+  });
+  const results = {};
+  for (const broadPhase of ['linear', 'tlas']) {
+    const world = await freshWorld(viewer, { now: frozenClock() });
+    await world.admitModel(sourceModel);
+    await world.admitModel(targetModel);
+    const { pairs, statistics } = await world.findClashes({
+      source: { model: sourceModel, dbIds: [1] },
+      target: { targets: [{ model: targetModel }] },
+      mode: 'clearance', clearance: 3, groupBy: 'dbId', broadPhase,
+    });
+    assert.deepEqual(statistics.diagnostics.filter((d) => d.reason === 'clearance-anisotropic-scale-unsupported'), [], `broadPhase:${broadPhase}`);
+    results[broadPhase] = pairs.map((p) => [p.target.dbId, p.distance]).sort((a, b) => a[0] - b[0]);
+  }
+  assert.deepEqual(results.linear, [[2, 1.5], [3, 2.5]]);
+  assert.deepEqual(results.tlas, results.linear);
 });
 
 test('an invalid instance is never admitted into shared placement state for a clearance call', async () => {

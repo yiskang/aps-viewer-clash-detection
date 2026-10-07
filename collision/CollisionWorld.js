@@ -27,6 +27,10 @@ import { aabbMinDistance } from './geometry/AabbDistance.js';
 import { validateUniformScale, computeToleranceFloor } from './query/ClearanceTransform.js';
 import { clearanceQuery, computeClearanceAnchor } from './query/ClearanceQuery.js';
 import { classifyHardClashPrecheck } from './query/ClearanceHardClashPrecheck.js';
+import { classifyClearanceTransform } from './query/ClearanceTransformClass.js';
+import {
+  ClearanceDerivedGeometryCache, DerivedGeometryUnavailableError,
+} from './geometry/ClearanceDerivedGeometryCache.js';
 
 const supportedModes = ['surface-intersection', 'containment', 'volume-overlap', 'clearance'];
 
@@ -606,6 +610,16 @@ export class CollisionWorld {
     // constructor (bypassing fromViewer, as some lifecycle-only tests do) has no TLAS path
     // reachable, exactly like a registry-less world has no narrow phase reachable.
     this._tlasCache = null;
+    // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.2): the clearance-private derived
+    // ("prescaled") geometry cache. null until fromViewer constructs it -- same pattern as
+    // _registry/_tlasCache; never consulted by any Hard mode.
+    this._clearanceDerivedCache = null;
+    // Amendment (owner-authorized 2026-10-07; design §5.7): per-epoch observability counter of
+    // clearance operands short-circuited as 'no-surface' (canonical 0 triangles, non-uniform
+    // transform). World-owned -- not inside the derived cache -- so it also exists on a world built
+    // without one. Map<loadEpoch, number>; read only by getEpochClearanceDerivedGeometryDiagnostics;
+    // released on eviction, cleared on dispose, untouched by placement invalidation.
+    this._clearanceNoSurfaceOperandsByEpoch = new Map();
     this._viewer = null;  // set by fromViewer; only _resolveGeometryView reads it
     this._options = null; // set by fromViewer: { narrowPhase, indexOwnership }
     this._now = now;
@@ -699,6 +713,19 @@ export class CollisionWorld {
       },
       checkpointPort: tlasCheckpointPort,
     });
+    // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.2): own long-lived checkpoint port,
+    // mirroring the registry's -- a derived build is keyed (loadEpoch, geometryIndex, S) and holds
+    // no Model, so it is validated by the same epoch-only liveness predicate.
+    const derivedCheckpointPort = createRealCheckpointPort({
+      isDisposed: () => world._disposed,
+      isEpochLive: (loadEpoch) => world._isEpochLive(loadEpoch),
+      accumulator: createFrameBudgetAccumulator({ now: world._now }),
+      yieldToScheduler: world._yieldToScheduler,
+    });
+    world._clearanceDerivedCache = new ClearanceDerivedGeometryCache({
+      resolveGeometryView: (loadEpoch, geometryIndex) => world._resolveGeometryView(loadEpoch, geometryIndex),
+      checkpointPort: derivedCheckpointPort,
+    });
     return world;
   }
 
@@ -777,6 +804,11 @@ export class CollisionWorld {
     const revision = (this._placementRevisionByEpoch.get(epoch) ?? 0) + 1;
     this._placementRevisionByEpoch.set(epoch, revision);
     this._placementInvalidatedAtRevision.set(epoch, revision);
+    // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.2 step 7): placements changed, so
+    // detach the epoch's derived-geometry bucket NON-cancellingly (in-flight builds still resolve
+    // their waiters; a placement change never aborts a live query). Correctness never depends on
+    // this -- a changed scale is a different key -- it only bounds retention.
+    this._clearanceDerivedCache?.detachEpoch(epoch);
   }
 
   // Minimal, read-only diagnostic accessor (Task 24, performance-gate criteria 8/12) -- the same
@@ -819,6 +851,27 @@ export class CollisionWorld {
     };
   }
 
+  // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.4): read-only observability of the
+  // clearance-private derived-geometry cache -- exhaustive shape { readyEntries, buildingEntries,
+  // unsupportedEntries, builds, hits, sharedWaits, evictions, retainedPositionBytes,
+  // retainedIndexBytes, retainedBvhBytes, noSurfaceOperands } (cumulative counters per live epoch).
+  // `noSurfaceOperands` (amendment, owner-authorized 2026-10-07; design §5.7) counts clearance
+  // operands short-circuited as having no clearance surface (canonical record with 0 triangles under a
+  // non-uniform transform) -- one per such side per pair evaluation that reached that branch; the
+  // pairs themselves are clean negatives with NO diagnostic, so this counter is their only
+  // visibility. Same conventions as the three accessors above: throws WorldDisposedError once
+  // disposed; an all-zero default for an unknown epoch or a world with no cache wired (constructed
+  // directly rather than via fromViewer). getEpochGeometryDiagnostics's canonical shape is
+  // deliberately untouched.
+  getEpochClearanceDerivedGeometryDiagnostics(epoch) {
+    if (this._disposed) throw new WorldDisposedError();
+    const cacheDiagnostics = this._clearanceDerivedCache ? this._clearanceDerivedCache.getEpochDiagnostics(epoch) : {
+      readyEntries: 0, buildingEntries: 0, unsupportedEntries: 0, builds: 0, hits: 0, sharedWaits: 0, evictions: 0,
+      retainedPositionBytes: 0, retainedIndexBytes: 0, retainedBvhBytes: 0,
+    };
+    return { ...cacheDiagnostics, noSurfaceOperands: this._clearanceNoSurfaceOperandsByEpoch.get(epoch) ?? 0 };
+  }
+
   dispose() {
     // dispose() is NOT one of the two deliberate no-op-on-disposed exceptions (isLeaseValid,
     // evictModel are the only two — docs/...:3380-3391, 3462-3464, 3478-3481) — a second dispose()
@@ -845,10 +898,16 @@ export class CollisionWorld {
     this._placementByEpoch.clear();
     this._placementRevisionByEpoch.clear();
     this._placementInvalidatedAtRevision.clear();
+    this._clearanceNoSurfaceOperandsByEpoch.clear(); // amendment §5.7 counter
     try {
       this._tlasCache?.releaseAll?.();
     } catch {
       // dispose() is contractually non-throwing -- same defense-in-depth posture as _registry above.
+    }
+    try {
+      this._clearanceDerivedCache?.releaseAll(); // rejects in-flight derived builds with WorldDisposedError
+    } catch {
+      // Same non-throw posture as the two releases above.
     }
   }
 
@@ -989,6 +1048,14 @@ export class CollisionWorld {
     } catch {
       // Defense in depth, not a substitute for TlasCache's own non-throw contract.
     }
+    // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.2): the epoch's derived-geometry
+    // bucket, released on the same eviction boundary (in-flight builds reject with ModelEvictedError).
+    try {
+      this._clearanceDerivedCache?.releaseEpoch(epoch);
+    } catch {
+      // Same non-throw contract as the releases above.
+    }
+    this._clearanceNoSurfaceOperandsByEpoch.delete(epoch); // amendment §5.7 counter, same boundary
   }
 
   // Entry-order check for findClashes's single-distinct-model path (Tasks 19/20 originally called
@@ -1792,7 +1859,7 @@ export class CollisionWorld {
           hardClashExcludedKeys.add(key);
           continue;
         }
-        if (outcome.outcome !== 'hit') continue; // geometry-unavailable/anisotropic-scale/inconclusive/aborted/beyond-threshold
+        if (outcome.outcome !== 'hit') continue; // geometry-unavailable/anisotropic-scale/no-clearance-surface/inconclusive/aborted/beyond-threshold
         const existing = clearanceCandidateByKey.get(key);
         if (!existing || compareClearanceCandidates(outcome, existing) < 0) {
           clearanceCandidateByKey.set(key, outcome);
@@ -2302,8 +2369,9 @@ export class CollisionWorld {
    * precheck, and the exact clearance distance query. M3 Task 9.
    *
    * Returns `{ outcome, ... }`, never a bare boolean: `outcome` is one of
-   * `'geometry-unavailable' | 'anisotropic-scale' | 'hard-clash-excluded' | 'inconclusive' |
-   * 'aborted' | 'beyond-threshold' | 'hit'`. Only `'hit'` carries `{ distance, witness, sourcePlaced,
+   * `'geometry-unavailable' | 'anisotropic-scale' | 'no-clearance-surface' | 'hard-clash-excluded' |
+   * 'inconclusive' | 'aborted' | 'beyond-threshold' | 'hit'` ('no-clearance-surface': amendment
+   * 2026-10-07, design §5.7 -- a clean, conclusive negative with no diagnostic, like 'beyond-threshold'). Only `'hit'` carries `{ distance, witness, sourcePlaced,
    * targetPlaced, targetOperand }` -- `targetOperand` is threaded through here (Step 9's own
    * verification/reconciliation note) so the aggregation loop in `findClashes` can build the public
    * `target.model`/`target.modelId` from the SAME operand that produced the winning candidate,
@@ -2380,26 +2448,65 @@ export class CollisionWorld {
     const sourceInstance = toInstance(sourceRecord, sourcePlaced.worldMatrix);
     const targetInstance = toInstance(targetRecord, targetPlaced.worldMatrix);
 
-    const sourceScale = validateUniformScale(sourceInstance.matrix);
-    const targetScale = validateUniformScale(targetInstance.matrix);
-    if (!sourceScale.valid || !targetScale.valid) {
-      // Task 8 already excluded non-finite/singular transforms upstream; this is
-      // validateUniformScale's OWN, finer-grained gate (anisotropic scale) -- a
-      // well-formed-but-unsupported transform, caught here right before the composed query, not at
-      // admission time.
+    // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.1/§5.3): per-operand transform
+    // classification replaces the former bare validateUniformScale gate. 'uniform' is decided FIRST
+    // by that same validator (identical scaleFactor), so every operand M3 already supported keeps the
+    // byte-identical legacy path below. 'derived' (orthogonal columns, det > 0, e.g. every SVF2
+    // fragment) is measured on a clearance-private prescaled mesh placed by its rigid remainder,
+    // AFTER the precheck. A 'derived' side on a world with no derived cache wired (constructed
+    // directly rather than via fromViewer) keeps the pre-design "unsupported" outcome.
+    //
+    // Amendment (owner-authorized 2026-10-07; design §5.7): the canonical record's triangle count is
+    // passed so a NON-uniform operand with 0 canonical triangles classifies 'no-surface' before any
+    // anisotropic eligibility rule (a uniform one still takes the legacy path, decided first).
+    const sourceClass = classifyClearanceTransform(sourceInstance.matrix, sourceRecord.geometry.boundingBox, {
+      triangleCount: sourceRecord.geometry.index.count / 3,
+    });
+    const targetClass = classifyClearanceTransform(targetInstance.matrix, targetRecord.geometry.boundingBox, {
+      triangleCount: targetRecord.geometry.index.count / 3,
+    });
+    // 'no-surface' is not "unsupported": it never reaches the diagnostic branch below.
+    const supported = (c) => c.path === 'uniform' || c.path === 'no-surface'
+      || (c.path === 'derived' && this._clearanceDerivedCache !== null);
+    const sourceSupported = supported(sourceClass);
+    const targetSupported = supported(targetClass);
+    if (!sourceSupported || !targetSupported) {
+      // Task 8 already excluded non-finite/singular transforms upstream; this is the finer-grained
+      // transform-class gate -- a well-formed transform OUTSIDE the supported clearance class (shear
+      // beyond 1e-4, reflection -- owner decision O-1 --, or the float32 numeric domain), caught here
+      // right before the composed query, not at admission time. The reason string
+      // `clearance-anisotropic-scale-unsupported` is kept (owner decision O-3), its meaning narrowed.
       //
       // Batch-2 review fix (Important #1, corrected shape -- see diagnoseAnisotropicScaleOnce's own
-      // comment): a single anisotropically-scaled fragment paired against N targets must emit ONE
+      // comment): a single unsupported fragment paired against N targets must emit ONE
       // fragment-scoped diagnostic per offending fragment, not one pair-scoped diagnostic per pair --
-      // diagnose each OFFENDING side independently (never a side that is already uniformly-scaled).
-      if (!sourceScale.valid) {
+      // diagnose each OFFENDING side independently (never a side that is supported).
+      if (!sourceSupported) {
         diagnoseAnisotropicScaleOnce(statistics, anisotropicScaleDiagnosedFragments, sourcePlaced, 'source', sourceOperand);
       }
-      if (!targetScale.valid) {
+      if (!targetSupported) {
         diagnoseAnisotropicScaleOnce(statistics, anisotropicScaleDiagnosedFragments, targetPlaced, 'target', targetOperand);
       }
       reportPrecheckNotRun?.('anisotropic-scale-before-precheck');
       return { outcome: 'anisotropic-scale' };
+    }
+
+    // Amendment (owner-authorized 2026-10-07; design §5.7): an operand with NO clearance surface
+    // (canonical record with 0 triangles -- an empty position set, or e.g. a two-vertex line -- under a
+    // non-uniform transform) can be neither a Hard-Clash nor a clearance operand, so the pair is a
+    // conclusive negative decided here, BEFORE the precheck: no diagnostic (legacy-SVF parity: such
+    // fragments produce no hit and no diagnostic there), no precheck, no distance query, no derived
+    // build. Decided only after every genuinely unsupported side above was diagnosed, so a no-surface
+    // operand never masks an unsupported partner (that pair is counted there, not here). Visibility:
+    // the per-epoch `noSurfaceOperands` accessor counter (one per surface-less side) and a
+    // recorder-only precheck not-run event; no statistics key and no ClashDiagnostic reason is added.
+    // A non-empty canonical whose DERIVED mesh collapses to 0 triangles is NOT this case -- it stays
+    // diagnosed in _resolveClearanceDistanceOperand (design §5.6).
+    if (sourceClass.path === 'no-surface' || targetClass.path === 'no-surface') {
+      if (sourceClass.path === 'no-surface') this._recordNoSurfaceOperand(sourceOperand.epoch);
+      if (targetClass.path === 'no-surface') this._recordNoSurfaceOperand(targetOperand.epoch);
+      reportPrecheckNotRun?.('no-clearance-surface-before-precheck');
+      return { outcome: 'no-clearance-surface' };
     }
 
     const scheduler = createComposedStageScheduler(checkpoint, this._now);
@@ -2449,13 +2556,30 @@ export class CollisionWorld {
     }
     // precheck.status is 'proceed' or 'skip-precheck' -- continue to the distance query.
 
+    // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.3 steps 4-6): the DISTANCE operands.
+    // A 'uniform' side is its canonical instance (unchanged); a 'derived' side is resolved from the
+    // clearance-private derived cache only now, after the precheck said proceed/skip-precheck --
+    // derived meshes never feed volumeOverlapQuery. Failures map per design §5.6.
+    const sourceDistance = await this._resolveClearanceDistanceOperand(
+      sourceInstance, sourceClass, sourceRecord, sourcePlaced, 'source', sourceOperand, statistics,
+      oversizedDiagnosedFragments, anisotropicScaleDiagnosedFragments,
+    );
+    if (sourceDistance.outcome) return { outcome: sourceDistance.outcome };
+    const targetDistance = await this._resolveClearanceDistanceOperand(
+      targetInstance, targetClass, targetRecord, targetPlaced, 'target', targetOperand, statistics,
+      oversizedDiagnosedFragments, anisotropicScaleDiagnosedFragments,
+    );
+    if (targetDistance.outcome) return { outcome: targetDistance.outcome };
+    const sourceScale = { scaleFactor: sourceDistance.scaleFactor };
+    const targetScale = { scaleFactor: targetDistance.scaleFactor };
+
     const toleranceFloor = computeToleranceFloor(
-      { localDiagonal: sourceInstance.localDiagonal, scaleFactor: sourceScale.scaleFactor },
-      { localDiagonal: targetInstance.localDiagonal, scaleFactor: targetScale.scaleFactor },
+      { localDiagonal: sourceDistance.instance.localDiagonal, scaleFactor: sourceScale.scaleFactor },
+      { localDiagonal: targetDistance.instance.localDiagonal, scaleFactor: targetScale.scaleFactor },
       surfaceEpsilonFactor,
     );
     const distanceQueryStart = this._now();
-    const result = clearanceQuery(sourceInstance, targetInstance, { clearance, toleranceFloor });
+    const result = clearanceQuery(sourceDistance.instance, targetDistance.instance, { clearance, toleranceFloor });
     statistics.clearanceDistanceQueriesRun++;
     const distanceQueryMs = this._now() - distanceQueryStart;
     statistics.clearanceQueryMs += distanceQueryMs;
@@ -2474,10 +2598,13 @@ export class CollisionWorld {
         sourceEpoch: sourceOperand.epoch, sourceFragmentId: sourcePlaced.instance.fragmentId,
         targetEpoch: targetOperand.epoch, targetFragmentId: targetPlaced.instance.fragmentId,
         stage: 'clearance-distance-query', ms: distanceQueryMs,
-        sourceTriangles: sourceRecord.geometry.index.count / 3, targetTriangles: targetRecord.geometry.index.count / 3,
+        // Design 2026-10-07 §5.3 step 7: triangle counts of the instance actually TRAVERSED (the
+        // derived mesh for a 'derived' side), plus which path each side took. Recorder-only.
+        sourceTriangles: sourceDistance.triangles, targetTriangles: targetDistance.triangles,
         sourceComponents: sourceRecord.connectivity.componentCount, targetComponents: targetRecord.connectivity.componentCount,
         sourceScaleFactor: sourceScale.scaleFactor, targetScaleFactor: targetScale.scaleFactor, anchoredOnSource,
         requestedClearance: clearance, anchorLocalMaxThreshold,
+        sourceTransformPath: sourceDistance.path, targetTransformPath: targetDistance.path,
       };
       const outcome = result.aborted ? 'aborted' : !result.withinClearance ? 'beyond-threshold' : 'hit';
       reportDiagnosticEvent('clearance-distance-query', {
@@ -2497,6 +2624,68 @@ export class CollisionWorld {
     if (!result.withinClearance) return { outcome: 'beyond-threshold' };
     return {
       outcome: 'hit', distance: result.distance, witness: result.witness, sourcePlaced, targetPlaced, targetOperand,
+    };
+  }
+
+  // Amendment §5.7 counter. Only a live epoch is counted (an eviction racing the awaits above must not
+  // leave a counter behind for a dead epoch); synchronous, observability-only.
+  _recordNoSurfaceOperand(epoch) {
+    if (!this._modelByEpoch.has(epoch)) return;
+    this._clearanceNoSurfaceOperandsByEpoch.set(epoch, (this._clearanceNoSurfaceOperandsByEpoch.get(epoch) ?? 0) + 1);
+  }
+
+  /**
+   * SVF2 non-uniform fragment clearance (design 2026-10-07 §5.3 / §5.6): one operand's DISTANCE
+   * instance. Returns `{ instance, scaleFactor, triangles, path }` or `{ outcome }`.
+   *
+   *  - 'uniform': the canonical instance and the legacy validator's scaleFactor, unchanged.
+   *  - 'derived': `{geometry, bvh, localDiagonal}` of the clearance-private prescaled mesh, keyed
+   *    (loadEpoch, geometryIndex, exact S), placed by the classification's rigid [Q | t] (read from
+   *    THIS call's live placement); its scaleFactor (~1) comes from re-validating that rigid matrix.
+   *
+   * Failure mapping (design §5.6), all existing reason strings / dedup namespaces:
+   *  - RenderProxyUnavailableError / DerivedGeometryUnavailableError on the second Viewer read ->
+   *    fragment `geometry-not-yet-available` (diagnoseFragmentOnce), 'geometry-unavailable'.
+   *  - cached unsupported marker (non-finite prescaled coordinate) or a weld that left 0 triangles
+   *    -> fragment `clearance-anisotropic-scale-unsupported`, 'anisotropic-scale' (never a silent
+   *    "beyond threshold").
+   *  - anything else (ModelEvictedError/WorldDisposedError from eviction/dispose, builder bugs)
+   *    propagates and aborts the call -- the same policy as resolveGeometryRecord.
+   */
+  async _resolveClearanceDistanceOperand(
+    canonicalInstance, transformClass, record, placed, role, operand, statistics,
+    oversizedDiagnosedFragments, anisotropicScaleDiagnosedFragments,
+  ) {
+    if (transformClass.path === 'uniform') {
+      return {
+        instance: canonicalInstance, scaleFactor: transformClass.scaleFactor,
+        triangles: record.geometry.index.count / 3, path: 'uniform',
+      };
+    }
+    const identity = placed.instance.geometryIdentity;
+    let derived;
+    try {
+      derived = await this._clearanceDerivedCache.get({
+        loadEpoch: identity.loadEpoch,
+        geometryIndex: identity.geometryIndex,
+        scale: transformClass.scale,
+        ownerModelIdHint: modelIdOf(operand.model),
+      });
+    } catch (err) {
+      if (!(err instanceof RenderProxyUnavailableError) && !(err instanceof DerivedGeometryUnavailableError)) throw err;
+      diagnoseFragmentOnce(statistics, oversizedDiagnosedFragments, placed, role, 'geometry-not-yet-available', operand);
+      return { outcome: 'geometry-unavailable' };
+    }
+    if (derived.state !== 'ready' || derived.triangleCount === 0) {
+      diagnoseAnisotropicScaleOnce(statistics, anisotropicScaleDiagnosedFragments, placed, role, operand);
+      return { outcome: 'anisotropic-scale' };
+    }
+    const matrix = transformClass.rigid;
+    return {
+      instance: { geometry: derived.geometry, bvh: derived.bvh, localDiagonal: derived.localDiagonal, matrix },
+      scaleFactor: validateUniformScale(matrix).scaleFactor,
+      triangles: derived.triangleCount,
+      path: 'derived',
     };
   }
 
@@ -2676,6 +2865,9 @@ export class CollisionWorld {
     // the underlying placement data has changed underneath it. Releasing the cached entry forces
     // any subsequent getEntry for this epoch to rebuild from the freshly-published data.
     this._tlasCache?.releaseEntryForEpoch(epoch);
+    // SVF2 non-uniform fragment clearance (design 2026-10-07 §5.2 step 7): the freshly published
+    // placements may carry new scales -- detach (never cancel) the epoch's derived-geometry bucket.
+    this._clearanceDerivedCache?.detachEpoch(epoch);
     return { published: true };
   }
 

@@ -32,15 +32,29 @@ function makeFixture(rootNodes, fragSpecs) {
 }
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 
-// A well-formed, FINITE, INVERTIBLE worldMatrix (translate(2.5,0,0) * scale(1,2,1)) that still admits
-// cleanly at admission time but is NOT uniform scale -- validateUniformScale's own finer-grained gate
-// rejects it. Reused verbatim from test/CollisionWorld.clearanceAdmissionValidation.test.mjs's own
-// ANISOTROPIC_MATRIX/ANISOTROPIC_BOUNDS fixture (same box(2,2,2) source geometry, so the bounds by-hand
-// computation matches exactly).
+// A well-formed, FINITE, INVERTIBLE worldMatrix (translate(2.5,0,0) * scale(1,2,1)). Reused verbatim
+// from test/CollisionWorld.clearanceAdmissionValidation.test.mjs's own ANISOTROPIC_MATRIX/
+// ANISOTROPIC_BOUNDS fixture. Since the SVF2 non-uniform fragment clearance design
+// (docs/superpowers/specs/2026-10-07-svf2-nonuniform-fragment-clearance-design.md §8 T0) an
+// axis-aligned anisotropic scale is SUPPORTED (derived prescaled mesh), so the two
+// anisotropic-scale-before-precheck tests below were re-pointed at SHEARED_MATRIX (still outside the
+// supported class), each with a sibling asserting this scale(1,2,1) case now runs the precheck path.
 const ANISOTROPIC_MATRIX = new THREE.Matrix4()
   .compose(new THREE.Vector3(2.5, 0, 0), new THREE.Quaternion(), new THREE.Vector3(1, 2, 1))
   .toArray();
 const ANISOTROPIC_BOUNDS = { min: [1.5, -2, -1], max: [3.5, 2, 1] };
+
+// translate(2.5,0,0) * shear (x += 0.25*y): non-orthogonal far beyond the 1e-4 gate -> classified
+// 'unsupported'/'non-orthogonal' before the precheck. Bounds by hand for box(2,2,2). Its AABB
+// (x from 1.25) does not overlap the source box (x up to 1) -- if this transform ever reached
+// classifyHardClashPrecheck, the aabb-disjoint event would fire, which the tests below forbid.
+const SHEARED_MATRIX = new THREE.Matrix4().set(
+  1, 0.25, 0, 2.5,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+).toArray();
+const SHEARED_BOUNDS = { min: [1.25, -1, -1], max: [3.75, 1, 1] };
 
 test('a provably-disjoint AABB pair reports precheckNotRunReason: aabb-disjoint', async () => {
   const { model, viewer } = makeFixture(
@@ -90,12 +104,36 @@ test('a pair whose target render proxy never resolves reports precheckNotRunReas
 });
 
 // Task 1.5 fix round (Important finding #2): same gap for anisotropic-scale-before-precheck.
-// ANISOTROPIC_MATRIX/ANISOTROPIC_BOUNDS is a well-formed, finite, invertible transform that survives
-// admission-time validation but fails validateUniformScale's own finer-grained gate right before the
-// composed Hard-Clash precheck -- taking _runClearanceNarrowPhasePair's own early-out BEFORE
-// classifyHardClashPrecheck is ever reached (never the AABB-disjoint path, since the two operands'
-// bounds do overlap here).
-test('a non-uniformly-scaled target reports precheckNotRunReason: anisotropic-scale-before-precheck', async () => {
+// SHEARED_MATRIX/SHEARED_BOUNDS is a well-formed, finite, invertible transform that survives
+// admission-time validation but lies outside the supported clearance transform class right before
+// the composed Hard-Clash precheck -- taking _runClearanceNarrowPhasePair's own early-out BEFORE
+// classifyHardClashPrecheck is ever reached (never the AABB-disjoint path).
+test('a sheared (unsupported-transform) target reports precheckNotRunReason: anisotropic-scale-before-precheck', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 0, children: [{ dbId: 1, fragments: [101] }, { dbId: 2, fragments: [102] }] }],
+    {
+      101: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      102: { geometryIndex: 1, geometry: box(2, 2, 2), matrix: SHEARED_MATRIX, bounds: SHEARED_BOUNDS },
+    },
+  );
+  const events = [];
+  setDiagnosticEventRecorder((kind, payload) => events.push(payload));
+  try {
+    const world = await CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
+    await world.admitModel(model);
+    await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'linear' });
+    const precheckEvents = events.filter((p) => p.stage === 'not-run');
+    assert.ok(precheckEvents.some((p) => p.precheckNotRunReason === 'anisotropic-scale-before-precheck'));
+    assert.equal(precheckEvents.filter((p) => p.precheckNotRunReason === 'aabb-disjoint').length, 0);
+  } finally {
+    clearDiagnosticEventRecorder();
+  }
+});
+
+// Sibling (design §8 T0): the scale(1,2,1) target is now supported -- no
+// anisotropic-scale-before-precheck event; the pair reaches classifyHardClashPrecheck (its AABB is
+// disjoint from the source's, so aabb-disjoint fires) and the derived distance query (gap 0.5).
+test('sibling: a scale(1,2,1) target reaches the precheck (aabb-disjoint) and the derived distance query', async () => {
   const { model, viewer } = makeFixture(
     [{ dbId: 0, children: [{ dbId: 1, fragments: [101] }, { dbId: 2, fragments: [102] }] }],
     {
@@ -108,10 +146,15 @@ test('a non-uniformly-scaled target reports precheckNotRunReason: anisotropic-sc
   try {
     const world = await CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
     await world.admitModel(model);
-    await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'linear' });
+    const { pairs } = await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'linear' });
     const precheckEvents = events.filter((p) => p.stage === 'not-run');
-    assert.ok(precheckEvents.some((p) => p.precheckNotRunReason === 'anisotropic-scale-before-precheck'));
-    assert.equal(precheckEvents.filter((p) => p.precheckNotRunReason === 'aabb-disjoint').length, 0);
+    assert.equal(precheckEvents.filter((p) => p.precheckNotRunReason === 'anisotropic-scale-before-precheck').length, 0);
+    assert.ok(precheckEvents.some((p) => p.precheckNotRunReason === 'aabb-disjoint'));
+    const distanceEvents = events.filter((p) => p.stage === 'clearance-distance-query');
+    assert.equal(distanceEvents.length, 1);
+    assert.equal(distanceEvents[0].targetTransformPath, 'derived');
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0].distance, 0.5);
   } finally {
     clearDiagnosticEventRecorder();
   }
@@ -141,11 +184,29 @@ test('no recorder installed: anisotropic-scale-before-precheck skip point does n
     [{ dbId: 0, children: [{ dbId: 1, fragments: [101] }, { dbId: 2, fragments: [102] }] }],
     {
       101: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
-      102: { geometryIndex: 1, geometry: box(2, 2, 2), matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS },
+      102: { geometryIndex: 1, geometry: box(2, 2, 2), matrix: SHEARED_MATRIX, bounds: SHEARED_BOUNDS },
     },
   );
   const world = await CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
   await world.admitModel(model);
   const result = await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'linear' });
   assert.ok(Array.isArray(result.pairs));
+  assert.ok(result.statistics.diagnostics.some((d) => d.reason === 'clearance-anisotropic-scale-unsupported'), 'the skip point was genuinely taken');
+});
+
+// Sibling (design §8 T0): with no recorder, the scale(1,2,1) target is measured (no skip point).
+test('sibling: no recorder installed, a scale(1,2,1) target is measured (gap 0.5)', async () => {
+  const { model, viewer } = makeFixture(
+    [{ dbId: 0, children: [{ dbId: 1, fragments: [101] }, { dbId: 2, fragments: [102] }] }],
+    {
+      101: { geometryIndex: 0, geometry: box(2, 2, 2), at: [0, 0, 0] },
+      102: { geometryIndex: 1, geometry: box(2, 2, 2), matrix: ANISOTROPIC_MATRIX, bounds: ANISOTROPIC_BOUNDS },
+    },
+  );
+  const world = await CollisionWorld.fromViewer(viewer, { narrowPhase: 'three-mesh-bvh', indexOwnership: 'clone' });
+  await world.admitModel(model);
+  const result = await world.findClashes({ source: { model, dbIds: [1] }, target: { model, dbIds: [2] }, mode: 'clearance', clearance: 1, groupBy: 'dbId', broadPhase: 'linear' });
+  assert.equal(result.pairs.length, 1);
+  assert.equal(result.pairs[0].distance, 0.5);
+  assert.deepEqual(result.statistics.diagnostics, []);
 });

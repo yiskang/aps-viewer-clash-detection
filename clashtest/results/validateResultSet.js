@@ -18,6 +18,7 @@ import { isOpenPath, UNKNOWN_FIELD_BYTES, TYPES, EVIDENCE_BY_MODE, checkShapeAnd
 import { RUN_OPTION_CEILINGS, ENGINE_LIMIT_CEILINGS, SCHEMA_MAX_NODES } from '../options.js';
 import { CorruptResultSetError, ResultSetTooLargeError, UnsupportedSchemaVersionError } from '../errors.js';
 import { SCHEMA_VERSION, pairSetDigestInput, ledgerDigestInput, ENVIRONMENT_CAUSES } from './resultSet.js';
+import { isCompletenessAffecting } from '../execution/diagnostics.js'; // the ONE completeness predicate (P4)
 
 export { SCHEMA_VERSION };
 // §13.5: the closed `ResultSetSummary` shape for listings, co-located with the generic schema walk
@@ -679,9 +680,19 @@ function* checkCrossFieldSteps(set, add) {
       add('/diagnostics/completenessAffectingUpperBound', 'diagnostics-counts-inconsistent');
     }
 
+    // 2026-10-07 (owner-authorized `fragment-null-geometry` informational reason; codex-advisor finding during
+    // that change's design consult): fresh execution already re-derives each diagnostic's `completenessAffecting`
+    // from its reason (UnitExecutor.js's boundary validator), but read-back only summed the persisted boolean, so a
+    // retained row whose flag disagrees with the ONE predicate (an informational reason marked `true`, or an
+    // actionable one marked `false`) passed whenever its counters agreed. Re-derived here, per retained row.
     let retainedAffectingSum = 0;
+    let retainedIndex = 0;
     for (const d of diagnostics.diagnostics) {
       if (d.completenessAffecting === true) retainedAffectingSum += d.occurrences;
+      if (d.completenessAffecting !== isCompletenessAffecting(d.reason)) {
+        add(`/diagnostics/diagnostics/${retainedIndex}/completenessAffecting`, 'diagnostics-counts-inconsistent');
+      }
+      retainedIndex += 1;
       yield CROSS_STEP;
     }
     const retainedOk = diagnostics.truncated === true

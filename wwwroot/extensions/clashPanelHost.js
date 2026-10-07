@@ -4,15 +4,14 @@
 // with the Viewer element enumerator, the model-unload wiring and the read-only ModelCatalog, then the Panel
 // itself, and owns the teardown. See clashpanel/README.md ("Ports the host must supply").
 //
-// DEMO-INTERIM POLICY (OQ-1 is NOT closed; this does not satisfy G-VA-OQ1): modelKey = `${urn}#${loadSeq}`
+// INTERIM IDENTITY POLICY, used by the normal app and the demo alike (OQ-1 is NOT closed; this does not satisfy G-VA-OQ1): modelKey = `${urn}#${loadSeq}`
 // with a per-page counter that is never reused, plus a URN-derived modelVersion witness. Results are therefore
 // non-resumable across a reload, by design (panel spec 11.1 / OD-8). No measurementBasis is supplied
-// (omitted == unverified: Soft is unavailable for multi-model tests, Hard is unaffected).
+// (omitted == unverified: Soft needs a user-supplied basis for multi-model tests, spec §23; Hard is unaffected).
 import { CollisionWorld } from '../../collision/index.js';
 import { createClashTestEngine } from '../../clashtest/index.js';
 import { createViewerElementEnumerator, wireModelUnload } from '../../clashtest/viewer/index.js';
 import { createClashPanel } from '../../clashpanel/index.js';
-import { declaredDisplayNameFor, normalizeUrnKey } from './clashPanelNames.js';
 
 const DEFAULT_DEPS = Object.freeze({ CollisionWorld, createClashTestEngine, createViewerElementEnumerator, wireModelUnload, createClashPanel });
 
@@ -56,6 +55,51 @@ export function ensureRandomUUID(g = globalThis) {
   } catch { /* read-only crypto: nothing more we can do */ }
 }
 
+/** 'urn:abc' and 'abc' name the same model: loadModel() prepends 'urn:', model.getData().urn carries it. */
+export function normalizeUrnKey(urn) {
+  if (typeof urn !== 'string') return '';
+  const t = urn.trim();
+  return t.startsWith('urn:') ? t.slice(4) : t;
+}
+
+function cleanLabel(v) {
+  return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+}
+
+/** Strips one trailing file extension ("a.b.rvt" -> "a.b"); a leading-dot-only name is left alone. */
+function stripExtension(name) {
+  const stripped = name.replace(/\.[A-Za-z0-9]{1,8}$/, '');
+  return stripped !== '' ? stripped : name;
+}
+
+/**
+ * Metadata-driven display name, shared by the demo and the normal app. Priority:
+ *  (a) name of the nearest ancestor of loadOptions.bubbleNode whose data.role === 'viewable' (the source file,
+ *      e.g. "Audubon_Structure_clash_test.rvt"), trailing extension stripped;
+ *  (b) the bubbleNode's own name();
+ *  (c) optional host-supplied fixture fallback label;
+ *  (d) `Model <seq>`.
+ * Display only: identity is NEVER inferred from this name (see modelKey in createHostCatalog).
+ */
+export function resolveModelDisplayName(model, seq, { fallbackLabel = null } = {}) {
+  const bubble = safe(() => model.getData()?.loadOptions?.bubbleNode);
+  if (bubble) {
+    let node = safe(() => bubble.parent);
+    for (let i = 0; node && i < 64; i++) {
+      const role = safe(() => node.data?.role);
+      if (role === 'viewable') {
+        const n = cleanLabel(safe(() => node.name()));
+        if (n !== null) return stripExtension(n);
+        break;
+      }
+      node = safe(() => node.parent);
+    }
+    const own = cleanLabel(safe(() => bubble.name()));
+    if (own !== null) return own;
+  }
+  return cleanLabel(fallbackLabel) ?? `Model ${seq}`;
+}
+
 function readUrn(model) {
   const urn = safe(() => model.getData()?.urn);
   return typeof urn === 'string' && urn !== '' ? urn : null;
@@ -65,10 +109,10 @@ function readUrn(model) {
  * Read-only ModelCatalog (clashpanel/README.md). Registers each model it sees with the engine registry
  * (interim OQ-1 policy above). `loaded` == load complete AND object tree available.
  */
-export function createHostCatalog({ viewer, registry, events, nameForUrn = declaredDisplayNameFor, report = () => {} }) {
+export function createHostCatalog({ viewer, registry, events, fallbackLabel = null, report = () => {} }) {
   const keyByModel = new WeakMap();      // survives unload/unregister (README: keyOfModel)
   const urnByKey = new Map();            // strings only; survives unload (README: displayNameFor)
-  const fallbackNameByKey = new Map();
+  const nameByKey = new Map();           // display names resolved once at registration; survive unload
   const failedModels = new WeakSet();   // L3: a model whose registration threw is not retried (warn once)
   const subscribers = new Set();
   let loadSeq = 0;
@@ -76,9 +120,8 @@ export function createHostCatalog({ viewer, registry, events, nameForUrn = decla
 
   const safeReport = (stage, e) => { try { report(stage, e); } catch { /* host callback must not break the catalog */ } };
 
-  function deriveFallbackName(model, seq) {
-    const bubble = safe(() => model.getData()?.loadOptions?.bubbleNode?.name?.());
-    return typeof bubble === 'string' && bubble !== '' ? bubble : `Model ${seq}`;
+  function deriveName(model, seq) {
+    return resolveModelDisplayName(model, seq, { fallbackLabel });
   }
 
   function sync() {
@@ -89,6 +132,8 @@ export function createHostCatalog({ viewer, registry, events, nameForUrn = decla
       const urn = readUrn(model);
       if (urn === null) continue; // not identifiable yet; a later event/list() retries
       const seq = ++loadSeq;
+      // Identity: one key per loaded Model OBJECT (WeakMap below), never reused. The same URN loaded twice
+      // therefore gets two distinct keys; display names (which may collide) are never used as identity.
       const modelKey = `${urn}#${seq}`;
       const guid = safe(() => model.getData()?.loadOptions?.bubbleNode?.guid?.());
       const modelVersion = typeof guid === 'string' && guid !== '' ? `urn:${normalizeUrnKey(urn)}|guid:${guid}` : `urn:${normalizeUrnKey(urn)}`;
@@ -101,13 +146,13 @@ export function createHostCatalog({ viewer, registry, events, nameForUrn = decla
       }
       keyByModel.set(model, modelKey);
       urnByKey.set(modelKey, urn);
-      fallbackNameByKey.set(modelKey, deriveFallbackName(model, seq));
+      nameByKey.set(modelKey, deriveName(model, seq));
     }
   }
 
   function displayNameFor(modelKey) {
     if (!urnByKey.has(modelKey)) return null;
-    return nameForUrn(urnByKey.get(modelKey)) ?? fallbackNameByKey.get(modelKey) ?? null;
+    return nameByKey.get(modelKey) ?? null;
   }
 
   function list() {
@@ -115,9 +160,7 @@ export function createHostCatalog({ viewer, registry, events, nameForUrn = decla
     const models = safe(() => viewer.getAllModels(), []) ?? [];
     return models.map((model) => {
       const modelKey = keyByModel.get(model) ?? null;
-      const urn = readUrn(model);
-      const displayName = (modelKey !== null ? displayNameFor(modelKey) : null)
-        ?? (urn !== null ? nameForUrn(urn) : null) ?? deriveFallbackName(model, '?');
+      const displayName = (modelKey !== null ? displayNameFor(modelKey) : null) ?? deriveName(model, '?');
       const loaded = safe(() => model.isLoadDone() === true, false) && !!safe(() => model.getInstanceTree());
       return { modelKey, displayName, model, loaded };
     });

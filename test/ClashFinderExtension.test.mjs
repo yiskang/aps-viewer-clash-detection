@@ -1333,5 +1333,36 @@ check('EXTENSION_ID is distinct from RoomLocatorExtension.EXTENSION_ID', EXTENSI
     warnedWith === diagnostics, true);
 }
 
+// === owner-authorized (2026-10-07): the informational {scope:'fragment', reason:'fragment-null-geometry'}
+// diagnostic (an OTG fragment the Viewer deliberately never loads -- no geometry) is carried but never
+// drives the caveat; the ordinary fragment-not-loaded still does. Both Hard and Soft Clash actions. =======
+for (const [title, label] of [['Find Clashes', 'Hard'], ['Find Soft Clashes', 'Soft']]) {
+  const run = async (diagnostics) => {
+    const { ext, viewer, world } = extensionWithFakeWorld();
+    const modelA = makeMockModel(1);
+    viewer.getAggregateSelection = () => [{ model: modelA, selection: [1] }];
+    viewer.getAllModels = () => [modelA];
+    viewer.isolate = () => {}; viewer.fitToView = () => {};
+    world.findClashes = async () => ({ pairs: [], statistics: { diagnostics } });
+    let notified = '';
+    ext._notifyUser = (message) => { notified = message; };
+    const menu = [];
+    ext.onContextMenu(menu, { hasSelected: true });
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try { await menu.find((m) => m.title === title).target(); } finally { console.warn = originalWarn; }
+    return notified;
+  };
+  const nullGeom = (fragId) => ({ scope: 'fragment', reason: 'fragment-null-geometry', role: 'target', fragment: { modelId: 1, dbId: null, fragId } });
+  check(`${label}: fragment-null-geometry-ONLY diagnostics report exactly "No clashes found."`,
+    await run([nullGeom(4600), nullGeom(4601)]), 'No clashes found.');
+  const mixed = await run([nullGeom(4600),
+    { scope: 'fragment', reason: 'fragment-not-loaded', role: 'target', fragment: { modelId: 1, dbId: null, fragId: 9 } }]);
+  check(`${label}: an ordinary fragment-not-loaded still produces the caveat`, /may be incomplete — 1 diagnostic\(s\): fragment-not-loaded\.$/.test(mixed), true);
+  check(`${label}: the caveat does not enumerate fragment-null-geometry`, /fragment-null-geometry/.test(mixed), false);
+}
+check('the partition matches the full shape: a pair-scoped fragment-null-geometry is NOT carved out',
+  ClashFinderExtension.isCompletenessAffecting({ scope: 'pair', reason: 'fragment-null-geometry' }), true);
+
 console.log(`\n  ${passes} passed, ${failures} failed`);
 if (failures) process.exitCode = 1;

@@ -317,7 +317,7 @@ const MEASURE_ADAPTER = async ({ which, explicit, sampleEachEnd }) => {
   }
   try {
     const { records, diagnostics } = await extractAllFragments(model, 0, { checkpoint: undefined, THREE });
-    const dropped = new Map(diagnostics.map((d) => [d.fragment.fragId, d.reason === 'fragment-not-loaded' ? 'N' : 'U']));
+    const dropped = new Map(diagnostics.map((d) => [d.fragment.fragId, (d.reason === 'fragment-not-loaded' || d.reason === 'fragment-null-geometry') ? 'N' : 'U']));
     const rows = [];
     let libOwnerDiffersFromFragList = 0;
     for (let f = 0; f < fragList.getCount(); f++) {
