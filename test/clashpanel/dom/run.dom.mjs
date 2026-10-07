@@ -28,11 +28,19 @@ test('run: progress bar exposes aria values; indeterminate when fraction is null
       line: document.querySelector('.clash-progress').textContent,
     };
   });
-  assert.deepEqual(r, { role: 'progressbar(implicit)', now: '42', min: '0', max: '100', text: '42%', value: 0.42, line: ' 42% units 8/19 found 37 caveats 2 0:12' });
+  // Option E (2026-10-07): the percentage is labelled as what it measures — the share of work units settled —
+  // instead of a bare `42%` (previously the pair-space fraction). This assertion was about the old presentation.
+  assert.deepEqual(r, { role: 'progressbar(implicit)', now: '42', min: '0', max: '100', text: '42% of units processed', value: 0.42, line: ' 42% of units · units 8/19 found 37 caveats 2 0:12' });
   assert.doesNotMatch(r.line, /ETA|remaining|left/i);
   await rerender(page, runVm({ state: 'planning', canRun: false, canStop: true, progress: { ...progress, fraction: null } }));
   const ind = await page.evaluate(() => ({ now: document.querySelector('progress').getAttribute('aria-valuenow'), hasValue: document.querySelector('progress').hasAttribute('value') }));
   assert.deepEqual(ind, { now: null, hasValue: false });
+}));
+
+test('run (Option E): when units failed or were skipped, the counter says so next to the units %', () => withPage(async ({ page }) => {
+  const progress = { fraction: 0.8, unitsEvaluated: 6, unitsFailedOrSkipped: 2, unitsTotal: 10, resultsFound: 3, caveatCount: 0, elapsedText: '0:05' };
+  await mountRenderer(page, ...RUN, runVm({ state: 'running', canRun: false, canStop: true, progress, headline: 'Running' }));
+  assert.equal(await page.textContent('.clash-progress'), ' 80% of units · units 6/10 (2 not evaluated) found 3 caveats 0 0:05');
 }));
 
 test('run: totals, badges, banners with details, state labels for done kinds', () => withPage(async ({ page }) => {

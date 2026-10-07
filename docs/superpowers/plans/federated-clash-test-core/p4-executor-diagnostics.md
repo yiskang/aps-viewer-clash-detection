@@ -58,7 +58,7 @@ Every exported name P4 produces. Other phases consume exactly these; internal he
 | `projectStatistics(raw)` | `(unknown) => {ok: true, statistics: Record<string,number>} \| {ok: false, issue: Issue}` | Closed numeric schema (§12.6). |
 | `deriveUnitTaints(diagnostics, opts)` | `(ProjectedDiagnostic[], {maxElementTaintsPerUnit, admit}) => {taints: TaintEntry[], overflowed: boolean}` | The exact per-unit taint table of §12.2.1, before any de-duplication. `admit(n) => boolean` is the ledger-budget oracle **injected by P6 from P3's `createRecordBudget(limits)` / `createLedger({limits, budget})`** (reconciliation row N9): P6 passes a closure asking the run's live ledger whether `n` more records fit, so P4 never owns budget state and P3 never learns about diagnostics. Omitted ⇒ defaults to `() => true` (what P4's own unit tests use). |
 | `TAINT_OVERFLOW_REASON` | `'taint-overflow'` | Reserved unit-taint reason the collapse uses (§12.2.1). |
-| `createDiagnosticAggregator(opts)` | `({maxRetainedDiagnostics, maxDistinctReasons, maxUnitIdsPerDiagnostic, slicer}) => DiagnosticAggregator` | Cross-unit de-duplication and exact accounting (§12.4). **`addUnit` is asynchronous; `snapshot()` is synchronous.** |
+| `createDiagnosticAggregator(opts)` | `({maxRetainedDiagnostics, maxDistinctReasons, maxUnitIdsPerDiagnostic, slicer}) => DiagnosticAggregator` | Cross-unit de-duplication and exact accounting (§12.4). **`addUnit` is asynchronous; `snapshot()` is synchronous.** **Amendment 2026-10-07 (owner-authorized Option D; see N20):** the aggregator also exposes synchronous `counters() → {total, completenessAffectingCount, unclassifiedOccurrences}` — exact running totals, O(`maxDistinctReasons`), no sort/copy of the retained set, same Σ-invariant check as `snapshot()`; P6 reads it for per-unit progress and calls `snapshot()` once at seal. |
 | `createStatisticsAccumulator()` | `() => {add(statistics, durationMs), snapshot()}` | §12.6 passthrough: per-key sums plus `libraryMsTotal` / `maxUnitMs`. **Both methods synchronous.** |
 
 ```text
@@ -92,7 +92,7 @@ DiagnosticsSummary = {
 |---|---|
 | `projectDiagnostics(raw, {table, limits, slicer})`, `aggregator.addUnit(unitId, outcome)` | `isCompletenessAffecting`, `attributionOf`, `createUnitBindingTable`, `projectDiagnostic`, `projectStatistics`, `deriveUnitTaints`, `aggregator.snapshot()`, `createStatisticsAccumulator()` and both its methods |
 
-No signature in this table may change without a reconciliation-register update: P6 awaits exactly `addUnit`, and P5 reads exactly `snapshot()`'s result.
+No signature in this table may change without a reconciliation-register update: P6 awaits exactly `addUnit`, reads `counters()` per unit (added 2026-10-07, N20 amendment) and P5 reads exactly `snapshot()`'s result.
 
 ### `clashtest/execution/LocalUnitExecutor.js` — the reference executor (§7.2, §7.4, §7.5)
 

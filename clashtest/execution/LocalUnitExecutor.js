@@ -378,13 +378,43 @@ export function createLocalUnitExecutor({ world, registry, enumerator, now, yiel
   // `enumerator.digestScope`. `checkpoint()` is the enumeration context's own method (row N6), not a
   // slicer method; the executor's only obligation is to give the enumerator a way to cooperate with
   // the scheduler.
-  const ctx = { checkpoint: () => yieldToScheduler() };
+  //
+  // Option A (owner-authorized 2026-10-07; docs/research/2026-10-07-architecture-self-clash-real-model-profile.md
+  // §7): the checkpoint is TIME-SLICED against `sliceBudgetMs` through the P0 slicer, exactly as the
+  // planning-time `enumerationCheckpoint` (run/Run.js) already is. It used to yield on EVERY call, and
+  // in the browser every such yield is a nested `setTimeout(0)` clamped to >= 4 ms: 2,854 calls per
+  // Architecture self-clash unit cost ~14 s of pure scheduler waiting for ~0.15 s of digest work.
+  //   - One slice account per unit (`createUnitCheckpoint` runs inside `execute`), spanning the
+  //     pre-bracket, the library call and the post-bracket -- never reset in between, so a long
+  //     library call makes the next post-bracket checkpoint due at once.
+  //   - The FIRST checkpoint of every unit still yields unconditionally, as it did before (the first
+  //     unit of a run gets no interUnitYield; this keeps one guaranteed in-unit yield per unit).
+  //   - `checkEvery: 1`: every call is already a coarse cadence point (the adapter calls it every
+  //     CHECK_EVERY items), so the clock is read on every call and a yield is never late by more than
+  //     one checkpoint interval -- "at least once per slice" (spec §6.2).
+  //   - The not-due path returns `undefined` synchronously (viewer/checkpoint.js "Item D" convention).
+  // Nothing else changes: which scopes are digested, the digest bytes, the bracket comparison, the
+  // settlement order, and cancellation (still observed only at the unit boundary, Run.js §10.1 --
+  // this checkpoint never observed cancel and still does not).
+  const createUnitCheckpoint = () => {
+    const slicer = createSlicer({ now, yieldToScheduler, sliceBudgetMs, checkEvery: 1 });
+    let first = true;
+    return () => {
+      if (first) {
+        first = false;
+        return slicer.yieldNow('unit-checkpoint');
+      }
+      return slicer.tick('unit-checkpoint');
+    };
+  };
 
   return async function execute(request) {
     const requestCheck = validateExecutionRequest(request);
     // The canonical failed:internal-error shell is the EXPORTED one (P4.5) -- the executor does not
     // hand-build a second one, exactly as P6 does not (row N8).
     if (!requestCheck.ok) return internalErrorOutcome(request, requestCheck.issues);
+
+    const ctx = { checkpoint: createUnitCheckpoint() };
 
     const startedAt = now();
     const resolved = resolveUnitBindings(request, registry);

@@ -1,0 +1,148 @@
+--- a/clashtest/execution/LocalUnitExecutor.js
++++ b/clashtest/execution/LocalUnitExecutor.js
+@@ -414,9 +414,30 @@
+     // hand-build a second one, exactly as P6 does not (row N8).
+     if (!requestCheck.ok) return internalErrorOutcome(request, requestCheck.issues);
+ 
+-    const ctx = { checkpoint: createUnitCheckpoint() };
++    const ctx = { checkpoint: (() => { const __cp = createUnitCheckpoint(); return () => {
++      const P = globalThis.__CLASH_PROFILE; // PROFILE (gated; absent => original behaviour)
++      if (!P) return __cp();
++      const t0 = performance.now();
++      const p = __cp();
++      P.cpTotal = (P.cpTotal || 0) + 1; if (P.cur) P.cur.cpCalls = (P.cur.cpCalls || 0) + 1;
++      if (!p) return p;
++      P.yieldTotal++; if (P.cur) P.cur.yields++;
++      if (P.lite) return p;
++      const U = P.cur;
++      return p.then(() => {
++        const d = performance.now() - t0; P.yieldSum += d; if (U) U.yieldMs += d;
++        if (P.lat.length < P.latCap) P.lat.push(d);
++      });
++    }; })() };
+ 
+     const startedAt = now();
++    const __P = globalThis.__CLASH_PROFILE; // PROFILE
++    const __U = __P ? { unitId: request?.unit?.unitId ?? null, tStart: performance.now(),
++      srcRoots: request?.materialized?.sourceDbIds?.length ?? null,
++      targets: (request?.materialized?.targets ?? []).map((t) => (t.scope === 'whole' ? 'whole' : (t.dbIds?.length ?? null))),
++      scopeExpect: (request?.materialized?.scopeExpect ?? []).map((e) => (e?.scope === 'whole' ? 'whole' : (e?.roots?.length ?? null))),
++      yields: 0, cpCalls: 0, yieldMs: 0, digests: [] } : null;
++    if (__P) { __P.cur = __U; __P.units.push(__U); }
+     const resolved = resolveUnitBindings(request, registry);
+     const participantKeys = request.snapshot.map((s) => s.modelKey).sort();
+     const generationsStart = readGenerations(request, registry, resolved);
+@@ -466,7 +487,9 @@
+     const preBindings = new Map(resolved.byKey);
+     for (const modelKey of unheld) preBindings.set(modelKey, null);
+ 
++    const __pre0 = performance.now(); const __preY = __U ? __U.yields : 0; const __preC = __U ? __U.cpCalls : 0; // PROFILE
+     const pre = await bracket(preBindings);
++    if (__U) { __U.preMs = performance.now() - __pre0; __U.preYields = __U.yields - __preY; __U.preCp = __U.cpCalls - __preC; __U.preProof = pre.proof; }
+     // Table A order, strictly: U5 `scope-drift` (5) > U6 `model-evicted` (6) > U7 `scope-unverifiable` (7).
+     if (pre.proof === 'drift') return finish('skipped', 'drift', { code: 'scope-drift', modelKeys: pre.modelKeys, retryable: false });
+ 
+@@ -489,7 +512,19 @@
+     let result = null;
+     let thrown = null;
+     try {
+-      result = await world.findClashes(buildFindClashesQuery(request, resolved));
++      const __f0 = performance.now(); // PROFILE
++      try {
++        result = await world.findClashes(buildFindClashesQuery(request, resolved));
++      } finally {
++        if (__U) {
++          __U.callMs = performance.now() - __f0;
++          const s = result?.statistics;
++          if (s) __U.lib = { broadPhasePairs: s.broadPhasePairs, narrowPhasePairs: s.narrowPhasePairs, broadPhaseMs: s.broadPhaseMs,
++            narrowPhaseMs: s.narrowPhaseMs, totalMs: s.totalMs, tlasBuildMs: s.tlasBuildMs, tlasQueryMs: s.tlasQueryMs,
++            tlasPrimitiveCandidatePairs: s.tlasPrimitiveCandidatePairs, diagnostics: Array.isArray(s.diagnostics) ? s.diagnostics.length : null,
++            pairs: Array.isArray(result?.pairs) ? result.pairs.length : null };
++        }
++      }
+     } catch (error) {
+       thrown = error;
+     }
+@@ -502,7 +537,9 @@
+     // with: a participant evicted or re-registered during the call is `null` here and therefore
+     // `unverifiable`, never `equal` (see `bindingsStillHeld`, §16.3 item 1).
+     const preBracketStillHeld = bindingsStillHeld(resolved, registry, world);
++    const __po0 = performance.now(); const __poY = __U ? __U.yields : 0; const __poC = __U ? __U.cpCalls : 0; // PROFILE
+     let post = await bracket(preBracketStillHeld);
++    if (__U) { __U.postMs = performance.now() - __po0; __U.postYields = __U.yields - __poY; __U.postCp = __U.cpCalls - __poC; __U.postProof = post.proof; }
+ 
+     // FIX (H1.4, adjudicated + owner-authorized remediation 2026-09-22, no schema change): the map
+     // above is a SYNCHRONOUS snapshot taken as `bracket(...)`'s argument, but `bracket(...)` is itself
+@@ -600,6 +637,7 @@
+       if (!projectedDiagnostics.ok) return internalErrorOutcome(request, [projectedDiagnostics.issue]);
+       if (!statistics.ok) return internalErrorOutcome(request, [statistics.issue]);
+ 
++      if (__U) { __U.outcome = 'evaluated'; __U.outPairs = projectedPairs.pairs.length; __U.outDiags = projectedDiagnostics.diagnostics.length; __U.tEnd = performance.now(); } // PROFILE
+       return finish('evaluated', 'equal', null, {
+         generationsEnd,
+         pairs: projectedPairs.pairs,
+--- a/clashtest/planning/scopeDigest.js
++++ b/clashtest/planning/scopeDigest.js
+@@ -220,7 +220,11 @@
+     if (binding === null || scope === null) { unverifiable.add(entry?.modelKey); continue; }
+     let observed = null;
+     try {
++      const __P = globalThis.__CLASH_PROFILE; const __U = __P && !__P.lite ? __P.cur : null; // PROFILE
++      const __d0 = performance.now(); const __dY = __U ? __U.yields : 0;
+       observed = await enumerator.digestScope(binding, scope, ctx);
++      if (__U) __U.digests.push({ kind: entry.scope === 'whole' ? 'whole' : 'roots', roots: entry.scope === 'whole' ? null : (entry.roots?.length ?? null),
++        ms: performance.now() - __d0, yields: __U.yields - __dY });
+     } catch (e) {
+       if (e && e.name === 'EnumerationCancelledError') throw e; // cancellation is never a proof
+       unverifiable.add(entry.modelKey); continue;
+--- a/clashtest/run/Run.js
++++ b/clashtest/run/Run.js
+@@ -516,7 +516,7 @@
+   const queue = [...run.plan.units];                      // leaf work list, grows on a split
+   let first = true;
+   while (queue.length > 0) {
+-    if (!first) await run.interUnitYield();               // §7.3: animation-frame-aligned or macrotask
++    if (!first) { const __i0 = performance.now(); await run.interUnitYield(); globalThis.__CLASH_PROFILE?.interUnit.push(performance.now() - __i0); } // §7.3 (PROFILE timed)
+     first = false;
+ 
+     // --- BOUNDARY: collect facts from committed state BEFORE choosing anything (§16.7) ---
+@@ -524,12 +524,19 @@
+     const boundaryStatus = resolveRunStatus(boundary);
+     if (boundaryStatus !== null && boundaryStatus !== 'completed') {
+       run.markRemainingNotRun(queue, boundaryStatus === 'cancelled' ? 'cancelled' : 'run-failed');
+-      return run.sealAs(boundaryStatus);
++      { const __P = globalThis.__CLASH_PROFILE; // PROFILE
++        if (__P) __P.sealStart = { t: performance.now(), status: boundaryStatus, queueLeft: queue.length };
++        const __sr = run.sealAs(boundaryStatus);
++        if (__P) Promise.resolve(__sr).then(() => { __P.sealEnd = performance.now(); }, () => { __P.sealEnd = performance.now(); });
++        return __sr; }
+     }
+ 
+     const unit = queue.shift();
+     run.pending.currentUnitId = unit.unitId;
++    const __r0 = performance.now(); // PROFILE
+     const result = await runUnitWithRetries(run, unit);
++    globalThis.__CLASH_PROFILE?.runUnits.push({ unitId: unit.unitId, t0: __r0, t1: performance.now(),
++      pairSpaceProcessed: run.pending.pairSpaceProcessed, resultsFound: run.pending.resultsFound, caveatCount: run.pending.caveatCount });
+ 
+     if (result.split !== undefined) {                     // §6.4: the parent is superseded by 2 leaves
+       queue.unshift(...result.split.children);            // the split was ALREADY admitted (R8)
+@@ -778,7 +785,9 @@
+     : [];
+   for (const taint of [...derived, ...unitTaints]) run.ledger.addTaint(unit.unitId, taint);
+ 
++  const __s0 = performance.now(); // PROFILE
+   const diagnostics = run.spec.diagnosticAggregator.snapshot();
++  globalThis.__CLASH_PROFILE?.snaps.push(performance.now() - __s0);
+   run.pending.caveatCount = diagnostics.completenessAffectingCount;
+   run.pending.caveatUnclassified = diagnostics.unclassifiedOccurrences;
+   // I5: U9 has NO fact and NO cause (§16.7 table A, and `classifyUnitSettlement` returns
+@@ -1441,6 +1450,8 @@
+  * within one yield of the request, and a dedicated `wakeBoundary()` signal would change nothing.
+  */
+ function requestCancel(run, reason, { dispose = false } = {}) {
++  { const __P = globalThis.__CLASH_PROFILE; // PROFILE
++    if (__P && !__P.cancel) __P.cancel = { t: performance.now(), currentUnitId: run.pending?.currentUnitId ?? null, status: run.status, executorUnitsStarted: __P.units.length }; }
+   if (run.sealStarted) {
+     // C3 — "sealing" and "terminal" are not the same state, and a dispose must not be dropped in
+     // between. If the finalize window is open, force it closed now; if the seal is still building

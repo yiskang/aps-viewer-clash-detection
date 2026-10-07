@@ -127,10 +127,51 @@ test('AC-P3: a running ViewModel offers progress counters and elapsed time, no l
   const vm = buildViewModel(input({ phase: 'running' }));
   assert.equal(vm.results.state, 'running');
   assert.deepEqual(vm.results.rows, []);
-  assert.deepEqual(keys(vm.run.progress), ['caveatCount', 'elapsedText', 'fraction', 'resultsFound', 'unitsEvaluated', 'unitsTotal']);
+  // Option E (2026-10-07): `unitsFailedOrSkipped` added so the units % and the counter can be shown consistently.
+  assert.deepEqual(keys(vm.run.progress), ['caveatCount', 'elapsedText', 'fraction', 'resultsFound', 'unitsEvaluated', 'unitsFailedOrSkipped', 'unitsTotal']);
   assert.equal(vm.run.progress.elapsedText, '1:05');
   assert.equal(vm.run.canStop, true);
   assert.equal(/\b(eta|remaining|throughput)\b/i.test(JSON.stringify(vm.run)), false);
+});
+
+// Option E (owner-authorized 2026-10-07): the running progress fraction is UNITS-based — settled units
+// (evaluated + failed/skipped) over unitsTotal — not the engine's pair-space `fractionProcessed`, which is
+// front-loaded for a same-model run (66.7% at unit 80/4,294 in the Architecture self-clash profile).
+function runningVm(over) {
+  const base = input({ phase: 'running' });
+  return buildViewModel({ ...base, run: { ...base.run, snapshot: snapshot({ status: 'running', phase: 'executing', ...over }) } });
+}
+
+test('E: the progress fraction is settled units / unitsTotal, never the front-loaded pair-space fraction', () => {
+  const p = runningVm({ unitsTotal: 4294, unitsEvaluated: 80, pairSpaceTotal: 3, pairSpaceProcessed: 2, fractionProcessed: 2 / 3 }).run.progress;
+  assert.equal(p.fraction, 80 / 4294);
+  assert.equal(p.unitsEvaluated, 80);
+  assert.equal(p.unitsTotal, 4294);
+});
+
+test('E: failed/skipped units are settled work and count toward the units fraction', () => {
+  const p = runningVm({ unitsTotal: 10, unitsEvaluated: 6, unitsFailedOrSkipped: 2, fractionProcessed: 0.99 }).run.progress;
+  assert.equal(p.fraction, 0.8);
+});
+
+test('E: the units fraction is indeterminate (null) until the plan has units, and never exceeds 1', () => {
+  assert.equal(runningVm({ unitsTotal: 0, unitsEvaluated: 0, fractionProcessed: null }).run.progress.fraction, null);
+  assert.equal(runningVm({ unitsTotal: 0, unitsEvaluated: 0, fractionProcessed: 0.5 }).run.progress.fraction, null);
+  assert.equal(runningVm({ unitsTotal: 4, unitsEvaluated: 4, unitsFailedOrSkipped: 1 }).run.progress.fraction, 1);
+});
+
+test('E: the progress carries the failed/skipped count so the shown % and the units counter never contradict', () => {
+  const p = runningVm({ unitsTotal: 10, unitsEvaluated: 6, unitsFailedOrSkipped: 2 }).run.progress;
+  assert.equal(p.fraction, 0.8);
+  assert.equal(p.unitsFailedOrSkipped, 2);
+});
+
+test('E: a runtime split (unitsTotal grows) can step the units fraction back; it is shown as is, not smoothed', () => {
+  const before = runningVm({ unitsTotal: 10, unitsEvaluated: 5 }).run.progress.fraction;
+  const after = runningVm({ unitsTotal: 11, unitsEvaluated: 5 }).run.progress.fraction;
+  assert.equal(before, 0.5);
+  assert.equal(after, 5 / 11);
+  assert.ok(after < before);
 });
 
 test('AC-P2: every terminal status × coverage × integrity × freshness (empty and non-empty) has a matrix headline, never bare "No clashes"', () => {

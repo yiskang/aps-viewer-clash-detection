@@ -390,10 +390,22 @@ function compareDiagnosticOrder(a, b) {
  * §11.2/§12.4. The single cross-unit de-duplication and exact-accounting home (duplicate-ownership
  * D3): P6 drives one aggregator per run (`await addUnit` per settled unit, `snapshot()` once at
  * seal); P5 only reads the finished `snapshot()` result and aggregates nothing itself.
+ *
+ * Option D (owner-authorized 2026-10-07, docs/research/2026-10-07-architecture-self-clash-post-d-e-profile.md):
+ * `counters()` is the per-unit read. P6's progress commit needs only `completenessAffectingCount`
+ * and `unclassifiedOccurrences` (RunProgress `caveatCount`/`caveatUnclassified`), and it used to get
+ * them from a full `snapshot()` after EVERY unit — a sort + copy of the whole de-duplication map,
+ * measured at 80→150 ms per unit and 82% of an Architecture self-clash's wall time. `counters()`
+ * returns the same exact numbers from the same running totals without touching the retained set,
+ * and applies the same Σ-invariant guard as `snapshot()` (recomputed from the same bucket objects,
+ * O(maxDistinctReasons), never O(retained)). `snapshot()` is unchanged and remains the seal read.
  */
 export function createDiagnosticAggregator({ maxRetainedDiagnostics, maxDistinctReasons, maxUnitIdsPerDiagnostic, slicer }) {
   const dedupMap = new Map();
   const countsByReason = new Map(); // reasonKey -> {scope, reason, count}
+  // The same bucket objects as `countsByReason`, in admission order, so `counters()` can re-check the
+  // Σ invariant from the buckets themselves (as `snapshot()` does) without iterating the Map.
+  const reasonBuckets = [];
   let total = 0;
   let completenessAffectingCount = 0;
   let unclassifiedOccurrences = 0;
@@ -425,7 +437,9 @@ export function createDiagnosticAggregator({ maxRetainedDiagnostics, maxDistinct
     newKeysThisUnit.sort((a, b) => (a.rk < b.rk ? -1 : a.rk > b.rk ? 1 : 0));
     const remaining = Math.max(0, maxDistinctReasons - countsByReason.size);
     for (const { rk, scope, reason } of newKeysThisUnit.slice(0, remaining)) {
-      countsByReason.set(rk, { scope, reason, count: 0 });
+      const bucket = { scope, reason, count: 0 };
+      countsByReason.set(rk, bucket);
+      reasonBuckets.push(bucket);
     }
 
     let omittedThisUnit = 0;
@@ -469,12 +483,7 @@ export function createDiagnosticAggregator({ maxRetainedDiagnostics, maxDistinct
     return { unitTaints };
   }
 
-  function snapshot() {
-    const sorted = [...dedupMap.values()].sort(compareDiagnosticOrder);
-    const truncated = sorted.length > maxRetainedDiagnostics;
-    const diagnostics = truncated ? sorted.slice(0, maxRetainedDiagnostics) : sorted;
-    const countsByReasonArr = [...countsByReason.values()];
-    const sum = countsByReasonArr.reduce((n, c) => n + c.count, 0);
+  function assertSigma(sum) {
     if (sum + omittedReasonOccurrences + unclassifiedOccurrences !== total) {
       // An engine defect, not data the run can recover from: surfaced loudly rather than silently
       // returned as a wrong number (§12.4's Σ invariant).
@@ -482,6 +491,14 @@ export function createDiagnosticAggregator({ maxRetainedDiagnostics, maxDistinct
         `diagnostics aggregator: Sigma invariant violated (${sum} + ${omittedReasonOccurrences} + ${unclassifiedOccurrences} !== ${total})`,
       );
     }
+  }
+
+  function snapshot() {
+    const sorted = [...dedupMap.values()].sort(compareDiagnosticOrder);
+    const truncated = sorted.length > maxRetainedDiagnostics;
+    const diagnostics = truncated ? sorted.slice(0, maxRetainedDiagnostics) : sorted;
+    const countsByReasonArr = [...countsByReason.values()];
+    assertSigma(countsByReasonArr.reduce((n, c) => n + c.count, 0));
     return {
       diagnostics,
       truncated,
@@ -495,7 +512,15 @@ export function createDiagnosticAggregator({ maxRetainedDiagnostics, maxDistinct
     };
   }
 
-  return Object.freeze({ addUnit, snapshot });
+  /** Option D: the exact running counters, O(maxDistinctReasons); no sort, no copy of the retained set. */
+  function counters() {
+    let sum = 0;
+    for (let i = 0; i < reasonBuckets.length; i++) sum += reasonBuckets[i].count;
+    assertSigma(sum);
+    return { total, completenessAffectingCount, unclassifiedOccurrences };
+  }
+
+  return Object.freeze({ addUnit, snapshot, counters });
 }
 
 /**

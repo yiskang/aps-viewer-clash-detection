@@ -1,0 +1,27 @@
+{
+ "note": "Run F head-phase Panel progress samples (Playwright page.evaluate every ~400 ms after the Run click, 2026-10-07 15:28:22-15:28:34Z). Returned to the caller, not stored in-page, transcribed here verbatim per field. settledUnits = window.__CLASH_PROFILE.runUnits.length (true settled units); pairSpaceProcessed = engine counter at the last settled boundary; pairSpaceTotal = 9003645 (final boundary). Columns: [wallTimeZ, panelState, settledUnits, unitsText, pctText, ariaValueNow, pairSpaceProcessed, pairSpacePct]",
+ "columns": ["wall", "state", "settledUnits", "unitsText", "pctText", "ariaNow", "pairSpaceProcessed", "pairSpacePct"],
+ "rows": [
+  ["15:28:22.628", "Preparing…", 0, " units 0/0", "", null, null, null],
+  ["15:28:23.837", "Planning…", 0, " units 0/4294", " 0% of units ·", "0", null, null],
+  ["15:28:24.643", "Running…", 1, " units 1/4294", " 0% of units ·", "0", 0, 0],
+  ["15:28:25.456", "Running…", 3, " units 3/4294", " 0% of units ·", "0", 572940, 6.36],
+  ["15:28:25.858", "Running…", 4, " units 4/4294", " 0% of units ·", "0", 988852, 10.98],
+  ["15:28:26.263", "Running…", 5, " units 5/4294", " 0% of units ·", "0", 1372934, 15.25],
+  ["15:28:27.071", "Running…", 8, " units 8/4294", " 0% of units ·", "0", 2306614, 25.62],
+  ["15:28:27.474", "Running…", 11, " units 11/4294", " 0% of units ·", "0", 3297588, 36.62],
+  ["15:28:27.876", "Running…", 14, " units 14/4294", " 0% of units ·", "0", 3974506, 44.14],
+  ["15:28:28.282", "Running…", 17, " units 17/4294", " 0% of units ·", "0", 4502884, 50.01],
+  ["15:28:29.505", "Running…", 18, " units 17/4294", " 0% of units ·", "0", 4624899, 51.37],
+  ["15:28:29.909", "Running…", 22, " units 22/4294", " 1% of units ·", "1", 5321976, 59.11],
+  ["15:28:30.311", "Running…", 27, " units 27/4294", " 1% of units ·", "1", 5876051, 65.26],
+  ["15:28:30.713", "Running…", 35, " units 35/4294", " 1% of units ·", "1", 6003533, 66.68],
+  ["15:28:31.115", "Running…", 48, " units 48/4294", " 1% of units ·", "1", 6003651, 66.68],
+  ["15:28:31.747", "Running…", 67, " units 67/4294", " 2% of units ·", "2", 6004061, 66.68],
+  ["15:28:32.152", "Running…", 80, " units 80/4294", " 2% of units ·", "2", 6004179, 66.69],
+  ["15:28:32.554", "Running…", 93, " units 93/4294", " 2% of units ·", "2", 6004306, 66.69],
+  ["15:28:33.359", "Running…", 119, " units 119/4294", " 3% of units ·", "3", 6005891, 66.70],
+  ["15:28:34.565", "Running…", 158, " units 158/4294", " 4% of units ·", "4", 6006451, 66.71]
+ ],
+ "screenshot": "progress-head.png taken at settledUnits 48 (Panel: ' 1% of units · units 48/4294 found 3414 caveats 35223 0:08')"
+}

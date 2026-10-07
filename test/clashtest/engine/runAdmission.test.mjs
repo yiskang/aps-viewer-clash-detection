@@ -131,6 +131,7 @@ test('the per-run diagnostic aggregator and statistics accumulator are fresh; th
   for (const spec of [a, b]) {
     assert.equal(typeof spec.diagnosticAggregator.addUnit, 'function');
     assert.equal(typeof spec.diagnosticAggregator.snapshot, 'function');
+    assert.equal(typeof spec.diagnosticAggregator.counters, 'function');   // Option D: per-unit progress read
     assert.equal(typeof spec.statisticsAccumulator.add, 'function');
     assert.equal(typeof spec.statisticsAccumulator.snapshot, 'function');
     assert.equal(typeof spec.validateUnitOutcome, 'function');

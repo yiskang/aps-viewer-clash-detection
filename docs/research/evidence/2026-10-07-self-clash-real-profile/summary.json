@@ -1,0 +1,1267 @@
+{
+  "full": {
+    "file": "profile-full.json",
+    "mode": "full",
+    "capturedAt": "2026-10-07T14:21:22.978Z",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    "viewerVersion": "7.124.2",
+    "visibility": "visible",
+    "viewport": [
+      1202,
+      909
+    ],
+    "hardwareConcurrency": 10,
+    "fragments": 5435,
+    "isOTG": true,
+    "panelRunStatusText": "Simple Viewer\nLoad\nBrowse…\n Load as additional model\nDownloading\nLoading...\nLoading...\nRendering...\nOptimizing...\nClash Detection\nTest Setup\nNew test\n▸ Show setup\n\nClash test 2 · Hard · A: Audubon_Architecture_clash_test · B: Same as Set A\n\nRun Status\nRun clash test\nStop\nClear results\n\nStopped\n\n1858 clashes · 1858 match filters\n\nCoverage: partial\nIntegrity: caveated\nFreshness: current\n\nStopped — partial results (1,858)\n\n4282 parts could not be evaluated (the run was stopped).\nDiagnostic detail was truncated\nStatus: cancelled · coverage partial · integrity caveated\nReason: cancel-requested\nDiagnostics: 20505\nDiagnostic detail was truncated\nCopy diagnostics\nRun details\nStopped — partial results (1,858).\nFilters And Grouping\nFilter\nModel\nAll models\nAudubon_Architecture_clash_test\nUnverified only\nHas location\nGroup\nNone\nElement\nSort\nDefault order\nClear filters\nResults\n#1 Audubon_Architecture_clash_test · Basic Wall [899054] · #327 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1780459] · #3079 caveated\n#2 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Baby Changing Station [1826053] · #3317 caveated\n#3 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Baby Changing Station [2011465] · #3368 caveated\n#4 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Basic Wall [2014451] · #3371 caveated\n#5 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Basic Wall [3167723] · #4918 caveated\n#6 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Basic Roof [935108] · #5429 caveated\n#7 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Basic Roof [1451208] · #5501 caveated\n#8 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1779193] · #3044 caveated\n#9 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1779194] · #3045 caveated\n#10 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1779196] · #3046 caveated\n#11 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · System Panel [1779284] · #3049 caveated\n#12 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · System Panel [1779286] · #3051 caveated\n#13 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · System Panel [1779288] · #3053 caveated\n#14 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779293] · #3054 caveated\n#15 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779294] · #3055 caveated\n#16 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779295] · #3056 caveated\n#17 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779296] · #3057 caveated\n#18 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779297] · #3058 caveated\n#19 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779298] · #3059 caveated\n#20 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779300] · #3060 caveated\n#21 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779301] · #3061 caveated\n#22 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779302] · #3062 caveated\n#23 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779303] · #3063 caveated\n#24 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779304] · #3064 caveated\n#25 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · System Panel [1779306] · #3066 caveated\n#26 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779307] · #3067 caveated\n#27 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779308] · #3068 caveated\n#28 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779309] · #3069 caveated\n#29 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779310] · #3070 caveated\n#30 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779907] · #3076 caveated\n#31 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Floor [2262108] · #3839 caveated\n#32 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326459] · #3844 caveated\n#33 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326462] · #3847 caveated\n#34 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326469] · #3849 caveated\n#35 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326473] · #3852 caveated\n#36 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326488] · #3854 caveated\n#37 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2678172] · #4636 caveated\n#38 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [3180894] · #5421 caveated\n#39 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Basic Wall [2275856] · #5642 caveated\n#40 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Basic Roof [2413529] · #5645 caveated\n#41 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1778266] · #3040 caveated\n#42 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1778405] · #3041 caveated\n#43 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1778453] · #3042 caveated\n#44 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1778856] · #3043 caveated\n#45 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1779717] · #3071 caveated\n#46 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Basic Wall [3094627] · #4915 caveated\n#47 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Basic Wall [3173270] · #4933 caveated\n#48 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Basic Roof [932363] · #5425 caveated\n#49 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Basic Roof [943523] · #5434 caveated\n#50 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Fascia [3008661] · #16215 caveated\n◀ Prev\nNext ▶\nNo clash selected\n‹\n1 / 38\n›\nSelected Clash\n\nNo clash selected. Select a result to see its details.",
+    "unitsStarted": 12,
+    "unitsCompleted": 12,
+    "window": {
+      "firstUnitStartToLastUnitEndMs": 175163.2,
+      "unitsPerMin": 4.11
+    },
+    "perUnitMeans": {
+      "yields": 2854,
+      "unitWallMs": 14550.4,
+      "preMs": 7061.4,
+      "callMs": 367.4,
+      "postMs": 7117.3,
+      "wholeDigestMs": 12614.7,
+      "rootsDigestMs": 1562.1,
+      "wholeDigestYields": 2548,
+      "rootsDigestYields": 306
+    },
+    "shares": {
+      "bracketPct": 97.45,
+      "callPct": 2.52,
+      "otherPct": 0.03,
+      "yieldWaitPctOfWall": 96.4,
+      "wholeDigestPctOfBracket": 88.97
+    },
+    "yieldLatency": {
+      "n": 34248,
+      "min": 0,
+      "p05": 4.2,
+      "median": 5,
+      "mean": 4.915,
+      "p95": 5.4,
+      "p99": 5.7,
+      "max": 22.1,
+      "fracAtLeast4ms": 0.9977,
+      "hist": {
+        "<4": 80,
+        "5-6": 21941,
+        "4.5-5": 8197,
+        "4-4.5": 3921,
+        "6-8": 101,
+        "16-50": 7,
+        "8-16": 1
+      }
+    },
+    "globalZeroDelaySetTimeout": {
+      "zeroCount": 34933,
+      "zeroHist": {
+        "0": 106,
+        "1": 10,
+        "2": 3,
+        "3": 12,
+        "4": 12426,
+        "5": 22259,
+        "6": 97,
+        "7": 6,
+        "9": 1,
+        "10": 1,
+        "17": 1,
+        "18": 2,
+        "21": 3,
+        "22": 3,
+        "28": 1,
+        "50": 2
+      },
+      "posCount": 46380
+    },
+    "interUnitYieldMs": {
+      "n": 12,
+      "median": 0.3,
+      "max": 0.4
+    },
+    "snapshotMs": {
+      "n": 12,
+      "total": 448.1,
+      "median": 44.3,
+      "max": 55.3
+    },
+    "stop": {
+      "clickWall": "2026-10-07T14:21:11.816Z",
+      "inFlightUnit": "3b.11",
+      "inFlightUnitElapsedAtClickMs": 11569.3,
+      "clickToCancelRequestMs": 0.3,
+      "clickToBoundaryMs": 2785.8,
+      "sealMs": 2362.2,
+      "clickToStoppedShownMs": 5147.5
+    },
+    "units": [
+      {
+        "i": 1,
+        "unitId": "3b.0",
+        "completed": true,
+        "srcRoots": 115,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          115,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 6616.6,
+        "callMs": 812.9,
+        "postMs": 6858.6,
+        "unitWallMs": 14307,
+        "yieldWaitMs": 13312.7,
+        "digestCalls": 6,
+        "wholeDigestMs": 11967.8,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1504.2,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          115,
+          2122,
+          115,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 1734,
+          "narrowPhasePairs": 1734,
+          "broadPhaseMs": 16.100000023841858,
+          "narrowPhaseMs": 788.6999999880791,
+          "totalMs": 812.0999999642372,
+          "tlasBuildMs": 8.5,
+          "tlasQueryMs": 2.100000023841858,
+          "tlasPrimitiveCandidatePairs": 9583,
+          "diagnostics": 4691,
+          "pairs": 318
+        },
+        "pairSpaceProcessed": 0,
+        "resultsFound": 0,
+        "caveatCount": 0
+      },
+      {
+        "i": 2,
+        "unitId": "3b.1",
+        "completed": true,
+        "srcRoots": 155,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          155,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7096,
+        "callMs": 901.4,
+        "postMs": 7155.4,
+        "unitWallMs": 15162,
+        "yieldWaitMs": 14086.7,
+        "digestCalls": 6,
+        "wholeDigestMs": 12667.3,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1581.5,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          155,
+          2122,
+          155,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 1533,
+          "narrowPhasePairs": 1533,
+          "broadPhaseMs": 13.5,
+          "narrowPhaseMs": 882.3000000119209,
+          "totalMs": 901.3000000119209,
+          "tlasBuildMs": 6.800000011920929,
+          "tlasQueryMs": 1.2999999523162842,
+          "tlasPrimitiveCandidatePairs": 8387,
+          "diagnostics": 2566,
+          "pairs": 608
+        },
+        "pairSpaceProcessed": 244030,
+        "resultsFound": 318,
+        "caveatCount": 4691
+      },
+      {
+        "i": 3,
+        "unitId": "3b.2",
+        "completed": true,
+        "srcRoots": 196,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          196,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7118.2,
+        "callMs": 155.6,
+        "postMs": 7152.7,
+        "unitWallMs": 14428.6,
+        "yieldWaitMs": 14120.8,
+        "digestCalls": 6,
+        "wholeDigestMs": 12701.4,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1567.8,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          196,
+          2122,
+          196,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 530,
+          "narrowPhasePairs": 530,
+          "broadPhaseMs": 13.5,
+          "narrowPhaseMs": 137.19999998807907,
+          "totalMs": 155.5,
+          "tlasBuildMs": 7,
+          "tlasQueryMs": 1.0999999642372131,
+          "tlasPrimitiveCandidatePairs": 6608,
+          "diagnostics": 1160,
+          "pairs": 84
+        },
+        "pairSpaceProcessed": 572940,
+        "resultsFound": 926,
+        "caveatCount": 7257
+      },
+      {
+        "i": 4,
+        "unitId": "3b.3",
+        "completed": true,
+        "srcRoots": 181,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          181,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7099.5,
+        "callMs": 318.6,
+        "postMs": 7132.1,
+        "unitWallMs": 14552.7,
+        "yieldWaitMs": 14082.9,
+        "digestCalls": 6,
+        "wholeDigestMs": 12652,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1578,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          181,
+          2122,
+          181,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 889,
+          "narrowPhasePairs": 889,
+          "broadPhaseMs": 12.799999952316284,
+          "narrowPhaseMs": 301.7000000476837,
+          "totalMs": 318.60000002384186,
+          "tlasBuildMs": 6.5,
+          "tlasQueryMs": 0.9999999403953552,
+          "tlasPrimitiveCandidatePairs": 7817,
+          "diagnostics": 1432,
+          "pairs": 334
+        },
+        "pairSpaceProcessed": 988852,
+        "resultsFound": 1010,
+        "caveatCount": 8417
+      },
+      {
+        "i": 5,
+        "unitId": "3b.4",
+        "completed": true,
+        "srcRoots": 125,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          125,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7075.1,
+        "callMs": 835.8,
+        "postMs": 7166,
+        "unitWallMs": 15084.8,
+        "yieldWaitMs": 14081.2,
+        "digestCalls": 6,
+        "wholeDigestMs": 12668.9,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1570.8,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          125,
+          2122,
+          125,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 954,
+          "narrowPhasePairs": 954,
+          "broadPhaseMs": 13.799999952316284,
+          "narrowPhaseMs": 817.5,
+          "totalMs": 835.6999999880791,
+          "tlasBuildMs": 6.699999988079071,
+          "tlasQueryMs": 1.7999999523162842,
+          "tlasPrimitiveCandidatePairs": 9465,
+          "diagnostics": 2950,
+          "pairs": 139
+        },
+        "pairSpaceProcessed": 1372934,
+        "resultsFound": 1344,
+        "caveatCount": 9849
+      },
+      {
+        "i": 6,
+        "unitId": "3b.5",
+        "completed": true,
+        "srcRoots": 123,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          123,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7117.4,
+        "callMs": 483.5,
+        "postMs": 7133.7,
+        "unitWallMs": 14737.6,
+        "yieldWaitMs": 14094.3,
+        "digestCalls": 6,
+        "wholeDigestMs": 12683.8,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1565.8,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          123,
+          2122,
+          123,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 594,
+          "narrowPhasePairs": 594,
+          "broadPhaseMs": 14.799999952316284,
+          "narrowPhaseMs": 463.9000000357628,
+          "totalMs": 483.4000000357628,
+          "tlasBuildMs": 8.800000011920929,
+          "tlasQueryMs": 1.699999988079071,
+          "tlasPrimitiveCandidatePairs": 7821,
+          "diagnostics": 1640,
+          "pairs": 104
+        },
+        "pairSpaceProcessed": 1638184,
+        "resultsFound": 1483,
+        "caveatCount": 12799
+      },
+      {
+        "i": 7,
+        "unitId": "3b.6",
+        "completed": true,
+        "srcRoots": 192,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          192,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7089.6,
+        "callMs": 105.3,
+        "postMs": 7137.9,
+        "unitWallMs": 14334.3,
+        "yieldWaitMs": 14063.8,
+        "digestCalls": 6,
+        "wholeDigestMs": 12650.8,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1574.7,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          192,
+          2122,
+          192,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 402,
+          "narrowPhasePairs": 402,
+          "broadPhaseMs": 12.800000011920929,
+          "narrowPhaseMs": 87.79999995231628,
+          "totalMs": 105.19999998807907,
+          "tlasBuildMs": 6.399999976158142,
+          "tlasQueryMs": 1.1000000834465027,
+          "tlasPrimitiveCandidatePairs": 9494,
+          "diagnostics": 748,
+          "pairs": 29
+        },
+        "pairSpaceProcessed": 1899190,
+        "resultsFound": 1587,
+        "caveatCount": 14439
+      },
+      {
+        "i": 8,
+        "unitId": "3b.7",
+        "completed": true,
+        "srcRoots": 161,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          161,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7106.3,
+        "callMs": 153.9,
+        "postMs": 7126.6,
+        "unitWallMs": 14388.3,
+        "yieldWaitMs": 14090.3,
+        "digestCalls": 6,
+        "wholeDigestMs": 12668.5,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1562.7,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          161,
+          2122,
+          161,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 333,
+          "narrowPhasePairs": 333,
+          "broadPhaseMs": 14,
+          "narrowPhaseMs": 135.4000000357628,
+          "totalMs": 153.70000004768372,
+          "tlasBuildMs": 7.099999964237213,
+          "tlasQueryMs": 1.899999976158142,
+          "tlasPrimitiveCandidatePairs": 9506,
+          "diagnostics": 778,
+          "pairs": 42
+        },
+        "pairSpaceProcessed": 2306614,
+        "resultsFound": 1616,
+        "caveatCount": 15187
+      },
+      {
+        "i": 9,
+        "unitId": "3b.8",
+        "completed": true,
+        "srcRoots": 180,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          180,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7099.7,
+        "callMs": 219,
+        "postMs": 7135.5,
+        "unitWallMs": 14456,
+        "yieldWaitMs": 14075.7,
+        "digestCalls": 6,
+        "wholeDigestMs": 12667.9,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1565.2,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          180,
+          2122,
+          180,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 649,
+          "narrowPhasePairs": 649,
+          "broadPhaseMs": 14.199999988079071,
+          "narrowPhaseMs": 199.80000001192093,
+          "totalMs": 218.89999997615814,
+          "tlasBuildMs": 6.5,
+          "tlasQueryMs": 1.5,
+          "tlasPrimitiveCandidatePairs": 10679,
+          "diagnostics": 1446,
+          "pairs": 92
+        },
+        "pairSpaceProcessed": 2648256,
+        "resultsFound": 1658,
+        "caveatCount": 15965
+      },
+      {
+        "i": 10,
+        "unitId": "3b.9",
+        "completed": true,
+        "srcRoots": 126,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          126,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7112.7,
+        "callMs": 295.7,
+        "postMs": 7126.7,
+        "unitWallMs": 14536.6,
+        "yieldWaitMs": 14101.1,
+        "digestCalls": 6,
+        "wholeDigestMs": 12660.9,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1577,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          126,
+          2122,
+          126,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 484,
+          "narrowPhasePairs": 484,
+          "broadPhaseMs": 14.100000023841858,
+          "narrowPhaseMs": 276.89999997615814,
+          "totalMs": 295.5999999642372,
+          "tlasBuildMs": 7.5,
+          "tlasQueryMs": 1.699999988079071,
+          "tlasPrimitiveCandidatePairs": 7784,
+          "diagnostics": 1025,
+          "pairs": 90
+        },
+        "pairSpaceProcessed": 3030216,
+        "resultsFound": 1750,
+        "caveatCount": 17411
+      },
+      {
+        "i": 11,
+        "unitId": "3b.10",
+        "completed": true,
+        "srcRoots": 119,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          119,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7103.6,
+        "callMs": 77.2,
+        "postMs": 7136.9,
+        "unitWallMs": 14318.8,
+        "yieldWaitMs": 14085.6,
+        "digestCalls": 6,
+        "wholeDigestMs": 12675,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1563.4,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          119,
+          2122,
+          119,
+          2122
+        ],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 262,
+          "narrowPhasePairs": 262,
+          "broadPhaseMs": 12.899999976158142,
+          "narrowPhaseMs": 59.90000003576279,
+          "totalMs": 77.20000004768372,
+          "tlasBuildMs": 6.800000011920929,
+          "tlasQueryMs": 1,
+          "tlasPrimitiveCandidatePairs": 8501,
+          "diagnostics": 769,
+          "pairs": 18
+        },
+        "pairSpaceProcessed": 3297588,
+        "resultsFound": 1840,
+        "caveatCount": 18436
+      },
+      {
+        "i": 12,
+        "unitId": "3b.11",
+        "completed": true,
+        "srcRoots": 100,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          100,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7101.7,
+        "callMs": 49.8,
+        "postMs": 7145.4,
+        "unitWallMs": 14297.7,
+        "yieldWaitMs": 14126.2,
+        "digestCalls": 6,
+        "wholeDigestMs": 12712,
+        "wholeDigestYields": 2548,
+        "rootsDigestMs": 1533.5,
+        "rootsDigestYields": 306,
+        "rootsDigestShapes": [
+          100,
+          2122,
+          100,
+          2122
+        ],
+        "outOfBracketDigests": [
+          {
+            "kind": "whole",
+            "roots": null,
+            "ms": 16,
+            "yields": 0
+          },
+          {
+            "kind": "roots",
+            "roots": 4244,
+            "ms": 26.7,
+            "yields": 0
+          },
+          {
+            "kind": "whole",
+            "roots": null,
+            "ms": 7.9,
+            "yields": 0
+          },
+          {
+            "kind": "roots",
+            "roots": 4244,
+            "ms": 26.5,
+            "yields": 0
+          }
+        ],
+        "lib": {
+          "broadPhasePairs": 303,
+          "narrowPhasePairs": 303,
+          "broadPhaseMs": 14,
+          "narrowPhaseMs": 32.90000003576279,
+          "totalMs": 49.80000001192093,
+          "tlasBuildMs": 7.200000047683716,
+          "tlasQueryMs": 0.5999999642372131,
+          "tlasPrimitiveCandidatePairs": 9486,
+          "diagnostics": 1300,
+          "pairs": 0
+        },
+        "pairSpaceProcessed": 3550106,
+        "resultsFound": 1858,
+        "caveatCount": 19205
+      }
+    ]
+  },
+  "lite": {
+    "file": "profile-lite.json",
+    "mode": "lite",
+    "capturedAt": "2026-10-07T14:24:38.485Z",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    "viewerVersion": "7.124.2",
+    "visibility": "visible",
+    "viewport": [
+      1202,
+      909
+    ],
+    "hardwareConcurrency": 10,
+    "fragments": 5435,
+    "isOTG": true,
+    "panelRunStatusText": "Simple Viewer\nLoad\nBrowse…\n Load as additional model\nDownloading\nLoading...\nLoading...\nRendering...\nOptimizing...\nClash Detection\nTest Setup\nNew test\n▸ Show setup\n\nClash test 2 · Hard · A: Audubon_Architecture_clash_test · B: Same as Set A\n\nRun Status\nRun clash test\nStop\nClear results\n\nStopped\n\n1858 clashes · 1858 match filters\n\nCoverage: partial\nIntegrity: caveated\nFreshness: current\n\nStopped — partial results (1,858)\n\n4283 parts could not be evaluated (the run was stopped).\nDiagnostic detail was truncated\nStatus: cancelled · coverage partial · integrity caveated\nReason: cancel-requested\nDiagnostics: 19205\nDiagnostic detail was truncated\nCopy diagnostics\nRun details\nStopped — partial results (1,858).\nFilters And Grouping\nFilter\nModel\nAll models\nAudubon_Architecture_clash_test\nUnverified only\nHas location\nGroup\nNone\nElement\nSort\nDefault order\nClear filters\nResults\n#1 Audubon_Architecture_clash_test · Basic Wall [899054] · #327 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1780459] · #3079 caveated\n#2 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Baby Changing Station [1826053] · #3317 caveated\n#3 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Baby Changing Station [2011465] · #3368 caveated\n#4 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Basic Wall [2014451] · #3371 caveated\n#5 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Basic Wall [3167723] · #4918 caveated\n#6 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Basic Roof [935108] · #5429 caveated\n#7 Audubon_Architecture_clash_test · Basic Wall [899117] · #328 ↔ Audubon_Architecture_clash_test · Basic Roof [1451208] · #5501 caveated\n#8 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1779193] · #3044 caveated\n#9 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1779194] · #3045 caveated\n#10 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1779196] · #3046 caveated\n#11 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · System Panel [1779284] · #3049 caveated\n#12 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · System Panel [1779286] · #3051 caveated\n#13 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · System Panel [1779288] · #3053 caveated\n#14 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779293] · #3054 caveated\n#15 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779294] · #3055 caveated\n#16 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779295] · #3056 caveated\n#17 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779296] · #3057 caveated\n#18 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779297] · #3058 caveated\n#19 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779298] · #3059 caveated\n#20 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779300] · #3060 caveated\n#21 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779301] · #3061 caveated\n#22 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779302] · #3062 caveated\n#23 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779303] · #3063 caveated\n#24 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779304] · #3064 caveated\n#25 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · System Panel [1779306] · #3066 caveated\n#26 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779307] · #3067 caveated\n#27 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779308] · #3068 caveated\n#28 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779309] · #3069 caveated\n#29 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779310] · #3070 caveated\n#30 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [1779907] · #3076 caveated\n#31 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Floor [2262108] · #3839 caveated\n#32 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326459] · #3844 caveated\n#33 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326462] · #3847 caveated\n#34 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326469] · #3849 caveated\n#35 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326473] · #3852 caveated\n#36 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2326488] · #3854 caveated\n#37 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [2678172] · #4636 caveated\n#38 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Rectangular Mullion [3180894] · #5421 caveated\n#39 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Basic Wall [2275856] · #5642 caveated\n#40 Audubon_Architecture_clash_test · Basic Wall [899614] · #330 ↔ Audubon_Architecture_clash_test · Basic Roof [2413529] · #5645 caveated\n#41 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1778266] · #3040 caveated\n#42 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1778405] · #3041 caveated\n#43 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1778453] · #3042 caveated\n#44 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1778856] · #3043 caveated\n#45 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Punched Window Frame [1779717] · #3071 caveated\n#46 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Basic Wall [3094627] · #4915 caveated\n#47 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Basic Wall [3173270] · #4933 caveated\n#48 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Basic Roof [932363] · #5425 caveated\n#49 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Basic Roof [943523] · #5434 caveated\n#50 Audubon_Architecture_clash_test · Basic Wall [907366] · #331 ↔ Audubon_Architecture_clash_test · Fascia [3008661] · #16215 caveated\n◀ Prev\nNext ▶\nNo clash selected\n‹\n1 / 38\n›\nSelected Clash\n\nNo clash selected. Select a result to see its details.",
+    "unitsStarted": 11,
+    "unitsCompleted": 11,
+    "window": {
+      "firstUnitStartToLastUnitEndMs": 159305.1,
+      "unitsPerMin": 4.143
+    },
+    "perUnitMeans": {
+      "yields": 2854,
+      "unitWallMs": 14438.3,
+      "preMs": 7005.9,
+      "callMs": 390.3,
+      "postMs": 7037.6,
+      "wholeDigestMs": 0,
+      "rootsDigestMs": 0,
+      "wholeDigestYields": 0,
+      "rootsDigestYields": 0
+    },
+    "shares": {
+      "bracketPct": 97.27,
+      "callPct": 2.7,
+      "otherPct": 0.03,
+      "yieldWaitPctOfWall": null,
+      "wholeDigestPctOfBracket": null
+    },
+    "yieldLatency": null,
+    "globalZeroDelaySetTimeout": null,
+    "interUnitYieldMs": {
+      "n": 11,
+      "median": 0.2,
+      "max": 0.5
+    },
+    "snapshotMs": {
+      "n": 11,
+      "total": 394.7,
+      "median": 40.5,
+      "max": 54.5
+    },
+    "stop": {
+      "clickWall": "2026-10-07T14:24:26.559Z",
+      "inFlightUnit": "3b.10",
+      "inFlightUnitElapsedAtClickMs": 8440.5,
+      "clickToCancelRequestMs": 0.1,
+      "clickToBoundaryMs": 4919.7,
+      "sealMs": 2350,
+      "clickToStoppedShownMs": 7269.3
+    },
+    "units": [
+      {
+        "i": 1,
+        "unitId": "3b.0",
+        "completed": true,
+        "srcRoots": 115,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          115,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7087.3,
+        "callMs": 874.3,
+        "postMs": 7124.8,
+        "unitWallMs": 15104.4,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 1734,
+          "narrowPhasePairs": 1734,
+          "broadPhaseMs": 16.200000047683716,
+          "narrowPhaseMs": 849.2999999523163,
+          "totalMs": 873.5,
+          "tlasBuildMs": 8.600000023841858,
+          "tlasQueryMs": 2.300000011920929,
+          "tlasPrimitiveCandidatePairs": 9583,
+          "diagnostics": 4691,
+          "pairs": 318
+        },
+        "pairSpaceProcessed": 0,
+        "resultsFound": 0,
+        "caveatCount": 0
+      },
+      {
+        "i": 2,
+        "unitId": "3b.1",
+        "completed": true,
+        "srcRoots": 155,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          155,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7109.7,
+        "callMs": 889,
+        "postMs": 7121,
+        "unitWallMs": 15128.9,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 1533,
+          "narrowPhasePairs": 1533,
+          "broadPhaseMs": 13.600000023841858,
+          "narrowPhaseMs": 869.8999999761581,
+          "totalMs": 888.8999999761581,
+          "tlasBuildMs": 7.100000023841858,
+          "tlasQueryMs": 1.699999988079071,
+          "tlasPrimitiveCandidatePairs": 8387,
+          "diagnostics": 2566,
+          "pairs": 608
+        },
+        "pairSpaceProcessed": 244030,
+        "resultsFound": 318,
+        "caveatCount": 4691
+      },
+      {
+        "i": 3,
+        "unitId": "3b.2",
+        "completed": true,
+        "srcRoots": 196,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          196,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7087.6,
+        "callMs": 164.1,
+        "postMs": 7127.4,
+        "unitWallMs": 14381.2,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 530,
+          "narrowPhasePairs": 530,
+          "broadPhaseMs": 13.300000011920929,
+          "narrowPhaseMs": 146.60000002384186,
+          "totalMs": 164,
+          "tlasBuildMs": 6.800000011920929,
+          "tlasQueryMs": 1.199999988079071,
+          "tlasPrimitiveCandidatePairs": 6608,
+          "diagnostics": 1160,
+          "pairs": 84
+        },
+        "pairSpaceProcessed": 572940,
+        "resultsFound": 926,
+        "caveatCount": 7257
+      },
+      {
+        "i": 4,
+        "unitId": "3b.3",
+        "completed": true,
+        "srcRoots": 181,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          181,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7101.8,
+        "callMs": 266.6,
+        "postMs": 7132.8,
+        "unitWallMs": 14503.8,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 889,
+          "narrowPhasePairs": 889,
+          "broadPhaseMs": 13.599999964237213,
+          "narrowPhaseMs": 248.30000001192093,
+          "totalMs": 266.5,
+          "tlasBuildMs": 7.100000023841858,
+          "tlasQueryMs": 1.399999976158142,
+          "tlasPrimitiveCandidatePairs": 7817,
+          "diagnostics": 1432,
+          "pairs": 334
+        },
+        "pairSpaceProcessed": 988852,
+        "resultsFound": 1010,
+        "caveatCount": 8417
+      },
+      {
+        "i": 5,
+        "unitId": "3b.4",
+        "completed": true,
+        "srcRoots": 125,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          125,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7074.3,
+        "callMs": 854.7,
+        "postMs": 7101.9,
+        "unitWallMs": 15039.2,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 954,
+          "narrowPhasePairs": 954,
+          "broadPhaseMs": 14.100000023841858,
+          "narrowPhaseMs": 836.5999999642372,
+          "totalMs": 854.6999999880791,
+          "tlasBuildMs": 6.900000035762787,
+          "tlasQueryMs": 1.600000023841858,
+          "tlasPrimitiveCandidatePairs": 9465,
+          "diagnostics": 2950,
+          "pairs": 139
+        },
+        "pairSpaceProcessed": 1372934,
+        "resultsFound": 1344,
+        "caveatCount": 9849
+      },
+      {
+        "i": 6,
+        "unitId": "3b.5",
+        "completed": true,
+        "srcRoots": 123,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          123,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7101.2,
+        "callMs": 520,
+        "postMs": 7128,
+        "unitWallMs": 14751.3,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 594,
+          "narrowPhasePairs": 594,
+          "broadPhaseMs": 13.900000035762787,
+          "narrowPhaseMs": 502.0999999642372,
+          "totalMs": 520,
+          "tlasBuildMs": 7,
+          "tlasQueryMs": 1.2999999523162842,
+          "tlasPrimitiveCandidatePairs": 7821,
+          "diagnostics": 1640,
+          "pairs": 104
+        },
+        "pairSpaceProcessed": 1638184,
+        "resultsFound": 1483,
+        "caveatCount": 12799
+      },
+      {
+        "i": 7,
+        "unitId": "3b.6",
+        "completed": true,
+        "srcRoots": 192,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          192,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7094.4,
+        "callMs": 102.2,
+        "postMs": 7137.9,
+        "unitWallMs": 14335.9,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 402,
+          "narrowPhasePairs": 402,
+          "broadPhaseMs": 13,
+          "narrowPhaseMs": 84.60000002384186,
+          "totalMs": 102.10000002384186,
+          "tlasBuildMs": 6,
+          "tlasQueryMs": 1.600000023841858,
+          "tlasPrimitiveCandidatePairs": 9494,
+          "diagnostics": 748,
+          "pairs": 29
+        },
+        "pairSpaceProcessed": 1899190,
+        "resultsFound": 1587,
+        "caveatCount": 14439
+      },
+      {
+        "i": 8,
+        "unitId": "3b.7",
+        "completed": true,
+        "srcRoots": 161,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          161,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7089.7,
+        "callMs": 131.5,
+        "postMs": 7131.5,
+        "unitWallMs": 14354.1,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 333,
+          "narrowPhasePairs": 333,
+          "broadPhaseMs": 13.399999976158142,
+          "narrowPhaseMs": 114.5,
+          "totalMs": 131.5,
+          "tlasBuildMs": 7.700000047683716,
+          "tlasQueryMs": 1,
+          "tlasPrimitiveCandidatePairs": 9506,
+          "diagnostics": 778,
+          "pairs": 42
+        },
+        "pairSpaceProcessed": 2306614,
+        "resultsFound": 1616,
+        "caveatCount": 15187
+      },
+      {
+        "i": 9,
+        "unitId": "3b.8",
+        "completed": true,
+        "srcRoots": 180,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          180,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 7117.1,
+        "callMs": 269.3,
+        "postMs": 7100.4,
+        "unitWallMs": 14488,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 649,
+          "narrowPhasePairs": 649,
+          "broadPhaseMs": 14.399999976158142,
+          "narrowPhaseMs": 250.80000001192093,
+          "totalMs": 269.30000001192093,
+          "tlasBuildMs": 7.099999964237213,
+          "tlasQueryMs": 1.9999999403953552,
+          "tlasPrimitiveCandidatePairs": 10679,
+          "diagnostics": 1446,
+          "pairs": 92
+        },
+        "pairSpaceProcessed": 2648256,
+        "resultsFound": 1658,
+        "caveatCount": 15965
+      },
+      {
+        "i": 10,
+        "unitId": "3b.9",
+        "completed": true,
+        "srcRoots": 126,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          126,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 6611,
+        "callMs": 153.3,
+        "postMs": 6671.8,
+        "unitWallMs": 13437.7,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 484,
+          "narrowPhasePairs": 484,
+          "broadPhaseMs": 12,
+          "narrowPhaseMs": 138.69999998807907,
+          "totalMs": 153.30000001192093,
+          "tlasBuildMs": 5.900000035762787,
+          "tlasQueryMs": 0.8999999761581421,
+          "tlasPrimitiveCandidatePairs": 7784,
+          "diagnostics": 1025,
+          "pairs": 90
+        },
+        "pairSpaceProcessed": 3030216,
+        "resultsFound": 1750,
+        "caveatCount": 17411
+      },
+      {
+        "i": 11,
+        "unitId": "3b.10",
+        "completed": true,
+        "srcRoots": 119,
+        "targets": [
+          2122
+        ],
+        "scopeExpect": [
+          119,
+          "whole",
+          2122
+        ],
+        "yields": 2854,
+        "preYields": 1427,
+        "postYields": 1427,
+        "preMs": 6590.9,
+        "callMs": 68.6,
+        "postMs": 6636,
+        "unitWallMs": 13296.8,
+        "yieldWaitMs": null,
+        "digestCalls": 0,
+        "wholeDigestMs": 0,
+        "wholeDigestYields": 0,
+        "rootsDigestMs": 0,
+        "rootsDigestYields": 0,
+        "rootsDigestShapes": [],
+        "outOfBracketDigests": [],
+        "lib": {
+          "broadPhasePairs": 262,
+          "narrowPhasePairs": 262,
+          "broadPhaseMs": 12.199999988079071,
+          "narrowPhaseMs": 52.90000003576279,
+          "totalMs": 68.60000002384186,
+          "tlasBuildMs": 6.5,
+          "tlasQueryMs": 0.8999999761581421,
+          "tlasPrimitiveCandidatePairs": 8501,
+          "diagnostics": 769,
+          "pairs": 18
+        },
+        "pairSpaceProcessed": 3297588,
+        "resultsFound": 1840,
+        "caveatCount": 18436
+      }
+    ]
+  }
+}

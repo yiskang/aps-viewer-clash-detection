@@ -778,7 +778,13 @@ async function applyUnitResult(run, unit, { settlement, outcome, attempt, extra 
     : [];
   for (const taint of [...derived, ...unitTaints]) run.ledger.addTaint(unit.unitId, taint);
 
-  const diagnostics = run.spec.diagnosticAggregator.snapshot();
+  // Option D (owner-authorized 2026-10-07): the progress commit reads the aggregator's exact running
+  // counters (O(maxDistinctReasons), independent of the retained set), not a full sorted `snapshot()`
+  // per unit (A11/N20: `snapshot()` once, at seal). Same numbers, same Σ guard; the sealed
+  // DiagnosticsSummary is still `snapshot()` in buildAndAdmitResultSet. An injected aggregator that
+  // implements only the N20 surface `{addUnit, snapshot}` keeps the pre-D per-unit read.
+  const aggregator = run.spec.diagnosticAggregator;
+  const diagnostics = typeof aggregator.counters === 'function' ? aggregator.counters() : aggregator.snapshot();
   run.pending.caveatCount = diagnostics.completenessAffectingCount;
   run.pending.caveatUnclassified = diagnostics.unclassifiedOccurrences;
   // I5: U9 has NO fact and NO cause (§16.7 table A, and `classifyUnitSettlement` returns

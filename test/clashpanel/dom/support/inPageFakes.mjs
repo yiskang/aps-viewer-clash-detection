@@ -165,10 +165,13 @@ function createHandle(runId, definition, persistenceById, options) {
   const control = {
     cancelReasons: [],
     listenerCount: () => listeners.size,
-    progress({ unitsEvaluated, unitsTotal, resultsFound }) {
+    // `pairSpace` (optional, Option E test): `{processed, total}` makes the pair-space fraction differ from the units
+    // fraction, the way a same-model run's front-loaded unit weights do. Omitted: pair space mirrors units (as before).
+    progress({ unitsEvaluated, unitsTotal, resultsFound, pairSpace }) {
       seq += 1;
-      const f = unitsTotal > 0 ? unitsEvaluated / unitsTotal : 0;
-      snapshot = { ...snapshot, status: 'running', phase: 'executing', seq, unitsEvaluated, unitsTotal, pairSpaceTotal: unitsTotal, pairSpaceEvaluated: unitsEvaluated, pairSpaceProcessed: unitsEvaluated, fractionEvaluated: f, fractionProcessed: f, resultsFound };
+      const ps = pairSpace ?? { processed: unitsEvaluated, total: unitsTotal };
+      const f = ps.total > 0 ? ps.processed / ps.total : 0;
+      snapshot = { ...snapshot, status: 'running', phase: 'executing', seq, unitsEvaluated, unitsTotal, pairSpaceTotal: ps.total, pairSpaceEvaluated: ps.processed, pairSpaceProcessed: ps.processed, fractionEvaluated: f, fractionProcessed: f, resultsFound };
       emit('state', { seq, status: 'running', phase: 'executing' });
     },
     finish({ status = 'completed', results = hardResults(), persistence = { state: 'saved', timedOut: false, attempt: 1 } } = {}) {

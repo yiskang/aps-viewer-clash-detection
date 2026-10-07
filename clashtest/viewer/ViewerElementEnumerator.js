@@ -145,6 +145,12 @@ export function createViewerElementEnumerator({ scheduleTimeout, clearScheduled,
         const rec = records[fragId];
         if (rec === undefined) throw new EnumerationInconsistencyError('fragment-outside-population', { fragId, count });
         // (5) D-V6 (OWNER-APPROVED fail-closed policy): a tree-reachable fragment the library would drop as a target.
+        // Owner-authorized bounded exception (2026-10-07): an intentionally omitted null-geometry fragment (SVF2/OTG
+        // `MESH_NOTLOADED` + geometry id 0, e.g. Audubon Architecture 2D-symbol frags 4600/4601) has no geometry any query
+        // could test; the library reports it as the informational `fragment-null-geometry`. It is tree-reachable, stays
+        // visible as an 'N' row in the population digest and in the root's subtree digest, and is not an owner-mismatch
+        // candidate (no fragList owner is read for it). Every other unattributable fragment still fails closed.
+        if (rec.cls === 'N' && rec.nullGeometry === true) { reachable[fragId] = 1; continue; }
         if (rec.cls !== 'L') throw new EnumerationInconsistencyError('tree-reachable-fragment-unattributable', { fragId, cls: rec.cls });
         if (rec.ownerDbId !== treeOwner) mismatches.push({ fragId, treeOwner, fragListOwner: rec.ownerDbId });
         reachable[fragId] = 1;

@@ -192,12 +192,27 @@ export function formatElapsed(ms) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+/**
+ * Option E (owner-authorized 2026-10-07): the shown progress fraction is the share of WORK UNITS settled —
+ * (unitsEvaluated + unitsFailedOrSkipped) / unitsTotal, both RunProgress fields — not `fractionProcessed`. The
+ * engine's pair-space fraction is exact for its own definition but front-loaded for a same-model run (the
+ * Architecture self-clash showed 66.7% at unit 80 of 4,294), so it misled as a completion signal. `null` ⇒
+ * indeterminate (no plan yet). A runtime split adds units, so this fraction can step back slightly; it is not
+ * smoothed.
+ */
+function unitsFraction(snap, num) {
+  const total = num(snap.unitsTotal);
+  if (total <= 0) return null;
+  return Math.min(1, (num(snap.unitsEvaluated) + num(snap.unitsFailedOrSkipped)) / total);
+}
+
 function progressOf(run) {
   const snap = run.snapshot ?? {};
   const num = (v) => (Number.isFinite(v) ? v : 0);
   return {
-    fraction: Number.isFinite(snap.fractionProcessed) ? snap.fractionProcessed : null,   // null ⇒ indeterminate
+    fraction: unitsFraction(snap, num),                                                   // null ⇒ indeterminate
     unitsEvaluated: num(snap.unitsEvaluated),
+    unitsFailedOrSkipped: num(snap.unitsFailedOrSkipped),                               // Option E: shown when > 0
     unitsTotal: num(snap.unitsTotal),
     resultsFound: num(snap.resultsFound),
     caveatCount: num(snap.caveatCount),

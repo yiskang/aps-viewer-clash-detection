@@ -58,6 +58,26 @@ async function selectFirstRowWithMarkers(page) {
   await page.waitForFunction(() => window.__e2e.world.viewer.meshCount() > 0);
 }
 
+test('E2E (Option E): a front-loaded pair-space fraction does not drive the bar; the shown % is settled units / total, labelled', () => withPage(async ({ page }) => {
+  await boot(page);
+  await configureAndRun(page);
+  // The Architecture self-clash shape: 80 of 4,294 units settled while 2/3 of the pair space is covered.
+  await page.evaluate(() => window.__e2e.world.engine.handles[0].progress({ unitsEvaluated: 80, unitsTotal: 4294, resultsFound: 7, pairSpace: { processed: 2, total: 3 } }));
+  await waitVm(page, (vm) => vm.run.state === 'running' && vm.run.progress !== null && vm.run.progress.unitsEvaluated === 80);
+  const shown = await page.evaluate(() => {
+    const bar = document.querySelector('#clash-detection-panel progress');
+    return {
+      now: bar.getAttribute('aria-valuenow'), text: bar.getAttribute('aria-valuetext'), value: bar.value,
+      pct: document.querySelector('#clash-detection-panel .clash-progress-pct').textContent,
+      units: document.querySelector('#clash-detection-panel .clash-progress-units').textContent,
+    };
+  });
+  assert.deepEqual(shown, { now: '2', text: '2% of units processed', value: 80 / 4294, pct: ' 2% of units ·', units: ' units 80/4294' });
+  assert.equal(shown.pct.includes('67'), false, 'the 66.7% pair-space figure is not presented as progress');
+  await page.evaluate(() => window.__e2e.world.engine.handles[0].finish());
+  await waitVm(page, (vm) => vm.run.state === 'done');
+}));
+
 test('E2E: setup by clicks → Run → progress → done → list → select presents markers → Back to all → dispose leaves nothing', () => withPage(async ({ page }) => {
   await boot(page);
   await configureAndRun(page);

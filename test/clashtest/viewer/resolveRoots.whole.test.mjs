@@ -146,8 +146,8 @@ test('three consecutive calls over unchanged content agree exactly (the planner 
 // 2026-10-07 (owner-authorized): an unreachable, intentionally omitted null-geometry fragment (not loaded AND geometry
 // id 0, populationScan's `nullGeometry` flag) is informational -- it is not counted as unattributable, so on its own it
 // produces no unreachable population (no `tree-unreachable-population` exclusion, no rule-7 caveat). A not-loaded
-// fragment with a real geometry id is still counted. A TREE-REACHABLE null-geometry fragment still fails closed (D-V6
-// is unchanged).
+// fragment with a real geometry id is still counted. A TREE-REACHABLE null-geometry fragment now plans (D-V6 bounded
+// exception, owner-authorized 2026-10-07 after the normal-app Architecture failure).
 test('unattributable: an unreachable null-geometry N fragment is not counted; a not-loaded fragment with a real geometry id still is', async () => {
   const geoms = new Map([[0, { geometryIndex: 10 }], [1, { geometryIndex: 11 }], [2, { geometryIndex: 12 }],
     [3, { geometryIndex: 13 }], [4, { geometryIndex: 14 }], [5, { geometryIndex: 0 }], [6, { geometryIndex: 16 }]]);
@@ -161,6 +161,14 @@ test('unattributable: an unreachable null-geometry N fragment is not counted; a 
   const both = await run(7, [5, 6]);
   assert.deepEqual(both.unreachable, { count: 0, ownerDbIds: [], unattributable: { notLoaded: 1, ownerUnresolvable: 0 } });
   const reachableNull = buildMockModel([{ dbId: 1, children: TREE }], new Map([[1, { geometryIndex: 0 }]]), { notLoadedFragIds: [1] });
-  await assert.rejects(enumerator.resolveRoots(bindingOf('k', { ...reachableNull.model, id: 'm1' }), 'whole', liveCtx().ctx),
+  // D-V6 bounded exception (owner-authorized 2026-10-07): a TREE-REACHABLE null-geometry fragment plans successfully
+  // (informational, never an unattributable/unreachable count); a tree-reachable not-loaded fragment with a real
+  // geometry id still fails closed.
+  const reached = await enumerator.resolveRoots(bindingOf('k', { ...reachableNull.model, id: 'm1' }), 'whole', liveCtx().ctx);
+  assert.deepEqual(validateResolveRootsResult(reached, { scope: 'whole' }), { ok: true, issues: [] });
+  assert.deepEqual(reached.unreachable, { count: 0, ownerDbIds: [], unattributable: { notLoaded: 0, ownerUnresolvable: 0 } });
+  assert.equal(reached.ownerMismatch.count, 0);
+  const reachableReal = buildMockModel([{ dbId: 1, children: TREE }], new Map([[1, { geometryIndex: 11 }]]), { notLoadedFragIds: [1] });
+  await assert.rejects(enumerator.resolveRoots(bindingOf('k', { ...reachableReal.model, id: 'm1' }), 'whole', liveCtx().ctx),
     (e) => e.name === 'EnumerationInconsistencyError' && e.reason === 'tree-reachable-fragment-unattributable');
 });

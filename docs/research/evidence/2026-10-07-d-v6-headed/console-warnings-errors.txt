@@ -1,0 +1,17 @@
+Total messages: 7 (Errors: 0, Warnings: 1)
+Returning 10 messages for level "warning"
+
+[WARNING] [Autodesk.Viewing.Model#getInstanceTree] is deprecated and will be removed in a future release, use Autodesk.Viewing.Model#getObjectTree instead. @ https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js:17520
+[ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8080/api/auth/token:0
+[ERROR] TypeError: Failed to fetch
+    at Object.getAccessToken (http://localhost:8080/viewer.js:11:28)
+    at https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js:41312:67 @ http://localhost:8080/viewer.js:18
+[WARNING] [Autodesk.Viewing.Model#getInstanceTree] is deprecated and will be removed in a future release, use Autodesk.Viewing.Model#getObjectTree instead. @ https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js:17520
+[WARNING] [Autodesk.Viewing.Model#getInstanceTree] is deprecated and will be removed in a future release, use Autodesk.Viewing.Model#getObjectTree instead. @ https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js:17520
+[ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8080/api/auth/token:0
+[ERROR] TypeError: Failed to fetch
+    at Object.getAccessToken (http://localhost:8080/viewer.js:11:28)
+    at https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js:41312:67 @ http://localhost:8080/viewer.js:18
+[WARNING] [Autodesk.Viewing.Model#getInstanceTree] is deprecated and will be removed in a future release, use Autodesk.Viewing.Model#getObjectTree instead. @ https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js:17520
+[WARNING] [Autodesk.Viewing.Model#getInstanceTree] is deprecated and will be removed in a future release, use Autodesk.Viewing.Model#getObjectTree instead. @ https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js:17520
+[WARNING] [Autodesk.Viewing.Model#getInstanceTree] is deprecated and will be removed in a future release, use Autodesk.Viewing.Model#getObjectTree instead. @ https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js:17520

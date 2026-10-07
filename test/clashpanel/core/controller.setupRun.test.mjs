@@ -135,7 +135,8 @@ test('AC-P3: RUN_START admits one run; during the run there is no list and no ET
     assert.equal(vm.run.canRun, false);
     assert.equal(vm.results.state, 'running');
     assert.deepEqual(vm.results.rows, []);
-    assert.deepEqual(Object.keys(vm.run.progress).sort(), ['caveatCount', 'elapsedText', 'fraction', 'resultsFound', 'unitsEvaluated', 'unitsTotal']);
+    // Option E (2026-10-07): `unitsFailedOrSkipped` added to the running progress (units % and counter shown consistently).
+    assert.deepEqual(Object.keys(vm.run.progress).sort(), ['caveatCount', 'elapsedText', 'fraction', 'resultsFound', 'unitsEvaluated', 'unitsFailedOrSkipped', 'unitsTotal']);
   };
   check();                                                                // preparing
   handle.emitState({ status: 'planning', phase: 'enumerating' }); await h.settle(); check();

@@ -426,6 +426,7 @@ export function createRunFixture(opts = {}) {
     get unitsAdded() { return addUnitCalls; },            // Task P6.6: the brief's name for it
     addUnit(unitId, outcome) { addUnitCalls.push(unitId); return realAggregator.addUnit(unitId, outcome); },
     snapshot: () => realAggregator.snapshot(),
+    counters: () => realAggregator.counters(),           // Option D: the per-unit progress read
   };
   const realStatistics = createStatisticsAccumulator();
   const addCalls = [];

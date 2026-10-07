@@ -1,5 +1,5 @@
 // clashpanel/ui/render/run.js — Region 2 RUN / STATUS (spec §7.1–§7.3, §13, §14.4).
-// Progress only from vm.run.progress (RunProgress fractions/counts + the Panel's own elapsed text): no ETA,
+// Progress only from vm.run.progress (units-based fraction + RunProgress counts + the Panel's own elapsed text): no ETA,
 // no throughput, no telemetry (PD-13). The aria-live status node is created once and only its text changes, so
 // assistive technology announces updates instead of seeing a new live region on every render.
 import { el, rebuild, setText } from '../dom.js';
@@ -42,14 +42,20 @@ function progressBlock(doc, p) {
       max: '1', 'aria-label': 'Run progress',
       'aria-valuemin': determinate ? '0' : null, 'aria-valuemax': determinate ? '100' : null,
       'aria-valuenow': determinate ? String(pct) : null,
-      'aria-valuetext': determinate ? `${pct}%` : 'progress not yet known',
+      'aria-valuetext': determinate ? `${pct}% of units processed` : 'progress not yet known',
     },
   });
   if (determinate) bar.value = Math.min(1, Math.max(0, p.fraction));
   return el(doc, 'div', { class: 'clash-progress' }, [
     bar,
-    el(doc, 'span', { class: 'clash-progress-pct', text: determinate ? ` ${pct}%` : '' }),
-    el(doc, 'span', { class: 'clash-progress-units', text: ` units ${p.unitsEvaluated}/${p.unitsTotal}` }),
+    // Option E: the percentage is labelled as what it measures (vm fraction = settled units / unitsTotal).
+    el(doc, 'span', { class: 'clash-progress-pct', text: determinate ? ` ${pct}% of units ·` : '' }),
+    // The % counts settled units (evaluated + failed/skipped); the counter shows evaluated units, so any
+    // failed/skipped units are named next to it and the two never contradict.
+    el(doc, 'span', {
+      class: 'clash-progress-units',
+      text: ` units ${p.unitsEvaluated}/${p.unitsTotal}${p.unitsFailedOrSkipped > 0 ? ` (${p.unitsFailedOrSkipped} not evaluated)` : ''}`,
+    }),
     el(doc, 'span', { class: 'clash-progress-found', text: ` found ${p.resultsFound}` }),
     el(doc, 'span', { class: 'clash-progress-caveats', text: ` caveats ${p.caveatCount}` }),
     el(doc, 'span', { class: 'clash-progress-elapsed', text: ` ${p.elapsedText}` }),
