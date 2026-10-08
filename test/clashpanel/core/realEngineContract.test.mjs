@@ -317,3 +317,39 @@ test('the run headline equals the wording matrix for the real sealed set (AC-P9 
   assert.equal(t.vm().run.headline, runHeadline({ status: 'completed', total: 2, coverage: 'full' }));
   await t.controller.dispose();
 });
+
+test('REAL engine, Model Pair: A×B and B×A pairs land in ONE unordered model-pair group; labels use host names', async () => {
+  const pairs = [
+    { source: { modelKey: 'mA', dbId: 1 }, target: { modelKey: 'mB', dbId: 10 }, type: 'volume-overlap', witness: { kind: 'surface-crossing', point: [1, 2, 3] } },
+    { source: { modelKey: 'mB', dbId: 11 }, target: { modelKey: 'mA', dbId: 2 }, type: 'volume-overlap', witness: { kind: 'surface-crossing', point: [4, 5, 6] } },
+  ];
+  const t = setup({ pairs });
+  await t.hardAB();
+  await t.runAndWait();
+  assert.equal(t.vm().run.doneKind, 'completed');
+  assert.equal(t.vm().run.counts.total, 2);
+  await t.dispatch({ type: INTENT.GROUP_MODE, value: 'modelPair' });
+  await t.until(() => t.vm().results.view === 'grouped');
+  const vm = t.vm();
+  assert.deepEqual(vm.results.rows.map((r) => [r.kind, r.groupId, r.label, r.count]), [
+    ['group', JSON.stringify(['pairModels', {}, ['mA', 'mB']]), 'Architecture ↔ Structure', 2]]);
+  assert.equal(vm.results.multiValuedNote, null);
+  assert.equal(t.counts.groupBy, 1);
+  await t.controller.dispose();
+});
+
+test('REAL engine, Model Pair: a same-instance self-clash groups as "A ↔ A" by modelKey identity', async () => {
+  const t = setup({ pairs: [
+    { source: { modelKey: 'mA', dbId: 1 }, target: { modelKey: 'mA', dbId: 2 }, type: 'volume-overlap', witness: { kind: 'surface-crossing', point: [0, 0, 0] } },
+    { source: { modelKey: 'mA', dbId: 4 }, target: { modelKey: 'mA', dbId: 3 }, type: 'volume-overlap', witness: { kind: 'surface-crossing', point: [1, 0, 0] } },
+  ] });
+  await t.dispatch({ type: INTENT.SETUP_TOGGLE_MODEL, side: 'A', modelKey: 'mA' });
+  await t.dispatch({ type: INTENT.SETUP_SELF_CLASH, value: true });
+  await t.runAndWait();
+  assert.equal(t.vm().run.doneKind, 'completed');
+  await t.dispatch({ type: INTENT.GROUP_MODE, value: 'modelPair' });
+  await t.until(() => t.vm().results.view === 'grouped');
+  assert.deepEqual(t.vm().results.rows.map((r) => [r.groupId, r.label, r.count]), [
+    [JSON.stringify(['pairModels', {}, ['mA', 'mA']]), 'Architecture ↔ Architecture', 2]]);
+  await t.controller.dispose();
+});

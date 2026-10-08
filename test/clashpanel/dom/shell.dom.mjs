@@ -144,7 +144,7 @@ test('AC-P21: re-creating the shell over the same controller rebuilds identical 
   }, richVm());
   assert.deepEqual(r, {
     sameAfterHideShow: true, sameAfterRecreate: true, size: r.size,
-    summary: 'Clash test 3 · Soft 0.05 · A: Architecture · B: Structure', page: ' 2 / 2 ', selectedRow: '-|r1', selectedDetail: 'r1',
+    summary: 'Clash test 3 · Soft 0.05 · A: Architecture · B: Structure', page: ' Page 2 of 2 ', selectedRow: '-|r1', selectedDetail: 'r1',
     filter: 'wall', group: true, b: false,
   });
   assert.ok(r.size > 20);

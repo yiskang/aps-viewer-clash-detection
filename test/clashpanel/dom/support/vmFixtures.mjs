@@ -86,7 +86,7 @@ export function resultsVm(over = {}) {
     page: { index: 0, count: 1, size: 50 },
     rows: [resultRow(0), resultRow(1), resultRow(2)],
     multiValuedNote: null, hiddenByFiltersNote: false,
-    nav: { canPrev: false, canNext: true, label: 'No clash selected' },
+    nav: { canPrev: false, canNext: true, label: 'No clash selected', scoped: false },
     ...over,
   };
 }

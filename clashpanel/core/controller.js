@@ -28,7 +28,9 @@ import { resolveSide, resolveResult } from './resolve.js';
 import { buildViewModel } from './viewModel.js';
 import { buildResultIndex } from './resultIndex.js';
 import { EMPTY_FILTER_SPEC, isFilterActive, parseMaxGap, runFilterPass } from './filters.js';
-import { computeElementGroups, filterGroups, sortGroups, matchIdsFrom } from './grouping.js';
+import { filterGroups, sortGroups, matchIdsFrom } from './grouping.js';
+import { groupModeOf, GROUP_MODE_IDS } from './groupModes.js';
+import { createElementPropertySource } from './elementProperties.js';
 import { buildOrderedIndex, pageSlice, clampPage, pageOfPosition } from './orderedList.js';
 import { buildRow, buildGroupHeaderRow, livenessOf, locationOf, sideView, gapOf } from './rows.js';
 import { BASIS_VERDICT_TIMEOUT_MS, READINESS_POLL_MS, PAGE_SIZE, FILTER_DEBOUNCE_MS } from './constants.js';
@@ -259,6 +261,7 @@ function onSetupToggleCollapsed(c) {
 function onCatalogChange(c) {
   if (c.disposed) return;
   c.labels.invalidateNames();                                     // names/known models may have changed (RF-2)
+  retryModelNotLoaded(c);                                         // a model may be back (hide/show): recompute 'model-not-loaded'
   revalidate(c, { reEvaluateSoft: true });                        // readiness/registration/basis may have changed
   recheckFreshness(c);                                            // §7.3: re-check on model add/unload
   touch(c);
@@ -555,10 +558,17 @@ function startPipeline(c, g, resultSet) {
     summary: null, caveatedIds: null, maskState: 'pending',   // caveated mask: 'pending' | 'ready' | 'unavailable'
     maskMissing: false,
     freshness: null, freshnessPending: false, claim: null, claimPending: false,
-    groupTable: null, groupingState: 'idle', groupingReason: null, groupsById: null,
+    grouping: new Map(),                                     // mode id -> {state:'pending'|'ok'|'unavailable', reason, table}
+    groupsById: null,
+    properties: null,                                        // element-property source of the metadata modes (this generation)
     matching: null, filterBusy: false, ordered: null, textIndexed: false,
   };
   if (index === null) return;
+  // One cached element-property source per result generation (Category / Level grouping): the live Model of a side is
+  // resolved exactly as for element names (liveModelFor), reads are dropped once this generation is no longer current.
+  c.pipe.properties = createElementPropertySource({
+    resultSet, resolveModel: (modelKey) => liveModelFor(c, modelKey), scheduler: c.scheduler, isCurrent: () => current(c, g),
+  });
   const p = c.pipe;
   // One summarize and one caveated mask per (generation, spec), single-flight, summarize first (§5.2, AC-P4).
   c.queue.submit({ key: 'summarize', priority: 0, job: (signal) => c.engine.derivations.summarize(resultSet, { signal }) })
@@ -577,7 +587,7 @@ function startPipeline(c, g, resultSet) {
     }, () => {}).catch(() => { /* a throwing commit must not surface as unhandled */ });
   recheckFreshness(c);
   refreshList(c);
-  if (c.view.groupBy === 'element') ensureGrouping(c);
+  ensureGrouping(c);
 }
 
 /**
@@ -696,22 +706,40 @@ function labelOfRef(c, ref) {
   return `${c.labels.modelName(ref.modelKey)} · ${c.labels.elementLabel(ref)}`;
 }
 
+const IDLE_GROUPING = Object.freeze({ state: 'idle', reason: null, table: null });
+
+/** The cached grouping outcome of the ACTIVE mode for the displayed set ('idle' for None / not requested yet). */
+function activeGrouping(c) {
+  const p = c.pipe;
+  const mode = groupModeOf(c.view.groupBy);
+  if (p === null || mode === null || mode.grouped !== true) return IDLE_GROUPING;
+  return p.grouping.get(mode.id) ?? IDLE_GROUPING;
+}
+
 /** Rebuilds the typed-array ordered index from the cached pass + group table (no Core call, AC-P4). */
 function rebuildOrdered(c, { follow = false } = {}) {
   const p = c.pipe;
   if (p === null || p.matching === null) return;
   const v = c.view;
-  const grouped = v.groupBy === 'element' && p.groupingState === 'ok';
+  const mode = groupModeOf(v.groupBy);
+  const entry = activeGrouping(c);
+  const grouped = entry.state === 'ok';
   let groups = [];
   if (grouped) {
     const matchIds = isFilterActive(v.filter) ? matchIdsFrom(p.matching, p.index) : null;
-    groups = sortGroups(filterGroups(p.groupTable, { matchIds, index: p.index }), GROUP_SORT[v.sort] ?? 'core', (ref) => labelOfRef(c, ref));
+    groups = sortGroups(filterGroups(entry.table, { matchIds, index: p.index }), GROUP_SORT[v.sort] ?? 'core', (ref) => mode.labelOf(ref, c.labels));
   }
   p.groupsById = grouped ? new Map(groups.map((gr) => [gr.groupId, gr])) : null;
   p.ordered = buildOrderedIndex({
     view: grouped ? 'grouped' : 'flat', matching: p.matching, index: p.index,
     sortKey: v.sort === 'gap-asc' && p.index.isSoft ? 'gap-asc' : 'default', groups, expanded: v.expanded,
   });
+  // Group-scoped navigation needs its group IN the current grouping: a filter that emptied it, or another grouping
+  // mode (whose group ids never coincide), ends the scope for good — clearing filters does not resurrect it. The flat
+  // (None / pending / unavailable) view leaves a scope dormant: it has no groups to contradict it (§12.3).
+  if (grouped && c.selection !== null && c.selection.navScope !== null && !p.groupsById.has(c.selection.navScope)) {
+    c.selection = { ...c.selection, navScope: null };
+  }
   if (follow) {
     // AC-P17: the page follows the selected OCCURRENCE; a selection hidden by filters leaves the page where it is;
     // with no selection a new ordering starts at its first page.
@@ -722,17 +750,36 @@ function rebuildOrdered(c, { follow = false } = {}) {
   v.page = clampPage(v.page, p.ordered.length, PAGE_SIZE);
 }
 
+/** Unavailable reasons of a metadata mode that a later read may cure (the property source does not cache them either). */
+const TRANSIENT_GROUPING_REASONS = new Set(['properties-error', 'model-not-loaded']);
+
+/** Drops the stored transient-unavailable outcome of `mode` so the next ensureGrouping reads again (never while pending). */
+function dropTransientGrouping(c, modeId) {
+  const entry = c.pipe?.grouping.get(modeId);
+  if (entry !== undefined && entry.state === 'unavailable' && entry.transient === true) c.pipe.grouping.delete(modeId);
+}
+
+/** Requests the ACTIVE mode's grouping once per (generation, mode); the outcome is cached in the pipe. */
 function ensureGrouping(c) {
   const p = c.pipe;
-  if (p === null || p.index === null || p.groupingState !== 'idle') return;
+  const mode = groupModeOf(c.view.groupBy);
+  if (p === null || p.index === null || mode === null || mode.grouped !== true || p.grouping.has(mode.id)) return;
   const g = p.gen;
-  p.groupingState = 'pending';
-  computeElementGroups({ queue: c.queue, engine: c.engine, resultSet: p.set })
+  const entry = { state: 'pending', reason: null, table: null };
+  p.grouping.set(mode.id, entry);
+  const isCurrent = () => current(c, g) && p.grouping.get(mode.id) === entry;
+  Promise.resolve()
+    .then(() => mode.compute({ queue: c.queue, engine: c.engine, resultSet: p.set, properties: p.properties, scheduler: c.scheduler, isCurrent }))
     .then((r) => r, () => ({ status: 'unavailable', reason: 'error' }))
     .then((r) => {
-      if (!current(c, g) || r.status === 'superseded') return;
-      if (r.status === 'ok') { p.groupTable = r.table; p.groupingState = 'ok'; }
-      else { p.groupingState = 'unavailable'; p.groupingReason = r.reason; }
+      if (!current(c, g) || p.grouping.get(mode.id) !== entry) return;
+      if (r?.status === 'superseded') { p.grouping.delete(mode.id); return; }
+      if (r?.status === 'ok') { entry.state = 'ok'; entry.table = r.table; }
+      else {
+        entry.state = 'unavailable'; entry.reason = typeof r?.reason === 'string' ? r.reason : 'error';
+        entry.transient = mode.usesProperties === true && TRANSIENT_GROUPING_REASONS.has(entry.reason);   // retried on the next selection
+      }
+      if (c.view.groupBy !== mode.id) return;                       // landed for a mode the user already left
       rebuildOrdered(c, { follow: true });
       touch(c);
     }).catch(() => { /* a throwing commit must not surface as unhandled */ });
@@ -802,9 +849,11 @@ function onFilterClear(c) {
 }
 
 function onGroupMode(c, intent) {
-  if (intent.value !== 'none' && intent.value !== 'element') return;
-  c.view.groupBy = intent.value;
-  if (intent.value === 'element') ensureGrouping(c);
+  const mode = groupModeOf(intent.value);
+  if (mode === null) return;                                         // unknown / not-yet-supported modes are ignored
+  c.view.groupBy = mode.id;
+  dropTransientGrouping(c, mode.id);                                 // selecting a mode whose read failed transiently retries it
+  ensureGrouping(c);
   rebuildOrdered(c, { follow: true });
   touch(c);
 }
@@ -849,9 +898,12 @@ function resultRow(c, canonicalIndex, groupId) {
 /** Only the current page is materialized (PAGE_SIZE entries at most, spec §12.1). */
 function pageRows(c) {
   const p = c.pipe;
-  return pageSlice(p.ordered, c.view.page, PAGE_SIZE).map((entry) => (entry.kind === 'group'
-    ? buildGroupHeaderRow({ group: p.groupsById.get(entry.groupId), labels: c.labels, expanded: c.view.expanded.has(entry.groupId) })
-    : resultRow(c, entry.canonicalIndex, entry.groupId)));
+  const mode = groupModeOf(c.view.groupBy);
+  return pageSlice(p.ordered, c.view.page, PAGE_SIZE).map((entry) => {
+    if (entry.kind !== 'group') return resultRow(c, entry.canonicalIndex, entry.groupId);
+    const group = p.groupsById.get(entry.groupId);
+    return buildGroupHeaderRow({ group, label: mode.labelOf(group.ref, c.labels), expanded: c.view.expanded.has(entry.groupId) });
+  });
 }
 
 // ── selection, navigation and presentation (spec §9.1–§9.6, §12.2, §12.3; Task 18) ─────────────────────────────
@@ -1033,6 +1085,7 @@ function onModelLeft(c, event) {
   // already read that model's names (T15 carry-forward); the index is then rebuilt from the models still live.
   c.labels.reset();
   if (c.pipe !== null) { c.pipe.textIndexed = false; ensureLabelIndex(c); }
+  forgetPropertyGroupings(c, key);
   const shown = c.presented;
   if (shown !== null && (typeof key !== 'string' || shown.modelKeys.includes(key))) {
     c.presented = null;
@@ -1043,17 +1096,52 @@ function onModelLeft(c, event) {
   touch(c);
 }
 
+/**
+ * A model of the displayed run left the scene (or an unknown model did — conservatively treated alike): its element
+ * properties are no longer readable, so the property cache and every metadata-mode grouping outcome are dropped; the
+ * active metadata mode recomputes at once (and reports 'model-not-loaded' instead of keeping stale groups).
+ */
+function retryModelNotLoaded(c) {
+  const p = c.pipe;
+  if (p === null || p.properties === null) return;
+  let dropped = false;
+  for (const id of GROUP_MODE_IDS) {
+    const entry = p.grouping.get(id);
+    if (entry !== undefined && entry.state === 'unavailable' && entry.reason === 'model-not-loaded' && p.grouping.delete(id)) dropped = true;
+  }
+  if (!dropped) return;
+  ensureGrouping(c);                                                // active mode only; others recompute when selected
+  rebuildOrdered(c, { follow: true });
+}
+
+function forgetPropertyGroupings(c, modelKey) {
+  const p = c.pipe;
+  if (p === null || p.properties === null) return;
+  const participating = (p.set?.provenance?.models ?? []).some((m) => m?.modelKey === modelKey);
+  if (typeof modelKey === 'string' && !participating) return;
+  p.properties.invalidate();
+  let dropped = false;
+  for (const id of GROUP_MODE_IDS) {
+    if (groupModeOf(id).usesProperties === true && p.grouping.delete(id)) dropped = true;
+  }
+  if (!dropped) return;
+  ensureGrouping(c);
+  rebuildOrdered(c, { follow: true });
+}
+
 function navOf(c) {
   const ordered = c.pipe?.ordered ?? null;
   const sel = c.selection;
-  // The group-scope suffix only when Prev/Next actually step that group: grouped view with the scope group expanded
-  // (orderedList.navNeighbor's own condition). After Group → None the flat list has no group scope.
-  const scoped = sel !== null && sel.navScope !== null && ordered !== null && ordered.view === 'grouped' && c.view.expanded.has(sel.navScope);
-  const label = sel === null ? 'No clash selected' : `Clash #${selectedCanonical(c) + 1}${scoped ? ' (within its group)' : ''}`;
-  if (ordered === null) return { canPrev: false, canNext: false, label };
+  // The group-scope wording (nav.scoped; the DOM renders 'Previous/Next in group') only when Prev/Next actually step that group: grouped view with the scope group PRESENT in
+  // the current grouping and expanded (orderedList.navNeighbor's own condition). After Group → None the flat list has
+  // no group scope; a group filtered away (or from another mode) is no scope either.
+  const scoped = sel !== null && sel.navScope !== null && ordered !== null && ordered.view === 'grouped'
+    && c.pipe.groupsById !== null && c.pipe.groupsById.has(sel.navScope) && c.view.expanded.has(sel.navScope);
+  const label = sel === null ? 'No clash selected' : `Clash #${selectedCanonical(c) + 1}`;
+  if (ordered === null) return { canPrev: false, canNext: false, label, scoped };
   const occ = sel?.occurrence ?? null;
   const scope = sel?.navScope ?? null;
-  return { canPrev: ordered.navNeighbor(occ, -1, scope) !== null, canNext: ordered.navNeighbor(occ, 1, scope) !== null, label };
+  return { canPrev: ordered.navNeighbor(occ, -1, scope) !== null, canNext: ordered.navNeighbor(occ, 1, scope) !== null, label, scoped };
 }
 
 // ── view input (pure data handed to viewModel.js) ─────────────────────────────────────────────────────────────
@@ -1115,13 +1203,14 @@ function listInput(c) {
   const v = c.view;
   const ordered = p.ordered;
   const elementOnly = v.filter.elementOnly;
+  const grouping = activeGrouping(c);
   return {
     total: p.index.count,
     filtered: p.matching === null ? null : p.matching.length,
-    busy: p.filterBusy || p.groupingState === 'pending' || (v.filter.unverified && p.maskState === 'pending'),
+    busy: p.filterBusy || grouping.state === 'pending' || (v.filter.unverified && p.maskState === 'pending'),
     maskUnavailable: v.filter.unverified === true && p.maskMissing === true,
     spec: v.filter, textDraft: v.textDraft, maxGapText: v.maxGapText, maxGapError: v.maxGapError,
-    groupBy: v.groupBy, groupingState: p.groupingState, groupingReason: p.groupingReason,
+    groupBy: v.groupBy, groupingState: grouping.state, groupingReason: grouping.reason,
     sort: v.sort, isSoft: p.index.isSoft, clearance: p.index.clearance,
     modelOptions: p.index.models.map((m) => ({ modelKey: m.modelKey, label: c.labels.modelName(m.modelKey) })),
     elementOnly: elementOnly === null ? null : { ...elementOnly, label: labelOfRef(c, elementOnly) },

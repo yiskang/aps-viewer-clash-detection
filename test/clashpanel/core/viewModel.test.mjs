@@ -8,6 +8,7 @@ import { runHeadline, STATEMENTS } from '../../../clashpanel/core/runReport.js';
 import { PAGE_SIZE, SOFT_BASIS_HEADLINE } from '../../../clashpanel/core/constants.js';
 import { INTENT } from '../../../clashpanel/core/intents.js';
 import { makeSet, makeHarness } from '../support/controllerHarness.mjs';
+import { MULTI_VALUED_NOTE } from '../../../clashpanel/core/grouping.js';
 
 // ── input builders (the ViewInput documented at the top of viewModel.js) ──────────────────────────────────────
 
@@ -55,7 +56,7 @@ function listFor(set, over = {}) {
     isSoft: false, clearance: null, modelOptions: [{ modelKey: 'mA', label: 'Architecture' }], elementOnly: null, view: 'flat',
     page: { index: 0, count: n === 0 ? 0 : 1, size: PAGE_SIZE },
     rows: set.results.map((r, i) => ({ kind: 'result', key: `-|${r.resultId}`, resultId: r.resultId, groupId: null, ordinal: i + 1, side1: { modelKey: 'mA', modelName: 'Architecture', label: '#1', dbId: 1 }, side2: { modelKey: 'mB', modelName: 'Structure', label: '#10', dbId: 10 }, gap: null, badges: [], liveness: 'live', selected: false })),
-    nav: { canPrev: false, canNext: n > 0, label: 'No clash selected' }, hiddenByFilters: false, ...over,
+    nav: { canPrev: false, canNext: n > 0, label: 'No clash selected', scoped: false }, hiddenByFilters: false, ...over,
   };
 }
 
@@ -108,7 +109,7 @@ test('every region has exactly the catalog shape and the whole ViewModel is deep
     assert.deepEqual(keys(vm.run), SHAPE.run);
     assert.deepEqual(keys(vm.filters), SHAPE.filters);
     assert.deepEqual(keys(vm.results), SHAPE.results);
-    assert.deepEqual(keys(vm.results.nav), ['canNext', 'canPrev', 'label']);
+    assert.deepEqual(keys(vm.results.nav), ['canNext', 'canPrev', 'label', 'scoped']);
     assert.deepEqual(keys(vm.results.page), ['count', 'index', 'size']);
     // every entry, including the shared basis option objects, is deeply frozen.
     const walk = (v) => { if (v !== null && typeof v === 'object') { assert.ok(Object.isFrozen(v)); Object.values(v).forEach(walk); } };
@@ -208,6 +209,14 @@ test('AC-P2: every terminal status × coverage × integrity × freshness (empty 
   assert.equal(combos, 96);
 });
 
+test('results.nav carries the group-scope flag through unchanged (label stays "Clash #N"; wording is the renderer\'s)', () => {
+  const two = makeSet({ runId: 'run-1', results: [{ a: ['mA', 1], b: ['mB', 10] }, { a: ['mA', 2], b: ['mB', 10] }] });
+  const nav = (scoped) => buildViewModel(input({ phase: 'done', set: two, list: listFor(two, { nav: { canPrev: true, canNext: false, label: 'Clash #2', scoped } }) })).results.nav;
+  assert.deepEqual(nav(true), { canPrev: true, canNext: false, label: 'Clash #2', scoped: true });
+  assert.deepEqual(nav(false), { canPrev: true, canNext: false, label: 'Clash #2', scoped: false });
+  assert.deepEqual(buildViewModel(input({ phase: 'done', set: two, list: null })).results.nav, { canPrev: false, canNext: false, label: 'No clash selected', scoped: false });
+});
+
 test('results.state covers before-run, running, list, empty-claim, empty-nonclaim, empty-filtered, grouping-unavailable and error', () => {
   const two = makeSet({ runId: 'run-1', results: [{ a: ['mA', 1], b: ['mB', 10] }, { a: ['mA', 2], b: ['mB', 10] }] });
   const empty = makeSet({ runId: 'run-1', results: [] });
@@ -232,6 +241,23 @@ test('results.state covers before-run, running, list, empty-claim, empty-nonclai
   const grouping = buildViewModel(cases[6][1]);
   assert.equal(grouping.filters.groupingNote, 'Grouping unavailable for a set this large — showing the flat list.');
   assert.equal(grouping.results.rows.length, 2);                           // the flat list is still shown
+});
+
+test('grouping notes: single-valued modes show no multi-valued note; no note at all over an empty filtered list', () => {
+  const two = makeSet({ runId: 'run-1', results: [{ a: ['mA', 1], b: ['mB', 10] }, { a: ['mA', 2], b: ['mB', 10] }] });
+  const vmOf = (over) => buildViewModel(input({ phase: 'done', set: two, list: listFor(two, over) }));
+  assert.equal(vmOf({ groupBy: 'element', groupingState: 'ok', view: 'grouped' }).results.multiValuedNote, MULTI_VALUED_NOTE);
+  assert.equal(vmOf({ groupBy: 'modelPair', groupingState: 'ok', view: 'grouped' }).results.multiValuedNote, null);
+  const emptyGrouped = vmOf({ groupBy: 'element', groupingState: 'ok', view: 'grouped', filtered: 0, rows: [] });
+  assert.equal(emptyGrouped.results.state, 'empty-filtered');
+  assert.equal(emptyGrouped.results.multiValuedNote, null);
+  const unavailable = vmOf({ groupBy: 'modelPair', groupingState: 'unavailable', groupingReason: 'error' });
+  assert.equal(unavailable.results.state, 'grouping-unavailable');
+  assert.equal(unavailable.filters.groupingNote, 'Grouping is unavailable right now — showing the flat list.');
+  const emptyUnavailable = vmOf({ groupBy: 'modelPair', groupingState: 'unavailable', groupingReason: 'too-large', filtered: 0, rows: [] });
+  assert.equal(emptyUnavailable.results.state, 'empty-filtered');
+  assert.equal(emptyUnavailable.filters.groupingNote, null);
+  assert.equal(vmOf({ groupBy: 'none', groupingState: 'unavailable' }).filters.groupingNote, null, 'None has no grouping to be unavailable');
 });
 
 test('H1 (the view-model owns the claim/freshness pair): an allowed claim renders only from a settled pair whose freshness is current', () => {

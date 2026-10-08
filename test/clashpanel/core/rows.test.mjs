@@ -74,6 +74,12 @@ test('group header row', () => {
   assert.deepEqual(header, { kind: 'group', key: 'group:g1', groupId: 'g1', label: 'Architecture · Wall-102', count: 5, filteredCount: 2, expanded: false });
 });
 
+test('group header row for a non-element group: the mode label is used and no element label is read', () => {
+  const strict = { modelName: () => { throw new Error('no model name read'); }, elementLabel: () => { throw new Error('no element label read'); } };
+  const header = buildGroupHeaderRow({ group: { groupId: 'gp', ref: ['mA', 'mB'], count: 3, filteredCount: 3 }, label: 'Architecture ↔ Structure', labels: strict, expanded: true });
+  assert.deepEqual(header, { kind: 'group', key: 'group:gp', groupId: 'gp', label: 'Architecture ↔ Structure', count: 3, filteredCount: 3, expanded: true });
+});
+
 test('AC-P13: hostile names flow through rows as raw strings', () => {
   const hostile = '<img src=x onerror=alert(1)>';
   const row = buildRow({ record: hard(), canonicalIndex: 0, labels: { modelName: () => hostile, elementLabel: () => hostile }, liveness: 'live' });

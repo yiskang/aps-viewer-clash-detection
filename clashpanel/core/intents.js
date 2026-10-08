@@ -6,7 +6,7 @@
 //   SETUP_TOGGLE_MODEL: {side:'A'|'B', modelKey}      SETUP_USE_SELECTION: {side:'A'|'B'}
 //   FILTER_TEXT(string)/FILTER_MAX_GAP(string)/FILTER_UNVERIFIED(boolean)/FILTER_HAS_LOCATION(boolean): {value}
 //   FILTER_MODEL: {value: string[]} ([] = all models)  FILTER_ELEMENT: {ref:{modelKey,dbId}|null}
-//   GROUP_MODE: {value:'none'|'element'}  GROUP_TOGGLE: {groupId}  SORT_SET: {value:'default'|'gap-asc'|'group-count'|'group-label'}
+//   GROUP_MODE: {value:'none'|'element'|'modelPair'|'category'|'level'} (groupModes.js GROUP_MODE_IDS; others ignored)  GROUP_TOGGLE: {groupId}  SORT_SET: {value:'default'|'gap-asc'|'group-count'|'group-label'}
 //   NAV_SELECT: {resultId, groupId:string|null}        NAV_PAGE: {page:number}
 //   ACTION_ISOLATE/ACTION_MARKERS/ACTION_FOCUS_ON_SELECT: {value:boolean}
 //   Every other intent carries no payload. A ViewModel banner's optional `action: {label, intent}` carries the

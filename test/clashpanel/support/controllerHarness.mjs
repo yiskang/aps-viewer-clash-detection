@@ -152,6 +152,23 @@ function elementGroups(set) {
   return { facets: [{ facetId: 'element', params: {}, multiValued: true }], unavailable: [], total: set.results.length, memberships: list.reduce((n, g) => n + g.count, 0), groups: list };
 }
 
+/** Mirrors Core's single-valued `pairModels` facet: value [first.modelKey, second.modelKey] (Core's PairId already
+ *  orders first/second for the Panel's unordered modes), groupId = canonical JSON of ['pairModels', {}, value],
+ *  groups in compareFacetValues order (modelKey strings, lexicographic), members in canonical result order. */
+function pairModelGroups(set) {
+  const groups = new Map();
+  for (const r of set.results) {
+    const value = [r.pair.first.modelKey, r.pair.second.modelKey];
+    const groupId = JSON.stringify(['pairModels', {}, value]);
+    let g = groups.get(groupId);
+    if (g === undefined) { g = { groupId, path: [groupId], facetId: 'pairModels', params: {}, value, count: 0, members: [] }; groups.set(groupId, g); }
+    g.members.push(r.resultId); g.count += 1;
+  }
+  const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+  const list = [...groups.values()].sort((x, y) => cmp(x.value[0], y.value[0]) || cmp(x.value[1], y.value[1]));
+  return { facets: [{ facetId: 'pairModels', params: {}, multiValued: false }], unavailable: [], total: set.results.length, memberships: set.results.length, groups: list };
+}
+
 class ScriptedHandle {
   constructor(engine, runId) {
     this.engine = engine;
@@ -250,8 +267,9 @@ export function createScriptedEngine({ bindings = {}, capacity = Infinity } = {}
     return { matches, count: matches.length, total: set.results.length, unavailable: [] };
   }, () => new DerivationAbortedError(), derivationState);
   const groupBy = controllable((set, facets) => {
-    if (!(facets.length === 1 && facets[0] === 'element')) throw new Error('scripted engine: only groupBy(["element"]) is supported');
-    return elementGroups(set);
+    if (facets.length === 1 && facets[0] === 'element') return elementGroups(set);
+    if (facets.length === 1 && facets[0] === 'pairModels') return pairModelGroups(set);
+    throw new Error('scripted engine: only groupBy(["element"]) / groupBy(["pairModels"]) are supported');
   }, () => new DerivationAbortedError(), derivationState);
   const freshness = controllable((runIdOrSet) => {
     const set = setOf(runIdOrSet);
@@ -402,14 +420,56 @@ export function makeFakeModel(label, names = {}) {
 }
 
 /**
+ * Gives a fake model a Viewer-shaped bulk property read: `getBulkProperties2(ids, options, onSuccess, onError)`
+ * (or the legacy `getBulkProperties` when `legacy`). `propsOf(dbId)` -> `{name?, properties:[{displayName,
+ * attributeName, displayCategory, displayValue}]}` or undefined (no row for that id). Mirrors the pinned-build
+ * behaviour the live probe observed (Viewer 7.124.2 SVF2): with a `propFilter` only matching properties are returned
+ * (by displayName OR attributeName) and the row's top-level `name` is undefined; an unfiltered read carries `name`.
+ * `model.properties` = {calls, fail(error|null), manual, pending, resolveAll()} for tests.
+ */
+export function withFakeProperties(model, propsOf, { legacy = false } = {}) {
+  const ctl = { calls: [], failWith: null, manual: false, pending: [] };
+  ctl.resolveAll = () => { while (ctl.pending.length > 0) ctl.pending.shift()(); };
+  model[legacy ? 'getBulkProperties' : 'getBulkProperties2'] = (ids, options, onSuccess, onError) => {
+    ctl.calls.push({ ids: [...ids], options });
+    const run = () => {
+      if (ctl.failWith !== null) { onError(ctl.failWith); return; }
+      const filter = Array.isArray(options?.propFilter) ? options.propFilter : null;
+      const rows = [];
+      for (const dbId of ids) {
+        const entry = propsOf(dbId);
+        if (entry === undefined || entry === null) continue;
+        const properties = (entry.properties ?? []).filter((p) => filter === null || filter.includes(p.displayName) || filter.includes(p.attributeName));
+        rows.push({ dbId, name: filter === null ? entry.name : undefined, properties });
+      }
+      onSuccess(rows);
+    };
+    if (ctl.manual) ctl.pending.push(run); else queueMicrotask(run);
+  };
+  model.properties = ctl;
+  return model;
+}
+
+/** Property-record builders for withFakeProperties (the shapes a Revit-derived SVF/SVF2 property db reports). */
+export const prop = Object.freeze({
+  category: (value) => ({ displayName: 'Category', attributeName: 'Category', displayCategory: '__category__', displayValue: value }),
+  levelRef: (dbId) => ({ displayName: 'Level', attributeName: 'Level', displayCategory: '__internalref__', displayValue: dbId }),
+  constraintsLevel: (value) => ({ displayName: 'Level', attributeName: 'Level', displayCategory: 'Constraints', displayValue: value }),
+  named: (displayName, value, displayCategory = 'Constraints') => ({ displayName, attributeName: displayName, displayCategory, displayValue: value }),
+});
+
+/**
  * A controller over the doubles with two registered, loaded models mA ("Architecture") and mB ("Structure") —
  * names overridable through `displayNames` —
- * bindingGeneration 1 / modelVersion 'v1' (matching makeSet's default provenance).
+ * bindingGeneration 1 / modelVersion 'v1' (matching makeSet's default provenance). `props` = {mA?, mB?} property
+ * functions for withFakeProperties (models without one have no bulk property read at all).
  */
-export function makeHarness({ basis = { state: 'verified', basisKey: 'b1' }, names, displayNames = { mA: 'Architecture', mB: 'Structure' }, capacity = Infinity } = {}) {
+export function makeHarness({ basis = { state: 'verified', basisKey: 'b1' }, names, displayNames = { mA: 'Architecture', mB: 'Structure' }, capacity = Infinity, props = {} } = {}) {
   const scheduler = createFakeScheduler();
   const modelA = makeFakeModel('A', names?.mA ?? ((dbId) => `A-${dbId}`));
   const modelB = makeFakeModel('B', names?.mB ?? ((dbId) => `B-${dbId}`));
+  if (typeof props.mA === 'function') withFakeProperties(modelA, props.mA);
+  if (typeof props.mB === 'function') withFakeProperties(modelB, props.mB);
   const catalog = createFakeCatalog({
     models: [
       { modelKey: 'mA', displayName: displayNames.mA, model: modelA, loaded: true },

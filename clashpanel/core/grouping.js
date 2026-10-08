@@ -1,8 +1,8 @@
 // clashpanel/core/grouping.js
 //
-// Spec §10.2: Group by Element is ONE Core call — engine.derivations.groupBy(set, ['element'],
-// {signal}) — per (generation, spec), through the single-flight derivation queue (Task 7), cached
-// as a table. Everything after it (filter intersection, n-of-m counts, re-sorting) is Panel-side
+// Spec §10.2: a Core-facet grouping (Element, Model Pair — see groupModes.js) is ONE Core call —
+// engine.derivations.groupBy(set, [facet], {signal}) — per (generation, mode), through the single-flight
+// derivation queue (Task 7), cached as a table. Everything after it (filter intersection, n-of-m counts, re-sorting) is Panel-side
 // presentation. The `element` facet is multi-valued: a clash is listed under BOTH of its elements,
 // so group counts do not sum to the result count. GroupingTooLargeError / DerivationBusyError (after
 // the queue's bounded retries) / any other error ⇒ "grouping unavailable, showing the flat list".
@@ -13,24 +13,36 @@ export const GROUPING_UNAVAILABLE_TEXT = Object.freeze({
 });
 export const MULTI_VALUED_NOTE = 'Each clash is listed under both of its elements, so group counts do not add up to the number of clashes.';
 
-export async function computeElementGroups({ queue, engine, resultSet, priority = 3 }) {
+/**
+ * ONE Core groupBy over a single built-in facet (the shared compute of the Core-facet group modes, groupModes.js).
+ * `isValue` guards the facet value shape: a malformed group value makes the whole grouping 'unavailable' (never a
+ * partial or mislabelled grouping). The group's Core groupId (canonical JSON of [facetId, params, value]) is the
+ * stable, display-independent group key.
+ */
+export async function computeFacetGroups({ queue, engine, resultSet, facet, isValue = () => true, priority = 3 }) {
   const outcome = await queue.submit({
-    key: `groupBy:element:${resultSet.runId}`,
+    key: `groupBy:${facet}:${resultSet.runId}`,
     priority,
-    job: (signal) => engine.derivations.groupBy(resultSet, ['element'], { signal }),
+    job: (signal) => engine.derivations.groupBy(resultSet, [facet], { signal }),
   });
   if (outcome.status === 'superseded') return { status: 'superseded' };
   if (outcome.status !== 'ok') {
     return { status: 'unavailable', reason: outcome.error?.name === 'GroupingTooLargeError' ? 'too-large' : 'error' };
   }
   const raw = outcome.value;
-  if (!raw || !Array.isArray(raw.groups) || (Array.isArray(raw.unavailable) && raw.unavailable.length > 0)) {
+  if (!raw || !Array.isArray(raw.groups) || (Array.isArray(raw.unavailable) && raw.unavailable.length > 0)
+    || !raw.groups.every((g) => typeof g?.groupId === 'string' && Array.isArray(g.members) && isValue(g.value))) {
     return { status: 'unavailable', reason: 'error' };
   }
   const groups = raw.groups.map((g) => Object.freeze({
     groupId: g.groupId, ref: g.value, count: g.count, memberIds: g.members,   // Core arrays referenced, not copied
   }));
   return { status: 'ok', table: Object.freeze({ groups: Object.freeze(groups), memberships: raw.memberships, total: raw.total }) };
+}
+
+/** Group by Element (spec §10.2): the multi-valued `element` facet. Kept as the named entry point of the Element mode. */
+export function computeElementGroups({ queue, engine, resultSet, priority = 3 }) {
+  return computeFacetGroups({ queue, engine, resultSet, facet: 'element', priority });
 }
 
 /** Result-id set of a filter pass (the mask intersected with group members). */
@@ -58,7 +70,7 @@ export function filterGroups(table, { matchIds = null, index }) {
   return out;
 }
 
-/** 'core' keeps Core order (ElementRef order); 'count-desc' by filtered count; 'label' by labelOf(ref).
+/** 'core' keeps Core order (the facet's identity order); 'count-desc' by filtered count; 'label' by labelOf(ref).
  *  Stable: ties keep Core order. Returns a new array. */
 export function sortGroups(groups, sortKey, labelOf = () => '') {
   const withPos = groups.map((g, pos) => ({ g, pos }));

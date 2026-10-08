@@ -20,7 +20,8 @@ import { participatingModelKeys } from './setupValidation.js';
 import { selectionEntriesOf } from './draft.js';
 import { runHeadline, STATEMENTS, describeAxes, bannersFor, emptyStatement } from './runReport.js';
 import { isFilterActive, FILTER_MASK_UNAVAILABLE_TEXT } from './filters.js';
-import { GROUPING_UNAVAILABLE_TEXT, MULTI_VALUED_NOTE } from './grouping.js';
+import { GROUPING_UNAVAILABLE_TEXT } from './grouping.js';
+import { groupModeOf } from './groupModes.js';
 import { INTENT } from './intents.js';
 
 // ── shared helpers ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -388,6 +389,17 @@ export const SORT_LABELS = Object.freeze({
   default: 'Default order', 'gap-asc': 'Gap (smallest first)', 'group-count': 'Group size (largest first)', 'group-label': 'Group name',
 });
 
+/** The active grouped mode's 'unavailable' text, or null (None, pending, ok). */
+function groupingUnavailableText(l) {
+  const mode = groupModeOf(l.groupBy);
+  if (mode === null || mode.grouped !== true || l.groupingState !== 'unavailable') return null;
+  const own = typeof mode.unavailableText === 'function' ? mode.unavailableText(l.groupingReason) : null;
+  return typeof own === 'string' ? own : (GROUPING_UNAVAILABLE_TEXT[l.groupingReason] ?? GROUPING_UNAVAILABLE_TEXT.error);
+}
+
+/** Grouping notes describe a LIST: none over an empty (filtered or unfiltered) list or a list-less error state. */
+const listShown = (l) => l.total > 0 && l.filtered !== 0 && l.maskUnavailable !== true;
+
 function buildFiltersRegion(input) {
   const l = input.list;
   if (l === null) return defaultFilters();
@@ -401,8 +413,7 @@ function buildFiltersRegion(input) {
     hasLocation: l.spec.hasLocation === true,
     elementOnly: l.elementOnly,
     groupBy: l.groupBy,
-    groupingNote: l.groupBy === 'element' && l.groupingState === 'unavailable'
-      ? (GROUPING_UNAVAILABLE_TEXT[l.groupingReason] ?? GROUPING_UNAVAILABLE_TEXT.error) : null,
+    groupingNote: listShown(l) ? groupingUnavailableText(l) : null,
     sort: l.sort,
     sortOptions: sortValues.map((value) => ({ value, label: SORT_LABELS[value] })),
     active: isFilterActive(l.spec),
@@ -416,7 +427,7 @@ function resultsBase() {
   return {
     state: 'before-run', message: BEFORE_RUN_TEXT, lines: [], view: 'flat',
     page: { index: 0, count: 0, size: PAGE_SIZE }, rows: [], multiValuedNote: null, hiddenByFiltersNote: false,
-    nav: { canPrev: false, canNext: false, label: NO_SELECTION_TEXT },
+    nav: { canPrev: false, canNext: false, label: NO_SELECTION_TEXT, scoped: false },
   };
 }
 
@@ -446,7 +457,7 @@ function buildResultsRegion(input) {
   if (l === null) return { ...base, state: 'error', message: INDEX_FAILED_TEXT };
   const listed = {
     ...base, view: l.view, page: { ...l.page }, rows: l.rows,
-    multiValuedNote: l.view === 'grouped' ? MULTI_VALUED_NOTE : null,
+    multiValuedNote: l.view === 'grouped' && listShown(l) ? (groupModeOf(l.groupBy)?.note ?? null) : null,
     hiddenByFiltersNote: l.hiddenByFilters === true,
     nav: l.nav ? { ...l.nav } : base.nav,
   };
@@ -457,9 +468,8 @@ function buildResultsRegion(input) {
   }
   if (l.maskUnavailable === true) return { ...listed, rows: [], state: 'error', message: FILTER_MASK_UNAVAILABLE_TEXT };
   if (l.filtered === 0) return { ...listed, rows: [], state: 'empty-filtered', message: EMPTY_FILTERED_TEXT };
-  if (l.groupBy === 'element' && l.groupingState === 'unavailable') {
-    return { ...listed, state: 'grouping-unavailable', message: GROUPING_UNAVAILABLE_TEXT[l.groupingReason] ?? GROUPING_UNAVAILABLE_TEXT.error };
-  }
+  const unavailable = groupingUnavailableText(l);
+  if (unavailable !== null) return { ...listed, state: 'grouping-unavailable', message: unavailable };
   return { ...listed, state: 'list', message: null };
 }
 

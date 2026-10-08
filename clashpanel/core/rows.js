@@ -81,13 +81,16 @@ export function buildRow({ record, canonicalIndex, groupId = null, labels, liven
   };
 }
 
-/** group = a filterGroups() entry {groupId, ref, count, filteredCount}. */
-export function buildGroupHeaderRow({ group, labels, expanded }) {
+/**
+ * group = a filterGroups() entry {groupId, ref, count, filteredCount}. `label` = the active group mode's labelOf(ref)
+ * (any mode: element, model pair, …); without it the Element label is built from an ElementRef `ref`.
+ */
+export function buildGroupHeaderRow({ group, label, labels, expanded }) {
   return {
     kind: 'group',
     key: `group:${group.groupId}`,
     groupId: group.groupId,
-    label: `${labels.modelName(group.ref.modelKey)} · ${labels.elementLabel(group.ref)}`,
+    label: typeof label === 'string' ? label : `${labels.modelName(group.ref.modelKey)} · ${labels.elementLabel(group.ref)}`,
     count: group.count,
     filteredCount: group.filteredCount,
     expanded: expanded === true,

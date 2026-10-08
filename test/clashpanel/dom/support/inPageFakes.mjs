@@ -262,9 +262,21 @@ export function createFakeEngine({ bindings }) {
         };
       },
       async filter(set) { calls.push(['filter']); return { matches: [], count: 0, total: set.results.length, unavailable: [] }; },
-      async groupBy(set) {
+      async groupBy(set, facets) {
         calls.push(['groupBy']);
         const groups = new Map();
+        if (Array.isArray(facets) && facets[0] === 'pairModels') {             // single-valued, like Core's facet
+          for (const r of set.results) {
+            const value = [r.pair.first.modelKey, r.pair.second.modelKey];
+            const id = JSON.stringify(['pairModels', {}, value]);
+            if (!groups.has(id)) groups.set(id, { groupId: id, path: [id], facetId: 'pairModels', params: {}, value, count: 0, members: [] });
+            const g = groups.get(id);
+            g.count += 1;
+            g.members.push(r.resultId);
+          }
+          const list = [...groups.values()];
+          return { facets: ['pairModels'], unavailable: [], total: set.results.length, memberships: set.results.length, groups: list };
+        }
         for (const r of set.results) {
           for (const ref of [r.pair.first, r.pair.second]) {
             const id = `element:${ref.modelKey}:${ref.dbId}`;

@@ -85,25 +85,35 @@ function groupedRows(doc, rows, dispatch) {
 function navBlock(doc, results, dispatch) {
   const { nav, page } = results;
   const pageCount = Math.max(1, page.count);
-  return el(doc, 'div', { class: 'clash-nav' }, [
-    el(doc, 'button', {
-      attrs: { type: 'button', 'data-key': 'nav-prev', disabled: !nav.canPrev },
-      text: '◀ Prev',
-      on: { click: () => dispatch({ type: INTENT.NAV_PREV }) },
-    }),
-    el(doc, 'button', {
-      attrs: { type: 'button', 'data-key': 'nav-next', disabled: !nav.canNext },
-      text: 'Next ▶',
-      on: { click: () => dispatch({ type: INTENT.NAV_NEXT }) },
-    }),
-    nav.label ? el(doc, 'span', { class: 'clash-nav-label', text: ` ${nav.label} ` }) : null,
-    el(doc, 'span', { class: 'clash-page' }, [
+  const scoped = nav.scoped === true;
+  const suffix = scoped ? ' in group' : '';
+  // Two visually separate rows with labelled scopes: the selected clash (Prev/Next, group-scoped wording only while
+  // Prev/Next truly step inside the group) and the result pages (paging only; unchanged semantics).
+  const selectedRow = el(doc, 'div', { class: 'clash-nav-row clash-nav-selected', attrs: { 'data-scope': 'selected-clash', 'data-group-scoped': scoped ? 'true' : 'false' } }, [
+    el(doc, 'span', { class: 'clash-nav-scope', text: 'Selected clash' }),
+    el(doc, 'div', { class: 'clash-nav-controls' }, [
+      el(doc, 'button', {
+        attrs: { type: 'button', 'data-key': 'nav-prev', 'aria-label': `Previous clash${suffix}`, disabled: !nav.canPrev },
+        text: `◀ Previous${suffix}`,
+        on: { click: () => dispatch({ type: INTENT.NAV_PREV }) },
+      }),
+      nav.label ? el(doc, 'span', { class: 'clash-nav-label', text: ` ${nav.label} ` }) : null,
+      el(doc, 'button', {
+        attrs: { type: 'button', 'data-key': 'nav-next', 'aria-label': `Next clash${suffix}`, disabled: !nav.canNext },
+        text: `Next${suffix} ▶`,
+        on: { click: () => dispatch({ type: INTENT.NAV_NEXT }) },
+      }),
+    ]),
+  ]);
+  const pageRow = el(doc, 'div', { class: 'clash-nav-row clash-page', attrs: { 'data-scope': 'result-pages' } }, [
+    el(doc, 'span', { class: 'clash-nav-scope', text: 'Result pages' }),
+    el(doc, 'div', { class: 'clash-nav-controls' }, [
       el(doc, 'button', {
         attrs: { type: 'button', 'data-key': 'page-prev', 'aria-label': 'Previous page', disabled: page.index <= 0 },
         text: '‹',
         on: { click: () => dispatch({ type: INTENT.NAV_PAGE, page: page.index - 1 }) },
       }),
-      el(doc, 'span', { class: 'clash-page-label', text: ` ${page.index + 1} / ${pageCount} ` }),
+      el(doc, 'span', { class: 'clash-page-label', text: ` Page ${page.index + 1} of ${pageCount} ` }),
       el(doc, 'button', {
         attrs: { type: 'button', 'data-key': 'page-next', 'aria-label': 'Next page', disabled: page.index >= pageCount - 1 },
         text: '›',
@@ -111,6 +121,7 @@ function navBlock(doc, results, dispatch) {
       }),
     ]),
   ]);
+  return el(doc, 'div', { class: 'clash-nav' }, [selectedRow, pageRow]);
 }
 
 export function renderResults(root, results, dispatch, doc) {

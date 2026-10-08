@@ -1,7 +1,8 @@
 // test/clashpanel/core/grouping.test.mjs — Task 13 (spec §10.2, AC-P4)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeElementGroups, filterGroups, sortGroups, matchIdsFrom, groupCountText, MULTI_VALUED_NOTE, GROUPING_UNAVAILABLE_TEXT } from '../../../clashpanel/core/grouping.js';
+import { computeElementGroups, computeFacetGroups, filterGroups, sortGroups, matchIdsFrom, groupCountText, MULTI_VALUED_NOTE, GROUPING_UNAVAILABLE_TEXT } from '../../../clashpanel/core/grouping.js';
+import { groupModeOf } from '../../../clashpanel/core/groupModes.js';
 import { buildResultIndex } from '../../../clashpanel/core/resultIndex.js';
 import { createDerivationQueue } from '../../../clashpanel/core/derivationQueue.js';
 import { createGeneration } from '../../../clashpanel/core/generation.js';
@@ -140,4 +141,37 @@ test('REAL engine: derivations.groupBy over sealedSet(\'positives\') has the sha
   for (const g of filterGroups(out.table, { matchIds: null, index })) {
     assert.deepEqual(g.memberIndexes, [...g.memberIndexes].sort((a, b) => a - b), 'Core member order is canonical (no Panel re-sort)');
   }
+});
+
+test('computeFacetGroups: a malformed facet value makes the grouping unavailable (never a mislabelled grouping)', async () => {
+  const w = world(() => ({ facets: [], unavailable: [], total: 1, memberships: 1, groups: [{ groupId: 'x', value: 'not-a-pair', count: 1, members: ['r0'] }] }));
+  const out = await computeFacetGroups({ queue: w.queue, engine: w.engine, resultSet: SET, facet: 'pairModels', isValue: (v) => Array.isArray(v) && v.length === 2 });
+  assert.deepEqual(out, { status: 'unavailable', reason: 'error' });
+  assert.deepEqual(w.calls[0][1], ['pairModels']);
+});
+
+test('REAL engine: the modelPair mode groups by the unordered modelKey pair; groupId is the Core facet key; single-valued', async () => {
+  const w = createEngineWorld();
+  const clock = createFakeClock({ start: Date.UTC(2026, 8, 26) });
+  const engine = createClashTestEngine(w.config({ now: clock.now, yieldToScheduler: clock.yieldToScheduler, scheduleTimeout: () => () => {} }));
+  const set = await sealedSet('positives');
+  const queue = createDerivationQueue({ scheduler: createFakeScheduler(), generation: createGeneration() });
+  const out = await groupModeOf('modelPair').compute({ queue, engine, resultSet: set });
+  assert.equal(out.status, 'ok');
+  assert.equal(out.table.memberships, set.results.length, 'single-valued: one membership per result');
+  const index = buildResultIndex(set);
+  for (const g of out.table.groups) {
+    assert.ok(Array.isArray(g.ref) && g.ref.length === 2 && g.ref.every((k) => typeof k === 'string'));
+    assert.ok(g.ref[0] <= g.ref[1], 'unordered pair: Core orders first <= second');
+    assert.equal(g.groupId, JSON.stringify(['pairModels', {}, g.ref]), 'stable key = identity, not display text');
+    for (const id of g.memberIds) {
+      const r = index.at(index.indexOfResultId(id));
+      assert.deepEqual([r.pair.first.modelKey, r.pair.second.modelKey], g.ref);
+    }
+  }
+  for (const g of filterGroups(out.table, { matchIds: null, index })) {
+    assert.deepEqual(g.memberIndexes, [...g.memberIndexes].sort((a, b) => a - b), 'canonical member order');
+  }
+  assert.equal(groupModeOf('modelPair').labelOf(['mA', 'mB'], { modelName: (k) => `<${k}>` }), '<mA> ↔ <mB>');
+  assert.equal(groupModeOf('modelPair').labelOf(['mA', 'mA'], { modelName: (k) => `<${k}>` }), '<mA> ↔ <mA>', 'self-clash A ↔ A');
 });

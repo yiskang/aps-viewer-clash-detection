@@ -480,12 +480,28 @@ body, html {
 }
 
 /* Pager / selected region. */
-.clash-panel-root .clash-nav,
-.clash-panel-root .clash-page {
+.clash-panel-root .clash-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.clash-panel-root .clash-nav-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.clash-panel-root .clash-nav-scope {
+    color: var(--nv-text-2);
+    font-size: 11px;
+}
+.clash-panel-root .clash-nav-controls {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0 4px;
+    justify-content: space-between;
+    gap: 2px 4px;
+    min-width: 0;
 }
 .clash-panel-root .clash-nav-label,
 .clash-panel-root .clash-page-label {

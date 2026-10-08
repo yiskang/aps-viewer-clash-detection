@@ -1,5 +1,6 @@
 // test/clashpanel/dom/results.dom.mjs — Region 4 RESULTS: rows, groups, selection, Prev/Next, pagination, states (Task 29).
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { withPage, mountRenderer, rerender, intents } from './support/harness.mjs';
 import { resultsVm, resultRow, groupRow, side } from './support/vmFixtures.mjs';
@@ -47,14 +48,14 @@ test('results: group headers expand/collapse via group/toggle and expose aria-ex
   assert.deepEqual(await intents(page), [{ type: 'group/toggle', groupId: 'gB' }]);
 }));
 
-test('results: Prev/Next disabled per vm.nav; pagination ‹ n / N › dispatches nav/page and disables at the ends', () => withPage(async ({ page }) => {
+test('results: Prev/Next disabled per vm.nav; pagination ‹ Page n of N › dispatches nav/page and disables at the ends', () => withPage(async ({ page }) => {
   await mountRenderer(page, ...RESULTS, resultsVm({ page: { index: 1, count: 3, size: PAGE_SIZE }, nav: { canPrev: true, canNext: false, label: '12 of 812' } }));
   const r = await page.evaluate(() => ({
     prev: document.querySelector('[data-key="nav-prev"]').disabled, next: document.querySelector('[data-key="nav-next"]').disabled,
     label: document.querySelector('.clash-page-label').textContent, navLabel: document.querySelector('.clash-nav-label').textContent,
     pPrev: document.querySelector('[data-key="page-prev"]').disabled, pNext: document.querySelector('[data-key="page-next"]').disabled,
   }));
-  assert.deepEqual(r, { prev: false, next: true, label: ' 2 / 3 ', navLabel: ' 12 of 812 ', pPrev: false, pNext: false });
+  assert.deepEqual(r, { prev: false, next: true, label: ' Page 2 of 3 ', navLabel: ' 12 of 812 ', pPrev: false, pNext: false });
   await page.click('[data-key="nav-prev"]');
   await page.click('[data-key="page-prev"]');
   await page.click('[data-key="page-next"]');
@@ -63,6 +64,86 @@ test('results: Prev/Next disabled per vm.nav; pagination ‹ n / N › dispatche
   assert.deepEqual(await page.evaluate(() => [document.querySelector('[data-key="page-prev"]').disabled, document.querySelector('[data-key="page-next"]').disabled]), [false, true]);
   await page.click('[data-key="nav-next"]');
   assert.deepEqual((await intents(page)).at(-1), { type: 'nav/next' });
+}));
+
+const navShape = (page) => page.evaluate(() => {
+  const rows = [...document.querySelectorAll('.clash-nav > .clash-nav-row')];
+  const btn = (k) => document.querySelector(`[data-key="${k}"]`);
+  return {
+    rows: rows.map((r) => [r.getAttribute('data-scope'), r.querySelector('.clash-nav-scope').textContent]),
+    selectedHas: [...rows[0].querySelectorAll('button')].map((b) => b.getAttribute('data-key')),
+    pagesHas: [...rows[1].querySelectorAll('button')].map((b) => b.getAttribute('data-key')),
+    grouped: rows[0].getAttribute('data-group-scoped'),
+    text: [btn('nav-prev').textContent, btn('nav-next').textContent],
+    aria: [btn('nav-prev').getAttribute('aria-label'), btn('nav-next').getAttribute('aria-label')],
+    navLabel: rows[0].querySelector('.clash-nav-label').textContent.trim(),
+    pageLabel: rows[1].querySelector('.clash-page-label').textContent.trim(),
+    all: document.querySelector('.clash-nav').textContent,
+  };
+});
+
+test('results: nav renders two separate labelled rows; plain Previous/Next when the scope is not constrained', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, resultsVm({ page: { index: 0, count: 4, size: PAGE_SIZE }, nav: { canPrev: true, canNext: true, label: 'Clash #7', scoped: false } }));
+  const r = await navShape(page);
+  assert.deepEqual(r.rows, [['selected-clash', 'Selected clash'], ['result-pages', 'Result pages']]);
+  assert.deepEqual(r.selectedHas, ['nav-prev', 'nav-next']);
+  assert.deepEqual(r.pagesHas, ['page-prev', 'page-next']);
+  assert.equal(r.grouped, 'false');
+  assert.deepEqual(r.text, ['◀ Previous', 'Next ▶']);
+  assert.deepEqual(r.aria, ['Previous clash', 'Next clash']);
+  assert.equal(r.navLabel, 'Clash #7');
+  assert.equal(r.pageLabel, 'Page 1 of 4');
+  assert.doesNotMatch(r.all, /group/i);
+}));
+
+test('results: "in group" button wording only while nav.scoped, with no duplicate suffix, and it disappears when scope ends', () => withPage(async ({ page }) => {
+  const vm = (scoped) => resultsVm({ nav: { canPrev: true, canNext: false, label: 'Clash #3', scoped } });
+  await mountRenderer(page, ...RESULTS, vm(true));
+  let r = await navShape(page);
+  assert.equal(r.grouped, 'true');
+  assert.deepEqual(r.text, ['◀ Previous in group', 'Next in group ▶']);
+  assert.deepEqual(r.aria, ['Previous clash in group', 'Next clash in group']);
+  assert.equal(r.navLabel, 'Clash #3');
+  assert.equal((r.all.match(/in group/g) ?? []).length, 2, 'only the two buttons carry the wording');
+  assert.doesNotMatch(r.all, /within its group/);
+  await page.click('[data-key="nav-prev"]');
+  assert.deepEqual(await intents(page), [{ type: 'nav/prev' }]);       // same intent as before
+  for (const scoped of [false, true, false]) {                           // filtered-away origin / collapse / None / mode switch all arrive as scoped:false
+    await rerender(page, vm(scoped));
+    r = await navShape(page);
+    assert.deepEqual(r.text, scoped ? ['◀ Previous in group', 'Next in group ▶'] : ['◀ Previous', 'Next ▶']);
+    assert.equal(r.grouped, String(scoped));
+  }
+}));
+
+test('results: page row semantics unchanged (disabled ends, nav/page intents) and independent of the group wording', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, resultsVm({ page: { index: 0, count: 2, size: PAGE_SIZE }, nav: { canPrev: false, canNext: true, label: 'Clash #1', scoped: true } }));
+  const dis = () => page.evaluate(() => [document.querySelector('[data-key="page-prev"]').disabled, document.querySelector('[data-key="page-next"]').disabled, document.querySelector('[data-key="page-prev"]').getAttribute('aria-label'), document.querySelector('[data-key="page-next"]').getAttribute('aria-label')]);
+  assert.deepEqual(await dis(), [true, false, 'Previous page', 'Next page']);
+  await page.click('[data-key="page-next"]');
+  assert.deepEqual(await intents(page), [{ type: 'nav/page', page: 1 }]);
+}));
+
+test('results: narrow layout — rows stack, labels sit above controls, no horizontal overflow at a 460px panel in a 480px viewport', () => withPage(async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 800 });
+  await page.addStyleTag({ content: readFileSync(new URL('../../../wwwroot/main.css', import.meta.url), 'utf8') });
+  await mountRenderer(page, ...RESULTS, resultsVm({ page: { index: 11, count: 120, size: PAGE_SIZE }, nav: { canPrev: true, canNext: true, label: 'Clash #6999', scoped: true } }));
+  const r = await page.evaluate(() => {
+    const root = document.querySelector('#clash-root');
+    root.classList.add('clash-panel-root');
+    root.style.width = '460px';
+    const nav = document.querySelector('.clash-nav');
+    const [a, b] = [...nav.querySelectorAll(':scope > .clash-nav-row')];
+    const cs = (e) => getComputedStyle(e);
+    return {
+      navFlex: [cs(nav).display, cs(nav).flexDirection],
+      rowsStacked: a.getBoundingClientRect().bottom <= b.getBoundingClientRect().top + 1,
+      scopeAbove: a.querySelector('.clash-nav-scope').getBoundingClientRect().bottom <= a.querySelector('button').getBoundingClientRect().top + 1,
+      overflow: nav.scrollWidth > nav.clientWidth + 1 || document.documentElement.scrollWidth > 480,
+      controlsWrap: cs(a.querySelector('.clash-nav-controls')).flexWrap,
+    };
+  });
+  assert.deepEqual(r, { navFlex: ['flex', 'column'], rowsStacked: true, scopeAbove: true, overflow: false, controlsWrap: 'wrap' });
 }));
 
 test('results: bounded DOM — a page of PAGE_SIZE rows renders exactly PAGE_SIZE row elements (never more than vm rows)', () => withPage(async ({ page }) => {
@@ -98,6 +179,57 @@ test('results: non-list states render message + lines and no rows; empty-filtere
   await rerender(page, resultsVm({ state: 'empty-filtered', message: 'No clashes match the current filters', rows: [] }));
   await page.click('[data-key="results-clear-filters"]');
   assert.deepEqual(await intents(page), [{ type: 'filter/clear' }]);
+}));
+
+test('results: a Model Pair group header shows the pair label and count only (no element label / dbId)', () => withPage(async ({ page }) => {
+  const gp = JSON.stringify(['pairModels', {}, ['mA', 'mB']]);
+  await mountRenderer(page, ...RESULTS, resultsVm({ view: 'grouped', rows: [
+    groupRow(gp, { label: 'Architecture ↔ Structure', count: 1211, filteredCount: 40, expanded: true }),
+    resultRow(0, { groupId: gp, key: `${gp}|r0` }),
+    groupRow(JSON.stringify(['pairModels', {}, ['mA', 'mA']]), { label: 'Architecture ↔ Architecture', count: 3, filteredCount: 3, expanded: false }),
+  ] }));
+  const r = await page.evaluate(() => ({
+    headers: [...document.querySelectorAll('.clash-group-row button')].map((b) => [b.querySelector('.clash-group-label').textContent, b.querySelector('.clash-group-count').textContent, b.querySelectorAll('.clash-dbid, .clash-label').length]),
+    listbox: [...document.querySelectorAll('.clash-rows[role="listbox"]')].map((u) => u.getAttribute('aria-label')),
+    note: document.querySelector('.clash-multivalued-note'),
+  }));
+  assert.deepEqual(r.headers, [['Architecture ↔ Structure', ' (40 of 1211)', 0], ['Architecture ↔ Architecture', ' (3)', 0]]);
+  assert.deepEqual(r.listbox, ['Architecture ↔ Structure']);
+  assert.equal(r.note, null);
+  await page.click('.clash-group-row button >> nth=1');
+  assert.deepEqual(await intents(page), [{ type: 'group/toggle', groupId: JSON.stringify(['pairModels', {}, ['mA', 'mA']]) }]);
+}));
+
+test('results: Category / Level group headers show the metadata pair label and count (raw labels via textContent)', () => withPage(async ({ page }) => {
+  const c1 = JSON.stringify(['category', ['Revit Ducts', 'Revit Walls']]);
+  const c2 = JSON.stringify(['category', ['Revit Walls', null]]);
+  const l1 = JSON.stringify(['level', ['FIRST FLOOR', 'SECOND FLOOR']]);
+  await mountRenderer(page, ...RESULTS, resultsVm({ view: 'grouped', rows: [
+    groupRow(c1, { label: 'Ducts ↔ Walls', count: 12, filteredCount: 12, expanded: true }),
+    resultRow(0, { groupId: c1, key: `${c1}|r0` }),
+    groupRow(c2, { label: 'Walls ↔ Unknown category', count: 3, filteredCount: 1, expanded: false }),
+    groupRow(l1, { label: '<b>FIRST FLOOR</b> ↔ SECOND FLOOR', count: 2, filteredCount: 2, expanded: false }),
+  ] }));
+  const r = await page.evaluate(() => ({
+    headers: [...document.querySelectorAll('.clash-group-row button')].map((b) => [b.querySelector('.clash-group-label').textContent, b.querySelector('.clash-group-count').textContent]),
+    bold: document.querySelectorAll('.clash-group-row b').length,
+    note: document.querySelector('.clash-multivalued-note'),
+  }));
+  assert.deepEqual(r.headers, [['Ducts ↔ Walls', ' (12)'], ['Walls ↔ Unknown category', ' (1 of 3)'], ['<b>FIRST FLOOR</b> ↔ SECOND FLOOR', ' (2)']]);
+  assert.equal(r.bold, 0, 'metadata text is never markup');
+  assert.equal(r.note, null);
+  await page.click('.clash-group-row button >> nth=2');
+  assert.deepEqual(await intents(page), [{ type: 'group/toggle', groupId: l1 }]);
+}));
+
+test('results: empty-filtered grouped state renders no grouping note and no group rows', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, resultsVm({ state: 'empty-filtered', view: 'grouped', message: 'No clashes match the current filters.', rows: [], multiValuedNote: null }));
+  const r = await page.evaluate(() => ({
+    note: document.querySelector('.clash-multivalued-note'),
+    groups: document.querySelectorAll('.clash-group-row').length,
+    clear: document.querySelector('[data-key="results-clear-filters"]')?.textContent ?? null,
+  }));
+  assert.deepEqual(r, { note: null, groups: 0, clear: 'Clear filters' });
 }));
 
 test('results: grouping-unavailable still lists rows; multi-valued and hidden-by-filters notes render', () => withPage(async ({ page }) => {

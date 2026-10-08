@@ -34,6 +34,7 @@ test('row select presents the live sides with the Hard witness point and per-tog
   assert.deepEqual(vm.selected.actions.focusOnSelect, { checked: true });
   assert.deepEqual(vm.results.rows.filter((r) => r.selected).map((r) => r.resultId), ['r2']);
   assert.equal(vm.results.nav.label, 'Clash #3');
+  assert.equal(vm.results.nav.scoped, false);
   assert.equal(h.engine.control.summarize.successes, 1);                   // selection is not a derivation
 });
 
@@ -148,25 +149,30 @@ test('AC-P17: a grouped occurrence keeps page and navScope across re-sort and fi
   await h.dispatch({ type: INTENT.NAV_NEXT });                             // stays inside the mB:10 group
   assert.equal(h.vm().selected.resultId, 'r6');
   assert.equal(presents(h).at(-1).req.sides.length, 2);
-  assert.equal(h.vm().results.nav.label, 'Clash #7 (within its group)');
+  assert.equal(h.vm().results.nav.label, 'Clash #7');
+  assert.equal(h.vm().results.nav.scoped, true);
 });
 
-test('headed finding: after Group → None the nav label no longer claims "(within its group)" and Next steps the flat list', async () => {
+test('headed finding: after Group → None the nav label no longer claims group-scoped nav wording and Next steps the flat list', async () => {
   const results = Array.from({ length: 60 }, (_, i) => ({ a: ['mA', 1000 + i], b: ['mB', 10] }));
   const h = await doneWith(makeSet({ runId: 'run-1', results }));
   await h.dispatch({ type: INTENT.GROUP_MODE, value: 'element' });
   const gMB10 = JSON.stringify(['element', {}, { dbId: 10, modelKey: 'mB' }]);
   await h.dispatch({ type: INTENT.NAV_SELECT, resultId: 'r5', groupId: gMB10 });
-  assert.equal(h.vm().results.nav.label, 'Clash #6 (within its group)');
+  assert.equal(h.vm().results.nav.label, 'Clash #6');
+  assert.equal(h.vm().results.nav.scoped, true);
   await h.dispatch({ type: INTENT.GROUP_MODE, value: 'none' });
   assert.equal(h.vm().selected.resultId, 'r5');                              // selection survives grouping (§12.3)
   assert.equal(h.vm().results.nav.label, 'Clash #6');                        // the flat list has no group scope
+  assert.equal(h.vm().results.nav.scoped, false);
   await h.dispatch({ type: INTENT.GROUP_MODE, value: 'element' });           // back to grouped, group still expanded
-  assert.equal(h.vm().results.nav.label, 'Clash #6 (within its group)');
+  assert.equal(h.vm().results.nav.label, 'Clash #6');
+  assert.equal(h.vm().results.nav.scoped, true);
   await h.dispatch({ type: INTENT.GROUP_MODE, value: 'none' });
   await h.dispatch({ type: INTENT.NAV_NEXT });
   assert.equal(h.vm().selected.resultId, 'r6');
   assert.equal(h.vm().results.nav.label, 'Clash #7');
+  assert.equal(h.vm().results.nav.scoped, false);
 });
 
 test('collapsing the navScope group ends group-scoped navigation: Next lands on a rendered occurrence and the page follows', async () => {
@@ -179,7 +185,8 @@ test('collapsing the navScope group ends group-scoped navigation: Next lands on 
   await h.dispatch({ type: INTENT.NAV_SELECT, resultId: 'r5', groupId: gMB10 });
   assert.equal(h.vm().results.page.index, 1);
   await h.dispatch({ type: INTENT.GROUP_TOGGLE, groupId: gMB10 });           // collapse the group being navigated
-  assert.equal(h.vm().results.nav.label, 'Clash #6');                        // no longer "(within its group)"
+  assert.equal(h.vm().results.nav.label, 'Clash #6');                        // no longer group-scoped nav wording
+  assert.equal(h.vm().results.nav.scoped, false);
   await h.dispatch({ type: INTENT.NAV_NEXT });
   const vm = h.vm();
   assert.equal(vm.selected.resultId, 'r6');                                  // the only rendered result occurrence
@@ -475,11 +482,13 @@ test('carry-forward (T14): a whole-list step into another group drops navScope; 
   const gMB11 = JSON.stringify(['element', {}, { dbId: 11, modelKey: 'mB' }]);
   await h.dispatch({ type: INTENT.GROUP_TOGGLE, groupId: gMB11 });
   await h.dispatch({ type: INTENT.NAV_SELECT, resultId: 'r5', groupId: gMB10 });
-  assert.equal(h.vm().results.nav.label, 'Clash #6 (within its group)');
+  assert.equal(h.vm().results.nav.label, 'Clash #6');
+  assert.equal(h.vm().results.nav.scoped, true);
   await h.dispatch({ type: INTENT.FILTER_ELEMENT, ref: { modelKey: 'mB', dbId: 11 } });   // gMB10 filtered out
   await h.dispatch({ type: INTENT.NAV_NEXT });                                // whole list ⇒ first rendered: r60 in gMB11
   assert.equal(h.vm().selected.resultId, 'r60');
-  assert.equal(h.vm().results.nav.label, 'Clash #61');                        // not "(within its group)"
+  assert.equal(h.vm().results.nav.label, 'Clash #61');                        // not group-scoped nav wording
+  assert.equal(h.vm().results.nav.scoped, false);
   await h.dispatch({ type: INTENT.FILTER_CLEAR });
   await h.dispatch({ type: INTENT.NAV_NEXT });
   assert.equal(h.vm().selected.resultId, 'r61');                              // never r0 (first member of stale gMB10)

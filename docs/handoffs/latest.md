@@ -2,7 +2,41 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — H1/H2 CHECKPOINT COMMITTED AND PUSHED (OWNER-AUTHORIZED 2026-10-08)
+## LATEST — GROUPING / NAVIGATION CHECKPOINT COMMITTED AND PUSHED (OWNER-AUTHORIZED 2026-10-08)
+
+- **Repo/HEAD:** the owner-authorized checkpoint commit containing this handoff (parent `e8969cb`) is pushed to `origin/main`; its SHA is the tip of `main` (`git log -1`); working tree clean after push. Package code, tests, spec §25, evidence, final report, and both Work reviews are in that commit.
+- **Independent authority:** [targeted navigation-polish re-review](../reviews/2026-10-08-clash-test-result-grouping-navigation-polish-targeted-independent-work-review.md) — **0 Critical / 0 High / 0 Medium / 0 Low in scope; passed; ready for owner checkpoint decision**. The prior full [visual/product review](../reviews/2026-10-08-clash-test-result-grouping-navigation-independent-work-review.md) remains accepted.
+- **Verified by Work:** all 23 retained navigation PNGs independently inspected—including the five not visually reviewed by the validating agent—and all hashes verified; focused controller/view-model 45/45; offline 5,447 total / 5,446 pass / 0 fail / 1 existing todo; DOM 106/106; diff check clean. The two-row Selected clash / Result pages pager and group-scope wording are coherent; action and protected-scope behavior is unchanged.
+- **Report correction:** accepted. §5a matches the executable dormant/restored-vs-different-group scope contract. The report's 22-file snapshot remains correct; its insertion count predates later handoff text and is explicitly marked for re-measurement at commit time. Work did not edit the read-only upstream report.
+- **Retained non-blocking observations:** native Viewer toolbar overlap at 480 px; no property-callback timeout; hidden-text-filter and Element cold-switch observations; Prev/Next enabled in None without selection. No new blocker.
+- **Next authorized action:** none; checkpoint complete; **awaiting owner direction**. **Must not begin without authorization:** Low remediation, multi-level grouping, manager panel/history/lifecycle, G2/C6/C8, G3, reflected fragments, or R20-1 changes.
+
+## (superseded) PRIOR LATEST — NAV-CLARITY POLISH + REPORT CORRECTION DONE; READY FOR TARGETED INDEPENDENT WORK RE-REVIEW (2026-10-08)
+
+- **Repo/HEAD:** `main`, HEAD `e8969cb` (== `origin/main`); working tree **dirty, uncommitted, unpushed** (22 modified tracked files, +617/−85, plus untracked package artifacts). Owner has not authorized commit/push.
+- **Owner-authorized this stage:** two-row pager (Selected clash / Result pages; "in group" wording only while group-constrained) and the L3 final-report factual correction (diff stats; mode-switch nav-scope wording, now §5a). No paging/selection/grouping/ordering semantics changed.
+- **Report:** [final report §5a/§5b](../research/2026-10-08-clash-test-result-grouping-navigation-final-report.md). **Prior independent authority:** [Work review](../reviews/2026-10-08-clash-test-result-grouping-navigation-independent-work-review.md) (0C/0H/0M/3L, accepted). **Nav evidence:** [headed 23 PNGs](../research/evidence/2026-10-08-navigation-polish-headed/README.md) — 23 PASS / 0 FAIL / 0 INCONCLUSIVE.
+- **Verified (controller):** offline 5,447 / 5,446 pass / 0 fail / 1 todo; DOM 106/106; diff check clean. New nav tests were written after the code (disclosed).
+- **Open Lows:** no property-callback timeout; native Viewer toolbar overlaps pager row 2 at 480 px (existing layout); hidden-text filter / Element cold-switch observations; Prev/Next enabled in None without selection (pre-existing).
+- **Next authorized action:** targeted independent Work re-review of the nav polish and corrected report. **Must not begin without authorization:** commit/push, Low remediation, multi-level grouping, manager panel/history/lifecycle, G2/C6/C8, G3, reflected fragments, R20-1 changes.
+
+## (superseded) PRIOR LATEST — CLASH TEST RESULT GROUPING / NAVIGATION INDEPENDENTLY ACCEPTED; READY FOR OWNER CHECKPOINT DECISION (2026-10-08)
+
+- **Repo/HEAD:** `main`, HEAD `e8969cb` (== `origin/main`); working tree **dirty, uncommitted, unpushed** with the grouping package plus this independent review/handoff update. Owner has not authorized commit/push.
+- **Independent authority:** [visual/product review](../reviews/2026-10-08-clash-test-result-grouping-navigation-independent-work-review.md) — **0 Critical / 0 High / 0 Medium / 3 Low; accepted for owner checkpoint decision**.
+- **Verified by Work:** all 46 headed PNGs independently inspected and all 46 manifest hashes verified; focused 91/91; offline 5,446 total / 5,445 pass / 0 fail / 1 existing todo; DOM 102/102; diff check clean. None/Element/Model Pair/Category/Level, duplicate model names, self-clash, filtering, navigation, actions, and bounded narrow-width behavior are coherent. No protected production scope changed.
+- **Non-blocking Lows:** no Viewer property-callback timeout; narrow viewport does not prove fully unobstructed responsive support (plus disclosed hidden-text-filter/one-time Element cold-switch product observations); upstream final report has stale tracked-diff statistics and overbroad mode-switch scope wording. Work did not edit that read-only report.
+- **Next authorized action:** none; **awaiting owner checkpoint decision**. The owner may optionally authorize the bounded final-report factual correction with closeout. **Must not begin without authorization:** report correction, commit/push, Low remediation, multi-level grouping, manager panel/history/lifecycle, G2/C6/C8, G3, reflected fragments, or R20-1 changes.
+
+## (superseded) PRIOR LATEST — CLASH TEST RESULT GROUPING / NAVIGATION PACKAGE COMPLETE; READY FOR INDEPENDENT WORK VISUAL/PRODUCT REVIEW (2026-10-08)
+
+- **Repo/HEAD:** `main`, HEAD `e8969cb` (== origin/main); working tree **dirty, uncommitted, unpushed** (clashpanel grouping code + tests, spec §25, evidence, final report, brief). Owner has not authorized commit/push.
+- **Report:** [final report](../research/2026-10-08-clash-test-result-grouping-navigation-final-report.md). **Brief:** [package brief](../reviews/for-claude-clash-test-result-grouping-navigation.md). **Spec:** Panel spec §25 (+§0 Q9, §10.2, §18). **Evidence:** [headed 46 PNGs + manifest](../research/evidence/2026-10-08-grouping-navigation-headed/README.md).
+- **Delivered:** single-level modes None/Element/Model Pair/Category/Level (registry `clashpanel/core/groupModes.js`); owner-chosen Level = per-side level pair, no cross-model normalization; both known Lows closed. Headed: 46 PASS / 0 FAIL / 0 INCONCLUSIVE. Tests: offline 5,446/5,445 pass/0 fail/1 todo; DOM 102/102; diff check clean. Internal review 0C/0H/1M(fixed)/3L (1 fixed, 2 open).
+- **Open debt:** no timeout on property read; group-name sort vs default order note; probe-based Viewer 7.124.2 SVF2 assumptions; Medium fix landed after headed run (unit-tested, headed not repeated). G2/C6/C8 debt unchanged.
+- **Next authorized action:** independent Work visual/product review only. **Must not begin without authorization:** commit/push, multi-level grouping, manager panel/history/lifecycle, G2/C6/C8, G3, reflected fragments, R20-1 changes.
+
+## (superseded) PRIOR LATEST — H1/H2 CHECKPOINT COMMITTED AND PUSHED (OWNER-AUTHORIZED 2026-10-08)
 
 - **Repo/HEAD:** the owner-authorized checkpoint commit containing this handoff (parent `dcdab38`) is pushed to `origin/main`; the commit SHA is the tip of `main` (`git log -1`), working tree clean after push. The H1/H2 remediation, tests, spec/plan/README reconciliations, reports/evidence, both independent reviews and this handoff are all in that commit. Remaining Low not remediated (owner instruction).
 - **Independent Work review:** [H1/H2 targeted review](../reviews/2026-10-08-d-v6-architecture-self-clash-h1-h2-targeted-independent-work-review.md) — **0 Critical / 0 High / 0 Medium / 1 Low**; both prior Highs closed. H1 closure is based on a completed 4,294/4,294-unit real Architecture self-clash (~145.5 s to last unit + inferred ~3.9 s completion seal, ~2.5 min total), final-result consistency, and the owner's explicit checkpoint-envelope acceptance—not planning success alone. H2 is reconciled across spec A19, adapter plan/README, source, and tests.

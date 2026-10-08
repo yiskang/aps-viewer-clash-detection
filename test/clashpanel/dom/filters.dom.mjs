@@ -29,6 +29,36 @@ test('filters: every control dispatches its exact INTENT payload immediately (no
   ]);
 }));
 
+test('filters: Group offers None / Element / Model Pair / Category / Level (single-level, one active mode); each dispatches group/mode', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...FILTERS, filtersVm({ groupBy: 'modelPair' }));
+  const r = await page.evaluate(() => ({
+    radios: [...document.querySelectorAll('.clash-group input[type="radio"]')].map((i) => [i.value, i.closest('label').textContent, i.checked]),
+    names: new Set([...document.querySelectorAll('.clash-group input[type="radio"]')].map((i) => i.name)).size,
+  }));
+  assert.deepEqual(r.radios, [
+    ['none', 'None', false], ['element', 'Element', false], ['modelPair', 'Model Pair', true], ['category', 'Category', false], ['level', 'Level', false],
+  ]);
+  assert.equal(r.names, 1, 'one radio group: exactly one active mode');
+  for (const value of ['element', 'modelPair', 'category', 'level', 'none']) await page.check(`[data-key="group-${value}"]`);
+  assert.deepEqual(await intents(page), ['element', 'modelPair', 'category', 'level', 'none'].map((value) => ({ type: 'group/mode', value })));
+}));
+
+test('filters: Category / Level checked state and a metadata-mode unavailable note render as text', () => withPage(async ({ page }) => {
+  const note = 'Category grouping is unavailable (element properties could not be read) — showing the flat list.';
+  await mountRenderer(page, ...FILTERS, filtersVm({ groupBy: 'category', groupingNote: note }));
+  let r = await page.evaluate(() => ({
+    checked: [...document.querySelectorAll('.clash-group input[type="radio"]')].filter((i) => i.checked).map((i) => i.value),
+    note: document.querySelector('.clash-grouping-note')?.textContent ?? null,
+  }));
+  assert.deepEqual(r, { checked: ['category'], note });
+  await rerender(page, filtersVm({ groupBy: 'level', groupingNote: null }));
+  r = await page.evaluate(() => ({
+    checked: [...document.querySelectorAll('.clash-group input[type="radio"]')].filter((i) => i.checked).map((i) => i.value),
+    note: document.querySelector('.clash-grouping-note'),
+  }));
+  assert.deepEqual(r, { checked: ['level'], note: null });
+}));
+
 test('filters: Max gap appears only when visible (Soft), shows its bound and error, dispatches the raw string', () => withPage(async ({ page }) => {
   await mountRenderer(page, ...FILTERS, filtersVm());
   assert.equal(await page.$('[data-key="filter-max-gap"]'), null);
