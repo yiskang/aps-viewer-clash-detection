@@ -38,8 +38,8 @@ test('E2E manager: New test keeps test 1 in the list with its last run; switchin
   await page.click(`${P} [data-key="setup-new-test"]`);
   await waitVm(page, (vm) => vm.test.draft.name === 'Clash test 2' && vm.run.state === 'idle');
   await page.click(`${P} [data-key="manager-view-list"]`);
-  await page.waitForFunction(() => document.querySelectorAll('#clash-detection-panel .clash-manager-table tbody tr').length === 2);
-  const rows = await page.evaluate(() => [...document.querySelectorAll('#clash-detection-panel .clash-manager-table tbody tr')]
+  await page.waitForFunction(() => document.querySelectorAll('#clash-detection-panel .clash-manager-list .clash-manager-item').length === 2);
+  const rows = await page.evaluate(() => [...document.querySelectorAll('#clash-detection-panel .clash-manager-list .clash-manager-item')]
     .map((tr) => ({ name: tr.querySelector('.clash-manager-name').textContent, status: tr.querySelector('.clash-manager-status').textContent, current: tr.getAttribute('aria-current') })));
   assert.equal(rows[0].name, 'Clash test 1');
   assert.match(rows[0].status, /^Completed — 3 clashes reported · Results not held — open and re-run to view/);
@@ -134,7 +134,7 @@ test('E2E M2: two REAL distinct deletions with identical announcement text each 
   await page.fill(`${P} [data-key="setup-name"]`, 'Same');
   await waitVm(page, (vm) => vm.test.draft.name === 'Same');
   await page.click(`${P} [data-key="manager-view-list"]`);
-  await page.waitForFunction(() => document.querySelectorAll('#clash-detection-panel .clash-manager-table tbody tr').length === 2);
+  await page.waitForFunction(() => document.querySelectorAll('#clash-detection-panel .clash-manager-list .clash-manager-item').length === 2);
   await page.evaluate((sel) => {
     const node = document.querySelector(sel);
     window.__node = node; window.__mut = 0;
@@ -148,7 +148,7 @@ test('E2E M2: two REAL distinct deletions with identical announcement text each 
   const deleteRow = async (i, expectedRows) => {
     await page.click(`${P} [data-key="manager-delete-${i}"]`);
     await page.click(`${P} [data-key="manager-confirm"]`);
-    await page.waitForFunction((n) => document.querySelectorAll('#clash-detection-panel .clash-manager-table tbody tr').length === n && !document.querySelector('#clash-detection-panel [data-key="manager-confirm"]'), expectedRows);
+    await page.waitForFunction((n) => document.querySelectorAll('#clash-detection-panel .clash-manager-list .clash-manager-item').length === n && !document.querySelector('#clash-detection-panel [data-key="manager-confirm"]'), expectedRows);
   };
   const base = await snap();
   await deleteRow(0, 1);
@@ -160,4 +160,20 @@ test('E2E M2: two REAL distinct deletions with identical announcement text each 
   assert.equal(b.seq, a.seq + 1, 'data-live-seq advances N then N+1');
   assert.ok(a.mut > base.mut && b.mut > a.mut, 'each event produced an observable update of the live node');
   assert.deepEqual([a.same, b.same, a.regions, b.regions], [true, true, 1, 1]);
+}));
+
+// ---- Addendum A / AC-UI8: Manager <-> Editor switching never reads or writes the panel width ----
+test('AC-UI8 E2E: switching Manager <-> Editor leaves the shell width exactly as the user/Viewer left it', () => withPage(async ({ page }) => {
+  await boot(page);
+  const width = () => page.evaluate(() => { const c = document.querySelector('#clash-detection-panel'); return [c.style.width, c.style.minWidth, c.style.maxWidth, c.style.height]; });
+  const initial = await width();
+  assert.equal(initial[0].replace(/\s+/g, ''), 'min(460px,90vw)');
+  await page.click(`${P} [data-key="manager-view-list"]`);
+  assert.deepEqual(await width(), initial, 'list view does not write the width');
+  await page.click(`${P} [data-key="manager-view-editor"]`);
+  assert.deepEqual(await width(), initial, 'editor view does not write the width');
+  await page.evaluate(() => { document.querySelector('#clash-detection-panel').style.width = '410px'; });   // a width produced by the Viewer clamp or the user
+  await page.click(`${P} [data-key="manager-view-list"]`);
+  await page.click(`${P} [data-key="manager-view-editor"]`);
+  assert.equal((await width())[0], '410px', 'a width set from outside survives both switches');
 }));

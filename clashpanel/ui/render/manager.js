@@ -1,6 +1,6 @@
-// clashpanel/ui/render/manager.js — spec §26.8–§26.10: the Clash Tests manager views around the UNCHANGED editor.
+// clashpanel/ui/render/manager.js — spec §26.8–§26.10 and §26.14: the Clash Tests manager views around the UNCHANGED editor.
 // Root children, fixed order: [0] header (active test, view switch, notice / fault / confirmation banners, one
-// persistent live node), [1] Tests list (a semantic table), [2] editor host rendered by renderPanel. Manager parts are
+// persistent live node), [1] Tests list (a semantic list, one item per test — §26.14), [2] editor host rendered by renderPanel. Manager parts are
 // <div role="region">, never <section>, so the editor keeps exactly its five regions. Text only via textContent (AC-P13);
 // state is never conveyed by colour alone (§26.10). Thin: renders the ViewModel, dispatches intents, holds no state.
 import { el, setText, rebuild, instanceNs } from '../dom.js';
@@ -8,12 +8,61 @@ import { INTENT, MANAGER_INTENT } from '../../core/intents.js';
 import { renderPanel } from './panel.js';
 
 export const MANAGER_STYLE_ID = 'clash-manager-style';
+// Action glyphs (§26.14, owner-approved mechanism): CSS mask data-URIs painted with currentColor — the precedent of the
+// toolbar icon (wwwroot/main.css `#clash-panel-toolbar-button .adsk-button-icon`). Alpha-only, so no colours are baked in.
+const glyph = (paths) => `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>${paths}</svg>")`;
+const GLYPHS = Object.freeze({
+  open: glyph("<path d='M4 20h4L19 9l-4-4L4 16z'/><path d='M13 7l4 4'/>"),
+  duplicate: glyph("<rect x='9' y='9' width='11' height='11' rx='1'/><path d='M15 9V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h4'/>"),
+  reset: glyph("<path d='M4 12a8 8 0 1 0 2.4-5.7'/><path d='M4 4v5h5'/>"),
+  delete: glyph("<path d='M4 7h16'/><path d='M9 7V4h6v3'/><path d='M6 7l1 13h10l1-13'/><path d='M10 11v6M14 11v6'/>"),
+});
+const L = '.clash-manager-list';
+// Text-label fallback where mask-image is unavailable. The SAME declarations are selected by the production `@supports not`
+// rule and by the deterministic test seam class `.clash-manager-no-mask` on the list root (CSS.supports stubbing cannot drive @supports).
+const FALLBACK = Object.freeze([
+  ['.clash-manager-icon', 'display:none'],
+  ['.clash-manager-act-text', 'display:inline'],
+  ['.clash-manager-act', 'width:auto;height:auto;min-height:28px;padding:0 8px'],
+  ['.clash-manager-actions', 'flex-wrap:wrap'],
+]);
+const LINE_CLAMP = 'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;line-height:16px';
 const MANAGER_CSS = [
-  '.clash-manager-table{width:100%;table-layout:fixed;border-collapse:collapse}',
-  '.clash-manager-table th,.clash-manager-table td{text-align:left;vertical-align:top;padding:2px 4px;overflow-wrap:anywhere;word-break:break-word}',
-  '.clash-manager-actions button{margin:0 4px 4px 0}',
+  // --- Tests list (§26.14). Everything is scoped to the list; it overrides the panel-wide `.clash-panel-root *` reset
+  // (min-width:0; overflow-wrap:anywhere; word-break:break-word) by specificity so names cannot collapse to one character per line.
+  `${L}{container-type:inline-size}`,
+  `${L} .clash-manager-caption{margin:6px 0}`,
+  `${L} .clash-manager-items{list-style:none;margin:0;padding:0}`,
+  `${L} .clash-manager-item{margin:6px 0;padding:6px 8px;border:1px solid var(--nv-border,#d5dbe1);border-left:3px solid var(--nv-border,#d5dbe1);border-radius:4px}`,
+  `${L} .clash-manager-item[aria-current="true"]{border-left-color:var(--nv-accent,#00bfff);background:var(--nv-band,rgba(242,247,250,.7))}`,
+  `${L} .clash-manager-item *{overflow-wrap:break-word;word-break:normal}`,
+  `${L} .clash-manager-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 8px}`,
+  `${L} .clash-manager-title{display:flex;align-items:flex-start;gap:6px;flex:1 1 calc(10ch + 64px);min-width:calc(10ch + 64px)}`,
+  `${L} .clash-manager-name{flex:1 1 10ch;min-width:10ch;font-weight:600;${LINE_CLAMP}}`,
+  `${L} .clash-manager-badge{flex:none;padding:0 6px;border:1px solid var(--nv-accent,#00bfff);border-radius:8px;font-size:11px;line-height:14px}`,
+  `${L} .clash-manager-actions{display:flex;flex:none;gap:4px}`,
+  `${L} .clash-manager-act{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;width:28px;height:28px;min-width:28px;margin:0;padding:0}`,
+  `${L} .clash-manager-icon{display:block;width:16px;height:16px;background-color:currentColor;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:contain;mask-size:contain}`,
+  ...Object.entries(GLYPHS).map(([id, g]) => `${L} .clash-manager-act-${id} .clash-manager-icon{-webkit-mask-image:${g};mask-image:${g}}`),
+  `${L} .clash-manager-act-text{display:none}`,
+  `${L} .clash-manager-meta{margin:4px 0 2px}`,
+  `${L} .clash-manager-sep{margin:0 4px}`,
+  `${L} .clash-manager-set{display:flex;gap:6px;margin:2px 0}`,
+  `${L} .clash-manager-set-label{flex:none;min-width:3.4em;color:var(--nv-text-2,#4a555b)}`,
+  `${L} .clash-manager-set-value{flex:1 1 12ch;min-width:12ch;${LINE_CLAMP}}`,
+  `${L} .clash-manager-readiness{margin:4px 0 0;color:var(--nv-text-2,#4a555b)}`,
+  `${L} .clash-manager-reasons{margin-top:4px;font-size:smaller}`,
+  `${L} .clash-manager-reason-row{margin:2px 0}`,
+  `${L} .clash-manager-reason-row .clash-manager-reason{display:inline}`,
+  '@container (max-width:279px){',
+  `${L} .clash-manager-actions{flex-basis:100%}`,
+  `${L} .clash-manager-set{flex-direction:column;gap:0}`,
+  `${L} .clash-manager-set-value{flex:0 0 auto}`,
+  '}',
+  `@supports not ((mask-image:none) or (-webkit-mask-image:none)){${FALLBACK.map(([s, d]) => `${L} ${s}{${d}}`).join('')}}`,
+  ...FALLBACK.map(([s, d]) => `${L}.clash-manager-no-mask ${s}{${d}}`),
+  // --- shared
   '.clash-manager-reason{display:block;font-size:smaller}',
-  '.clash-manager-table tr[aria-current="true"] th{font-weight:bold}',
   // A fault-locked result row (lockRow below): the host's native disabled-control look (wwwroot/main.css
   // `.clash-panel-root button:disabled` = opacity .4, cursor default), no hover highlight (main.css
   // `.clash-panel-root .clash-row:hover` is (0,3,0); these selectors are (0,4,0)/(0,5,0)) and no focus ring.
@@ -130,34 +179,70 @@ function renderHeader(header, vm, dispatch, doc, ns) {
   header.setAttribute('data-confirm-op', op);
 }
 
-function actionCell(doc, t, i, dispatch, ns) {
-  return el(doc, 'td', { class: 'clash-manager-actions' }, ACTIONS.flatMap((a) => {
+// §26.14 disabled reasons: ONE visible reason element per DISTINCT reason in an item, first-disabled-action order; every
+// disabled action it explains links to it by aria-describedby. The reason string is exactly the gate reason (never merged
+// across different reasons).
+function reasonGroups(t) {
+  const groups = [];
+  for (const a of ACTIONS) {
     const gate = t.actions[a.id];
-    const reasonId = `${ns}-manager-${i}-${a.id}-reason`;
-    return [
-      el(doc, 'button', {
-        attrs: { type: 'button', 'data-key': `manager-${a.id}-${i}`, 'aria-label': `${a.label} “${t.name}”`, disabled: !gate.enabled, 'aria-describedby': gate.enabled ? null : reasonId },
-        text: a.label, on: { click: () => dispatch({ type: a.intent, testId: t.testId }) },
-      }),
-      gate.enabled ? null : el(doc, 'span', { class: 'clash-manager-reason', attrs: { id: reasonId }, text: gate.reason }),
-    ];
+    if (gate.enabled) continue;
+    let g = groups.find((x) => x.reason === gate.reason);
+    if (!g) { g = { reason: gate.reason, labels: [], actionIds: [] }; groups.push(g); }
+    g.labels.push(a.label);
+    g.actionIds.push(a.id);
+  }
+  return groups;
+}
+
+function actionGroup(doc, t, i, dispatch, groups, ns) {
+  const reasonIdOf = (a) => `${ns}-manager-${i}-reason-${groups.findIndex((g) => g.actionIds.includes(a.id))}`;
+  return el(doc, 'div', { class: 'clash-manager-actions', attrs: { role: 'group', 'aria-label': `Actions for “${t.name}”` } }, ACTIONS.map((a) => {
+    const gate = t.actions[a.id];
+    return el(doc, 'button', {
+      class: `clash-manager-act clash-manager-act-${a.id}`,
+      attrs: { type: 'button', 'data-key': `manager-${a.id}-${i}`, 'aria-label': `${a.label} “${t.name}”`, title: a.label, disabled: !gate.enabled, 'aria-describedby': gate.enabled ? null : reasonIdOf(a) },
+      on: { click: () => dispatch({ type: a.intent, testId: t.testId }) },
+    }, [
+      el(doc, 'span', { class: 'clash-manager-icon', attrs: { 'aria-hidden': 'true' } }),
+      el(doc, 'span', { class: 'clash-manager-act-text', text: a.label }),
+    ]);
   }));
 }
 
-function row(doc, t, i, dispatch, ns) {
+function setRow(doc, label, value) {
+  return el(doc, 'div', { class: 'clash-manager-set' }, [
+    el(doc, 'span', { class: 'clash-manager-set-label', text: label }),
+    el(doc, 'span', { class: 'clash-manager-set-value', attrs: { title: value }, text: value }),
+  ]);
+}
+
+// One list item per test (§26.14): head line (name · Active badge · actions), meta line (mode · existing status text),
+// Set A, Set B, readiness, then the reasons container only when an action is disabled.
+function item(doc, t, i, dispatch, ns) {
   const status = [t.status.text, t.resultsText, t.setupChangedSinceRun ? 'Setup changed since this run' : null, t.modelsChangedText]
     .filter((s) => typeof s === 'string' && s.length > 0).join(' · ');
-  return el(doc, 'tr', { attrs: { 'data-test-id': t.testId, 'aria-current': t.active ? 'true' : null } }, [
-    el(doc, 'th', { attrs: { scope: 'row' } }, [
-      el(doc, 'span', { class: 'clash-manager-name', text: t.name }),
-      t.active ? el(doc, 'span', { class: 'clash-manager-active-mark', text: ' (active)' }) : null,
+  const groups = reasonGroups(t);
+  return el(doc, 'li', { class: 'clash-manager-item', attrs: { 'data-test-id': t.testId, 'aria-current': t.active ? 'true' : null } }, [
+    el(doc, 'div', { class: 'clash-manager-head' }, [
+      el(doc, 'div', { class: 'clash-manager-title' }, [
+        el(doc, 'span', { class: 'clash-manager-name', attrs: { title: t.name }, text: t.name }),
+        t.active ? el(doc, 'span', { class: 'clash-manager-badge', text: 'Active' }) : null,
+      ]),
+      actionGroup(doc, t, i, dispatch, groups, ns),
     ]),
-    el(doc, 'td', { text: t.modeText }),
-    el(doc, 'td', { text: t.setA }),
-    el(doc, 'td', { text: t.setB }),
-    el(doc, 'td', { class: 'clash-manager-status', text: status }),
-    el(doc, 'td', { class: 'clash-manager-readiness', text: t.readiness?.text ?? '' }),
-    actionCell(doc, t, i, dispatch, ns),
+    el(doc, 'div', { class: 'clash-manager-meta' }, [
+      el(doc, 'span', { class: 'clash-manager-mode', text: t.modeText }),
+      status.length > 0 ? el(doc, 'span', { class: 'clash-manager-sep', attrs: { 'aria-hidden': 'true' }, text: '·' }) : null,
+      status.length > 0 ? el(doc, 'span', { class: 'clash-manager-status', text: status }) : null,
+    ]),
+    setRow(doc, 'Set A', t.setA),
+    setRow(doc, 'Set B', t.setB),
+    el(doc, 'div', { class: 'clash-manager-readiness', text: t.readiness?.text ?? '' }),
+    groups.length === 0 ? null : el(doc, 'div', { class: 'clash-manager-reasons' }, groups.map((g, k) => el(doc, 'p', { class: 'clash-manager-reason-row' }, [
+      el(doc, 'span', { class: 'clash-manager-reason-for', text: `${g.labels.join(', ')}: ` }),
+      el(doc, 'span', { class: 'clash-manager-reason', attrs: { id: `${ns}-manager-${i}-reason-${k}` }, text: g.reason }),
+    ]))),
   ]);
 }
 
@@ -171,11 +256,9 @@ function renderList(list, m, dispatch, doc, ns) {
       }),
       m.create.enabled ? null : el(doc, 'span', { class: 'clash-manager-reason', attrs: { id: reasonId }, text: m.create.reason }),
     ]));
-    list.appendChild(el(doc, 'table', { class: 'clash-manager-table' }, [
-      el(doc, 'caption', { text: 'Clash tests (this session only)' }),
-      el(doc, 'thead', {}, [el(doc, 'tr', {}, ['Test', 'Mode', 'Set A', 'Set B', 'Status', 'Readiness', 'Actions'].map((h) => el(doc, 'th', { attrs: { scope: 'col' }, text: h })))]),
-      el(doc, 'tbody', {}, m.tests.map((t, i) => row(doc, t, i, dispatch, ns))),
-    ]));
+    const captionId = `${ns}-manager-list-caption`;
+    list.appendChild(el(doc, 'p', { class: 'clash-manager-caption', attrs: { id: captionId }, text: 'Clash tests (this session only)' }));
+    list.appendChild(el(doc, 'ul', { class: 'clash-manager-items', attrs: { 'aria-labelledby': captionId } }, m.tests.map((t, i) => item(doc, t, i, dispatch, ns))));
   });
 }
 

@@ -11,20 +11,20 @@ import { faultCases } from '../support/faultControls.mjs';
 
 const R = ['/clashpanel/ui/render/manager.js', 'renderManagedPanel'];
 
-test('list view: one row per test, row header = name, active row by text and aria-current; the editor keeps five hidden sections', () => withPage(async ({ page }) => {
+test('list view: one item per test, name element = name, active item by visible Active badge text and aria-current; the editor keeps five hidden sections', () => withPage(async ({ page }) => {
   await mountRenderer(page, ...R, managedVm({ view: 'list' }));
   const r = await page.evaluate(() => {
     const root = document.getElementById('clash-root');
     return {
-      rows: [...root.querySelectorAll('.clash-manager-table tbody tr')].map((tr) => [tr.querySelector('th[scope="row"]').textContent, tr.getAttribute('aria-current')]),
-      caption: root.querySelector('.clash-manager-table caption').textContent,
+      rows: [...root.querySelectorAll('.clash-manager-list .clash-manager-item')].map((li) => [li.querySelector('.clash-manager-name').textContent, li.querySelector('.clash-manager-badge')?.textContent ?? null, li.getAttribute('aria-current')]),
+      caption: root.querySelector('.clash-manager-caption').textContent,
       sections: [...root.querySelectorAll('section')].map((s) => s.dataset.region),
       editorHidden: root.querySelector('.clash-manager-editor').hidden,
       listHidden: root.querySelector('.clash-manager-list').hidden,
       toggle: root.querySelector('[data-key="manager-view-editor"]').textContent,
     };
   });
-  assert.deepEqual(r.rows, [['Clash test 1 (active)', 'true'], ['Clash test 2', null]]);
+  assert.deepEqual(r.rows, [['Clash test 1', 'Active', 'true'], ['Clash test 2', null, null]]);
   assert.equal(r.caption, 'Clash tests (this session only)');
   assert.deepEqual(r.sections, ['setup', 'run', 'filters', 'results', 'selected']);
   assert.equal(r.editorHidden, true);
@@ -233,7 +233,7 @@ test('Review Focus 2: hostile and unbroken names stay inert text and never widen
   const r = await page.evaluate(() => {
     const root = document.getElementById('clash-root');
     return { pwned: window.__pwned ?? null, imgs: root.querySelectorAll('img').length, overflow: root.scrollWidth <= root.clientWidth + 1,
-      name: root.querySelector('tbody tr th .clash-manager-name').textContent };
+      name: root.querySelector('.clash-manager-item .clash-manager-name').textContent };
   });
   assert.deepEqual(r, { pwned: null, imgs: 0, overflow: true, name: '<img src=x onerror=window.__pwned=1>' });
 }));
