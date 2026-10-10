@@ -81,7 +81,7 @@ function assertNoBareNoClashes(vm) {
 }
 
 const SHAPE = {
-  top: ['filters', 'results', 'run', 'selected', 'setup', 'version'],
+  top: ['filters', 'results', 'run', 'selected', 'setup', 'test', 'version'],
   setup: ['basis', 'clearance', 'collapsed', 'mode', 'models', 'name', 'newTest', 'overlap', 'overlapText', 'scope', 'selfClash', 'setupChangedSinceRun', 'softChecking', 'summary', 'useSelectionEnabled', 'validation'],
   run: ['badges', 'banners', 'canRun', 'canStop', 'counts', 'details', 'diagnostics', 'doneKind', 'headline', 'progress', 'state', 'statusLive', 'waitingForOtherRun'],
   filters: ['active', 'busy', 'elementOnly', 'groupBy', 'groupingNote', 'hasLocation', 'maxGap', 'modelOptions', 'models', 'sort', 'sortOptions', 'text', 'unverified'],

@@ -89,6 +89,16 @@ isolation only when the Isolate toggle is on and the isolation prerequisite hold
 else changed it since), and fits the camera best-effort. It never calls a theming method, never changes the
 Viewer selection and never restores the camera.
 
+## Clash Tests manager (session-scoped, spec §26)
+
+`createClashPanel` hosts a session-scoped Clash Tests manager by default (`testsManager: false` composes the
+standalone editor). The manager lists several tests, creates/opens/duplicates/deletes/resets them and shows per-test
+readiness and "models changed". It adds **no host port**: it reads `catalog.list/displayNameFor/onChange`,
+`catalog.keyOfModel` (only to name a model-left event's model), `registry.bindingFor` and the bridge's model-left
+events only. Only the active test holds results or touches the Viewer.
+Nothing is persisted — every test is lost on reload or `dispose()`. Live headed SVF2 verification of switch/delete
+teardown and of row readiness after unload/reload is gate CTM-7 (not performed).
+
 ## Gates (open; nothing here is live-verified)
 
 Nothing in this package has run against a live Viewer, a live engine run or an SVF2 model. It does **not** claim

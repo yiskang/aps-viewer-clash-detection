@@ -7,7 +7,7 @@ import { INTENT } from '../../../clashpanel/core/intents.js';
 import { makeHarness } from '../support/controllerHarness.mjs';
 
 test('the barrel exports exactly the core surface and no presentation constant (AC-P11)', () => {
-  assert.deepEqual(Object.keys(core).sort(), ['INTENT', 'buildViewModel', 'createDefaultScheduler', 'createPanelController']);
+  assert.deepEqual(Object.keys(core).sort(), ['INTENT', 'buildViewModel', 'createDefaultScheduler', 'createPanelController', 'createTestsManager']);
   for (const name of Object.keys(constants)) assert.equal(name in core, false, `${name} must not be re-exported`);
   assert.ok(Object.isFrozen(core.INTENT));
 });

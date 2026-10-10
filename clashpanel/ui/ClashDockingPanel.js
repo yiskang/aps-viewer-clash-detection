@@ -13,6 +13,7 @@
 //   * never setVisible after uninitialize() (the container is null then).
 import { INTENT } from '../core/intents.js';
 import { renderPanel } from './render/panel.js';
+import { renderManagedPanel } from './render/manager.js';
 
 const BODY_CLASS = 'clash-panel-body';
 // Native Viewer scroll surface (7.124.2): 6px themed scrollbar + solid light surface. Added alongside BODY_CLASS.
@@ -66,7 +67,7 @@ function assertController(controller) {
   }
 }
 
-export function createPanelShell({ Autodesk, parentContainer, controller, id, title, doc } = {}) {
+export function createPanelShell({ Autodesk, parentContainer, controller, id, title, doc, managed = false } = {}) {
   assertController(controller);
   if (typeof parentContainer?.appendChild !== 'function') throw new TypeError('createPanelShell: parentContainer must be a DOM element');
   if (typeof id !== 'string' || id === '') throw new TypeError('createPanelShell: id is required');
@@ -78,7 +79,9 @@ export function createPanelShell({ Autodesk, parentContainer, controller, id, ti
   let body = null;
   let unsubscribe = null;
   const dispatch = (intent) => (disposed ? Promise.resolve() : controller.dispatch(intent));
-  const render = (vm) => { if (!disposed && body !== null) renderPanel(body, vm, dispatch, document_); };
+  // §26.8: a manager-hosted Panel renders {manager, editor}; the standalone editor renders its own ViewModel.
+  const renderBody = managed === true ? renderManagedPanel : renderPanel;
+  const render = (vm) => { if (!disposed && body !== null) renderBody(body, vm, dispatch, document_); };
   const onVisibility = (shown) => {
     if (disposed) return;
     controller.dispatch({ type: shown ? INTENT.PANEL_SHOWN : INTENT.PANEL_HIDDEN });

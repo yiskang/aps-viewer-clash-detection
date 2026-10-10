@@ -26,6 +26,8 @@ import { mapAdmissionError, diagnosticsExport } from './runReport.js';
 import { createLabelResolver } from './labels.js';
 import { resolveSide, resolveResult } from './resolve.js';
 import { buildViewModel } from './viewModel.js';
+import { sealSummary } from './testSummary.js';
+import { isLoadableDraft } from './testDrafts.js';
 import { buildResultIndex } from './resultIndex.js';
 import { EMPTY_FILTER_SPEC, isFilterActive, parseMaxGap, runFilterPass } from './filters.js';
 import { filterGroups, sortGroups, matchIdsFrom } from './grouping.js';
@@ -59,15 +61,18 @@ export function createPanelController({ engine, catalog, bridge, scheduler = cre
     admission: null, confirm: null, releaseErrors: [], releaseStuck: false, residencyNotice: null,
     isolationNotice: null, viewerSeq: 0,   // last bridge.clear()/present() outcome worth telling the user about
     displayed: null,                       // {runId, status, resultSet|null, persistence}
+    lastSealed: null,                      // §26.4 summary of the last sealed run of THIS draft (vm.test.lastRun)
     runRecord: null,                       // Panel-local facts captured when the run was ADMITTED (not in the sealed set)
+    labelScope: Object.freeze([]),          // seam (e), G-A2: manager's referenced-model-key scope ([] standalone)
     readAbort: new AbortController(),
   };
   Object.assign(c, resultsState(), selectionState());
   c.labels = createLabelResolver({
     catalog, scheduler,
     resolveLiveModel: (modelKey) => liveModelFor(c, modelKey),
-    // Models known only from the displayed run (e.g. unloaded since) still count for name disambiguation (RF-2).
-    knownModelKeys: () => (c.displayed?.resultSet?.provenance?.models ?? []).map((m) => m.modelKey),
+    // Models known only from the displayed run (e.g. unloaded since) still count for name disambiguation (RF-2), plus
+    // — seam (e), G-A2 — every key the Clash Tests manager's records reference, so list and editor labels agree.
+    knownModelKeys: () => [...(c.displayed?.resultSet?.provenance?.models ?? []).map((m) => m.modelKey), ...c.labelScope],
   });
   revalidate(c);
   c.disposers.push(catalog.onChange(() => onCatalogChange(c)));
@@ -245,6 +250,7 @@ function newTest(c, acknowledgeUnsaved) {
   c.confirm = null;
   retireDisplayed(c, { acknowledgeUnsaved });
   c.draft = draftReduce(c.draft, { type: 'newTest', testId: c.mintId() });
+  c.lastSealed = null;                                            // §26.2 (b): the new draft has no run yet
   c.hasRun = false;
   c.setupChanged = false;
   c.setupCollapsed = false;
@@ -255,6 +261,63 @@ function newTest(c, acknowledgeUnsaved) {
 
 function onSetupToggleCollapsed(c) {
   c.setupCollapsed = !c.setupCollapsed;
+  touch(c);
+}
+
+// ── Clash Tests manager seam (spec §26.2 (a)/(c); additive, unused by the standalone editor) ───────────────────
+
+const LOAD_REASON = Object.freeze({
+  INVALID_ID: 'invalid-test-id', INVALID_DRAFT: 'invalid-draft', RUN_ACTIVE: 'run-active', UNSAVED: 'unsaved-results', DISPOSED: 'disposed',
+});
+
+/** A refused load: nothing changed; `testId` is the test the editor STILL holds. */
+function loadRefusal(c, reason) {
+  return Object.freeze({ ok: false, testId: c.draft.testId, version: c.version, releaseStuck: c.releaseStuck, reason });
+}
+
+/**
+ * Atomic load (Work review M1): every precondition is checked BEFORE any mutation; a refusal mutates nothing and
+ * notifies nobody. On success it runs exactly the `newTest` path with the SUPPLIED draft (retireDisplayed → adopt →
+ * reset run bookkeeping → forced Soft re-evaluation) and notifies once, with that draft's testId.
+ */
+function onTestLoad(c, intent) {
+  if (c.disposed) return loadRefusal(c, LOAD_REASON.DISPOSED);
+  const { testId, draft } = intent;
+  if (typeof testId !== 'string' || testId.length === 0) return loadRefusal(c, LOAD_REASON.INVALID_ID);
+  if (!isLoadableDraft(draft, testId)) return loadRefusal(c, LOAD_REASON.INVALID_DRAFT);
+  if (isActive(c)) return loadRefusal(c, LOAD_REASON.RUN_ACTIVE);
+  const acknowledgeUnsaved = intent.acknowledgeUnsaved === true;
+  if (!acknowledgeUnsaved && heldUnsaved(c)) return loadRefusal(c, LOAD_REASON.UNSAVED);
+  c.confirm = null;
+  retireDisplayed(c, { acknowledgeUnsaved });
+  c.draft = draft;
+  c.lastSealed = null;
+  c.hasRun = false;
+  c.setupChanged = false;
+  c.setupCollapsed = false;
+  c.admission = null;
+  revalidate(c, { reEvaluateSoft: true });
+  touch(c);
+  return Object.freeze({ ok: true, testId: c.draft.testId, version: c.version, releaseStuck: c.releaseStuck });
+}
+
+function onConfirmCancel(c) {
+  if (c.confirm === null) return;
+  c.confirm = null;
+  touch(c);
+}
+
+/**
+ * Seam (e), owner decision G-A2 (Work plan review H2): the manager's referenced-model-key scope joins the label
+ * resolver's known keys, so `labels.modelName` disambiguates over the same key set as the manager rows. A changed scope
+ * invalidates the cached names and notifies once; an identical scope or a non-array payload changes nothing.
+ */
+function onTestLabelScope(c, intent) {
+  if (!Array.isArray(intent.modelKeys)) return;
+  const next = [...new Set(intent.modelKeys.filter((k) => typeof k === 'string' && k.length > 0))].sort();
+  if (next.join('\u0000') === c.labelScope.join('\u0000')) return;
+  c.labelScope = Object.freeze(next);
+  c.labels.invalidateNames();
   touch(c);
 }
 
@@ -409,6 +472,7 @@ function onRunDone(c, g, handle, summary) {
   try { adopted = c.residency.adopt(summary) ?? adopted; } catch (error) { c.releaseErrors = [error]; }
   c.residencyNotice = adopted.notice ?? null;
   c.displayed = { runId: summary.runId, status: summary.status, resultSet: summary.resultSet ?? null, persistence: summary.persistence ?? null };
+  c.lastSealed = sealSummary({ summary, runState: c.run, draft: c.draft, sealedAt: c.scheduler.now() });   // §26.2 (b)
   c.labels.invalidateNames();                                     // the displayed run's models join the known set
   if (summary.status === 'failed' || !summary.resultSet) c.setupCollapsed = false;   // §14.3: re-expands on failure
   if (summary.resultSet) startPipeline(c, g, summary.resultSet);
@@ -1154,6 +1218,7 @@ function viewInput(c) {
     displayed: displayedInput(c),
     list: listInput(c),
     selected: selectedInput(c),
+    test: testInput(c),
   };
 }
 
@@ -1222,6 +1287,11 @@ function listInput(c) {
   };
 }
 
+/** §26.2 (b): read-only snapshot for the Clash Tests manager. `draft` is the frozen draft itself (identity). */
+function testInput(c) {
+  return { testId: c.draft.testId, draft: c.draft, runActive: isActive(c), heldUnsaved: heldUnsaved(c), pendingConfirm: c.confirm !== null, lastRun: c.lastSealed };
+}
+
 function selectedInput(c) {
   const i = selectedCanonical(c);
   if (i < 0) return null;
@@ -1276,17 +1346,20 @@ const DISPATCH = {
   [INTENT.ACTION_FOCUS_ON_SELECT]: onActionFocusOnSelect,
   [INTENT.ACTION_BACK_TO_ALL]: onBackToAll,
   [INTENT.PANEL_HIDDEN]: onPanelHidden,
+  [INTENT.TEST_LOAD]: onTestLoad,
+  [INTENT.CONFIRM_CANCEL]: onConfirmCancel,
+  [INTENT.TEST_LABEL_SCOPE]: onTestLabelScope,
 };
 
 /** Unknown intents throw synchronously (a programming error in the UI); known intents resolve after their effect
- *  (with `undefined`, except DIAGNOSTICS_COPY which resolves with the diagnostics string). */
+ *  (with undefined, except DIAGNOSTICS_COPY — the diagnostics string — and TEST_LOAD — its LoadResult). */
 function dispatch(c, intent) {
   if (intent === null || typeof intent !== 'object' || typeof intent.type !== 'string') {
     throw new TypeError('unknown intent: an intent must be an object with a string `type`');
   }
   const handler = Object.prototype.hasOwnProperty.call(DISPATCH, intent.type) ? DISPATCH[intent.type] : undefined;
   if (handler === undefined) throw new TypeError(`unknown intent: ${intent.type}`);
-  if (c.disposed) return Promise.resolve(undefined);
+  if (c.disposed) return Promise.resolve(intent.type === INTENT.TEST_LOAD ? loadRefusal(c, LOAD_REASON.DISPOSED) : undefined);
   try {
     return Promise.resolve(handler(c, intent));
   } catch (error) {

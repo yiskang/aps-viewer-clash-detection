@@ -3,7 +3,7 @@
 // It receives every port by injection; it registers no model, derives no key, wires no unload, invalidates no
 // placement (host responsibilities, PD-18/OQ-1 — see clashpanel/README.md). Toolbar button / extension
 // registration are HOST shell code (gate H1), not part of this package.
-import { createPanelController } from './core/index.js';
+import { createPanelController, createTestsManager, createDefaultScheduler } from './core/index.js';
 import { createViewerBridge } from './viewer/ViewerBridge.js';
 import { createViewerApi } from './viewer/viewerApi.js';
 import { createPanelShell } from './ui/ClashDockingPanel.js';
@@ -22,8 +22,13 @@ function assertEvents(events) {
 }
 
 /**
- * createClashPanel({ Autodesk, viewer, THREE, engine, catalog, scheduler?, doc?, events, id?, title? })
+ * createClashPanel({ Autodesk, viewer, THREE, engine, catalog, scheduler?, doc?, events, id?, title?, testsManager? })
  *   -> { show, hide, toggle, isVisible, dispose(): Promise<void>, controller }
+ * testsManager (default true): host the session-scoped Clash Tests manager (spec §26) around the editor; false = the
+ * standalone editor (§23.5 in-place New test). The returned object is unchanged; `controller` is always the editor —
+ * with the manager hosted, a frozen facade over it whose getViewModel/subscribe deliver the editor ViewModel and whose
+ * dispatch routes through the manager (one authoritative dispatch surface, Codex plan review C1).
+ * dispose() with the manager hosted: shell → manager → controller → bridge.
  * dispose(): shell → controller → bridge, each step guaranteed to run even when an earlier one throws; resolves
  * once all three completed, or rejects with an AggregateError listing every failed step (after ALL ran) —
  * including the bridge's recorded teardown failures (listener removals, a failed isolation restore).
@@ -54,25 +59,38 @@ function bridgeTeardownErrors(bridge) {
   return out;
 }
 
-export function createClashPanel({ Autodesk, viewer, THREE, engine, catalog, scheduler, doc, events, id = DEFAULT_ID, title = DEFAULT_TITLE } = {}) {
+export function createClashPanel({ Autodesk, viewer, THREE, engine, catalog, scheduler, doc, events, id = DEFAULT_ID, title = DEFAULT_TITLE, testsManager = true } = {}) {
   if (viewer === null || typeof viewer !== 'object') throw new TypeError('createClashPanel: viewer is required');
   assertEvents(events);
   const viewerApi = createViewerApi(viewer, { events: { BEFORE_MODEL_UNLOAD: events.BEFORE_MODEL_UNLOAD, MODEL_REMOVED: events.MODEL_REMOVED } });
   if (typeof id !== 'string' || id === '') throw new TypeError('createClashPanel: id must be a non-empty string');
   const bridge = createViewerBridge({ viewerApi, THREE, names: overlayNamesFor(id) });
 
+  const sched = scheduler ?? createDefaultScheduler();
   let controller;
   try {
-    controller = createPanelController({ engine, catalog, bridge, scheduler });
+    controller = createPanelController({ engine, catalog, bridge, scheduler: sched });
   } catch (error) {
     void Promise.resolve().then(() => bridge.dispose()).catch(() => {});
     throw error;
   }
 
+  let manager = null;
+  if (testsManager !== false) {
+    try {
+      // The manager sees only onModelLeft of the bridge (spec §26.2: it never presents or clears).
+      manager = createTestsManager({ editor: controller, engine, catalog, bridge: { onModelLeft: (cb) => bridge.onModelLeft(cb) }, scheduler: sched });
+    } catch (error) {
+      void Promise.resolve().then(() => controller.dispose()).catch(() => {}).then(() => bridge.dispose()).catch(() => {});
+      throw error;
+    }
+  }
+
   let shell;
   try {
-    shell = createPanelShell({ Autodesk, parentContainer: viewer.container, controller, id, title, doc });
+    shell = createPanelShell({ Autodesk, parentContainer: viewer.container, controller: manager ?? controller, managed: manager !== null, id, title, doc });
   } catch (error) {
+    try { manager?.dispose(); } catch { /* rollback continues */ }
     void Promise.resolve()
       .then(() => controller.dispose())
       .catch(() => {})
@@ -89,6 +107,7 @@ export function createClashPanel({ Autodesk, viewer, THREE, engine, catalog, sch
     } catch (error) {
       errors.push(error);
     } finally {
+      try { manager?.dispose(); } catch (error) { errors.push(error); }   // §26.8: manager first, then the editor's dispose
       try {
         // controller.dispose() never rejects: it resolves {released, errors} (Part 3); fold both into this result.
         const outcome = await controller.dispose();
@@ -110,6 +129,15 @@ export function createClashPanel({ Autodesk, viewer, THREE, engine, catalog, sch
     if (errors.length > 0) throw new AggregateError(errors, 'createClashPanel: dispose completed with errors');
   }
 
+  // ONE authoritative dispatch surface (Codex plan review C1): with the manager hosted, programmatic dispatches go
+  // through it exactly like the UI's; readers keep receiving the editor ViewModel (fault-locked when faulted).
+  const publicController = manager === null ? controller : Object.freeze({
+    getViewModel: () => manager.getViewModel().editor,
+    subscribe: (cb) => manager.subscribe((vm) => cb(vm.editor)),
+    dispatch: (intent) => manager.dispatch(intent),
+    dispose: () => { manager.dispose(); return controller.dispose(); },
+  });
+
   return Object.freeze({
     show: () => shell.show(),
     hide: () => shell.hide(),
@@ -119,6 +147,6 @@ export function createClashPanel({ Autodesk, viewer, THREE, engine, catalog, sch
       if (disposing === null) disposing = disposeAll();
       return disposing;
     },
-    controller,
+    controller: publicController,
   });
 }

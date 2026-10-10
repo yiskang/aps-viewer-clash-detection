@@ -31,7 +31,7 @@ test('ViewModel is frozen, identical until state changes, and subscribers see ev
   off();
   await h.dispatch({ type: INTENT.SETUP_NAME, value: 'again' });
   assert.equal(seen.at(-1), vm2.version);                                 // unsubscribed
-  assert.deepEqual(Object.keys(vm2).sort(), ['filters', 'results', 'run', 'selected', 'setup', 'version']);
+  assert.deepEqual(Object.keys(vm2).sort(), ['filters', 'results', 'run', 'selected', 'setup', 'test', 'version']);
   assert.equal(vm2.selected, null);
   assert.equal(vm2.results.state, 'before-run');
 });

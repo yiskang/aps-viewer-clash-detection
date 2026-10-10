@@ -14,6 +14,7 @@
 //     list:      null | { total, filtered|null, busy, maskUnavailable?, spec, textDraft, maxGapText, maxGapError, groupBy, groupingState,
 //                  groupingReason, sort, isSoft, clearance, modelOptions, elementOnly, view, page, rows, nav, hiddenByFilters },
 //     selected:  null | { resultId, ordinal, side1, side2, gap, hasLocation, liveness, notes, hiddenByFilters, anyLive, isolation, toggles } }
+//     test:      { testId, draft, runActive, heldUnsaved, pendingConfirm, lastRun|null }  (spec §26.2 (b); manager seam)
 import { PAGE_SIZE, GAP_UNIT_LABEL, BASIS_UNITS, BASIS_RAW, SOFT_BASIS_HEADLINE, SOFT_BASIS_NOT_VERIFIED_TEXT } from './constants.js';
 import { resolveBasis, BASIS_STATE, basisProvenanceText } from './measurementBasis.js';
 import { participatingModelKeys } from './setupValidation.js';
@@ -68,7 +69,7 @@ const CONFIRM_ACTION = Object.freeze({ label: 'Discard unsaved results', intent:
 
 // ── setup region ────────────────────────────────────────────────────────────────────────────────────────────────
 
-function describeScope(side, modelName) {
+export function describeScope(side, modelName) {
   const parts = side.modelKeys.map((key) => modelName(key));
   for (const [key, dbIds] of Object.entries(side.elements)) {
     if (side.modelKeys.includes(key)) continue;                   // a model entry wins over elements (§6.1)
@@ -495,6 +496,17 @@ function buildSelectedRegion(input) {
   };
 }
 
+// ── test snapshot (spec §26.2 (b)) ──────────────────────────────────────────────────────────────────────────────
+
+function buildTestSnapshot(input) {
+  const t = input.test;
+  if (t === undefined || t === null) return null;
+  return {
+    testId: t.testId, draft: t.draft, runActive: t.runActive === true, heldUnsaved: t.heldUnsaved === true,
+    pendingConfirm: t.pendingConfirm === true, lastRun: t.lastRun ?? null,
+  };
+}
+
 // ── entry point ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 export function buildViewModel(input) {
@@ -505,5 +517,6 @@ export function buildViewModel(input) {
     filters: buildFiltersRegion(input),
     results: buildResultsRegion(input),
     selected: buildSelectedRegion(input),
+    test: buildTestSnapshot(input),
   });
 }
