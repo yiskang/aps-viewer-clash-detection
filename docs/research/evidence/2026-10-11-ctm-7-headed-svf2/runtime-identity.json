@@ -1,0 +1,26 @@
+{
+  "chrome": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+  "viewer": "7.124.2",
+  "url": "http://localhost:8080/#dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6d",
+  "models": [
+    {
+      "id": 1,
+      "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+      "svf2": true,
+      "unit": "ft"
+    },
+    {
+      "id": 2,
+      "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+      "svf2": true,
+      "unit": "ft"
+    },
+    {
+      "id": 4,
+      "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+      "svf2": true,
+      "unit": "ft"
+    }
+  ],
+  "gdpr": "streamingV2"
+}

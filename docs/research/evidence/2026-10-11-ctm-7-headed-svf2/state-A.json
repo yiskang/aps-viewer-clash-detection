@@ -1,0 +1,475 @@
+[
+  {
+    "label": "A0-initial-manager-1-test",
+    "at": "2026-10-11T05:19:35.073Z",
+    "manager": {
+      "panelTitleView": "list",
+      "headerActive": "Test: Clash test 1",
+      "count": 1,
+      "items": [
+        {
+          "id": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+          "active": true,
+          "name": "Clash test 1",
+          "mode": "Hard",
+          "status": "Not run",
+          "setA": "Nothing selected",
+          "setB": "Nothing selected",
+          "readiness": "Setup incomplete",
+          "reasons": [
+            "Reset results: This test has no results to reset."
+          ],
+          "disabledActions": [
+            "manager-reset-0"
+          ],
+          "notice": null
+        }
+      ],
+      "confirm": null,
+      "liveManager": "",
+      "liveEditor": "Not ready to run.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+      "name": "Clash test 1",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Nothing selected",
+      "setB": "Nothing selected",
+      "runState": "idle",
+      "doneKind": null,
+      "headline": "Not ready to run",
+      "counts": {
+        "total": null,
+        "filtered": null
+      },
+      "canRun": false,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": null,
+      "resultsState": "before-run",
+      "resultsMsg": "Run a test to see clashes.",
+      "rows": 0,
+      "selected": null,
+      "validation": "blocked",
+      "groupBy": "none"
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ]
+    },
+    "scenario": "A"
+  },
+  {
+    "label": "A1-editor-configured-hard",
+    "at": "2026-10-11T05:19:40.628Z",
+    "manager": {
+      "panelTitleView": "editor-or-other",
+      "headerActive": "Test: CT7 Arch x Struct",
+      "count": 0,
+      "items": [],
+      "confirm": null,
+      "liveManager": "",
+      "liveEditor": "Ready to run.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+      "name": "CT7 Arch x Struct",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Audubon_Architecture_clash_test",
+      "setB": "Audubon_Structure_clash_test",
+      "runState": "idle",
+      "doneKind": null,
+      "headline": "Ready to run",
+      "counts": {
+        "total": null,
+        "filtered": null
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": null,
+      "resultsState": "before-run",
+      "resultsMsg": "Run a test to see clashes.",
+      "rows": 0,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none"
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ]
+    },
+    "scenario": "A"
+  },
+  {
+    "label": "A2-manager-after-config",
+    "at": "2026-10-11T05:19:44.281Z",
+    "manager": {
+      "panelTitleView": "list",
+      "headerActive": "Test: CT7 Arch x Struct",
+      "count": 1,
+      "items": [
+        {
+          "id": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+          "active": true,
+          "name": "CT7 Arch x Struct",
+          "mode": "Hard",
+          "status": "Not run",
+          "setA": "Audubon_Architecture_clash_test",
+          "setB": "Audubon_Structure_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [
+            "Reset results: This test has no results to reset."
+          ],
+          "disabledActions": [
+            "manager-reset-0"
+          ],
+          "notice": null
+        }
+      ],
+      "confirm": null,
+      "liveManager": "",
+      "liveEditor": "Ready to run.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+      "name": "CT7 Arch x Struct",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Audubon_Architecture_clash_test",
+      "setB": "Audubon_Structure_clash_test",
+      "runState": "idle",
+      "doneKind": null,
+      "headline": "Ready to run",
+      "counts": {
+        "total": null,
+        "filtered": null
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": null,
+      "resultsState": "before-run",
+      "resultsMsg": "Run a test to see clashes.",
+      "rows": 0,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none"
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ]
+    },
+    "scenario": "A"
+  },
+  {
+    "label": "A3-test2-soft-configured",
+    "at": "2026-10-11T05:19:55.908Z",
+    "manager": {
+      "panelTitleView": "editor-or-other",
+      "headerActive": "Test: CT7 Struct x Mech (Soft try)",
+      "count": 0,
+      "items": [],
+      "confirm": null,
+      "liveManager": "Created “Clash test 2”.",
+      "liveEditor": "Not ready to run.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "859c0174-d142-4366-89ec-2014879a3858",
+      "name": "CT7 Struct x Mech (Soft try)",
+      "mode": "soft",
+      "revision": 1,
+      "setA": "Audubon_Structure_clash_test",
+      "setB": "Audubon_Mechanical_clash_test",
+      "runState": "idle",
+      "doneKind": null,
+      "headline": "Not ready to run",
+      "counts": {
+        "total": null,
+        "filtered": null
+      },
+      "canRun": false,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": null,
+      "resultsState": "before-run",
+      "resultsMsg": "Run a test to see clashes.",
+      "rows": 0,
+      "selected": null,
+      "validation": "blocked",
+      "groupBy": "none"
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ]
+    },
+    "scenario": "A"
+  },
+  {
+    "label": "A4-test2-soft-attested-ft",
+    "at": "2026-10-11T05:20:10.614Z",
+    "manager": {
+      "panelTitleView": "editor-or-other",
+      "headerActive": "Test: CT7 Struct x Mech (Soft try)",
+      "count": 0,
+      "items": [],
+      "confirm": null,
+      "liveManager": "Created “Clash test 2”.",
+      "liveEditor": "Ready to run.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "859c0174-d142-4366-89ec-2014879a3858",
+      "name": "CT7 Struct x Mech (Soft try)",
+      "mode": "soft",
+      "revision": 1,
+      "setA": "Audubon_Structure_clash_test",
+      "setB": "Audubon_Mechanical_clash_test",
+      "runState": "idle",
+      "doneKind": null,
+      "headline": "Ready to run",
+      "counts": {
+        "total": null,
+        "filtered": null
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": null,
+      "resultsState": "before-run",
+      "resultsMsg": "Run a test to see clashes.",
+      "rows": 0,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none"
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ]
+    },
+    "scenario": "A"
+  },
+  {
+    "label": "A5-manager-two-tests",
+    "at": "2026-10-11T05:20:11.158Z",
+    "manager": {
+      "panelTitleView": "list",
+      "headerActive": "Test: CT7 Struct x Mech (Soft try)",
+      "count": 2,
+      "items": [
+        {
+          "id": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+          "active": false,
+          "name": "CT7 Arch x Struct",
+          "mode": "Hard",
+          "status": "Not run",
+          "setA": "Audubon_Architecture_clash_test",
+          "setB": "Audubon_Structure_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [
+            "Reset results: This test has no results to reset."
+          ],
+          "disabledActions": [
+            "manager-reset-0"
+          ],
+          "notice": null
+        },
+        {
+          "id": "859c0174-d142-4366-89ec-2014879a3858",
+          "active": true,
+          "name": "CT7 Struct x Mech (Soft try)",
+          "mode": "Soft (clearance 0.1 ft, user-supplied, not verified)",
+          "status": "Not run",
+          "setA": "Audubon_Structure_clash_test",
+          "setB": "Audubon_Mechanical_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [
+            "Reset results: This test has no results to reset."
+          ],
+          "disabledActions": [
+            "manager-reset-1"
+          ],
+          "notice": null
+        }
+      ],
+      "confirm": null,
+      "liveManager": "Created “Clash test 2”.",
+      "liveEditor": "Ready to run.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "859c0174-d142-4366-89ec-2014879a3858",
+      "name": "CT7 Struct x Mech (Soft try)",
+      "mode": "soft",
+      "revision": 1,
+      "setA": "Audubon_Structure_clash_test",
+      "setB": "Audubon_Mechanical_clash_test",
+      "runState": "idle",
+      "doneKind": null,
+      "headline": "Ready to run",
+      "counts": {
+        "total": null,
+        "filtered": null
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": null,
+      "resultsState": "before-run",
+      "resultsMsg": "Run a test to see clashes.",
+      "rows": 0,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none"
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ]
+    },
+    "scenario": "A"
+  }
+]

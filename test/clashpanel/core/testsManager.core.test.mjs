@@ -200,6 +200,90 @@ test('H1 / AC-M10: a model-left event ALONE — catalog and binding snapshot unc
   assert.equal(h.engine.startCalls.length, 0);
 });
 
+test('F-1 Option B: a hide-only model-left event (reason "removed", key still catalogued + bound) leaves every record available and unchanged; show recomputes without a transition', async () => {
+  const h = makeManagerHarness();
+  referencingAB(h);
+  await h.dispatch({ type: MANAGER_INTENT.DUPLICATE, testId: 'test-1' });   // a second (inactive-or-active) record referencing the same keys
+  const ids = h.vm().tests.map((t) => t.testId);
+  assert.ok(ids.length >= 2);
+  h.bridge.fireModelLeft({ model: h.modelB, reason: 'removed' });          // viewer.hideModel(B): MODEL_REMOVED only, no BEFORE_MODEL_UNLOAD
+  assert.deepEqual(h.catalog.list().map((e) => e.modelKey), ['mA', 'mB'], 'precondition: still catalogued');
+  assert.notEqual(h.engine.registry.bindingFor('mB'), null, 'precondition: still bound');
+  for (const id of ids) {
+    const row = h.row(id);
+    assert.equal(row.readiness.state, 'setup-complete', id);
+    assert.doesNotMatch(row.readiness.text, /not loaded/, id);
+    assert.equal(row.modelsChanged, false, id);
+    assert.equal(row.modelsChangedText ?? null, null, id);
+    assert.equal(row.setB, 'Structure', `${id}: no "(not loaded)" suffix`);
+  }
+  h.catalog.fire();                                                         // showModel: same key re-enters; nothing flaps
+  for (const id of ids) {
+    assert.equal(h.row(id).readiness.state, 'setup-complete', id);
+    assert.equal(h.row(id).modelsChanged, false, id);
+  }
+  assert.equal(h.engine.startCalls.length, 0);
+});
+
+test('F-1 Option B (real Viewer 7.124.2 order): hideModel removes the model from getAllModels while MODEL_REMOVED fires and re-adds it WITHOUT an event — readiness settles to available after the synchronous hide returns', async () => {
+  const h = makeManagerHarness();
+  referencingAB(h);
+  await h.dispatch({ type: MANAGER_INTENT.DUPLICATE, testId: 'test-1' });
+  const ids = h.vm().tests.map((t) => t.testId);
+  const entry = { modelKey: 'mB', displayName: 'Structure', model: h.modelB, loaded: true };
+  // viewer.hideModel(B), synchronously: impl.removeModel → MODEL_REMOVED (catalog change + bridge 'removed') → addHiddenModel (no event)
+  h.catalog.removeModel('mB');
+  h.bridge.fireModelLeft({ model: h.modelB, reason: 'removed' });
+  h.catalog.fire();
+  for (const id of ids) assert.equal(h.row(id).readiness.state, 'models-missing', `${id}: transient gap state is computed during the event`);
+  h.catalog.addModel(entry);                                       // the model is listed again; the Viewer fires nothing
+  await Promise.resolve();
+  for (const id of ids) {
+    assert.equal(h.row(id).readiness.state, 'setup-complete', id);
+    assert.equal(h.row(id).modelsChanged, false, id);
+    assert.equal(h.row(id).setB, 'Structure', id);
+  }
+  // actual unload of a VISIBLE model: BEFORE_MODEL_UNLOAD while listed, catalog drops it, MODEL_REMOVED after — stays missing
+  h.bridge.fireModelLeft({ model: h.modelB, reason: 'unload' });
+  h.catalog.removeModel('mB');
+  h.catalog.fire();
+  h.bridge.fireModelLeft({ model: h.modelB, reason: 'removed' });
+  await Promise.resolve();
+  for (const id of ids) assert.equal(h.row(id).readiness.state, 'models-missing', id);
+  assert.equal(h.row('test-1').modelsChanged, true);
+});
+
+test('F-1 Option B: an actual unload still departs the model — in either event order, and a later "removed" never un-departs it', () => {
+  for (const order of [['unload', 'removed'], ['removed', 'unload']]) {
+    const h = makeManagerHarness();
+    referencingAB(h);
+    for (const reason of order) h.bridge.fireModelLeft({ model: h.modelB, reason });
+    const row = h.row('test-1');
+    assert.equal(row.readiness.state, 'models-missing', order.join('>'));
+    assert.equal(row.readiness.text, 'Structure is not loaded', order.join('>'));
+    assert.equal(row.modelsChanged, true, order.join('>'));
+    h.catalog.removeModel('mB');
+    h.catalog.fire();
+    h.bridge.fireModelLeft({ model: h.modelB, reason: 'removed' });          // trailing MODEL_REMOVED after the catalog dropped it
+    assert.equal(h.row('test-1').readiness.state, 'models-missing', order.join('>'));
+  }
+});
+
+test('F-1 Option B: hide, then a genuine unload of the hidden model, departs it; a new-key reload never rebinds the old test', () => {
+  const h = makeManagerHarness();
+  referencingAB(h);
+  h.bridge.fireModelLeft({ model: h.modelB, reason: 'removed' });          // hidden: still runnable
+  assert.equal(h.row('test-1').readiness.state, 'setup-complete');
+  h.bridge.fireModelLeft({ model: h.modelB, reason: 'unload' });           // then unloaded while hidden
+  assert.equal(h.row('test-1').readiness.state, 'models-missing');
+  h.catalog.removeModel('mB');
+  h.catalog.fire();
+  h.catalog.addModel({ modelKey: 'mB2', displayName: 'Structure', model: {}, loaded: true });   // reload = a NEW key
+  h.catalog.fire();
+  assert.equal(h.row('test-1').readiness.state, 'models-missing', 'the old test stays bound to the old, unavailable key');
+  assert.equal(h.row('test-1').modelsChanged, true);
+});
+
 test('H1: removal — the catalog drops the model after (or without) the event; the row stays missing and changed', () => {
   const h = makeManagerHarness();
   referencingAB(h);

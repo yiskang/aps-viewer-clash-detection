@@ -1,0 +1,470 @@
+[
+  {
+    "label": "I-manager-view",
+    "at": "2026-10-11T05:26:50.484Z",
+    "manager": {
+      "panelTitleView": "list",
+      "headerActive": "Test: CT7 Round-trip Arch x Struct",
+      "count": 1,
+      "items": [
+        {
+          "id": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+          "active": true,
+          "name": "CT7 Round-trip Arch x Struct",
+          "mode": "Hard",
+          "status": "Completed — 2277 clashes reported",
+          "setA": "Audubon_Architecture_clash_test",
+          "setB": "Audubon_Structure_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [],
+          "disabledActions": [],
+          "notice": null
+        }
+      ],
+      "confirm": null,
+      "liveManager": "Deleted “CT7 Struct x Mech (Soft try)” for this session.",
+      "liveEditor": "Completed — 2277 clashes.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+      "name": "CT7 Round-trip Arch x Struct",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Audubon_Architecture_clash_test",
+      "setB": "Audubon_Structure_clash_test",
+      "runState": "done",
+      "doneKind": "completed",
+      "headline": "Completed — 2277 clashes",
+      "counts": {
+        "total": 2277,
+        "filtered": 2277
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": {
+        "runId": "470ab085-4759-47c6-87bb-857567f0224c",
+        "status": "completed",
+        "resultCount": 2277,
+        "coverage": "full",
+        "integrity": "caveated",
+        "freshnessAtSeal": "current",
+        "caveatCount": 6836,
+        "models": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+          }
+        ],
+        "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"CT7 Round-trip Arch x Struct\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"c4749d72-0d8c-4776-94c7-2e3afedb8a29\"}",
+        "startedAt": 548803.7000000477,
+        "sealedAt": 552607.2000000477
+      },
+      "resultsState": "list",
+      "resultsMsg": null,
+      "rows": 50,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none",
+      "firstRowTestId": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+      "selectedRowOrdinal": null
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0,
+        "clash-panel-markers:clash-detection-panel": 0,
+        "clash-panel-outlines:clash-detection-panel": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "4": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "4": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        4
+      ],
+      "panelOverlayScenes": [
+        "clash-panel-markers:clash-detection-panel",
+        "clash-panel-outlines:clash-detection-panel"
+      ],
+      "panelOverlayChildren": [
+        0,
+        0
+      ],
+      "isolatedAny": false
+    },
+    "scenario": "I"
+  },
+  {
+    "label": "I-manager-view",
+    "at": "2026-10-11T05:26:51.879Z",
+    "manager": {
+      "panelTitleView": "list",
+      "headerActive": "Test: CT7 Round-trip Arch x Struct",
+      "count": 1,
+      "items": [
+        {
+          "id": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+          "active": true,
+          "name": "CT7 Round-trip Arch x Struct",
+          "mode": "Hard",
+          "status": "Completed — 2277 clashes reported",
+          "setA": "Audubon_Architecture_clash_test",
+          "setB": "Audubon_Structure_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [],
+          "disabledActions": [],
+          "notice": null
+        }
+      ],
+      "confirm": null,
+      "liveManager": "Deleted “CT7 Struct x Mech (Soft try)” for this session.",
+      "liveEditor": "Completed — 2277 clashes.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+      "name": "CT7 Round-trip Arch x Struct",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Audubon_Architecture_clash_test",
+      "setB": "Audubon_Structure_clash_test",
+      "runState": "done",
+      "doneKind": "completed",
+      "headline": "Completed — 2277 clashes",
+      "counts": {
+        "total": 2277,
+        "filtered": 2277
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": {
+        "runId": "470ab085-4759-47c6-87bb-857567f0224c",
+        "status": "completed",
+        "resultCount": 2277,
+        "coverage": "full",
+        "integrity": "caveated",
+        "freshnessAtSeal": "current",
+        "caveatCount": 6836,
+        "models": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+          }
+        ],
+        "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"CT7 Round-trip Arch x Struct\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"c4749d72-0d8c-4776-94c7-2e3afedb8a29\"}",
+        "startedAt": 548803.7000000477,
+        "sealedAt": 552607.2000000477
+      },
+      "resultsState": "list",
+      "resultsMsg": null,
+      "rows": 50,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none",
+      "firstRowTestId": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+      "selectedRowOrdinal": null
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0,
+        "clash-panel-markers:clash-detection-panel": 0,
+        "clash-panel-outlines:clash-detection-panel": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "4": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "4": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        4
+      ],
+      "panelOverlayScenes": [
+        "clash-panel-markers:clash-detection-panel",
+        "clash-panel-outlines:clash-detection-panel"
+      ],
+      "panelOverlayChildren": [
+        0,
+        0
+      ],
+      "isolatedAny": false
+    },
+    "scenario": "I"
+  },
+  {
+    "label": "I-manager-view",
+    "at": "2026-10-11T05:26:53.293Z",
+    "manager": {
+      "panelTitleView": "list",
+      "headerActive": "Test: CT7 Round-trip Arch x Struct",
+      "count": 1,
+      "items": [
+        {
+          "id": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+          "active": true,
+          "name": "CT7 Round-trip Arch x Struct",
+          "mode": "Hard",
+          "status": "Completed — 2277 clashes reported",
+          "setA": "Audubon_Architecture_clash_test",
+          "setB": "Audubon_Structure_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [],
+          "disabledActions": [],
+          "notice": null
+        }
+      ],
+      "confirm": null,
+      "liveManager": "Deleted “CT7 Struct x Mech (Soft try)” for this session.",
+      "liveEditor": "Completed — 2277 clashes.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+      "name": "CT7 Round-trip Arch x Struct",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Audubon_Architecture_clash_test",
+      "setB": "Audubon_Structure_clash_test",
+      "runState": "done",
+      "doneKind": "completed",
+      "headline": "Completed — 2277 clashes",
+      "counts": {
+        "total": 2277,
+        "filtered": 2277
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": {
+        "runId": "470ab085-4759-47c6-87bb-857567f0224c",
+        "status": "completed",
+        "resultCount": 2277,
+        "coverage": "full",
+        "integrity": "caveated",
+        "freshnessAtSeal": "current",
+        "caveatCount": 6836,
+        "models": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+          }
+        ],
+        "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"CT7 Round-trip Arch x Struct\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"c4749d72-0d8c-4776-94c7-2e3afedb8a29\"}",
+        "startedAt": 548803.7000000477,
+        "sealedAt": 552607.2000000477
+      },
+      "resultsState": "list",
+      "resultsMsg": null,
+      "rows": 50,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none",
+      "firstRowTestId": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+      "selectedRowOrdinal": null
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0,
+        "clash-panel-markers:clash-detection-panel": 0,
+        "clash-panel-outlines:clash-detection-panel": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "4": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "4": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        4
+      ],
+      "panelOverlayScenes": [
+        "clash-panel-markers:clash-detection-panel",
+        "clash-panel-outlines:clash-detection-panel"
+      ],
+      "panelOverlayChildren": [
+        0,
+        0
+      ],
+      "isolatedAny": false
+    },
+    "scenario": "I"
+  },
+  {
+    "label": "I-final-manager",
+    "at": "2026-10-11T05:26:54.711Z",
+    "manager": {
+      "panelTitleView": "list",
+      "headerActive": "Test: CT7 Round-trip Arch x Struct",
+      "count": 1,
+      "items": [
+        {
+          "id": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+          "active": true,
+          "name": "CT7 Round-trip Arch x Struct",
+          "mode": "Hard",
+          "status": "Completed — 2277 clashes reported",
+          "setA": "Audubon_Architecture_clash_test",
+          "setB": "Audubon_Structure_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [],
+          "disabledActions": [],
+          "notice": null
+        }
+      ],
+      "confirm": null,
+      "liveManager": "Deleted “CT7 Struct x Mech (Soft try)” for this session.",
+      "liveEditor": "Completed — 2277 clashes.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+      "name": "CT7 Round-trip Arch x Struct",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Audubon_Architecture_clash_test",
+      "setB": "Audubon_Structure_clash_test",
+      "runState": "done",
+      "doneKind": "completed",
+      "headline": "Completed — 2277 clashes",
+      "counts": {
+        "total": 2277,
+        "filtered": 2277
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": {
+        "runId": "470ab085-4759-47c6-87bb-857567f0224c",
+        "status": "completed",
+        "resultCount": 2277,
+        "coverage": "full",
+        "integrity": "caveated",
+        "freshnessAtSeal": "current",
+        "caveatCount": 6836,
+        "models": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+          }
+        ],
+        "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"CT7 Round-trip Arch x Struct\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"c4749d72-0d8c-4776-94c7-2e3afedb8a29\"}",
+        "startedAt": 548803.7000000477,
+        "sealedAt": 552607.2000000477
+      },
+      "resultsState": "list",
+      "resultsMsg": null,
+      "rows": 50,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none",
+      "firstRowTestId": "c4749d72-0d8c-4776-94c7-2e3afedb8a29",
+      "selectedRowOrdinal": null
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0,
+        "clash-panel-markers:clash-detection-panel": 0,
+        "clash-panel-outlines:clash-detection-panel": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "4": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "4": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        4
+      ],
+      "panelOverlayScenes": [
+        "clash-panel-markers:clash-detection-panel",
+        "clash-panel-outlines:clash-detection-panel"
+      ],
+      "panelOverlayChildren": [
+        0,
+        0
+      ],
+      "isolatedAny": false
+    },
+    "scenario": "I"
+  }
+]

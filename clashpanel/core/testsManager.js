@@ -175,8 +175,14 @@ function onModelLeft(m, event) {
   if (m.disposed) return;
   let key = null;
   try { key = m.catalog.keyOfModel(event?.model); } catch { key = null; }
-  if (typeof key === 'string' && key.length > 0 && listedKeys(m).has(key)) m.departed.add(key);
+  // F-1 Option B: hide is visibility, not departure. Viewer 7.124.2 hideModel() = impl.removeModel (fires MODEL_REMOVED while
+  // the model is in NEITHER getAllModels list) then addHiddenModel (re-lists it, fires NOTHING). The invalidation below
+  // therefore computes a transient "missing" that no later event corrects, so a 'removed' event also re-invalidates once the
+  // synchronous Viewer call has returned; a real unload (key absent / departed) stays missing on that second read.
+  // Only an 'unload' departs a still-listed key, and a 'removed' never un-departs one.
+  if (event?.reason !== 'removed' && typeof key === 'string' && key.length > 0 && listedKeys(m).has(key)) m.departed.add(key);
   invalidate(m);
+  if (event?.reason === 'removed') queueMicrotask(() => invalidate(m));
 }
 
 /**

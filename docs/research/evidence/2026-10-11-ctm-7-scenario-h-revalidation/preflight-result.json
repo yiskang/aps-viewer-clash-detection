@@ -1,0 +1,391 @@
+{
+  "pass": true,
+  "checks": [
+    {
+      "id": "3.runtime-identity",
+      "ok": true,
+      "detail": {
+        "viewer": "7.124.2",
+        "viewerScript": "https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js",
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+      }
+    },
+    {
+      "id": "4a.carrier.viewer",
+      "ok": true,
+      "detail": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "4b.carrier.host-panel-controller",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "id": "4c.carrier.manager",
+      "ok": true,
+      "detail": {
+        "view": "list",
+        "count": 2
+      }
+    },
+    {
+      "id": "4d.carrier.editor-vm",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "id": "4e.carrier.catalog",
+      "ok": true,
+      "detail": 3
+    },
+    {
+      "id": "4f.counts.models-tests",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "id": "4g.test-names",
+      "ok": true,
+      "detail": [
+        "Clash test 1",
+        "Clash test 2"
+      ]
+    },
+    {
+      "id": "4h.readiness-fields-nonnull",
+      "ok": true,
+      "detail": [
+        [
+          "Clash test 1",
+          "Setup complete — readiness to run is checked when opened",
+          "Completed — 2277 clashes reported · Results not held — open and re-run to view"
+        ],
+        [
+          "Clash test 2",
+          "Setup complete — readiness to run is checked when opened",
+          "Completed — 491 clashes reported"
+        ]
+      ]
+    },
+    {
+      "id": "4i.setupModels-nonempty",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "id": "4j.keys-match-catalog-editor-viewer",
+      "ok": true,
+      "detail": {
+        "catKeys": [
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2"
+        ],
+        "setupKeys": [
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2"
+        ],
+        "viewerKeys": [
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2"
+        ]
+      }
+    },
+    {
+      "id": "4k.names-by-id",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "id": "5a.selectors-live",
+      "ok": true,
+      "detail": {
+        ".clash-manager-header": true,
+        ".clash-manager-list": true,
+        ".clash-manager-editor": true,
+        "li.clash-manager-item[data-test-id]": true,
+        ".clash-manager-name": true,
+        ".clash-manager-mode": true,
+        ".clash-manager-status": true,
+        ".clash-manager-set-value": true,
+        ".clash-manager-readiness": true
+      }
+    },
+    {
+      "id": "5b.private-overlayScenes",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "id": "5c.reason-rows-selector-optional-note",
+      "ok": true,
+      "detail": "li .clash-manager-reason-row present only when a reason is shown; asserted by the oracle at hide/unload, not at H0"
+    },
+    {
+      "id": "6.unused-fields-excluded",
+      "ok": true,
+      "detail": [
+        "viewer.overlays (all non-panel scenes)",
+        "viewer.selection",
+        "editor.groupBy",
+        "editor.firstRowTestId",
+        "editor.counts.filtered",
+        "manager.liveManager/liveEditor text (recorded, not asserted)",
+        "manager.activeElementBanner"
+      ]
+    },
+    {
+      "id": "7a.hideModel-form",
+      "ok": true,
+      "detail": {
+        "length": 1
+      }
+    },
+    {
+      "id": "7b.showModel-form",
+      "ok": true,
+      "detail": {
+        "length": 2
+      }
+    },
+    {
+      "id": "7c.unloadModel-form",
+      "ok": true,
+      "detail": {
+        "length": 1,
+        "src": "function (model) {\n  if (!model) {\n    model = this.model;\n  }\n\n  this.impl.unloadModel(model);\n}"
+      }
+    },
+    {
+      "id": "7d.target-models-are-Model-objects",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "id": "8.capture-quality",
+      "ok": true,
+      "detail": {
+        "problems": [],
+        "settle": {
+          "stable": true,
+          "timedOut": false,
+          "waitedMs": 251,
+          "minWaitMs": 1500
+        }
+      }
+    }
+  ],
+  "capture": {
+    "schema": "ctm7-h-capture/1",
+    "label": "PREFLIGHT-H0",
+    "at": "2026-10-11T07:33:30.158Z",
+    "scenario": "H",
+    "href": "http://localhost:8080/#<hash>",
+    "manager": {
+      "view": "list",
+      "headerActive": "Test: Clash test 2",
+      "count": 2,
+      "items": [
+        {
+          "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+          "active": false,
+          "name": "Clash test 1",
+          "mode": "Hard",
+          "status": "Completed — 2277 clashes reported · Results not held — open and re-run to view",
+          "setA": "Audubon_Architecture_clash_test",
+          "setB": "Audubon_Structure_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [],
+          "disabledActions": []
+        },
+        {
+          "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+          "active": true,
+          "name": "Clash test 2",
+          "mode": "Hard",
+          "status": "Completed — 491 clashes reported",
+          "setA": "Audubon_Structure_clash_test",
+          "setB": "Audubon_Mechanical_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [],
+          "disabledActions": []
+        }
+      ],
+      "confirm": null,
+      "confirmOp": "",
+      "notice": null,
+      "fault": null,
+      "liveManager": "Completed — 491 clashes.",
+      "liveEditor": "Completed — 491 clashes.",
+      "activeElementBanner": null
+    },
+    "editor": {
+      "testId": "c8015f9f-47ea-438a-9528-f015f5972d96",
+      "name": "Clash test 2",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Audubon_Structure_clash_test",
+      "setB": "Audubon_Mechanical_clash_test",
+      "runState": "done",
+      "doneKind": "completed",
+      "headline": "Completed — 491 clashes",
+      "counts": {
+        "total": 491,
+        "filtered": 491
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": {
+        "runId": "358237cb-7fdf-4623-8c10-7aa23ad59dba",
+        "status": "completed",
+        "resultCount": 491,
+        "coverage": "full",
+        "integrity": "caveated",
+        "freshnessAtSeal": "current",
+        "caveatCount": 781,
+        "models": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA|guid:38c10754-d1f9-5bf6-2546-4bac2d3dab5b"
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+          }
+        ],
+        "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 2\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]},\"testId\":\"c8015f9f-47ea-438a-9528-f015f5972d96\"}",
+        "startedAt": 63866.59999990463,
+        "sealedAt": 65165.5
+      },
+      "resultsState": "list",
+      "resultsMsg": null,
+      "rows": 50,
+      "selected": null,
+      "validation": "ready",
+      "validationMessages": [],
+      "groupBy": null,
+      "firstRowTestId": "-|[\"c8015f9f-47ea-438a-9528-f015f5972d96\",\"sha256:5dbd44983dfef70c36081fb3c626a293a52cb746d7ccfe4e891a50076ec15fa4\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",124,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+      "setupModels": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "ready": true,
+          "registered": true,
+          "inA": false,
+          "inB": false,
+          "note": null
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "ready": true,
+          "registered": true,
+          "inA": true,
+          "inB": false,
+          "note": null
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "ready": true,
+          "registered": true,
+          "inA": false,
+          "inB": true,
+          "note": null
+        }
+      ],
+      "validationState": "ready"
+    },
+    "catalog": [
+      {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+        "displayName": "Audubon_Architecture_clash_test",
+        "loaded": true
+      },
+      {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+        "displayName": "Audubon_Structure_clash_test",
+        "loaded": true
+      },
+      {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+        "displayName": "Audubon_Mechanical_clash_test",
+        "loaded": true
+      }
+    ],
+    "viewer": {
+      "models": [
+        1,
+        2,
+        3
+      ],
+      "visibleModels": [
+        1,
+        2,
+        3
+      ],
+      "modelKeysBySelf": [
+        {
+          "id": 1,
+          "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+          "isLoadDone": true,
+          "isOTG": true,
+          "hasInstanceTree": true
+        },
+        {
+          "id": 2,
+          "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+          "isLoadDone": true,
+          "isOTG": true,
+          "hasInstanceTree": true
+        },
+        {
+          "id": 3,
+          "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+          "isLoadDone": true,
+          "isOTG": true,
+          "hasInstanceTree": true
+        }
+      ],
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "isolatedAny": false,
+      "selection": 0,
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0
+      },
+      "panelOverlayScenes": [],
+      "panelOverlayChildren": []
+    },
+    "problems": [],
+    "settle": {
+      "stable": true,
+      "timedOut": false,
+      "waitedMs": 251,
+      "minWaitMs": 1500
+    }
+  }
+}

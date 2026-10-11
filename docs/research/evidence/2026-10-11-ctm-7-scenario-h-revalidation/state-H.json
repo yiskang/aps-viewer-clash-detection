@@ -1,0 +1,3185 @@
+{
+  "schema": "ctm7-h-capture/1",
+  "count": 16,
+  "captures": [
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "smoke",
+      "at": "2026-10-11T07:32:04.485Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "editor",
+        "headerActive": "Test: Clash test 1",
+        "count": 0,
+        "items": [],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Not ready to run.",
+        "liveEditor": "Not ready to run.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Nothing selected",
+        "setB": "Nothing selected",
+        "runState": "idle",
+        "doneKind": null,
+        "headline": "Not ready to run",
+        "counts": {
+          "total": null,
+          "filtered": null
+        },
+        "canRun": false,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": null,
+        "resultsState": "before-run",
+        "resultsMsg": "Run a test to see clashes.",
+        "rows": 0,
+        "selected": null,
+        "validation": "blocked",
+        "validationMessages": [
+          "Set A is empty — choose a model or use the current selection.",
+          "Set B is empty — choose a model or use the current selection."
+        ],
+        "groupBy": null,
+        "firstRowTestId": null,
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          }
+        ],
+        "validationState": "blocked"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          3
+        ],
+        "visibleModels": [
+          1,
+          2,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 253,
+        "minWaitMs": 0
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "PREFLIGHT-H0",
+      "at": "2026-10-11T07:33:04.042Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 2",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": false,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": true,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 491 clashes.",
+        "liveEditor": "Completed — 491 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "c8015f9f-47ea-438a-9528-f015f5972d96",
+        "name": "Clash test 2",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Structure_clash_test",
+        "setB": "Audubon_Mechanical_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 491 clashes",
+        "counts": {
+          "total": 491,
+          "filtered": 491
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "358237cb-7fdf-4623-8c10-7aa23ad59dba",
+          "status": "completed",
+          "resultCount": 491,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 781,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA|guid:38c10754-d1f9-5bf6-2546-4bac2d3dab5b"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 2\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]},\"testId\":\"c8015f9f-47ea-438a-9528-f015f5972d96\"}",
+          "startedAt": 63866.59999990463,
+          "sealedAt": 65165.5
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"c8015f9f-47ea-438a-9528-f015f5972d96\",\"sha256:5dbd44983dfef70c36081fb3c626a293a52cb746d7ccfe4e891a50076ec15fa4\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",124,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          3
+        ],
+        "visibleModels": [
+          1,
+          2,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 256,
+        "minWaitMs": 1500
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "PREFLIGHT-H0",
+      "at": "2026-10-11T07:33:17.841Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 2",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": false,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": true,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 491 clashes.",
+        "liveEditor": "Completed — 491 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "c8015f9f-47ea-438a-9528-f015f5972d96",
+        "name": "Clash test 2",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Structure_clash_test",
+        "setB": "Audubon_Mechanical_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 491 clashes",
+        "counts": {
+          "total": 491,
+          "filtered": 491
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "358237cb-7fdf-4623-8c10-7aa23ad59dba",
+          "status": "completed",
+          "resultCount": 491,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 781,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA|guid:38c10754-d1f9-5bf6-2546-4bac2d3dab5b"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 2\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]},\"testId\":\"c8015f9f-47ea-438a-9528-f015f5972d96\"}",
+          "startedAt": 63866.59999990463,
+          "sealedAt": 65165.5
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"c8015f9f-47ea-438a-9528-f015f5972d96\",\"sha256:5dbd44983dfef70c36081fb3c626a293a52cb746d7ccfe4e891a50076ec15fa4\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",124,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          3
+        ],
+        "visibleModels": [
+          1,
+          2,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 256,
+        "minWaitMs": 1500
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "PREFLIGHT-H0",
+      "at": "2026-10-11T07:33:22.373Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 2",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": false,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": true,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 491 clashes.",
+        "liveEditor": "Completed — 491 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "c8015f9f-47ea-438a-9528-f015f5972d96",
+        "name": "Clash test 2",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Structure_clash_test",
+        "setB": "Audubon_Mechanical_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 491 clashes",
+        "counts": {
+          "total": 491,
+          "filtered": 491
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "358237cb-7fdf-4623-8c10-7aa23ad59dba",
+          "status": "completed",
+          "resultCount": 491,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 781,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA|guid:38c10754-d1f9-5bf6-2546-4bac2d3dab5b"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 2\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]},\"testId\":\"c8015f9f-47ea-438a-9528-f015f5972d96\"}",
+          "startedAt": 63866.59999990463,
+          "sealedAt": 65165.5
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"c8015f9f-47ea-438a-9528-f015f5972d96\",\"sha256:5dbd44983dfef70c36081fb3c626a293a52cb746d7ccfe4e891a50076ec15fa4\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",124,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          3
+        ],
+        "visibleModels": [
+          1,
+          2,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 252,
+        "minWaitMs": 1500
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "PREFLIGHT-H0",
+      "at": "2026-10-11T07:33:30.158Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 2",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": false,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": true,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 491 clashes.",
+        "liveEditor": "Completed — 491 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "c8015f9f-47ea-438a-9528-f015f5972d96",
+        "name": "Clash test 2",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Structure_clash_test",
+        "setB": "Audubon_Mechanical_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 491 clashes",
+        "counts": {
+          "total": 491,
+          "filtered": 491
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "358237cb-7fdf-4623-8c10-7aa23ad59dba",
+          "status": "completed",
+          "resultCount": 491,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 781,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA|guid:38c10754-d1f9-5bf6-2546-4bac2d3dab5b"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 2\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]},\"testId\":\"c8015f9f-47ea-438a-9528-f015f5972d96\"}",
+          "startedAt": 63866.59999990463,
+          "sealedAt": 65165.5
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"c8015f9f-47ea-438a-9528-f015f5972d96\",\"sha256:5dbd44983dfef70c36081fb3c626a293a52cb746d7ccfe4e891a50076ec15fa4\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",124,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          3
+        ],
+        "visibleModels": [
+          1,
+          2,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 251,
+        "minWaitMs": 1500
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H1-hideModel-structure",
+      "at": "2026-10-11T07:33:45.114Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 2",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": false,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": true,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 491 clashes.",
+        "liveEditor": "Completed — 491 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "c8015f9f-47ea-438a-9528-f015f5972d96",
+        "name": "Clash test 2",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Structure_clash_test",
+        "setB": "Audubon_Mechanical_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 491 clashes",
+        "counts": {
+          "total": 491,
+          "filtered": 491
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "358237cb-7fdf-4623-8c10-7aa23ad59dba",
+          "status": "completed",
+          "resultCount": 491,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 781,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA|guid:38c10754-d1f9-5bf6-2546-4bac2d3dab5b"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 2\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]},\"testId\":\"c8015f9f-47ea-438a-9528-f015f5972d96\"}",
+          "startedAt": 63866.59999990463,
+          "sealedAt": 65165.5
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"c8015f9f-47ea-438a-9528-f015f5972d96\",\"sha256:5dbd44983dfef70c36081fb3c626a293a52cb746d7ccfe4e891a50076ec15fa4\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",124,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          3,
+          2
+        ],
+        "visibleModels": [
+          1,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": null,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": null,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 254,
+        "minWaitMs": 6000
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H2a-editor-test1-structure-hidden",
+      "at": "2026-10-11T07:33:55.440Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "editor",
+        "headerActive": "Test: Clash test 1",
+        "count": 0,
+        "items": [],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Opened “Clash test 1”.",
+        "liveEditor": "Ready to run.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Architecture_clash_test",
+        "setB": "Audubon_Structure_clash_test",
+        "runState": "idle",
+        "doneKind": null,
+        "headline": "Ready to run",
+        "counts": {
+          "total": null,
+          "filtered": null
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": null,
+        "resultsState": "before-run",
+        "resultsMsg": "Run a test to see clashes.",
+        "rows": 0,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": null,
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          3,
+          2
+        ],
+        "visibleModels": [
+          1,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": null,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": null,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 252,
+        "minWaitMs": 1500
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H2b-run-complete-structure-hidden",
+      "at": "2026-10-11T07:34:04.747Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "editor",
+        "headerActive": "Test: Clash test 1",
+        "count": 0,
+        "items": [],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 2277 clashes.",
+        "liveEditor": "Completed — 2277 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Architecture_clash_test",
+        "setB": "Audubon_Structure_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 2277 clashes",
+        "counts": {
+          "total": 2277,
+          "filtered": 2277
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "3d33d2a0-943c-4ef2-90ca-f1fe73082ac9",
+          "status": "completed",
+          "resultCount": 2277,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 6836,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 1\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"27512605-cd09-45fa-9141-f8c1f8358e8e\"}",
+          "startedAt": 153484.09999990463,
+          "sealedAt": 157026.29999995232
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"27512605-cd09-45fa-9141-f8c1f8358e8e\",\"sha256:d6c88a84e225703055941342cca9d7df612475e6afdc5bc51e2e64c9a0a41796\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",327,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",6614]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          3,
+          2
+        ],
+        "visibleModels": [
+          1,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": null,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": null,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 255,
+        "minWaitMs": 1500
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H2c-manager-after-hidden-run",
+      "at": "2026-10-11T07:34:12.313Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 1",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": true,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": false,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 2277 clashes.",
+        "liveEditor": "Completed — 2277 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Architecture_clash_test",
+        "setB": "Audubon_Structure_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 2277 clashes",
+        "counts": {
+          "total": 2277,
+          "filtered": 2277
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "3d33d2a0-943c-4ef2-90ca-f1fe73082ac9",
+          "status": "completed",
+          "resultCount": 2277,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 6836,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 1\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"27512605-cd09-45fa-9141-f8c1f8358e8e\"}",
+          "startedAt": 153484.09999990463,
+          "sealedAt": 157026.29999995232
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"27512605-cd09-45fa-9141-f8c1f8358e8e\",\"sha256:d6c88a84e225703055941342cca9d7df612475e6afdc5bc51e2e64c9a0a41796\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",327,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",6614]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          3,
+          2
+        ],
+        "visibleModels": [
+          1,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": null,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": null,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 253,
+        "minWaitMs": 3000
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H3-showModel-structure",
+      "at": "2026-10-11T07:34:23.279Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 1",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": true,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": false,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 2277 clashes.",
+        "liveEditor": "Completed — 2277 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Architecture_clash_test",
+        "setB": "Audubon_Structure_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 2277 clashes",
+        "counts": {
+          "total": 2277,
+          "filtered": 2277
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "3d33d2a0-943c-4ef2-90ca-f1fe73082ac9",
+          "status": "completed",
+          "resultCount": 2277,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 6836,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 1\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"27512605-cd09-45fa-9141-f8c1f8358e8e\"}",
+          "startedAt": 153484.09999990463,
+          "sealedAt": 157026.29999995232
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"27512605-cd09-45fa-9141-f8c1f8358e8e\",\"sha256:d6c88a84e225703055941342cca9d7df612475e6afdc5bc51e2e64c9a0a41796\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",327,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",6614]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          3,
+          2
+        ],
+        "visibleModels": [
+          1,
+          3,
+          2
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 256,
+        "minWaitMs": 3000
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H3b-hideModel-mechanical-observed",
+      "at": "2026-10-11T07:34:34.298Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 1",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": true,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": false,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 2277 clashes.",
+        "liveEditor": "Completed — 2277 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Architecture_clash_test",
+        "setB": "Audubon_Structure_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 2277 clashes",
+        "counts": {
+          "total": 2277,
+          "filtered": 2277
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "3d33d2a0-943c-4ef2-90ca-f1fe73082ac9",
+          "status": "completed",
+          "resultCount": 2277,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 6836,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 1\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"27512605-cd09-45fa-9141-f8c1f8358e8e\"}",
+          "startedAt": 153484.09999990463,
+          "sealedAt": 157026.29999995232
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"27512605-cd09-45fa-9141-f8c1f8358e8e\",\"sha256:d6c88a84e225703055941342cca9d7df612475e6afdc5bc51e2e64c9a0a41796\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",327,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",6614]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          3
+        ],
+        "visibleModels": [
+          1,
+          2
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": null
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": null
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 256,
+        "minWaitMs": 2000
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H3c-showModel-mechanical-observed",
+      "at": "2026-10-11T07:34:39.101Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 1",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": true,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": false,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 2277 clashes.",
+        "liveEditor": "Completed — 2277 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Architecture_clash_test",
+        "setB": "Audubon_Structure_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 2277 clashes",
+        "counts": {
+          "total": 2277,
+          "filtered": 2277
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "3d33d2a0-943c-4ef2-90ca-f1fe73082ac9",
+          "status": "completed",
+          "resultCount": 2277,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 6836,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 1\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"27512605-cd09-45fa-9141-f8c1f8358e8e\"}",
+          "startedAt": 153484.09999990463,
+          "sealedAt": 157026.29999995232
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"27512605-cd09-45fa-9141-f8c1f8358e8e\",\"sha256:d6c88a84e225703055941342cca9d7df612475e6afdc5bc51e2e64c9a0a41796\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",327,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",6614]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          3
+        ],
+        "visibleModels": [
+          1,
+          2,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 255,
+        "minWaitMs": 2000
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H3d-after-rAF-experiment",
+      "at": "2026-10-11T07:34:54.483Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 1",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": true,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": false,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 2277 clashes.",
+        "liveEditor": "Completed — 2277 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Architecture_clash_test",
+        "setB": "Audubon_Structure_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 2277 clashes",
+        "counts": {
+          "total": 2277,
+          "filtered": 2277
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "3d33d2a0-943c-4ef2-90ca-f1fe73082ac9",
+          "status": "completed",
+          "resultCount": 2277,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 6836,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 1\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"27512605-cd09-45fa-9141-f8c1f8358e8e\"}",
+          "startedAt": 153484.09999990463,
+          "sealedAt": 157026.29999995232
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"27512605-cd09-45fa-9141-f8c1f8358e8e\",\"sha256:d6c88a84e225703055941342cca9d7df612475e6afdc5bc51e2e64c9a0a41796\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",327,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",6614]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+            "displayName": "Audubon_Mechanical_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          3
+        ],
+        "visibleModels": [
+          1,
+          2,
+          3
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 3,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "3": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 254,
+        "minWaitMs": 1500
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H4-unloadModel-mechanical",
+      "at": "2026-10-11T07:35:06.563Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 1",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": true,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": false,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported · Results not held — open and re-run to view · Models changed since this run",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test (not loaded)",
+            "readiness": "Audubon_Mechanical_clash_test is not loaded",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Completed — 2277 clashes.",
+        "liveEditor": "Completed — 2277 clashes.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+        "name": "Clash test 1",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Architecture_clash_test",
+        "setB": "Audubon_Structure_clash_test",
+        "runState": "done",
+        "doneKind": "completed",
+        "headline": "Completed — 2277 clashes",
+        "counts": {
+          "total": 2277,
+          "filtered": 2277
+        },
+        "canRun": true,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": {
+          "runId": "3d33d2a0-943c-4ef2-90ca-f1fe73082ac9",
+          "status": "completed",
+          "resultCount": 2277,
+          "coverage": "full",
+          "integrity": "caveated",
+          "freshnessAtSeal": "current",
+          "caveatCount": 6836,
+          "models": [
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+            },
+            {
+              "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+              "bindingGeneration": 1,
+              "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+            }
+          ],
+          "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"Clash test 1\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"27512605-cd09-45fa-9141-f8c1f8358e8e\"}",
+          "startedAt": 153484.09999990463,
+          "sealedAt": 157026.29999995232
+        },
+        "resultsState": "list",
+        "resultsMsg": null,
+        "rows": 50,
+        "selected": null,
+        "validation": "ready",
+        "validationMessages": [],
+        "groupBy": null,
+        "firstRowTestId": "-|[\"27512605-cd09-45fa-9141-f8c1f8358e8e\",\"sha256:d6c88a84e225703055941342cca9d7df612475e6afdc5bc51e2e64c9a0a41796\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",327,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",6614]",
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": true,
+            "note": null
+          }
+        ],
+        "validationState": "ready"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2
+        ],
+        "visibleModels": [
+          1,
+          2
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 254,
+        "minWaitMs": 6000
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H4b-editor-test2-mechanical-unloaded",
+      "at": "2026-10-11T07:35:14.598Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "editor",
+        "headerActive": "Test: Clash test 2",
+        "count": 0,
+        "items": [],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Opened “Clash test 2”.",
+        "liveEditor": "Not ready to run.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "c8015f9f-47ea-438a-9528-f015f5972d96",
+        "name": "Clash test 2",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Structure_clash_test",
+        "setB": "Audubon_Mechanical_clash_test",
+        "runState": "idle",
+        "doneKind": null,
+        "headline": "Not ready to run",
+        "counts": {
+          "total": null,
+          "filtered": null
+        },
+        "canRun": false,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": null,
+        "resultsState": "before-run",
+        "resultsMsg": "Run a test to see clashes.",
+        "rows": 0,
+        "selected": null,
+        "validation": "blocked",
+        "validationMessages": [
+          "Model Audubon_Mechanical_clash_test is not registered."
+        ],
+        "groupBy": null,
+        "firstRowTestId": null,
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          }
+        ],
+        "validationState": "blocked"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2
+        ],
+        "visibleModels": [
+          1,
+          2
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 252,
+        "minWaitMs": 2500
+      }
+    },
+    {
+      "schema": "ctm7-h-capture/1",
+      "label": "H5-mechanical-reloaded-new-key",
+      "at": "2026-10-11T07:35:28.416Z",
+      "scenario": "H",
+      "href": "http://localhost:8080/#<hash>",
+      "manager": {
+        "view": "list",
+        "headerActive": "Test: Clash test 2",
+        "count": 2,
+        "items": [
+          {
+            "id": "27512605-cd09-45fa-9141-f8c1f8358e8e",
+            "active": false,
+            "name": "Clash test 1",
+            "mode": "Hard",
+            "status": "Completed — 2277 clashes reported · Results not held — open and re-run to view",
+            "setA": "Audubon_Architecture_clash_test",
+            "setB": "Audubon_Structure_clash_test",
+            "readiness": "Setup complete — readiness to run is checked when opened",
+            "reasons": [],
+            "disabledActions": []
+          },
+          {
+            "id": "c8015f9f-47ea-438a-9528-f015f5972d96",
+            "active": true,
+            "name": "Clash test 2",
+            "mode": "Hard",
+            "status": "Completed — 491 clashes reported · Results not held — open and re-run to view · Models changed since this run",
+            "setA": "Audubon_Structure_clash_test",
+            "setB": "Audubon_Mechanical_clash_test · …dA#3 (not loaded)",
+            "readiness": "Audubon_Mechanical_clash_test · …dA#3 is not loaded",
+            "reasons": [],
+            "disabledActions": []
+          }
+        ],
+        "confirm": null,
+        "confirmOp": "",
+        "notice": null,
+        "fault": null,
+        "liveManager": "Opened “Clash test 2”.",
+        "liveEditor": "Not ready to run.",
+        "activeElementBanner": null
+      },
+      "editor": {
+        "testId": "c8015f9f-47ea-438a-9528-f015f5972d96",
+        "name": "Clash test 2",
+        "mode": "hard",
+        "revision": 1,
+        "setA": "Audubon_Structure_clash_test",
+        "setB": "Audubon_Mechanical_clash_test · …dA#3",
+        "runState": "idle",
+        "doneKind": null,
+        "headline": "Not ready to run",
+        "counts": {
+          "total": null,
+          "filtered": null
+        },
+        "canRun": false,
+        "runActive": false,
+        "heldUnsaved": false,
+        "pendingConfirm": false,
+        "lastRun": null,
+        "resultsState": "before-run",
+        "resultsMsg": "Run a test to see clashes.",
+        "rows": 0,
+        "selected": null,
+        "validation": "blocked",
+        "validationMessages": [
+          "Model Audubon_Mechanical_clash_test is not registered."
+        ],
+        "groupBy": null,
+        "firstRowTestId": null,
+        "setupModels": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "displayName": "Audubon_Architecture_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "displayName": "Audubon_Structure_clash_test",
+            "ready": true,
+            "registered": true,
+            "inA": true,
+            "inB": false,
+            "note": null
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#4",
+            "displayName": "Audubon_Mechanical_clash_test · …dA#4",
+            "ready": true,
+            "registered": true,
+            "inA": false,
+            "inB": false,
+            "note": null
+          }
+        ],
+        "validationState": "blocked"
+      },
+      "catalog": [
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+          "displayName": "Audubon_Architecture_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+          "displayName": "Audubon_Structure_clash_test",
+          "loaded": true
+        },
+        {
+          "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#4",
+          "displayName": "Audubon_Mechanical_clash_test",
+          "loaded": true
+        }
+      ],
+      "viewer": {
+        "models": [
+          1,
+          2,
+          4
+        ],
+        "visibleModels": [
+          1,
+          2,
+          4
+        ],
+        "modelKeysBySelf": [
+          {
+            "id": 1,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 2,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          },
+          {
+            "id": 4,
+            "urn": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA",
+            "isLoadDone": true,
+            "isOTG": true,
+            "hasInstanceTree": true
+          }
+        ],
+        "isolatedNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "4": 0
+        },
+        "hiddenNodeCounts": {
+          "1": 0,
+          "2": 0,
+          "4": 0
+        },
+        "isolatedAny": false,
+        "selection": 0,
+        "overlays": {
+          "selection": 0,
+          "selection_points": 0,
+          "pivot": 0,
+          "roll": 0,
+          "MeasureTool-snapper-geometries": 0,
+          "MeasureTool-snapper-indicator": 0
+        },
+        "panelOverlayScenes": [],
+        "panelOverlayChildren": []
+      },
+      "problems": [],
+      "settle": {
+        "stable": true,
+        "timedOut": false,
+        "waitedMs": 254,
+        "minWaitMs": 6000
+      }
+    }
+  ],
+  "h3Seen": [
+    "Completed — 2277 clashes reported",
+    "Setup complete — readiness to run is checked when opened",
+    "Completed — 491 clashes reported · Results not held — open and re-run to view"
+  ],
+  "h3dRafExperiment": {
+    "muts": [
+      [
+        114.8,
+        "false,true"
+      ],
+      [
+        116.9,
+        "false,false"
+      ],
+      [
+        119,
+        "false,false"
+      ],
+      [
+        216.9,
+        "false,false"
+      ],
+      [
+        2129.5,
+        "false,false"
+      ],
+      [
+        2134.2,
+        "false,false"
+      ],
+      [
+        2234.3,
+        "false,false"
+      ]
+    ],
+    "frames": 208,
+    "flagged": [],
+    "tCall": 103.60000002384186,
+    "tAfter": 114.79999995231628
+  },
+  "acceptAll": [
+    [
+      "smoke",
+      true
+    ],
+    [
+      "PREFLIGHT-H0",
+      true
+    ],
+    [
+      "PREFLIGHT-H0",
+      true
+    ],
+    [
+      "PREFLIGHT-H0",
+      true
+    ],
+    [
+      "PREFLIGHT-H0",
+      true
+    ],
+    [
+      "H1-hideModel-structure",
+      true
+    ],
+    [
+      "H2a-editor-test1-structure-hidden",
+      true
+    ],
+    [
+      "H2b-run-complete-structure-hidden",
+      true
+    ],
+    [
+      "H2c-manager-after-hidden-run",
+      true
+    ],
+    [
+      "H3-showModel-structure",
+      true
+    ],
+    [
+      "H3b-hideModel-mechanical-observed",
+      true
+    ],
+    [
+      "H3c-showModel-mechanical-observed",
+      true
+    ],
+    [
+      "H3d-after-rAF-experiment",
+      true
+    ],
+    [
+      "H4-unloadModel-mechanical",
+      true
+    ],
+    [
+      "H4b-editor-test2-mechanical-unloaded",
+      true
+    ],
+    [
+      "H5-mechanical-reloaded-new-key",
+      true
+    ]
+  ]
+}

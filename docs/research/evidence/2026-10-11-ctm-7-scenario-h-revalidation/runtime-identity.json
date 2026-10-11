@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-11",
+  "repoHead": "85aee231289dab39b7d98a63c9f2067b57db01b6",
+  "app": "PORT=8080 node server.js (normal app, hash-URN load, not ?clashPanelDemo=1)",
+  "browser": "Playwright MCP Chrome 155.0.0.0 (macOS), Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+  "viewer": "7.124.2 (from loaded viewer3D.js script URL; Autodesk.Viewing.getVersion is not a function in this build)",
+  "gdpr": "streamingV2 (as prior run; not re-read)",
+  "models": [
+    {"id": 1, "name": "Audubon_Architecture_clash_test", "key": "<urn>#1", "svf2": true, "unit": "ft"},
+    {"id": 2, "name": "Audubon_Structure_clash_test", "key": "<urn>#2", "svf2": true, "unit": "ft"},
+    {"id": 3, "name": "Audubon_Mechanical_clash_test", "key": "<urn>#3", "svf2": true, "unit": "ft", "unloadedAt": "H4", "reloadedAs": 4},
+    {"id": 4, "name": "Audubon_Mechanical_clash_test", "key": "<urn>#4", "svf2": true, "unit": "ft", "note": "same URN reloaded through host Load UI = new key"}
+  ],
+  "urnsSameAsPriorRun": true,
+  "helperSha256": {
+    "capture-helper.js": "3fc67c446ee011426152ea276ae3c74d2a748ef44bf9f8ab7fc470408dbe9635",
+    "CAPTURE-SCHEMA.md": "a229d195ce700ad948684771f5d1b50d146401168b45120b1c5c85bd2f48bddd",
+    "PROTOCOL.md": "53b7dd3abcaafbfd186ed81dcb07b1c8cf525d9acdd464093691bec8e7813c15"
+  },
+  "note": "helper hashes equal the retained docs/research/evidence-support/ctm-7-h-revalidation/ copies (verified by shasum before injection)"
+}

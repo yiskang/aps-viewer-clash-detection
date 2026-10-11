@@ -1,0 +1,296 @@
+[
+  {
+    "label": "D1-before-switch-manager",
+    "at": "2026-10-11T05:21:41.742Z",
+    "manager": {
+      "panelTitleView": "list",
+      "headerActive": "Test: CT7 Arch x Struct",
+      "count": 2,
+      "items": [
+        {
+          "id": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+          "active": true,
+          "name": "CT7 Arch x Struct",
+          "mode": "Hard",
+          "status": "Completed — 2277 clashes reported",
+          "setA": "Audubon_Architecture_clash_test",
+          "setB": "Audubon_Structure_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [],
+          "disabledActions": [],
+          "notice": null
+        },
+        {
+          "id": "859c0174-d142-4366-89ec-2014879a3858",
+          "active": false,
+          "name": "CT7 Struct x Mech (Soft try)",
+          "mode": "Soft (clearance 0.1 ft, user-supplied, not verified)",
+          "status": "Not run",
+          "setA": "Audubon_Structure_clash_test",
+          "setB": "Audubon_Mechanical_clash_test",
+          "readiness": "Setup complete — readiness to run is checked when opened",
+          "reasons": [
+            "Reset results: This test has no results to reset."
+          ],
+          "disabledActions": [
+            "manager-reset-1"
+          ],
+          "notice": null
+        }
+      ],
+      "confirm": null,
+      "liveManager": "Opened “CT7 Arch x Struct”.",
+      "liveEditor": "Completed — 2277 clashes.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+      "name": "CT7 Arch x Struct",
+      "mode": "hard",
+      "revision": 1,
+      "setA": "Audubon_Architecture_clash_test",
+      "setB": "Audubon_Structure_clash_test",
+      "runState": "done",
+      "doneKind": "completed",
+      "headline": "Completed — 2277 clashes",
+      "counts": {
+        "total": 2277,
+        "filtered": 2277
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": {
+        "runId": "baed24a4-8e42-4adc-9e73-8089f7d96de2",
+        "status": "completed",
+        "resultCount": 2277,
+        "coverage": "full",
+        "integrity": "caveated",
+        "freshnessAtSeal": "current",
+        "caveatCount": 6836,
+        "models": [
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:f7b33efa-9766-ffb1-133a-9c922de520c4"
+          },
+          {
+            "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+            "bindingGeneration": 1,
+            "modelVersion": "urn:dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0|guid:5070ef4b-2543-6324-3ea5-83ad71beddbe"
+          }
+        ],
+        "definitionKey": "{\"mode\":\"volume-overlap\",\"name\":\"CT7 Arch x Struct\",\"schemaVersion\":1,\"selectionA\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\"}]},\"selectionB\":{\"entries\":[{\"kind\":\"model\",\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"}]},\"testId\":\"0d3a62e9-930a-4fe4-a403-cef1ea3418ac\"}",
+        "startedAt": 176500.30000007153,
+        "sealedAt": 182845.90000009537
+      },
+      "resultsState": "list",
+      "resultsMsg": null,
+      "rows": 50,
+      "selected": "[\"0d3a62e9-930a-4fe4-a403-cef1ea3418ac\",\"sha256:d6c88a84e225703055941342cca9d7df612475e6afdc5bc51e2e64c9a0a41796\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",327,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",6614]",
+      "validation": "ready",
+      "groupBy": "none",
+      "firstRowTestId": "0d3a62e9-930a-4fe4-a403-cef1ea3418ac",
+      "selectedRowOrdinal": "#1"
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0,
+        "clash-panel-markers:clash-detection-panel": 1,
+        "clash-panel-outlines:clash-detection-panel": 2
+      },
+      "isolatedNodeCounts": {
+        "1": 1,
+        "2": 1,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 1
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ],
+      "panelOverlayScenes": [
+        "clash-panel-markers:clash-detection-panel",
+        "clash-panel-outlines:clash-detection-panel"
+      ],
+      "panelOverlayChildren": [
+        1,
+        2
+      ],
+      "isolatedAny": true
+    },
+    "scenario": "D"
+  },
+  {
+    "label": "D2-immediately-after-open-test2",
+    "at": "2026-10-11T05:21:42.097Z",
+    "manager": {
+      "panelTitleView": "editor-or-other",
+      "headerActive": "Test: CT7 Struct x Mech (Soft try)",
+      "count": 0,
+      "items": [],
+      "confirm": null,
+      "liveManager": "Opened “CT7 Struct x Mech (Soft try)”.",
+      "liveEditor": "Ready to run.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "859c0174-d142-4366-89ec-2014879a3858",
+      "name": "CT7 Struct x Mech (Soft try)",
+      "mode": "soft",
+      "revision": 1,
+      "setA": "Audubon_Structure_clash_test",
+      "setB": "Audubon_Mechanical_clash_test",
+      "runState": "idle",
+      "doneKind": null,
+      "headline": "Ready to run",
+      "counts": {
+        "total": null,
+        "filtered": null
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": null,
+      "resultsState": "before-run",
+      "resultsMsg": "Run a test to see clashes.",
+      "rows": 0,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none",
+      "firstRowTestId": null,
+      "selectedRowOrdinal": null
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0,
+        "clash-panel-markers:clash-detection-panel": 0,
+        "clash-panel-outlines:clash-detection-panel": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ],
+      "panelOverlayScenes": [
+        "clash-panel-markers:clash-detection-panel",
+        "clash-panel-outlines:clash-detection-panel"
+      ],
+      "panelOverlayChildren": [
+        0,
+        0
+      ],
+      "isolatedAny": false
+    },
+    "scenario": "D"
+  },
+  {
+    "label": "D3-settled-after-switch",
+    "at": "2026-10-11T05:21:45.101Z",
+    "manager": {
+      "panelTitleView": "editor-or-other",
+      "headerActive": "Test: CT7 Struct x Mech (Soft try)",
+      "count": 0,
+      "items": [],
+      "confirm": null,
+      "liveManager": "Opened “CT7 Struct x Mech (Soft try)”.",
+      "liveEditor": "Ready to run.",
+      "noticeEls": []
+    },
+    "editor": {
+      "testId": "859c0174-d142-4366-89ec-2014879a3858",
+      "name": "CT7 Struct x Mech (Soft try)",
+      "mode": "soft",
+      "revision": 1,
+      "setA": "Audubon_Structure_clash_test",
+      "setB": "Audubon_Mechanical_clash_test",
+      "runState": "idle",
+      "doneKind": null,
+      "headline": "Ready to run",
+      "counts": {
+        "total": null,
+        "filtered": null
+      },
+      "canRun": true,
+      "runActive": false,
+      "heldUnsaved": false,
+      "pendingConfirm": false,
+      "lastRun": null,
+      "resultsState": "before-run",
+      "resultsMsg": "Run a test to see clashes.",
+      "rows": 0,
+      "selected": null,
+      "validation": "ready",
+      "groupBy": "none",
+      "firstRowTestId": null,
+      "selectedRowOrdinal": null
+    },
+    "viewer": {
+      "overlays": {
+        "selection": 0,
+        "selection_points": 0,
+        "pivot": 0,
+        "roll": 0,
+        "MeasureTool-snapper-geometries": 0,
+        "MeasureTool-snapper-indicator": 0,
+        "clash-panel-markers:clash-detection-panel": 0,
+        "clash-panel-outlines:clash-detection-panel": 0
+      },
+      "isolatedNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "hiddenNodeCounts": {
+        "1": 0,
+        "2": 0,
+        "3": 0
+      },
+      "selection": 0,
+      "models": [
+        1,
+        2,
+        3
+      ],
+      "panelOverlayScenes": [
+        "clash-panel-markers:clash-detection-panel",
+        "clash-panel-outlines:clash-detection-panel"
+      ],
+      "panelOverlayChildren": [
+        0,
+        0
+      ],
+      "isolatedAny": false
+    },
+    "scenario": "D"
+  }
+]
