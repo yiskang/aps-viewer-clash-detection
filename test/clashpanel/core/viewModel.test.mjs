@@ -423,3 +423,20 @@ test('overlap: empty under the selfClash mirror (Set B = Set A is its own explic
   assert.equal(vm.overlapText, null);
   assert.equal(vm.scope.B, 'Same as Set A');
 });
+
+test('B5 group-selected variant: exact shape, Markers disabled with the §27.4 reason, live-only gating, frozen, no child field', () => {
+  const set = makeSet({ runId: 'run-1', results: [{ a: ['mA', 1], b: ['mB', 10] }] });
+  const g = { kind: 'group', groupId: 'g', label: 'A ↔ B', clashCount: 1, participants: 2, shown: 2, unavailable: 0, notes: ['n'], isolation: { available: true, reason: null }, toggles: { focusOnSelect: true, isolate: true, markers: true } };
+  let s = buildViewModel(input({ phase: 'done', set, list: listFor(set), selected: g })).selected;
+  assert.deepEqual(keys(s), ['actions', 'clashCount', 'groupId', 'kind', 'label', 'notes', 'participants', 'shown', 'unavailable', 'unavailableNote']);
+  assert.deepEqual(keys(s.actions), SHAPE.actions);
+  assert.deepEqual(s.actions.markers, { enabled: false, checked: false, reason: 'Markers are unavailable for a clash group.' }, 'a stale toggle value never leaks');
+  assert.deepEqual(s.actions.isolate, { enabled: true, checked: true, reason: null });
+  assert.equal(s.unavailableNote, null);
+  assert.equal(Object.isFrozen(s) && Object.isFrozen(s.actions.markers), true);
+  s = buildViewModel(input({ phase: 'done', set, list: listFor(set), selected: { ...g, shown: 0, unavailable: 1, participants: 1 } })).selected;
+  assert.deepEqual(s.actions.focus, { enabled: false, reason: 'Viewer actions are unavailable: no participant model is loaded.' });
+  assert.equal(s.actions.isolate.enabled, false);
+  assert.equal(s.actions.isolate.checked, true, "the user toggle is preserved, as for a child");
+  assert.equal(s.unavailableNote, '1 of 1 participants is not shown (model not loaded).');
+});

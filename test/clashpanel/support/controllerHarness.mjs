@@ -372,7 +372,7 @@ export function createScriptedEngine({ bindings = {}, capacity = Infinity } = {}
 // ---- bridge double ---------------------------------------------------------------------------------------------
 
 export function createRecordingBridge() {
-  const calls = [];                              // Viewer-MUTATING operations only: present / clear / dispose
+  const calls = [];                              // Viewer-MUTATING operations only: present / presentGroup / clear / dispose
   const reads = [];                              // read-only operations (isolation prerequisite, selection)
   const modelLeft = new Set();
   let prerequisite = { available: true, reason: null };
@@ -393,12 +393,20 @@ export function createRecordingBridge() {
     setClearImpl(fn) { clearImpl = fn; },
     /** When manual, present() stays pending until resolvePresent(). */
     setManual(value) { manual = value; },
-    resolvePresent(outcome) { pending.shift()(outcome); },
+    resolvePresent(outcome, index = 0) { pending.splice(index, 1)[0](outcome); },
+    get groupPresents() { return calls.filter((c) => c.op === 'presentGroup'); },
     listenerCount: () => modelLeft.size,
     fireModelLeft(event) { for (const cb of [...modelLeft]) cb(event); },
     present(req) {
       calls.push({ op: 'present', req });
       const auto = { superseded: false, fitted: req.options.focus, isolated: req.options.isolate, marked: req.options.marker, notes: [] };
+      if (manual) return new Promise((resolve) => pending.push((o) => resolve(o ?? auto)));
+      return Promise.resolve(auto);
+    },
+    /** Addendum B2 seam: records the aggregate request; B3 implements the real ViewerBridge.presentGroup(). */
+    presentGroup(req) {
+      calls.push({ op: 'presentGroup', req });
+      const auto = { superseded: false, fitted: req.options.focus, isolated: req.options.isolate, notes: [] };
       if (manual) return new Promise((resolve) => pending.push((o) => resolve(o ?? auto)));
       return Promise.resolve(auto);
     },
@@ -464,16 +472,18 @@ export const prop = Object.freeze({
  * bindingGeneration 1 / modelVersion 'v1' (matching makeSet's default provenance). `props` = {mA?, mB?} property
  * functions for withFakeProperties (models without one have no bulk property read at all).
  */
-export function makeHarness({ basis = { state: 'verified', basisKey: 'b1' }, names, displayNames = { mA: 'Architecture', mB: 'Structure' }, capacity = Infinity, props = {} } = {}) {
+export function makeHarness({ basis = { state: 'verified', basisKey: 'b1' }, names, displayNames = { mA: 'Architecture', mB: 'Structure' }, capacity = Infinity, props = {}, extraModels = [] } = {}) {
   const scheduler = createFakeScheduler();
   const modelA = makeFakeModel('A', names?.mA ?? ((dbId) => `A-${dbId}`));
   const modelB = makeFakeModel('B', names?.mB ?? ((dbId) => `B-${dbId}`));
   if (typeof props.mA === 'function') withFakeProperties(modelA, props.mA);
   if (typeof props.mB === 'function') withFakeProperties(modelB, props.mB);
+  const extras = extraModels.map((m) => ({ ...m, model: makeFakeModel(m.modelKey, (dbId) => `${m.modelKey}-${dbId}`) }));
   const catalog = createFakeCatalog({
     models: [
       { modelKey: 'mA', displayName: displayNames.mA, model: modelA, loaded: true },
       { modelKey: 'mB', displayName: displayNames.mB, model: modelB, loaded: true },
+      ...extras.map((m) => ({ modelKey: m.modelKey, displayName: m.displayName ?? m.modelKey, model: m.model, loaded: true })),
     ],
     basis,
   });
@@ -482,13 +492,14 @@ export function makeHarness({ basis = { state: 'verified', basisKey: 'b1' }, nam
     bindings: {
       mA: { modelKey: 'mA', model: modelA, modelVersion: 'v1', bindingGeneration: 1, placementGeneration: 0 },
       mB: { modelKey: 'mB', model: modelB, modelVersion: 'v1', bindingGeneration: 1, placementGeneration: 0 },
+      ...Object.fromEntries(extras.map((m) => [m.modelKey, { modelKey: m.modelKey, model: m.model, modelVersion: 'v1', bindingGeneration: 1, placementGeneration: 0 }])),
     },
   });
   const bridge = createRecordingBridge();
   let ids = 0;
   const controller = createPanelController({ engine, catalog, bridge, scheduler, mintId: () => { ids += 1; return `test-${ids}`; } });
   const h = {
-    scheduler, catalog, engine, bridge, controller, modelA, modelB,
+    scheduler, catalog, engine, bridge, controller, modelA, modelB, extraModels: Object.fromEntries(extras.map((m) => [m.modelKey, m.model])),
     vm: () => controller.getViewModel(),
     settle: (rounds) => settle(scheduler, rounds),
     async dispatch(intent) { const out = await controller.dispatch(intent); await settle(scheduler); return out; },

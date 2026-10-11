@@ -274,6 +274,7 @@ const FAULT_LOCKS = Object.freeze([
   Object.freeze({ gate: (e) => e?.setup?.newTest, selector: '[data-key="setup-new-test"]' }),
   Object.freeze({ gate: (e) => e?.run?.locked, selector: '[data-key="run-start"]' }),
   Object.freeze({ gate: (e) => e?.results?.select, selector: 'section[data-region="results"] .clash-row' }),
+  Object.freeze({ gate: (e) => e?.results?.groupPresent, selector: 'section[data-region="results"] .clash-group-body' }),   // AC-GP11; never the disclosure
   Object.freeze({ gate: (e) => e?.results?.nav?.locked, selector: '[data-key="nav-prev"], [data-key="nav-next"]' }),
   Object.freeze({ gate: (e) => e?.selected?.actions?.focus, selector: '[data-key="action-focus"]' }),
   Object.freeze({ gate: (e) => e?.selected?.actions?.isolate, selector: '[data-key="action-isolate"]' }),

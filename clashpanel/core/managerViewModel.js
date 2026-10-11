@@ -190,7 +190,8 @@ export function buildManagerViewModel(s) {
  * the composite `editor` ViewModel reports EVERY user-facing control whose intent `policy` (Task 9's FAULT_POLICY)
  * blocks as `{enabled:false, reason}` — the editor's existing disabled-reason shape — so a headless consumer and the
  * DOM never show enabled a control whose intent dispatch drops. Setup edits/New test, Run, result-row selection,
- * Prev/Next, Focus/Isolate/Markers/Back to All are fixed controls locked unconditionally (= FAULT_POLICY's blocked
+ * group-row presentation, Prev/Next, Focus/Isolate/Markers/Back to All (child and group-selected variants alike, which
+ * share `selected.actions`) are fixed controls locked unconditionally (= FAULT_POLICY's blocked
  * user-facing intents, pinned by the FAULT_CONTROLS equivalence tests, Tasks 9/11); only banner actions, which carry
  * their intent as data, consult `policy` and are locked unless it allows the intent (fail closed, like dispatch). Allow-listed controls (filters, group, sort, page,
  * Focus on select, Stop, Clear + confirmation, Copy diagnostics, collapse) are carried over unchanged. Returns a NEW
@@ -211,7 +212,8 @@ export function lockedEditorVm(editorVm, reason, policy) {
   };
   if (editorVm.setup) out.setup = { ...editorVm.setup, newTest: gate, useSelectionEnabled: false, locked: gate };
   if (editorVm.results) {
-    out.results = { ...editorVm.results, select: gate, nav: { ...editorVm.results.nav, canPrev: false, canNext: false, locked: gate } };
+    // groupPresent: the group row-body button (GROUP_PRESENT, spec §27.1/AC-GP11); the disclosure (GROUP_TOGGLE) is allow-listed.
+    out.results = { ...editorVm.results, select: gate, groupPresent: gate, nav: { ...editorVm.results.nav, canPrev: false, canNext: false, locked: gate } };
   }
   if (editorVm.selected) {
     const a = editorVm.selected.actions;

@@ -11,6 +11,12 @@
 // token's resources or none. Mutation order: compute → release previous → markers → isolation → fit.
 // Fit is outside the guarantee (best-effort, never rolled back). The bridge never calls any theming
 // member and never touches selection or camera restore.
+//
+// presentGroup (spec §27.3/§27.4/§27.7) is a SIBLING of present(), never a widening of or fallback through it:
+// independently validated {participants:[{model,dbId}], options:{focus,isolate}} of arbitrary positive
+// cardinality, de-duplicated by identical {model,dbId}, run through the SAME queue/token/ledger transaction with
+// NO marker step (Option A: no witness, closest-point or outline resource). Isolation is one aggregate
+// reconcile of every unique live participant; fit frames their union.
 import { createMarkerSet, computeMarkerRadius, MIN_MARKER_RADIUS } from './markers.js';
 import { createIsolationSession, isolationPrerequisite, isolationEquals, readIsolation } from './isolation.js';
 import { fitSides } from './fit.js';
@@ -70,8 +76,29 @@ function validateRequest(req) {
   }
 }
 
+// presentGroup request: validated independently of present(); returns a call-time snapshot of the unique
+// participants (identical {model, dbId} collapse; equal dbIds in different models stay distinct).
+function validateGroupRequest(req) {
+  if (!req || !Array.isArray(req.participants) || req.participants.length < 1) throw new TypeError('presentGroup: participants must be a non-empty array');
+  const byModel = new Map();
+  const unique = [];
+  for (const p of req.participants) {
+    if (!isModel(p?.model) || !isDbId(p?.dbId)) throw new TypeError('presentGroup: each participant needs {model, dbId}');
+    if (!byModel.has(p.model)) byModel.set(p.model, new Set());
+    const ids = byModel.get(p.model);
+    if (!ids.has(p.dbId)) { ids.add(p.dbId); unique.push(Object.freeze({ model: p.model, dbId: p.dbId })); }
+  }
+  const o = req.options;
+  if (!o || typeof o.focus !== 'boolean' || typeof o.isolate !== 'boolean') throw new TypeError('presentGroup: options {focus, isolate} must be booleans');
+  if ('marker' in o) throw new TypeError('presentGroup: a clash group has no marker option');
+  return { participants: unique, focus: o.focus, isolate: o.isolate };
+}
+
 const outcome = (fields) => Object.freeze({ superseded: false, fitted: false, isolated: false, marked: false, ...fields, notes: Object.freeze([...(fields.notes ?? [])]) });
 const DISPOSED_PRESENT = outcome({ superseded: true, disposed: true });
+// GroupOutcome: no `marked` and no witness field; `participants` = unique live participants presented.
+const groupOutcome = ({ marked: _marked, ...fields }) => Object.freeze({ superseded: false, fitted: false, isolated: false, participants: 0, ...fields, notes: Object.freeze([...(fields.notes ?? [])]) });
+const DISPOSED_GROUP = groupOutcome({ superseded: true, disposed: true });
 const DISPOSED_CLEAR = Object.freeze({ isolation: 'none', markersRemoved: 0, notes: Object.freeze([]), disposed: true });
 
 // Overlay scene names are INSTANCE-scoped by default so two Panels/bridges on one Viewer never share (and so
@@ -153,6 +180,32 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
     const boxes = marker ? liveSides.map(readBounds) : [];
     const radius = marker ? computeMarkerRadius(boxes) : MIN_MARKER_RADIUS;
 
+    // (2) markers — the single-clash witness step (location + outlines); bounds already read in step 1.
+    const draw = !marker ? null : (hooks) => {
+      const loc = markers.addLocation({ point: req.point, closestPoints: req.closestPoints, radius }, hooks);
+      if (loc.length === 0) notes.push(BRIDGE_NOTE.NO_LOCATION);
+      const boundsOf = (model, dbId) => boxes[liveSides.findIndex((s) => s.model === model && s.dbId === dbId)] ?? null;
+      const outl = markers.addOutlines(liveSides, boundsOf, hooks);
+      if (outl.omitted > 0) notes.push(BRIDGE_NOTE.NO_BOUNDS);
+      return loc.length + outl.meshes.length > 0;
+    };
+    return transact(t, { targets: liveSides, focus, isolate, notes, draw, make: outcome });
+  }
+
+  // Aggregate presentation: the same transaction with NO draw step — no marker, closest-point marker or outline.
+  async function runPresentGroup(t, { participants, focus, isolate }) {
+    if (!isLive(t)) return groupOutcome({ superseded: true });
+    const notes = [];
+    const inScene = sceneModels();                                    // (1) reads only
+    const liveParticipants = participants.filter((p) => inScene.includes(p.model));
+    if (liveParticipants.length < participants.length) notes.push(BRIDGE_NOTE.NOT_IN_SCENE);
+    return transact(t, { targets: liveParticipants, focus, isolate, notes, draw: null, make: groupOutcome, shown: { participants: liveParticipants.length } });
+  }
+
+  // The ONE presentation transaction shared by present() and presentGroup(): adopt the ledger → release the
+  // previous presentation → optional draw → isolation → fit. `targets` are the live {model, dbId} entries; `shown`
+  // is merged into a successful outcome only.
+  async function transact(t, { targets, focus, isolate, notes, draw, make, shown = {} }) {
     // Adopt the previous ledger: from here on this token's ledger holds every Panel resource.
     const L = { token: t, markerMeshes: held === null ? [] : held.markerMeshes, get isolation() { return isolation.record(); } };
     held = L;
@@ -168,25 +221,19 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
         guard(t);
         if (removeExact(mesh, notes)) L.markerMeshes.splice(L.markerMeshes.indexOf(mesh), 1);
       }
-      if (!(isolate && liveSides.length > 0) && isolation.owns()) {
+      if (!(isolate && targets.length > 0) && isolation.owns()) {
         notes.push(...isolation.restore({ beforeMutation: () => guard(t) }).notes);   // 'failed' is surfaced, never dropped
       }
       guard(t);
 
-      // (2) markers
-      if (marker) {
-        const loc = markers.addLocation({ point: req.point, closestPoints: req.closestPoints, radius }, hooks);
-        if (loc.length === 0) notes.push(BRIDGE_NOTE.NO_LOCATION);
-        const boundsOf = (model, dbId) => boxes[liveSides.findIndex((s) => s.model === model && s.dbId === dbId)] ?? null;
-        const outl = markers.addOutlines(liveSides, boundsOf, hooks);   // bounds already read in step 1
-        if (outl.omitted > 0) notes.push(BRIDGE_NOTE.NO_BOUNDS);
-        marked = loc.length + outl.meshes.length > 0;
-      }
+      // (2) markers (present() only)
+      if (draw !== null) marked = draw(hooks);
       guard(t);
 
-      // (3) isolation — only if requested and the §9.5 prerequisite holds (checked inside apply).
-      if (isolate && liveSides.length > 0) {
-        const r = isolation.apply(liveSides, { beforeMutation: () => guard(t) });
+      // (3) isolation — only if requested and the §9.5 prerequisite holds (checked inside apply). One aggregate
+      // reconcile of every live target (one or many models).
+      if (isolate && targets.length > 0) {
+        const r = isolation.apply(targets, { beforeMutation: () => guard(t) });
         isolated = r.applied;
         if (!r.applied) {
           notes.push(r.reason);
@@ -199,21 +246,21 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
       guard(t);
     } catch (error) {
       const cleanup = releaseHeld();
-      if (error instanceof Superseded) return outcome({ superseded: true });
-      return outcome({ notes: [...notes, BRIDGE_NOTE.FAILED, ...cleanup.notes] });
+      if (error instanceof Superseded) return make({ superseded: true });
+      return make({ notes: [...notes, BRIDGE_NOTE.FAILED, ...cleanup.notes] });
     }
 
-    // (4) fit — best-effort, last, outside the transaction guarantee.
+    // (4) fit — best-effort, last, outside the transaction guarantee. Many models ⇒ one aggregate fit of the union.
     let fitted = false;
-    if (focus && liveSides.length > 0) {
-      const f = fitSides(viewerApi, liveSides, () => isLive(t));   // token re-checked before every camera call
+    if (focus && targets.length > 0) {
+      const f = fitSides(viewerApi, targets, () => isLive(t));   // token re-checked before every camera call
       fitted = f.fitted;
       notes.push(...f.notes);
     }
     // Invalidated during fit: this presentation is stale. No camera rollback (OD-6); its markers/isolation stay
     // in the held ledger for the invalidator (clear/dispose/newer present) to release.
-    if (!isLive(t)) return outcome({ superseded: true });
-    return outcome({ fitted, isolated, marked, notes });
+    if (!isLive(t)) return make({ superseded: true });
+    return make({ fitted, isolated, marked, notes, ...shown });
   }
 
   function present(req) {
@@ -227,6 +274,24 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
       } catch {                                // unexpected (non-Viewer) failure: clean, never reject
         const cleanup = releaseHeld();
         return outcome({ superseded: !isLive(t), notes: [BRIDGE_NOTE.FAILED, ...cleanup.notes] });
+      }
+    });
+  }
+
+  // Aggregate sibling of present() (spec §27.3): same queue, token supersession and fail-closed outcome; never
+  // routed through present().
+  function presentGroup(req) {
+    if (disposed) return Promise.resolve(DISPOSED_GROUP);
+    let group;
+    try { group = validateGroupRequest(req); } catch (e) { return Promise.reject(e); }
+    const t = ++seq;
+    live = t;                                  // invalidates every earlier token immediately
+    return queue.run(async () => {
+      try {
+        return await runPresentGroup(t, group);
+      } catch {                                // unexpected (non-Viewer) failure: clean, never reject
+        const cleanup = releaseHeld();
+        return groupOutcome({ superseded: !isLive(t), notes: [BRIDGE_NOTE.FAILED, ...cleanup.notes] });
       }
     });
   }
@@ -324,5 +389,5 @@ export function createViewerBridge({ viewerApi, THREE, names = defaultNames() } 
     return Object.freeze({ disposed, releaseNotes: Object.freeze([...disposeNotes]), listenerErrors: Object.freeze([...disposeErrors]) });
   }
 
-  return Object.freeze({ present, clear, dispose, checkIsolationPrerequisite, readAggregateSelection, onModelLeft, inspectLedger, inspectDisposal });
+  return Object.freeze({ present, presentGroup, clear, dispose, checkIsolationPrerequisite, readAggregateSelection, onModelLeft, inspectLedger, inspectDisposal });
 }

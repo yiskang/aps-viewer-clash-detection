@@ -42,9 +42,16 @@ test('results: group headers expand/collapse via group/toggle and expose aria-ex
     resultRow(0, { groupId: 'gA', key: 'gA|r0' }),
     groupRow('gB', { label: 'Structure · Beam-9', count: 1, filteredCount: 1, expanded: false }),
   ] }));
-  const r = await page.evaluate(() => [...document.querySelectorAll('.clash-group-row button')].map((b) => [b.getAttribute('aria-expanded'), b.textContent]));
-  assert.deepEqual(r, [['true', '▾ Architecture · Wall-1 (2 of 4)'], ['false', '▸ Structure · Beam-9 (1)']]);
-  await page.click('.clash-group-row button >> nth=1');
+  const r = await page.evaluate(() => [...document.querySelectorAll('.clash-group-row')].map((row) => {
+    const t = row.querySelector('.clash-group-toggle');
+    const b = row.querySelector('.clash-group-body');
+    return [t.getAttribute('aria-expanded'), t.textContent, t.getAttribute('aria-label'), b.textContent];
+  }));
+  assert.deepEqual(r, [
+    ['true', '▾ ', 'Collapse group Architecture · Wall-1', 'Architecture · Wall-1 (2 of 4)'],
+    ['false', '▸ ', 'Expand group Structure · Beam-9', 'Structure · Beam-9 (1)'],
+  ]);
+  await page.click('.clash-group-toggle >> nth=1');
   assert.deepEqual(await intents(page), [{ type: 'group/toggle', groupId: 'gB' }]);
 }));
 
@@ -189,14 +196,14 @@ test('results: a Model Pair group header shows the pair label and count only (no
     groupRow(JSON.stringify(['pairModels', {}, ['mA', 'mA']]), { label: 'Architecture ↔ Architecture', count: 3, filteredCount: 3, expanded: false }),
   ] }));
   const r = await page.evaluate(() => ({
-    headers: [...document.querySelectorAll('.clash-group-row button')].map((b) => [b.querySelector('.clash-group-label').textContent, b.querySelector('.clash-group-count').textContent, b.querySelectorAll('.clash-dbid, .clash-label').length]),
+    headers: [...document.querySelectorAll('.clash-group-body')].map((b) => [b.querySelector('.clash-group-label').textContent, b.querySelector('.clash-group-count').textContent, b.querySelectorAll('.clash-dbid, .clash-label').length]),
     listbox: [...document.querySelectorAll('.clash-rows[role="listbox"]')].map((u) => u.getAttribute('aria-label')),
     note: document.querySelector('.clash-multivalued-note'),
   }));
   assert.deepEqual(r.headers, [['Architecture ↔ Structure', ' (40 of 1211)', 0], ['Architecture ↔ Architecture', ' (3)', 0]]);
   assert.deepEqual(r.listbox, ['Architecture ↔ Structure']);
   assert.equal(r.note, null);
-  await page.click('.clash-group-row button >> nth=1');
+  await page.click('.clash-group-toggle >> nth=1');
   assert.deepEqual(await intents(page), [{ type: 'group/toggle', groupId: JSON.stringify(['pairModels', {}, ['mA', 'mA']]) }]);
 }));
 
@@ -211,14 +218,14 @@ test('results: Category / Level group headers show the metadata pair label and c
     groupRow(l1, { label: '<b>FIRST FLOOR</b> ↔ SECOND FLOOR', count: 2, filteredCount: 2, expanded: false }),
   ] }));
   const r = await page.evaluate(() => ({
-    headers: [...document.querySelectorAll('.clash-group-row button')].map((b) => [b.querySelector('.clash-group-label').textContent, b.querySelector('.clash-group-count').textContent]),
+    headers: [...document.querySelectorAll('.clash-group-body')].map((b) => [b.querySelector('.clash-group-label').textContent, b.querySelector('.clash-group-count').textContent]),
     bold: document.querySelectorAll('.clash-group-row b').length,
     note: document.querySelector('.clash-multivalued-note'),
   }));
   assert.deepEqual(r.headers, [['Ducts ↔ Walls', ' (12)'], ['Walls ↔ Unknown category', ' (1 of 3)'], ['<b>FIRST FLOOR</b> ↔ SECOND FLOOR', ' (2)']]);
   assert.equal(r.bold, 0, 'metadata text is never markup');
   assert.equal(r.note, null);
-  await page.click('.clash-group-row button >> nth=2');
+  await page.click('.clash-group-toggle >> nth=2');
   assert.deepEqual(await intents(page), [{ type: 'group/toggle', groupId: l1 }]);
 }));
 
@@ -271,27 +278,30 @@ test('results ARIA: in the grouped view every listbox owns only options; group t
       ownedRoles: listboxes.map((lb) => [...lb.children].map((c) => c.getAttribute('role'))),
       buttonsInsideListbox: document.querySelectorAll('[role="listbox"] button').length,
       groupButtons: document.querySelectorAll('.clash-group-row button').length,
+      toggles: document.querySelectorAll('.clash-group-row > .clash-group-toggle').length,
+      bodies: document.querySelectorAll('.clash-group-row > .clash-group-body').length,
       optionsOutsideListbox: [...document.querySelectorAll('[role="option"]')].filter((o) => o.parentElement.getAttribute('role') !== 'listbox').length,
       labels: listboxes.map((lb) => lb.getAttribute('aria-label')),
     };
   });
   assert.deepEqual(r.ownedRoles, [['option', 'option'], ['option']]);
   assert.equal(r.buttonsInsideListbox, 0);
-  assert.equal(r.groupButtons, 3);
+  assert.equal(r.groupButtons, 6, 'two sibling buttons per group header');
+  assert.deepEqual([r.toggles, r.bodies], [3, 3]);
   assert.equal(r.optionsOutsideListbox, 0);
   assert.deepEqual(r.labels, ['Architecture · Wall-1', 'Structure · Beam-9']); // each group's options are named by their group
 }));
 
-test('results ARIA: grouped Tab order is header → its options → next header; Enter/Space on a header toggles; option Enter still selects', () => withPage(async ({ page }) => {
+test('results ARIA: grouped Tab order is header (disclosure → body) → its options → next header; Enter/Space on the disclosure toggles; option Enter still selects', () => withPage(async ({ page }) => {
   await mountRenderer(page, ...RESULTS, resultsVm({ view: 'grouped', rows: GROUPED_ROWS() }));
-  await page.focus('.clash-group-row button >> nth=0');
+  await page.focus('.clash-group-toggle >> nth=0');
   const order = [];
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < 7; i += 1) {
     order.push(await page.evaluate(() => document.activeElement.getAttribute('data-key')));
     await page.keyboard.press('Tab');
   }
-  assert.deepEqual(order, ['g|gA', 'gA|r0', 'gA|r1', 'g|gB', 'gB|r2']);
-  await page.focus('.clash-group-row button >> nth=1');
+  assert.deepEqual(order, ['g|gA', 'g|gA|present', 'gA|r0', 'gA|r1', 'g|gB', 'g|gB|present', 'gB|r2']);
+  await page.focus('.clash-group-toggle >> nth=1');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Space');
   await page.focus('[data-key="gA|r1"]');
@@ -330,4 +340,71 @@ test('results ARIA: the flat view is unchanged — one listbox "Clash results" o
     listboxes: [...document.querySelectorAll('[role="listbox"]')].map((lb) => [lb.getAttribute('aria-label'), [...lb.children].map((c) => c.getAttribute('role'))]),
   }));
   assert.deepEqual(r.listboxes, [['Clash results', ['option', 'option']]]);
+}));
+
+// ── Addendum B1 (spec §27.1, AC-GP1/GP2): sibling native disclosure + row-body buttons ─────────────────────────────
+
+const groupedVm = (over = {}) => resultsVm({ view: 'grouped', rows: [
+  groupRow('gA', { label: 'Architecture · Wall-1', count: 4, filteredCount: 2, expanded: true, ...over.gA }),
+  resultRow(0, { groupId: 'gA', key: 'gA|r0' }),
+  groupRow('gB', { label: 'Structure · Beam-9', count: 1, filteredCount: 1, expanded: false, ...over.gB }),
+] });
+
+test('B1: every group header is two SIBLING native buttons (disclosure + body), no nested interactive element', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, groupedVm());
+  const r = await page.evaluate(() => [...document.querySelectorAll('.clash-group-row')].map((row) => ({
+    kids: [...row.children].map((c) => [c.tagName, c.type, c.className]),
+    nested: row.querySelectorAll('button button, button a, button input, button [tabindex], button [role="button"]').length,
+    keys: [...row.querySelectorAll('button')].map((b) => b.getAttribute('data-key')),
+  })));
+  for (const g of r) {
+    assert.deepEqual(g.kids, [['BUTTON', 'button', 'clash-group-toggle'], ['BUTTON', 'button', 'clash-group-body']]);
+    assert.equal(g.nested, 0);
+  }
+  assert.deepEqual(r[0].keys, ['g|gA', 'g|gA|present']);
+  assert.equal(new Set(r.flatMap((g) => g.keys)).size, 4, 'data-keys are unique');
+}));
+
+test('B1/AC-GP1: disclosure click/Enter/Space dispatch only group/toggle; body click/Enter/Space only group/present', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, groupedVm());
+  await page.click('[data-key="g|gA"]');
+  await page.focus('[data-key="g|gA"]');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press(' ');
+  assert.deepEqual(await intents(page), [
+    { type: 'group/toggle', groupId: 'gA' }, { type: 'group/toggle', groupId: 'gA' }, { type: 'group/toggle', groupId: 'gA' },
+  ]);
+  await page.evaluate(() => { window.__clash.intents.length = 0; });
+  await page.click('[data-key="g|gA|present"]');
+  await page.focus('[data-key="g|gB|present"]');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press(' ');
+  assert.deepEqual(await intents(page), [
+    { type: 'group/present', groupId: 'gA' }, { type: 'group/present', groupId: 'gB' }, { type: 'group/present', groupId: 'gB' },
+  ]);
+}));
+
+test('B1: selected group exposes aria-current + a selected class on its row; an unselected one does not; listbox semantics of children unchanged', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, groupedVm({ gB: { selected: true } }));
+  const r = await page.evaluate(() => ({
+    rows: [...document.querySelectorAll('.clash-group-row')].map((row) => [row.classList.contains('clash-group-row-selected'), row.querySelector('.clash-group-body').getAttribute('aria-current'), row.querySelector('.clash-group-toggle').hasAttribute('aria-current')]),
+    option: [...document.querySelectorAll('.clash-row')].map((li) => [li.getAttribute('role'), li.getAttribute('aria-selected')]),
+    listbox: [...document.querySelectorAll('.clash-rows')].map((u) => u.getAttribute('role')),
+  }));
+  assert.deepEqual(r.rows, [[false, null, false], [true, 'true', false]]);
+  assert.deepEqual(r.option, [['option', 'false']]);
+  assert.deepEqual(r.listbox, ['listbox']);
+}));
+
+test('B1: focus on the disclosure / body button survives a rerender (expand/collapse, selection change)', () => withPage(async ({ page }) => {
+  await mountRenderer(page, ...RESULTS, groupedVm());
+  const active = () => page.evaluate(() => document.activeElement?.getAttribute('data-key'));
+  await page.focus('[data-key="g|gB"]');
+  await rerender(page, groupedVm({ gB: { expanded: true } }));
+  assert.equal(await active(), 'g|gB', 'disclosure keeps focus across expand');
+  await page.focus('[data-key="g|gB|present"]');
+  await rerender(page, groupedVm({ gB: { selected: true } }));
+  assert.equal(await active(), 'g|gB|present', 'body keeps focus across selection');
+  await rerender(page, groupedVm({ gB: { selected: true, expanded: true } }));
+  assert.equal(await active(), 'g|gB|present', 'and across a later expand');
 }));

@@ -85,7 +85,7 @@ export function buildRow({ record, canonicalIndex, groupId = null, labels, liven
  * group = a filterGroups() entry {groupId, ref, count, filteredCount}. `label` = the active group mode's labelOf(ref)
  * (any mode: element, model pair, …); without it the Element label is built from an ElementRef `ref`.
  */
-export function buildGroupHeaderRow({ group, label, labels, expanded }) {
+export function buildGroupHeaderRow({ group, label, labels, expanded, selected = false }) {
   return {
     kind: 'group',
     key: `group:${group.groupId}`,
@@ -94,5 +94,6 @@ export function buildGroupHeaderRow({ group, label, labels, expanded }) {
     count: group.count,
     filteredCount: group.filteredCount,
     expanded: expanded === true,
+    selected: selected === true,                  // spec §27.1: this group is the aggregate-presentation selection
   };
 }

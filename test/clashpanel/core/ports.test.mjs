@@ -244,8 +244,8 @@ test('assertCatalogPort: requires list/displayNameFor/keyOfModel/onChange, retur
   assert.throws(() => assertCatalogPort(null), TypeError);
 });
 
-test('assertBridgePort: requires the six bridge methods and returns the bridge', () => {
-  const names = ['present', 'clear', 'dispose', 'checkIsolationPrerequisite', 'readAggregateSelection', 'onModelLeft'];
+test('assertBridgePort: requires the seven bridge methods (incl. Addendum B presentGroup) and returns the bridge', () => {
+  const names = ['present', 'presentGroup', 'clear', 'dispose', 'checkIsolationPrerequisite', 'readAggregateSelection', 'onModelLeft'];
   const ok = Object.fromEntries(names.map((n) => [n, () => {}]));
   assert.equal(assertBridgePort(ok), ok);
   for (const name of names) {

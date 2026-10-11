@@ -13,7 +13,8 @@
 //                  runRecord?: null | { basisVerdict, basis:{state,unit} } },
 //     list:      null | { total, filtered|null, busy, maskUnavailable?, spec, textDraft, maxGapText, maxGapError, groupBy, groupingState,
 //                  groupingReason, sort, isSoft, clearance, modelOptions, elementOnly, view, page, rows, nav, hiddenByFilters },
-//     selected:  null | { resultId, ordinal, side1, side2, gap, hasLocation, liveness, notes, hiddenByFilters, anyLive, isolation, toggles } }
+//     selected:  null | { kind:'group', groupId, label, clashCount, participants, shown, unavailable, notes, isolation, toggles }   (§27.5)
+//                | { resultId, ordinal, side1, side2, gap, hasLocation, liveness, notes, hiddenByFilters, anyLive, isolation, toggles } }
 //     test:      { testId, draft, runActive, heldUnsaved, pendingConfirm, lastRun|null }  (spec §26.2 (b); manager seam)
 import { PAGE_SIZE, GAP_UNIT_LABEL, BASIS_UNITS, BASIS_RAW, SOFT_BASIS_HEADLINE, SOFT_BASIS_NOT_VERIFIED_TEXT } from './constants.js';
 import { resolveBasis, BASIS_STATE, basisProvenanceText } from './measurementBasis.js';
@@ -475,9 +476,34 @@ function buildResultsRegion(input) {
 }
 
 /** Selected Clash region (§9.3, §14.4 region 5): detail survives filters/pages; actions carry enable reasons. */
+export const GROUP_MARKERS_REASON = 'Markers are unavailable for a clash group.';   // spec §27.4 (owner decision: Option A)
+
+/** Group-selected variant (spec §27.5): replaces the child detail wholesale; no child field is ever carried over. */
+function buildSelectedGroupRegion(s) {
+  const blocked = s.shown === 0 ? 'Viewer actions are unavailable: no participant model is loaded.' : null;
+  return {
+    kind: 'group', groupId: s.groupId, label: s.label, clashCount: s.clashCount, participants: s.participants,
+    shown: s.shown, unavailable: s.unavailable,
+    unavailableNote: s.unavailable > 0 ? `${s.unavailable} of ${s.participants} participants ${s.unavailable === 1 ? 'is' : 'are'} not shown (model not loaded).` : null,
+    notes: [...s.notes],
+    actions: {
+      focus: { enabled: blocked === null, reason: blocked },
+      isolate: {
+        enabled: blocked === null && s.isolation.available,
+        checked: s.toggles.isolate === true && s.isolation.available,
+        reason: blocked ?? (s.isolation.available ? null : s.isolation.reason),
+      },
+      markers: { enabled: false, checked: false, reason: GROUP_MARKERS_REASON },
+      focusOnSelect: { checked: s.toggles.focusOnSelect === true },
+      backToAll: { enabled: true },
+    },
+  };
+}
+
 function buildSelectedRegion(input) {
   const s = input.selected;
   if (s === null) return null;
+  if (s.kind === 'group') return buildSelectedGroupRegion(s);
   const blocked = s.anyLive !== true ? `Viewer actions are unavailable: ${s.liveness}.` : null;   // AC-P7
   return {
     resultId: s.resultId, ordinal: s.ordinal, side1: { ...s.side1 }, side2: { ...s.side2 }, gap: s.gap,

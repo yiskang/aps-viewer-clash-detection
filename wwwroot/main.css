@@ -455,13 +455,15 @@ body, html {
 
 /* Group rows: native group.category header band (bold). */
 .clash-panel-root .clash-group-row {
+    display: flex;
+    align-items: stretch;
     margin-bottom: 1px;
+    border-left: 3px solid transparent;
     background: var(--nv-band);
     font-weight: 700;
 }
 .clash-panel-root .clash-group-row button {
     display: block;
-    width: 100%;
     margin: 0;
     padding: 8px 6px;
     text-align: left;
@@ -471,12 +473,32 @@ body, html {
     border-radius: 0;
     background: transparent;
 }
+/* Sibling controls (spec §27.1): the disclosure keeps its own narrow target; the row body takes the rest. */
+.clash-panel-root .clash-group-row .clash-group-toggle {
+    flex: 0 0 auto;
+}
+.clash-panel-root .clash-group-row .clash-group-body {
+    flex: 1 1 auto;
+    min-width: 0;
+}
 .clash-panel-root .clash-group-row button:hover {
     color: var(--nv-text);
     background: var(--nv-row-hover);
 }
 .clash-panel-root .clash-group-row button:active {
     box-shadow: none;
+}
+.clash-panel-root .clash-group-row button:focus-visible {
+    outline: 2px solid var(--nv-accent-focus);
+    outline-offset: -2px;
+}
+/* Selected group (same affordance as a selected child row). */
+.clash-panel-root .clash-group-row-selected {
+    background: var(--nv-row-selected);
+    border-left: 3px solid #999;
+}
+.clash-panel-root .clash-group-row-selected button:not(:hover) {
+    background: transparent;
 }
 
 /* Pager / selected region. */

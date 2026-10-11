@@ -2,7 +2,36 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — CTM-7 CLOSED OUT AT OWNER-RATIFIED STATE; CHECKPOINT COMMITTED + PUSHED; AWAITING OWNER DIRECTION (2026-10-11)
+## LATEST — ADDENDUM B CHECKPOINT COMMITTED AND PUSHED; AWAITING OWNER DIRECTION (2026-10-11)
+
+- **Repo/HEAD/tree:** `main`, pre-checkpoint HEAD `9e49f4036137bafd098ceb8631bcd16fff6c4da6` == `origin/main`; owner authorized the checkpoint ([prompt](../prompts/pre-ctm8-addendum-b-checkpoint-commit-push-prompt.md)) and the single checkpoint commit containing the Addendum B package (implementation, tests, docs addenda, headed evidence, reports/reviews, this handoff) was created and pushed to `origin/main` (SHA = `git log -1` on `main` after this entry).
+- **Milestone state:** CTM-7 remains closed at its owner-ratified checkpoint. **CTM-8 has not started and remains unauthorized.**
+- **Governing:** [design §27](../superpowers/specs/2026-09-26-viewer-clash-panel-design.md) and [plan Addendum B](../superpowers/plans/2026-10-10-clash-tests-manager-implementation-plan.md). Upstream read-only input: [implementation final report](../research/2026-10-11-clash-group-header-aggregate-presentation-final-report.md).
+- **Independent authority:** [Addendum B implementation Independent Work Review](../reviews/2026-10-11-clash-group-header-aggregate-presentation-implementation-independent-work-review.md) — **CONDITIONAL PASS; ready for owner checkpoint decision; 0 Critical / 0 High / 0 Medium / 2 Low; no blocker**.
+- **Verified:** separate `presentGroup` path with unchanged 1–2-side `present`; compound participant identity; markers/outlines suppressed; interaction/selection/lifecycle/fault contracts satisfied. Canonical `npm test` passes — offline **5695 / 5694 pass / 0 fail / 1 existing todo**, DOM **147/147**; focused **74/74**; `git diff --check` and protected-path checks clean. Headed visual evidence independently adjudicated **10 PASS / 0 FAIL / 0 INCONCLUSIVE**.
+- **Non-blocking Lows:** a provisional cold-label refresh produces an approximately 4 ms false “No clashes match” flash without losing selection or isolation; the upstream report miscounts changed-file totals although its enumerated path tables are complete.
+- **Deferred:** O-1…O-4, the pre-existing single-clash navScope cold-pass loss, optional GP-F1 visual polish, per-ViewModel membership calibration, other upstream Minors and CTM-7 L1–L8. The cold-index no-match path has exact passing unit coverage; another headed run is not required for this checkpoint.
+- **Exact next gate:** **owner direction**; no automatic CTM-8 entry. The 2 Low findings (L1 flash, L2 report counts) remain open/deferred.
+- **Not authorized without owner direction:** CTM-8; L1–L8 or any deferred finding/observation remediation; persistence/history; Viewer theming/selection; public-limit changes; Core/Adapter/collision/host or `markers.js`/`fit.js`/`isolation.js` changes; G2/C6/C8/G3/R20-1; another package or milestone.
+
+## (superseded) PRIOR LATEST — CLASH GROUP AGGREGATE PRESENTATION ADDENDUM ACCEPTED; READY FOR OWNER IMPLEMENTATION AUTHORIZATION (2026-10-11)
+
+- **Repo/HEAD/tree:** `main`, HEAD `9e49f4036137bafd098ceb8631bcd16fff6c4da6` == `origin/main`. Current uncommitted/unpushed tree is docs-only: the prior review/handoff plus spec §27, plan Addendum B, this review and handoff update; no production/test change.
+- **Milestone state:** CTM-7 remains closed at its owner-ratified checkpoint. CTM-8 has not started and remains unauthorized. This is a bounded pre-CTM-8 correction only.
+- **Governing:** [Viewer Clash Panel design §27](../superpowers/specs/2026-09-26-viewer-clash-panel-design.md) and [Clash Tests Manager plan Addendum B](../superpowers/plans/2026-10-10-clash-tests-manager-implementation-plan.md). Prior design authority: [aggregate-presentation review](../reviews/2026-10-11-clash-group-header-aggregate-presentation-independent-work-review.md).
+- **Owner decision:** Option A is final — aggregate group mode uses Focus/guarded Isolate but no markers or participant outlines; Markers is disabled with a group-specific reason. Existing single-clash marker/witness behavior is unchanged.
+- **Independent authority:** [Addendum Independent Work Review](../reviews/2026-10-11-clash-group-header-aggregate-presentation-addendum-independent-work-review.md) — **PASS; 0 Critical / 0 High / 0 Medium / 0 Low; no blocker; ready for owner implementation authorization**.
+- **Next gate:** **owner authorization for Claude/Codex implementation of reviewed Addendum B**. **Not authorized:** production/test edits, implementation branch, headed/manual verification, commit/push, CTM-8, L1–L8, persistence/history, Viewer theming/selection, Core/Adapter/collision/host changes, G2/C6/C8/G3/R20-1 or another package/milestone.
+
+## (superseded) PRIOR LATEST — CLASH GROUP HEADER AGGREGATE PRESENTATION REVIEWED; OWNER MARKER DECISION REQUIRED (2026-10-11)
+
+- **Repo/HEAD/tree:** `main`, HEAD `9e49f4036137bafd098ceb8631bcd16fff6c4da6` == `origin/main`; baseline tree was clean. Current review output is docs-only: this handoff plus the new review report; no production/test/spec/plan change.
+- **Independent authority:** [Clash group header aggregate presentation Independent Work Review](../reviews/2026-10-11-clash-group-header-aggregate-presentation-independent-work-review.md) — **OWNER DECISION REQUIRED; 0 Critical / 2 High / 1 Medium / 0 Low**.
+- **Design result:** keep `ViewerBridge.present()` as the intentional one-clash/1–2-side contract. Aggregate group presentation requires a separate `presentGroup`-style bridge operation, compound `{modelKey,dbId}` participant identity, one shared path across Element/Model Pair/Category/Level, distinct group-vs-clash selection, and separate disclosure/body controls. A narrow spec/plan addendum is required before implementation.
+- **Owner decision:** choose aggregate markers: **A — suppress group markers/outlines (recommended minimum)**, or **B — unique-participant bounds outlines with a separately reviewed capacity/omission contract**. Do not display all child clash witness markers.
+- **Next gate:** owner marker decision, then explicit authorization for a bounded docs-only design/plan addendum and its independent review. **Not authorized:** implementation, tests/spec/plan edits before that authorization, headed execution, commit/push, CTM-8, L1–L8, persistence/history, Core/Adapter/collision, G2/C6/C8/G3/R20-1 or another package/milestone.
+
+## (superseded) PRIOR LATEST — CTM-7 CLOSED OUT AT OWNER-RATIFIED STATE; CHECKPOINT COMMITTED + PUSHED; AWAITING OWNER DIRECTION (2026-10-11)
 
 - **Repo/HEAD/tree:** baseline `85aee231289dab39b7d98a63c9f2067b57db01b6`; the owner-authorized CTM-7 closeout checkpoint commit (`feat(clashpanel): checkpoint CTM-7 manager validation`) sits on top and is pushed to `origin/main` (read the tip via `git log -1`); tree clean. It contains the Option B production/test/spec/plan change and all CTM-7 reports, reviews, evidence, prompts and this handoff.
 - **Owner decision:** ratified the retained post-fix Scenario H evidence (Option A). Record: [owner ratification](../reviews/2026-10-11-clash-tests-manager-ctm-7-scenario-h-evidence-owner-ratification.md). Review it resolves: [Scenario H Independent Work Review](../reviews/2026-10-11-clash-tests-manager-ctm-7-scenario-h-headed-revalidation-independent-work-review.md) (0C/1H/0M/2L; High was workflow-only).

@@ -141,7 +141,29 @@ test('re-review M1 guard: every INTENT is mapped to a control in FAULT_CONTROLS 
   for (const [type, c] of Object.entries(FAULT_CONTROLS)) {
     assert.ok(typeof c.gate === 'function' && c.dom.length > 0, type);
     if (c.variant) assert.ok(typeof c.variant.gate === 'function' && c.variant.dom.length > 0, `${type} variant`);
+    if (c.groupVariant) assert.ok(typeof c.groupVariant.gate === 'function' && c.groupVariant.dom.length > 0, `${type} groupVariant`);
   }
+});
+
+test('Addendum B6 / AC-GP11 guard: GROUP_PRESENT is a user-facing blocked control; every group-selected Viewer action has a group variant; the disclosure stays allow-listed', () => {
+  assert.equal(FAULT_POLICY[INTENT.GROUP_PRESENT], 'block');
+  assert.equal(FAULT_POLICY[INTENT.GROUP_TOGGLE], 'allow');
+  assert.ok(!(INTENT.GROUP_PRESENT in NON_USER_FACING), 'the row-body button is user-facing (no placeholder)');
+  assert.deepEqual(FAULT_CONTROLS[INTENT.GROUP_PRESENT].dom, ['.clash-group-body']);
+  assert.deepEqual(FAULT_CONTROLS[INTENT.GROUP_TOGGLE].dom, ['.clash-group-toggle'], 'the disclosure selector never matches the body button');
+  const grouped = Object.entries(FAULT_CONTROLS).filter(([, c]) => c.groupVariant).map(([t]) => t).sort();
+  assert.deepEqual(grouped, [INTENT.GROUP_TOGGLE, INTENT.GROUP_PRESENT, INTENT.ACTION_FOCUS, INTENT.ACTION_ISOLATE,
+    INTENT.ACTION_FOCUS_ON_SELECT, INTENT.ACTION_BACK_TO_ALL].sort());
+});
+
+test('Addendum B6 / AC-GP11 (VM): the group-selected Markers (never enabled, §27.4) stays disabled while faulted and carries the terminal-fault reason like every blocked action', () => {
+  const ed = faultCases().find((c) => c.name === 'group').vm;
+  assert.equal(ed.selected.kind, 'group');
+  assert.deepEqual(ed.selected.actions.markers, { enabled: false, checked: false, reason: 'Markers are unavailable for a clash group.' });
+  const locked = lockedEditorVm(ed, MANAGER_TEXT.FAULT, FAULT_POLICY);
+  assert.deepEqual(locked.selected.actions.markers, { enabled: false, checked: false, reason: MANAGER_TEXT.FAULT });
+  assert.equal(locked.selected.kind, 'group', 'the overlay keeps the group variant (no child fields appear)');
+  assert.deepEqual(Object.keys(locked.selected).sort(), Object.keys(ed.selected).sort());
 });
 
 test('re-review M1 (VM): the fault overlay disables with the fault reason EXACTLY the user-facing controls FAULT_POLICY blocks; allowed ones are unchanged', () => {
@@ -149,7 +171,7 @@ test('re-review M1 (VM): the fault overlay disables with the fault reason EXACTL
   assert.deepEqual(blocked.sort(), [INTENT.SETUP_NAME, INTENT.SETUP_MODE, INTENT.SETUP_CLEARANCE, INTENT.SETUP_BASIS, INTENT.SETUP_TOGGLE_MODEL,
     INTENT.SETUP_USE_SELECTION, INTENT.SETUP_SELF_CLASH, INTENT.SETUP_NEW_TEST, INTENT.RUN_START, INTENT.RUN_RELEASE_AND_RETRY,
     INTENT.NAV_SELECT, INTENT.NAV_PREV, INTENT.NAV_NEXT, INTENT.ACTION_FOCUS, INTENT.ACTION_ISOLATE, INTENT.ACTION_MARKERS,
-    INTENT.ACTION_BACK_TO_ALL].sort(), 'the 17 user-facing blocked intents (19 blocked − TEST_LOAD − TEST_LABEL_SCOPE)');
+    INTENT.ACTION_BACK_TO_ALL, INTENT.GROUP_PRESENT].sort(), 'the 18 user-facing blocked intents (20 blocked − TEST_LOAD − TEST_LABEL_SCOPE)');
   for (const { name, vm: ed, controls } of faultCases()) {
     const before = JSON.stringify(ed);
     const locked = lockedEditorVm(ed, MANAGER_TEXT.FAULT, FAULT_POLICY);

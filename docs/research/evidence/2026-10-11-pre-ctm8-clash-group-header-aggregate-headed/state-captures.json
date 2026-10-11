@@ -1,0 +1,5066 @@
+[
+  {
+    "tag": "S2-before",
+    "t": "2026-10-11T10:18:05.883Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        239.4,
+        -239.4,
+        239.4
+      ],
+      "target": [
+        0,
+        0,
+        0
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S2-after-present-ArchMech",
+    "t": "2026-10-11T10:18:08.927Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        119.76,
+        -115.54,
+        118.4
+      ],
+      "target": [
+        2.65,
+        1.58,
+        1.29
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"]]",
+      "label": "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test",
+      "clashCount": 1211,
+      "participants": 1004,
+      "shown": 1004,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": false,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test (1211)"
+      ],
+      "groupRegion": "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test\n\n1211 clashes · 1004 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S4-camera-moved-away",
+    "t": "2026-10-11T10:18:20.711Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        400,
+        400,
+        300
+      ],
+      "target": [
+        0,
+        0,
+        0
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"]]",
+      "label": "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test",
+      "clashCount": 1211,
+      "participants": 1004,
+      "shown": 1004,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": false,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test (1211)"
+      ],
+      "groupRegion": "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test\n\n1211 clashes · 1004 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S4-after-Focus",
+    "t": "2026-10-11T10:18:23.257Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        119.66,
+        118.59,
+        89.05
+      ],
+      "target": [
+        2.65,
+        1.58,
+        1.29
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"]]",
+      "label": "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test",
+      "clashCount": 1211,
+      "participants": 1004,
+      "shown": 1004,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": false,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test (1211)"
+      ],
+      "groupRegion": "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test\n\n1211 clashes · 1004 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S6-back-to-all-no-isolation",
+    "t": "2026-10-11T10:18:34.537Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        119.66,
+        118.59,
+        89.05
+      ],
+      "target": [
+        2.65,
+        1.58,
+        1.29
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S5-prior-external-isolation",
+    "t": "2026-10-11T10:18:35.543Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 3,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 3
+      }
+    ],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        119.66,
+        118.59,
+        89.05
+      ],
+      "target": [
+        2.65,
+        1.58,
+        1.29
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S5-group-isolate-on",
+    "t": "2026-10-11T10:18:41.286Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 238,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 766,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 238
+      },
+      {
+        "modelId": 3,
+        "ids": 766
+      }
+    ],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        119.66,
+        118.59,
+        89.05
+      ],
+      "target": [
+        2.65,
+        1.58,
+        1.29
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"]]",
+      "label": "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test",
+      "clashCount": 1211,
+      "participants": 1004,
+      "shown": 1004,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test (1211)"
+      ],
+      "groupRegion": "Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test\n\n1211 clashes · 1004 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S5-back-to-all-restores-prior",
+    "t": "2026-10-11T10:18:48.955Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 3,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 1
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 3
+      }
+    ],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        119.66,
+        118.59,
+        89.05
+      ],
+      "target": [
+        2.65,
+        1.58,
+        1.29
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    },
+    "priorIds": [
+      327,
+      329,
+      330
+    ]
+  },
+  {
+    "tag": "S5x-clean",
+    "t": "2026-10-11T10:19:12.486Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        119.66,
+        118.59,
+        89.05
+      ],
+      "target": [
+        2.65,
+        1.58,
+        1.29
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S5x-prior-again",
+    "t": "2026-10-11T10:19:13.289Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 3,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 3
+      }
+    ],
+    "overlays": {},
+    "camera": {
+      "pos": [
+        119.66,
+        118.59,
+        89.05
+      ],
+      "target": [
+        2.65,
+        1.58,
+        1.29
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S5x-single-clash-isolated",
+    "t": "2026-10-11T10:19:16.678Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 1,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 1,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 1
+      },
+      {
+        "modelId": 3,
+        "ids": 1
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 1,
+      "clash-panel-outlines:clash-detection-panel": 2
+    },
+    "camera": {
+      "pos": [
+        115.69,
+        46.19,
+        9.96
+      ],
+      "target": [
+        102.45,
+        32.94,
+        0.03
+      ]
+    },
+    "vmSelected": {
+      "resultId": "[\"5058e9a4-3340-4d2c-8a65-aae5ff33c96d\",\"sha256:fdea2e5dba9d9c23b3ca12d777f9b697a85ea09f71431544c09f09b974f963ff\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",328,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",127]",
+      "ordinal": 1,
+      "side1": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+        "modelName": "Audubon_Architecture_clash_test",
+        "label": "Basic Wall [899117]",
+        "dbId": 328
+      },
+      "side2": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+        "modelName": "Audubon_Mechanical_clash_test",
+        "label": "Round Elbow [839567]",
+        "dbId": 127
+      },
+      "gap": null,
+      "hasLocation": true,
+      "liveness": "live",
+      "notes": [],
+      "hiddenByFilters": false,
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [
+      "Collapse group Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test"
+    ],
+    "page": {
+      "index": 0,
+      "count": 25,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": "Clash #1",
+      "markers": {
+        "disabled": false,
+        "checked": true,
+        "title": "",
+        "reason": null
+      }
+    }
+  },
+  {
+    "tag": "S5x-single-clash-back-to-all",
+    "t": "2026-10-11T10:19:18.712Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 3,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 1
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 3
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        115.69,
+        46.19,
+        9.96
+      ],
+      "target": [
+        102.45,
+        32.94,
+        0.03
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [
+      "Collapse group Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test"
+    ],
+    "page": {
+      "index": 0,
+      "count": 25,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S3-pre",
+    "t": "2026-10-11T10:21:53.519Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        400,
+        400,
+        300
+      ],
+      "target": [
+        0,
+        0,
+        0
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S3-three-model-group-isolated-focused",
+    "t": "2026-10-11T10:21:56.586Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 2,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        119.08,
+        119.6,
+        84.47
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S4-three-model-Focus",
+    "t": "2026-10-11T10:22:00.069Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 2,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S8-S9-group-selected-region",
+    "t": "2026-10-11T10:22:14.129Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 2,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S8-expand-keeps-group-selection",
+    "t": "2026-10-11T10:22:15.836Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 2,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S9-child-selected-markers-restored",
+    "t": "2026-10-11T10:22:18.872Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 1,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 1,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 1
+      },
+      {
+        "modelId": 3,
+        "ids": 1
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 1,
+      "clash-panel-outlines:clash-detection-panel": 2
+    },
+    "camera": {
+      "pos": [
+        -6.33,
+        94.78,
+        32.64
+      ],
+      "target": [
+        52.81,
+        35.63,
+        -6.79
+      ]
+    },
+    "vmSelected": {
+      "resultId": "[\"5058e9a4-3340-4d2c-8a65-aae5ff33c96d\",\"sha256:fdea2e5dba9d9c23b3ca12d777f9b697a85ea09f71431544c09f09b974f963ff\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1\",473,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",153]",
+      "ordinal": 112,
+      "side1": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0#1",
+        "modelName": "Audubon_Architecture_clash_test",
+        "label": "Floor [971567]",
+        "dbId": 473
+      },
+      "side2": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+        "modelName": "Audubon_Mechanical_clash_test",
+        "label": "Mechanical Equipment - Main AHU - Non-Hosted [844863]",
+        "dbId": 153
+      },
+      "gap": null,
+      "hasLocation": true,
+      "liveness": "live",
+      "notes": [],
+      "hiddenByFilters": false,
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": "Clash #112",
+      "markers": {
+        "disabled": false,
+        "checked": true,
+        "title": "",
+        "reason": null
+      }
+    }
+  },
+  {
+    "tag": "S10-base",
+    "t": "2026-10-11T10:22:38.770Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -6.33,
+        94.78,
+        32.64
+      ],
+      "target": [
+        52.81,
+        35.63,
+        -6.79
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S10-toggle-Enter",
+    "t": "2026-10-11T10:22:39.979Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -6.33,
+        94.78,
+        32.64
+      ],
+      "target": [
+        52.81,
+        35.63,
+        -6.79
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Ducts ↔ Walls"
+    ],
+    "page": {
+      "index": 0,
+      "count": 4,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S10-toggle-Space",
+    "t": "2026-10-11T10:22:41.188Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -6.33,
+        94.78,
+        32.64
+      ],
+      "target": [
+        52.81,
+        35.63,
+        -6.79
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S10-toggle-click",
+    "t": "2026-10-11T10:22:42.419Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -6.33,
+        94.78,
+        32.64
+      ],
+      "target": [
+        52.81,
+        35.63,
+        -6.79
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Ducts ↔ Walls"
+    ],
+    "page": {
+      "index": 0,
+      "count": 4,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S10-toggle-click-collapse",
+    "t": "2026-10-11T10:22:43.652Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -6.33,
+        94.78,
+        32.64
+      ],
+      "target": [
+        52.81,
+        35.63,
+        -6.79
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S10-body-Enter",
+    "t": "2026-10-11T10:22:46.165Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 59,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 65,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 59
+      },
+      {
+        "modelId": 3,
+        "ids": 65
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -68.39,
+        98.47,
+        63.58
+      ],
+      "target": [
+        21.77,
+        8.31,
+        3.47
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Ducts\",\"Revit Walls\"]]",
+      "label": "Ducts ↔ Walls",
+      "clashCount": 100,
+      "participants": 124,
+      "shown": 124,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Ducts ↔ Walls"
+      ],
+      "ariaCurrentBodies": [
+        "Ducts ↔ Walls (100)"
+      ],
+      "groupRegion": "Ducts ↔ Walls\n\n100 clashes · 124 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S10-body-Space",
+    "t": "2026-10-11T10:22:48.840Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 2,
+        "isolated": 16,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 40,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 2,
+        "ids": 16
+      },
+      {
+        "modelId": 3,
+        "ids": 40
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -104.35,
+        130.99,
+        65.11
+      ],
+      "target": [
+        -5.31,
+        31.95,
+        -0.92
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Ducts\",\"Revit Structural Framing\"]]",
+      "label": "Ducts ↔ Structural Framing",
+      "clashCount": 55,
+      "participants": 56,
+      "shown": 56,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Ducts ↔ Structural Framing"
+      ],
+      "ariaCurrentBodies": [
+        "Ducts ↔ Structural Framing (55)"
+      ],
+      "groupRegion": "Ducts ↔ Structural Framing\n\n55 clashes · 56 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S10-body-click",
+    "t": "2026-10-11T10:22:51.375Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 59,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 65,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 59
+      },
+      {
+        "modelId": 3,
+        "ids": 65
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -68.39,
+        98.47,
+        63.58
+      ],
+      "target": [
+        21.77,
+        8.31,
+        3.47
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Ducts\",\"Revit Walls\"]]",
+      "label": "Ducts ↔ Walls",
+      "clashCount": 100,
+      "participants": 124,
+      "shown": 124,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Ducts ↔ Walls"
+      ],
+      "ariaCurrentBodies": [
+        "Ducts ↔ Walls (100)"
+      ],
+      "groupRegion": "Ducts ↔ Walls\n\n100 clashes · 124 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S10-toggle-Enter-on-selected",
+    "t": "2026-10-11T10:22:52.585Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 59,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 65,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 59
+      },
+      {
+        "modelId": 3,
+        "ids": 65
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -68.39,
+        98.47,
+        63.58
+      ],
+      "target": [
+        21.77,
+        8.31,
+        3.47
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Ducts\",\"Revit Walls\"]]",
+      "label": "Ducts ↔ Walls",
+      "clashCount": 100,
+      "participants": 124,
+      "shown": 124,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Ducts ↔ Walls"
+    ],
+    "page": {
+      "index": 0,
+      "count": 4,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Ducts ↔ Walls"
+      ],
+      "ariaCurrentBodies": [
+        "Ducts ↔ Walls (100)"
+      ],
+      "groupRegion": "Ducts ↔ Walls\n\n100 clashes · 124 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S6-start",
+    "t": "2026-10-11T10:23:02.767Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 59,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 65,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 59
+      },
+      {
+        "modelId": 3,
+        "ids": 65
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -68.39,
+        98.47,
+        63.58
+      ],
+      "target": [
+        21.77,
+        8.31,
+        3.47
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Ducts\",\"Revit Walls\"]]",
+      "label": "Ducts ↔ Walls",
+      "clashCount": 100,
+      "participants": 124,
+      "shown": 124,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Ducts ↔ Walls"
+    ],
+    "page": {
+      "index": 0,
+      "count": 4,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Ducts ↔ Walls"
+      ],
+      "ariaCurrentBodies": [
+        "Ducts ↔ Walls (100)"
+      ],
+      "groupRegion": "Ducts ↔ Walls\n\n100 clashes · 124 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S6-filter-applied-membership-recomputed",
+    "t": "2026-10-11T10:23:05.777Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -68.39,
+        98.47,
+        63.58
+      ],
+      "target": [
+        21.77,
+        8.31,
+        3.47
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Ducts ↔ Walls"
+    ],
+    "page": {
+      "index": 0,
+      "count": 3,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S6b-now",
+    "t": "2026-10-11T10:24:03.339Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -68.39,
+        98.47,
+        63.58
+      ],
+      "target": [
+        21.77,
+        8.31,
+        3.47
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Ducts ↔ Walls"
+    ],
+    "page": {
+      "index": 0,
+      "count": 3,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S6b-reselected-with-filter-Basic-Wall",
+    "t": "2026-10-11T10:24:05.882Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 59,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 65,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 59
+      },
+      {
+        "modelId": 3,
+        "ids": 65
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -68.39,
+        98.47,
+        63.58
+      ],
+      "target": [
+        21.77,
+        8.31,
+        3.47
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Ducts\",\"Revit Walls\"]]",
+      "label": "Ducts ↔ Walls",
+      "clashCount": 100,
+      "participants": 124,
+      "shown": 124,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Ducts ↔ Walls"
+    ],
+    "page": {
+      "index": 0,
+      "count": 3,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Ducts ↔ Walls"
+      ],
+      "ariaCurrentBodies": [
+        "Ducts ↔ Walls (100)"
+      ],
+      "groupRegion": "Ducts ↔ Walls\n\n100 clashes · 124 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S6b-filter-Round-Duct",
+    "t": "2026-10-11T10:24:09.396Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 51,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 48,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 51
+      },
+      {
+        "modelId": 3,
+        "ids": 48
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -53.32,
+        103.97,
+        55.38
+      ],
+      "target": [
+        24.55,
+        26.1,
+        3.47
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Ducts\",\"Revit Walls\"]]",
+      "label": "Ducts ↔ Walls",
+      "clashCount": 80,
+      "participants": 99,
+      "shown": 99,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Ducts ↔ Walls"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Ducts ↔ Walls"
+      ],
+      "ariaCurrentBodies": [
+        "Ducts ↔ Walls (80 of 100)"
+      ],
+      "groupRegion": "Ducts ↔ Walls\n\n80 clashes · 99 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S6c-before-back-to-all-page2",
+    "t": "2026-10-11T10:24:19.480Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 51,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 48,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 51
+      },
+      {
+        "modelId": 3,
+        "ids": 48
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -53.32,
+        103.97,
+        55.38
+      ],
+      "target": [
+        24.55,
+        26.1,
+        3.47
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Ducts\",\"Revit Walls\"]]",
+      "label": "Ducts ↔ Walls",
+      "clashCount": 80,
+      "participants": 99,
+      "shown": 99,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 1,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": "Ducts ↔ Walls\n\n80 clashes · 99 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S6c-after-back-to-all",
+    "t": "2026-10-11T10:24:21.561Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -53.32,
+        103.97,
+        55.38
+      ],
+      "target": [
+        24.55,
+        26.1,
+        3.47
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 1,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S7-3model-presented",
+    "t": "2026-10-11T10:25:23.635Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      2,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 2,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S7-structure-hideModel",
+    "t": "2026-10-11T10:25:26.800Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3,
+      2
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S7-Focus-re-resolves-live-only",
+    "t": "2026-10-11T10:25:30.033Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3,
+      2
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S7-structure-showModel-reentry",
+    "t": "2026-10-11T10:26:01.416Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3,
+      2
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S7x-single-clash-struct-presented",
+    "t": "2026-10-11T10:26:21.829Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 1,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 1,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3,
+      2
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 3,
+        "ids": 1
+      },
+      {
+        "modelId": 2,
+        "ids": 1
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 1,
+      "clash-panel-outlines:clash-detection-panel": 2
+    },
+    "camera": {
+      "pos": [
+        -122.98,
+        118.19,
+        77.86
+      ],
+      "target": [
+        -6.19,
+        1.4,
+        0
+      ]
+    },
+    "vmSelected": {
+      "resultId": "[\"5058e9a4-3340-4d2c-8a65-aae5ff33c96d\",\"sha256:fdea2e5dba9d9c23b3ca12d777f9b697a85ea09f71431544c09f09b974f963ff\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",191,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+      "ordinal": 1235,
+      "side1": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+        "modelName": "Audubon_Mechanical_clash_test",
+        "label": "Heat Pump - Horizontal - Water Source - Back Discharge [895501]",
+        "dbId": 191
+      },
+      "side2": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+        "modelName": "Audubon_Structure_clash_test",
+        "label": "Floor [401326]",
+        "dbId": 180
+      },
+      "gap": null,
+      "hasLocation": true,
+      "liveness": "live",
+      "notes": [],
+      "hiddenByFilters": false,
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": "Clash #1235",
+      "markers": {
+        "disabled": false,
+        "checked": true,
+        "title": "",
+        "reason": null
+      }
+    }
+  },
+  {
+    "tag": "S7x-single-clash-struct-hideModel",
+    "t": "2026-10-11T10:26:25.003Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 1,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3,
+      2
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 3,
+        "ids": 1
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -122.98,
+        118.19,
+        77.86
+      ],
+      "target": [
+        -6.19,
+        1.4,
+        0
+      ]
+    },
+    "vmSelected": {
+      "resultId": "[\"5058e9a4-3340-4d2c-8a65-aae5ff33c96d\",\"sha256:fdea2e5dba9d9c23b3ca12d777f9b697a85ea09f71431544c09f09b974f963ff\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",191,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+      "ordinal": 1235,
+      "side1": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+        "modelName": "Audubon_Mechanical_clash_test",
+        "label": "Heat Pump - Horizontal - Water Source - Back Discharge [895501]",
+        "dbId": 191
+      },
+      "side2": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+        "modelName": "Audubon_Structure_clash_test",
+        "label": "Floor [401326]",
+        "dbId": 180
+      },
+      "gap": null,
+      "hasLocation": true,
+      "liveness": "live",
+      "notes": [],
+      "hiddenByFilters": false,
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Some elements are hidden — show all to enable isolation"
+        },
+        "markers": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": "Clash #1235",
+      "markers": {
+        "disabled": false,
+        "checked": true,
+        "title": "",
+        "reason": null
+      }
+    }
+  },
+  {
+    "tag": "S7x-single-clash-struct-showModel",
+    "t": "2026-10-11T10:26:28.146Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 1,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3,
+      2
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 3,
+        "ids": 1
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -122.98,
+        118.19,
+        77.86
+      ],
+      "target": [
+        -6.19,
+        1.4,
+        0
+      ]
+    },
+    "vmSelected": {
+      "resultId": "[\"5058e9a4-3340-4d2c-8a65-aae5ff33c96d\",\"sha256:fdea2e5dba9d9c23b3ca12d777f9b697a85ea09f71431544c09f09b974f963ff\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",191,\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\",180]",
+      "ordinal": 1235,
+      "side1": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3",
+        "modelName": "Audubon_Mechanical_clash_test",
+        "label": "Heat Pump - Horizontal - Water Source - Back Discharge [895501]",
+        "dbId": 191
+      },
+      "side2": {
+        "modelKey": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2",
+        "modelName": "Audubon_Structure_clash_test",
+        "label": "Floor [401326]",
+        "dbId": 180
+      },
+      "gap": null,
+      "hasLocation": true,
+      "liveness": "live",
+      "notes": [],
+      "hiddenByFilters": false,
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Some elements are hidden — show all to enable isolation"
+        },
+        "markers": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": "Clash #1235",
+      "markers": {
+        "disabled": false,
+        "checked": true,
+        "title": "",
+        "reason": null
+      }
+    }
+  },
+  {
+    "tag": "S7u-clean",
+    "t": "2026-10-11T10:26:48.983Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3,
+      2
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -122.98,
+        118.19,
+        77.86
+      ],
+      "target": [
+        -6.19,
+        1.4,
+        0
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S7u-3model-presented",
+    "t": "2026-10-11T10:26:52.092Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 2,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 21,
+        "hidden": 0
+      },
+      {
+        "id": 2,
+        "isolated": 2,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3,
+      2
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 1,
+        "ids": 2
+      },
+      {
+        "modelId": 3,
+        "ids": 21
+      },
+      {
+        "modelId": 2,
+        "ids": 2
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"category\",[\"Revit Floors\",\"Revit Mechanical Equipment\"]]",
+      "label": "Floors ↔ Mechanical Equipment",
+      "clashCount": 23,
+      "participants": 25,
+      "shown": 25,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "category",
+    "expanded": [
+      "Collapse group Floors ↔ Mechanical Equipment"
+    ],
+    "page": {
+      "index": 0,
+      "count": 2,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Floors ↔ Mechanical Equipment"
+      ],
+      "ariaCurrentBodies": [
+        "Floors ↔ Mechanical Equipment (23)"
+      ],
+      "groupRegion": "Floors ↔ Mechanical Equipment\n\n23 clashes · 25 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S7u-structure-unloadModel",
+    "t": "2026-10-11T10:26:56.272Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "category",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 35,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S7u-modelpair-after-unload",
+    "t": "2026-10-11T10:27:42.170Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [
+      "Collapse group Audubon_Architecture_clash_test ↔ Audubon_Mechanical_clash_test"
+    ],
+    "page": {
+      "index": 0,
+      "count": 25,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S7u-modelpair-after-unload",
+    "t": "2026-10-11T10:28:24.429Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 3,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -120.13,
+        122.42,
+        76.5
+      ],
+      "target": [
+        0.89,
+        1.4,
+        -4.18
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S7u-MechStruct-group-partial-live",
+    "t": "2026-10-11T10:28:27.504Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 3,
+        "isolated": 438,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      3
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 3,
+        "ids": 438
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -75.07,
+        87.92,
+        66.68
+      ],
+      "target": [
+        19.89,
+        -7.03,
+        3.38
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"]]",
+      "label": "Audubon_Mechanical_clash_test ↔ Audubon_Structure_clash_test",
+      "clashCount": 491,
+      "participants": 464,
+      "shown": 438,
+      "unavailable": 26,
+      "unavailableNote": "26 of 464 participants are not shown (model not loaded).",
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test ↔ Audubon_Structure_clash_test"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test ↔ Audubon_Structure_clash_test (491)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test ↔ Audubon_Structure_clash_test\n\n491 clashes · 464 participants\n\n26 of 464 participants are not shown (model not loaded).\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S7u-mech-unloaded-no-live-participants",
+    "t": "2026-10-11T10:28:40.740Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -75.07,
+        87.92,
+        66.68
+      ],
+      "target": [
+        19.89,
+        -7.03,
+        3.38
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"]]",
+      "label": "Audubon_Mechanical_clash_test ↔ Audubon_Structure_clash_test",
+      "clashCount": 491,
+      "participants": 464,
+      "shown": 0,
+      "unavailable": 464,
+      "unavailableNote": "464 of 464 participants are not shown (model not loaded).",
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": false,
+          "reason": "Viewer actions are unavailable: no participant model is loaded."
+        },
+        "isolate": {
+          "enabled": false,
+          "checked": true,
+          "reason": "Viewer actions are unavailable: no participant model is loaded."
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test ↔ Audubon_Structure_clash_test"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test ↔ Audubon_Structure_clash_test (491)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test ↔ Audubon_Structure_clash_test\n\n491 clashes · 464 participants\n\n464 of 464 participants are not shown (model not loaded).\n\nFocus\nViewer actions are unavailable: no participant model is loaded.\nIsolate Viewer actions are unavailable: no participant model is loaded.\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S7r-reloaded-new-keys",
+    "t": "2026-10-11T10:28:58.133Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 5,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        -75.07,
+        87.92,
+        66.68
+      ],
+      "target": [
+        19.89,
+        -7.03,
+        3.38
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0#2\"]]",
+      "label": "Audubon_Mechanical_clash_test · …dA#3 ↔ Audubon_Structure_clash_test · …Z0#2",
+      "clashCount": 491,
+      "participants": 464,
+      "shown": 0,
+      "unavailable": 464,
+      "unavailableNote": "464 of 464 participants are not shown (model not loaded).",
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": false,
+          "reason": "Viewer actions are unavailable: no participant model is loaded."
+        },
+        "isolate": {
+          "enabled": false,
+          "checked": true,
+          "reason": "Viewer actions are unavailable: no participant model is loaded."
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test · …dA#3 ↔ Audubon_Structure_clash_test · …Z0#2"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test · …dA#3 ↔ Audubon_Structure_clash_test · …Z0#2 (491)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test · …dA#3 ↔ Audubon_Structure_clash_test · …Z0#2\n\n491 clashes · 464 participants\n\n464 of 464 participants are not shown (model not loaded).\n\nFocus\nViewer actions are unavailable: no participant model is loaded.\nIsolate Viewer actions are unavailable: no participant model is loaded.\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S1-pre",
+    "t": "2026-10-11T10:29:51.057Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 5,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        400,
+        -400,
+        300
+      ],
+      "target": [
+        0,
+        0,
+        0
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "S1-one-model-group-presented",
+    "t": "2026-10-11T10:29:54.103Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 5,
+        "isolated": 365,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 5,
+        "ids": 365
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        110.27,
+        -106.05,
+        80.06
+      ],
+      "target": [
+        0.04,
+        4.18,
+        -2.61
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\"]]",
+      "label": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5",
+      "clashCount": 242,
+      "participants": 365,
+      "shown": 365,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5 (242)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5\n\n242 clashes · 365 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "S6-first-text-filter-after",
+    "t": "2026-10-11T10:30:07.418Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 5,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        110.27,
+        -106.05,
+        80.06
+      ],
+      "target": [
+        0.04,
+        4.18,
+        -2.61
+      ]
+    },
+    "vmSelected": null,
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [],
+      "ariaCurrentBodies": [],
+      "groupRegion": null,
+      "childRegionTitle": null,
+      "markers": null
+    }
+  },
+  {
+    "tag": "F1-repro2-presented",
+    "t": "2026-10-11T10:30:51.453Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 5,
+        "isolated": 365,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 5,
+        "ids": 365
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        110.27,
+        -106.05,
+        80.06
+      ],
+      "target": [
+        0.04,
+        4.18,
+        -2.61
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\"]]",
+      "label": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5",
+      "clashCount": 242,
+      "participants": 365,
+      "shown": 365,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5 (242)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5\n\n242 clashes · 365 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "PH-presented",
+    "t": "2026-10-11T10:31:13.826Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 5,
+        "isolated": 328,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 5,
+        "ids": 328
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        110.27,
+        -106.05,
+        83.65
+      ],
+      "target": [
+        0.04,
+        4.18,
+        0.97
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\"]]",
+      "label": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5",
+      "clashCount": 213,
+      "participants": 328,
+      "shown": 328,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5 (213 of 242)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5\n\n213 clashes · 328 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "PH-panel-hidden",
+    "t": "2026-10-11T10:31:16.365Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 5,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        110.27,
+        -106.05,
+        83.65
+      ],
+      "target": [
+        0.04,
+        4.18,
+        0.97
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\"]]",
+      "label": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5",
+      "clashCount": 213,
+      "participants": 328,
+      "shown": 328,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5 (213 of 242)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5213 clashes · 328 participantsFocusIsolateMarkers Markers are unavailable for a clash group.Focus on selectBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "PH-panel-shown",
+    "t": "2026-10-11T10:31:18.952Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 0
+      },
+      {
+        "id": 5,
+        "isolated": 0,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        110.27,
+        -106.05,
+        83.65
+      ],
+      "target": [
+        0.04,
+        4.18,
+        0.97
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\"]]",
+      "label": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5",
+      "clashCount": 213,
+      "participants": 328,
+      "shown": 328,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5 (213 of 242)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5\n\n213 clashes · 328 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  },
+  {
+    "tag": "PH-focus-after-show",
+    "t": "2026-10-11T10:31:21.517Z",
+    "models": [
+      {
+        "id": 1,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 4,
+        "isolated": 0,
+        "hidden": 1
+      },
+      {
+        "id": 5,
+        "isolated": 328,
+        "hidden": 0
+      }
+    ],
+    "allModels": [
+      1,
+      4,
+      5
+    ],
+    "aggregateIsolation": [
+      {
+        "modelId": 5,
+        "ids": 328
+      }
+    ],
+    "overlays": {
+      "clash-panel-markers:clash-detection-panel": 0,
+      "clash-panel-outlines:clash-detection-panel": 0
+    },
+    "camera": {
+      "pos": [
+        110.27,
+        -106.05,
+        83.65
+      ],
+      "target": [
+        0.04,
+        4.18,
+        0.97
+      ]
+    },
+    "vmSelected": {
+      "kind": "group",
+      "groupId": "[\"pairModels\",{},[\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\",\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#5\"]]",
+      "label": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5",
+      "clashCount": 213,
+      "participants": 328,
+      "shown": 328,
+      "unavailable": 0,
+      "unavailableNote": null,
+      "notes": [],
+      "actions": {
+        "focus": {
+          "enabled": true,
+          "reason": null
+        },
+        "isolate": {
+          "enabled": true,
+          "checked": true,
+          "reason": null
+        },
+        "markers": {
+          "enabled": false,
+          "checked": false,
+          "reason": "Markers are unavailable for a clash group."
+        },
+        "focusOnSelect": {
+          "checked": true
+        },
+        "backToAll": {
+          "enabled": true
+        }
+      }
+    },
+    "groupBy": "modelPair",
+    "expanded": [],
+    "page": {
+      "index": 0,
+      "count": 1,
+      "size": 50
+    },
+    "filterText": "",
+    "dom": {
+      "selectedGroupRows": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5"
+      ],
+      "ariaCurrentBodies": [
+        "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5 (213 of 242)"
+      ],
+      "groupRegion": "Audubon_Mechanical_clash_test · …dA#5 ↔ Audubon_Mechanical_clash_test · …dA#5\n\n213 clashes · 328 participants\n\nFocus\nIsolate\nMarkers Markers are unavailable for a clash group.\nFocus on select\nBack to all",
+      "childRegionTitle": null,
+      "markers": {
+        "disabled": true,
+        "checked": false,
+        "title": "Markers are unavailable for a clash group.",
+        "reason": "Markers are unavailable for a clash group."
+      }
+    }
+  }
+]

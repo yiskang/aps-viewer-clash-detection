@@ -5,11 +5,13 @@
 //   dom            → selectors of the rendered node(s) the managed renderer must disable and describe when blocked.
 //   variant        → an ALTERNATIVE dispatch site of the same intent that cannot render together with `dom` (a
 //                    mutually exclusive state), checked against faultVariantEditorVm() (Codex targeted review Medium).
+//   groupVariant   → the group-selected alternative (spec §27.5, AC-GP11): the same intent dispatched from the
+//                    group-selected region / selected group row, checked against faultGroupEditorVm().
 // An intent with no control in the editor Panel is declared in NON_USER_FACING with its reason. A new INTENT, or an
 // intent moved between allow and block in FAULT_POLICY, fails Task 9 / Task 11 until this table and the overlay agree.
 // Plain data + pure functions; Node-side only (the DOM test passes `dom` selectors into the page as strings).
 import { INTENT } from '../../../clashpanel/core/intents.js';
-import { panelVm, setupVm, runVm, filtersVm, resultsVm, selectedVm, resultRow, groupRow } from '../dom/support/vmFixtures.mjs';
+import { panelVm, setupVm, runVm, filtersVm, resultsVm, selectedVm, groupSelectedVm, resultRow, groupRow } from '../dom/support/vmFixtures.mjs';
 
 const bannerAction = (type) => (vm) => vm.run.banners.find((b) => b.action?.intent?.type === type)?.action;
 const lockedBy = (enabled, part) => ({ enabled, reason: part?.reason ?? null });
@@ -21,6 +23,9 @@ export const NON_USER_FACING = Object.freeze({
   [INTENT.PANEL_HIDDEN]: 'shell visibility lifecycle (ClashDockingPanel.js), not a control in the Panel body',
   [INTENT.PANEL_SHOWN]: 'shell visibility lifecycle (ClashDockingPanel.js), not a control in the Panel body',
 });
+
+// Group-selected action selectors (selected.js groupVariant shares the child's data-keys; the region class tells them apart).
+const inGroup = (k) => `.clash-selected-group ${key(k)}`;
 
 export const FAULT_CONTROLS = Object.freeze({
   // Setup region (setup.js) — one shared setup lock; New test and Use selection also have their own existing gates.
@@ -55,17 +60,29 @@ export const FAULT_CONTROLS = Object.freeze({
   [INTENT.GROUP_MODE]: { gate: (vm) => vm.filters.groupBy, dom: ['[data-key^="group-"]'] },
   [INTENT.SORT_SET]: { gate: (vm) => vm.filters.sort, dom: [key('sort')] },
   // Results region (results.js).
-  [INTENT.GROUP_TOGGLE]: { gate: (vm) => vm.results.rows.filter((r) => r.kind === 'group'), dom: ['.clash-group-row button'] },
+  // Spec §27.1: the disclosure button (GROUP_TOGGLE, allow-listed) and the row-body button (GROUP_PRESENT, blocked) are
+  // sibling native buttons, so each selector names exactly one of them.
+  [INTENT.GROUP_TOGGLE]: { gate: (vm) => vm.results.rows.filter((r) => r.kind === 'group'), dom: ['.clash-group-toggle'],
+    groupVariant: { gate: (vm) => vm.results.rows.filter((r) => r.kind === 'group'), dom: ['.clash-group-row-selected .clash-group-toggle'] } },
+  [INTENT.GROUP_PRESENT]: { gate: (vm) => vm.results.groupPresent, dom: ['.clash-group-body'],
+    groupVariant: { gate: (vm) => vm.results.groupPresent, dom: ['.clash-group-row-selected .clash-group-body'] } },   // re-present the selected group
   [INTENT.NAV_SELECT]: { gate: (vm) => vm.results.select, dom: ['section[data-region="results"] .clash-row'] },
   [INTENT.NAV_PREV]: { gate: (vm) => lockedBy(vm.results.nav.canPrev, vm.results.nav.locked), dom: [key('nav-prev')] },
   [INTENT.NAV_NEXT]: { gate: (vm) => lockedBy(vm.results.nav.canNext, vm.results.nav.locked), dom: [key('nav-next')] },
   [INTENT.NAV_PAGE]: { gate: (vm) => vm.results.page, dom: [key('page-prev'), key('page-next')] },
   // Selected clash region (selected.js).
-  [INTENT.ACTION_FOCUS]: { gate: (vm) => vm.selected.actions.focus, dom: [key('action-focus')] },
-  [INTENT.ACTION_ISOLATE]: { gate: (vm) => vm.selected.actions.isolate, dom: [key('action-isolate')] },
+  // The group-selected variant (selected.js groupVariant) dispatches the same intents. Its Markers is never enabled
+  // (spec §27.4), so it has no groupVariant here (the equivalence cases require an enabled control before the fault);
+  // its fault behavior is pinned separately by the group Markers tests.
+  [INTENT.ACTION_FOCUS]: { gate: (vm) => vm.selected.actions.focus, dom: [key('action-focus')],
+    groupVariant: { gate: (vm) => vm.selected.actions.focus, dom: [inGroup('action-focus')] } },
+  [INTENT.ACTION_ISOLATE]: { gate: (vm) => vm.selected.actions.isolate, dom: [key('action-isolate')],
+    groupVariant: { gate: (vm) => vm.selected.actions.isolate, dom: [inGroup('action-isolate')] } },
   [INTENT.ACTION_MARKERS]: { gate: (vm) => vm.selected.actions.markers, dom: [key('action-markers')] },
-  [INTENT.ACTION_FOCUS_ON_SELECT]: { gate: (vm) => vm.selected.actions.focusOnSelect, dom: [key('action-focus-on-select')] },
-  [INTENT.ACTION_BACK_TO_ALL]: { gate: (vm) => vm.selected.actions.backToAll, dom: [key('action-back-to-all')] },
+  [INTENT.ACTION_FOCUS_ON_SELECT]: { gate: (vm) => vm.selected.actions.focusOnSelect, dom: [key('action-focus-on-select')],
+    groupVariant: { gate: (vm) => vm.selected.actions.focusOnSelect, dom: [inGroup('action-focus-on-select')] } },
+  [INTENT.ACTION_BACK_TO_ALL]: { gate: (vm) => vm.selected.actions.backToAll, dom: [key('action-back-to-all')],
+    groupVariant: { gate: (vm) => vm.selected.actions.backToAll, dom: [inGroup('action-back-to-all')] } },
 });
 
 function deepFrozen(v) {
@@ -116,11 +133,25 @@ export function faultVariantEditorVm() {
   });
 }
 
-/** The cases the equivalence tests render: `main` checks every entry's {gate, dom}; `variant` checks every `variant`. */
+/** The group-selected alternative of faultFixtureEditorVm() (spec §27.1/§27.5): the expanded group g1 is the selected
+ *  group (no child row selected) and the selected region is the group variant with Focus/Isolate/Back to all enabled. */
+export function faultGroupEditorVm() {
+  const base = faultFixtureEditorVm();
+  return deepFrozen({
+    ...base,
+    results: { ...base.results, rows: [groupRow('g1', { expanded: true, selected: true }), resultRow(0, { groupId: 'g1' }), resultRow(1, { groupId: 'g1' })],
+      nav: { ...base.results.nav, label: 'No clash selected' } },
+    selected: groupSelectedVm(),
+  });
+}
+
+/** The cases the equivalence tests render: `main` checks every entry's {gate, dom}; `variant` checks every `variant`;
+ *  `group` checks every `groupVariant`. */
 export function faultCases() {
   const all = Object.entries(FAULT_CONTROLS);
   return [
     { name: 'main', vm: faultFixtureEditorVm(), controls: Object.fromEntries(all.map(([type, c]) => [type, { gate: c.gate, dom: c.dom }])) },
     { name: 'variant', vm: faultVariantEditorVm(), controls: Object.fromEntries(all.filter(([, c]) => c.variant).map(([type, c]) => [type, c.variant])) },
+    { name: 'group', vm: faultGroupEditorVm(), controls: Object.fromEntries(all.filter(([, c]) => c.groupVariant).map(([type, c]) => [type, c.groupVariant])) },
   ];
 }

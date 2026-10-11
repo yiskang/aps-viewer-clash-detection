@@ -605,6 +605,9 @@ function resetResultsView(c) {
   c.pipe = null;
   c.view = { ...defaultView(), groupBy: c.view.groupBy };
   c.selection = null;                                              // restore table: a new run drops the selection
+  c.selectedGroupId = null;                                        // …and the group-presentation selection (spec §27.6)
+  c.groupContext = null;
+  c.groupMembers = null;
   c.presented = null;
   c.presentNotes = [];
 }
@@ -626,6 +629,7 @@ function startPipeline(c, g, resultSet) {
     groupsById: null,
     properties: null,                                        // element-property source of the metadata modes (this generation)
     matching: null, filterBusy: false, ordered: null, textIndexed: false,
+    labelsPending: null,                                     // token of the label-index build still in flight (GP-F1)
   };
   if (index === null) return;
   // One cached element-property source per result generation (Category / Level grouping): the live Model of a side is
@@ -812,6 +816,7 @@ function rebuildOrdered(c, { follow = false } = {}) {
     else if (c.selection === null) v.page = 0;
   }
   v.page = clampPage(v.page, p.ordered.length, PAGE_SIZE);
+  reconcileSelectedGroup(c);
 }
 
 /** Unavailable reasons of a metadata mode that a later read may cure (the property source does not cache them either). */
@@ -855,9 +860,22 @@ function ensureLabelIndex(c) {
   if (p === null || p.index === null || p.textIndexed || c.view.filter.text.trim() === '') return;
   p.textIndexed = true;
   const g = p.gen;
+  const pass = {};
+  p.labelsPending = pass;
+  // A failed build settles too (the cold result is then the final one), so a selected group is never left dormant.
+  const settled = (committed) => {
+    if (!committed || !current(c, g) || p.labelsPending !== pass) return;
+    p.labelsPending = null;
+    if (c.view.filter.text.trim() !== '') refreshList(c);
+  };
   c.labels.warm(p.index, { isCurrent: () => current(c, g) })
-    .then((committed) => { if (committed && current(c, g) && c.view.filter.text.trim() !== '') refreshList(c); }, () => {})
+    .then(settled, () => settled(true))
     .catch(() => { /* a throwing commit must not surface as unhandled */ });
+}
+
+/** A text-filter pass run before the label index committed matched model names / dbIds only: provisional (GP-F1). */
+function textPassProvisional(c) {
+  return c.pipe !== null && c.pipe.labelsPending !== null && c.view.filter.text.trim() !== '';
 }
 
 function setFilter(c, patch) {
@@ -915,6 +933,7 @@ function onFilterClear(c) {
 function onGroupMode(c, intent) {
   const mode = groupModeOf(intent.value);
   if (mode === null) return;                                         // unknown / not-yet-supported modes are ignored
+  if (mode.id !== c.view.groupBy) endGroupSelection(c);              // §27.6: group ids never carry across modes
   c.view.groupBy = mode.id;
   dropTransientGrouping(c, mode.id);                                 // selecting a mode whose read failed transiently retries it
   ensureGrouping(c);
@@ -966,7 +985,7 @@ function pageRows(c) {
   return pageSlice(p.ordered, c.view.page, PAGE_SIZE).map((entry) => {
     if (entry.kind !== 'group') return resultRow(c, entry.canonicalIndex, entry.groupId);
     const group = p.groupsById.get(entry.groupId);
-    return buildGroupHeaderRow({ group, label: mode.labelOf(group.ref, c.labels), expanded: c.view.expanded.has(entry.groupId) });
+    return buildGroupHeaderRow({ group, label: mode.labelOf(group.ref, c.labels), expanded: c.view.expanded.has(entry.groupId), selected: c.selectedGroupId === entry.groupId });
   });
 }
 
@@ -977,6 +996,9 @@ const ISOLATION_UNAVAILABLE_TEXT = 'Isolation is unavailable in the current view
 function selectionState() {
   return {
     selection: null,                     // {occurrence:{groupId,resultId}, navScope:string|null}
+    selectedGroupId: null,               // spec §27.1: group-presentation selection; mutually exclusive with `selection`
+    groupContext: null,                  // {groupId, participants, unavailable}: durable counts of the last group resolution (§27.2); never a Model
+    groupMembers: null,                  // memberIndexes (canonical ints) of the last group resolution: the §27.2 refresh compares against it
     toggles: { focusOnSelect: true, isolate: false, markers: true },
     presented: null,                     // {modelKeys:string[]} of the current visualization (never a Model object)
     presentNotes: [],
@@ -1068,6 +1090,9 @@ async function present(c, { fit }) {
 }
 
 function select(c, occurrence, navScope) {
+  c.selectedGroupId = null;                                         // §27.1: a child selection ends the group selection
+  c.groupContext = null;
+  c.groupMembers = null;
   c.selection = { occurrence: { groupId: occurrence.groupId ?? null, resultId: occurrence.resultId }, navScope };
   c.presentNotes = [];                                              // never show the previous clash's notes with this one
   pageToSelection(c);
@@ -1100,15 +1125,17 @@ function onNavStep(c, dir) {
 function onNavPrev(c) { return onNavStep(c, -1); }
 function onNavNext(c) { return onNavStep(c, 1); }
 
-function onActionFocus(c) { return present(c, { fit: true }); }   // Focus always fits
+function onActionFocus(c) { return c.selectedGroupId !== null ? presentGroup(c, { fit: true }) : present(c, { fit: true }); }   // Focus always fits
 
 function onActionIsolate(c, intent) {
   c.toggles = { ...c.toggles, isolate: intent.value === true && isolationState(c).available };
   touch(c);
+  if (c.selectedGroupId !== null) return presentGroup(c, { fit: false });
   return c.selection === null ? undefined : present(c, { fit: false });
 }
 
 function onActionMarkers(c, intent) {
+  if (c.selectedGroupId !== null) return undefined;                 // §27: Markers are unavailable for a group; a forged intent changes nothing
   c.toggles = { ...c.toggles, markers: intent.value === true };
   touch(c);
   return c.selection === null ? undefined : present(c, { fit: false });
@@ -1119,9 +1146,130 @@ function onActionFocusOnSelect(c, intent) {
   touch(c);
 }
 
+/**
+ * The selected group's CURRENT FILTERED membership as durable participants (spec §27.2): both sides of every member
+ * clash, de-duplicated by compound {modelKey, dbId} (equal dbIds in different models stay distinct), in first-seen
+ * order. One path for every grouping mode. Liveness is resolved here, at action time, through the provenance-aware
+ * resolver; no Viewer Model is retained. Unavailable participants are omitted and counted.
+ */
+function resolveGroupMembership(c, groupId) {
+  const p = c.pipe;
+  const group = p?.groupsById?.get(groupId);
+  if (group === undefined || p.index === null) return null;
+  const seen = new Set();
+  const live = [];
+  let unavailable = 0;
+  for (const i of group.memberIndexes) {
+    const record = p.index.at(i);
+    for (const ref of [record.pair.first, record.pair.second]) {
+      const key = JSON.stringify([ref.modelKey, ref.dbId]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const side = resolveSide({ ref, provenance: p.set.provenance, engine: c.engine, catalog: c.catalog });
+      if (side.state === 'live') live.push({ modelKey: side.modelKey, model: side.model, dbId: side.dbId });
+      else unavailable += 1;
+    }
+  }
+  return { live, participants: seen.size, unavailable, members: group.memberIndexes };
+}
+
+/**
+ * Presents the selected group through the bridge's aggregate operation (the sibling of present(); never a fallback
+ * through it). With no live participant nothing is attempted and any previous presentation is cleared, keeping the
+ * selected-group state truthful. Isolation only when the §9.5 prerequisite holds; no marker option exists.
+ */
+async function presentGroup(c, { fit }) {
+  const groupId = c.selectedGroupId;
+  if (c.disposed || groupId === null) return;
+  const membership = resolveGroupMembership(c, groupId);
+  if (membership === null) return;                                   // the group left the current filtered list
+  c.groupContext = { groupId, participants: membership.participants, unavailable: membership.unavailable };
+  c.groupMembers = membership.members;
+  if (membership.live.length === 0) {
+    const shown = c.presented !== null;
+    c.presented = null;
+    c.presentNotes = [];
+    if (shown) await clearViewer(c);
+    if (!c.disposed) touch(c);
+    return;
+  }
+  const request = {
+    participants: membership.live.map((x) => ({ model: x.model, dbId: x.dbId })),
+    options: { focus: fit === true, isolate: c.toggles.isolate === true && isolationState(c).available },
+  };
+  c.presented = { modelKeys: [...new Set(membership.live.map((x) => x.modelKey))] };
+  c.viewerSeq += 1;
+  const seq = c.viewerSeq;
+  const g = c.gen.current();
+  let outcome;
+  try {
+    outcome = await c.bridge.presentGroup(request);
+  } catch (error) {
+    outcome = { superseded: false, fitted: false, isolated: false, notes: [`The clash group could not be shown in the viewer: ${String(error?.message ?? error)}`] };
+  }
+  if (c.disposed || !c.gen.isCurrent(g) || seq !== c.viewerSeq || outcome?.superseded === true || outcome?.disposed === true) return;
+  c.presentNotes = Array.isArray(outcome?.notes) ? outcome.notes.filter((n) => typeof n === 'string') : [];
+  c.isolationNotice = null;
+  touch(c);
+}
+
+/**
+ * GROUP_PRESENT (spec §27.1/§27.2): the group row body selects the group (clearing the clash selection and its
+ * navScope, never altering expansion) and presents its current filtered membership. Unknown/filtered-out groups and
+ * the flat view are ignored: `groupsById` holds only the groups of the current filtered list.
+ */
+function onGroupPresent(c, intent) {
+  const groups = c.pipe?.groupsById ?? null;
+  if (typeof intent.groupId !== 'string' || groups === null || !groups.has(intent.groupId)) return undefined;
+  c.selectedGroupId = intent.groupId;
+  c.selection = null;
+  c.groupContext = null;
+  c.groupMembers = null;
+  c.presentNotes = [];
+  touch(c);
+  return presentGroup(c, { fit: c.toggles.focusOnSelect });
+}
+
+/**
+ * Ends the group selection (spec §27.6: group disappearance, grouping-mode change). An aggregate still shown is cleared
+ * through the guarded bridge path; when nothing is shown (panel hidden, no live participant) the Viewer is untouched.
+ */
+function endGroupSelection(c) {
+  if (c.selectedGroupId === null) return;
+  c.selectedGroupId = null;
+  c.groupContext = null;
+  c.groupMembers = null;
+  c.presentNotes = [];
+  if (c.presented === null) return;
+  c.presented = null;
+  clearViewer(c).catch(() => { /* a throwing commit must not surface as unhandled */ });
+}
+
+const sameMembers = (a, b) => a === b || (a !== null && b !== null && a.length === b.length && a.every((v, k) => v === b[k]));
+
+/**
+ * Spec §27.2 refresh, run after every list rebuild (filters, grouping landing, model-left regrouping). The selected group
+ * is judged against the CURRENT filtered grouping: gone ⇒ selection and presentation end; a changed membership is
+ * re-presented only while an aggregate is shown (a hidden panel or a cleared presentation is never silently re-shown —
+ * the next row activation or Focus/Isolate re-resolves). Expansion, page and sort leave memberIndexes unchanged ⇒ no-op.
+ * A regrouping still in flight, or a text pass run before the label index committed (GP-F1: the cold first pass is
+ * re-run once names land), leaves the selection dormant until the real result lands.
+ */
+function reconcileSelectedGroup(c) {
+  const groupId = c.selectedGroupId;
+  if (groupId === null || activeGrouping(c).state === 'pending' || textPassProvisional(c)) return;
+  const group = c.pipe?.groupsById?.get(groupId);
+  if (group === undefined) { endGroupSelection(c); return; }
+  if (c.presented === null || sameMembers(group.memberIndexes, c.groupMembers)) return;
+  presentGroup(c, { fit: c.toggles.focusOnSelect }).catch(() => { /* a throwing commit must not surface as unhandled */ });
+}
+
 /** Back to All = bridge.clear() + clear selection + navScope; filters, grouping, page and results untouched. */
 function onBackToAll(c) {
   c.selection = null;
+  c.selectedGroupId = null;
+  c.groupContext = null;
+  c.groupMembers = null;
   c.presented = null;
   c.presentNotes = [];
   touch(c);
@@ -1292,7 +1440,24 @@ function testInput(c) {
   return { testId: c.draft.testId, draft: c.draft, runActive: isActive(c), heldUnsaved: heldUnsaved(c), pendingConfirm: c.confirm !== null, lastRun: c.lastSealed };
 }
 
+/**
+ * Group-selected variant input (spec §27.5). Built fresh at every ViewModel build from the CURRENT filtered membership and
+ * the current catalog (like the child's liveness), so the counts stay truthful after model departure/re-entry; only
+ * numbers and strings, never a Viewer Model. A group that is not in the current list (regrouping in flight) has no variant.
+ */
+function groupSelectedInput(c) {
+  const group = c.pipe?.groupsById?.get(c.selectedGroupId);
+  if (group === undefined || c.pipe.index === null) return null;
+  const membership = resolveGroupMembership(c, c.selectedGroupId);
+  return {
+    kind: 'group', groupId: c.selectedGroupId, label: groupModeOf(c.view.groupBy).labelOf(group.ref, c.labels),
+    clashCount: group.memberIndexes.length, participants: membership.participants, shown: membership.live.length,
+    unavailable: membership.unavailable, notes: [...c.presentNotes], isolation: isolationState(c), toggles: { ...c.toggles },
+  };
+}
+
 function selectedInput(c) {
+  if (c.selectedGroupId !== null) return groupSelectedInput(c);
   const i = selectedCanonical(c);
   if (i < 0) return null;
   const p = c.pipe;
@@ -1334,6 +1499,7 @@ const DISPATCH = {
   [INTENT.FILTER_CLEAR]: onFilterClear,
   [INTENT.GROUP_MODE]: onGroupMode,
   [INTENT.GROUP_TOGGLE]: onGroupToggle,
+  [INTENT.GROUP_PRESENT]: onGroupPresent,
   [INTENT.SORT_SET]: onSortSet,
   [INTENT.NAV_PAGE]: onNavPage,
   [INTENT.PANEL_SHOWN]: onPanelShown,

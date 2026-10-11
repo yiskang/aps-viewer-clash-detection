@@ -4892,3 +4892,55 @@ The targeted [fault-state re-review](../../reviews/2026-10-10-clash-tests-manage
 **Deferred Lows interaction (L1–L8, none remediated).** L1/L5/L7 (focus loss / index-based `data-key` / missing focus DOM tests): the new structure keeps the `data-key` scheme and rebuild model, so L1/L5 behavior is unchanged and P1–P3 proceed without remediating them; new tests must not assert fixed focus-restoration behavior either way. L3 (copy nits): all strings unchanged, no overlap. L2/L4/L6/L8: no overlap. **If implementation finds that preserving behavior requires touching focus restoration, stop and surface an owner decision.**
 
 **Not authorized (unchanged).** Implementation of this addendum; CTM-7; CTM-8; L1–L8 remediation; persistence/history/background runs/lifecycle; public API change; Core/Adapter/collision; G2/C6/C8/G3; R20-1; separate-panel architecture; any resize feature.
+
+---
+
+## Addendum B — Clash group header aggregate presentation (bounded pre-CTM-8 correction, 2026-10-11) — PLANNED ONLY; IMPLEMENTATION NOT AUTHORIZED
+
+**Authority and dependency.** Governing design is spec §27 (AC-GP1…AC-GP12), based on the [aggregate-presentation Independent Work Review](../../reviews/2026-10-11-clash-group-header-aggregate-presentation-independent-work-review.md) and the owner's final marker decision: **Option A, no group markers/outlines**. Addendum A remains complete and unchanged. CTM-7 remains closed; CTM-8 has not started. This addendum defines one bounded correction package that must receive a separate owner implementation authorization after its Independent Work Review.
+
+**Architecture boundary.** The headless controller owns selection/membership; `ViewerBridge` remains the only Viewer-mutating layer; renderers consume ViewModel state; the Clash Tests manager only applies its existing terminal-fault policy/overlay. `ViewerBridge.present()` remains one-clash/1–2 sides. The new `presentGroup()` is a sibling operation, not a widening or fallback through `present()`.
+
+### Expected minimum production surface
+
+Required:
+
+- `clashpanel/core/intents.js` — add the user-facing `GROUP_PRESENT` intent and shape comment;
+- `clashpanel/core/controller.js` — mutually exclusive group selection, current filtered membership resolution, lifecycle/refresh transitions, and bridge call;
+- `clashpanel/core/rows.js`, `clashpanel/core/viewModel.js` — selected group row/action/context shapes;
+- `clashpanel/viewer/ViewerBridge.js` — separately validated `presentGroup()` sharing the existing transaction/ownership machinery;
+- `clashpanel/ui/render/results.js`, `clashpanel/ui/render/selected.js`, `wwwroot/main.css` — sibling controls, selected semantics, bounded group context and styling;
+- `clashpanel/core/testsManager.js` — classify `GROUP_PRESENT` as terminal-fault blocked while `GROUP_TOGGLE` stays allow-listed;
+- `clashpanel/core/managerViewModel.js` — only the minimal fault overlay needed to expose the new group-row/group-selected controls as disabled with the terminal-fault reason.
+
+No production change is pre-authorized in `clashpanel/viewer/markers.js`, `fit.js`, `isolation.js`, Core, collision, Viewer Adapter, host integration or public package files. Private reuse of existing fit/isolation helpers from `ViewerBridge.js` is expected; if their public behavior must change, stop and obtain a plan amendment. Test support/fake/public-shape enumeration files may change only where the new intent/bridge seam is mechanically exposed.
+
+### Package tasks and green checkpoints
+
+1. **B1 — intent, state and group row contract.** Add failing core/DOM tests first for `GROUP_PRESENT`, mutually exclusive `selectedGroupId`, sibling native disclosure/body buttons, click/Enter/Space separation, selected ARIA/style and focus retention. Implement without changing current child listbox semantics. Focused results/rows/intents suites must return green before B2.
+2. **B2 — one aggregate membership path.** Add controller tests for Element and Category multi-child groups; Model Pair/Level through the same descriptor path; current filtered `memberIndexes`; both pair sides; compound `{modelKey,dbId}` de-duplication; equal dbIds in different models; single child; more than two models; empty/no-live membership. Implement action-time resolution with no retained Model objects. Focused controller/grouping/navigation suites return green.
+3. **B3 — independent ViewerBridge operation.** Add bridge tests before code for request validation, arbitrary cardinality, defensive de-duplication, one/many-model isolate target, aggregate fit, zero marker/outline calls, failure injection, supersession, rollback, clear and dispose. Implement `presentGroup()` through the existing queue/token/ledger and private fit/isolation composition. Pin that `present()` still rejects zero or more than two sides and retains witness/marker behavior.
+4. **B4 — refresh and lifecycle.** Test and implement filtered-membership re-presentation/disappearance, group-mode change, collapsed selection, group→child transition, Back to all, panel hide/show, model departure/same-key re-entry, new run, Clear and manager switch/delete. Preserve filters/grouping/expansion/page where §27 requires. Existing single-clash lifecycle tests remain green.
+5. **B5 — selected-region and marker decision.** Test and render the minimal group-selected variant: group identity/count, Focus, guarded Isolate, Focus on select, disabled Markers with exact reason `Markers are unavailable for a clash group.`, Back to all, and no child sides/gap/location/witness/ordinal. Verify a child selection restores existing single-clash Markers and details unchanged.
+6. **B6 — terminal-fault equivalence.** Extend `FAULT_POLICY`, `FAULT_CONTROLS` and their static/equivalence tests so the group-row presentation action and applicable group-selected actions are disabled/non-interactive with the terminal-fault reason. Disclosure remains the existing allow-listed view action. No new manager recovery or lifecycle behavior is introduced.
+7. **B7 — closeout gate.** Run every focused suite above, then canonical `npm test` and `git diff --check`. Record exact totals and a protected-path diff proving no Core/Adapter/collision/host/CTM-8/L1–L8 change. The implementation agent writes its own upstream final report; a separate Independent Work implementation review is required before headed verification or closeout.
+
+Every B1–B6 checkpoint must be green before the next task begins. If a later owner authorization separately includes commits, each commit must cover one coherent green B task or a smaller reviewed subset; this addendum itself authorizes no commit.
+
+### Required test coverage
+
+**Controller/unit:** Element and Category multi-child aggregation; Model Pair/Level shared path; >2 models; duplicate participants; same dbId in different models; empty/no-live participants; single-child group; collapsed group selection; filtered-membership refresh/disappearance; group→child; Back to all; model departure/re-entry; new-run/test-switch/delete; single-clash regression.
+
+**ViewerBridge:** independent validation; arbitrary cardinality; de-duplication; one/many-model isolation; aggregate fit; no aggregate marker/outline calls; supersession; rollback; clear/dispose; injected failure at each mutating step; `present()` rejection of zero/>2 sides and unchanged witness behavior.
+
+**Renderer/DOM:** sibling disclosure/body controls; no cross-trigger; native click/Enter/Space; selected group ARIA/style; focus retention through expand/collapse and rerender; child transition; truthful group-selected context; exact disabled Markers reason and accessibility linkage; no stale child detail; Back to all; terminal-fault intent/control equivalence and alternate control variants.
+
+### Headed/manual verification gate — separate authorization after implementation review
+
+Use the normal app and retained evidence to verify one-model, two-model and greater-than-two-model groups; aggregate Focus; aggregate guarded Isolate/restore; Back to all; unavailable participant behavior; selected visuals; disabled Markers reason; child restoration; and no disclosure/body cross-trigger. This evidence belongs to this pre-CTM-8 correction only and must not be described as CTM-8 calibration or performance evidence.
+
+### Acceptance and stop conditions
+
+The package passes only when AC-GP1…AC-GP12 are mechanically covered, canonical tests are green, no marker/outline is created in group mode, and protected boundaries are clean. Stop for owner review if implementation would require a new grouping mode, nested grouping, persistence/history, public resource limit, Viewer theming/selection, aggregate witness/outline design, Core/Adapter/collision/host change, L1–L8 remediation or CTM-8 work.
+
+**Authorization boundary.** This docs-only addendum does not authorize B1–B7, production/test edits, headed verification, an implementation branch, commit or push. The next possible gate after independent acceptance of this addendum is **owner authorization for Claude/Codex implementation of Addendum B**.

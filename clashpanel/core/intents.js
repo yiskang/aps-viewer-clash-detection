@@ -6,7 +6,8 @@
 //   SETUP_TOGGLE_MODEL: {side:'A'|'B', modelKey}      SETUP_USE_SELECTION: {side:'A'|'B'}
 //   FILTER_TEXT(string)/FILTER_MAX_GAP(string)/FILTER_UNVERIFIED(boolean)/FILTER_HAS_LOCATION(boolean): {value}
 //   FILTER_MODEL: {value: string[]} ([] = all models)  FILTER_ELEMENT: {ref:{modelKey,dbId}|null}
-//   GROUP_MODE: {value:'none'|'element'|'modelPair'|'category'|'level'} (groupModes.js GROUP_MODE_IDS; others ignored)  GROUP_TOGGLE: {groupId}  SORT_SET: {value:'default'|'gap-asc'|'group-count'|'group-label'}
+//   GROUP_MODE: {value:'none'|'element'|'modelPair'|'category'|'level'} (groupModes.js GROUP_MODE_IDS; others ignored)  GROUP_TOGGLE: {groupId} (disclosure only)
+//   GROUP_PRESENT: {groupId} (spec §27.1: the group row body only — selects the group, mutually exclusive with a clash selection)  SORT_SET: {value:'default'|'gap-asc'|'group-count'|'group-label'}
 //   NAV_SELECT: {resultId, groupId:string|null}        NAV_PAGE: {page:number}
 //   ACTION_ISOLATE/ACTION_MARKERS/ACTION_FOCUS_ON_SELECT: {value:boolean}
 //   Every other intent carries no payload. A ViewModel banner's optional `action: {label, intent}` carries the
@@ -31,6 +32,7 @@ export const INTENT = Object.freeze({
   FILTER_CLEAR: 'filter/clear',
   GROUP_MODE: 'group/mode',
   GROUP_TOGGLE: 'group/toggle',
+  GROUP_PRESENT: 'group/present',
   SORT_SET: 'sort/set',
   NAV_SELECT: 'nav/select',
   NAV_PREV: 'nav/prev', NAV_NEXT: 'nav/next', NAV_PAGE: 'nav/page',

@@ -108,6 +108,21 @@ export function selectedVm(over = {}) {
   };
 }
 
+export function groupSelectedVm(over = {}) {
+  return {
+    kind: 'group', groupId: 'g1', label: 'Architecture ↔ Structure', clashCount: 3, participants: 5, shown: 5, unavailable: 0,
+    unavailableNote: null, notes: [],
+    actions: {
+      focus: { enabled: true, reason: null },
+      isolate: { enabled: true, checked: false, reason: null },
+      markers: { enabled: false, checked: false, reason: 'Markers are unavailable for a clash group.' },
+      focusOnSelect: { checked: true },
+      backToAll: { enabled: true },
+    },
+    ...over,
+  };
+}
+
 export function panelVm(over = {}) {
   return {
     version: 1,

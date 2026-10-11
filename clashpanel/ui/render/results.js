@@ -38,14 +38,29 @@ function resultRow(doc, row, dispatch) {
   ]);
 }
 
+// Spec §27.1: every group header is TWO sibling native buttons — never nested, so neither click, Enter nor Space on one
+// can reach the other. The disclosure button owns GROUP_TOGGLE only (expand/collapse, aria-expanded); the row-body button
+// owns GROUP_PRESENT only (selects the group; aria-current when it is the selected group). data-keys: the disclosure
+// keeps the historical `group:<id>`; the body adds `|present`, so focus survives the rebuild() on either control.
 function groupRow(doc, row, dispatch) {
   const countText = row.filteredCount !== row.count ? `${row.filteredCount} of ${row.count}` : `${row.count}`;
-  return el(doc, 'div', { class: 'clash-group-row' }, [
+  const selected = row.selected === true;
+  return el(doc, 'div', { class: selected ? 'clash-group-row clash-group-row-selected' : 'clash-group-row' }, [
     el(doc, 'button', {
-      attrs: { type: 'button', 'data-key': row.key, 'aria-expanded': row.expanded ? 'true' : 'false' },
+      class: 'clash-group-toggle',
+      attrs: {
+        type: 'button', 'data-key': row.key, 'aria-expanded': row.expanded ? 'true' : 'false',
+        'aria-label': `${row.expanded ? 'Collapse' : 'Expand'} group ${row.label}`,
+      },
       on: { click: () => dispatch({ type: INTENT.GROUP_TOGGLE, groupId: row.groupId }) },
     }, [
       el(doc, 'span', { class: 'clash-group-twisty', text: row.expanded ? '▾ ' : '▸ ' }),
+    ]),
+    el(doc, 'button', {
+      class: 'clash-group-body',
+      attrs: { type: 'button', 'data-key': `${row.key}|present`, 'aria-current': selected ? 'true' : null },
+      on: { click: () => dispatch({ type: INTENT.GROUP_PRESENT, groupId: row.groupId }) },
+    }, [
       el(doc, 'span', { class: 'clash-group-label', text: row.label }),
       el(doc, 'span', { class: 'clash-group-count', text: ` (${countText})` }),
     ]),

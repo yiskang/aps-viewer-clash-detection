@@ -112,7 +112,8 @@ export function assertCatalogPort(catalog) {
   return assertMembers(catalog, 'catalog', ['list', 'displayNameFor', 'keyOfModel', 'onChange'], 'assertCatalogPort');
 }
 
+/** Structural check of the Panel-internal ViewerBridge (`presentGroup`: spec §27.3, the aggregate sibling of `present`). */
 export function assertBridgePort(bridge) {
   return assertMembers(bridge, 'bridge',
-    ['present', 'clear', 'dispose', 'checkIsolationPrerequisite', 'readAggregateSelection', 'onModelLeft'], 'assertBridgePort');
+    ['present', 'presentGroup', 'clear', 'dispose', 'checkIsolationPrerequisite', 'readAggregateSelection', 'onModelLeft'], 'assertBridgePort');
 }

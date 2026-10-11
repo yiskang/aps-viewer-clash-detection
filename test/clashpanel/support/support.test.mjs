@@ -332,6 +332,27 @@ test('fake bridge: auto mode resolves default outcomes derived from the request 
   assert.equal(bridge.calls.present.length, 3);
 });
 
+test('fake bridge: presentGroup (Addendum B seam) records, auto-resolves a marker-free GroupOutcome, holds, fails and no-ops after dispose', async () => {
+  const bridge = createFakeBridge();
+  const greq = { participants: [{ model: {}, dbId: 1 }], options: { focus: true, isolate: true } };
+  assert.deepEqual(await bridge.presentGroup(greq), { superseded: false, fitted: true, isolated: true, notes: [] });
+  assert.equal(bridge.calls.presentGroup.length, 1);
+  assert.equal(bridge.calls.presentGroup[0].req, greq);
+  assert.equal(bridge.calls.present.length, 0, 'never recorded as present()');
+  bridge.holdAll();
+  const held = bridge.presentGroup(greq);
+  await flush();
+  assert.equal(bridge.pending('presentGroup').length, 1);
+  bridge.calls.presentGroup[1].resolve({ superseded: true, fitted: false, isolated: false, notes: [] });
+  assert.equal((await held).superseded, true);
+  bridge.autoAll();
+  bridge.failNext('presentGroup', new Error('viewer refused'));
+  await assert.rejects(bridge.presentGroup(greq), /viewer refused/);
+  await bridge.dispose();
+  assert.equal((await bridge.presentGroup(greq)).disposed, true);
+  assert.equal(bridge.calls.afterDispose.at(-1).kind, 'presentGroup');
+});
+
 test('fake bridge: holdAll() defers every call so a test can resolve interleavings; failNext rejects', async () => {
   const bridge = createFakeBridge().holdAll();
   const p1 = bridge.present(req());

@@ -7,11 +7,15 @@ const presentDefault = (req, prerequisite) => ({
   superseded: false, fitted: Boolean(req?.options?.focus), isolated: Boolean(req?.options?.isolate) && prerequisite.available,
   marked: Boolean(req?.options?.marker), notes: [],
 });
+/** Addendum B (spec §27.3): the aggregate GroupOutcome carries no `marked`/witness field. */
+const groupDefault = (req, prerequisite) => ({
+  superseded: false, fitted: Boolean(req?.options?.focus), isolated: Boolean(req?.options?.isolate) && prerequisite.available, notes: [],
+});
 
 export function createFakeBridge({ auto = true, journal = null, prerequisite = { available: true, reason: null }, selection = [] } = {}) {
-  const calls = { present: [], clear: [], dispose: [], afterDispose: [], checkIsolationPrerequisite: 0, readAggregateSelection: 0 };
+  const calls = { present: [], presentGroup: [], clear: [], dispose: [], afterDispose: [], checkIsolationPrerequisite: 0, readAggregateSelection: 0 };
   const leftListeners = new Set();
-  const failures = { present: [], clear: [], dispose: [] };
+  const failures = { present: [], presentGroup: [], clear: [], dispose: [] };
   const listenerErrors = [];
   let mode = auto ? 'auto' : 'manual';
   let disposed = false;
@@ -38,6 +42,11 @@ export function createFakeBridge({ auto = true, journal = null, prerequisite = {
       if (disposed) { calls.afterDispose.push({ kind: 'present', req }); return Promise.resolve({ disposed: true, superseded: false, fitted: false, isolated: false, marked: false, notes: [] }); }
       const dflt = typeof presentOutcome === 'function' ? presentOutcome(req) : (presentOutcome ?? presentDefault(req, prereq));
       return enqueue('present', { req }, dflt);
+    },
+    presentGroup(req) {
+      note('presentGroup');
+      if (disposed) { calls.afterDispose.push({ kind: 'presentGroup', req }); return Promise.resolve({ disposed: true, superseded: true, fitted: false, isolated: false, participants: 0, notes: [] }); }
+      return enqueue('presentGroup', { req }, groupDefault(req, prereq));
     },
     clear() {
       note('clear');

@@ -226,6 +226,41 @@ test('fault-state re-review M1 (DOM): a faulted result row leaves the tab order,
   assert.equal((await intents(page)).length, 14, 'un-faulted: the same inputs select again');
 }));
 
+test('Addendum B6 / AC-GP11 (DOM): while faulted the group row-body button and the group-selected Focus/Isolate/Back to all emit no intent, Markers stays disabled with the fault reason, and the disclosure still dispatches GROUP_TOGGLE', () => withPage(async ({ page }) => {
+  const reason = MANAGER_TEXT.FAULT;
+  const ed = faultCases().find((c) => c.name === 'group').vm;   // selected group g1 (expanded), group-selected region
+  const BODY = '.clash-manager-editor .clash-group-row-selected .clash-group-body';
+  const TOGGLE = '.clash-manager-editor .clash-group-row-selected .clash-group-toggle';
+  const ACTIONS = ['action-focus', 'action-isolate', 'action-back-to-all'].map((k) => `.clash-manager-editor .clash-selected-group [data-key="${k}"]`);
+  const clean = () => managedVm({ view: 'editor' }, ed);
+  const faulted = () => managedVm({ view: 'editor', fault: { text: reason }, editorLock: { enabled: false, reason } }, lockedEditorVm(ed, reason, FAULT_POLICY));
+  const fire = async () => {
+    for (const sel of [BODY, ...ACTIONS]) await page.click(sel, { force: true });
+    await page.focus(BODY).catch(() => {});
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Space');
+  };
+  // Not faulted (non-vacuous): the body presents the group, each action dispatches its intent.
+  await mountRenderer(page, ...R, clean());
+  await fire();
+  const cleanTypes = (await intents(page)).map((i) => i.type);
+  assert.deepEqual(cleanTypes.slice(0, 4), [INTENT.GROUP_PRESENT, INTENT.ACTION_FOCUS, INTENT.ACTION_ISOLATE, INTENT.ACTION_BACK_TO_ALL]);
+  assert.ok(cleanTypes.slice(4).every((t) => t === INTENT.GROUP_PRESENT) && cleanTypes.length === 6, 'not faulted: Enter and Space on the body present the group');
+
+  await rerender(page, faulted());
+  const before = (await intents(page)).length;
+  await fire();
+  assert.equal((await intents(page)).length, before, 'faulted: no click, Enter or Space on the body or a group action reaches a handler');
+  const state = await page.evaluate((sels) => sels.map((sel) => {
+    const n = document.querySelector(sel);
+    const by = n.getAttribute('aria-describedby');
+    return { disabled: n.disabled, reason: by ? document.getElementById(by)?.textContent ?? null : null };
+  }), [BODY, ...ACTIONS, '.clash-manager-editor .clash-selected-group [data-key="action-markers"]']);
+  for (const s of state) assert.deepEqual(s, { disabled: true, reason });
+  await page.click(TOGGLE);
+  assert.deepEqual((await intents(page)).at(-1), { type: INTENT.GROUP_TOGGLE, groupId: 'g1' }, 'the allow-listed disclosure still dispatches');
+}));
+
 test('Review Focus 2: hostile and unbroken names stay inert text and never widen the panel', () => withPage(async ({ page }) => {
   const long = 'W'.repeat(10000);
   await page.setViewportSize({ width: 480, height: 800 });

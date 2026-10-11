@@ -1022,3 +1022,93 @@ No design/spec correctness blocker is known at this abstraction level. Next gate
 - **AC-UI10** Existing live-region, fault-lock, confirmation-focus, `data-key` and AC-M1…M19 tests pass unchanged except the enumerated structural selector edits in the plan addendum.
 - **AC-UI11** `ul`/`li` semantics expose the item count and the list's accessible name resolves (via `aria-labelledby`) to `Clash tests (this session only)`; the action group's accessible name resolves to include the test name; the reason rows list each disabled action exactly once, in order, beside its shared reason; Tab order per item is Open → Duplicate → Reset → Delete (enabled ones); Enter/Space activate; the focus ring is visible on every icon button; nothing is conveyed by color alone.
 - **AC-UI12** No new dependency, asset file, `innerHTML`, DOM-built SVG or emoji.
+
+## 27. Owner-decision addendum 2026-10-11 — Clash group header aggregate presentation
+
+**Authority and status.** This bounded pre-CTM-8 design addendum records the owner's final decision that group mode suppresses markers and participant outlines (Option A). It incorporates the contract established by the [aggregate-presentation Independent Work Review](../../reviews/2026-10-11-clash-group-header-aggregate-presentation-independent-work-review.md). It does not widen `ViewerBridge.present()`, change single-clash semantics, authorize implementation, enter CTM-8, or reopen CTM-7. A separately reviewed implementation-plan addendum is required before implementation may be authorized.
+
+### 27.1 Interaction and mutually exclusive selection
+
+Every displayed group header has two sibling native button targets:
+
+1. the disclosure button owns only expand/collapse (`GROUP_TOGGLE`) and exposes `aria-expanded` plus an expand/collapse accessible name;
+2. the group-row body owns only aggregate presentation through a distinct intent (`GROUP_PRESENT`).
+
+Neither target dispatches the other's intent, and no nested interactive control is permitted. Native click, Enter and Space behavior applies to both. Expanding or collapsing a group does not select or present it; presenting a group does not alter expansion. A selected group remains selected when its disclosure state changes.
+
+Controller state gains a distinct, mutually exclusive group-presentation selection, minimally `selectedGroupId: string|null`, alongside the existing single-clash `selection`. `GROUP_PRESENT` clears the current clash selection and its `navScope`; selecting a child clash clears `selectedGroupId` and uses the unchanged single-clash path. A group row exposes selected state in text/ARIA/style without changing listbox option semantics for child rows.
+
+### 27.2 Membership and participant identity
+
+The selected group is resolved from the **current filtered** group descriptor's `memberIndexes`. The controller visits both sides of each referenced clash and builds durable participant identities as `{modelKey, dbId}`. De-duplication uses that compound identity; a dbId that appears in different models remains two participants. The group modes Element, Model Pair, Category and Level all use this one path; `none` has no group-presentation action.
+
+Live Viewer participants are resolved only when presentation is requested. The controller passes ephemeral `{model, dbId}` values to the bridge and never stores a Viewer `Model` in selection, rows or the ViewModel. Unavailable participants are omitted and reported in group context. If none remain live, the controller clears any prior Viewer presentation, keeps a truthful selected-group context, and disables Viewer actions that require live participants.
+
+Filter changes recompute the selected group's current membership and re-present that membership when the group still exists. If filtering removes the group, or if grouping mode changes, the controller clears group selection and aggregate Viewer presentation. Pagination and disclosure changes do not change membership or selection.
+
+### 27.3 Separate ViewerBridge aggregate operation
+
+`ViewerBridge.present()` remains the one-clash operation: one result, one witness context, one or two `sides`, and the existing `{focus,isolate,marker}` semantics. It must continue to reject zero or more than two sides.
+
+Aggregate presentation uses a separately validated operation:
+
+```js
+ViewerBridge.presentGroup({
+  participants: [{ model, dbId }],
+  options: { focus, isolate }
+})
+```
+
+`participants` is a non-empty array after controller-side liveness resolution, supports arbitrary positive cardinality, and supports one, two or more than two models. The bridge validates this request independently from `present()` and de-duplicates identical live `{model,dbId}` participants defensively.
+
+`presentGroup()` reuses the bridge's single serialized queue, token supersession, one held visualization/isolation ledger, guarded isolation ownership, aggregate fit, rollback, `clear()` and `dispose()` behavior. It must not call Viewer selection or theming APIs. It must not create clash witness markers, closest-point markers, or participant bounds outlines. Its outcome remains fail-closed and distinguishes supersession/disposal/fit/isolation notes without inventing a clash witness.
+
+### 27.4 Owner-approved group marker behavior
+
+Option A is final for v1:
+
+- group mode displays no markers and no participant outlines;
+- the Markers control is disabled/unavailable while a group is selected and exposes the group-specific reason **"Markers are unavailable for a clash group."**;
+- no child witness is replayed as an aggregate overlay;
+- selecting a child clash immediately restores the existing single-clash marker toggle and witness/outline semantics.
+
+This is an owner-approved product decision, not an unresolved gate. A future aggregate-overlay design would require separate authorization and cannot be inferred from this addendum.
+
+### 27.5 Selected-region contract
+
+The existing Selected Clash region may render a bounded group-selected variant. It identifies the group by its current label and filtered participant/clash count, reports unavailable participants without claiming they were shown, and retains only applicable shared actions: Focus, guarded Isolate, Focus on select, Markers (disabled with the §27.4 reason), and Back to all.
+
+The group variant must not display or retain stale child-clash ordinal, sides, gap, location, witness, closest points, liveness or element-only filtering controls. It is contextual state for the existing region, not a new analysis surface. Switching between group and child selection replaces the variant atomically.
+
+### 27.6 Restore and lifecycle behavior
+
+- **Back to all:** call the bridge's guarded `clear()` path, clear both clash and group selection, and preserve filters, grouping mode, expansion and page.
+- **New run, Clear/results retirement, active-test switch or delete:** use the existing results/view reset and Viewer clear paths; both selection kinds are cleared.
+- **Panel hide:** clear the Viewer presentation through the existing bridge path but retain group selection, matching single-clash selection behavior. Panel show does not silently mutate the Viewer; a later row activation or Focus/Isolate action re-resolves current live membership.
+- **Model departure:** if the departed model participated in the shown aggregate, clear the aggregate Viewer presentation immediately and retain only truthful group context. Re-resolution omits unavailable members; when no live participant remains, presentation actions are unavailable. Same-key re-entry is handled by the existing catalog/binding lifecycle and never by storing the old Model object.
+- **Group disappearance or grouping-mode change:** clear group selection and aggregate presentation. Expand/collapse alone never clears either.
+
+### 27.7 Multi-model behavior and bounds
+
+One model, two models and more than two models follow the same participant/bridge path. Aggregate Focus frames the union of live participant bounds through existing fit behavior; guarded Isolate reconciles all live participants in one aggregate isolation operation. The one-to-two-side restriction belongs only to single-clash `present()`.
+
+This addendum introduces no arbitrary participant/resource limit. Existing sealed-result, pagination and resource limits remain authoritative; de-duplication avoids repeated Viewer work. Headed evidence for real one-, two- and greater-than-two-model presentation is an implementation-package gate, not CTM-8 performance evidence.
+
+### 27.8 Acceptance criteria
+
+- **AC-GP1** Disclosure click/Enter/Space dispatches only `GROUP_TOGGLE`; row-body click/Enter/Space dispatches only `GROUP_PRESENT`; neither cross-triggers.
+- **AC-GP2** Group and child selection are mutually exclusive; disclosure changes preserve group selection; child selection restores unchanged single-clash presentation.
+- **AC-GP3** Element and Category multi-child groups plus Model Pair and Level use one `memberIndexes` aggregation path over current filtered membership.
+- **AC-GP4** Participant identity is the compound `{modelKey,dbId}`; duplicates collapse, equal dbIds in different models remain distinct, and live Models are not retained.
+- **AC-GP5** `presentGroup()` accepts arbitrary positive participant cardinality across one or many models; `present()` still rejects zero or more than two sides.
+- **AC-GP6** Group presentation can aggregate-fit and guarded-isolate, creates no marker/outline resource, and participates in the existing supersession/rollback/clear/dispose guarantees.
+- **AC-GP7** No-live membership clears prior Viewer state, preserves a non-misleading group-selected context and disables live-only actions.
+- **AC-GP8** The group-selected region exposes no child-clash sides/gap/location/witness/ordinal; Markers is disabled with the exact group-specific reason.
+- **AC-GP9** Back to all clears Viewer state plus both selection kinds while preserving filters/grouping/expansion/page.
+- **AC-GP10** Filter/membership, group disappearance, grouping-mode, model-departure, panel-hide, run and active-test lifecycle rows behave exactly as §27.2/§27.6 specifies.
+- **AC-GP11** Terminal manager fault blocks `GROUP_PRESENT` and every applicable group-selected Viewer action while leaving the disclosure-only `GROUP_TOGGLE` consistent with the existing allow-listed navigation policy.
+- **AC-GP12** Existing single-clash tests and marker/witness behavior remain unchanged.
+
+### 27.9 Protected boundaries
+
+Out of scope: new or nested grouping modes; persistence/history; collision/Core/Viewer Adapter changes; Viewer theming or Viewer selection; child-witness aggregate overlays; participant outline mode; new arbitrary resource limits; L1–L8 remediation; CTM-8; and any broader product surface. Implementation, tests, headed execution, commit and push require separate authorization.
