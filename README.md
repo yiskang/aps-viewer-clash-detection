@@ -17,10 +17,15 @@ The sample started from the [Simple Viewer](https://tutorials.autodesk.io/tutori
 | ![Clash Tests manager listing two tests with their mode, Set A / Set B models and status](docs/images/clash-tests-manager.png) | ![Clash results grouped by model pair, with Focus, Isolate and Back to all for a selected group](docs/images/clash-detection-results.png) |
 | Create and manage clash tests | Browse grouped results, focus and isolate |
 
-| Context menu | Find Room | Find Clashes (hard) | Find Soft Clashes |
-| --- | --- | --- | --- |
-| ![Viewer context menu with Locate Room, Find Clashes and Find Soft Clashes entries on a selected bathtub](docs/images/context-menu.png) | ![Master Bath 207 isolated in the model after Locate Room on a bathtub](docs/images/find-room.png) | ![A hard-clash result for one selected structural element, isolated across the loaded models](docs/images/find-clashes-hard.png) | ![A soft-clash (clearance) result for one selected structural column, isolated with its near neighbours](docs/images/find-clashes-soft.png) |
-| Right-click a selected element | Locate Room isolates the containing room | Find Clashes on one selected element | Find Soft Clashes on one selected element |
+| Context menu | Find Room |
+| --- | --- |
+| ![Viewer context menu with Locate Room, Find Clashes and Find Soft Clashes entries on a selected bathtub](docs/images/context-menu.png) | ![Master Bath 207 isolated in the model after Locate Room on a bathtub](docs/images/find-room.png) |
+| Right-click a selected element | Locate Room isolates the containing room |
+
+| Find Clashes (hard) | Find Soft Clashes |
+| --- | --- |
+| ![A hard-clash result for one selected structural element, isolated across the loaded models](docs/images/find-clashes-hard.png) | ![A soft-clash (clearance) result for one selected structural column, isolated with its near neighbours](docs/images/find-clashes-soft.png) |
+| Find Clashes on one selected element | Find Soft Clashes on one selected element |
 
 ## Features
 
