@@ -2,7 +2,14 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — CTM-8 COMPLETE CHECKPOINT COMMITTED/PUSHED; AWAITING OWNER DIRECTION (2026-10-12)
+## LATEST — POST-CHECKPOINT HV-2 CLEANUP CHECKPOINT COMMITTED/PUSHED; AWAITING OWNER DIRECTION (2026-10-12)
+
+- **Repo/pre-commit state:** `main` == `origin/main` == `9dbf47ad80d32de246cca1f19f116910f3040d4d` (`0/0`) before the commit. Owner authorized one docs-only cleanup checkpoint commit and normal push; the CTM-8 checkpoint `9dbf47a` remains complete, pushed and unamended. Final SHA: see `git log -1` (a commit cannot embed its own SHA).
+- **Reviewed with 0 findings:** [cleanup final report](../research/2026-10-12-ctm-8-hv2-documentation-evidence-tooling-cleanup-final-report.md) · [cleanup Independent Work Review](../reviews/2026-10-12-ctm-8-hv2-docs-evidence-tooling-cleanup-independent-work-review.md) · [L1-closure targeted review](../reviews/2026-10-12-ctm-8-hv2-cleanup-l1-closure-targeted-independent-work-review.md) — PASS, 0C/0H/0M/0L, no blockers.
+- **Preserved:** future-HV-2 discriminating pre-state, checksum count 38, `containmentPreFocus`/`containmentPostFocus`, L1 heading fix. No production/test/tooling/protocol/evidence/prior-review change.
+- **Exact next gate:** owner direction. No automatic CTM-8 reopening, refinement, rerun or new milestone.
+
+## (prior) CTM-8 COMPLETE CHECKPOINT COMMITTED/PUSHED; AWAITING OWNER DIRECTION (2026-10-12)
 
 - **Repo/pre-commit state:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`) before the commit. The owner-authorized single checkpoint commit `test(clash-panel): complete CTM-8 rebuild-cost calibration` and normal push of the complete reviewed CTM-8 package were made from this state; the resulting SHA is `main`/`origin/main` HEAD after push (`git log -1`). No force-push, no amend. CTM-7 closed; Addendum B checkpoint preserved; no production or existing-test path changed.
 - **Package:** protocol `CTM8-P0-v4` · [execution final report](../research/2026-10-12-ctm-8-rebuild-cost-calibration-final-report.md) · [execution Independent Work Review](../reviews/2026-10-12-ctm-8-execution-support-package-independent-work-review.md) · [HV-2 adjudication report](../research/2026-10-12-ctm-8-hv2-focus-adjudication-final-report.md) · [HV-2 Independent Work Review](../reviews/2026-10-12-ctm-8-hv2-focus-adjudication-independent-work-review.md). Verdict: **CONDITIONAL PASS — READY FOR OWNER CHECKPOINT DECISION WITH NON-BLOCKING RESIDUALS**; blockers: **none**.
