@@ -2,6 +2,40 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
+## LATEST — README FOLLOW-UP CHECKPOINT AUTHORIZED AND COMMITTED/PUSHED; AWAITING OWNER DIRECTION (2026-10-12)
+
+- **Repo/state:** before the checkpoint, `main` == `origin/main` == `ef790ad14be29bbd1bc379337efa0f749dd5d4cc` (`0/0`). The owner authorized one bounded follow-up checkpoint commit and normal push (`docs(readme): finalize clash detection README refresh`) containing the reviewed README wording cleanup and the README package docs/reviews/prompts/handoff. Final SHA: see `git log -1` (a commit cannot embed its own SHA). `8f7bed5` and `ef790ad` remain unchanged; no amend/reset/rebase/force-push.
+- **Artifacts:** [targeted Independent Work Review](../reviews/2026-10-12-readme-ratification-final-report-backfill-targeted-independent-work-review.md) (CONDITIONAL PASS, 0C/0H/0M/2L) · [README review](../reviews/2026-10-12-readme-thumbnail-refresh-independent-work-review.md) · [owner ratification](../reviews/2026-10-12-readme-thumbnail-refresh-owner-ratification.md) · [final report](../research/2026-10-12-readme-thumbnail-refresh-final-report.md).
+- **Deferred / non-blocking:** L1 hard-clash thumbnail visually weak; L2 screenshots retain `Simple Viewer` app chrome. Not remediated.
+- **Exact next gate:** owner direction. No automatic image/Low remediation or new package.
+
+## (superseded) README RATIFICATION/BACKFILL VERIFIED; READY FOR OWNER FOLLOW-UP CHECKPOINT DECISION (2026-10-12)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ef790ad14be29bbd1bc379337efa0f749dd5d4cc` (`0/0`). Ratified commits `8f7bed5` and `ef790ad` remain unchanged; no later commit or history rewrite. Current README wording cleanup and package docs remain uncommitted/unpushed.
+- **Independent authority:** [targeted ratification/backfill Independent Work Review](../reviews/2026-10-12-readme-ratification-final-report-backfill-targeted-independent-work-review.md) — **CONDITIONAL PASS — READY FOR OWNER README FOLLOW-UP CHECKPOINT DECISION WITH NON-BLOCKING RESIDUALS; 0 Critical / 0 High / 0 Medium / 2 Low; no blockers**.
+- **Closure:** H1 closed by explicit [owner ratification](../reviews/2026-10-12-readme-thumbnail-refresh-owner-ratification.md); H2 closed by the verified [upstream final-report backfill](../research/2026-10-12-readme-thumbnail-refresh-final-report.md). The [prior README review](../reviews/2026-10-12-readme-thumbnail-refresh-independent-work-review.md) remains preserved.
+- **Deferred / non-blocking:** L1 hard-clash thumbnail remains visually weak; L2 screenshots retain `Simple Viewer` app chrome. No visual remediation performed.
+- **Exact next gate:** owner decision whether to authorize one bounded follow-up checkpoint commit and normal push for the current README cleanup and durable README package docs.
+- **Must not begin without authorization:** commit/push, image/Low remediation, amend/reset/revert/history rewrite, CTM-7/CTM-8 reopening, or another package/milestone.
+
+## (superseded) README COMMITS RATIFIED; FINAL REPORT BACKFILLED; AWAITING TARGETED WORK VERIFICATION (2026-10-12)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ef790ad14be29bbd1bc379337efa0f749dd5d4cc` (`0/0`). README refresh commits `8f7bed5` and `ef790ad` are already pushed; the owner **ratified both**. No history rewrite/amend/revert/force-push is planned or authorized.
+- **Artifacts:** [Independent Work Review](../reviews/2026-10-12-readme-thumbnail-refresh-independent-work-review.md) · [owner ratification](../reviews/2026-10-12-readme-thumbnail-refresh-owner-ratification.md) · [upstream final report (backfill)](../research/2026-10-12-readme-thumbnail-refresh-final-report.md).
+- **Uncommitted:** the `README.md` wording cleanup (group Markers wording, `Context Menu Utilities` rename, hard/soft terminology) plus these docs. Not committed or pushed.
+- **Deferred / non-blocking:** L1 hard-clash thumbnail visually weak; L2 screenshots show `Simple Viewer` app chrome. No remediation performed.
+- **Exact next gate:** targeted Independent Work verification of the ratification + final-report backfill. Follow-up commit/push remains unauthorized until that verification and an owner decision.
+- **Must not begin without authorization:** commit/push, image replacement/Low remediation, CTM-7/CTM-8 reopening, another package/milestone.
+
+## (superseded) README / THUMBNAIL REFRESH REVIEWED; OWNER DECISION REQUIRED (2026-10-12)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ef790ad14be29bbd1bc379337efa0f749dd5d4cc` (`0/0`). README commits `8f7bed5` and `ef790ad` are already pushed. Before this review update, `README.md` had one further uncommitted wording cleanup and two task prompts were untracked.
+- **Independent authority:** [README / Thumbnail Refresh Independent Work Review](../reviews/2026-10-12-readme-thumbnail-refresh-independent-work-review.md) — **OWNER DECISION REQUIRED; 0 Critical / 2 High / 0 Medium / 2 Low**.
+- **Content result:** README claims and links are implementation-supported; package scope is README plus six images only. All six source PNGs were inspected: **5 PASS / 0 FAIL / 1 INCONCLUSIVE** (hard-clash overlap is visually subtle). The retained `Simple Viewer` app-bar label is a non-blocking polish residual.
+- **Blockers:** the two commits reached `origin/main` despite the package's no-commit/no-push gate; the required upstream `docs/research/*-final-report.md` is missing. Work did not backfill that upstream-owned artifact or alter README/assets/production/tests.
+- **Exact next gate:** owner decides whether to ratify the already-pushed commits (recommended) or authorize non-destructive corrective commits. If ratified, the responsible package backfills `docs/research/2026-10-12-readme-thumbnail-refresh-final-report.md`, followed by targeted Work verification before any further README checkpoint.
+- **Must not begin without authorization:** final-report backfill, README/image remediation, commit/push/amend/revert, CTM-7/CTM-8 reopening, or another package/milestone.
+
 ## LATEST — POST-CHECKPOINT HV-2 CLEANUP CHECKPOINT COMMITTED/PUSHED; AWAITING OWNER DIRECTION (2026-10-12)
 
 - **Repo/pre-commit state:** `main` == `origin/main` == `9dbf47ad80d32de246cca1f19f116910f3040d4d` (`0/0`) before the commit. Owner authorized one docs-only cleanup checkpoint commit and normal push; the CTM-8 checkpoint `9dbf47a` remains complete, pushed and unamended. Final SHA: see `git log -1` (a commit cannot embed its own SHA).

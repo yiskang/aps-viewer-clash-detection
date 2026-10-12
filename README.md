@@ -20,12 +20,12 @@ The sample started from the [Simple Viewer](https://tutorials.autodesk.io/tutori
 | Context menu | Find Room |
 | --- | --- |
 | ![Viewer context menu with Locate Room, Find Clashes and Find Soft Clashes entries on a selected bathtub](docs/images/context-menu.png) | ![Master Bath 207 isolated in the model after Locate Room on a bathtub](docs/images/find-room.png) |
-| Right-click a selected element | Locate Room isolates the containing room |
+| Right-click a selected element | Locate Room — isolates the containing room |
 
 | Find Clashes (hard) | Find Soft Clashes |
 | --- | --- |
 | ![A hard-clash result for one selected structural element, isolated across the loaded models](docs/images/find-clashes-hard.png) | ![A soft-clash (clearance) result for one selected structural column, isolated with its near neighbours](docs/images/find-clashes-soft.png) |
-| Find Clashes on one selected element | Find Soft Clashes on one selected element |
+| Find Clashes — hard/overlap clashes for the selected element | Find Soft Clashes — soft/clearance clashes for the selected element |
 
 ## Features
 
@@ -49,17 +49,19 @@ Each run produces a result set you can explore in the same panel:
 - Individual clashes with **Previous / Next** navigation and paging.
 - Filter by text or model, **Unverified only**, **Has location**, and sort order.
 - **Group by** Element, Model Pair, Category or Level; select a group to present all its participants at once.
-- **Focus**, **Isolate**, **Markers** and **Back to all** for the selected clash or group.
+- **Focus**, **Isolate** and **Back to all** for a selected clash or group. **Markers** are available for individual clashes.
 - Works across several loaded models (federated results).
 
-### Find Room
+### Context Menu Utilities
 
-Select an element, right-click it and choose **Locate Room**. The sample finds the room(s) that contain the
-element (by default the model's "Revit Rooms" category), then isolates them and fits the view. If the
-result may be incomplete, an alert says so. Requires a model that contains Revit room elements.
+Select an element and right-click it to use these actions:
 
-The same context menu also offers **Find Clashes** (hard) and **Find Soft Clashes** for a single selected
-element.
+- **Locate Room** — finds the room(s) that contain the element (by default the model's "Revit Rooms"
+  category), isolates them and fits the view. Requires a model that contains Revit room elements.
+- **Find Clashes** — hard/overlap clashes for the selected element.
+- **Find Soft Clashes** — soft/clearance clashes for the selected element.
+
+Each action isolates its result in the Viewer. If a result may be incomplete, an alert says so.
 
 ## Libraries
 
