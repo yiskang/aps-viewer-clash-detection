@@ -1,0 +1,17 @@
+{
+  "package": "CTM-8 HV-2 (Focus) headed evidence-only adjudication",
+  "date": "2026-10-12",
+  "sessionWindowUTC": { "pageOpened": "2026-10-12T04:41:04Z", "lastCapture": "2026-10-12T04:48Z" },
+  "repository": { "branch": "main", "head": "ac5bcb42b00e668442ce3add9764cba96d883309", "originMain": "ac5bcb42b00e668442ce3add9764cba96d883309", "tree": "dirty, as at package start: docs/handoffs/latest.md modified; untracked CTM-8 docs/prompts/research/reviews/evidence and test/calibration/ (prior package). This package adds only this evidence directory and test/calibration/ctm8/headed/hv2-adjudication.js", "packageLockSha256": "7e0052f46b2e8a6a22959370945f5c6c316528ec33ceb067d27e615327a3d596" },
+  "node": "v22.23.1",
+  "server": { "url": "http://localhost:8080", "port": 8080, "pid": 83961, "startedBy": "already running before this package (not started or stopped here)" },
+  "browser": { "driver": "Playwright MCP (headed Chromium)", "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36", "viewport": [1600, 1000], "viewerContainer": [1600, 952], "devicePixelRatio": 1, "crossOriginIsolated": false, "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)" },
+  "viewer": { "version": "7.124.2", "camera": "orthographic in this session (navigation.getIsPerspective() = false); verticalFov 53.130102" },
+  "models": [
+    { "viewerModelId": 1, "name": "Audubon_Architecture_clash_test.rvt", "urnBase64": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0", "svf2OTG": true, "loadedVia": "URL hash (#<URN>)" },
+    { "viewerModelId": 2, "name": "Audubon_Structure_clash_test.rvt", "urnBase64": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0", "svf2OTG": true, "loadedVia": "host Load UI (#urn + #keep-current-models + #load)" },
+    { "viewerModelId": 3, "name": "Audubon_Mechanical_clash_test.rvt", "urnBase64": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA", "svf2OTG": true, "loadedVia": "host Load UI (#urn + #keep-current-models + #load)" }
+  ],
+  "panel": "Clash Panel opened via #clash-panel-toolbar-button; one test re-configured through the real setup UI and run with the real Run button per point",
+  "tooling": { "file": "test/calibration/ctm8/headed/hv2-adjudication.js", "version": "ctm8-hv2-adjudication/2 (v1 used only for P1 attempt 1)", "sha256": "5e2685993bdcec04f4c2f2e461cdd9622d98b3c848bcd64b93b1025471a656a5", "injection": "page.addScriptTag({path}) after the panel opened", "driver": "driver-playwright.txt (exact Playwright procedure; __PARAMS__ per point are recorded in each scenarios/<point>.json cfg)" }
+}

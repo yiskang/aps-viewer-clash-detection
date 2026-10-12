@@ -2,7 +2,114 @@
 
 - **Repository:** `/Users/kangea/Workspace/Codes/aps-viewer-clash-detection`
 
-## LATEST — ADDENDUM B CHECKPOINT COMMITTED AND PUSHED; AWAITING OWNER DIRECTION (2026-10-11)
+## LATEST — CTM-8 COMPLETE CHECKPOINT COMMITTED/PUSHED; AWAITING OWNER DIRECTION (2026-10-12)
+
+- **Repo/pre-commit state:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`) before the commit. The owner-authorized single checkpoint commit `test(clash-panel): complete CTM-8 rebuild-cost calibration` and normal push of the complete reviewed CTM-8 package were made from this state; the resulting SHA is `main`/`origin/main` HEAD after push (`git log -1`). No force-push, no amend. CTM-7 closed; Addendum B checkpoint preserved; no production or existing-test path changed.
+- **Package:** protocol `CTM8-P0-v4` · [execution final report](../research/2026-10-12-ctm-8-rebuild-cost-calibration-final-report.md) · [execution Independent Work Review](../reviews/2026-10-12-ctm-8-execution-support-package-independent-work-review.md) · [HV-2 adjudication report](../research/2026-10-12-ctm-8-hv2-focus-adjudication-final-report.md) · [HV-2 Independent Work Review](../reviews/2026-10-12-ctm-8-hv2-focus-adjudication-independent-work-review.md). Verdict: **CONDITIONAL PASS — READY FOR OWNER CHECKPOINT DECISION WITH NON-BLOCKING RESIDUALS**; blockers: **none**.
+- **Preserved:** 252/252 cells, 7,020 measured + 1,080 warm-ups = 8,100 operations all OK; calibration tests 118 pass; offline suite 5,813 / 5,812 pass / 0 fail / 1 todo; HM-REC 6/6 UNAVAILABLE and Family M launch shift accepted non-blocking; HV-2 = CHECK/EVIDENCE DEFECT (historical 9/9 preserved; targeted 7 PASS / 0 FAIL / 0 INCONCLUSIVE; manifest 38/38 verified).
+- **Accepted non-blocking residuals:** HV-2 L1 (report says 37 files; manifest has 38) · HV-2 L2 (P3-C containment sampled after Focus) · execution-review Mediums/Lows and anomalies (`anomalies.md`) · known trailing-space line breaks in read-only review files (`git diff --check` warns only there). No report rewritten.
+- **Exact next gate:** owner direction. No automatic refinement, optimization, limit-setting, remediation or new milestone.
+
+## (prior) CTM-8 HV-2 REVIEWED; READY FOR OWNER CHECKPOINT DECISION (2026-10-12)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`); CTM-8 package remains uncommitted/unpushed. No production or existing-test tracked change; `git diff --check` clean. Commit/push remains **unauthorized**.
+- **Independent authority:** [HV-2 Focus adjudication Independent Work Review](../reviews/2026-10-12-ctm-8-hv2-focus-adjudication-independent-work-review.md) — **CONDITIONAL PASS — READY FOR OWNER CHECKPOINT DECISION WITH NON-BLOCKING RESIDUALS; 0 Critical / 0 High / 0 Medium / 2 Low; no blocker**.
+- **HV-2 disposition:** **CHECK/EVIDENCE DEFECT**, not a product defect. [Upstream report](../research/2026-10-12-ctm-8-hv2-focus-adjudication-final-report.md) and [evidence](../research/evidence/2026-10-12-ctm-8-hv2-focus-adjudication/) independently support **7 PASS / 0 FAIL / 0 INCONCLUSIVE** at three real points; historical 9/9 literal results remain unchanged. The evidence manifest has **38/38** verified entries (the upstream report's 37 is a non-blocking metadata error).
+- **Residuals:** P3-C's raw selection-containment field was sampled after Focus and is excluded; independent camera/event/screenshot evidence still proves the state. Future tooling should capture it before Focus. No rerun or Focus product-remediation package is required.
+- **Closed owner dispositions:** HM-REC 6/6 UNAVAILABLE remains accepted non-blocking; Family M launch-0 vs 1/2 shift remains an accepted non-blocking anomaly with no assigned cause.
+- **Exact next gate:** **owner decision whether to commit/push the complete CTM-8 checkpoint.** Do not commit/push, rerun/refine CTM-8, edit governing/upstream artifacts, derive limits/budgets/scalability claims, remediate deferred work, or begin another package/milestone without explicit authorization.
+
+## (prior) CTM-8 EXECUTION/SUPPORT-CODE REVIEWED; OWNER DECISION REQUIRED (2026-10-12)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`). Uncommitted/unpushed: CTM-8 docs, evidence and new non-production `test/calibration/ctm8/` support code. No production/existing-test/shared-support path changed. CTM-7 remains closed; Addendum B checkpoint remains intact. Commit/push unauthorized.
+- **Governing / upstream:** accepted [`CTM8-P0-v4`](../research/2026-10-11-ctm-8-rebuild-cost-calibration-protocol.md), SHA-256 `a6f7a61f…2634c3`; read-only [execution final report](../research/2026-10-12-ctm-8-rebuild-cost-calibration-final-report.md); [evidence root](../research/evidence/2026-10-12-ctm-8-rebuild-cost-calibration/).
+- **Independent authority:** [CTM-8 execution/support-code Independent Work Review](../reviews/2026-10-12-ctm-8-execution-support-package-independent-work-review.md) — **OWNER DECISION REQUIRED; 0 Critical / 0 High / 3 Medium / 2 Low**. Support code, 252/252-cell campaign, 8,100 all-OK operations, checksum-bound evidence, Family R headed corroboration and tests are technically accepted; offline **5,813 / 5,812 pass / 0 fail / 1 todo**, calibration **118/118**.
+- **Owner decisions:** (1) accept HM-REC headed evidence as unavailable while retaining complete headless M-REC (recommended), or authorize a bounded refinement; (2) accept HV-2 as **0 PASS / 0 product FAIL / 9 INCONCLUSIVE** caused by an already-fitted pre-state (recommended), or authorize one targeted correctness-only check; (3) accept the launch shift as descriptive/non-budget evidence (recommended), or authorize controlled refinement before limits/thresholds.
+- **Deferred / protected:** no limit, budget, supported maximum or scalability guarantee; SKEWED, `-PULL`, optimization, CTM-7/Addendum B deferred work and all production/Core/Adapter/collision/host/public-API boundaries remain untouched.
+- **Exact next gate:** owner dispositions above, then a separate owner checkpoint commit/push decision. Do not remediate, rerun, refine, optimize, edit governing/upstream artifacts, commit or push without explicit authorization.
+
+## (superseded) PRIOR LATEST — CTM-8 P0-v4 TARGETED REVIEW PASSED; AWAITING OWNER EXECUTION DECISION (2026-10-12)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`); tree remains docs-only, uncommitted and unpushed. CTM-7 closed; Addendum B checkpointed. No CTM-8 harness/support code or execution evidence exists.
+- **Protocol:** [`CTM8-P0-v4`](../research/2026-10-11-ctm-8-rebuild-cost-calibration-protocol.md), SHA-256 `a6f7a61f1cae8b2aac7868277b67c26422537f88af3c27d908cbd054fc2634c3`; upstream read-only [v4 correction final report](../research/2026-10-12-ctm-8-p0-v4-correction-final-report.md).
+- **Independent authority:** [P0-v4 targeted Independent Work Review](../reviews/2026-10-12-ctm-8-p0-v4-targeted-independent-work-review.md) — **PASS — READY FOR OWNER CTM-8 EXECUTION DECISION; 0 Critical / 0 High / 0 Medium / 5 Low; no blocker**. H1/H2/M1/M2 closed; arithmetic remains 84 cells/launch, 252 executions, 7,020 measured, 1,080 warm-ups, 8,100 operations.
+- **Setup-feasibility disposition:** 120 s setup and 30 s sample bounds are distinct. A 5,000/10,000 initial build timeout makes that cell `NOT EXECUTED — setup timeout`/unavailable evidence, not failed product performance; the rest of the campaign continues. No preflight or prior owner decision is required.
+- **Deferred:** the five historical Low findings remain non-blocking; all protected Addendum B/CTM-7/O-1…O-4/navScope/GP-F1/Core/Adapter/host/persistence boundaries remain untouched.
+- **Exact next gate:** **owner decision whether to authorize the bounded CTM-8 execution/support-code package in protocol §17.** No execution/support code is currently authorized.
+- **Must not begin without authorization:** harness/generator/instrumentation/support code, calibration/headed execution, evidence creation, production/test/spec/plan edits, commit/push, limits/budgets/scalability claims, deferred remediation or another CTM-8 package.
+
+## (superseded) PRIOR LATEST — CTM-8 P0 CORRECTED TO `CTM8-P0-v4` (DOCS-ONLY); AWAITING TARGETED INDEPENDENT WORK RE-REVIEW (2026-10-12)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`); tree docs-only, uncommitted, unpushed. CTM-7 closed; Addendum B checkpointed. No calibration, harness, generator, instrumentation, seam or evidence exists; no production/test/spec/plan change. No commit/push authorized.
+- **Protocol:** [`CTM8-P0-v4`](../research/2026-10-11-ctm-8-rebuild-cost-calibration-protocol.md) (updated in place). **v4 correction final report:** [2026-10-12-ctm-8-p0-v4-correction-final-report.md](../research/2026-10-12-ctm-8-p0-v4-correction-final-report.md). History: [v2 correction report](../research/2026-10-11-ctm-8-p0-v2-correction-final-report.md) (v3), earlier P0/remediation reports.
+- **Latest failed targeted review:** [P0-v3 targeted Independent Work Review](../reviews/2026-10-12-ctm-8-p0-v3-targeted-independent-work-review.md) — FAIL, 0C/2H/2M/5L.
+- **Correction status (pending re-review confirmation):** H-01 Family R `n_models=3` — single `NAME(modelKey,dbId)` rule, `mC` object-tree replacement specified as minimum non-production support requirement, per-cell name/count proof; H-02 — Family M subscriber attached only after build/predicates/settle (Steps 3b/3c); M-01 — M-BASE fully synchronous window + drain rule; M-02 — model-axis prose made neutral/empirical.
+- **Unchanged:** 84 cells/launch, 252 executions, 7,020 measured, 1,080 warm-ups, 8,100 ops; UNIFORM-only; closed owner decisions (§18.1).
+- **Deferred Lows:** see correction report (traceability of 1M+2L texts, `setup()`/`until` executability notes, HM-REC wording, AC-P11 citation).
+- **Only remaining owner decision:** whether to authorize the CTM-8 execution/support-code package — decidable only after a clean re-review. If Family M build at N=5,000/10,000 still exceeds the 120 s setup timeout in execution, that is an owner decision.
+- **Exact next gate:** **targeted Independent Work re-review of `CTM8-P0-v4`.** Execution and execution-support code remain **unauthorized**.
+- **Must not begin:** harness/generator/instrumentation/seam work, calibration or headed execution, evidence creation, spec/plan/production/test edits, commit/push, limits/budgets/scalability claims, deferred remediation (CTM-7 L1–L8, Addendum B L1/L2, O-1…O-4, navScope, GP-F1), persistence/history, Core/Adapter/collision/host, G2/C6/C8/G3/R20-1, another CTM-8 package.
+
+## (superseded) PRIOR LATEST — CTM-8 P0-v3 TARGETED RE-REVIEW FAILED (2026-10-12)
+
+- Review: [P0-v3 targeted Independent Work Review](../reviews/2026-10-12-ctm-8-p0-v3-targeted-independent-work-review.md) — FAIL — P0 REMEDIATION REQUIRED (0C/2H/2M/5L): H-01 Family R `n_models=3` naming not executable; H-02 Family M subscriber-before-build; M-01 M-BASE window; M-02 model-axis cost prose. Resolved in `CTM8-P0-v4` (above), pending re-review.
+
+## (superseded) PRIOR LATEST — CTM-8 P0 v2 CORRECTED TO `CTM8-P0-v3` (DOCS-ONLY); AWAITING TARGETED INDEPENDENT WORK RE-REVIEW (2026-10-11)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`); tree docs-only, uncommitted, unpushed. CTM-7 closed; Addendum B checkpointed. No calibration, harness, generator, instrumentation, seam or evidence exists; no production/test change.
+- **Protocol:** [`CTM8-P0-v3`](../research/2026-10-11-ctm-8-rebuild-cost-calibration-protocol.md) (post-targeted-review correction). History: [original P0 report](../research/2026-10-11-ctm-8-p0-calibration-protocol-final-report.md); [v2 remediation report](../research/2026-10-11-ctm-8-p0-calibration-protocol-remediation-final-report.md) (figures superseded); **[v2 correction final report](../research/2026-10-11-ctm-8-p0-v2-correction-final-report.md)**.
+- **Latest failed review:** [P0-v2 targeted Independent Work Review](../reviews/2026-10-11-ctm-8-p0-v2-targeted-independent-work-review.md) — FAIL, 0C/2H/1M. **H-01** (UNIFORM-only mandatory Family R) corrected; **H-02** (exact Family M fixture sequence for `n_models` 1/2/3, corrected helper path) corrected; **M-01** (resolved decisions removed from open items) corrected. Pending re-review confirmation.
+- **Mandatory campaign (final):** 84 cells/launch (M 36 + R 48; 72 warm, 12 cold) × 3 launches = 252 executions; 7,020 measured samples; 1,080 warm-ups; 8,100 total operations. SKEWED and `-PULL` optional/outside the mandatory campaign.
+- **Closed owner decisions (protocol §18.1):** UNIFORM-only; 30 s safety timeout; cell-local 3-consecutive-failure abort (global failure recorded distinctly); headed Family M `5/25/100 × 1/3`; unreachable-point dispositions; public-sentinel-only observability; no seam/hook.
+- **Only remaining owner decision:** whether to authorize the CTM-8 execution/support-code package, after a clean targeted re-review.
+- **Exact next gate:** **targeted Independent Work re-review of the corrected P0 protocol (`CTM8-P0-v3`).** Execution and execution-support code remain **unauthorized**.
+- **Must not begin:** harness/generator/instrumentation/observation code, calibration or headed execution, evidence creation, spec/plan/production/test edits, commit/push, limits/budgets/scalability claims, deferred remediation (CTM-7 L1–L8, Addendum B L1/L2, O-1…O-4, navScope, GP-F1), persistence/history, Core/Adapter/collision/host, G2/C6/C8/G3/R20-1, another CTM-8 package.
+
+## (superseded) PRIOR LATEST — CTM-8 P0-v2 TARGETED REVIEW FAILED; BOUNDED DOCS CORRECTION REQUIRED (2026-10-11)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`); tree docs-only, uncommitted, unpushed. CTM-7 remains closed and Addendum B checkpointed; no calibration/support code or execution exists.
+- **Governing/package:** [CTM8-P0-v2 protocol](../research/2026-10-11-ctm-8-rebuild-cost-calibration-protocol.md), read-only [original P0 report](../research/2026-10-11-ctm-8-p0-calibration-protocol-final-report.md), and [remediation report](../research/2026-10-11-ctm-8-p0-calibration-protocol-remediation-final-report.md).
+- **Latest authority:** [P0-v2 targeted Independent Work Review](../reviews/2026-10-11-ctm-8-p0-v2-targeted-independent-work-review.md) — **FAIL — P0 REMEDIATION REQUIRED; 0 Critical / 2 High / 1 Medium / 0 Low**.
+- **Verified closure:** prior technical H1–H5 and L1 are closed; public-sentinel cold/warm classification, headed boundaries, Family M transitions, selected-group comparator, 10,000 interpretation, and execution-support separation are sound.
+- **Blockers:** mandatory Family R still includes unauthorized SKEWED and carries obsolete 132-cell arithmetic; Family M fixture creation cites the wrong helper path and does not define exact 1/2/3-model intent sequences. Timeout/failure/headed choices are final but still labelled owner-open.
+- **Correct mandatory arithmetic:** UNIFORM-only Family R gives 84 cells/launch, 252 cell executions, 7,020 measured samples, 1,080 warm-ups, and 8,100 total operations across three launches.
+- **Exact next gate:** responsible package performs the bounded docs-only H-01/H-02/M-01 correction, then targeted Independent Work re-review. **CTM-8 execution and execution-support code remain unauthorized.**
+- **Must not begin:** harness/generator/instrumentation/seam work, calibration/headed execution, evidence creation, production/test/spec/plan changes, commit/push, limits/budgets/scalability claims, deferred remediation, or another CTM-8 package.
+
+## (superseded) PRIOR LATEST — CTM-8 P0 REMEDIATED (DOCS-ONLY); AWAITING TARGETED INDEPENDENT WORK RE-REVIEW (2026-10-11)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0`); tree docs-only, uncommitted, unpushed. CTM-7 closed; Addendum B checkpointed. No calibration, harness, generator, observation seam or evidence exists; no production/test change.
+- **Status:** bounded docs-only P0 remediation complete. Protocol updated in place to **`CTM8-P0-v2`**: [protocol](../research/2026-10-11-ctm-8-rebuild-cost-calibration-protocol.md). Original P0 report preserved: [P0 final report](../research/2026-10-11-ctm-8-p0-calibration-protocol-final-report.md). Remediation report: [remediation final report](../research/2026-10-11-ctm-8-p0-calibration-protocol-remediation-final-report.md).
+- **Governing failed review:** [P0 Independent Work Review](../reviews/2026-10-11-ctm-8-p0-calibration-protocol-independent-work-review.md) — FAIL, 0C/5H/3M/1L; H1–H5, M1–M3, L1 each dispositioned in the remediation report.
+- **Owner decisions applied:** both Family M (`M.N_tests`) and Family R (`R.N_results`), full 4×3 headless matrix; `-PULL` excluded; 3 launches × 30 warm / 15 cold; public-sentinel-only observability (index-commit sub-phase UNAVAILABLE, R-COLD total kept); practical headed corroboration only.
+- **Mandatory campaign:** 132 cells/launch (M 36 + R 96; 108 warm, 24 cold) × 3 launches = 396 executions; 10,800 measured samples + 1,620 warm-ups = 12,420 operations.
+- **Open for owner (non-blocking):** keep both UNIFORM/SKEWED profiles; 30 s timeout/abort rule; headed Family M points; execution-support authorization (harness, generator, runtime headed instrumentation, execution, evidence writes — separate; no seam/hook).
+- **Exact next gate:** **targeted Independent Work re-review of the remediated P0 protocol.** **CTM-8 execution and execution-support code remain unauthorized.**
+- **Must not begin:** harness/generator/observation code, calibration or headed execution, evidence creation, spec/plan/production/test edits, commit/push, limits/budgets/scalability claims, deferred remediation (CTM-7 L1–L8, Addendum B L1/L2, O-1…O-4, navScope, GP-F1), persistence/history, Core/Adapter/collision/host, G2/C6/C8/G3/R20-1, another CTM-8 package.
+
+## (superseded) PRIOR LATEST — CTM-8 P0 REVIEW FAILED; OWNER SCOPE DECISION + PROTOCOL REMEDIATION REQUIRED (2026-10-11)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (`0/0` ahead/behind); tree remains docs-only, uncommitted and unpushed. CTM-7 is closed; Addendum B is checkpointed. No calibration, harness, generator, observation seam or execution evidence exists.
+- **Governing/package:** [CTM8-P0-v1 protocol](../research/2026-10-11-ctm-8-rebuild-cost-calibration-protocol.md), read-only upstream [P0 final report](../research/2026-10-11-ctm-8-p0-calibration-protocol-final-report.md), [CTM-8 entry review](../reviews/2026-10-11-ctm-8-entry-gate-independent-work-review.md), spec §26.13 and plan G-PERF/CTM-8.
+- **Independent authority:** [P0 calibration-protocol Independent Work Review](../reviews/2026-10-11-ctm-8-p0-calibration-protocol-independent-work-review.md) — **FAIL — P0 REMEDIATION REQUIRED; 0 Critical / 5 High / 3 Medium / 1 Low**.
+- **Blocking protocol defects:** private-state cold/warm precondition; headed actions/stop conditions do not prove Viewer completion; Family-M mutations are not exact executable transitions; R-GROUP-WARM permits a non-comparable membership/presentation change; stale §18 statement treats 10,000 as an engine cap.
+- **Owner decisions:** confirm Family M/Family R campaign scope (recommended: both families with bounded core scenarios), include/exclude `-PULL`, confirm 30/15 repetitions and three launches, and choose the minimum observability boundary. Test-only harness/generator and headed injected instrumentation need later explicit authorization; no production hook is recommended.
+- **Deferred:** Addendum B L1/L2, CTM-7 L1–L8, O-1…O-4, navScope, GP-F1 polish and unrelated UI/Core/Adapter/collision/host work remain untouched.
+- **Exact next gate:** owner scope/observability disposition, then explicit authorization for a bounded **docs-only P0 remediation**, followed by targeted Independent Work re-review. **CTM-8 execution remains unauthorized.**
+- **Must not begin:** harness/generator/observation code, calibration or headed execution, evidence creation, protocol/spec/plan/upstream-report/production/test edits, commit/push, limits/budgets/scalability claims, deferred remediation, persistence/history, Core/Adapter/collision/host, G2/C6/C8/G3/R20-1 or another CTM-8 package.
+
+## (superseded) PRIOR LATEST — CTM-8 ENTRY GATE REVIEWED; OWNER DECISION REQUIRED (2026-10-11)
+
+- **Repo/HEAD/tree:** `main` == `origin/main` == `ac5bcb42b00e668442ce3add9764cba96d883309` (Addendum B checkpoint); tree has only this review/handoff edit plus the untracked [entry prompt](../prompts/ctm-8-entry-gate-independent-work-review-prompt.md). No production/test change.
+- **State:** CTM-7 closed (owner-ratified). **Owner authorized entry into CTM-8** (entry prompt; does not authorize implementation). CTM-8 work has not started; none exists on disk.
+- **Governing:** [spec gate table](../superpowers/specs/2026-09-26-viewer-clash-panel-design.md) (:986, PD-14) and [plan G-PERF/CTM-8 row](../superpowers/plans/2026-10-10-clash-tests-manager-implementation-plan.md) (:4675, :4678). CTM-8 = mandatory later rebuild-cost calibration gate, "not part of this plan's tasks"; no protocol, tasks, AC, fixtures, budget or evidence matrix defined.
+- **Latest review:** [CTM-8 entry Independent Work Review](../reviews/2026-10-11-ctm-8-entry-gate-independent-work-review.md) — **OWNER DECISION REQUIRED**; 0C/0H/0M/2 Low (stale plan wording; authorization only in untracked prompt). No prerequisite blocker.
+- **Deferred (not pulled in):** Addendum B L1/L2, CTM-7 L1–L8, O-1…O-4, single-clash navScope cold-pass loss, GP-F1 polish.
+- **Owner decisions needed:** authorize first package (recommended: docs-only CTM-8 calibration protocol design, "P0"); measurement method; N×M exploration points; scope of selected-group/cold-label paths; report-only vs later budget.
+- **Next authorized action:** none — awaiting owner authorization of CTM-8 P0 (or other direction).
+- **Must not begin:** any CTM-8 measurement/harness/code, limits/budgets/scalability claims, deferred-item remediation, spec/plan edits, commit/push, persistence/history, Core/Adapter/collision/host, G2/C6/C8/G3/R20-1, second package.
+
+## (superseded) PRIOR LATEST — ADDENDUM B CHECKPOINT COMMITTED AND PUSHED; AWAITING OWNER DIRECTION (2026-10-11)
 
 - **Repo/HEAD/tree:** `main`, pre-checkpoint HEAD `9e49f4036137bafd098ceb8631bcd16fff6c4da6` == `origin/main`; owner authorized the checkpoint ([prompt](../prompts/pre-ctm8-addendum-b-checkpoint-commit-push-prompt.md)) and the single checkpoint commit containing the Addendum B package (implementation, tests, docs addenda, headed evidence, reports/reviews, this handoff) was created and pushed to `origin/main` (SHA = `git log -1` on `main` after this entry).
 - **Milestone state:** CTM-7 remains closed at its owner-ratified checkpoint. **CTM-8 has not started and remains unauthorized.**

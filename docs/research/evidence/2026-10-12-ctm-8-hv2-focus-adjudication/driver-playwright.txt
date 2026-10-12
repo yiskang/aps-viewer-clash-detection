@@ -1,0 +1,137 @@
+async (page) => {
+  // ===== parameters (edited per point) =====
+  const P = __PARAMS__;
+  // =========================================
+  const EV = '/Users/kangea/Workspace/Codes/aps-viewer-clash-detection/docs/research/evidence/2026-10-12-ctm-8-hv2-focus-adjudication';
+  const URN = { 1: 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0', 2: 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0', 3: 'dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA' };
+  const sel = (k) => `[data-key=${JSON.stringify(k)}]`;
+  const ev = (fn, arg) => page.evaluate(fn, arg);
+  const actions = [];
+  const act = (a) => actions.push({ at: new Date().toISOString(), a });
+  const shots = [];
+  const shot = async (name) => { const p = `${EV}/screenshots/${name}.png`; await page.screenshot({ path: p }); shots.push(`screenshots/${name}.png`); return `screenshots/${name}.png`; };
+  const settle = () => ev(() => window.__hv2.settle());
+  const state = (l) => ev((l) => window.__hv2.state(l), l);
+  const mark = () => ev(() => window.__hv2.mark());
+  const since = (m) => ev((m) => window.__hv2.since(m), m);
+  const waitTc = (m) => ev((m) => window.__hv2.waitEvent(m, 'CAMERA_TRANSITION_COMPLETED', 5000), m);
+  const contain = () => ev(() => window.__hv2.containment());
+  const cmp = (a, b) => ev(([a, b]) => window.__hv2.compare(a, b), [a, b]);
+  const fin = (c) => ev((c) => window.__hv2.finiteCam(c), c);
+  const rec = { pid: P.pid, scenarioIds: [], cfg: P, startedAt: new Date().toISOString(), actions, steps: {} };
+
+  // ---- setup through the real setup UI ----
+  if (await page.locator(sel('setup-toggle-collapsed')).getAttribute('aria-expanded') === 'false') await page.click(sel('setup-toggle-collapsed'));
+  if (await page.locator(sel('action-back-to-all')).count()) { if (await page.locator(sel('action-back-to-all')).isEnabled()) await page.click(sel('action-back-to-all')); }
+  await page.fill(sel('filter-text'), '');
+  const self = P.B === 'self';
+  await page.locator(sel('setup-self-clash')).setChecked(self);
+  for (const id of [1, 2, 3]) await page.locator(sel(`setup-A-${URN[id]}#${id}`)).setChecked(P.A.includes(id));
+  if (!self) for (const id of [1, 2, 3]) await page.locator(sel(`setup-B-${URN[id]}#${id}`)).setChecked(P.B.includes(id));
+  await page.locator(sel('setup-mode-hard')).check();
+  act(`setup: Set A=${JSON.stringify(P.A)} Set B=${JSON.stringify(P.B)} mode=hard`);
+  await page.waitForFunction(() => !document.querySelector('[data-key="run-start"]').disabled, null, { timeout: 30000 });
+  await page.click(sel('run-start'));
+  act('click run-start (real Run button)');
+  await page.waitForFunction(() => window.__hv2.runBrief().run.state !== 'done', null, { timeout: 10000 }).catch(() => {});
+  await page.waitForFunction(() => { const r = window.__hv2.runBrief(); return r.run.state === 'done' && /Completed/.test(r.run.headline || ''); }, null, { timeout: 240000 });
+  rec.run = await ev(() => window.__hv2.runBrief());
+  act(`run done: ${rec.run.run.headline}`);
+  await page.locator(sel('group-element')).click();
+  await page.waitForFunction(() => window.__hv2.runBrief().results.view === 'grouped', null, { timeout: 30000 });
+  act('click group-element (Group by element)');
+  const rowSel = `button.clash-group-body${sel(`group:${P.gid}|present`)}`;
+  let pages = 0;
+  while (!(await page.locator(rowSel).count())) {
+    if (pages > 80) throw new Error('G† not found');
+    await page.click(sel('page-next')); pages += 1; await page.waitForTimeout(150);
+  }
+  act(`clicked page-next x${pages} to reach G†`);
+
+  // ---- 0: pre-state ----
+  rec.steps.pre = { state: await state('pre'), screenshot: await shot(`${P.pid}-00-pre`) };
+
+  // ---- HV-1 (protocol): group row click, Focus on select default ----
+  let m = await mark();
+  await page.click(rowSel);
+  act('HV-1: click group row body (Focus on select = default)');
+  await waitTc(m); const s1 = await settle();
+  const F = await state('F');
+  rec.steps.hv1 = { settle: s1, state: F, events: await since(m), containment: await contain(), screenshot: await shot(`${P.pid}-01-HV1-fitted-F`) };
+  rec.group = { isolateBeforeHv1: P.isolate ? 'off at HV-1; checked after F' : 'off', groupId: F.selected && F.selected.groupId, label: F.selected && F.selected.label, clashCount: F.selected && F.selected.clashCount, participants: F.selected && F.selected.participants, focusOnSelectChecked: F.selected && F.selected.actions && F.selected.actions.focusOnSelect, participantIds: await ev(() => window.__hv2.participantIds()) };
+
+  // ---- Isolate ON via the real UI toggle (visual-adjudication aid: without it the fitted participants are occluded by
+  //      surrounding building geometry; Isolate re-presents with fit:false, so the camera must stay at F) ----
+  if (P.isolate) {
+    m = await mark();
+    await page.locator(sel('action-isolate')).setChecked(true);
+    act('check action-isolate (real UI toggle; presentGroup fit:false)');
+    const sI = await settle();
+    const FI = await state('F-isolated');
+    rec.steps.isolate = { settle: sI, state: FI, events: await since(m), vsF: await cmp(FI.camera, F.camera), containment: await contain(), screenshot: await shot(`${P.pid}-01b-isolate-on-at-F`) };
+  }
+
+  // ---- A: original HV-2 sequence (no camera change) ----
+  const idA = `HV2-ADJ-${P.sid}-A`; rec.scenarioIds.push(idA);
+  m = await mark();
+  await page.click(sel('action-focus'));
+  act(`${idA}: click action-focus (no camera change)`);
+  const tcA = await waitTc(m); const sA = await settle();
+  const A = await state('A-after');
+  rec.steps.A = { id: idA, before: F.camera, settle: sA, transitionCompleted: tcA, state: A, events: await since(m), vsF: await cmp(A.camera, F.camera), finite: await fin(A.camera), containment: await contain(), screenshot: await shot(`${P.pid}-02-${idA}-after-focus`) };
+
+  // ---- B: moved-away then Focus ----
+  const idB = `HV2-ADJ-${P.sid}-B`; rec.scenarioIds.push(idB);
+  const move = await ev(() => window.__hv2.moveAway({ factor: 4 }));
+  act(`${idB}: EVIDENCE TOOLING ${move.api} position=${JSON.stringify(move.position)} target=${JSON.stringify(move.target)}`);
+  await settle();
+  const M = await state('M');
+  const contM = await contain();
+  const shotM = await shot(`${P.pid}-03-${idB}-moved-away-M`);
+  m = await mark();
+  await page.click(sel('action-focus'));
+  act(`${idB}: click action-focus from M`);
+  const tcB = await waitTc(m); const sB = await settle();
+  const B = await state('B-after');
+  rec.steps.B = { id: idB, move, M: { state: M, containment: contM, screenshot: shotM, vsF: await cmp(M.camera, F.camera) }, settle: sB, transitionCompleted: tcB, state: B, events: await since(m), vsM: await cmp(B.camera, M.camera), vsF: await cmp(B.camera, F.camera), finite: await fin(B.camera), containment: await contain(), screenshot: await shot(`${P.pid}-04-${idB}-after-focus`) };
+
+  // ---- C: Focus on select OFF, so Focus is the first fit ----
+  if (P.doC) {
+    const idC = `HV2-ADJ-${P.sid}-C`; rec.scenarioIds.push(idC);
+    await page.locator(sel('action-focus-on-select')).setChecked(false);
+    act(`${idC}: uncheck action-focus-on-select (real UI toggle)`);
+    await page.click(sel('action-back-to-all'));
+    act(`${idC}: click action-back-to-all`);
+    await settle();
+    const move2 = await ev(() => window.__hv2.moveAway({ factor: 4 }));
+    act(`${idC}: EVIDENCE TOOLING ${move2.api} position=${JSON.stringify(move2.position)} target=${JSON.stringify(move2.target)}`);
+    await settle();
+    const M2 = await state('M2');
+    m = await mark();
+    await page.click(rowSel);
+    act(`${idC}: click group row body (Focus on select = off)`);
+    const s2 = await settle();
+    const S = await state('C-selected-no-fit');
+    const selEvents = await since(m);
+    const shotS = await shot(`${P.pid}-05-${idC}-selected-FoS-off-M2`);
+    m = await mark();
+    await page.click(sel('action-focus'));
+    act(`${idC}: click action-focus from M2 (first fit of this selection)`);
+    const tcC = await waitTc(m); const sC = await settle();
+    const C = await state('C-after');
+    rec.steps.C = { id: idC, move: move2, M2: { state: M2 }, select: { settle: s2, state: S, events: selEvents, vsM2: await cmp(S.camera, M2.camera), containment: await contain(), screenshot: shotS }, settle: sC, transitionCompleted: tcC, state: C, events: await since(m), vsM2: await cmp(C.camera, M2.camera), vsF: await cmp(C.camera, F.camera), finite: await fin(C.camera), containment: await contain(), screenshot: await shot(`${P.pid}-06-${idC}-after-focus`) };
+    await page.locator(sel('action-focus-on-select')).setChecked(true);
+    act(`${idC}: re-check action-focus-on-select (restore default)`);
+  }
+
+  // ---- restore ----
+  await page.click(sel('action-back-to-all'));
+  act('click action-back-to-all (restore)');
+  await settle();
+  rec.steps.restore = { state: await state('after-back-to-all'), screenshot: await shot(`${P.pid}-09-back-to-all`) };
+  rec.screenshots = shots;
+  rec.finishedAt = new Date().toISOString();
+  await page.evaluate((r) => { window.__hv2Rec = window.__hv2Rec || {}; window.__hv2Rec[r.pid] = r; }, rec);
+  const s = (x) => x && { cam: x.state.camera, vsF: x.vsF, vsM: x.vsM, vsM2: x.vsM2, ev: x.events && x.events.countsDelta, tc: x.transitionCompleted && x.transitionCompleted.seen, cont: x.containment && { a: x.containment.available, src: x.containment.source, all: x.containment.allCornersInViewport, n: x.containment.cornersInViewport, c: x.containment.center && x.containment.center.inViewport, r: x.containment.reason } };
+  return { pid: rec.pid, run: rec.run.run.headline, group: rec.group, F: rec.steps.hv1.state.camera, hv1ev: rec.steps.hv1.events.countsDelta, hv1cont: s({state: rec.steps.hv1.state, containment: rec.steps.hv1.containment}).cont, iso: rec.steps.isolate && s(rec.steps.isolate), A: s(rec.steps.A), M: rec.steps.B.M.state.camera, Mcont: s({state: rec.steps.B.M.state, containment: rec.steps.B.M.containment}).cont, B: s(rec.steps.B), C: rec.steps.C ? { sel: s({state: rec.steps.C.select.state, vsM2: rec.steps.C.select.vsM2, events: rec.steps.C.select.events, containment: rec.steps.C.select.containment}), after: s(rec.steps.C) } : null };
+}

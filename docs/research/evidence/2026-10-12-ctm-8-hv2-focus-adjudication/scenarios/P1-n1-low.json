@@ -1,0 +1,1575 @@
+{
+  "pid": "P1-n1-low",
+  "scenarioIds": [
+    "HV2-ADJ-P1-A",
+    "HV2-ADJ-P1-B"
+  ],
+  "cfg": {
+    "pid": "P1-n1-low",
+    "sid": "P1",
+    "A": [
+      3
+    ],
+    "B": "self",
+    "gid": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+    "doC": false,
+    "isolate": true
+  },
+  "startedAt": "2026-10-12T04:45:46.590Z",
+  "actions": [
+    {
+      "at": "2026-10-12T04:45:46.646Z",
+      "a": "setup: Set A=[3] Set B=\"self\" mode=hard"
+    },
+    {
+      "at": "2026-10-12T04:45:46.689Z",
+      "a": "click run-start (real Run button)"
+    },
+    {
+      "at": "2026-10-12T04:46:10.369Z",
+      "a": "run done: Completed — 242 clashes"
+    },
+    {
+      "at": "2026-10-12T04:46:10.777Z",
+      "a": "click group-element (Group by element)"
+    },
+    {
+      "at": "2026-10-12T04:46:11.572Z",
+      "a": "clicked page-next x4 to reach G†"
+    },
+    {
+      "at": "2026-10-12T04:46:11.703Z",
+      "a": "HV-1: click group row body (Focus on select = default)"
+    },
+    {
+      "at": "2026-10-12T04:46:12.895Z",
+      "a": "check action-isolate (real UI toggle; presentGroup fit:false)"
+    },
+    {
+      "at": "2026-10-12T04:46:13.618Z",
+      "a": "HV2-ADJ-P1-A: click action-focus (no camera change)"
+    },
+    {
+      "at": "2026-10-12T04:46:14.836Z",
+      "a": "HV2-ADJ-P1-B: EVIDENCE TOOLING viewer.navigation.setView(position, target) position=[-88.136899,64.771311,25.11935] target=[-94.001627,70.636038,19.254622]"
+    },
+    {
+      "at": "2026-10-12T04:46:15.532Z",
+      "a": "HV2-ADJ-P1-B: click action-focus from M"
+    },
+    {
+      "at": "2026-10-12T04:46:16.779Z",
+      "a": "click action-back-to-all (restore)"
+    }
+  ],
+  "steps": {
+    "pre": {
+      "state": {
+        "label": "pre",
+        "t": 306847.3,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": null,
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "screenshot": "screenshots/P1-n1-low-00-pre.png"
+    },
+    "hv1": {
+      "settle": {
+        "settled": true
+      },
+      "state": {
+        "label": "F",
+        "t": 308011.4,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": {
+          "kind": "group",
+          "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+          "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+          "clashCount": 4,
+          "participants": 5,
+          "unavailableNote": null,
+          "notes": [],
+          "actions": {
+            "focus": {
+              "enabled": true,
+              "reason": null
+            },
+            "focusOnSelect": {
+              "checked": true
+            },
+            "isolate": {
+              "enabled": true,
+              "checked": false,
+              "reason": null
+            }
+          }
+        },
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 306971.8,
+            "seq": 0,
+            "selectionModels": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 307496.9,
+            "seq": 1,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 32
+        }
+      },
+      "containment": {
+        "available": true,
+        "source": "last AGGREGATE_FIT_TO_VIEW_EVENT.selection",
+        "boxApi": "InstanceTree.getNodeBox (public) + Viewer3D.worldToClient (public)",
+        "caveat": "node boxes are fragment-derived world boxes as exposed by the public InstanceTree; a proxy, not a pixel coverage measure",
+        "participantsBoxed": 5,
+        "participantsMissingBox": 0,
+        "perModel": [
+          {
+            "modelId": 3,
+            "ids": 5,
+            "boxed": 5
+          }
+        ],
+        "unionBox": {
+          "min": [
+            -115.168,
+            24.602,
+            1.938
+          ],
+          "max": [
+            -113.71,
+            42.62,
+            3.396
+          ]
+        },
+        "viewportPx": [
+          1600,
+          952
+        ],
+        "corners": [
+          {
+            "world": [
+              -115.168,
+              24.602,
+              1.938
+            ],
+            "client": [
+              154.1,
+              848.1
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              24.602,
+              3.396
+            ],
+            "client": [
+              154.1,
+              736.5
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              42.62,
+              1.938
+            ],
+            "client": [
+              1348.2,
+              158.7
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              42.62,
+              3.396
+            ],
+            "client": [
+              1348.2,
+              47.1
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              24.602,
+              1.938
+            ],
+            "client": [
+              250.8,
+              903.9
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              24.602,
+              3.396
+            ],
+            "client": [
+              250.8,
+              792.3
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              42.62,
+              1.938
+            ],
+            "client": [
+              1444.9,
+              214.5
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              42.62,
+              3.396
+            ],
+            "client": [
+              1444.9,
+              102.9
+            ],
+            "inFront": true,
+            "inViewport": true
+          }
+        ],
+        "allCornersInViewport": true,
+        "cornersInViewport": 8,
+        "center": {
+          "world": [
+            -114.439,
+            33.611,
+            2.667
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "screenshot": "screenshots/P1-n1-low-01-HV1-fitted-F.png"
+    },
+    "isolate": {
+      "settle": {
+        "settled": true
+      },
+      "state": {
+        "label": "F-isolated",
+        "t": 308677.8,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [
+            {
+              "modelId": 3,
+              "n": 5
+            }
+          ],
+          "selection": []
+        },
+        "selected": {
+          "kind": "group",
+          "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+          "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+          "clashCount": 4,
+          "participants": 5,
+          "unavailableNote": null,
+          "notes": [],
+          "actions": {
+            "focus": {
+              "enabled": true,
+              "reason": null
+            },
+            "focusOnSelect": {
+              "checked": true
+            },
+            "isolate": {
+              "enabled": true,
+              "checked": true,
+              "reason": null
+            }
+          }
+        },
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "events": {
+        "events": [],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 0,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 0,
+          "CAMERA_CHANGE_EVENT": 0
+        }
+      },
+      "vsF": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "containment": {
+        "available": true,
+        "source": "getAggregateIsolation",
+        "boxApi": "InstanceTree.getNodeBox (public) + Viewer3D.worldToClient (public)",
+        "caveat": "node boxes are fragment-derived world boxes as exposed by the public InstanceTree; a proxy, not a pixel coverage measure",
+        "participantsBoxed": 5,
+        "participantsMissingBox": 0,
+        "perModel": [
+          {
+            "modelId": 3,
+            "ids": 5,
+            "boxed": 5
+          }
+        ],
+        "unionBox": {
+          "min": [
+            -115.168,
+            24.602,
+            1.938
+          ],
+          "max": [
+            -113.71,
+            42.62,
+            3.396
+          ]
+        },
+        "viewportPx": [
+          1600,
+          952
+        ],
+        "corners": [
+          {
+            "world": [
+              -115.168,
+              24.602,
+              1.938
+            ],
+            "client": [
+              154.1,
+              848.1
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              24.602,
+              3.396
+            ],
+            "client": [
+              154.1,
+              736.5
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              42.62,
+              1.938
+            ],
+            "client": [
+              1348.2,
+              158.7
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              42.62,
+              3.396
+            ],
+            "client": [
+              1348.2,
+              47.1
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              24.602,
+              1.938
+            ],
+            "client": [
+              250.8,
+              903.9
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              24.602,
+              3.396
+            ],
+            "client": [
+              250.8,
+              792.3
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              42.62,
+              1.938
+            ],
+            "client": [
+              1444.9,
+              214.5
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              42.62,
+              3.396
+            ],
+            "client": [
+              1444.9,
+              102.9
+            ],
+            "inFront": true,
+            "inViewport": true
+          }
+        ],
+        "allCornersInViewport": true,
+        "cornersInViewport": 8,
+        "center": {
+          "world": [
+            -114.439,
+            33.611,
+            2.667
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "screenshot": "screenshots/P1-n1-low-01b-isolate-on-at-F.png"
+    },
+    "A": {
+      "id": "HV2-ADJ-P1-A",
+      "before": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "settle": {
+        "settled": true
+      },
+      "transitionCompleted": {
+        "seen": true,
+        "event": {
+          "type": "CAMERA_TRANSITION_COMPLETED",
+          "t": 309416.5,
+          "seq": 3,
+          "immediate": null
+        }
+      },
+      "state": {
+        "label": "A-after",
+        "t": 309942.1,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [
+            {
+              "modelId": 3,
+              "n": 5
+            }
+          ],
+          "selection": []
+        },
+        "selected": {
+          "kind": "group",
+          "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+          "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+          "clashCount": 4,
+          "participants": 5,
+          "unavailableNote": null,
+          "notes": [],
+          "actions": {
+            "focus": {
+              "enabled": true,
+              "reason": null
+            },
+            "focusOnSelect": {
+              "checked": true
+            },
+            "isolate": {
+              "enabled": true,
+              "checked": true,
+              "reason": null
+            }
+          }
+        },
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 308884.4,
+            "seq": 2,
+            "selectionModels": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 309416.5,
+            "seq": 3,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 32
+        }
+      },
+      "vsF": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "finite": true,
+      "containment": {
+        "available": true,
+        "source": "getAggregateIsolation",
+        "boxApi": "InstanceTree.getNodeBox (public) + Viewer3D.worldToClient (public)",
+        "caveat": "node boxes are fragment-derived world boxes as exposed by the public InstanceTree; a proxy, not a pixel coverage measure",
+        "participantsBoxed": 5,
+        "participantsMissingBox": 0,
+        "perModel": [
+          {
+            "modelId": 3,
+            "ids": 5,
+            "boxed": 5
+          }
+        ],
+        "unionBox": {
+          "min": [
+            -115.168,
+            24.602,
+            1.938
+          ],
+          "max": [
+            -113.71,
+            42.62,
+            3.396
+          ]
+        },
+        "viewportPx": [
+          1600,
+          952
+        ],
+        "corners": [
+          {
+            "world": [
+              -115.168,
+              24.602,
+              1.938
+            ],
+            "client": [
+              154.1,
+              848.1
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              24.602,
+              3.396
+            ],
+            "client": [
+              154.1,
+              736.5
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              42.62,
+              1.938
+            ],
+            "client": [
+              1348.2,
+              158.7
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              42.62,
+              3.396
+            ],
+            "client": [
+              1348.2,
+              47.1
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              24.602,
+              1.938
+            ],
+            "client": [
+              250.8,
+              903.9
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              24.602,
+              3.396
+            ],
+            "client": [
+              250.8,
+              792.3
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              42.62,
+              1.938
+            ],
+            "client": [
+              1444.9,
+              214.5
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              42.62,
+              3.396
+            ],
+            "client": [
+              1444.9,
+              102.9
+            ],
+            "inFront": true,
+            "inViewport": true
+          }
+        ],
+        "allCornersInViewport": true,
+        "cornersInViewport": 8,
+        "center": {
+          "world": [
+            -114.439,
+            33.611,
+            2.667
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "screenshot": "screenshots/P1-n1-low-02-HV2-ADJ-P1-A-after-focus.png"
+    },
+    "B": {
+      "id": "HV2-ADJ-P1-B",
+      "move": {
+        "api": "viewer.navigation.setView(position, target)",
+        "factor": 4,
+        "eyeDistance": 10.158,
+        "offset": [
+          20.437,
+          37.025,
+          16.588
+        ],
+        "position": [
+          -88.136899,
+          64.771311,
+          25.11935
+        ],
+        "target": [
+          -94.001627,
+          70.636038,
+          19.254622
+        ],
+        "from": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ]
+        }
+      },
+      "M": {
+        "state": {
+          "label": "M",
+          "t": 310618.8,
+          "camera": {
+            "position": [
+              -88.136899,
+              64.771311,
+              25.11935
+            ],
+            "target": [
+              -94.001627,
+              70.636038,
+              19.254622
+            ],
+            "up": [
+              -0.408248,
+              0.408248,
+              0.816497
+            ],
+            "worldUp": [
+              0,
+              0,
+              1
+            ],
+            "fovDeg": 53.130102,
+            "isPerspective": false
+          },
+          "aggregate": {
+            "isolation": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "selection": []
+          },
+          "selected": {
+            "kind": "group",
+            "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+            "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+            "clashCount": 4,
+            "participants": 5,
+            "unavailableNote": null,
+            "notes": [],
+            "actions": {
+              "focus": {
+                "enabled": true,
+                "reason": null
+              },
+              "focusOnSelect": {
+                "checked": true
+              },
+              "isolate": {
+                "enabled": true,
+                "checked": true,
+                "reason": null
+              }
+            }
+          },
+          "viewport": {
+            "container": [
+              1600,
+              952
+            ],
+            "window": [
+              1600,
+              1000
+            ],
+            "dpr": 1
+          }
+        },
+        "containment": {
+          "available": true,
+          "source": "getAggregateIsolation",
+          "boxApi": "InstanceTree.getNodeBox (public) + Viewer3D.worldToClient (public)",
+          "caveat": "node boxes are fragment-derived world boxes as exposed by the public InstanceTree; a proxy, not a pixel coverage measure",
+          "participantsBoxed": 5,
+          "participantsMissingBox": 0,
+          "perModel": [
+            {
+              "modelId": 3,
+              "ids": 5,
+              "boxed": 5
+            }
+          ],
+          "unionBox": {
+            "min": [
+              -115.168,
+              24.602,
+              1.938
+            ],
+            "max": [
+              -113.71,
+              42.62,
+              3.396
+            ]
+          },
+          "viewportPx": [
+            1600,
+            952
+          ],
+          "corners": [
+            {
+              "world": [
+                -115.168,
+                24.602,
+                1.938
+              ],
+              "client": [
+                -3653.9,
+                2752.1
+              ],
+              "inFront": true,
+              "inViewport": false
+            },
+            {
+              "world": [
+                -115.168,
+                24.602,
+                3.396
+              ],
+              "client": [
+                -3653.9,
+                2640.5
+              ],
+              "inFront": true,
+              "inViewport": false
+            },
+            {
+              "world": [
+                -115.168,
+                42.62,
+                1.938
+              ],
+              "client": [
+                -2459.8,
+                2062.7
+              ],
+              "inFront": true,
+              "inViewport": false
+            },
+            {
+              "world": [
+                -115.168,
+                42.62,
+                3.396
+              ],
+              "client": [
+                -2459.8,
+                1951.1
+              ],
+              "inFront": true,
+              "inViewport": false
+            },
+            {
+              "world": [
+                -113.71,
+                24.602,
+                1.938
+              ],
+              "client": [
+                -3557.2,
+                2807.9
+              ],
+              "inFront": true,
+              "inViewport": false
+            },
+            {
+              "world": [
+                -113.71,
+                24.602,
+                3.396
+              ],
+              "client": [
+                -3557.2,
+                2696.3
+              ],
+              "inFront": true,
+              "inViewport": false
+            },
+            {
+              "world": [
+                -113.71,
+                42.62,
+                1.938
+              ],
+              "client": [
+                -2363.1,
+                2118.5
+              ],
+              "inFront": true,
+              "inViewport": false
+            },
+            {
+              "world": [
+                -113.71,
+                42.62,
+                3.396
+              ],
+              "client": [
+                -2363.1,
+                2006.9
+              ],
+              "inFront": true,
+              "inViewport": false
+            }
+          ],
+          "allCornersInViewport": false,
+          "cornersInViewport": 0,
+          "center": {
+            "world": [
+              -114.439,
+              33.611,
+              2.667
+            ],
+            "client": [
+              -3008.5,
+              2379.5
+            ],
+            "inFront": true,
+            "inViewport": false
+          }
+        },
+        "screenshot": "screenshots/P1-n1-low-03-HV2-ADJ-P1-B-moved-away-M.png",
+        "vsF": {
+          "equalWithinTol": false,
+          "tol": 0.001,
+          "maxAbsDiff": {
+            "position": 37.025161,
+            "target": 37.02516,
+            "up": 0,
+            "fovDeg": 0
+          }
+        }
+      },
+      "settle": {
+        "settled": true
+      },
+      "transitionCompleted": {
+        "seen": true,
+        "event": {
+          "type": "CAMERA_TRANSITION_COMPLETED",
+          "t": 311316.6,
+          "seq": 5,
+          "immediate": null
+        }
+      },
+      "state": {
+        "label": "B-after",
+        "t": 311841.6,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [
+            {
+              "modelId": 3,
+              "n": 5
+            }
+          ],
+          "selection": []
+        },
+        "selected": {
+          "kind": "group",
+          "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+          "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+          "clashCount": 4,
+          "participants": 5,
+          "unavailableNote": null,
+          "notes": [],
+          "actions": {
+            "focus": {
+              "enabled": true,
+              "reason": null
+            },
+            "focusOnSelect": {
+              "checked": true
+            },
+            "isolate": {
+              "enabled": true,
+              "checked": true,
+              "reason": null
+            }
+          }
+        },
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 310801.2,
+            "seq": 4,
+            "selectionModels": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 311316.6,
+            "seq": 5,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 31
+        }
+      },
+      "vsM": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 37.025161,
+          "target": 37.02516,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "vsF": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "finite": true,
+      "containment": {
+        "available": true,
+        "source": "getAggregateIsolation",
+        "boxApi": "InstanceTree.getNodeBox (public) + Viewer3D.worldToClient (public)",
+        "caveat": "node boxes are fragment-derived world boxes as exposed by the public InstanceTree; a proxy, not a pixel coverage measure",
+        "participantsBoxed": 5,
+        "participantsMissingBox": 0,
+        "perModel": [
+          {
+            "modelId": 3,
+            "ids": 5,
+            "boxed": 5
+          }
+        ],
+        "unionBox": {
+          "min": [
+            -115.168,
+            24.602,
+            1.938
+          ],
+          "max": [
+            -113.71,
+            42.62,
+            3.396
+          ]
+        },
+        "viewportPx": [
+          1600,
+          952
+        ],
+        "corners": [
+          {
+            "world": [
+              -115.168,
+              24.602,
+              1.938
+            ],
+            "client": [
+              154.1,
+              848.1
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              24.602,
+              3.396
+            ],
+            "client": [
+              154.1,
+              736.5
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              42.62,
+              1.938
+            ],
+            "client": [
+              1348.2,
+              158.7
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -115.168,
+              42.62,
+              3.396
+            ],
+            "client": [
+              1348.2,
+              47.1
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              24.602,
+              1.938
+            ],
+            "client": [
+              250.8,
+              903.9
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              24.602,
+              3.396
+            ],
+            "client": [
+              250.8,
+              792.3
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              42.62,
+              1.938
+            ],
+            "client": [
+              1444.9,
+              214.5
+            ],
+            "inFront": true,
+            "inViewport": true
+          },
+          {
+            "world": [
+              -113.71,
+              42.62,
+              3.396
+            ],
+            "client": [
+              1444.9,
+              102.9
+            ],
+            "inFront": true,
+            "inViewport": true
+          }
+        ],
+        "allCornersInViewport": true,
+        "cornersInViewport": 8,
+        "center": {
+          "world": [
+            -114.439,
+            33.611,
+            2.667
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "screenshot": "screenshots/P1-n1-low-04-HV2-ADJ-P1-B-after-focus.png"
+    },
+    "restore": {
+      "state": {
+        "label": "after-back-to-all",
+        "t": 312562.3,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": null,
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "screenshot": "screenshots/P1-n1-low-09-back-to-all.png"
+    }
+  },
+  "run": {
+    "run": {
+      "state": "done",
+      "headline": "Completed — 242 clashes",
+      "counts": {
+        "total": 242,
+        "filtered": 242
+      }
+    },
+    "filters": {
+      "text": "",
+      "groupBy": "element",
+      "sort": "default"
+    },
+    "results": {
+      "state": "list",
+      "view": "flat",
+      "page": {
+        "index": 0,
+        "count": 5,
+        "size": 50
+      }
+    },
+    "modelOptions": [
+      "Audubon_Mechanical_clash_test"
+    ]
+  },
+  "group": {
+    "isolateBeforeHv1": "off at HV-1; checked after F",
+    "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+    "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+    "clashCount": 4,
+    "participants": 5,
+    "focusOnSelectChecked": {
+      "checked": true
+    },
+    "participantIds": {
+      "source": "last AGGREGATE_FIT_TO_VIEW_EVENT.selection",
+      "list": [
+        {
+          "modelId": 3,
+          "n": 5
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    "screenshots/P1-n1-low-00-pre.png",
+    "screenshots/P1-n1-low-01-HV1-fitted-F.png",
+    "screenshots/P1-n1-low-01b-isolate-on-at-F.png",
+    "screenshots/P1-n1-low-02-HV2-ADJ-P1-A-after-focus.png",
+    "screenshots/P1-n1-low-03-HV2-ADJ-P1-B-moved-away-M.png",
+    "screenshots/P1-n1-low-04-HV2-ADJ-P1-B-after-focus.png",
+    "screenshots/P1-n1-low-09-back-to-all.png"
+  ],
+  "finishedAt": "2026-10-12T04:46:17.377Z"
+}

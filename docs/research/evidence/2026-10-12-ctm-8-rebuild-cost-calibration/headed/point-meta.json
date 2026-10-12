@@ -1,0 +1,25 @@
+{
+  "points": {
+    "n1-low":  { "slot": "low",    "requested": 100,  "label": "NEAREST-REACHABLE (requested 100, actual 242)",   "definitionText": "Set A = Mechanical, Set B = Set A (self), Hard" },
+    "n1-mid":  { "slot": "middle", "requested": 1000, "label": "NEAREST-REACHABLE (requested 1000, actual 369)",  "definitionText": "Set A = Structure, Set B = Set A (self), Soft clearance 0.25 ft (user-supplied basis)" },
+    "n1-high": { "slot": "high",   "requested": "largest naturally reachable", "label": "HIGH = largest observed for n=1 (actual 4770)", "definitionText": "Set A = Architecture, Set B = Set A (self), Hard" },
+    "n2-low":  { "slot": "low",    "requested": 100,  "label": "NEAREST-REACHABLE (requested 100, actual 121)",   "definitionText": "Set A = Structure, Set B = Mechanical, Soft clearance 0.3 ft (user-supplied basis)" },
+    "n2-mid":  { "slot": "middle", "requested": 1000, "label": "NEAREST-REACHABLE (requested 1000, actual 1211)", "definitionText": "Set A = Architecture, Set B = Mechanical, Hard" },
+    "n2-high": { "slot": "high",   "requested": "largest naturally reachable", "label": "HIGH = largest observed for n=2 (actual 2277)", "definitionText": "Set A = Architecture, Set B = Structure, Hard" },
+    "n3-low":  { "slot": "low",    "requested": 100,  "label": "NEAREST-REACHABLE (requested 100, actual 114)",   "definitionText": "Set A = Mechanical, Set B = Architecture + Structure, Soft clearance 0.1 ft (user-supplied basis)" },
+    "n3-mid":  { "slot": "middle", "requested": 1000, "label": "NEAREST-REACHABLE (requested 1000, actual 1702)", "definitionText": "Set A = Mechanical, Set B = Architecture + Structure, Hard" },
+    "n3-high": { "slot": "high",   "requested": "largest naturally reachable", "label": "HIGH = largest observed for n=3 (actual 3488)", "definitionText": "Set A = Architecture, Set B = Structure + Mechanical, Hard" }
+  },
+  "notReachable": [
+    { "requested": 5000,  "nModels": [1, 2, 3], "label": "NOT REACHABLE HEADED", "reason": "largest naturally produced set observed in this session: 4770 (n=1), 2277 (n=2 among tried pairs), 3488 (n=3); see reachability.md" },
+    { "requested": 10000, "nModels": [1, 2, 3], "label": "NOT REACHABLE HEADED", "reason": "as above" }
+  ],
+  "familyM": {
+    "scenario": "HM-REC",
+    "points": ["N=5,n=1", "N=25,n=1", "N=100,n=1", "N=5,n=3", "N=25,n=3", "N=100,n=3"],
+    "status": "UNAVAILABLE — §9.3 HM-REC predicate not executable through the public instrumentation route (manager VM/list DOM not reachable without a private-state read or production seam); owner ruling required",
+    "timed": false,
+    "recordsCreated": false,
+    "detail": "blockers.md"
+  }
+}

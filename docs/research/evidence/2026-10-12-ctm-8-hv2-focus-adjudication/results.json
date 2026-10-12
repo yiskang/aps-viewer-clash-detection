@@ -1,0 +1,1787 @@
+{
+  "package": "CTM-8 HV-2 (Focus) headed evidence-only adjudication",
+  "date": "2026-10-12",
+  "protocol": "CTM8-P0-v4 §9.4 HV-2 (historical 9/9 'not met as written' preserved; not redefined here)",
+  "tolerance": 0.001,
+  "cameraFields": "position, target, up (getCameraUpVector), fovDeg (getVerticalFov); worldUp and isPerspective recorded",
+  "noPerformanceInterpretation": "event timestamps are ordering aids only; no latency is reported",
+  "points": [
+    {
+      "point": "P1-n1-low",
+      "definition": "n1-low style: Set A=Mechanical, Set B=self, Hard",
+      "fitPath": "single-model (fit.js perModel.length===1 -> viewer.fitToView(ids, model))",
+      "run": {
+        "state": "done",
+        "headline": "Completed — 242 clashes",
+        "counts": {
+          "total": 242,
+          "filtered": 242
+        }
+      },
+      "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "groupLabel": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+      "clashCount": 4,
+      "participants": 5,
+      "participantIdsInViewer": {
+        "source": "last AGGREGATE_FIT_TO_VIEW_EVENT.selection",
+        "list": [
+          {
+            "modelId": 3,
+            "n": 5
+          }
+        ]
+      },
+      "cameraPre": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraF_afterHV1": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "hv1Events": {
+        "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+        "FIT_TO_VIEW_EVENT": 0,
+        "CAMERA_TRANSITION_COMPLETED": 1,
+        "CAMERA_CHANGE_EVENT": 32
+      },
+      "hv1Settled": {
+        "settled": true
+      },
+      "isolateToggle": {
+        "note": "Isolate checked via the real UI after F (visual aid; presentGroup fit:false)",
+        "cameraUnchangedVsF": {
+          "equalWithinTol": true,
+          "tol": 0.001,
+          "maxAbsDiff": {
+            "position": 0,
+            "target": 0,
+            "up": 0,
+            "fovDeg": 0
+          }
+        },
+        "events": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 0,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 0,
+          "CAMERA_CHANGE_EVENT": 0
+        }
+      },
+      "restoreBackToAll": {
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": null
+      },
+      "raw": "scenarios/P1-n1-low.json"
+    },
+    {
+      "point": "P2-n2-mid",
+      "definition": "n2-mid style: Set A=Architecture, Set B=Mechanical, Hard",
+      "fitPath": "two-model group (aggregate fit)",
+      "run": {
+        "state": "done",
+        "headline": "Completed — 1211 clashes",
+        "counts": {
+          "total": 1211,
+          "filtered": 1211
+        }
+      },
+      "groupId": "[\"element\",{},{\"dbId\":4808,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "groupLabel": "Audubon_Mechanical_clash_test · Round Duct [918256]",
+      "clashCount": 56,
+      "participants": 57,
+      "participantIdsInViewer": {
+        "source": "getAggregateIsolation",
+        "list": [
+          {
+            "modelId": 1,
+            "n": 56
+          },
+          {
+            "modelId": 3,
+            "n": 1
+          }
+        ]
+      },
+      "cameraPre": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraF_afterHV1": {
+        "position": [
+          69.263034,
+          -7.81051,
+          42.265341
+        ],
+        "target": [
+          28.026049,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "hv1Events": {
+        "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+        "FIT_TO_VIEW_EVENT": 0,
+        "CAMERA_TRANSITION_COMPLETED": 1,
+        "CAMERA_CHANGE_EVENT": 32
+      },
+      "hv1Settled": {
+        "settled": true
+      },
+      "isolateToggle": {
+        "note": "Isolate checked via the real UI after F (visual aid; presentGroup fit:false)",
+        "cameraUnchangedVsF": {
+          "equalWithinTol": true,
+          "tol": 0.001,
+          "maxAbsDiff": {
+            "position": 0,
+            "target": 0,
+            "up": 0,
+            "fovDeg": 0
+          }
+        },
+        "events": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 0,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 0,
+          "CAMERA_CHANGE_EVENT": 0
+        }
+      },
+      "restoreBackToAll": {
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": null
+      },
+      "raw": "scenarios/P2-n2-mid.json"
+    },
+    {
+      "point": "P3-n3-mid",
+      "definition": "n3-mid style: Set A=Mechanical, Set B=Architecture+Structure, Hard",
+      "fitPath": "three-model group (aggregate fit)",
+      "run": {
+        "state": "done",
+        "headline": "Completed — 1702 clashes",
+        "counts": {
+          "total": 1702,
+          "filtered": 1702
+        }
+      },
+      "groupId": "[\"element\",{},{\"dbId\":4808,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "groupLabel": "Audubon_Mechanical_clash_test · Round Duct [918256]",
+      "clashCount": 57,
+      "participants": 58,
+      "participantIdsInViewer": {
+        "source": "getAggregateIsolation",
+        "list": [
+          {
+            "modelId": 1,
+            "n": 56
+          },
+          {
+            "modelId": 2,
+            "n": 1
+          },
+          {
+            "modelId": 3,
+            "n": 1
+          }
+        ]
+      },
+      "cameraPre": {
+        "position": [
+          69.263034,
+          -7.81051,
+          42.265341
+        ],
+        "target": [
+          28.026049,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraF_afterHV1": {
+        "position": [
+          100.444452,
+          -20.007555,
+          54.462387
+        ],
+        "target": [
+          47.01042,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "hv1Events": {
+        "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+        "FIT_TO_VIEW_EVENT": 0,
+        "CAMERA_TRANSITION_COMPLETED": 1,
+        "CAMERA_CHANGE_EVENT": 31
+      },
+      "hv1Settled": {
+        "settled": true
+      },
+      "isolateToggle": {
+        "note": "Isolate checked via the real UI after F (visual aid; presentGroup fit:false)",
+        "cameraUnchangedVsF": {
+          "equalWithinTol": true,
+          "tol": 0.001,
+          "maxAbsDiff": {
+            "position": 0,
+            "target": 0,
+            "up": 0,
+            "fovDeg": 0
+          }
+        },
+        "events": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 0,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 0,
+          "CAMERA_CHANGE_EVENT": 0
+        }
+      },
+      "restoreBackToAll": {
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": null
+      },
+      "raw": "scenarios/P3-n3-mid.json"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "HV2-ADJ-P1-A",
+      "point": "P1-n1-low",
+      "variant": "A-IDEMPOTENT (original HV-2 sequence: Focus right after HV-1, no camera change)",
+      "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "participants": 5,
+      "cameraBefore": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraAfter": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "vsBefore": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 308884.4,
+            "seq": 2,
+            "selectionModels": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 309416.5,
+            "seq": 3,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 32
+        }
+      },
+      "settled": {
+        "settled": true
+      },
+      "containment": {
+        "source": "getAggregateIsolation",
+        "participantsBoxed": 5,
+        "participantsMissingBox": 0,
+        "unionBox": {
+          "min": [
+            -115.168,
+            24.602,
+            1.938
+          ],
+          "max": [
+            -113.71,
+            42.62,
+            3.396
+          ]
+        },
+        "cornersInViewport": 8,
+        "allCornersInViewport": true,
+        "center": {
+          "world": [
+            -114.439,
+            33.611,
+            2.667
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "assertions": {
+        "focusReFitsToF (camera ≈ F, finite)": "PASS",
+        "fit request issued (AGGREGATE_FIT_TO_VIEW_EVENT after click)": "PASS",
+        "historical HV-2 predicate 'camera after ≠ camera before'": "NOT MET (camera identical; expected, because the pre-state is already the fitted pose)",
+        "participant box corners in viewport (proxy)": "PASS"
+      },
+      "verdict": "PASS",
+      "verdictMeaning": "Focus behaves as a correct idempotent re-fit; the original 'camera must change' predicate cannot be satisfied from this pre-state",
+      "evidenceSupportsCategory": "CHECK/EVIDENCE DEFECT (predicate requires a change the correct behavior cannot produce from an already-fitted pre-state)",
+      "screenshots": {
+        "before_F": "screenshots/P1-n1-low-01-HV1-fitted-F.png",
+        "before_F_isolated": "screenshots/P1-n1-low-01b-isolate-on-at-F.png",
+        "after": "screenshots/P1-n1-low-02-HV2-ADJ-P1-A-after-focus.png"
+      }
+    },
+    {
+      "id": "HV2-ADJ-P1-B",
+      "point": "P1-n1-low",
+      "variant": "B-MOVED-AWAY (camera moved off the group by evidence tooling, then real Focus button)",
+      "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "participants": 5,
+      "evidenceToolingMove": {
+        "api": "viewer.navigation.setView(position, target)",
+        "factor": 4,
+        "eyeDistance": 10.158,
+        "offset": [
+          20.437,
+          37.025,
+          16.588
+        ],
+        "position": [
+          -88.136899,
+          64.771311,
+          25.11935
+        ],
+        "target": [
+          -94.001627,
+          70.636038,
+          19.254622
+        ],
+        "from": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ]
+        }
+      },
+      "cameraF": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraM": {
+        "position": [
+          -88.136899,
+          64.771311,
+          25.11935
+        ],
+        "target": [
+          -94.001627,
+          70.636038,
+          19.254622
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "M_vs_F": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 37.025161,
+          "target": 37.02516,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "containmentAtM": {
+        "cornersInViewport": 0,
+        "allCornersInViewport": false,
+        "center": {
+          "world": [
+            -114.439,
+            33.611,
+            2.667
+          ],
+          "client": [
+            -3008.5,
+            2379.5
+          ],
+          "inFront": true,
+          "inViewport": false
+        }
+      },
+      "cameraAfter": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "after_vs_M": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 37.025161,
+          "target": 37.02516,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "after_vs_F": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 310801.2,
+            "seq": 4,
+            "selectionModels": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 311316.6,
+            "seq": 5,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 31
+        }
+      },
+      "cameraTransitionCompleted": {
+        "seen": true,
+        "event": {
+          "type": "CAMERA_TRANSITION_COMPLETED",
+          "t": 311316.6,
+          "seq": 5,
+          "immediate": null
+        }
+      },
+      "settled": {
+        "settled": true
+      },
+      "containmentAfter": {
+        "source": "getAggregateIsolation",
+        "participantsBoxed": 5,
+        "participantsMissingBox": 0,
+        "unionBox": {
+          "min": [
+            -115.168,
+            24.602,
+            1.938
+          ],
+          "max": [
+            -113.71,
+            42.62,
+            3.396
+          ]
+        },
+        "cornersInViewport": 8,
+        "allCornersInViewport": true,
+        "center": {
+          "world": [
+            -114.439,
+            33.611,
+            2.667
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "assertions": {
+        "camera after ≠ M": "PASS",
+        "camera after finite": "PASS",
+        "camera after ≈ F (position, target, up, fov within 1e-3)": "PASS",
+        "M shows group not framed (proxy: 0/8 corners, center out of view)": "PASS",
+        "participant box corners in viewport after Focus (proxy)": "PASS",
+        "visual: all participants framed (screenshot)": "PASS (see screenshot; part of the frame lies under the docked panel overlay — observation O-2)"
+      },
+      "verdict": "PASS",
+      "evidenceSupportsCategory": "CHECK/EVIDENCE DEFECT (Focus demonstrably re-frames the group when the camera is not already fitted)",
+      "screenshots": {
+        "M": "screenshots/P1-n1-low-03-HV2-ADJ-P1-B-moved-away-M.png",
+        "after": "screenshots/P1-n1-low-04-HV2-ADJ-P1-B-after-focus.png"
+      }
+    },
+    {
+      "id": "HV2-ADJ-P2-A",
+      "point": "P2-n2-mid",
+      "variant": "A-IDEMPOTENT (original HV-2 sequence: Focus right after HV-1, no camera change)",
+      "groupId": "[\"element\",{},{\"dbId\":4808,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "participants": 57,
+      "cameraBefore": {
+        "position": [
+          69.263034,
+          -7.81051,
+          42.265341
+        ],
+        "target": [
+          28.026049,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraAfter": {
+        "position": [
+          69.263034,
+          -7.81051,
+          42.265341
+        ],
+        "target": [
+          28.026049,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "vsBefore": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 332203.1,
+            "seq": 8,
+            "selectionModels": [
+              {
+                "modelId": 1,
+                "n": 56
+              },
+              {
+                "modelId": 3,
+                "n": 1
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 332731.2,
+            "seq": 9,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 32
+        }
+      },
+      "settled": {
+        "settled": true
+      },
+      "containment": {
+        "source": "getAggregateIsolation",
+        "participantsBoxed": 57,
+        "participantsMissingBox": 0,
+        "unionBox": {
+          "min": [
+            -25.5,
+            22.223,
+            -5.972
+          ],
+          "max": [
+            81.552,
+            44.63,
+            8.028
+          ]
+        },
+        "cornersInViewport": 8,
+        "allCornersInViewport": true,
+        "center": {
+          "world": [
+            28.026,
+            33.426,
+            1.028
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "assertions": {
+        "focusReFitsToF (camera ≈ F, finite)": "PASS",
+        "fit request issued (AGGREGATE_FIT_TO_VIEW_EVENT after click)": "PASS",
+        "historical HV-2 predicate 'camera after ≠ camera before'": "NOT MET (camera identical; expected, because the pre-state is already the fitted pose)",
+        "participant box corners in viewport (proxy)": "PASS"
+      },
+      "verdict": "PASS",
+      "verdictMeaning": "Focus behaves as a correct idempotent re-fit; the original 'camera must change' predicate cannot be satisfied from this pre-state",
+      "evidenceSupportsCategory": "CHECK/EVIDENCE DEFECT (predicate requires a change the correct behavior cannot produce from an already-fitted pre-state)",
+      "screenshots": {
+        "before_F": "screenshots/P2-n2-mid-01-HV1-fitted-F.png",
+        "before_F_isolated": "screenshots/P2-n2-mid-01b-isolate-on-at-F.png",
+        "after": "screenshots/P2-n2-mid-02-HV2-ADJ-P2-A-after-focus.png"
+      }
+    },
+    {
+      "id": "HV2-ADJ-P2-B",
+      "point": "P2-n2-mid",
+      "variant": "B-MOVED-AWAY (camera moved off the group by evidence tooling, then real Focus button)",
+      "groupId": "[\"element\",{},{\"dbId\":4808,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "participants": 57,
+      "evidenceToolingMove": {
+        "api": "viewer.navigation.setView(position, target)",
+        "factor": 4,
+        "eyeDistance": 71.425,
+        "offset": [
+          143.701,
+          260.337,
+          116.636
+        ],
+        "position": [
+          212.964274,
+          252.526544,
+          158.901149
+        ],
+        "target": [
+          171.727288,
+          293.763529,
+          117.664163
+        ],
+        "from": {
+          "position": [
+            69.263034,
+            -7.81051,
+            42.265341
+          ],
+          "target": [
+            28.026049,
+            33.426476,
+            1.028355
+          ]
+        }
+      },
+      "cameraF": {
+        "position": [
+          69.263034,
+          -7.81051,
+          42.265341
+        ],
+        "target": [
+          28.026049,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraM": {
+        "position": [
+          212.964274,
+          252.526544,
+          158.901149
+        ],
+        "target": [
+          171.727288,
+          293.763529,
+          117.664163
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "M_vs_F": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 260.337054,
+          "target": 260.337053,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "containmentAtM": {
+        "cornersInViewport": 0,
+        "allCornersInViewport": false,
+        "center": {
+          "world": [
+            28.026,
+            33.426,
+            1.028
+          ],
+          "client": [
+            -3008.5,
+            2379.5
+          ],
+          "inFront": true,
+          "inViewport": false
+        }
+      },
+      "cameraAfter": {
+        "position": [
+          69.263034,
+          -7.81051,
+          42.265341
+        ],
+        "target": [
+          28.026049,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "after_vs_M": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 260.337054,
+          "target": 260.337053,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "after_vs_F": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 334117,
+            "seq": 10,
+            "selectionModels": [
+              {
+                "modelId": 1,
+                "n": 56
+              },
+              {
+                "modelId": 3,
+                "n": 1
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 334633.1,
+            "seq": 11,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 31
+        }
+      },
+      "cameraTransitionCompleted": {
+        "seen": true,
+        "event": {
+          "type": "CAMERA_TRANSITION_COMPLETED",
+          "t": 334633.1,
+          "seq": 11,
+          "immediate": null
+        }
+      },
+      "settled": {
+        "settled": true
+      },
+      "containmentAfter": {
+        "source": "getAggregateIsolation",
+        "participantsBoxed": 57,
+        "participantsMissingBox": 0,
+        "unionBox": {
+          "min": [
+            -25.5,
+            22.223,
+            -5.972
+          ],
+          "max": [
+            81.552,
+            44.63,
+            8.028
+          ]
+        },
+        "cornersInViewport": 8,
+        "allCornersInViewport": true,
+        "center": {
+          "world": [
+            28.026,
+            33.426,
+            1.028
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "assertions": {
+        "camera after ≠ M": "PASS",
+        "camera after finite": "PASS",
+        "camera after ≈ F (position, target, up, fov within 1e-3)": "PASS",
+        "M shows group not framed (proxy: 0/8 corners, center out of view)": "PASS",
+        "participant box corners in viewport after Focus (proxy)": "PASS",
+        "visual: all participants framed (screenshot)": "PASS (see screenshot; part of the frame lies under the docked panel overlay — observation O-2)"
+      },
+      "verdict": "PASS",
+      "evidenceSupportsCategory": "CHECK/EVIDENCE DEFECT (Focus demonstrably re-frames the group when the camera is not already fitted)",
+      "screenshots": {
+        "M": "screenshots/P2-n2-mid-03-HV2-ADJ-P2-B-moved-away-M.png",
+        "after": "screenshots/P2-n2-mid-04-HV2-ADJ-P2-B-after-focus.png"
+      }
+    },
+    {
+      "id": "HV2-ADJ-P3-A",
+      "point": "P3-n3-mid",
+      "variant": "A-IDEMPOTENT (original HV-2 sequence: Focus right after HV-1, no camera change)",
+      "groupId": "[\"element\",{},{\"dbId\":4808,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "participants": 58,
+      "cameraBefore": {
+        "position": [
+          100.444452,
+          -20.007555,
+          54.462387
+        ],
+        "target": [
+          47.01042,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraAfter": {
+        "position": [
+          100.444452,
+          -20.007555,
+          54.462387
+        ],
+        "target": [
+          47.01042,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "vsBefore": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 349669.1,
+            "seq": 14,
+            "selectionModels": [
+              {
+                "modelId": 1,
+                "n": 56
+              },
+              {
+                "modelId": 3,
+                "n": 1
+              },
+              {
+                "modelId": 2,
+                "n": 1
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 350184.2,
+            "seq": 15,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 31
+        }
+      },
+      "settled": {
+        "settled": true
+      },
+      "containment": {
+        "source": "getAggregateIsolation",
+        "participantsBoxed": 58,
+        "participantsMissingBox": 0,
+        "unionBox": {
+          "min": [
+            -29.802,
+            22.223,
+            -5.972
+          ],
+          "max": [
+            123.823,
+            44.63,
+            8.028
+          ]
+        },
+        "cornersInViewport": 8,
+        "allCornersInViewport": true,
+        "center": {
+          "world": [
+            47.01,
+            33.426,
+            1.028
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "assertions": {
+        "focusReFitsToF (camera ≈ F, finite)": "PASS",
+        "fit request issued (AGGREGATE_FIT_TO_VIEW_EVENT after click)": "PASS",
+        "historical HV-2 predicate 'camera after ≠ camera before'": "NOT MET (camera identical; expected, because the pre-state is already the fitted pose)",
+        "participant box corners in viewport (proxy)": "PASS"
+      },
+      "verdict": "PASS",
+      "verdictMeaning": "Focus behaves as a correct idempotent re-fit; the original 'camera must change' predicate cannot be satisfied from this pre-state",
+      "evidenceSupportsCategory": "CHECK/EVIDENCE DEFECT (predicate requires a change the correct behavior cannot produce from an already-fitted pre-state)",
+      "screenshots": {
+        "before_F": "screenshots/P3-n3-mid-01-HV1-fitted-F.png",
+        "before_F_isolated": "screenshots/P3-n3-mid-01b-isolate-on-at-F.png",
+        "after": "screenshots/P3-n3-mid-02-HV2-ADJ-P3-A-after-focus.png"
+      }
+    },
+    {
+      "id": "HV2-ADJ-P3-B",
+      "point": "P3-n3-mid",
+      "variant": "B-MOVED-AWAY (camera moved off the group by evidence tooling, then real Focus button)",
+      "groupId": "[\"element\",{},{\"dbId\":4808,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "participants": 58,
+      "evidenceToolingMove": {
+        "api": "viewer.navigation.setView(position, target)",
+        "factor": 4,
+        "eyeDistance": 92.55,
+        "offset": [
+          186.205,
+          337.339,
+          151.134
+        ],
+        "position": [
+          286.649541,
+          317.331805,
+          205.596651
+        ],
+        "target": [
+          233.215509,
+          370.765836,
+          152.162618
+        ],
+        "from": {
+          "position": [
+            100.444452,
+            -20.007555,
+            54.462387
+          ],
+          "target": [
+            47.01042,
+            33.426476,
+            1.028355
+          ]
+        }
+      },
+      "cameraF": {
+        "position": [
+          100.444452,
+          -20.007555,
+          54.462387
+        ],
+        "target": [
+          47.01042,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "cameraM": {
+        "position": [
+          286.649541,
+          317.331805,
+          205.596651
+        ],
+        "target": [
+          233.215509,
+          370.765836,
+          152.162618
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "M_vs_F": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 337.33936,
+          "target": 337.33936,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "containmentAtM": {
+        "cornersInViewport": 0,
+        "allCornersInViewport": false,
+        "center": {
+          "world": [
+            47.01,
+            33.426,
+            1.028
+          ],
+          "client": [
+            -3008.5,
+            2379.5
+          ],
+          "inFront": true,
+          "inViewport": false
+        }
+      },
+      "cameraAfter": {
+        "position": [
+          100.444452,
+          -20.007555,
+          54.462387
+        ],
+        "target": [
+          47.01042,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "after_vs_M": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 337.33936,
+          "target": 337.33936,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "after_vs_F": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 351586.6,
+            "seq": 16,
+            "selectionModels": [
+              {
+                "modelId": 1,
+                "n": 56
+              },
+              {
+                "modelId": 3,
+                "n": 1
+              },
+              {
+                "modelId": 2,
+                "n": 1
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 352102.2,
+            "seq": 17,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 31
+        }
+      },
+      "cameraTransitionCompleted": {
+        "seen": true,
+        "event": {
+          "type": "CAMERA_TRANSITION_COMPLETED",
+          "t": 352102.2,
+          "seq": 17,
+          "immediate": null
+        }
+      },
+      "settled": {
+        "settled": true
+      },
+      "containmentAfter": {
+        "source": "getAggregateIsolation",
+        "participantsBoxed": 58,
+        "participantsMissingBox": 0,
+        "unionBox": {
+          "min": [
+            -29.802,
+            22.223,
+            -5.972
+          ],
+          "max": [
+            123.823,
+            44.63,
+            8.028
+          ]
+        },
+        "cornersInViewport": 8,
+        "allCornersInViewport": true,
+        "center": {
+          "world": [
+            47.01,
+            33.426,
+            1.028
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "assertions": {
+        "camera after ≠ M": "PASS",
+        "camera after finite": "PASS",
+        "camera after ≈ F (position, target, up, fov within 1e-3)": "PASS",
+        "M shows group not framed (proxy: 0/8 corners, center out of view)": "PASS",
+        "participant box corners in viewport after Focus (proxy)": "PASS",
+        "visual: all participants framed (screenshot)": "PASS (see screenshot; part of the frame lies under the docked panel overlay — observation O-2)"
+      },
+      "verdict": "PASS",
+      "evidenceSupportsCategory": "CHECK/EVIDENCE DEFECT (Focus demonstrably re-frames the group when the camera is not already fitted)",
+      "screenshots": {
+        "M": "screenshots/P3-n3-mid-03-HV2-ADJ-P3-B-moved-away-M.png",
+        "after": "screenshots/P3-n3-mid-04-HV2-ADJ-P3-B-after-focus.png"
+      }
+    },
+    {
+      "id": "HV2-ADJ-P3-C",
+      "point": "P3-n3-mid",
+      "variant": "C (Focus on select OFF via real UI toggle; Back to all; camera moved away; row click does NOT fit; real Focus is the first fit)",
+      "groupId": "[\"element\",{},{\"dbId\":4808,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+      "participants": 58,
+      "evidenceToolingMove": {
+        "api": "viewer.navigation.setView(position, target)",
+        "factor": 4,
+        "eyeDistance": 92.55,
+        "offset": [
+          186.205,
+          337.339,
+          151.134
+        ],
+        "position": [
+          286.649541,
+          317.331805,
+          205.596651
+        ],
+        "target": [
+          233.215509,
+          370.765836,
+          152.162618
+        ],
+        "from": {
+          "position": [
+            100.444452,
+            -20.007555,
+            54.462387
+          ],
+          "target": [
+            47.01042,
+            33.426476,
+            1.028355
+          ]
+        }
+      },
+      "cameraM2": {
+        "position": [
+          286.649541,
+          317.331805,
+          205.596651
+        ],
+        "target": [
+          233.215509,
+          370.765836,
+          152.162618
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "afterRowClick_FoSoff": {
+        "camera": {
+          "position": [
+            286.649541,
+            317.331805,
+            205.596651
+          ],
+          "target": [
+            233.215509,
+            370.765836,
+            152.162618
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "vsM2": {
+          "equalWithinTol": true,
+          "tol": 0.001,
+          "maxAbsDiff": {
+            "position": 0,
+            "target": 0,
+            "up": 0,
+            "fovDeg": 0
+          }
+        },
+        "events": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 0,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 0,
+          "CAMERA_CHANGE_EVENT": 0
+        },
+        "screenshot": "screenshots/P3-n3-mid-05-HV2-ADJ-P3-C-selected-FoS-off-M2.png",
+        "containmentNote": "select.containment in the raw file was evaluated AFTER the Focus click (driver ordering defect) and must be ignored; M2 == M of the B scenario at this point (identical camera), whose containment is 0/8 corners"
+      },
+      "cameraAfter": {
+        "position": [
+          100.444452,
+          -20.007555,
+          54.462387
+        ],
+        "target": [
+          47.01042,
+          33.426476,
+          1.028355
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "after_vs_M2": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 337.33936,
+          "target": 337.33936,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "after_vs_F": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 354672.1,
+            "seq": 18,
+            "selectionModels": [
+              {
+                "modelId": 1,
+                "n": 56
+              },
+              {
+                "modelId": 3,
+                "n": 1
+              },
+              {
+                "modelId": 2,
+                "n": 1
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 355199.2,
+            "seq": 19,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 32
+        }
+      },
+      "cameraTransitionCompleted": {
+        "seen": true,
+        "event": {
+          "type": "CAMERA_TRANSITION_COMPLETED",
+          "t": 355199.2,
+          "seq": 19,
+          "immediate": null
+        }
+      },
+      "settled": {
+        "settled": true
+      },
+      "containmentAfter": {
+        "cornersInViewport": 8,
+        "allCornersInViewport": true,
+        "center": {
+          "world": [
+            47.01,
+            33.426,
+            1.028
+          ],
+          "client": [
+            799.5,
+            475.5
+          ],
+          "inFront": true,
+          "inViewport": true
+        }
+      },
+      "assertions": {
+        "row click with FoS off leaves camera at M2 and fires no fit": "PASS",
+        "camera after Focus ≠ M2": "PASS",
+        "camera after ≈ F": "PASS",
+        "participant box corners in viewport (proxy)": "PASS",
+        "visual framed (screenshot)": "PASS"
+      },
+      "verdict": "PASS",
+      "evidenceSupportsCategory": "CHECK/EVIDENCE DEFECT",
+      "screenshots": {
+        "selected_at_M2": "screenshots/P3-n3-mid-05-HV2-ADJ-P3-C-selected-FoS-off-M2.png",
+        "after": "screenshots/P3-n3-mid-06-HV2-ADJ-P3-C-after-focus.png"
+      }
+    }
+  ],
+  "totals": {
+    "PASS": 7,
+    "FAIL": 0,
+    "INCONCLUSIVE": 0,
+    "scenarios": 7
+  },
+  "publicFitCompleteSignal": {
+    "fitRequest": "AGGREGATE_FIT_TO_VIEW_EVENT fired synchronously once per Focus click (also for the single-model path in 7.124.2); FIT_TO_VIEW_EVENT fired 0 times in this session",
+    "completion": "CAMERA_TRANSITION_COMPLETED was seen after every Focus click, including the no-op re-fit (A), but it carries no request id, so it is not attributable to a specific fit by itself; it was used together with the §9.4 settled rule. No dedicated public 'fit complete' event tied to a request exists",
+    "verdict": "no reliable request-correlated public fit-complete signal; settled-camera rule + transition event is a sufficient practical completion strategy here"
+  },
+  "attempt1": {
+    "file": "scenarios/P1-n1-low-attempt1-isolate-off.json",
+    "note": "first P1 pass with Isolate OFF: camera numbers identical to the final P1 (F, M, post-Focus = F), but the fitted participants are hidden behind surrounding building geometry (uniform grey frame), so the visual check was not possible; containment proxy unavailable then (no participant ids in public selection/isolation, tooling v1). Re-run with Isolate checked via the real UI after F. Not counted in totals."
+  },
+  "observations": [
+    "O-1: the HV-1 group click (Focus on select = on) fires the same aggregate fit; HV-2's pre-state is therefore always the fitted pose F, and a correct idempotent Focus cannot change the camera.",
+    "O-2: the fit frames the union in the full Viewer canvas (container 1600x952); the docked Clash panel overlays its left ~470 px, so part of the framed group can sit under the panel (box-corner x min 154-189 px). Recorded only; not a Focus-contract assessment.",
+    "O-3: with Isolate off the framed participants may be occluded by unrelated building geometry (attempt 1); Focus framing is a camera property, visibility depends on Isolate.",
+    "O-4: the camera is orthographic (isPerspective=false) in this session; fov is still reported by getVerticalFov and unchanged by Focus.",
+    "O-5: P1 final pass started with the camera already at F (left there by attempt 1 Back to all), so its HV-1 caused no visible camera change; P2/P3 started from the previous point's fitted pose."
+  ]
+}

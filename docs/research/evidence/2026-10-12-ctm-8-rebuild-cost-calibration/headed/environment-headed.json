@@ -1,0 +1,22 @@
+{
+  "protocol": "CTM8-P0-v4",
+  "part": "headed corroboration (§9.1 environment record)",
+  "date": "2026-10-12",
+  "sessionWindowUTC": { "pageOpened": "2026-10-12T03:06:45Z", "firstPointStarted": "2026-10-12T03:15:32Z", "lastPointFinished": "2026-10-12T03:35:27Z" },
+  "repository": { "branch": "main", "head": "ac5bcb42b00e668442ce3add9764cba96d883309", "tree": "dirty: docs/handoffs/latest.md modified (not by this package); untracked CTM-8 docs/prompts/reviews/evidence and test/calibration/ (this campaign's support code)", "packageLockSha256": "7e0052f46b2e8a6a22959370945f5c6c316528ec33ceb067d27e615327a3d596" },
+  "machine": { "model": "Apple M4", "cpuCores": 10, "ramBytes": 34359738368, "os": "macOS 27.0.1 (26A434)", "power": "AC attached (UPS 100%)", "otherHeavyProcesses": "not controlled; OrbStack running (unrelated Adminer container on :8099)" },
+  "node": "v22.23.1",
+  "server": { "command": "node server.js", "pid": 96055, "port": 8080, "startedBy": "parent agent (not this package)", "startedAt": "Mon Oct 12 11:06:30 2026 (local)", "NODE_ENV": "unset", "devServerState": "plain node server.js (no build/watch step observed); .env present per parent, not read" },
+  "browser": { "driver": "Playwright MCP (headed Chromium)", "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36", "viewport": [1600, 1000], "devicePixelRatio": 1, "crossOriginIsolated": false, "timerResolutionProbeMs": 0.1, "longtaskObserverSupported": true, "cacheState": "fresh Playwright MCP browser context for this session (not cleared explicitly)" },
+  "viewer": { "version": "7.124.2", "source": "https://developer.api.autodesk.com/modelderivative/v2/viewers/7.124.2/viewer3D.js", "webgl": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4)" },
+  "models": [
+    { "viewerModelId": 1, "name": "Audubon_Architecture_clash_test.rvt", "urnHashBase64": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fQXJjaGl0ZWN0dXJlX2NsYXNoX3Rlc3QucnZ0", "svf2OTG": true, "loadedVia": "URL hash (#<URN>)" },
+    { "viewerModelId": 2, "name": "Audubon_Structure_clash_test.rvt", "urnHashBase64": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fU3RydWN0dXJlX2NsYXNoX3Rlc3QucnZ0", "svf2OTG": true, "loadedVia": "host Load UI (#urn + #keep-current-models + #load)" },
+    { "viewerModelId": 3, "name": "Audubon_Mechanical_clash_test.rvt", "urnHashBase64": "dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA", "svf2OTG": true, "loadedVia": "host Load UI (#urn + #keep-current-models + #load)" }
+  ],
+  "loadingMode": "SVF2 (OTG), federated: three separate URNs in one Viewer session; all three loaded for the whole session; n_models of a point = number of distinct models in its result set (verified from vm.filters.modelOptions per point)",
+  "panel": "Clash Panel opened via #clash-panel-toolbar-button; Tests Manager hosted; one test record ('Clash test 1') re-configured and re-run for every point",
+  "instrumentation": { "file": "test/calibration/ctm8/headed/instrument.js", "sha256": "f1a9a028e5c46c24f46a4593ef2da2ffdd44787a36edddd89b009071b14a8772", "version": "ctm8-headed-instrument/1", "injection": "page.evaluate(<file text>) after the panel was opened" },
+  "engineConfiguredMaxResultsPerRun": "100,000 (options.js default, source-derived; not observable via public VM)",
+  "timerSource": "performance.now() in page (capture-phase event listener for t0; MutationObserver callback / 10 ms poll for tD)"
+}

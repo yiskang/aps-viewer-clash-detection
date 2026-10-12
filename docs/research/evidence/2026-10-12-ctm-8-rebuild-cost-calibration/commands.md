@@ -1,0 +1,1 @@
+node test/calibration/ctm8/run-campaign.mjs --launch <0|1|2> --out docs/research/evidence/2026-10-12-ctm-8-rebuild-cost-calibration  (3 sequential processes; git HEAD ac5bcb42b00e668442ce3add9764cba96d883309)

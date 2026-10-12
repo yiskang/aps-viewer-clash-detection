@@ -1,0 +1,712 @@
+{
+  "pid": "P1-n1-low",
+  "scenarioIds": [
+    "HV2-ADJ-P1-A",
+    "HV2-ADJ-P1-B"
+  ],
+  "cfg": {
+    "pid": "P1-n1-low",
+    "sid": "P1",
+    "A": [
+      3
+    ],
+    "B": "self",
+    "gid": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+    "doC": false
+  },
+  "startedAt": "2026-10-12T04:43:57.578Z",
+  "actions": [
+    {
+      "at": "2026-10-12T04:43:57.715Z",
+      "a": "setup: Set A=[3] Set B=\"self\" mode=hard"
+    },
+    {
+      "at": "2026-10-12T04:43:57.781Z",
+      "a": "click run-start (real Run button)"
+    },
+    {
+      "at": "2026-10-12T04:44:23.623Z",
+      "a": "run done: Completed — 242 clashes"
+    },
+    {
+      "at": "2026-10-12T04:44:24.080Z",
+      "a": "click group-element (Group by element)"
+    },
+    {
+      "at": "2026-10-12T04:44:24.888Z",
+      "a": "clicked page-next x4 to reach G†"
+    },
+    {
+      "at": "2026-10-12T04:44:25.098Z",
+      "a": "HV-1: click group row body (Focus on select = default)"
+    },
+    {
+      "at": "2026-10-12T04:44:26.215Z",
+      "a": "HV2-ADJ-P1-A: click action-focus (no camera change)"
+    },
+    {
+      "at": "2026-10-12T04:44:27.300Z",
+      "a": "HV2-ADJ-P1-B: EVIDENCE TOOLING viewer.navigation.setView(position, target) position=[-88.136899,64.771311,25.11935] target=[-94.001627,70.636038,19.254622]"
+    },
+    {
+      "at": "2026-10-12T04:44:28.006Z",
+      "a": "HV2-ADJ-P1-B: click action-focus from M"
+    },
+    {
+      "at": "2026-10-12T04:44:29.159Z",
+      "a": "click action-back-to-all (restore)"
+    }
+  ],
+  "steps": {
+    "pre": {
+      "state": {
+        "label": "pre",
+        "t": 200162.7,
+        "camera": {
+          "position": [
+            239.401913,
+            -239.401909,
+            239.40192
+          ],
+          "target": [
+            0,
+            0,
+            0.000004
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": null,
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "screenshot": "screenshots/P1-n1-low-att1-isooff-00-pre.png"
+    },
+    "hv1": {
+      "settle": {
+        "settled": true
+      },
+      "state": {
+        "label": "F",
+        "t": 201386.2,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": {
+          "kind": "group",
+          "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+          "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+          "clashCount": 4,
+          "participants": 5,
+          "unavailableNote": null,
+          "notes": [],
+          "actions": {
+            "focus": {
+              "enabled": true,
+              "reason": null
+            },
+            "focusOnSelect": {
+              "checked": true
+            },
+            "isolate": {
+              "enabled": true,
+              "checked": false,
+              "reason": null
+            }
+          }
+        },
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 200365.8,
+            "seq": 0,
+            "selectionModels": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 200875.8,
+            "seq": 1,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 31
+        }
+      },
+      "containment": {
+        "available": false,
+        "reason": "no participant ids in public aggregate selection/isolation",
+        "source": "none"
+      },
+      "screenshot": "screenshots/P1-n1-low-att1-isooff-01-HV1-fitted-F.png"
+    },
+    "A": {
+      "id": "HV2-ADJ-P1-A",
+      "before": {
+        "position": [
+          -108.574103,
+          27.74615,
+          8.531395
+        ],
+        "target": [
+          -114.438831,
+          33.610878,
+          2.666667
+        ],
+        "up": [
+          -0.408248,
+          0.408248,
+          0.816497
+        ],
+        "worldUp": [
+          0,
+          0,
+          1
+        ],
+        "fovDeg": 53.130102,
+        "isPerspective": false
+      },
+      "settle": {
+        "settled": true
+      },
+      "transitionCompleted": {
+        "seen": true,
+        "event": {
+          "type": "CAMERA_TRANSITION_COMPLETED",
+          "t": 202009.2,
+          "seq": 3,
+          "immediate": null
+        }
+      },
+      "state": {
+        "label": "A-after",
+        "t": 202515.5,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": {
+          "kind": "group",
+          "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+          "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+          "clashCount": 4,
+          "participants": 5,
+          "unavailableNote": null,
+          "notes": [],
+          "actions": {
+            "focus": {
+              "enabled": true,
+              "reason": null
+            },
+            "focusOnSelect": {
+              "checked": true
+            },
+            "isolate": {
+              "enabled": true,
+              "checked": false,
+              "reason": null
+            }
+          }
+        },
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 201478.7,
+            "seq": 2,
+            "selectionModels": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 202009.2,
+            "seq": 3,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 32
+        }
+      },
+      "vsF": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "finite": true,
+      "containment": {
+        "available": false,
+        "reason": "no participant ids in public aggregate selection/isolation",
+        "source": "none"
+      },
+      "screenshot": "screenshots/P1-n1-low-att1-isooff-02-HV2-ADJ-P1-A-after-focus.png"
+    },
+    "B": {
+      "id": "HV2-ADJ-P1-B",
+      "move": {
+        "api": "viewer.navigation.setView(position, target)",
+        "factor": 4,
+        "eyeDistance": 10.158,
+        "offset": [
+          20.437,
+          37.025,
+          16.588
+        ],
+        "position": [
+          -88.136899,
+          64.771311,
+          25.11935
+        ],
+        "target": [
+          -94.001627,
+          70.636038,
+          19.254622
+        ],
+        "from": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ]
+        }
+      },
+      "M": {
+        "state": {
+          "label": "M",
+          "t": 203084.2,
+          "camera": {
+            "position": [
+              -88.136899,
+              64.771311,
+              25.11935
+            ],
+            "target": [
+              -94.001627,
+              70.636038,
+              19.254622
+            ],
+            "up": [
+              -0.408248,
+              0.408248,
+              0.816497
+            ],
+            "worldUp": [
+              0,
+              0,
+              1
+            ],
+            "fovDeg": 53.130102,
+            "isPerspective": false
+          },
+          "aggregate": {
+            "isolation": [],
+            "selection": []
+          },
+          "selected": {
+            "kind": "group",
+            "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+            "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+            "clashCount": 4,
+            "participants": 5,
+            "unavailableNote": null,
+            "notes": [],
+            "actions": {
+              "focus": {
+                "enabled": true,
+                "reason": null
+              },
+              "focusOnSelect": {
+                "checked": true
+              },
+              "isolate": {
+                "enabled": true,
+                "checked": false,
+                "reason": null
+              }
+            }
+          },
+          "viewport": {
+            "container": [
+              1600,
+              952
+            ],
+            "window": [
+              1600,
+              1000
+            ],
+            "dpr": 1
+          }
+        },
+        "containment": {
+          "available": false,
+          "reason": "no participant ids in public aggregate selection/isolation",
+          "source": "none"
+        },
+        "screenshot": "screenshots/P1-n1-low-att1-isooff-03-HV2-ADJ-P1-B-moved-away-M.png",
+        "vsF": {
+          "equalWithinTol": false,
+          "tol": 0.001,
+          "maxAbsDiff": {
+            "position": 37.025161,
+            "target": 37.02516,
+            "up": 0,
+            "fovDeg": 0
+          }
+        }
+      },
+      "settle": {
+        "settled": true
+      },
+      "transitionCompleted": {
+        "seen": true,
+        "event": {
+          "type": "CAMERA_TRANSITION_COMPLETED",
+          "t": 203791.5,
+          "seq": 5,
+          "immediate": null
+        }
+      },
+      "state": {
+        "label": "B-after",
+        "t": 204315.8,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": {
+          "kind": "group",
+          "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+          "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+          "clashCount": 4,
+          "participants": 5,
+          "unavailableNote": null,
+          "notes": [],
+          "actions": {
+            "focus": {
+              "enabled": true,
+              "reason": null
+            },
+            "focusOnSelect": {
+              "checked": true
+            },
+            "isolate": {
+              "enabled": true,
+              "checked": false,
+              "reason": null
+            }
+          }
+        },
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "events": {
+        "events": [
+          {
+            "type": "AGGREGATE_FIT_TO_VIEW_EVENT",
+            "t": 203276.5,
+            "seq": 4,
+            "selectionModels": [
+              {
+                "modelId": 3,
+                "n": 5
+              }
+            ],
+            "immediate": false
+          },
+          {
+            "type": "CAMERA_TRANSITION_COMPLETED",
+            "t": 203791.5,
+            "seq": 5,
+            "immediate": null
+          }
+        ],
+        "countsDelta": {
+          "AGGREGATE_FIT_TO_VIEW_EVENT": 1,
+          "FIT_TO_VIEW_EVENT": 0,
+          "CAMERA_TRANSITION_COMPLETED": 1,
+          "CAMERA_CHANGE_EVENT": 31
+        }
+      },
+      "vsM": {
+        "equalWithinTol": false,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 37.025161,
+          "target": 37.02516,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "vsF": {
+        "equalWithinTol": true,
+        "tol": 0.001,
+        "maxAbsDiff": {
+          "position": 0,
+          "target": 0,
+          "up": 0,
+          "fovDeg": 0
+        }
+      },
+      "finite": true,
+      "containment": {
+        "available": false,
+        "reason": "no participant ids in public aggregate selection/isolation",
+        "source": "none"
+      },
+      "screenshot": "screenshots/P1-n1-low-att1-isooff-04-HV2-ADJ-P1-B-after-focus.png"
+    },
+    "restore": {
+      "state": {
+        "label": "after-back-to-all",
+        "t": 204942.6,
+        "camera": {
+          "position": [
+            -108.574103,
+            27.74615,
+            8.531395
+          ],
+          "target": [
+            -114.438831,
+            33.610878,
+            2.666667
+          ],
+          "up": [
+            -0.408248,
+            0.408248,
+            0.816497
+          ],
+          "worldUp": [
+            0,
+            0,
+            1
+          ],
+          "fovDeg": 53.130102,
+          "isPerspective": false
+        },
+        "aggregate": {
+          "isolation": [],
+          "selection": []
+        },
+        "selected": null,
+        "viewport": {
+          "container": [
+            1600,
+            952
+          ],
+          "window": [
+            1600,
+            1000
+          ],
+          "dpr": 1
+        }
+      },
+      "screenshot": "screenshots/P1-n1-low-att1-isooff-09-back-to-all.png"
+    }
+  },
+  "run": {
+    "run": {
+      "state": "done",
+      "headline": "Completed — 242 clashes",
+      "counts": {
+        "total": 242,
+        "filtered": 242
+      }
+    },
+    "filters": {
+      "text": "",
+      "groupBy": "none",
+      "sort": "default"
+    },
+    "results": {
+      "state": "list",
+      "view": "flat",
+      "page": {
+        "index": 0,
+        "count": 5,
+        "size": 50
+      }
+    },
+    "modelOptions": [
+      "Audubon_Mechanical_clash_test"
+    ]
+  },
+  "group": {
+    "groupId": "[\"element\",{},{\"dbId\":4479,\"modelKey\":\"dXJuOmFkc2sub2JqZWN0czpvcy5vYmplY3Q6dGVzdC1zYW5kYm94LWxrd2VqN3hwYmdwNjN4NGhsMzM1eTZtMjZvYWtnZ29mL0F1ZHVib25fTWVjaGFuaWNhbF9jbGFzaF90ZXN0LnJ2dA#3\"}]",
+    "label": "Audubon_Mechanical_clash_test · Round Duct [839290]",
+    "clashCount": 4,
+    "participants": 5,
+    "focusOnSelectChecked": {
+      "checked": true
+    },
+    "participantIds": {
+      "source": "none",
+      "list": []
+    }
+  },
+  "screenshots": [
+    "screenshots/P1-n1-low-att1-isooff-00-pre.png",
+    "screenshots/P1-n1-low-att1-isooff-01-HV1-fitted-F.png",
+    "screenshots/P1-n1-low-att1-isooff-02-HV2-ADJ-P1-A-after-focus.png",
+    "screenshots/P1-n1-low-att1-isooff-03-HV2-ADJ-P1-B-moved-away-M.png",
+    "screenshots/P1-n1-low-att1-isooff-04-HV2-ADJ-P1-B-after-focus.png",
+    "screenshots/P1-n1-low-att1-isooff-09-back-to-all.png"
+  ],
+  "finishedAt": "2026-10-12T04:44:29.752Z"
+}
