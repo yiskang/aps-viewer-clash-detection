@@ -1,25 +1,68 @@
-# Simple Viewer (Node.js)
+# APS Viewer Clash Detection (Node.js)
 
 ![platforms](https://img.shields.io/badge/platform-windows%20%7C%20osx%20%7C%20linux-lightgray.svg)
 [![node.js](https://img.shields.io/badge/Node.js-20.13-blue.svg)](https://nodejs.org)
 [![npm](https://img.shields.io/badge/npm-10.5-blue.svg)](https://www.npmjs.com/)
 [![license](https://img.shields.io/:license-mit-green.svg)](https://opensource.org/licenses/MIT)
 
-[Autodesk Platform Services](https://aps.autodesk.com) application built by following
-the [Simple Viewer](https://tutorials.autodesk.io/tutorials/simple-viewer/) tutorial
-from https://tutorials.autodesk.io.
+An [Autodesk Platform Services](https://aps.autodesk.com) Viewer sample for coordinating multi-model
+projects in the browser. It demonstrates a Viewer-side clash-test workflow: define **Clash Tests**, run
+**Clash Detection** across one or more loaded models, explore the **Clash Results**, and use **Find Room** to
+locate the room that contains a selected element. Models are loaded as SVF2.
 
-![thumbnail](thumbnail.png)
+The sample started from the [Simple Viewer](https://tutorials.autodesk.io/tutorials/simple-viewer/) tutorial.
 
-## Collision detection library
+| Clash Tests | Clash Detection / Results |
+| --- | --- |
+| ![Clash Tests manager listing two tests with their mode, Set A / Set B models and status](docs/images/clash-tests-manager.png) | ![Clash results grouped by model pair, with Focus, Isolate and Back to all for a selected group](docs/images/clash-detection-results.png) |
+| Create and manage clash tests | Browse grouped results, focus and isolate |
 
-This repo also hosts a Viewer-side collision/clash-detection library (`collision/`), currently at
-Milestone 1. See [`collision/README.md`](collision/README.md) for usage, supported query modes,
-the quick-start example, and known limitations, and
-[`wwwroot/extensions/RoomLocatorExtension.js`](wwwroot/extensions/RoomLocatorExtension.js) for the
-reference sample integration.
+| Context menu | Find Room | Find Clashes (hard) | Find Soft Clashes |
+| --- | --- | --- | --- |
+| ![Viewer context menu with Locate Room, Find Clashes and Find Soft Clashes entries on a selected bathtub](docs/images/context-menu.png) | ![Master Bath 207 isolated in the model after Locate Room on a bathtub](docs/images/find-room.png) | ![A hard-clash result for one selected structural element, isolated across the loaded models](docs/images/find-clashes-hard.png) | ![A soft-clash (clearance) result for one selected structural column, isolated with its near neighbours](docs/images/find-clashes-soft.png) |
+| Right-click a selected element | Locate Room isolates the containing room | Find Clashes on one selected element | Find Soft Clashes on one selected element |
 
-The federated clash-test core engine (`clashtest/`): see [`clashtest/README.md`](clashtest/README.md) and its [design spec](docs/superpowers/specs/2026-09-20-federated-clash-test-and-results-design.md).
+## Features
+
+### Clash Tests
+
+Open the **Clash Detection** panel from the Viewer toolbar. The panel hosts a Clash Tests manager:
+
+- Create, open, duplicate, delete and reset several tests in one session.
+- Choose **Hard** (overlap) or **Soft** (clearance) mode. Soft clearance uses a distance you supply.
+- Pick the models for **Set A** and **Set B**, use the current Viewer selection to narrow a set, or compare
+  a set against itself.
+- See each test's readiness, run it, and stop a run in progress.
+
+Tests live in the browser session only; they are not saved across reloads.
+
+### Clash Detection / Results
+
+Each run produces a result set you can explore in the same panel:
+
+- Run status, coverage and diagnostics summary, with a **Copy diagnostics** button.
+- Individual clashes with **Previous / Next** navigation and paging.
+- Filter by text or model, **Unverified only**, **Has location**, and sort order.
+- **Group by** Element, Model Pair, Category or Level; select a group to present all its participants at once.
+- **Focus**, **Isolate**, **Markers** and **Back to all** for the selected clash or group.
+- Works across several loaded models (federated results).
+
+### Find Room
+
+Select an element, right-click it and choose **Locate Room**. The sample finds the room(s) that contain the
+element (by default the model's "Revit Rooms" category), then isolates them and fits the view. If the
+result may be incomplete, an alert says so. Requires a model that contains Revit room elements.
+
+The same context menu also offers **Find Clashes** (hard) and **Find Soft Clashes** for a single selected
+element.
+
+## Libraries
+
+- Collision library (`collision/`): see [`collision/README.md`](collision/README.md) for usage, supported
+  query modes and known limitations. [`wwwroot/extensions/RoomLocatorExtension.js`](wwwroot/extensions/RoomLocatorExtension.js)
+  is a reference integration.
+- Federated clash-test engine (`clashtest/`): see [`clashtest/README.md`](clashtest/README.md).
+- Clash panel (`clashpanel/`): see [`clashpanel/README.md`](clashpanel/README.md).
 
 ## Development
 
@@ -35,8 +78,8 @@ or [bash](https://en.wikipedia.org/wiki/Bash_(Unix_shell)) (should already be av
 
 ### Setup & Run
 
-- Clone this repository: `git clone https://github.com/autodesk-platform-services/aps-simple-viewer-nodejs`
-- Go to the project folder: `cd aps-simple-viewer-nodejs`
+- Clone this repository: `git clone https://github.com/yiskang/aps-viewer-clash-detection`
+- Go to the project folder: `cd aps-viewer-clash-detection`
 - Install Node.js dependencies: `npm install`
 - Open the project folder in a code editor of your choice
 - Create a _.env_ file in the project folder, and populate it with the snippet below,
@@ -61,3 +104,7 @@ Please contact us via https://forge.autodesk.com/en/support/get-help.
 
 This sample is licensed under the terms of the [MIT License](http://opensource.org/licenses/MIT).
 Please see the [LICENSE](LICENSE) file for more details.
+
+## Written by
+
+Eason Kang [in/eason-kang-b4398492/](https://www.linkedin.com/in/eason-kang-b4398492), [Developer Advocacy and Support Team](http://aps.autodesk.com)
